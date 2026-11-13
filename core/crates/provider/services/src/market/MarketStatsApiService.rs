@@ -681,6 +681,28 @@ impl MarketStatsApiService {
 
     /// Creates a comment on a marketplace entry.
     pub fn create_entry_comment(&self, entry_id: &str, body: &str) -> Result<String, String> {
+        self.create_comment(entry_id, body, None)
+    }
+
+    /// Replies to an existing marketplace comment, preserving its parent relation.
+    pub fn reply_entry_comment(
+        &self,
+        entry_id: &str,
+        body: &str,
+        parent_id: &str,
+    ) -> Result<String, String> {
+        if parent_id.trim().is_empty() {
+            return Err("A reply requires a parent comment".to_string());
+        }
+        self.create_comment(entry_id, body, Some(parent_id))
+    }
+
+    fn create_comment(
+        &self,
+        entry_id: &str,
+        body: &str,
+        parent_id: Option<&str>,
+    ) -> Result<String, String> {
         #[derive(Deserialize)]
         struct Response {
             #[serde(rename = "commentId")]
@@ -690,7 +712,7 @@ impl MarketStatsApiService {
             "POST",
             &["entries", entry_id, "comments"],
             vec![("Content-Type".to_string(), "application/json".to_string())],
-            serde_json::to_vec(&serde_json::json!({"body": body})).map_err(|e| e.to_string())?,
+            serde_json::to_vec(&market_comment_body(body, parent_id)).map_err(|e| e.to_string())?,
             true,
         )?;
         Ok(resp.comment_id)
@@ -1449,6 +1471,14 @@ fn market_entry_patch_json(
     serde_json::Value::Object(map)
 }
 
+fn market_comment_body(body: &str, parent_id: Option<&str>) -> serde_json::Value {
+    let mut payload = serde_json::json!({"body": body});
+    if let Some(parent_id) = parent_id {
+        payload["parentId"] = serde_json::Value::String(parent_id.to_string());
+    }
+    payload
+}
+
 fn market_new_version_body(
     entry_patch: Option<serde_json::Value>,
     version: serde_json::Value,
@@ -1505,7 +1535,7 @@ pub use MarketStatsApiService as MarketStatsApiServiceModule;
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_my_entries, MarketStatsApiService};
+    use super::{market_comment_body, parse_my_entries, MarketStatsApiService};
     use operit_host_api::HostManager::setDefaultHttpHost;
     use operit_host_api::{
         HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData,
@@ -1513,6 +1543,15 @@ mod tests {
         HttpStreamOpenedCallback,
     };
     use std::sync::Arc;
+
+    #[test]
+    fn comment_payload_preserves_reply_parent_without_changing_top_level_comments() {
+        assert_eq!(market_comment_body("Hello", None), serde_json::json!({"body": "Hello"}));
+        assert_eq!(
+            market_comment_body("Reply", Some("parent-42")),
+            serde_json::json!({"body": "Reply", "parentId": "parent-42"}),
+        );
+    }
 
     struct ReqwestTestHttpHost;
 

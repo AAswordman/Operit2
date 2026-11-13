@@ -1346,6 +1346,11 @@ pub fn compare(local: &Snapshot, remote: &Snapshot) -> Result<Option<Correction>
 
 #[path = "transaction/Journal.rs"]
 mod journal;
+#[cfg(feature = "full")]
+#[path = "transaction/FileIndex.rs"]
+mod file_index;
+#[cfg(feature = "full")]
+pub(crate) use file_index::FileSource;
 pub(crate) use journal::{text, Journal, LegacyReceiveState};
 #[path = "transaction/Kernel.rs"]
 pub mod kernel;

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 use crate::LegacyTransactionImport::JournalRecord;
 use crate::SyncOperationStore::{SyncOperation, SyncOperationStoreError as Error, SyncReceipt};
 
-pub(crate) struct Journal(Box<dyn RuntimeSqliteConnection>);
+pub(crate) struct Journal(pub(super) Box<dyn RuntimeSqliteConnection>);
 
 // Direct appends and recoverable preference edits share a durable identity floor.
 const AUTHOR_SEQUENCE_HIGH_WATER_SQL: &str = "SELECT MAX(
@@ -38,6 +38,8 @@ impl Journal {
             CREATE TABLE IF NOT EXISTS journal_meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);")?;
         connection.executeBatch(super::compaction::SCHEMA)?;
         connection.executeBatch("CREATE TABLE IF NOT EXISTS preference_compaction_policy(path TEXT PRIMARY KEY,format INTEGER NOT NULL,safe INTEGER NOT NULL)")?;
+        #[cfg(feature = "full")]
+        connection.executeBatch(super::file_index::SCHEMA)?;
         Ok(Self(connection))
     }
 
@@ -81,6 +83,8 @@ impl Journal {
             text(original.payload.get("storagePath").and_then(serde_json::Value::as_str).unwrap_or(&original.entityId)),
             SqliteValue::Integer(original.payload.get("schemaVersion").and_then(serde_json::Value::as_i64).unwrap_or(0)),
         ])?;
+        #[cfg(feature = "full")]
+        Self::index_blob_references(tx, &original.opId)?;
         Ok(())
     }
 
@@ -163,6 +167,8 @@ impl Journal {
                     return Err(Error::Message(format!("Conflicting immutable operation {}", operation.opId)));
                 }
                 tx.execute("UPDATE originals SET pending=0 WHERE id=?1", vec![text(&operation.opId)])?;
+                #[cfg(feature = "full")]
+                Self::compact_file(tx, operation)?;
                 // SQL owners export through their own source; this journal only carries pending reception.
                 if matches!(operation.domain.as_str(), "chat" | "plugin_storage") {
                     Self::retire_ids(tx,std::iter::once(operation.opId.clone()))?;
@@ -263,6 +269,8 @@ impl Journal {
     pub(crate) fn save_owner(tx: &mut dyn RuntimeSqliteTransaction, state: &super::kernel::OwnerState) -> Result<(), Error> {
         tx.execute("INSERT INTO transaction_owners(path,state) VALUES(?1,?2) ON CONFLICT(path) DO UPDATE SET state=excluded.state",
             vec![text(&state.current.data.owner.path), text(&serde_json::to_string(state)?)])?;
+        #[cfg(feature = "full")]
+        Self::index_owner_blobs(tx, &state.current.data.owner.path)?;
         Ok(())
     }
 
@@ -332,9 +340,13 @@ impl Journal {
     /// A coverage decision retires pending and completed copies through the same atomic path.
     pub(crate) fn retire_ids(tx: &mut dyn RuntimeSqliteTransaction, ids: impl IntoIterator<Item=String>) -> Result<(),Error> {
         for id in ids {
+            #[cfg(feature = "full")]
+            Self::queue_file_blob(tx, &id)?;
             for row in tx.query("SELECT origin,sequence,business_time,fingerprint FROM originals WHERE id=?1",vec![text(&id)])? {
                 super::compaction::seal_identity(tx,&id,&row.valueAt(0)?.asString()?,row.valueAt(1)?.asI64()?,row.valueAt(2)?.asI64()?,&row.valueAt(3)?.asString()?)?;
                 tx.execute("DELETE FROM originals WHERE id=?1",vec![text(&id)])?;
+                #[cfg(feature = "full")]
+                tx.execute("DELETE FROM sync_blob_references WHERE operation_id=?1",vec![text(&id)])?;
             }
         }
         Ok(())

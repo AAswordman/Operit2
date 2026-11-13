@@ -85,7 +85,7 @@ fn completion_preserves_the_original_for_export_and_rejects_changed_redelivery()
 }
 
 #[test]
-fn legacy_handover_imports_pending_and_keeps_original_files_read_only() {
+fn legacy_handover_imports_pending_before_deleting_original_files() {
     let fixture = Fixture::new();
     let journal = fixture.journal();
     let archived = operation("peer", 1);
@@ -101,8 +101,8 @@ fn legacy_handover_imports_pending_and_keeps_original_files_read_only() {
     assert_eq!(journal.pendingOperations().unwrap(), vec![pending.clone()]);
     journal.completeOperations(&[pending]).unwrap();
     journal.receiveOperations(&[operation("peer", 4)]).unwrap();
-    assert_eq!(fixture.host.readBytes(&log).unwrap(), legacy.as_bytes());
-    assert_eq!(fixture.host.readBytes(&format!("{ROOT}/receive_state.json")).unwrap(), received);
+    assert!(!fixture.host.exists(&log).unwrap());
+    assert!(!fixture.host.exists(&format!("{ROOT}/receive_state.json")).unwrap());
     let receipt = fixture.reopen().receipt().unwrap();
     assert!(receipt.containsSequence("peer", 1));
     assert!(!receipt.containsSequence("peer", 2));
@@ -111,7 +111,7 @@ fn legacy_handover_imports_pending_and_keeps_original_files_read_only() {
 }
 
 #[test]
-fn failed_legacy_import_rolls_back_before_retry() {
+fn failed_legacy_import_resets_once_before_deleting_retired_files() {
     let fixture = Fixture::new();
     let journal = fixture.journal();
     let op = operation("peer", 1);
@@ -119,10 +119,14 @@ fn failed_legacy_import_rolls_back_before_retry() {
     let log = journal.operationsPath("peer");
     fixture.host.writeBytesAtomically(&log, format!("{valid}broken-json\n").as_bytes()).unwrap();
     fixture.host.writeBytesAtomically(&format!("{ROOT}/devices.json"), br#"["peer"]"#).unwrap();
-    assert!(journal.receipt().is_err());
+    assert!(!journal.receipt().unwrap().containsSequence("peer", 1));
+    assert!(!fixture.host.exists(&log).unwrap());
     let mut sql = fixture.host.openTransactionDatabase(&format!("{ROOT}/transactions.sqlite")).unwrap();
     assert_eq!(sql.query("SELECT COUNT(*) FROM originals", vec![]).unwrap()[0].valueAt(0).unwrap(), &SqliteValue::Integer(0));
     fixture.host.writeBytesAtomically(&log, valid.as_bytes()).unwrap();
-    assert!(journal.receipt().unwrap().containsSequence("peer", 1));
-    assert_eq!(journal.operationsSince(&SyncClock::empty(), &[], 10).unwrap(), vec![op]);
+    drop(journal);
+    let journal = fixture.reopen();
+    assert!(!journal.receipt().unwrap().containsSequence("peer", 1));
+    assert!(journal.operationsSince(&SyncClock::empty(), &[], 10).unwrap().is_empty());
+    assert!(!fixture.host.exists(&log).unwrap());
 }

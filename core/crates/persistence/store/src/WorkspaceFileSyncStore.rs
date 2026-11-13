@@ -498,12 +498,13 @@ impl WorkspaceFileSyncStore {
             return self.save(state);
         };
         match stamp {
-            Some(stamp) => { state.files.insert(path, stamp); }
+            Some(stamp) => { state.files.insert(path.clone(), stamp); }
             None => {
                 state.files.remove(&path);
                 self.removeEmptyParents(&path)?;
             }
         }
+        self.files().indexMaterializedFile(&path, next.as_ref().map(|snapshot| &snapshot.reference))?;
         state.pending = None;
         self.save(state)
     }

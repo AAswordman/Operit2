@@ -422,6 +422,8 @@ pub struct SyncOperationStore {
 #[derive(Default)]
 struct SyncOperationStoreSharedState {
     controlRevision: AtomicU64,
+    #[cfg(feature = "full")]
+    lastFileCollection: Mutex<i64>,
     clock: Mutex<SyncOperationCachedValue<SyncClock>>,
     journal: Mutex<Option<crate::Transaction::Journal>>,
     legacyFiles: Mutex<()>,
@@ -1735,9 +1737,52 @@ impl SyncOperationStore {
                 ));
             }
             journal.reclaim_sql_copies()?;
+            // Also clean leftovers from earlier migrations, without importing them again.
+            if let Err(error) = self.cleanLegacyJournal() {
+                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_legacy.cleanup: {error}"));
+            }
+            #[cfg(feature = "full")]
+            if let Err(error) = journal.migrate_file_index(self.storageHost.as_ref()).and_then(|_| {
+                journal.collect_file_blobs(self.storageHost.as_ref(), &self.rootPath, currentTimeMillis()?)
+            }) {
+                operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.upgrade: {error}"));
+            }
             *state = Some(journal);
         }
         action(state.as_mut().expect("journal opened"))
+    }
+
+    /// Private legacy files are removed only after the SQL import marker is committed.
+    fn cleanLegacyJournal(&self) -> Result<(), SyncOperationStoreError> {
+        let _legacy = lockSyncState(&self.sharedState.legacyFiles, "legacy cleanup")?;
+        for name in ["operations", "pending"] {
+            let path = format!("{}/{name}", self.rootPath);
+            for entry in self.storageHost.list(&path)? {
+                if entry.path.starts_with(&format!("{path}/")) { self.storageHost.delete(&entry.path, true)?; }
+            }
+            if self.storageHost.exists(&path)? { self.storageHost.delete(&path, true)?; }
+        }
+        for name in ["receive_state.json", "devices.json", "preference_outboxes.json"] {
+            let path = format!("{}/{name}", self.rootPath);
+            if self.storageHost.exists(&path)? { self.storageHost.delete(&path, false)?; }
+        }
+        Ok(())
+    }
+
+    /// Collection is amortized across writers; a failed deletion remains queued for retry.
+    #[cfg(feature = "full")]
+    pub(crate) fn collectFileBlobs(&self) {
+        let Ok(now) = currentTimeMillis() else { return; };
+        let Ok(mut last) = self.sharedState.lastFileCollection.try_lock() else { return; };
+        if now.saturating_sub(*last) < 60_000 { return; }
+        *last = now;
+        if let Err(error) = self.withJournal(|journal| {
+            journal.migrate_file_index(self.storageHost.as_ref())?;
+            journal.collect_file_blobs(self.storageHost.as_ref(), &self.rootPath, now)
+        }) {
+            *last = 0;
+            operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.cleanup: {error}"));
+        }
     }
 
     pub(crate) fn hasTransactionJournal(&self) -> Result<bool, SyncOperationStoreError> {
@@ -1752,6 +1797,10 @@ impl SyncOperationStore {
     pub(crate) fn retireTransactionJournal(&self) -> Result<(), SyncOperationStoreError> {
         self.withJournal(|journal| journal.transaction(|tx| {
             for table in ["originals", "legacy_receipts", "transaction_owners", "transaction_files", "transaction_commits"] {
+                tx.execute(&format!("DELETE FROM {table}"), vec![])?;
+            }
+            #[cfg(feature = "full")]
+            for table in ["sync_file_sources", "sync_blob_references", "sync_owner_blob_references"] {
                 tx.execute(&format!("DELETE FROM {table}"), vec![])?;
             }
             Ok(())
@@ -1777,10 +1826,14 @@ impl SyncOperationStore {
         } else { BTreeMap::new() };
         for (path, encrypted) in files { journal.register_file(&path, encrypted)?; }
         let devices: Vec<String> = self.readJson(&self.devicesPath())?;
+        let directory = format!("{}/operations", self.rootPath);
+        let mut paths: BTreeSet<String> = devices.iter().map(|device| self.operationsPath(device)).collect();
+        paths.extend(self.storageHost.list(&directory)?.into_iter()
+            .filter(|entry| !entry.isDirectory && entry.path.starts_with(&format!("{directory}/")) && entry.path.ends_with(".jsonl"))
+            .map(|entry| entry.path));
         journal.transaction(|tx| {
             Journal::import_receipts(tx, &received)?;
-            for device in devices {
-                let path = self.operationsPath(&device);
+            for path in paths {
                 if !self.storageHost.exists(&path)? { continue; }
                 let mut lines = JournalLines::new(self.storageHost.as_ref(), &path);
                 while lines.next()? {
@@ -1841,7 +1894,12 @@ impl SyncOperationStore {
                 createdAt: currentTimeMillis()?, schemaVersion: 1,
             };
             let stored = self.encodeOperationPayload(&op)?;
-            journal.transaction(|tx| crate::Transaction::Journal::put(tx, &op, &stored, false))?;
+            journal.transaction(|tx| {
+                crate::Transaction::Journal::put(tx, &op, &stored, false)?;
+                #[cfg(feature = "full")]
+                crate::Transaction::Journal::publish_file(tx, &op)?;
+                Ok(())
+            })?;
             Ok(op)
         })?;
         if let Some(control) = &control { control.update(|model| model.append_journal([&op]))?; }
@@ -1850,6 +1908,8 @@ impl SyncOperationStore {
         cached.value = clock;
         drop(cached);
         self.recordAppliedOperation(&op)?;
+        #[cfg(feature = "full")]
+        self.collectFileBlobs();
         drop(control);
         publishSyncMutation();
         Ok(op)
@@ -1916,6 +1976,7 @@ impl SyncOperationStore {
     pub fn pendingOperationCount(&self) -> Result<usize, SyncOperationStoreError> { Ok(self.pendingOperationIds()?.len()) }
 
     /// Excludes old and pending file states without reading their blobs or touching live paths.
+    #[cfg(feature = "full")]
     pub fn ignoreNonPortableFileOperations(&self) -> Result<(), SyncOperationStoreError> {
         let paths = self.withJournal(|journal| journal.transaction(|tx| {
             Ok(tx.query("SELECT DISTINCT target FROM originals WHERE domain=?1", vec![crate::Transaction::text(crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN)])?
@@ -1937,6 +1998,10 @@ impl SyncOperationStore {
                 crate::Transaction::Journal::retire_ids(tx, ids)?;
                 tx.execute("DELETE FROM transaction_files WHERE path=?1", vec![crate::Transaction::text(path)])?;
                 tx.execute("DELETE FROM transaction_owners WHERE path=?1", vec![crate::Transaction::text(path)])?;
+                #[cfg(feature = "full")]
+                for table in ["sync_file_sources", "sync_owner_blob_references"] {
+                    tx.execute(&format!("DELETE FROM {table} WHERE path=?1"), vec![crate::Transaction::text(path)])?;
+                }
             }
             Ok(())
         }))?;
@@ -1996,6 +2061,8 @@ impl SyncOperationStore {
         let _revision = control.as_ref().map(|_| ControlJournalMutation::new(&self.sharedState.controlRevision));
         self.withJournal(|journal| journal.complete(operations))?;
         if let Some(control) = &control { control.update(|model| model.complete(operations))?; }
+        #[cfg(feature = "full")]
+        if operations.iter().any(crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState) { self.collectFileBlobs(); }
         Ok(())
     }
 

@@ -228,7 +228,11 @@ class StoreStatsStrip extends StatelessWidget {
             builder: (context, constraints) {
               final fits = stats.length * _cellWidth <= constraints.maxWidth;
               final cells = <Widget>[
-                for (var index = 0; index < stats.length; index += 1) ...<Widget>[
+                for (
+                  var index = 0;
+                  index < stats.length;
+                  index += 1
+                ) ...<Widget>[
                   if (index > 0)
                     SizedBox(
                       height: 36,
@@ -527,7 +531,8 @@ class StoreListRow extends StatelessWidget {
                       fontFamily: monospaceTitle ? 'monospace' : null,
                     ),
                   ),
-                  if (subtitle != null && subtitle.trim().isNotEmpty) ...<Widget>[
+                  if (subtitle != null &&
+                      subtitle.trim().isNotEmpty) ...<Widget>[
                     const SizedBox(height: 2),
                     Text(
                       subtitle,
@@ -652,25 +657,27 @@ class _StoreInlineConfirmState extends State<StoreInlineConfirm> {
                                 onPressed: _running
                                     ? null
                                     : () => setState(() => _open = false),
-                                style: SettingsControlStyles.sectionTextButton(),
+                                style:
+                                    SettingsControlStyles.sectionTextButton(),
                                 child: const Text('取消'),
                               ),
                               const SizedBox(width: 6),
                               FilledButton(
                                 onPressed: _running ? null : _confirm,
-                                style: SettingsControlStyles.sectionFilledButton()
-                                    .copyWith(
-                                      backgroundColor: widget.destructive
-                                          ? WidgetStatePropertyAll<Color>(
-                                              colorScheme.error,
-                                            )
-                                          : null,
-                                      foregroundColor: widget.destructive
-                                          ? WidgetStatePropertyAll<Color>(
-                                              colorScheme.onError,
-                                            )
-                                          : null,
-                                    ),
+                                style:
+                                    SettingsControlStyles.sectionFilledButton()
+                                        .copyWith(
+                                          backgroundColor: widget.destructive
+                                              ? WidgetStatePropertyAll<Color>(
+                                                  colorScheme.error,
+                                                )
+                                              : null,
+                                          foregroundColor: widget.destructive
+                                              ? WidgetStatePropertyAll<Color>(
+                                                  colorScheme.onError,
+                                                )
+                                              : null,
+                                        ),
                                 child: _running
                                     ? SizedBox.square(
                                         dimension: 16,
@@ -817,10 +824,7 @@ class StoreNoticeCard extends StatelessWidget {
                 ],
               ),
             ),
-            if (action != null) ...<Widget>[
-              const SizedBox(width: 8),
-              action!,
-            ],
+            if (action != null) ...<Widget>[const SizedBox(width: 8), action!],
           ],
         ),
       ),
@@ -830,7 +834,12 @@ class StoreNoticeCard extends StatelessWidget {
 
 /// Circular avatar from a URL, or the person's initial when they have none.
 class StoreAvatar extends StatelessWidget {
-  const StoreAvatar({super.key, required this.name, this.url, this.radius = 14});
+  const StoreAvatar({
+    super.key,
+    required this.name,
+    this.url,
+    this.radius = 14,
+  });
 
   final String name;
   final String? url;
@@ -857,93 +866,287 @@ class StoreAvatar extends StatelessWidget {
 }
 
 /// One market comment with author, date and the owner's edit/delete menu.
-class StoreCommentTile extends StatelessWidget {
+class StoreCommentTile extends StatefulWidget {
   const StoreCommentTile({
     super.key,
     required this.comment,
+    this.parentComment,
+    this.loadConversation,
+    this.onReplyTo,
+    this.onReply,
     this.onEdit,
     this.onDelete,
+    this.inConversation = false,
+    this.conversationActive = false,
+    this.onConversationChanged,
   });
 
   final core_proxy.MarketComment comment;
+  final core_proxy.MarketComment? parentComment;
+  final Future<List<core_proxy.MarketComment>> Function()? loadConversation;
+  final ValueChanged<core_proxy.MarketComment>? onReplyTo;
+  final VoidCallback? onReply;
   final VoidCallback? onEdit;
   final VoidCallback? onDelete;
+  final bool inConversation;
+  final bool conversationActive;
+  final ValueChanged<List<core_proxy.MarketComment>?>? onConversationChanged;
+
+  @override
+  State<StoreCommentTile> createState() => _StoreCommentTileState();
+}
+
+class _StoreCommentTileState extends State<StoreCommentTile> {
+  List<core_proxy.MarketComment>? _conversation;
+  bool _open = false;
+  bool _loading = false;
+  bool _failed = false;
+  int _generation = 0;
+
+  Future<void> _toggleConversation() async {
+    if (_loading) return;
+    if (_open) {
+      setState(() => _open = false);
+      widget.onConversationChanged?.call(null);
+      return;
+    }
+    if (_conversation != null) {
+      setState(() => _open = true);
+      widget.onConversationChanged?.call(_conversation);
+      return;
+    }
+    final generation = ++_generation;
+    setState(() {
+      _loading = true;
+      _failed = false;
+    });
+    try {
+      final comments = await widget.loadConversation!();
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _conversation = comments;
+        _open = true;
+        _loading = false;
+      });
+      widget.onConversationChanged?.call(comments);
+    } catch (_) {
+      if (!mounted || generation != _generation) return;
+      setState(() {
+        _failed = true;
+        _loading = false;
+      });
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant StoreCommentTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.conversationActive && !widget.conversationActive) {
+      _open = false;
+    }
+    if (oldWidget.comment != widget.comment) {
+      _generation++;
+      _conversation = null;
+      _open = false;
+      _loading = false;
+      _failed = false;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final onEdit = this.onEdit;
-    final onDelete = this.onDelete;
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(14, 12, 6, 12),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          StoreAvatar(
-            name: comment.author.login,
-            url: comment.author.avatar,
-            radius: 15,
+    final colors = theme.colorScheme;
+    final comment = widget.comment;
+    final hasParent = comment.parentId?.isNotEmpty ?? false;
+    final ancestors = _conversation;
+    final parent =
+        widget.parentComment ??
+        (ancestors != null && ancestors.length > 1
+            ? ancestors[ancestors.length - 2]
+            : null);
+    final actionStyle = SettingsControlStyles.sectionTextButton().copyWith(
+      foregroundColor: WidgetStatePropertyAll(colors.onSurfaceVariant),
+      textStyle: WidgetStatePropertyAll(theme.textTheme.labelMedium),
+      padding: const WidgetStatePropertyAll(
+        EdgeInsets.symmetric(horizontal: 6),
+      ),
+      minimumSize: const WidgetStatePropertyAll(Size(0, 32)),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    );
+    return Column(
+      key: ValueKey('comment-thread-${comment.id}'),
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        if (_open && ancestors != null) ...[
+          if (ancestors.first.parentId?.isNotEmpty ?? false)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
+              child: Text(
+                '原评论已删除或暂不可用',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          for (var index = 0; index < ancestors.length - 1; index++)
+            StoreCommentTile(
+              key: ValueKey('context-${ancestors[index].id}'),
+              comment: ancestors[index],
+              parentComment: index > 0 ? ancestors[index - 1] : null,
+              inConversation: index > 0,
+              onReply: widget.onReplyTo == null
+                  ? null
+                  : () => widget.onReplyTo!(ancestors[index]),
+            ),
+        ],
+        Container(
+          margin: EdgeInsets.only(
+            left: hasParent && (widget.inConversation || _open) ? 28 : 0,
           ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Row(
-                  children: <Widget>[
-                    Flexible(
-                      child: Text(
-                        comment.author.login,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
+          decoration: hasParent && (widget.inConversation || _open)
+              ? BoxDecoration(
+                  border: Border(
+                    left: BorderSide(
+                      color: colors.outlineVariant.withValues(alpha: 0.5),
                     ),
-                    const SizedBox(width: 8),
-                    Text(
-                      formatMarketDate(comment.createdAt),
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.onSurfaceVariant,
-                      ),
+                  ),
+                )
+              : null,
+          padding: EdgeInsets.fromLTRB(
+            hasParent && (widget.inConversation || _open) ? 8 : 16,
+            16,
+            16,
+            12,
+          ),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              StoreAvatar(
+                name: comment.author.login,
+                url: comment.author.avatar,
+                radius: 14,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Wrap(
+                            spacing: 5,
+                            crossAxisAlignment: WrapCrossAlignment.center,
+                            children: [
+                              Text(
+                                comment.author.login,
+                                style: theme.textTheme.labelLarge?.copyWith(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              if (hasParent) ...[
+                                Text(
+                                  '回复',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: colors.onSurfaceVariant,
+                                  ),
+                                ),
+                                if (parent != null)
+                                  Text(
+                                    parent.author.login,
+                                    style: theme.textTheme.labelMedium
+                                        ?.copyWith(color: colors.primary),
+                                  ),
+                              ],
+                            ],
+                          ),
+                        ),
+                        if (widget.onEdit != null || widget.onDelete != null)
+                          SizedBox.square(
+                            dimension: 24,
+                            child: PopupMenuButton<String>(
+                              tooltip: '评论操作',
+                              padding: EdgeInsets.zero,
+                              iconSize: 18,
+                              icon: Icon(
+                                Icons.more_horiz_rounded,
+                                color: colors.onSurfaceVariant,
+                              ),
+                              onSelected: (value) {
+                                if (value == 'edit') widget.onEdit?.call();
+                                if (value == 'delete') widget.onDelete?.call();
+                              },
+                              itemBuilder: (_) => [
+                                if (widget.onEdit != null)
+                                  const PopupMenuItem(
+                                    value: 'edit',
+                                    child: Text('编辑评论'),
+                                  ),
+                                if (widget.onDelete != null)
+                                  const PopupMenuItem(
+                                    value: 'delete',
+                                    child: Text('删除评论'),
+                                  ),
+                              ],
+                            ),
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    StoreExpandableText(
+                      key: ValueKey(comment.id),
+                      text: comment.body,
+                    ),
+                    const SizedBox(height: 4),
+                    Wrap(
+                      spacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text(
+                          formatMarketDate(comment.createdAt),
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                        if (widget.onReply != null)
+                          TextButton(
+                            key: ValueKey('comment-reply-${comment.id}'),
+                            onPressed: widget.onReply,
+                            style: actionStyle,
+                            child: const Text('回复'),
+                          ),
+                        if (hasParent && widget.loadConversation != null)
+                          TextButton(
+                            key: ValueKey('comment-parent-${comment.id}'),
+                            onPressed: _loading ? null : _toggleConversation,
+                            style: actionStyle.copyWith(
+                              foregroundColor: WidgetStatePropertyAll(
+                                colors.primary,
+                              ),
+                            ),
+                            child: Text(
+                              _open
+                                  ? '收起对话'
+                                  : _failed
+                                  ? '重试'
+                                  : '查看对话',
+                            ),
+                          ),
+                        if (_loading)
+                          const SizedBox.square(
+                            dimension: 12,
+                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                          ),
+                      ],
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
-                SelectableText(
-                  comment.body,
-                  style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-          if (onEdit != null || onDelete != null)
-            PopupMenuButton<String>(
-              tooltip: '评论操作',
-              icon: const Icon(Icons.more_horiz_rounded),
-              onSelected: (value) {
-                if (value == 'edit') {
-                  onEdit?.call();
-                } else if (value == 'delete') {
-                  onDelete?.call();
-                }
-              },
-              itemBuilder: (context) => <PopupMenuEntry<String>>[
-                if (onEdit != null)
-                  const PopupMenuItem<String>(
-                    value: 'edit',
-                    child: Text('编辑评论'),
-                  ),
-                if (onDelete != null)
-                  const PopupMenuItem<String>(
-                    value: 'delete',
-                    child: Text('删除评论'),
-                  ),
-              ],
-            ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 }

@@ -114,7 +114,7 @@ impl RuntimeFileSyncStore {
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
-        let reference = self.storeBlob(content)?;
+        let reference = RuntimeFileSyncReference { contentHash: contentHash(content), size: i64::try_from(content.len()).map_err(|_| "File is too large")? };
         let mut deviceId = self.syncOperationStore.localDeviceId().map_err(|error| error.to_string())?;
         let modifiedAt = Some(self.storageHost.modifiedAt(storagePath).map_err(|e| e.to_string())?);
         let mut payload = serde_json::to_value(RuntimeFileSnapshot { reference: reference.clone(), modifiedAt }).map_err(|e| e.to_string())?;
@@ -306,13 +306,14 @@ impl RuntimeFileSyncStore {
                 let content = store.readBlob(&snapshot.reference)?;
                 storageHost.writeBytes(storagePath, &content).map_err(|e| e.to_string())?;
                 if let Some(modifiedAt) = snapshot.modifiedAt { storageHost.setModifiedAt(storagePath, modifiedAt).map_err(|e| e.to_string())?; }
-                storageHost.flushFile(storagePath).map_err(|e| e.to_string())
+                storageHost.flushFile(storagePath).map_err(|e| e.to_string())?;
+                store.indexMaterializedFile(storagePath, Some(&snapshot.reference))
             }
             "delete" => {
                 if storageHost.exists(storagePath).map_err(|e|e.to_string())? {
                     storageHost.delete(storagePath, false).map_err(|e|e.to_string())?;
                 }
-                Ok(())
+                store.indexMaterializedFile(storagePath, None)
             }
             other => Err(format!("unsupported runtime file sync operation: {other}")),
         }
@@ -381,7 +382,7 @@ impl RuntimeFileSyncStore {
     }
 
     pub fn readStagedJson<T:serde::de::DeserializeOwned>(&self, reference:&RuntimeFileSyncReference) -> Result<(T,std::sync::Arc<crate::Transaction::sql_snapshot::SqlSnapshot>),String> {
-        crate::Transaction::sql_snapshot::read_staged(self.storageHost.clone(),&self.blobStoragePath(reference)?,reference)
+        crate::Transaction::sql_snapshot::read_staged(self.storageHost.clone(),&self.blobReadPath(reference)?,reference)
     }
 
     pub fn readSqlInitialization(&self, operation:&SyncOperation) -> Result<crate::Transaction::compaction::Initialization,String> {
@@ -392,14 +393,21 @@ impl RuntimeFileSyncStore {
 
     /// Checks local blob presence without reading or hashing its contents.
     pub fn hasBlob(&self, reference: &RuntimeFileSyncReference) -> Result<bool, String> {
-        self.storageHost.exists(&self.blobStoragePath(reference)?).map_err(|e|e.to_string())
+        validateBlobReference(reference)?;
+        Ok(self.fileSource(&reference.contentHash)?.is_some() || self.storageHost.exists(&self.blobStoragePath(reference)?).map_err(|e|e.to_string())?)
     }
 
     /// Reads one bounded range from a verified content-addressed blob.
     pub fn readBlobChunk(&self, contentHash: &str, offset: i64, length: i64) -> Result<Vec<u8>, String> {
         let offset = u64::try_from(offset).map_err(|_| "blob chunk offset must not be negative")?;
         let length = usize::try_from(length).map_err(|_| "blob chunk length must not be negative or overflow")?;
-        self.storageHost.readBytesRange(&self.blobPath(contentHash)?, offset, length).map_err(|e|e.to_string())
+        let source = self.fileSource(contentHash)?;
+        let path = source.as_ref().map(|source| source.path.clone()).unwrap_or(self.blobPath(contentHash)?);
+        let bytes = self.storageHost.readBytesRange(&path, offset, length).map_err(|e|e.to_string())?;
+        if source.is_some_and(|source| !source.current(self.storageHost.as_ref()).unwrap_or(false)) {
+            return Err("File changed during synchronization; refresh its index".into());
+        }
+        Ok(bytes)
     }
 
     /// Verifies and persists one complete content-addressed blob.
@@ -447,7 +455,7 @@ impl RuntimeFileSyncStore {
 
     /// Verifies all source bytes while decoding; only the decoded object and a fixed I/O buffer coexist.
     pub fn readJsonBlob<T: serde::de::DeserializeOwned>(&self, reference: &RuntimeFileSyncReference) -> Result<T, String> {
-        crate::SyncBlobIo::read_json(self.storageHost.as_ref(), &self.blobStoragePath(reference)?, reference)
+        crate::SyncBlobIo::read_json(self.storageHost.as_ref(), &self.blobReadPath(reference)?, reference)
     }
 
     /// Reads and verifies one complete content-addressed blob.
@@ -455,10 +463,34 @@ impl RuntimeFileSyncStore {
         validateBlobReference(reference)?;
         let content = self
             .storageHost
-            .readBytes(&self.blobPath(&reference.contentHash)?)
+            .readBytes(&self.blobReadPath(reference)?)
             .map_err(|error| format!("blob {}: {error}", reference.contentHash))?;
         verifyBlob(reference, &content)?;
         Ok(content)
+    }
+
+    /// Materialized remote bytes replace their temporary blob with the same live-file index.
+    pub(crate) fn indexMaterializedFile(&self, path: &str, reference: Option<&RuntimeFileSyncReference>) -> Result<(), String> {
+        requireSpaceFile(path)?;
+        let source = reference.map(|reference| self.storageHost.modifiedAt(path).map(|modified_at|
+            crate::Transaction::FileSource { path: path.into(), reference: reference.clone(), modified_at })).transpose().map_err(|e|e.to_string())?;
+        self.syncOperationStore.withJournal(|journal| journal.transaction(|tx| match &source {
+            Some(source) => crate::Transaction::Journal::index_file(tx, source),
+            None => crate::Transaction::Journal::unindex_file(tx, path),
+        })).map_err(|e|e.to_string())?;
+        self.syncOperationStore.collectFileBlobs();
+        Ok(())
+    }
+
+    fn fileSource(&self, hash: &str) -> Result<Option<crate::Transaction::FileSource>, String> {
+        validateContentHash(hash)?;
+        Ok(self.syncOperationStore.withJournal(|journal| journal.file_sources(hash)).map_err(|e|e.to_string())?
+            .into_iter().find(|source| source.current(self.storageHost.as_ref()).unwrap_or(false)))
+    }
+
+    fn blobReadPath(&self, reference: &RuntimeFileSyncReference) -> Result<String, String> {
+        validateBlobReference(reference)?;
+        Ok(self.fileSource(&reference.contentHash)?.map(|source| source.path).unwrap_or(self.blobPath(&reference.contentHash)?))
     }
 
     /// Resolves one validated blob hash below the private synchronization root.
@@ -475,7 +507,7 @@ fn contentHash(content: &[u8]) -> String {
 
 
 /// Rejects an operation whose entity is outside the explicit Space file registry.
-fn requireSpaceFile(storagePath: &str) -> Result<(), String> {
+pub(crate) fn requireSpaceFile(storagePath: &str) -> Result<(), String> {
     if runtimeStorageOwnership(storagePath)? != RuntimeStorageOwnership::Space {
         return Err(format!(
             "runtime file is not registered for Space synchronization: {storagePath}"
@@ -657,3 +689,7 @@ mod tests {
     }
 
 }
+
+#[cfg(test)]
+#[path = "tests/FileContentIndexTests.rs"]
+mod file_content_index_tests;

@@ -16,6 +16,7 @@ import '../components/StoreDetailKit.dart';
 import '../components/StoreVisuals.dart';
 import '../market/ArtifactMarketSupport.dart';
 import '../market/MarketInstallStateStore.dart';
+import '../market/MarketCommentPager.dart';
 import 'ArtifactProjectNodeTreeDialog.dart';
 import 'ArtifactPublishScreen.dart';
 import 'RepoMarketPublishScreen.dart';
@@ -45,8 +46,20 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
   String? _entryError;
   String? _currentGithubLogin;
   String? _currentGithubAuthorId;
+  final GlobalKey _communityKey = GlobalKey();
+  late final MarketCommentPager _commentPager = MarketCommentPager(
+    (page) => _market.getCommentsPage(entryId: widget.entryId, page: page),
+  );
+  int _commentPage = 1;
+  int _commentTotal = 0;
+  int _commentPageCount = 1;
+  int _communityGeneration = 0;
+  bool _commentsExpanded = false;
+  String? _expandedCommentId;
+  Set<String> _expandedContextIds = {};
   bool _communityLoading = true;
   bool _composerOpen = false;
+  core_proxy.MarketComment? _replyTo;
   bool _postingComment = false;
   bool _reacting = false;
   bool _liked = false;
@@ -100,24 +113,30 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
     }
   }
 
-  Future<void> _loadCommunity() async {
+  Future<void> _loadCommunity({int? page, bool refresh = false}) async {
+    final generation = ++_communityGeneration;
     setState(() {
       _communityLoading = true;
       _communityError = null;
+      _expandedCommentId = null;
+      _expandedContextIds = {};
     });
     try {
-      final page = await _market.getCommentsPage(
-        entryId: widget.entryId,
-        page: 1,
+      final result = await _commentPager.load(
+        page ?? _commentPage,
+        refresh: refresh,
       );
-      if (!mounted) return;
+      if (!mounted || generation != _communityGeneration) return;
       setState(() {
-        _comments = page.items;
+        _comments = result.items;
+        _commentPage = result.page;
+        _commentTotal = result.total;
+        _commentPageCount = result.pageCount;
         _communityLoading = false;
       });
     } catch (error, stackTrace) {
       debugPrint('Failed to load market community: $error\n$stackTrace');
-      if (!mounted) return;
+      if (!mounted || generation != _communityGeneration) return;
       setState(() {
         _communityError = error.toString();
         _communityLoading = false;
@@ -143,17 +162,23 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
     if (body.isEmpty || _postingComment) return;
     setState(() => _postingComment = true);
     try {
-      await _market.createEntryComment(entryId: widget.entryId, body: body);
-      final page = await _market.getCommentsPage(
-        entryId: widget.entryId,
-        page: 1,
-      );
+      final replyTo = _replyTo;
+      if (replyTo == null) {
+        await _market.createEntryComment(entryId: widget.entryId, body: body);
+      } else {
+        await _market.replyEntryComment(
+          entryId: widget.entryId,
+          body: body,
+          parentId: replyTo.id,
+        );
+      }
+      await _loadCommunity(page: 1, refresh: true);
       if (!mounted) return;
       setState(() {
-        _comments = page.items;
         _commentController.clear();
         _postingComment = false;
         _composerOpen = false;
+        _replyTo = null;
       });
     } catch (error, stackTrace) {
       debugPrint('Failed to post market comment: $error\n$stackTrace');
@@ -221,12 +246,8 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
                               commentId: comment.id,
                               body: editController.text.trim(),
                             );
-                            final page = await _market.getCommentsPage(
-                              entryId: widget.entryId,
-                              page: 1,
-                            );
+                            await _loadCommunity(refresh: true);
                             if (!mounted) return;
-                            setState(() => _comments = page.items);
                             if (dialogContext.mounted) {
                               Navigator.of(dialogContext).pop();
                             }
@@ -258,12 +279,7 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
   Future<void> _deleteComment(core_proxy.MarketComment comment) async {
     try {
       await _market.deleteEntryComment(commentId: comment.id);
-      final page = await _market.getCommentsPage(
-        entryId: widget.entryId,
-        page: 1,
-      );
-      if (!mounted) return;
-      setState(() => _comments = page.items);
+      await _loadCommunity(refresh: true);
     } catch (error, stackTrace) {
       debugPrint('Failed to delete market comment: $error\n$stackTrace');
       _showError(error);
@@ -389,7 +405,8 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           )
         else
           count,
-      if (!existing) core_proxy.MarketReactionCount(reaction: reaction, total: 1),
+      if (!existing)
+        core_proxy.MarketReactionCount(reaction: reaction, total: 1),
     ];
   }
 
@@ -410,9 +427,9 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
               entry.title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
             ),
       child: entry == null ? _buildPending(context) : _buildEntry(entry),
     );
@@ -610,7 +627,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
         tone: StoreNoticeTone.error,
         title: '评论加载失败',
         message: _communityError,
-        action: TextButton(onPressed: _loadCommunity, child: const Text('重试')),
+        action: TextButton(
+          onPressed: () => _loadCommunity(refresh: true),
+          child: const Text('重试'),
+        ),
       );
     } else if (_comments.isEmpty) {
       body = StoreGroupedList(
@@ -640,28 +660,22 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
     } else {
       body = StoreGroupedList(
         children: <Widget>[
-          for (final comment in _comments)
-            _canDeleteComment(entry, comment)
-                ? StoreInlineConfirm(
-                    message: '删除后这条评论会从公开列表移除。',
-                    confirmLabel: '删除评论',
-                    destructive: true,
-                    onConfirm: () => _deleteComment(comment),
-                    trigger: (context, requestConfirm) => StoreCommentTile(
-                      comment: comment,
-                      onEdit: _canEditComment(comment)
-                          ? () => _showEditCommentDialog(comment)
-                          : null,
-                      onDelete: requestConfirm,
-                    ),
-                  )
-                : StoreCommentTile(comment: comment),
+          for (final comment
+              in _comments
+                  .take(_commentsExpanded ? MarketCommentPager.pageSize : 3)
+                  .where(
+                    (comment) =>
+                        comment.id == _expandedCommentId ||
+                        !_expandedContextIds.contains(comment.id),
+                  ))
+            _buildComment(entry, comment),
         ],
       );
     }
     return StoreDetailSection(
+      key: _communityKey,
       title: '评论与反馈',
-      count: _communityLoading ? null : _comments.length,
+      count: _communityLoading ? null : _commentTotal,
       trailing: Wrap(
         spacing: 8,
         crossAxisAlignment: WrapCrossAlignment.center,
@@ -675,7 +689,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
           FilledButton.tonalIcon(
             onPressed: _composerOpen
                 ? null
-                : () => setState(() => _composerOpen = true),
+                : () => setState(() {
+                    _composerOpen = true;
+                    _replyTo = null;
+                  }),
             style: SettingsControlStyles.sectionFilledButton(),
             icon: const Icon(Icons.rate_review_outlined, size: 18),
             label: const Text('写评论'),
@@ -693,16 +710,166 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
               _CommentComposer(
                 controller: _commentController,
                 posting: _postingComment,
-                onCancel: () => setState(() => _composerOpen = false),
+                replyTo: _replyTo,
+                onCancelReply: () => setState(() => _replyTo = null),
+                onCancel: () => setState(() {
+                  _composerOpen = false;
+                  _replyTo = null;
+                }),
                 onPost: _postComment,
               ),
               const SizedBox(height: 10),
             ],
             body,
+            if (!_communityLoading &&
+                _communityError == null &&
+                _commentTotal > 3)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: _commentsExpanded
+                    ? Column(
+                        children: [
+                          if (_commentPageCount > 1)
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: _commentPage > 1
+                                      ? () =>
+                                            _changeCommentPage(_commentPage - 1)
+                                      : null,
+                                  icon: const Icon(
+                                    Icons.chevron_left_rounded,
+                                    size: 18,
+                                  ),
+                                  label: const Text('上一页'),
+                                ),
+                                Text(
+                                  '$_commentPage / $_commentPageCount',
+                                  style: theme.textTheme.labelLarge,
+                                ),
+                                TextButton(
+                                  onPressed: _commentPage < _commentPageCount
+                                      ? () =>
+                                            _changeCommentPage(_commentPage + 1)
+                                      : null,
+                                  child: const Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text('下一页'),
+                                      Icon(
+                                        Icons.chevron_right_rounded,
+                                        size: 18,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          TextButton.icon(
+                            onPressed: _collapseComments,
+                            icon: const Icon(
+                              Icons.keyboard_arrow_up_rounded,
+                              size: 18,
+                            ),
+                            label: const Text('收起评论'),
+                          ),
+                        ],
+                      )
+                    : TextButton.icon(
+                        onPressed: () =>
+                            setState(() => _commentsExpanded = true),
+                        icon: const Icon(Icons.unfold_more_rounded, size: 18),
+                        label: Text('查看全部 $_commentTotal 条评论'),
+                      ),
+              ),
           ],
         ),
       ),
     );
+  }
+
+  Widget _buildComment(
+    core_proxy.MarketEntrySummary entry,
+    core_proxy.MarketComment comment,
+  ) {
+    Widget tile({VoidCallback? onDelete}) => StoreCommentTile(
+      key: ValueKey(comment.id),
+      comment: comment,
+      parentComment: _commentPager.cachedComment(comment.parentId),
+      loadConversation: () => _commentPager.conversation(comment),
+      conversationActive: _expandedCommentId == comment.id,
+      onConversationChanged: (comments) => setState(() {
+        if (comments == null) {
+          if (_expandedCommentId != comment.id) return;
+          _expandedCommentId = null;
+          _expandedContextIds = {};
+        } else {
+          _expandedCommentId = comment.id;
+          _expandedContextIds = comments.map((item) => item.id).toSet();
+        }
+      }),
+      onReplyTo: _postingComment ? null : _beginReply,
+      onReply: _postingComment ? null : () => _beginReply(comment),
+      onEdit: _canEditComment(comment)
+          ? () => _showEditCommentDialog(comment)
+          : null,
+      onDelete: onDelete,
+    );
+    if (!_canDeleteComment(entry, comment)) return tile();
+    return StoreInlineConfirm(
+      key: ValueKey(comment.id),
+      message: '删除后这条评论会从公开列表移除。',
+      confirmLabel: '删除评论',
+      destructive: true,
+      onConfirm: () => _deleteComment(comment),
+      trigger: (context, requestConfirm) => tile(onDelete: requestConfirm),
+    );
+  }
+
+  void _beginReply(core_proxy.MarketComment comment) {
+    setState(() {
+      _replyTo = comment;
+      _composerOpen = true;
+    });
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _scrollToCommunity();
+    });
+  }
+
+  void _scrollToCommunity() {
+    final target = _communityKey.currentContext;
+    if (target != null) {
+      Scrollable.ensureVisible(
+        target,
+        duration: ExtensionMotion.of(context).standard,
+      );
+    }
+  }
+
+  Future<void> _changeCommentPage(int page) async {
+    _scrollToCommunity();
+    await _loadCommunity(page: page);
+    if (mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollToCommunity();
+      });
+    }
+  }
+
+  Future<void> _collapseComments() async {
+    _scrollToCommunity();
+    setState(() {
+      _commentsExpanded = false;
+      _expandedCommentId = null;
+      _expandedContextIds = {};
+    });
+    if (_commentPage != 1) await _loadCommunity(page: 1);
+    if (mounted) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _scrollToCommunity();
+      });
+    }
   }
 
   bool _canEditComment(core_proxy.MarketComment comment) {
@@ -763,8 +930,12 @@ class _CommentComposer extends StatelessWidget {
     required this.posting,
     required this.onCancel,
     required this.onPost,
+    this.replyTo,
+    required this.onCancelReply,
   });
 
+  final core_proxy.MarketComment? replyTo;
+  final VoidCallback onCancelReply;
   final TextEditingController controller;
   final bool posting;
   final VoidCallback onCancel;
@@ -779,13 +950,41 @@ class _CommentComposer extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
+              if (replyTo != null) ...[
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        '回复 @${replyTo!.author.login}',
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          color: Theme.of(context).colorScheme.primary,
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: '取消回复',
+                      onPressed: posting ? null : onCancelReply,
+                      icon: const Icon(Icons.close_rounded, size: 18),
+                    ),
+                  ],
+                ),
+                Text(
+                  replyTo!.body,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+                const SizedBox(height: 8),
+              ],
               TextField(
                 controller: controller,
                 enabled: !posting,
                 minLines: 3,
                 maxLines: 8,
                 autofocus: true,
-                decoration: const InputDecoration(hintText: '分享你的使用体验'),
+                decoration: InputDecoration(
+                  hintText: replyTo == null ? '分享你的使用体验' : '写下你的回复',
+                ),
               ),
               const SizedBox(height: 8),
               ValueListenableBuilder<TextEditingValue>(

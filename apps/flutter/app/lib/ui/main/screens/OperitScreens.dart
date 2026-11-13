@@ -165,7 +165,7 @@ class MarketBrowseScreenRoute extends OperitScreen {
     this.type,
     this.categoryId,
     this.sort = MarketSortOption.updated,
-  }) : super(routeTypeName: 'MarketBrowse', title: '市场');
+  }) : super(routeTypeName: 'MarketBrowse', title: '市场', keepAlive: true);
 
   final String heading;
   final String? type;

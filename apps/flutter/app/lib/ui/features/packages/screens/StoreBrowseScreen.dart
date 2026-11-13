@@ -156,6 +156,7 @@ class StoreMarketListing extends StatefulWidget {
 }
 
 class _StoreMarketListingState extends State<StoreMarketListing> {
+  final ScrollController _scrollController = ScrollController();
   late final MarketInstallStateStore _installState;
   List<core_proxy.MarketEntrySummary> _items =
       <core_proxy.MarketEntrySummary>[];
@@ -191,6 +192,7 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
 
   @override
   void dispose() {
+    _scrollController.dispose();
     _installState.removeListener(_onInstallStateChanged);
     super.dispose();
   }
@@ -228,7 +230,10 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
 
   Future<void> _reload() async {
     final generation = ++_generation;
+    if (_scrollController.hasClients) _scrollController.jumpTo(0);
     setState(() {
+      _loadingMore = false;
+      _revealed.clear();
       _loading = true;
       _error = null;
     });
@@ -265,12 +270,12 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
       });
     } catch (error, stackTrace) {
       debugPrint('Failed to load more market entries: $error\n$stackTrace');
-      if (!mounted) return;
+      if (!mounted || generation != _generation) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$error'), behavior: SnackBarBehavior.floating),
       );
     } finally {
-      if (mounted) {
+      if (mounted && generation == _generation) {
         setState(() => _loadingMore = false);
       }
     }
@@ -345,6 +350,7 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
             bottom: 40,
           );
           return CustomScrollView(
+            controller: _scrollController,
             slivers: <Widget>[
               if (_loading)
                 SliverPadding(

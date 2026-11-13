@@ -50,9 +50,8 @@ impl Node {
     fn deliver(&self, to: &Node, op: &SyncOperation) {
         if let Some(reference) = RuntimeFileSyncStore::requiredBlob(op).unwrap() {
             let source = RuntimeFileSyncStore::new(self.host.clone(), SYNC);
-            let path = source.blobStoragePath(&reference).unwrap();
             RuntimeFileSyncStore::new(to.host.clone(), SYNC)
-                .writeBlob(&reference, &self.host.readBytes(&path).unwrap())
+                .writeBlob(&reference, &source.readBlob(&reference).unwrap())
                 .unwrap();
         }
         if WorkspaceFileSyncStore::owns(op) {
