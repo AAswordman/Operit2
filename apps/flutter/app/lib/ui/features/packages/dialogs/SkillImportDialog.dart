@@ -297,12 +297,14 @@ class _SkillImportDialogState extends State<SkillImportDialog> {
       };
       final after = await repository.getAvailableSkillPackages();
       final added = after.keys.toSet().difference(before.keys.toSet());
-      if (added.length != 1) throw StateError('导入未产生唯一技能：$result');
-      await widget.clients.application.setExtensionScope(
-        kind: 'skill',
-        id: added.single,
-        scope: scope,
-      );
+      if (added.isEmpty) throw StateError('未导入新技能：$result');
+      for (final skillId in added) {
+        await widget.clients.application.setExtensionScope(
+          kind: 'skill',
+          id: skillId,
+          scope: scope,
+        );
+      }
       if (!mounted) {
         return;
       }

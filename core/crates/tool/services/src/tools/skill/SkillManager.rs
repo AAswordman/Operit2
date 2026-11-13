@@ -554,7 +554,7 @@ impl SkillManager {
             .is_ok()
     }
 
-    /// Imports a skill from archive bytes supplied by a host-backed transport.
+    /// Imports all skill packages from archive bytes supplied by a host-backed transport.
     #[allow(non_snake_case)]
     pub fn importSkillArchiveBytes(
         &self,
@@ -623,10 +623,7 @@ impl SkillManager {
             tmpDir.to_path_buf()
         };
 
-        let skillMdCandidates = match directSkillFile(self.filesystem.as_ref(), &searchRoot) {
-            Some(skillFile) => vec![skillFile],
-            None => findSkillFiles(self.filesystem.as_ref(), &searchRoot, 10),
-        };
+        let skillMdCandidates = findSkillFiles(self.filesystem.as_ref(), &searchRoot);
         if skillMdCandidates.is_empty() {
             return if normalizedSubDir.is_some() {
                 "No SKILL.md found in the selected import path".to_string()
@@ -635,16 +632,53 @@ impl SkillManager {
             };
         }
 
-        let selectedSkillFile = skillMdCandidates[0].clone();
-        let Some(selectedSkillDir) = selectedSkillFile.parent() else {
-            return "Invalid SKILL.md path".to_string();
-        };
+        let installedNames = self.getAvailableSkills().into_keys().collect::<BTreeSet<_>>();
+        let mut imported = Vec::new();
+        let mut failed = Vec::new();
+        let singleSkill = skillMdCandidates.len() == 1;
+        for skillFile in skillMdCandidates {
+            match self.importSkillDirectory(
+                &skillFile,
+                archiveLabel,
+                skillsRoot,
+                tmpDir,
+                &installedNames,
+            ) {
+                Ok(message) => imported.push(message),
+                Err(error) if singleSkill => return error,
+                Err(error) => {
+                    let relativePath = skillFile.strip_prefix(tmpDir).unwrap_or(&skillFile);
+                    failed.push(format!("{}: {}", relativePath.display(), error));
+                }
+            }
+        }
+        if singleSkill {
+            return imported.remove(0);
+        }
+        let mut messages = vec![format!(
+            "Imported {} skills; failed: {}",
+            imported.len(),
+            failed.len()
+        )];
+        messages.extend(imported);
+        messages.extend(failed);
+        messages.join("\n")
+    }
 
-        let (metaName, metaDesc) =
-            match parseSkillMetadata(self.filesystem.as_ref(), &selectedSkillFile) {
-                Ok(value) => value,
-                Err(error) => return format!("Failed to import skill: {}", error),
-            };
+    /// Installs one discovered package without preventing other packages from importing.
+    #[allow(non_snake_case)]
+    fn importSkillDirectory(
+        &self,
+        selectedSkillFile: &Path,
+        archiveLabel: &Path,
+        skillsRoot: &Path,
+        tmpDir: &Path,
+        installedNames: &BTreeSet<String>,
+    ) -> Result<String, String> {
+        let selectedSkillDir = selectedSkillFile.parent().ok_or("Invalid SKILL.md path")?;
+
+        let (metaName, metaDesc) = parseSkillMetadata(self.filesystem.as_ref(), selectedSkillFile)
+            .map_err(|error| format!("Failed to import skill: {}", error))?;
 
         let baseName = if !metaName.trim().is_empty() {
             metaName.trim().to_string()
@@ -670,30 +704,35 @@ impl SkillManager {
         } else {
             baseName.trim().to_string()
         };
-        if self.getAvailableSkills().contains_key(&finalDirName) {
-            return format!("Skill already exists in an installation location: {finalDirName}");
+        if installedNames.contains(&finalDirName) {
+            return Err(format!(
+                "Skill already exists in an installation location: {finalDirName}"
+            ));
         }
-        let finalDir = skillsRoot.join(&finalDirName);
+        if finalDirName.contains(['/', '\\']) || Path::new(&finalDirName).components().count() != 1 {
+            return Err(format!("Invalid skill name: {finalDirName}"));
+        }
+        let finalDir = safeChildPath(skillsRoot, &finalDirName)?;
         let finalDirPath = hostPath(&finalDir);
         let finalDirInfo = match self.filesystem.fileExists(&finalDirPath) {
             Ok(info) => info,
-            Err(error) => return format!("Failed to import skill: {}", error),
+            Err(error) => return Err(format!("Failed to import skill: {}", error)),
         };
         if finalDirInfo.exists {
-            return format!("Skill '{}' already exists", finalDirName);
+            return Err(format!("Skill '{}' already exists", finalDirName));
         }
         if let Err(error) =
             self.filesystem
                 .copyFile(&hostPath(selectedSkillDir), &finalDirPath, true)
         {
-            return format!("Failed to import skill: {}", error);
+            return Err(format!("Failed to import skill: {}", error));
         }
 
-        if metaDesc.trim().is_empty() {
+        Ok(if metaDesc.trim().is_empty() {
             format!("Imported skill: {}", finalDirName)
         } else {
             format!("Imported skill: {} - {}", finalDirName, metaDesc)
-        }
+        })
     }
 
     #[allow(non_snake_case)]
@@ -897,38 +936,26 @@ fn directSkillFile(filesystem: &VisualFileSystem, root: &Path) -> Option<PathBuf
 }
 
 #[allow(non_snake_case)]
-fn findSkillFiles(filesystem: &VisualFileSystem, root: &Path, limit: usize) -> Vec<PathBuf> {
+fn findSkillFiles(filesystem: &VisualFileSystem, root: &Path) -> Vec<PathBuf> {
     let mut result = Vec::new();
-    findSkillFilesInner(filesystem, root, limit, &mut result);
+    findSkillFilesInner(filesystem, root, &mut result);
+    result.sort();
     result
 }
 
 #[allow(non_snake_case)]
-fn findSkillFilesInner(
-    filesystem: &VisualFileSystem,
-    root: &Path,
-    limit: usize,
-    result: &mut Vec<PathBuf>,
-) {
-    if result.len() >= limit {
+fn findSkillFilesInner(filesystem: &VisualFileSystem, root: &Path, result: &mut Vec<PathBuf>) {
+    // A package owns its entire subtree, including any example SKILL.md files.
+    if let Some(skillFile) = directSkillFile(filesystem, root) {
+        result.push(skillFile);
         return;
     }
     let Ok(children) = filesystem.listFiles(&hostPath(root)) else {
         return;
     };
     for child in children {
-        if result.len() >= limit {
-            return;
-        }
-        let path = root.join(&child.name);
-        if !child.isDirectory {
-            if child.name.eq_ignore_ascii_case("SKILL.md")
-                || child.name.eq_ignore_ascii_case("skill.md")
-            {
-                result.push(path);
-            }
-        } else {
-            findSkillFilesInner(filesystem, &path, limit, result);
+        if child.isDirectory && child.name != "__MACOSX" {
+            findSkillFilesInner(filesystem, &root.join(&child.name), result);
         }
     }
 }

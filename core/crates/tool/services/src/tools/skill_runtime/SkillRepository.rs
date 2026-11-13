@@ -140,13 +140,13 @@ impl SkillRepository {
         Ok(skill)
     }
 
-    /// Imports a skill from a zip archive by searching for SKILL.md.
+    /// Imports all skill packages from a zip archive by searching for SKILL.md.
     #[allow(non_snake_case)]
     pub fn importSkillFromZip(&self, zipFile: &Path) -> String {
         self.importSkillFromZipWithSubDir(zipFile, None)
     }
 
-    /// Imports a skill from a zip archive using an optional subdirectory inside the zip.
+    /// Imports all skill packages under an optional subdirectory inside a zip archive.
     #[allow(non_snake_case)]
     pub fn importSkillFromZipWithSubDir(
         &self,
