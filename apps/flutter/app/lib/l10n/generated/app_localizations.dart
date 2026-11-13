@@ -7464,6 +7464,54 @@ abstract class AppLocalizations {
   /// **'Automatic port'**
   String get settingsPeerPortModeAutomatic;
 
+  /// No description provided for @settingsPeerNetworkDiscoveryHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'For discovery across routed networks, configure a shared directory and group key. To host the directory, leave the address empty and set a group key.'**
+  String get settingsPeerNetworkDiscoveryHelp;
+
+  /// No description provided for @settingsPeerDiscoveryDirectory.
+  ///
+  /// In en, this message translates to:
+  /// **'Discovery directory (optional)'**
+  String get settingsPeerDiscoveryDirectory;
+
+  /// No description provided for @settingsPeerDiscoveryGroup.
+  ///
+  /// In en, this message translates to:
+  /// **'Discovery group key'**
+  String get settingsPeerDiscoveryGroup;
+
+  /// No description provided for @settingsPeerDiscoveryGenerateKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate new group key'**
+  String get settingsPeerDiscoveryGenerateKey;
+
+  /// No description provided for @settingsPeerDiscoveryCopyKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy group key'**
+  String get settingsPeerDiscoveryCopyKey;
+
+  /// No description provided for @settingsPeerDiscoveryPort.
+  ///
+  /// In en, this message translates to:
+  /// **'Directory listener port'**
+  String get settingsPeerDiscoveryPort;
+
+  /// No description provided for @settingsPeerDiscoveryPortHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Only used on the directory host. Other devices use the port in the directory URL.'**
+  String get settingsPeerDiscoveryPortHelp;
+
+  /// No description provided for @settingsPeerNetworkDiscoveryInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'Check the discovery settings: use an HTTP(S) origin without a path, a shared key of 16–128 bytes, and a nonzero port when hosting the directory.'**
+  String get settingsPeerNetworkDiscoveryInvalid;
+
   /// No description provided for @settingsPeerAdvanced.
   ///
   /// In en, this message translates to:

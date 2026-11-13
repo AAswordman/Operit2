@@ -182,6 +182,15 @@ fn discovery_advertisement_capability_is_independent() {
     }
 }
 
+/// Directory publication uses HTTP plus Host address enumeration, even without multicast advertisement.
+#[test]
+fn directory_advertisement_does_not_require_multicast() {
+    let host = HostManager::new()
+        .withServiceDiscoveryHost(Arc::new(DiscoveryFixture(false)))
+        .withHttpServerHost(Arc::new(HttpFixture { upgrades: false, binds: AtomicUsize::new(0) }));
+    assert!(HostPeerLink::listenerCapabilities(&host).discoveryAdvertisement);
+}
+
 /// Rejects unsupported WS before even binding an otherwise usable HTTP server.
 #[tokio::test]
 async fn unsupported_websocket_does_not_acquire_http_resources() {

@@ -213,6 +213,7 @@ fn initialize(
             PeerHostPortMode::Fixed
         };
         PeerStateStore::new(storage.clone()).saveHostConfig(&PeerHostConfig {
+            discovery: None,
             bindAddress: configuredAddress.clone(),
             transports: vec![PeerTransport::Tcp],
             discoveryEnabled,

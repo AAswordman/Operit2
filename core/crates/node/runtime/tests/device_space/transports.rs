@@ -87,6 +87,7 @@ async fn tcpAdmissionSingleChannel(macBind: &str, mixed: bool) {
         drop(reservation);
         PeerStateStore::new(router.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
+                discovery: None,
                 bindAddress: bind.into(),
 
                 transports: if mixed { vec![PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Tcp] } else { vec![PeerTransport::Tcp] },
@@ -418,6 +419,7 @@ async fn real_tcp_space_remove_deletes_pairing_and_allows_repairing() {
     for router in [&macRouter, &iosRouter] {
         PeerStateStore::new(router.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
+                discovery: None,
                 bindAddress: "127.0.0.1:0".into(),
 
                 transports: vec![PeerTransport::Tcp],
@@ -584,6 +586,7 @@ async fn real_tcp_listener_gate_reports_revocation_to_dialer() {
     for router in [&macRouter, &iosRouter] {
         PeerStateStore::new(router.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
+                discovery: None,
                 bindAddress: "127.0.0.1:0".into(),
 
                 transports: vec![PeerTransport::Tcp],
@@ -729,6 +732,7 @@ async fn outboundOnlyPairing(mixed: bool) {
         );
         PeerStateStore::new(serverRouter.localCore.runtimeStorageHost())
             .saveHostConfig(&PeerHostConfig {
+                discovery: None,
                 bindAddress: "127.0.0.1:0".into(),
 
                 transports: vec![transport],
@@ -879,6 +883,7 @@ async fn listener_capabilities_validate_all_transports_before_binding() {
     let store = PeerStateStore::new(router.localCore.runtimeStorageHost());
     store
         .saveHostConfig(&PeerHostConfig {
+            discovery: None,
             bindAddress: "127.0.0.1:0".into(),
 
             transports: vec![PeerTransport::Tcp, PeerTransport::Http],
@@ -1282,6 +1287,7 @@ async fn qr_pairing_authenticates_invitation_and_auto_approves_on_admin() {
     let serverPeer = HostRuntimePeerService::new(serverHost, &serverOwner, info.clone()).unwrap();
     serverRouter.installNodeServices(NodeServices::new(serverPeer.clone())).unwrap();
     PeerStateStore::new(serverRouter.localCore.runtimeStorageHost()).saveHostConfig(&PeerHostConfig {
+        discovery: None,
         bindAddress: "127.0.0.1:0".into(), transports: vec![PeerTransport::Tcp],
         discoveryEnabled: false, portMode: PeerHostPortMode::Automatic, updatedAt: 1,
     }).unwrap();

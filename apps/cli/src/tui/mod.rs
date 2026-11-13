@@ -333,7 +333,7 @@ async fn start_tui_listeners(
         let capabilities = services.listenerCapabilities()?;
         saved_listener_transports(&config.transports, &capabilities.transports)
     };
-    if transports.is_empty() {
+    if transports.is_empty() && services.localHostConfig()?.is_none_or(|config| config.discovery.is_none()) {
         return Ok(());
     }
     match services.startListening(transports).await {

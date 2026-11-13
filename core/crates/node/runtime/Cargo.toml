@@ -11,12 +11,15 @@ default = ["full"]
 route-catalog = []
 # Shared pairing/session engine; no ChatServiceCore, Provider or ToolPkg.
 # Networking/execution belongs to Host providers; do not enable native Tokio I/O here.
-peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:url", "dep:rand_core", "tokio/time"]
-peer-state = ["dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
+peer-runtime = ["route-catalog", "peer-state", "dep:ring", "dep:uuid", "dep:futures-util", "dep:base64", "dep:serde_json", "dep:spake2", "dep:url", "dep:rand_core", "tokio/time", "dep:bytes", "dep:http", "dep:http-body-util"]
+peer-state = ["dep:url", "dep:ring", "dep:operit-store", "dep:operit-util", "dep:serde_json", "dep:base64"]
 full = ["operit-util/full", "route-catalog", "peer-runtime", "dep:operit-runtime", "dep:operit-store", "operit-store/full", "dep:operit-tools", "dep:operit-util", "dep:operit-rslink-runtime", "tokio/time"]
 test-support = []
 
 [dependencies]
+bytes = { version = "1", optional = true }
+http = { version = "1", optional = true }
+http-body-util = { version = "0.1", optional = true }
 ring = { version = "0.17", features = ["wasm32_unknown_unknown_js", "less-safe-getrandom-espidf"], optional = true }
 # SPAKE2 turns the six-digit pairing code into a password-authenticated
 # exchange: an active man in the middle can no longer verify a guessed code

@@ -1,5 +1,8 @@
 // ignore_for_file: file_names
 
+import 'dart:convert';
+import 'dart:math';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -92,6 +95,9 @@ class PeerListenerSettings extends StatefulWidget {
 class _PeerListenerSettingsState extends State<PeerListenerSettings> {
   final _bindHost = TextEditingController();
   final _bindPort = TextEditingController();
+  final _directoryUrl = TextEditingController();
+  final _groupKey = TextEditingController();
+  final _discoveryPort = TextEditingController();
   Set<PeerTransport> _transports = {};
   PeerListenerCapabilities? _capabilities;
   PeerHostPortMode? _portMode;
@@ -114,6 +120,9 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
   void dispose() {
     _bindHost.dispose();
     _bindPort.dispose();
+    _directoryUrl.dispose();
+    _groupKey.dispose();
+    _discoveryPort.dispose();
     super.dispose();
   }
 
@@ -132,8 +141,12 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       }
       final capabilities = await widget.clients.server.runtimeRemoteLinkService
           .listenerCapabilities();
+      final discovery = config.discovery;
       if (!mounted) return;
       setState(() {
+        _directoryUrl.text = discovery?.directoryUrl ?? '';
+        _groupKey.text = discovery?.groupKey ?? '';
+        _discoveryPort.text = (discovery?.listenPort ?? 37196).toString();
         _capabilities = capabilities;
         _updateFields(config);
         _loaded = true;
@@ -172,6 +185,36 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
       setState(() => _error = l10n.settingsPeerPortRequired);
       return false;
     }
+    final directory = _directoryUrl.text.trim();
+    final group = _groupKey.text.trim();
+    final discoveryPort = int.tryParse(_discoveryPort.text.trim());
+    final uri = Uri.tryParse(directory);
+    if (discoveryPort == null ||
+        discoveryPort < (directory.isEmpty && group.isNotEmpty ? 1 : 0) ||
+        discoveryPort > 65535 ||
+        (group.isNotEmpty &&
+            (utf8.encode(group).length < 16 ||
+                utf8.encode(group).length > 128)) ||
+        (directory.isNotEmpty &&
+            (group.isEmpty ||
+                uri == null ||
+                !['http', 'https'].contains(uri.scheme) ||
+                uri.host.isEmpty ||
+                uri.userInfo.isNotEmpty ||
+                uri.hasQuery ||
+                uri.hasFragment ||
+                !['', '/'].contains(uri.path) ||
+                utf8.encode(directory).length > 2048))) {
+      setState(() => _error = l10n.settingsPeerNetworkDiscoveryInvalid);
+      return false;
+    }
+    final discovery = directory.isEmpty && group.isEmpty
+        ? null
+        : PeerDiscoveryConfig(
+            directoryUrl: directory,
+            groupKey: group,
+            listenPort: discoveryPort,
+          );
     setState(() {
       _busy = true;
       _error = null;
@@ -183,13 +226,14 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
         bindAddress: _composeBindAddress(host, portText),
         transports: _transports.toList(),
         discoveryEnabled: discoverable,
+        discovery: discovery,
         portMode: _portMode!,
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       );
       await service.stopListening();
       await service.saveLocalHostConfig(config: config);
       if (mounted) setState(() => _updateFields(config));
-      if (activeTransports.isNotEmpty) {
+      if (activeTransports.isNotEmpty || discovery != null) {
         await service.startListening(transports: activeTransports);
       }
       final applied = await service.localHostConfig();
@@ -292,6 +336,82 @@ class _PeerListenerSettingsState extends State<PeerListenerSettings> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  Text(
+                    l10n.settingsPeerNetworkDiscoveryHelp,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('peer-discovery-directory'),
+                    controller: _directoryUrl,
+                    enabled: enabled,
+                    keyboardType: TextInputType.url,
+                    decoration: InputDecoration(
+                      labelText: l10n.settingsPeerDiscoveryDirectory,
+                      hintText: 'http://192.168.1.2:37196',
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    key: const ValueKey('peer-discovery-group'),
+                    controller: _groupKey,
+                    enabled: enabled,
+                    obscureText: true,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    decoration: InputDecoration(
+                      labelText: l10n.settingsPeerDiscoveryGroup,
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        tooltip: l10n.settingsPeerDiscoveryGenerateKey,
+                        onPressed: enabled
+                            ? () {
+                                final random = Random.secure();
+                                _groupKey.text = base64UrlEncode(
+                                  List<int>.generate(
+                                    24,
+                                    (_) => random.nextInt(256),
+                                  ),
+                                );
+                              }
+                            : null,
+                        icon: const Icon(Icons.refresh),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: TextButton.icon(
+                      onPressed: enabled
+                          ? () async {
+                              await Clipboard.setData(
+                                ClipboardData(text: _groupKey.text),
+                              );
+                            }
+                          : null,
+                      icon: const Icon(Icons.copy, size: 16),
+                      label: Text(l10n.settingsPeerDiscoveryCopyKey),
+                    ),
+                  ),
+                  TextField(
+                    key: const ValueKey('peer-discovery-port'),
+                    controller: _discoveryPort,
+                    enabled: enabled,
+                    keyboardType: TextInputType.number,
+                    inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                    decoration: InputDecoration(
+                      labelText: l10n.settingsPeerDiscoveryPort,
+                      helperText: l10n.settingsPeerDiscoveryPortHelp,
+                      helperMaxLines: 3,
+                      isDense: true,
+                      border: const OutlineInputBorder(),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
                   Text(
                     l10n.settingsPeerTransportHelp,
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(

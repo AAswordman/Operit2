@@ -122,3 +122,97 @@ cargo test --locked -p operit-node-runtime --no-default-features --features peer
 
 这些测试验证本地实现的既有行为；未运行 Tailscale 官方 Go 测试，未完成真实 tailnet 双机验证。
 要最终归因到用户这一次故障，还需要其平台、是否扫描为空、手动地址结果、目标监听地址/端口，以及 `ServiceDiscovery` / `RuntimePeerService` 相关日志。
+
+
+## 曾评估的专用方案（已撤下推荐，保留调查记录）
+
+2026-11-14 后续约束：不适配 Tailscale 或其他 VPN 的专用 API。
+下文保留为先前候选方案的调查记录，不作为实施方向。
+当前设计参见 [通用 IP 网络设备发现](device-space-network-discovery-design.md)：统一单播发现入口，通用候选地址来源，以及按需引入的授权发现目录。
+
+### 当时的候选：固定单播发现入口、候选设备目录、双向发现
+
+将“找到对端的地址”与“得到 Operit 实际监听端口”分成两个阶段解决。
+局域网继续使用已有 mDNS；VPN 路径通过相同的扫描界面汇总单播发现结果。
+第一阶段面向电脑与电脑、电脑与手机，不要求用户手输 IP，也不需要另部署一个服务器。
+这里的“无需服务器”仅适用于存在一个能读取 Tailscale 设备目录的 Operit 节点的情况。
+
+1. 接收端在一个约定 TCP 端口提供小型发现服务，业务 HTTP/WS/TCP 端口继续保持现有配置。
+   发现端口例如可评估 `37196`，这是待选择的产品协议常量，不是目前已有端口，也不是无冲突保证。
+   该服务只在用户开启接收与发现时运行。端口占用必须报告，不能静默改成随机端口。
+2. 桌面 Host 从可访问的 Tailscale 本地 API 获取可见 peer，或在已安装且可调用 CLI 的环境中使用 `tailscale status --json`。
+   只向这些候选设备发起有界的单播探测，不扫描整个 `100.64.0.0/10`。
+   不假设每台安装图形客户端的电脑都具有相同 IPC 路径、权限或可执行文件路径。
+3. 对候选地址固定发现端口发出 `POST /operit-discovery/v1/hello`，正文包含协议版本、请求随机数、本机 Operit nodeId、显示名、正在运行的业务端口和 transports。
+   对端回传同类信息，并回显请求随机数；不传配对密码或会话秘密。
+4. 收到探测的节点也将探测者登记为候选。该次候选的连接 IP 取自 Host 提供的真实 socket 来源地址，业务端口来自发现信息。
+   因此电脑探测手机时，手机也能发现电脑，不需要手机自行枚举所有 Tailscale peer。
+   探测请求只有在发起者也有可用接收监听时，才作为可连接设备反向登记。
+5. 将这些发现记录转成现有 `DiscoveredService`，复用 nodeId 去重、已配对设备过滤、配对确认与重连流程。
+   单播记录只提供连接线索，实际设备身份仍由现有配对握手确认。
+
+协议示意（设计草案）：
+
+```text
+电脑读取 Tailscale 设备目录
+  -> 向手机:固定发现端口发送自己的 nodeId / 业务端口
+  <- 手机回复自己的 nodeId / 业务端口
+
+电脑的发现列表出现手机
+手机的发现列表出现电脑
+
+选择设备 -> 连接回复中的业务端口 -> 现有配对确认
+```
+
+这解决了“知道 IP 却不知道随机业务端口”的问题：固定的是轻量发现入口，而非所有业务连接端口。
+也解决了“手机取不到设备目录”的常见电脑—手机场景：由能取目录的电脑发起双向握手。
+该发现端口与业务端口都必须被实际网络路径和访问策略允许；实现不能绕过这些限制。
+
+### 扫描时序与生命周期
+
+桌面节点需要在发现功能开启时执行限频后台探测，并在可见设备变化时触发刷新；不能只在电脑打开扫描对话框时探测。
+否则用户只在手机点击扫描，电脑可能完全不发起查询。
+
+单播发现缓存应持有来源与过期时间，订阅需要支持到期移除。当前 `DiscoveredService` 没有 TTL 字段，运行时 `discoveryRecords` 也会保留旧记录，落地时需要补齐这一契约。
+手机发现列表应能随订阅异步更新，不应将原有五秒 mDNS 快照结束视为所有 VPN 发现都结束。
+反向发现的首次出现速度受桌面后台探测周期影响；不能在没有额外触发通道时承诺手机点击后五秒内必然发现。
+
+每个 nodeId 应保留经过握手确认的多个候选地址，例如 LAN IPv4、Tailscale IPv4。
+以后已配对设备可直接查询已知地址的固定发现端口，得到最新业务端口，再通过已有会话身份认证。
+这可让已经建立联系的设备恢复连接，不必每次重新枚举 VPN 全部设备。
+不能将发现消息里声称的 nodeId 直接视为已认证身份。
+
+### 纯手机首次发现的边界
+
+如果双方都是手机、从未建立过联系、彼此没有候选地址，也没有可访问的目录或发现中介，固定单播端口本身不提供“往哪个 IP 发包”的答案。
+要保证该场景也能自动发现，需要新增至少一种共同可达的候选来源，例如经过授权的设备发现目录，或可供本应用使用的 Tailscale 集成。
+这里不假定产品已有账号体系，也不把公开 tailnet 名称当作授权凭据。
+一个已经被自动发现的桌面节点，也可以进一步充当已知候选的介绍节点；手机拿到线索后仍应直接探测目标并完成自身认证。
+
+核对到的 Android 官方客户端实现中，LocalAPI 通过 Go/Kotlin 应用内调用进入 `localAPIHandler.ServeHTTP()`，该实现不能证明第三方应用可像桌面一样读取它。
+Manifest 没有提供一个明确用于向普通第三方应用返回 peer 列表的接口。
+所以不能把“在 Android 调用桌面的 localapi socket”当作现成解决方案。
+iOS 第三方访问能力在本次调查中尚未核实。
+
+新增官方源码证据：
+
+- [Tailscale CLI status.go](https://github.com/tailscale/tailscale/blob/e0d532cca9beeb8ed235bf30b9198a7c0e0afa02/cmd/tailscale/cli/status.go#L49)：存在 `--json`；源码也警告 JSON 格式可能变化，实现只依赖所需字段。
+- [ipn/ipnstate/ipnstate.go](https://github.com/tailscale/tailscale/blob/e0d532cca9beeb8ed235bf30b9198a7c0e0afa02/ipn/ipnstate/ipnstate.go#L80)：状态有 peer 表，peer 包含 TailscaleIPs、DNSName 等信息；它是网络设备目录，不直接提供 Operit 的随机监听端口。
+- [Android libtailscale/localapi.go](https://github.com/tailscale/tailscale-android/blob/340e5567441f06d446cc3489deba780930c141ed/libtailscale/localapi.go#L132)：应用内部处理 LocalAPI 请求。
+- [AndroidManifest.xml](https://github.com/tailscale/tailscale-android/blob/340e5567441f06d446cc3489deba780930c141ed/android/src/main/AndroidManifest.xml)：检查其导出组件，未找到明确的第三方 peer 列表接口。Android 源码固定提交时间为 2026-11-13 18:00:32 UTC。
+
+### 与现有代码的接合点
+
+- `ServiceDiscoveryHost`：组合局域网与单播 provider，对 Core 保持统一的浏览、发布和订阅入口；平台专属设备目录读取由 Host 负责。
+- `ServiceAdvertisement`：使用当前运行时已提供的实际业务端口和 TXT 元数据，避免另存一份会过期的端口配置；绑定范围需与接收端设置保持一致。
+- `HttpServerHost`：现有契约提供 HTTP 监听与 `RemoteAddress`，可供轻量发现服务使用，不需要让 Core 自己创建原生 socket。
+- `HostRuntimePeerService`：复用现有候选过滤及认证；增加来源、过期处理和持久化多地址能力。
+- `DeviceSpaceDiscoveryPanel`：统一呈现 mDNS、VPN 单播及已知地址查询的结果，并支持异步到达。
+
+该专用候选方案已经撤下推荐，当前实施方向以通用 IP 网络设备发现设计为准。
+这部分是已核对代码接合点的设计方案，尚未实现或经过 tailnet 真机验证。
+
+
+## 实施状态
+
+后续已实现不依赖 VPN 品牌的通用目录发现逻辑，替换了早期实现中的已知地址固定端口探测和地址历史旁路，使用和限制见 [通用 IP 网络设备发现：实现与使用](device-space-network-discovery-design.md)。上文的专用 VPN 候选设计仍为撤回的研究方案，不代表当前实现。

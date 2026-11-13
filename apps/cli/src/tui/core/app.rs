@@ -3460,6 +3460,10 @@ impl OperitTui {
         let return_to_hub = modal.returnToHub;
         let transports = plan.transports.clone();
         let config = PeerHostConfig {
+            discovery: match self.networkControl.localHostConfig() {
+                Ok(config) => config.and_then(|config| config.discovery),
+                Err(error) => { self.set_listener_error(error); return; }
+            },
             bindAddress: plan.bindAddress.clone(),
             transports: transports.clone(),
             discoveryEnabled: plan.discoveryEnabled,
@@ -3474,7 +3478,7 @@ impl OperitTui {
             self.set_listener_error(error);
             return;
         }
-        if !transports.is_empty() {
+        if !transports.is_empty() || config.discovery.is_some() {
             if let Err(error) = self.networkControl.startListening(transports.clone()).await {
                 self.set_listener_error(error);
                 return;

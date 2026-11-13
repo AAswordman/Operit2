@@ -89,6 +89,7 @@ fn profile(nodeId: String) -> operit_store::CoreSpaceStore::CoreSpaceDeviceProfi
 fn listener(storage: Arc<dyn RuntimeStorageHost>) {
     PeerStateStore::new(storage)
         .saveHostConfig(&PeerHostConfig {
+            discovery: None,
             bindAddress: "127.0.0.1:0".into(),
             transports: vec![PeerTransport::Tcp],
             discoveryEnabled: false,

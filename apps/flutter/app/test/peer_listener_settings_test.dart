@@ -138,6 +138,52 @@ void main() {
     await tester.pumpAndSettle();
   }
 
+  testWidgets('client-only Host saves a shared discovery directory', (
+    tester,
+  ) async {
+    final bridge = TestBridge()
+      ..capabilities = {'transports': [], 'discoveryAdvertisement': false};
+    await mount(tester, bridge);
+    await tester.tap(find.text('Advanced options'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('peer-discovery-directory')),
+      'https://discovery.example',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('peer-discovery-group')),
+      'shared-discovery-key',
+    );
+    await save(tester);
+    expect(
+      (bridge.config!['discovery'] as Map)['directoryUrl'],
+      'https://discovery.example',
+    );
+    expect(
+      (bridge.config!['discovery'] as Map)['groupKey'],
+      'shared-discovery-key',
+    );
+    expect(bridge.startedTransports, [isEmpty]);
+  });
+
+  testWidgets('invalid directory never stops or saves listeners', (
+    tester,
+  ) async {
+    final bridge = TestBridge();
+    await mount(tester, bridge);
+    await tester.tap(find.text('Advanced options'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('peer-discovery-directory')),
+      'http://example.com/path',
+    );
+    await save(tester);
+    expect(find.textContaining('Check the discovery settings'), findsOneWidget);
+    expect(bridge.calls.contains('stopListening'), false);
+    expect(bridge.calls.contains('saveLocalHostConfig'), false);
+    expect(bridge.writes, isEmpty);
+  });
+
   testWidgets('defaults enable discovery with HTTP and WebSocket', (
     tester,
   ) async {
@@ -167,6 +213,7 @@ void main() {
           .selected,
       true,
     );
+    await tester.ensureVisible(find.text('Automatic port'));
     expect(find.text('Automatic port'), findsOneWidget);
     expect(find.text('Save'), findsOneWidget);
   });
@@ -282,6 +329,7 @@ void main() {
     await mount(tester, bridge);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.widgetWithText(FilterChip, 'TCP'));
     await tester.tap(find.widgetWithText(FilterChip, 'TCP'));
     await tester.pumpAndSettle();
     bridge.selectedAddress = '0.0.0.0:48123';
@@ -375,6 +423,7 @@ void main() {
     await mount(tester, bridge);
     await tester.tap(find.text('Advanced options'));
     await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('Fixed listen address and port'));
     await tester.tap(find.text('Fixed listen address and port'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('Automatic port').last);

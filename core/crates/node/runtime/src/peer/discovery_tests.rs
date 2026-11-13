@@ -82,6 +82,7 @@ fn inbound(server: &HostRuntimePeerService, client: &str, secret: u8) {
 }
 async fn listen(server: &HostRuntimePeerService) -> String {
     server.state.store.saveHostConfig(&PeerHostConfig {
+        discovery: None,
         bindAddress: "127.0.0.1:0".into(), transports: vec![PeerTransport::Tcp],
         discoveryEnabled: false, portMode: PeerHostPortMode::Automatic, updatedAt: 1,
     }).unwrap();

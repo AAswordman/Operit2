@@ -4045,6 +4045,32 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsPeerPortModeAutomatic => '自动分配端口';
 
   @override
+  String get settingsPeerNetworkDiscoveryHelp =>
+      '跨网络发现需要共同的目录地址和组密钥。要由本机提供目录，请留空目录地址并设置组密钥。';
+
+  @override
+  String get settingsPeerDiscoveryDirectory => '发现目录地址（可选）';
+
+  @override
+  String get settingsPeerDiscoveryGroup => '发现组密钥';
+
+  @override
+  String get settingsPeerDiscoveryGenerateKey => '生成新的发现组密钥';
+
+  @override
+  String get settingsPeerDiscoveryCopyKey => '复制发现组密钥';
+
+  @override
+  String get settingsPeerDiscoveryPort => '目录监听端口';
+
+  @override
+  String get settingsPeerDiscoveryPortHelp => '仅目录设备使用此端口；其他设备使用目录地址中的端口。';
+
+  @override
+  String get settingsPeerNetworkDiscoveryInvalid =>
+      '请检查发现设置：目录为不含路径的 HTTP(S) 地址，密钥为 16–128 字节；本机提供目录时，监听端口应为 1–65535。';
+
+  @override
   String get settingsPeerAdvanced => '高级选项';
 
   @override

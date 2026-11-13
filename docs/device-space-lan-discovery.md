@@ -19,7 +19,7 @@
   ranked discovered addresses, with its saved address as a fallback. Each
   alternative gets a bounded connection and authentication attempt. While an
   allowed outbound network peer is offline, the worker also actively refreshes
-  the shared browser at most once every 15 seconds, using a one-second scan for
+  the shared browser at most once every 15 seconds, using a three-second scan for
   all peers. This recovers a missed port-change announcement without opening the
   direct-link dialog. A failed initial subscription is retried during these
   refreshes. Blocking scans run on Host tasks and do not delay shutdown; healthy

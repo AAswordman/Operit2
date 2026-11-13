@@ -47,7 +47,7 @@ impl HostRuntimePeerService {
             // The subscription shares the Host browser with manual scans and lives only as long as this worker.
             let mut discovery = state.upgrade().and_then(|state| HostRuntimePeerService { state }.subscribeDiscovery());
             let mut pending = FuturesUnordered::<LocalBoxFuture<'static, (String, Result<(), CoreLinkError>)>>::new();
-            let mut discoveryRefresh = FuturesUnordered::<LocalBoxFuture<'static, Result<discovery::DiscoveryRefresh, CoreLinkError>>>::new();
+            let mut discoveryRefresh = FuturesUnordered::<LocalBoxFuture<'static, discovery::DiscoveryRefresh>>::new();
             let mut nextDiscoveryRefresh = 0;
             let mut connecting = BTreeSet::new();
             let mut policyRevokedUntil = BTreeMap::<String, u64>::new();
@@ -59,11 +59,10 @@ impl HostRuntimePeerService {
                     _ = &mut stopped => break,
                     result = discoveryRefresh.next(), if !discoveryRefresh.is_empty() => {
                         let failure = match result {
-                            Some(Ok(refresh)) => {
+                            Some(refresh) => {
                                 if let Some(subscription) = refresh.subscription { discovery = Some(subscription); }
                                 refresh.scan.err()
                             }
-                            Some(Err(failure)) => Some(failure),
                             None => None,
                         };
                         if let Some(failure) = failure {
@@ -103,7 +102,7 @@ impl HostRuntimePeerService {
                         peers.sort_by(|left, right| left.nodeId.cmp(&right.nodeId));
                         let split = peers.partition_point(|peer| lastPeer.as_ref().is_some_and(|last| &peer.nodeId <= last));
                         peers.rotate_left(split);
-                        let mut needsDiscovery = false;
+                        let mut needsDiscovery = service.needsDirectoryRefresh();
                         for peer in peers {
                             if policyRevokedUntil.contains_key(&peer.nodeId) { continue; }
                             if service.requirePeerConnectionAllowed(&peer.nodeId).is_err() {
@@ -129,12 +128,12 @@ impl HostRuntimePeerService {
                         }
                         // Manual direct-link scans already restart this same browser. Do that
                         // automatically for offline network pairings, with one bounded scan for all peers.
-                        if needsDiscovery && service.state.host.serviceDiscoveryHost.is_some()
+                        if needsDiscovery && (service.state.host.serviceDiscoveryHost.is_some() || service.needsDirectoryRefresh())
                             && discoveryRefresh.is_empty() && now >= nextDiscoveryRefresh {
                             nextDiscoveryRefresh = now.saturating_add(DISCOVERY_REFRESH_INTERVAL_MS);
                             let retrySubscription = discovery.is_none();
                             discoveryRefresh.push(Box::pin(async move {
-                                service.refreshReconnectionDiscovery(retrySubscription).await
+                                service.refreshDiscovery(3_000, retrySubscription).await
                             }));
                         }
                     }

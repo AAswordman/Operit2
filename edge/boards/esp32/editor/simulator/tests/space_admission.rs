@@ -252,6 +252,7 @@ fn node_from_storage(
     if configureListener {
         PeerStateStore::new(storage.clone())
             .saveHostConfig(&PeerHostConfig {
+                discovery: None,
                 bindAddress: "127.0.0.1:0".into(),
                 transports: vec![PeerTransport::Tcp],
                 discoveryEnabled: false,
@@ -993,6 +994,7 @@ mod core_edge {
         {
             PeerStateStore::new(storage.clone())
                 .saveHostConfig(&PeerHostConfig {
+                    discovery: None,
                     bindAddress: "127.0.0.1:0".into(),
 
                     transports: vec![PeerTransport::Tcp],

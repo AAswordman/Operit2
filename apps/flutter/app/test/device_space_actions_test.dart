@@ -196,6 +196,37 @@ void main() {
     expect(bridge.calls.where((c) => c == 'discoverPeers').length, 2);
     await dispose(tester, bridge);
   });
+  testWidgets('open discovery refreshes late records and stops after closing', (
+    tester,
+  ) async {
+    final bridge = DeviceBridge()..peers = [];
+    await mount(tester, bridge);
+    await tester.tap(find.text('添加设备'));
+    await tester.pumpAndSettle();
+    expect(bridge.calls.where((c) => c == 'discoverPeers').length, 1);
+    bridge.peers = [
+      {
+        'nodeId': 'late',
+        'displayName': '后来上线的设备',
+        'address': 'http://192.0.2.10:37195',
+      },
+    ];
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(find.text('后来上线的设备'), findsOneWidget);
+    expect(bridge.discoveryArgs, {'timeoutMs': 3000});
+    bridge.peers = [];
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(find.text('后来上线的设备'), findsNothing);
+    await tester.binding.handlePopRoute();
+    await tester.pumpAndSettle();
+    final scans = bridge.calls.where((c) => c == 'discoverPeers').length;
+    await tester.pump(const Duration(seconds: 10));
+    expect(bridge.calls.where((c) => c == 'discoverPeers').length, scans);
+    await dispose(tester, bridge);
+  });
+
   testWidgets('device discovery has no loading bar or secondary title', (
     tester,
   ) async {

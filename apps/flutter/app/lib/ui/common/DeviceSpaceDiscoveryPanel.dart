@@ -207,6 +207,7 @@ class _AddDeviceDialog extends StatefulWidget {
 }
 
 class _AddDeviceDialogState extends State<_AddDeviceDialog> {
+  Timer? _refresh;
   bool _busy = false;
   bool _scanning = false;
   String? _error;
@@ -224,6 +225,12 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
     }
   }
 
+  @override
+  void dispose() {
+    _refresh?.cancel();
+    super.dispose();
+  }
+
   /// Updates action availability and the explicit discovery status.
   void _setBusy(bool busy) {
     if (!mounted) return;
@@ -234,15 +241,18 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   }
 
   /// Refreshes nearby devices without displaying a progress bar.
-  Future<void> _scan() async {
+  Future<void> _scan({bool background = false}) async {
     if (_busy || _scanning) return;
+    _refresh ??= Timer.periodic(const Duration(seconds: 5), (_) {
+      if (mounted) unawaited(_scan(background: true));
+    });
     setState(() {
       _scanning = true;
-      _discoveryError = null;
+      if (!background) _discoveryError = null;
     });
     try {
       final peers = await widget.clients.server.runtimeRemoteLinkService
-          .discoverPeers(timeoutMs: 5000);
+          .discoverPeers(timeoutMs: background ? 3000 : 5000);
       final onlyNodeId = widget.onlyNodeId;
       if (mounted) {
         setState(() {
@@ -255,7 +265,12 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
         });
       }
     } catch (error) {
-      if (mounted) setState(() => _discoveryError = error.toString());
+      if (mounted) {
+        setState(() {
+          _peers = [];
+          _discoveryError = error.toString();
+        });
+      }
     } finally {
       if (mounted) setState(() => _scanning = false);
     }

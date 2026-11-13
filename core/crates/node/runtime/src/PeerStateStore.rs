@@ -29,6 +29,9 @@ pub struct PeerHostConfig {
     #[serde(default)]
     pub transports: Vec<operit_peer_link::PeerTransport>,
     pub discoveryEnabled: bool,
+    /// Optional generic directory; saved atomically with listener settings.
+    #[serde(default)]
+    pub discovery: Option<PeerDiscoveryConfig>,
     /// Automatic reuses an assigned port or requests a new one on collision.
     /// Fixed requires a nonzero port and never changes it after a bind failure.
     pub portMode: PeerHostPortMode,
@@ -40,6 +43,42 @@ pub enum PeerHostPortMode {
     Automatic,
     #[serde(rename = "fixed")]
     Fixed,
+}
+
+/// Optional directory shared by a discovery group; independent of any VPN.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerDiscoveryConfig {
+    pub directoryUrl: String,
+    /// Discovery-only credential, never a pairing or Space authorization secret.
+    pub groupKey: String,
+    /// Used only when this node hosts the directory (directoryUrl is empty).
+    pub listenPort: u16,
+}
+impl Default for PeerDiscoveryConfig {
+    fn default() -> Self {
+        Self { directoryUrl: String::new(), groupKey: String::new(), listenPort: 37196 }
+    }
+}
+impl PeerDiscoveryConfig {
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.groupKey.is_empty() && !(16..=128).contains(&self.groupKey.len()) {
+            return Err("Discovery group key must contain 16–128 bytes".into());
+        }
+        if !self.directoryUrl.is_empty() {
+            let url = url::Url::parse(&self.directoryUrl).map_err(|_| "Invalid discovery directory URL")?;
+            if !matches!(url.scheme(), "http" | "https") || url.host().is_none()
+                || !url.username().is_empty() || url.password().is_some()
+                || url.query().is_some() || url.fragment().is_some()
+                || !matches!(url.path(), "" | "/") || self.directoryUrl.len() > 2048 {
+                return Err("Discovery directory must be an HTTP(S) origin without credentials or a path".into());
+            }
+            if self.groupKey.is_empty() { return Err("Discovery directory requires a group key".into()); }
+        }
+        if self.directoryUrl.is_empty() && (self.groupKey.is_empty() || self.listenPort == 0) {
+            return Err("Hosting a discovery directory requires a group key and a nonzero port".into());
+        }
+        Ok(())
+    }
 }
 
 /// 配对服务沿用原版本及原入站/出站凭证，不按重构后的传输实现另分版本。
@@ -131,6 +170,7 @@ impl PeerStateStore {
             0 => {
                 if preferences.entries().is_empty() {
                     let initial = PeerHostConfig {
+                        discovery: None,
                         bindAddress: "0.0.0.0:0".into(),
                         transports: vec![PeerTransport::Http, PeerTransport::WebSocket],
                         discoveryEnabled: true,
@@ -624,6 +664,7 @@ impl PeerStateStore {
     }
     /// Saves explicit listener settings without removing unrelated preference keys.
     pub fn saveHostConfig(&self, config: &PeerHostConfig) -> Result<(), String> {
+        if let Some(discovery) = &config.discovery { discovery.validate()?; }
         self.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .try_edit_result(|preferences| writeHostConfigPreferences(preferences, config))
             .map_err(|error: PreferencesDataStoreError| error.to_string())
@@ -739,6 +780,7 @@ fn writeHostConfigPreferences(
     for (key, value) in [
         ("bindAddress", Value::String(config.bindAddress.clone())),
         ("discoveryEnabled", Value::Bool(config.discoveryEnabled)),
+        ("networkDiscovery", serde_json::to_value(&config.discovery)?),
         ("transports", serde_json::to_value(&config.transports)?),
         ("portMode", serde_json::to_value(config.portMode)?),
         ("updatedAt", Value::from(config.updatedAt)),
@@ -763,6 +805,7 @@ fn decodeHostConfig(preferences: &Preferences) -> Result<PeerHostConfig, String>
             .ok_or_else(|| format!("Peer host config is missing {key}"))?;
         fields.insert(key.to_owned(), value.clone());
     }
+    fields.insert("discovery".into(), preferences.get(&stringPreferencesKey("networkDiscovery")).cloned().unwrap_or(Value::Null));
     serde_json::from_value(Value::Object(fields)).map_err(|error| error.to_string())
 }
 
@@ -1551,6 +1594,7 @@ mod tests {
             writeHostConfigPreferences(
                 &mut preferences,
                 &PeerHostConfig {
+                    discovery: None,
                     bindAddress: address.into(),
                     transports: transports.clone(),
                     discoveryEnabled: discovery,

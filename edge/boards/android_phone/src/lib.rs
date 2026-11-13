@@ -100,6 +100,7 @@ impl PhoneNode {
         let mut config = match store.hostConfig()? {
             Some(config) => config,
             None => PeerHostConfig {
+                discovery: None,
                 bindAddress: bind.clone(),
                 transports: vec![PeerTransport::Tcp],
                 discoveryEnabled: false,

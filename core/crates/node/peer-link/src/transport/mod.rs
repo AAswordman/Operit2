@@ -64,7 +64,7 @@ impl HostPeerLink {
             discoveryAdvertisement: host
                 .serviceDiscoveryHost
                 .as_ref()
-                .is_some_and(|host| host.supportsAdvertisement()),
+                .is_some_and(|discovery| discovery.supportsAdvertisement() || host.httpHost.is_some() || host.httpServerHost.is_some()),
         }
     }
 }

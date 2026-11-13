@@ -4210,6 +4210,33 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsPeerPortModeAutomatic => 'Automatic port';
 
   @override
+  String get settingsPeerNetworkDiscoveryHelp =>
+      'For discovery across routed networks, configure a shared directory and group key. To host the directory, leave the address empty and set a group key.';
+
+  @override
+  String get settingsPeerDiscoveryDirectory => 'Discovery directory (optional)';
+
+  @override
+  String get settingsPeerDiscoveryGroup => 'Discovery group key';
+
+  @override
+  String get settingsPeerDiscoveryGenerateKey => 'Generate new group key';
+
+  @override
+  String get settingsPeerDiscoveryCopyKey => 'Copy group key';
+
+  @override
+  String get settingsPeerDiscoveryPort => 'Directory listener port';
+
+  @override
+  String get settingsPeerDiscoveryPortHelp =>
+      'Only used on the directory host. Other devices use the port in the directory URL.';
+
+  @override
+  String get settingsPeerNetworkDiscoveryInvalid =>
+      'Check the discovery settings: use an HTTP(S) origin without a path, a shared key of 16–128 bytes, and a nonzero port when hosting the directory.';
+
+  @override
   String get settingsPeerAdvanced => 'Advanced options';
 
   @override

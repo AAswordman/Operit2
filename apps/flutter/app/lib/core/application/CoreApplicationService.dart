@@ -252,7 +252,7 @@ class CoreApplicationService with WidgetsBindingObserver {
       final transports = config.transports
           .where(capabilities.transports.contains)
           .toList();
-      if (transports.isNotEmpty) {
+      if (transports.isNotEmpty || config.discovery != null) {
         await peerService.startListening(transports: transports);
       }
       await spaceStep('Start Space synchronization', () async {

@@ -219,6 +219,7 @@ void main() {
         await service.renameDeviceSpace(spaceName: '多端同步验证');
         await service.saveLocalHostConfig(
           config: model.PeerHostConfig(
+            discovery: null,
             bindAddress: '127.0.0.1:39181',
             transports: [model.PeerTransport.http],
             discoveryEnabled: false,

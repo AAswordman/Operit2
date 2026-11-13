@@ -903,7 +903,7 @@ async fn start_listeners(
         }
         transports
     };
-    if transports.is_empty() {
+    if transports.is_empty() && services.localHostConfig()?.is_none_or(|config| config.discovery.is_none()) {
         return Ok(());
     }
     match services.startListening(transports).await {
