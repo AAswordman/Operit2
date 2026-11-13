@@ -165,6 +165,30 @@ impl OpenCodeRouting {
         trimmed.ends_with("/zen/go") || trimmed.ends_with("/zen/go/v1")
     }
 
+    /// Applies OpenCode's client identity and stable provider-scoped Go session.
+    pub(crate) fn request_headers(
+        endpoint: &str,
+        provider_id: &str,
+        mut headers: Vec<(String, String)>,
+    ) -> Vec<(String, String)> {
+        let is_go = Self::is_go(endpoint);
+        headers.retain(|(name, _)| {
+            !name.eq_ignore_ascii_case("User-Agent")
+                && !(is_go && name.eq_ignore_ascii_case("x-opencode-session"))
+        });
+        headers.push((
+            "User-Agent".to_string(),
+            format!("Operit/{}", env!("CARGO_PKG_VERSION")),
+        ));
+        if is_go {
+            headers.push((
+                "x-opencode-session".to_string(),
+                format!("operit-{provider_id}"),
+            ));
+        }
+        headers
+    }
+
     /// Returns the API base used by the OpenCode Gemini route.
     pub fn api_base(endpoint: &str) -> String {
         Self::normalized_base(
@@ -191,6 +215,7 @@ impl OpenCodeProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         base_endpoint: String,
+        provider_id: String,
         api_key: String,
         model_name: String,
         custom_headers: Vec<(String, String)>,
@@ -213,17 +238,7 @@ impl OpenCodeProvider {
         .to_string();
         let endpoint = OpenCodeRouting::endpoint_for(&base_endpoint, &model_name)
             .map_err(AiServiceError::RequestFailed)?;
-        let mut headers = custom_headers;
-        headers.push((
-            "User-Agent".to_string(),
-            format!("Operit/{}", env!("CARGO_PKG_VERSION")),
-        ));
-        if OpenCodeRouting::is_go(&base_endpoint) {
-            headers.push((
-                "x-opencode-session".to_string(),
-                format!("operit-{}", model_name),
-            ));
-        }
+        let headers = OpenCodeRouting::request_headers(&base_endpoint, &provider_id, custom_headers);
         let delegate = match protocol {
             ApiProviderType::OPENAI_RESPONSES_GENERIC => OpenCodeDelegate::Responses(
                 OpenCodeResponsesProvider {

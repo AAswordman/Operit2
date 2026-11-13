@@ -618,6 +618,7 @@ impl MultiServiceManager {
             ))),
             ProviderCreateParams::OpenCodeProvider {
                 api_endpoint,
+                provider_id,
                 api_key_provider,
                 model_name,
                 custom_headers,
@@ -629,6 +630,7 @@ impl MultiServiceManager {
                 enable_tool_call,
             } => Ok(Box::new(OpenCodeProvider::new(
                 api_endpoint,
+                provider_id,
                 Self::resolveApiKeyProviderLocked(inner, api_key_provider)?,
                 model_name,
                 custom_headers.into_iter().collect(),

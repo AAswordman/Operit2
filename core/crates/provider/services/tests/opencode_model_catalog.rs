@@ -144,6 +144,11 @@ fn settings_fetcher_preserves_opencode_routes_headers_and_model_ids() {
         )));
         assert!(!request.contains("wrong-client"));
         assert!(request.contains("x-custom: kept\r\n"));
+        if basePath.ends_with("/zen") {
+            assert!(!request.contains("x-opencode-session:"));
+        } else {
+            assert!(request.contains("x-opencode-session: operit-opencode-test\r\n"));
+        }
         if apiKey.is_empty() {
             assert!(!request.contains("authorization:"));
         } else {

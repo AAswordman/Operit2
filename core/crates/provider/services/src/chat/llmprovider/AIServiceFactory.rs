@@ -76,6 +76,7 @@ pub enum ProviderCreateParams {
     },
     OpenCodeProvider {
         api_endpoint: String,
+        provider_id: String,
         api_key_provider: ApiKeyProviderSpec,
         model_name: String,
         custom_headers: BTreeMap<String, String>,
@@ -483,6 +484,7 @@ impl AIServiceFactory {
             ApiProviderType::OPENCODE => {
                 Self::open_code_provider(
                     api_endpoint,
+                    config.providerId.clone(),
                     api_key_provider,
                     model_name,
                     custom_headers,
@@ -626,6 +628,7 @@ impl AIServiceFactory {
     /// Builds the OpenCode routing provider spec.
     fn open_code_provider(
         api_endpoint: String,
+        provider_id: String,
         api_key_provider: ApiKeyProviderSpec,
         model_name: String,
         custom_headers: BTreeMap<String, String>,
@@ -653,6 +656,7 @@ impl AIServiceFactory {
             kind: ProviderServiceKind::OpenCodeProvider,
             params: ProviderCreateParams::OpenCodeProvider {
                 api_endpoint,
+                provider_id,
                 api_key_provider,
                 model_name,
                 custom_headers,

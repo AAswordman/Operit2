@@ -73,10 +73,6 @@ pub(super) fn bearer_headers(
         let header_value = value
             .as_str()
             .ok_or_else(|| format!("customHeaders value for {name} is not a string"))?;
-        if is_opencode && name.eq_ignore_ascii_case("User-Agent") {
-            // OpenCode owns its client identity rather than accepting a generic user agent.
-            continue;
-        }
         if name.eq_ignore_ascii_case("Authorization") {
             if (operation.requiresApiKey || is_opencode) && header_value.trim().is_empty() {
                 // Preserve the existing contract for empty legacy authorization headers.
@@ -94,10 +90,7 @@ pub(super) fn bearer_headers(
         }
     }
     if is_opencode {
-        headers.push((
-            "User-Agent".to_string(),
-            format!("Operit/{}", env!("CARGO_PKG_VERSION")),
-        ));
+        headers = OpenCodeRouting::request_headers(&provider.endpoint, &provider.id, headers);
     }
     Ok(headers)
 }
