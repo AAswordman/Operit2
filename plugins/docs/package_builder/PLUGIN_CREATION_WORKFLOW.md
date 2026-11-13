@@ -42,7 +42,23 @@ operit_editor 的 `operit_editor` 工具实际调用 `Tools.SoftwareSettings.exe
 ["skill", "show", "PackageBuilder"]
 ```
 
-逐项核验结果及 references/types/examples 文件，不删除其他 Skill；任一步失败停止并报告。已有安装不应被描述成“已经自动更新为当前资料”。
+逐项核验结果及 references/types 文件，不删除其他 Skill；任一步失败停止并报告。已有安装不应被描述成“已经自动更新为当前资料”。
+
+### 按需通过 VFS 查阅已安装插件
+
+本 Skill 不携带插件文件索引或 `examples/` 副本。AI 应自行列举设备与当前空间的安装目录，按任务挑选参考包，不受启用状态限制：
+
+| VFS 路径 | 用途 |
+| --- | --- |
+| `/operitapp/data/extensions/device/packages/` | 本设备安装的脚本和 ToolPkg 归档 |
+| `/operitapp/data/extensions/space/packages/` | 当前空间安装的脚本和 ToolPkg 归档 |
+| `/operitapp/data/cache/toolpkg/` | 运行时已有的按需解压缓存，便于直接读取 manifest、入口和源码 |
+
+使用 `Tools.Files.list(path)`、`Tools.Files.read(path)` 或系统文件工具按需浏览，目录不存在时继续检查其他入口。缓存目录名应实际列举，不自行推算；缓存可能缺失或过期，必须与安装文件核验，不能用缓存判断安装或启用状态。`package list` 仅列出独立脚本包，不能替代对两处安装目录的查看；其他命令先读 `args: []` 的实际帮助。
+
+内置插件不保证有独立安装文件，可以查阅实际存在的运行缓存，不为参考示例批量加载插件。确需查看某个已安装 `.toolpkg` 且没有可读缓存时，用 `Tools.Files.unzip(source, destination)` 仅将该归档解压到独立临时目录；不要覆盖安装文件或运行缓存，也不要为准备或更新本 Skill 解压所有包。读取实际 manifest、源码和构建配置后再采用其接口；安装成品可能没有二次开发源码，不应被称为完整项目。
+
+显式更新旧版 Skill 时，原先复制在 Skill 内的示例随目录替换一并移除；已安装插件仍从以上 VFS 入口读取。
 
 ## 2. 确定真实开发目录
 

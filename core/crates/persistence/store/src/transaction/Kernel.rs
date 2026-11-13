@@ -323,7 +323,6 @@ impl<'a> Registry<'a> {
         let mut errors = self.prepare();
         let mut snapshots = Vec::new();
         for (path, owner) in &self.owners {
-            if pending.contains(path) { continue; }
             if let Some(snapshot) = &owner.snapshot {
                 match snapshot() { Ok(value) => snapshots.push(value), Err(error) => errors.push(format!("{path}: {error}")) }
             }
@@ -338,7 +337,6 @@ impl<'a> Registry<'a> {
         let mut manifests = Vec::new();
         // A report retains metadata only. Release each owner's contents before opening the next.
         for (path, owner) in &self.owners {
-            if pending.contains(path) { continue; }
             let Some(capture) = &owner.snapshot else { continue; };
             let snapshot = match capture() {
                 Ok(snapshot) => snapshot,
@@ -358,7 +356,6 @@ impl<'a> Registry<'a> {
     }
 
     pub fn snapshot(&self, owner: &Owner) -> Result<Snapshot, String> {
-        if self.pending_owners()?.contains(&owner.path) { return Err("Dataset has pending transactions".into()); }
         let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
         let snapshot = (participant.snapshot.as_ref().ok_or("Owner has no snapshot capability")?)()?;
         if &snapshot.data.owner != owner { return Err("Owner format/layout is not ready".into()); }

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
@@ -45,7 +45,7 @@ function commands(text) {
 }
 
 /** Confirms every include stays in the plugin tree and names an existing resource. */
-test('Operit 插件开发套件 bundles the current workflow with types and examples', () => {
+test('Operit 插件开发套件 bundles the current workflow and types', () => {
   const includes = JSON.parse(source(skillDirectory + 'skill.include.json')).includes;
   const workflow = includes.filter(include => include.target === 'references/PLUGIN_CREATION_WORKFLOW.md');
   assert.equal(workflow.length, 1);
@@ -59,35 +59,20 @@ test('Operit 插件开发套件 bundles the current workflow with types and exam
   assert.match(source(skillDirectory + 'SKILL.md'), /references\/PLUGIN_CREATION_WORKFLOW\.md/u);
 });
 
-/** Enumerates the resources selected by a skill include using its exact excluded names. */
-function includedFiles(directory, excluded) {
-  const files = [];
-  for (const entry of readdirSync(directory, { withFileTypes: true })) {
-    if (excluded.has(entry.name)) continue;
-    const file = path.join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...includedFiles(file, excluded));
-    else if (entry.isFile()) files.push(file);
-  }
-  return files;
-}
-
-/** Checks the actual selected examples, including ignored leftovers from previous package builds. */
-test('Operit 插件开发套件 examples contain authoring sources without generated packages or Compose artifacts', () => {
+/** Prevents installation/update from traversing and materializing every plugin archive. */
+test('Operit 插件开发套件 references live VFS installations without bundled package examples', () => {
   const includes = JSON.parse(source(skillDirectory + 'skill.include.json')).includes;
-  const examples = includes.filter(include => include.target.startsWith('examples/packages/'));
-  assert.equal(examples.length, 2);
-  for (const include of examples) {
-    const base = path.resolve(root, skillDirectory, include.source);
-    const files = includedFiles(base, new Set(include.excludeNames));
-    assert.ok(files.some(file => file.endsWith('.ts')), include.target);
-    for (const file of files) {
-      const relative = path.relative(base, file);
-      assert.doesNotMatch(relative, /(?:^|[\\/])(?:dist|build|tests-dist)(?:[\\/]|$)/u, relative);
-      assert.notEqual(path.extname(file), '.toolpkg', relative);
-      if (path.extname(file) === '.js') {
-        assert.doesNotMatch(readFileSync(file, 'utf8'), /^\/\/ @operit-compose-artifact /u, relative);
-      }
+  assert.deepEqual(includes.map(include => include.target), [
+    'references/PLUGIN_CREATION_WORKFLOW.md', 'references/SCRIPT_DEV_GUIDE.md',
+    'references/TOOLPKG_FORMAT_GUIDE.md', 'types',
+  ]);
+  for (const file of documents) {
+    const text = source(file);
+    for (const vfsPath of ['/operitapp/data/extensions/device/packages/',
+      '/operitapp/data/extensions/space/packages/', '/operitapp/data/cache/toolpkg/']) {
+      assert.ok(text.includes(vfsPath), `${file}: ${vfsPath}`);
     }
+    assert.doesNotMatch(text, /examples\/packages\//u, file);
   }
 });
 
@@ -106,11 +91,7 @@ test('authoring reference links resolve to bundled local documents', () => {
       assert.equal(existsSync(path.resolve(root, path.dirname(file), match[1])), true, `${file}: ${match[1]}`);
     }
   }
-  const guide = source(guideDirectory + 'SCRIPT_DEV_GUIDE.md');
-  for (const example of ['buildin/time.ts', 'buildin/operit_editor.ts', 'external/template_try', 'buildin/workflow']) {
-    assert.equal(existsSync(path.join(root, 'plugins/packages', example)), true, example);
-    assert.match(guide, new RegExp(`examples/packages/${example.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')}`, 'u'));
-  }
+
 });
 
 /** Ensures AI sees an executable command contract instead of a decorative query. */

@@ -401,6 +401,8 @@ impl RuntimeFileSyncStore {
     pub fn readBlobChunk(&self, contentHash: &str, offset: i64, length: i64) -> Result<Vec<u8>, String> {
         let offset = u64::try_from(offset).map_err(|_| "blob chunk offset must not be negative")?;
         let length = usize::try_from(length).map_err(|_| "blob chunk length must not be negative or overflow")?;
+        crate::SyncBlobIo::validateContentHash(contentHash)?;
+        self.syncOperationStore.withJournal(|journal|journal.lease_blob(contentHash)).map_err(|e|e.to_string())?;
         let source = self.fileSource(contentHash)?;
         let path = source.as_ref().map(|source| source.path.clone()).unwrap_or(self.blobPath(contentHash)?);
         let bytes = self.storageHost.readBytesRange(&path, offset, length).map_err(|e|e.to_string())?;
@@ -425,6 +427,7 @@ impl RuntimeFileSyncStore {
     /// Resolves the verified host storage path for one content-addressed blob.
     pub fn blobStoragePath(&self, reference: &RuntimeFileSyncReference) -> Result<String, String> {
         validateBlobReference(reference)?;
+        self.syncOperationStore.withJournal(|journal|journal.lease_blob(&reference.contentHash)).map_err(|e|e.to_string())?;
         self.blobPath(&reference.contentHash)
     }
 
@@ -478,7 +481,7 @@ impl RuntimeFileSyncStore {
             Some(source) => crate::Transaction::Journal::index_file(tx, source),
             None => crate::Transaction::Journal::unindex_file(tx, path),
         })).map_err(|e|e.to_string())?;
-        self.syncOperationStore.collectFileBlobs();
+        self.syncOperationStore.collectBlobs(None);
         Ok(())
     }
 
@@ -490,6 +493,7 @@ impl RuntimeFileSyncStore {
 
     fn blobReadPath(&self, reference: &RuntimeFileSyncReference) -> Result<String, String> {
         validateBlobReference(reference)?;
+        self.syncOperationStore.withJournal(|journal|journal.lease_blob(&reference.contentHash)).map_err(|e|e.to_string())?;
         Ok(self.fileSource(&reference.contentHash)?.map(|source| source.path).unwrap_or(self.blobPath(&reference.contentHash)?))
     }
 

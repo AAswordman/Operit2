@@ -137,30 +137,44 @@ impl OperitApplication {
         // Captured after the snapshots: a new commit since the empty export invalidates this comparison.
         let (receipt, failures) = registry.receipt()?;
         errors.extend(failures);
-        let skipped = registry.skipped()?.into_iter().map(|(path,operations)|
-            (path,operations.into_iter().map(|operation|operation.opId).collect::<std::collections::BTreeSet<_>>()))
-            .collect::<BTreeMap<_,_>>();
+        let mut skipped = BTreeMap::<String, std::collections::BTreeSet<String>>::new();
+        for operation in journal.skippedOperations().map_err(|e|e.to_string())?.into_iter()
+            .chain(journal.pendingOperations().map_err(|e|e.to_string())?) {
+            if let Ok(path) = registry.target(&operation) { skipped.entry(path).or_default().insert(operation.opId); }
+        }
+        if errors.is_empty() {
+            match self.pluginSqliteHost().and_then(|host|PluginStorage::blobDatasetPaths(host).map_err(|e|e.to_string())) {
+                Ok(mut sql) => {
+                    sql.push(operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into());
+                    journal.collectBlobs(Some(&sql));
+                },
+                Err(error) => { operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_blobs.inventory: {error}")); },
+            }
+        }
         Ok(json!({"manifests":manifests,"pendingOwners":pending,"skipped":skipped,"errors":errors,"boundary":operit_store::Transaction::digest(&receipt)?}))
     }
     pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
-        let snapshot = registry.snapshot(&owner)?;
+        let mut snapshot = registry.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
         let content = if owner.backend == operit_store::Transaction::Backend::DataStore {
             let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
             let declaration = schema.owner(&owner.path)?.ok_or("Unknown preference file")?;
             Some(operit_store::Transaction::preference::file_snapshot(&(declaration.open)(storage,&owner.path),token).map_err(|e|e.to_string())?)
         } else { None };
+        snapshot.covered.extend(pending.iter().filter(|op|registry.target(op).as_ref()==Ok(&owner.path)).map(|op|op.opId.clone()));
         let definition = registry.snapshot_definition(&owner)?;
         serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&CorrectionFile { snapshot, content, definition })?).map_err(|e|e.to_string())
     }
     pub(super) fn exportConsistencyCoverage(&self, owner: Owner, token: &str) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
-        let snapshot = self.transactionRegistry(&schema,&pending)?.snapshot(&owner)?;
+        let registry = self.transactionRegistry(&schema,&pending)?;
+        let mut snapshot = registry.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
+        snapshot.covered.extend(pending.iter().filter(|op|registry.target(op).as_ref()==Ok(&owner.path)).map(|op|op.opId.clone()));
         serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&FileCoverage { owner, covered: snapshot.covered })?).map_err(|e|e.to_string())
     }
     pub(super) fn repairConsistencySnapshot(&self, owner: Owner, expected: &str, reference: FileCorrectionReference) -> Result<bool,String> {

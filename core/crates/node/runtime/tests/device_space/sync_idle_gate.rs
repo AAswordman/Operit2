@@ -510,47 +510,20 @@ async fn a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange() {
     );
 }
 
-/// A capability rejection does not arm network backoff or repeatedly start full exchanges.
+/// A rejected digest is bypassed by a verified full pass, without a network timer.
 #[tokio::test]
-async fn rejected_digest_probes_do_not_retry_full_exchanges() {
+async fn rejected_digest_probes_force_full_correction() {
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
-    let (routers, _access, peers, _pendingFailure) = gateMesh("sync-rejected-probe");
+    let (routers, _access, peers, _) = gateMesh("sync-rejected-probe");
     let observer = idleObserver(&routers[1]);
     observer.synchronizeOnce().await.unwrap();
     observer.synchronizeOnce().await.unwrap();
-    let markersBefore = fullPassMarkers(&peers[1]);
-    let fullClockCallsBefore = synchronizedMethodCount(&peers[1], "syncClock");
-
-    peers[1]
-        .faults
-        .lock()
-        .unwrap()
-        .insert("syncClockDigest".into(), CallFault::MethodDenied);
+    let before = synchronizedMethodCount(&peers[1], "syncConsistency");
+    peers[1].faults.lock().unwrap().insert("syncClockDigest".into(), CallFault::MethodDenied);
     observer.synchronizeOnce().await.unwrap();
-    assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
-    assert_eq!(
-        synchronizedMethodCount(&peers[1], "syncClock"),
-        fullClockCallsBefore
-    );
-
-    let probesAfterFailure = synchronizedMethodCount(&peers[1], "syncClockDigest");
-    observer.synchronizeOnce().await.unwrap();
-    assert_eq!(
-        synchronizedMethodCount(&peers[1], "syncClockDigest"),
-        probesAfterFailure + 1,
-        "capability rejection must not arm a connection retry timer"
-    );
-    assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
-
-    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
-    observer.synchronizeOnce().await.unwrap();
-    assert_eq!(fullPassMarkers(&peers[1]), markersBefore);
-    observer.synchronizeReachablePeer(routers[0].localNodeId(), 512).await.unwrap();
-    assert!(
-        fullPassMarkers(&peers[1]) > markersBefore,
-        "an explicit request can resume after the capability is repaired"
-    );
+    assert!(synchronizedMethodCount(&peers[1], "syncConsistency") > before);
+    assert!(observer.progressFlow().value().is_empty());
 }
 
 /// A preference-only edit must reopen a settled storage-provider gate without
@@ -683,7 +656,7 @@ async fn preference_edit_during_business_receipt_is_delivered_before_the_gate_se
     assert!(access[1].deviceSpace().unwrap().members.contains(&target));
 }
 
-/// Healthy replication continues; deterministic owner failures do not schedule unchanged work again.
+/// Healthy replication continues and a correction failure never suppresses subsequent passes.
 #[tokio::test]
 async fn partial_plugin_failure_keeps_healthy_replication_moving() {
     let _guard = routeTestGlobalLock().lock().await;
@@ -713,11 +686,8 @@ async fn partial_plugin_failure_keeps_healthy_replication_moving() {
     );
     let markers = fullPassMarkers(&peers[1]);
     observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
-    observer.synchronizeOnce().await.unwrap();
-    assert!(
-        fullPassMarkers(&peers[1]) == markers,
-        "deterministic failures must wait for a changed state or an explicit request"
-    );
+    assert!(observer.synchronizeOnce().await.is_err());
+    assert!(fullPassMarkers(&peers[1]) > markers, "correction failures must not close the gate");
     access[0]
         .updateDeviceSpacePolicy("sync.partial.plugin".into(), "v2".into())
         .unwrap();
@@ -795,8 +765,12 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
                 }
                 let content = operit_store::sync::SqlChatSyncStore::SqlChatSyncStore::snapshotContentDigest(&snapshot).unwrap();
                 let manifest = snapshot.manifest_with_digest(content).unwrap();
-                operit_link::toCoreValue(serde_json::json!({"manifests":[manifest],"pendingOwners":[],"errors":[],"boundary":operit_store::Transaction::digest(&self.inner.gateClock().unwrap()).unwrap()}))
+                let pending = self.fault == "pending" && self.faultPending.load(std::sync::atomic::Ordering::SeqCst);
+                operit_link::toCoreValue(serde_json::json!({"manifests":[manifest],"pendingOwners":if pending {vec![snapshot.data.owner.path.clone()]} else {vec![]},"errors":[],"boundary":operit_store::Transaction::digest(&self.inner.gateClock().unwrap()).unwrap()}))
                     .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
+            }
+            "syncOperationsSince" if self.fault == "incremental" && self.faultPending.swap(false, std::sync::atomic::Ordering::SeqCst) => {
+                Err(operit_link::CoreLinkError::internal("invalid incremental payload"))
             }
             "syncReadSnapshot" | "syncReadCoverage" if request.methodName == self.fault && self.faultPending.swap(false, std::sync::atomic::Ordering::SeqCst) => {
                 Err(operit_link::CoreLinkError::internal("Snapshot changed; synchronize again"))
@@ -819,7 +793,10 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
                 let mut snapshot = self.snapshot.lock().unwrap();
                 let applied = args["expected"] == snapshot.token().unwrap()
                     && !(self.fault == "syncRepairSnapshot" && self.faultPending.swap(false, std::sync::atomic::Ordering::SeqCst));
-                if applied { snapshot.data = self.authority.lock().unwrap().data.clone(); }
+                if applied {
+                    snapshot.data = self.authority.lock().unwrap().data.clone();
+                    if self.fault == "pending" { self.faultPending.store(false, std::sync::atomic::Ordering::SeqCst); }
+                }
                 operit_link::toCoreValue(applied).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
             },
             "syncApplyOperations" if self.fault == "new-write" && self.reports.load(std::sync::atomic::Ordering::SeqCst) > 0 => {
@@ -850,7 +827,7 @@ async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retr
     use operit_store::Transaction::{Backend, Data, Owner, Snapshot};
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
-    for fault in ["syncReadSnapshot", "syncReadCoverage", "manifest", "syncRepairSnapshot", "storage"] {
+    for fault in ["syncReadSnapshot", "syncReadCoverage", "manifest", "syncRepairSnapshot", "incremental", "pending", "storage"] {
         let (mut routers, _access, peers, _) = gateMesh(&format!("sync-quiet-{fault}"));
         let snapshots = ["z", "a"].map(|node| {
             let mut data = Data::empty(Owner { backend: Backend::Sql,
@@ -875,13 +852,8 @@ async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retr
             assert!(result.is_err());
             assert!(observer.progressFlow().value().iter().any(|item| item.error.is_some()), "real storage failures must remain visible");
             let before = synchronizedMethodCount(&peers[1], "syncReadSnapshot");
-            observer.synchronizeOnce().await.unwrap();
-            assert_eq!(synchronizedMethodCount(&peers[1], "syncReadSnapshot"), before, "storage errors must not arm a retry");
-            for _ in 0..2 {
-                let error = observer.synchronizeRequestedPeer(routers[0].localNodeId(), 512, false).await.err().unwrap();
-                assert!(error.message.contains("database is corrupt"), "the gate must retain the original failure: {error}");
-                assert_eq!(synchronizedMethodCount(&peers[1], "syncReadSnapshot"), before, "unchanged failures must stay gated");
-            }
+            assert!(observer.synchronizeOnce().await.is_err());
+            assert!(synchronizedMethodCount(&peers[1], "syncReadSnapshot") > before, "storage errors must not strand correction behind a gate");
             continue;
         }
         assert!(result.is_ok(), "{fault}: {result:?}");

@@ -1,12 +1,4 @@
-use std::path::Path;
-
-use operit_runtime::plugins::BuiltinPluginAssets::{
-    BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS,
-};
-use operit_runtime::plugins::BundledExternalSkillAssets::{
-    BUNDLED_EXTERNAL_SKILL_ASSETS, BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS,
-};
-use operit_tools::runtime_support::RuntimeBundledExternalSkillPackageAsset;
+use operit_runtime::plugins::BundledExternalSkillAssets::BUNDLED_EXTERNAL_SKILL_ASSETS;
 use operit_tools::runtime_support::ToolRuntimeSupport;
 
 /// Initializes one isolated storage host before any test constructs the shared runtime service.
@@ -54,99 +46,51 @@ fn asset_runtime(
     )
 }
 
-/// Verifies real skill examples share runtime archives and restore every original source byte.
+/// Keeps authoring resources small and points discovery at both live installation scopes.
 #[test]
-fn package_builder_examples_reuse_archives_without_losing_files() {
-    let plugins = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../../plugins");
-    let mut reused = 0;
-    let mut reused_bytes = 0;
-    let support = asset_runtime();
-    for asset in support.bundledExternalSkillPackageAssets() {
-        assert_eq!(asset.skillName, "PackageBuilder");
-        assert!(
-            BUILTIN_PLUGIN_ASSETS
-                .iter()
-                .chain(BUNDLED_EXTERNAL_PLUGIN_ASSETS)
-                .any(|package| { std::ptr::eq(package.bytes, asset.archive) }),
-            "example must reference an existing package allocation: {}",
-            asset.path
-        );
-        assert!(
-            !BUNDLED_EXTERNAL_SKILL_ASSETS.iter().any(|inline| {
-                inline.skill_name == asset.skillName && inline.path == asset.path
-            }),
-            "example must not also be embedded inline: {}",
-            asset.path
-        );
-        let actual = asset.readBytes().unwrap();
-        let source = plugins.join(asset.path.strip_prefix("examples/").unwrap());
-        assert!(
-            actual == std::fs::read(&source).unwrap(),
-            "example differs: {}",
-            source.display()
-        );
-        reused += 1;
-        reused_bytes += actual.len();
-    }
-    assert!(
-        reused > 0,
-        "package examples must reuse the shared archives"
-    );
-    for required in [
-        "examples/packages/external/deepseek_dafeiyu/resources/idle.webp",
-        "examples/packages/external/deepseek_dafeiyu/resources/talk.webp",
-        "examples/packages/buildin/workflow/resources/workflow.html",
-    ] {
-        assert!(
-            BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS
-                .iter()
-                .any(|asset| asset.path == required),
-            "runtime resources must be shared with their example: {required}"
-        );
-    }
-    println!(
-        "Verified {reused} shared example files, {reused_bytes} source bytes restored exactly"
-    );
+fn package_builder_bundles_docs_and_types_with_live_vfs_paths() {
+    let assets = BUNDLED_EXTERNAL_SKILL_ASSETS
+        .iter()
+        .filter(|asset| asset.skill_name == "PackageBuilder")
+        .collect::<Vec<_>>();
     for required in [
         "SKILL.md",
         "types/toolpkg.d.ts",
+        "references/PLUGIN_CREATION_WORKFLOW.md",
         "references/TOOLPKG_FORMAT_GUIDE.md",
-        "examples/packages/buildin/character_cards/package.json",
     ] {
         assert!(
-            BUNDLED_EXTERNAL_SKILL_ASSETS.iter().any(|asset| {
-                asset.skill_name == "PackageBuilder" && asset.path == required
-            }),
-            "source-only skill file must remain available: {required}"
+            assets.iter().any(|asset| asset.path == required),
+            "missing {required}"
         );
     }
-}
-
-/// Rejects corrupt archives and missing members instead of hiding an invalid package reference.
-#[test]
-fn invalid_shared_package_assets_report_errors() {
-    let corrupt = RuntimeBundledExternalSkillPackageAsset {
-        skillName: "fixture",
-        path: "examples/resource.bin",
-        archive: b"invalid archive",
-        member: "resource.bin",
-    };
-    assert!(corrupt.readBytes().is_err());
-    let missing = RuntimeBundledExternalSkillPackageAsset {
-        archive: BUNDLED_EXTERNAL_PLUGIN_ASSETS
+    assert!(assets.iter().all(|asset| asset.path == "SKILL.md"
+        || asset.path.starts_with("types/")
+        || asset.path.starts_with("references/")));
+    let skill = std::str::from_utf8(
+        assets
             .iter()
-            .find(|package| package.name == "deepseek_dafeiyu.toolpkg")
+            .find(|asset| asset.path == "SKILL.md")
             .unwrap()
             .bytes,
-        member: "this-member-does-not-exist.bin",
-        ..corrupt
-    };
-    assert!(missing.readBytes().is_err());
+    )
+    .unwrap();
+    let paths = operit_store::RuntimeStorePaths::RuntimeStorePaths::default();
+    for scope in ["device", "space"] {
+        let key = operit_store::ExtensionStore::ExtensionStore::root("package", scope).unwrap();
+        assert!(skill.contains(
+            &paths
+                .runtime_storage_path(&key)
+                .to_string_lossy()
+                .to_string()
+        ));
+    }
+    assert!(skill.contains(&paths.toolpkg_cache_dir().to_string_lossy().to_string()));
 }
 
-/// Installs the built-in skill hidden by default, restores its files, and preserves user visibility.
+/// Installs only authoring resources and removes legacy examples on explicit updates.
 #[test]
-fn shared_skill_install_restores_complete_examples_without_plugin_installation() {
+fn lightweight_skill_install_and_update_preserve_settings_and_installed_plugins() {
     use operit_host_native_filesystem::PosixFileSystemHost;
     use operit_tools::tools::skill::SkillManager::SkillManager;
     use std::sync::Arc;
@@ -174,7 +118,10 @@ fn shared_skill_install_restores_complete_examples_without_plugin_installation()
     let skill = skills.remove("PackageBuilder").unwrap();
     assert_eq!(skill.name, "PackageBuilder");
     assert_eq!(skill.directory.file_name().unwrap(), "PackageBuilder");
-    assert_eq!(repository.readSkillDisplayName(&skill).unwrap(), "Operit 插件开发套件");
+    assert_eq!(
+        repository.readSkillDisplayName(&skill).unwrap(),
+        "Operit 插件开发套件"
+    );
     let record = operit_store::ExtensionStore::ExtensionStore::default()
         .record("skill", &skill.name)
         .unwrap();
@@ -191,20 +138,12 @@ fn shared_skill_install_restores_complete_examples_without_plugin_installation()
                 == asset.bytes
         );
     }
-    for asset in BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS
-        .iter()
-        .filter(|asset| asset.skill_name == "PackageBuilder")
-    {
-        let source = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../../../plugins")
-            .join(asset.path.strip_prefix("examples/").unwrap());
-        assert!(
-            filesystem
-                .readFileBytes(&skill.directory.join(asset.path).to_string_lossy())
-                .unwrap()
-                == std::fs::read(source).unwrap()
-        );
-    }
+    assert!(
+        !filesystem
+            .fileExists(&skill.directory.join("examples").to_string_lossy())
+            .unwrap()
+            .exists
+    );
     assert!(!manager
         .getBundledExternalSkillCandidates(support.as_ref())
         .iter()
@@ -215,47 +154,120 @@ fn shared_skill_install_restores_complete_examples_without_plugin_installation()
     support.setSkillVisibleToAi(&skill.name, false).unwrap();
     assert!(manager.ensureBuiltinSkills(support.as_ref()).is_empty());
     assert!(!support.isSkillVisibleToAi(&skill.name));
-    assert_eq!(repository.bundledSkillNeedsUpdate(&skill).unwrap(), Some(false));
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&skill).unwrap(),
+        Some(false)
+    );
 
     // Legacy installations have the stable name but no builtin/source metadata or version.
-    let legacy = "---\nname: PackageBuilder\ndescription: Legacy package builder\n---\n# PackageBuilder\n";
-    filesystem.writeFile(&skill.skillFile.to_string_lossy(), legacy, false).unwrap();
+    let legacy =
+        "---\nname: PackageBuilder\ndescription: Legacy package builder\n---\n# PackageBuilder\n";
+    filesystem
+        .writeFile(&skill.skillFile.to_string_lossy(), legacy, false)
+        .unwrap();
     let store = operit_store::ExtensionStore::ExtensionStore::default();
-    store.setSettings("skill", &skill.name, serde_json::json!({"visible": true})).unwrap();
+    store
+        .setSettings("skill", &skill.name, serde_json::json!({"visible": true}))
+        .unwrap();
     assert!(manager.ensureBuiltinSkills(support.as_ref()).is_empty());
-    assert_eq!(repository.readSkillDisplayName(&skill).unwrap(), "PackageBuilder");
-    assert_eq!(repository.bundledSkillNeedsUpdate(&skill).unwrap(), Some(true));
-    let stale = skill.directory.join("obsolete-reference.md");
-    filesystem.writeFile(&stale.to_string_lossy(), "old instructions", false).unwrap();
+    assert_eq!(
+        repository.readSkillDisplayName(&skill).unwrap(),
+        "PackageBuilder"
+    );
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&skill).unwrap(),
+        Some(true)
+    );
+    let stale = skill
+        .directory
+        .join("examples/packages/external/old-plugin/resource.bin");
+    filesystem
+        .writeFile(&stale.to_string_lossy(), "old instructions", false)
+        .unwrap();
+    let installed = skill
+        .directory
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap()
+        .join("packages/user-plugin.toolpkg");
+    filesystem
+        .writeFileBytes(&installed.to_string_lossy(), b"installed plugin bytes")
+        .unwrap();
     let updated = repository.importBundledExternalSkill(&skill.name).unwrap();
     assert_eq!(updated.directory, skill.directory);
-    assert_eq!(repository.readSkillDisplayName(&updated).unwrap(), "Operit 插件开发套件");
+    assert_eq!(
+        repository.readSkillDisplayName(&updated).unwrap(),
+        "Operit 插件开发套件"
+    );
     assert!(repository.isSkillVisibleToAi(&skill.name));
-    assert!(!filesystem.fileExists(&stale.to_string_lossy()).unwrap().exists);
-    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
+    assert!(
+        !filesystem
+            .fileExists(&updated.directory.join("examples").to_string_lossy())
+            .unwrap()
+            .exists
+    );
+    assert_eq!(
+        filesystem
+            .readFileBytes(&installed.to_string_lossy())
+            .unwrap(),
+        b"installed plugin bytes"
+    );
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&updated).unwrap(),
+        Some(false)
+    );
 
-    // Type definitions and compressed example resources are independently updateable.
+    // Updates still detect changed type definitions and missing documentation.
     let types = updated.directory.join("types/toolpkg.d.ts");
-    filesystem.writeFile(&types.to_string_lossy(), "old declarations", false).unwrap();
-    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(true));
+    filesystem
+        .writeFile(&types.to_string_lossy(), "old declarations", false)
+        .unwrap();
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&updated).unwrap(),
+        Some(true)
+    );
     repository.setSkillVisibleToAi(&skill.name, false).unwrap();
     repository.importBundledExternalSkill(&skill.name).unwrap();
     assert!(!repository.isSkillVisibleToAi(&skill.name));
-    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
-    let resource = BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS.iter()
-        .find(|asset| asset.skill_name == skill.name).unwrap();
-    filesystem.deleteFile(&updated.directory.join(resource.path).to_string_lossy(), false).unwrap();
-    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(true));
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&updated).unwrap(),
+        Some(false)
+    );
+    filesystem
+        .deleteFile(
+            &updated
+                .directory
+                .join("references/PLUGIN_CREATION_WORKFLOW.md")
+                .to_string_lossy(),
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&updated).unwrap(),
+        Some(true)
+    );
     repository.importBundledExternalSkill(&skill.name).unwrap();
-    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&updated).unwrap(),
+        Some(false)
+    );
 
     // Explicit updates preserve space ownership as well as visibility.
     store.moveScope("skill", &skill.name, "space").unwrap();
-    let shared = repository.getAvailableSkillPackages().remove(&skill.name).unwrap();
-    filesystem.writeFile(&shared.skillFile.to_string_lossy(), legacy, false).unwrap();
+    let shared = repository
+        .getAvailableSkillPackages()
+        .remove(&skill.name)
+        .unwrap();
+    filesystem
+        .writeFile(&shared.skillFile.to_string_lossy(), legacy, false)
+        .unwrap();
     let updated = repository.importBundledExternalSkill(&skill.name).unwrap();
     assert_eq!(updated.directory, shared.directory);
     assert_eq!(store.record("skill", &skill.name).unwrap().scope, "space");
     assert!(!repository.isSkillVisibleToAi(&skill.name));
-    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
+    assert_eq!(
+        repository.bundledSkillNeedsUpdate(&updated).unwrap(),
+        Some(false)
+    );
 }

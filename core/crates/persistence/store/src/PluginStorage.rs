@@ -1504,6 +1504,11 @@ fn restoreSnapshotSchema(tx: &mut SqliteTransaction<'_>, definition: &Value) -> 
     Ok((names, true))
 }
 
+/// Blob roots include temporarily disabled databases: their current initializers remain durable.
+pub fn blobDatasetPaths(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<String>, SqliteStoreError> {
+    catalog(host)?.queryRows("SELECT path FROM plugin_databases ORDER BY path", vec![])?.iter().map(|row|row.get(0)).collect()
+}
+
 pub fn syncDatasetPaths(host: Arc<dyn RuntimeSqliteHost>) -> Result<Vec<String>, SqliteStoreError> {
     catalog(host)?.queryRows("SELECT path FROM plugin_databases WHERE sync=1 ORDER BY path", vec![])?.iter().map(|row|row.get(0)).collect()
 }

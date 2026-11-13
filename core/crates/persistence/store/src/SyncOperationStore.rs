@@ -423,7 +423,7 @@ pub struct SyncOperationStore {
 struct SyncOperationStoreSharedState {
     controlRevision: AtomicU64,
     #[cfg(feature = "full")]
-    lastFileCollection: Mutex<i64>,
+    lastBlobCollection: Mutex<[i64; 2]>,
     clock: Mutex<SyncOperationCachedValue<SyncClock>>,
     journal: Mutex<Option<crate::Transaction::Journal>>,
     legacyFiles: Mutex<()>,
@@ -1743,7 +1743,7 @@ impl SyncOperationStore {
             }
             #[cfg(feature = "full")]
             if let Err(error) = journal.migrate_file_index(self.storageHost.as_ref()).and_then(|_| {
-                journal.collect_file_blobs(self.storageHost.as_ref(), &self.rootPath, currentTimeMillis()?)
+                journal.collect_blobs(self.storageHost.as_ref(), &self.rootPath, currentTimeMillis()?, None)
             }) {
                 operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.upgrade: {error}"));
             }
@@ -1771,14 +1771,15 @@ impl SyncOperationStore {
 
     /// Collection is amortized across writers; a failed deletion remains queued for retry.
     #[cfg(feature = "full")]
-    pub(crate) fn collectFileBlobs(&self) {
+    pub fn collectBlobs(&self, sql_paths: Option<&[String]>) {
         let Ok(now) = currentTimeMillis() else { return; };
-        let Ok(mut last) = self.sharedState.lastFileCollection.try_lock() else { return; };
+        let Ok(mut last) = self.sharedState.lastBlobCollection.try_lock() else { return; };
+        let last = &mut last[usize::from(sql_paths.is_some())];
         if now.saturating_sub(*last) < 60_000 { return; }
         *last = now;
         if let Err(error) = self.withJournal(|journal| {
             journal.migrate_file_index(self.storageHost.as_ref())?;
-            journal.collect_file_blobs(self.storageHost.as_ref(), &self.rootPath, now)
+            journal.collect_blobs(self.storageHost.as_ref(), &self.rootPath, now, sql_paths)
         }) {
             *last = 0;
             operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_files.cleanup: {error}"));
@@ -1909,7 +1910,7 @@ impl SyncOperationStore {
         drop(cached);
         self.recordAppliedOperation(&op)?;
         #[cfg(feature = "full")]
-        self.collectFileBlobs();
+        self.collectBlobs(None);
         drop(control);
         publishSyncMutation();
         Ok(op)
@@ -2062,7 +2063,7 @@ impl SyncOperationStore {
         self.withJournal(|journal| journal.complete(operations))?;
         if let Some(control) = &control { control.update(|model| model.complete(operations))?; }
         #[cfg(feature = "full")]
-        if operations.iter().any(crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState) { self.collectFileBlobs(); }
+        if operations.iter().any(crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState) { self.collectBlobs(None); }
         Ok(())
     }
 

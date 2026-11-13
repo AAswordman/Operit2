@@ -357,15 +357,6 @@ impl SkillManager {
                 return Ok(Some(true));
             }
         }
-        for asset in runtimeSupport
-            .bundledExternalSkillPackageAssets()
-            .iter()
-            .filter(|asset| asset.skillName == skill.name)
-        {
-            if differs(asset.path, &asset.readBytes()?)? {
-                return Ok(Some(true));
-            }
-        }
         Ok(Some(false))
     }
 
@@ -412,15 +403,6 @@ impl SkillManager {
                 let outputFile = prepared.join(normalizeAssetRelativePath(asset.path)?);
                 self.filesystem
                     .writeFileBytes(&hostPath(&outputFile), asset.bytes)?;
-            }
-            for asset in runtimeSupport
-                .bundledExternalSkillPackageAssets()
-                .iter()
-                .filter(|asset| asset.skillName == skillName)
-            {
-                let outputFile = prepared.join(normalizeAssetRelativePath(asset.path)?);
-                self.filesystem
-                    .writeFileBytes(&hostPath(&outputFile), &asset.readBytes()?)?;
             }
             let skillFile = directSkillFile(self.filesystem.as_ref(), &prepared)
                 .ok_or("Bundled skill has no SKILL.md")?;

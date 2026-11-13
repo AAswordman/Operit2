@@ -301,58 +301,10 @@ impl LocalModelManifest {
         file: &LocalModelFile,
         preferredKind: Option<LocalModelSourceKind>,
     ) -> Result<LocalModelSource, String> {
-        let primarySource = self.sourceForFile(file).ok_or_else(|| {
-            format!("manifest source not found for file: {}", file.sourceId)
-        })?;
-        if primarySource.kind == LocalModelSourceKind::DirectHttp {
-            return Ok(primarySource.clone());
-        }
-        let preferred = match preferredKind {
-            Some(kind) => kind,
-            None => return Ok(primarySource.clone()),
-        };
-        match preferred {
-            LocalModelSourceKind::HuggingFace => {
-                let source = self
-                    .sources
-                    .iter()
-                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
-                    .ok_or_else(|| {
-                        format!(
-                            "HuggingFace source is not configured for model: {}@{}",
-                            self.id, self.version
-                        )
-                    })?;
-                Ok(source.clone())
-            }
-            LocalModelSourceKind::HfMirror => {
-                let source = self
-                    .sources
-                    .iter()
-                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
-                    .ok_or_else(|| {
-                        format!(
-                            "HuggingFace source is not configured for model: {}@{}",
-                            self.id, self.version
-                        )
-                    })?;
-                Ok(source.withSourceKind(LocalModelSourceKind::HfMirror))
-            }
-            LocalModelSourceKind::ModelScope => {
-                let source = self
-                    .sources
-                    .iter()
-                    .find(|s| s.kind == LocalModelSourceKind::ModelScope)
-                    .ok_or_else(|| {
-                        format!(
-                            "ModelScope source is not configured for model: {}@{}",
-                            self.id, self.version
-                        )
-                    })?;
-                Ok(source.clone())
-            }
-            LocalModelSourceKind::DirectHttp => Ok(primarySource.clone()),
-        }
+        let primarySource = self
+            .sourceForFile(file)
+            .ok_or_else(|| format!("manifest source not found for file: {}", file.sourceId))?;
+        Ok(self.sourceWithPreferredKind(primarySource, preferredKind))
     }
 
     /// Resolves the download source for one manifest archive taking the preferred source kind into account.
@@ -362,57 +314,49 @@ impl LocalModelManifest {
         preferredKind: Option<LocalModelSourceKind>,
     ) -> Result<LocalModelSource, String> {
         let primarySource = self.sourceForArchive(archive).ok_or_else(|| {
-            format!("manifest source not found for archive: {}", archive.sourceId)
+            format!(
+                "manifest source not found for archive: {}",
+                archive.sourceId
+            )
         })?;
-        if primarySource.kind == LocalModelSourceKind::DirectHttp {
-            return Ok(primarySource.clone());
-        }
+        Ok(self.sourceWithPreferredKind(primarySource, preferredKind))
+    }
+
+    /// Applies a global source preference when available, otherwise keeping the declared source.
+    fn sourceWithPreferredKind(
+        &self,
+        primarySource: &LocalModelSource,
+        preferredKind: Option<LocalModelSourceKind>,
+    ) -> LocalModelSource {
         let preferred = match preferredKind {
             Some(kind) => kind,
-            None => return Ok(primarySource.clone()),
+            None => return primarySource.clone(),
         };
-        match preferred {
-            LocalModelSourceKind::HuggingFace => {
-                let source = self
-                    .sources
-                    .iter()
-                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
-                    .ok_or_else(|| {
-                        format!(
-                            "HuggingFace source is not configured for archive: {}@{}",
-                            self.id, self.version
-                        )
-                    })?;
-                Ok(source.clone())
-            }
-            LocalModelSourceKind::HfMirror => {
-                let source = self
-                    .sources
-                    .iter()
-                    .find(|s| s.kind == LocalModelSourceKind::HuggingFace)
-                    .ok_or_else(|| {
-                        format!(
-                            "HuggingFace source is not configured for archive: {}@{}",
-                            self.id, self.version
-                        )
-                    })?;
-                Ok(source.withSourceKind(LocalModelSourceKind::HfMirror))
-            }
-            LocalModelSourceKind::ModelScope => {
-                let source = self
-                    .sources
-                    .iter()
-                    .find(|s| s.kind == LocalModelSourceKind::ModelScope)
-                    .ok_or_else(|| {
-                        format!(
-                            "ModelScope source is not configured for archive: {}@{}",
-                            self.id, self.version
-                        )
-                    })?;
-                Ok(source.clone())
-            }
-            LocalModelSourceKind::DirectHttp => Ok(primarySource.clone()),
+        if primarySource.kind == LocalModelSourceKind::DirectHttp
+            || preferred == LocalModelSourceKind::DirectHttp
+            || primarySource.kind == preferred
+        {
+            return primarySource.clone();
         }
+        // Derive the mirror from this file's repository, even for multi-repository models.
+        if preferred == LocalModelSourceKind::HfMirror
+            && primarySource.kind == LocalModelSourceKind::HuggingFace
+        {
+            return primarySource.withSourceKind(preferred);
+        }
+        if let Some(source) = self.sources.iter().find(|source| source.kind == preferred) {
+            return source.clone();
+        }
+        if preferred == LocalModelSourceKind::HfMirror {
+            if let Some(source) = self
+                .sources
+                .iter()
+                .find(|source| source.kind == LocalModelSourceKind::HuggingFace)
+            {
+                return source.withSourceKind(preferred);
+            }
+        }
+        primarySource.clone()
     }
 }
 
@@ -432,6 +376,133 @@ mod tests {
 
         assert!(file.verifySha256(b"hello"));
         assert!(!file.verifySha256(b"HELLO"));
+    }
+
+    /// Verifies every built-in model can resolve downloads under any global source preference.
+    #[test]
+    fn catalogDownloadsFallBackWhenPreferredSourceIsUnavailable() {
+        use crate::LocalModelCatalog::LocalModelCatalog;
+
+        for manifest in LocalModelCatalog::manifests() {
+            for preferred in [
+                None,
+                Some(LocalModelSourceKind::HuggingFace),
+                Some(LocalModelSourceKind::ModelScope),
+                Some(LocalModelSourceKind::HfMirror),
+            ] {
+                match &manifest.installSource {
+                    LocalModelInstallSource::Files => {
+                        for file in &manifest.files {
+                            let resolved = manifest.sourceForFileWithPreferredKind(file, preferred);
+                            assert!(
+                                resolved.is_ok(),
+                                "{} / {} / {preferred:?}: {resolved:?}",
+                                manifest.id,
+                                file.relativePath
+                            );
+                            let primary = manifest.sourceForFile(file).unwrap();
+                            if preferred == Some(LocalModelSourceKind::ModelScope)
+                                && !manifest
+                                    .sources
+                                    .iter()
+                                    .any(|source| source.kind == LocalModelSourceKind::ModelScope)
+                            {
+                                assert_eq!(resolved.unwrap(), *primary);
+                            }
+                        }
+                    }
+                    LocalModelInstallSource::Archives { archives } => {
+                        for archive in archives {
+                            let resolved =
+                                manifest.sourceForArchiveWithPreferredKind(archive, preferred);
+                            assert!(
+                                resolved.is_ok(),
+                                "{} / {} / {preferred:?}: {resolved:?}",
+                                manifest.id,
+                                archive.archiveId
+                            );
+                            assert_eq!(
+                                resolved.unwrap(),
+                                *manifest.sourceForArchive(archive).unwrap()
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Verifies files keep their own repository when several sources share the preferred kind.
+    #[test]
+    fn preferredSourcePreservesFileRepository() {
+        let mut manifest = crate::LocalModelCatalog::LocalModelCatalog::qwen3LlamaCpp();
+        let primary = manifest.sources[0].clone();
+        let mut other = primary.clone();
+        other.id = "other-repository".to_string();
+        other.repository = "owner/other".to_string();
+        other.baseUrl = "https://huggingface.co/owner/other/resolve/main".to_string();
+        manifest.sources.insert(0, other);
+
+        assert_eq!(
+            manifest
+                .sourceForFileWithPreferredKind(
+                    &manifest.files[0],
+                    Some(LocalModelSourceKind::HuggingFace)
+                )
+                .unwrap(),
+            primary
+        );
+        assert_eq!(
+            manifest
+                .sourceForFileWithPreferredKind(
+                    &manifest.files[0],
+                    Some(LocalModelSourceKind::HfMirror)
+                )
+                .unwrap(),
+            primary.withSourceKind(LocalModelSourceKind::HfMirror)
+        );
+    }
+
+    /// Verifies archive downloads use the same source preference fallback as individual files.
+    #[test]
+    fn archiveDownloadsFallBackWhenPreferredSourceIsUnavailable() {
+        let mut manifest = crate::LocalModelCatalog::LocalModelCatalog::sherpaOnnxKittenNanoTts();
+        manifest.sources[0].kind = LocalModelSourceKind::HuggingFace;
+        let LocalModelInstallSource::Archives { archives } = &manifest.installSource else {
+            panic!("expected archive installation");
+        };
+        assert_eq!(
+            manifest
+                .sourceForArchiveWithPreferredKind(
+                    &archives[0],
+                    Some(LocalModelSourceKind::ModelScope)
+                )
+                .unwrap(),
+            manifest.sources[0]
+        );
+    }
+
+    /// Verifies a missing file source remains an error even when another source is configured.
+    #[test]
+    fn preferredSourceDoesNotHideMissingManifestSource() {
+        let mut manifest = crate::LocalModelCatalog::LocalModelCatalog::qwen3LlamaCpp();
+        manifest.files[0].sourceId = "missing".to_string();
+        assert!(manifest
+            .sourceForFileWithPreferredKind(
+                &manifest.files[0],
+                Some(LocalModelSourceKind::HuggingFace)
+            )
+            .is_err());
+
+        let mut manifest = crate::LocalModelCatalog::LocalModelCatalog::sherpaOnnxKittenNanoTts();
+        let LocalModelInstallSource::Archives { archives } = &mut manifest.installSource else {
+            panic!("expected archive installation");
+        };
+        archives[0].sourceId = "missing".to_string();
+        let archive = archives[0].clone();
+        assert!(manifest
+            .sourceForArchiveWithPreferredKind(&archive, Some(LocalModelSourceKind::HuggingFace))
+            .is_err());
     }
 
     /// Verifies source URL construction trims only boundary slashes.

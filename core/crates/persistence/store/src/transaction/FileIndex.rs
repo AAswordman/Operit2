@@ -6,6 +6,7 @@ use operit_host_api::{RuntimeSqliteTransaction, RuntimeStorageHost, SqliteValue}
 use std::collections::BTreeSet;
 
 pub(super) const SCHEMA: &str = "
+CREATE TABLE IF NOT EXISTS sync_blob_leases(hash TEXT PRIMARY KEY,expires_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sync_file_sources(path TEXT PRIMARY KEY, hash TEXT NOT NULL, size INTEGER NOT NULL, modified_at INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS sync_file_hash ON sync_file_sources(hash);
 CREATE TABLE IF NOT EXISTS sync_file_garbage(hash TEXT PRIMARY KEY, after_ms INTEGER NOT NULL);
@@ -112,8 +113,8 @@ impl Journal {
         Ok(())
     }
 
-    /// Only known file copies are candidates. Transaction/SQL initialization blobs stay with their owners.
-    pub(crate) fn collect_file_blobs(&mut self, host: &dyn RuntimeStorageHost, root: &str, now: i64) -> Result<(), Error> {
+    /// Mark durable owner references before sweeping historical blobs; transfers hold renewable leases.
+    pub(crate) fn collect_blobs(&mut self, host: &dyn RuntimeStorageHost, root: &str, now: i64, sql_paths: Option<&[String]>) -> Result<(), Error> {
         let inventory = format!("{root}/workspace_inventory.json");
         let mut workspace = BTreeSet::new();
         if host.exists(&inventory)? {
@@ -129,23 +130,64 @@ impl Journal {
             }
             hashes(&serde_json::from_slice(&host.readBytes(&inventory)?)?, &mut workspace);
         }
-        let candidates = self.0.query("SELECT hash FROM sync_file_garbage WHERE after_ms<=?1", vec![SqliteValue::Integer(now)])?;
+        if let Some(paths) = sql_paths {
+            let mut roots = Vec::new();
+            for path in paths {
+                if !host.exists(path)? { continue; }
+                let mut database = host.openTransactionDatabase(path)?;
+                database.executeBatch("PRAGMA busy_timeout=0")?;
+                for (table,column) in [("_operit_transaction_initialization","original"),("_operit_log","payload"),("_operit_transaction_checkpoint","snapshot")] {
+                    if database.query("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?1",vec![text(table)])?.is_empty() { continue; }
+                    for row in database.query(&format!("SELECT DISTINCT j.value FROM {table} s,json_tree(s.{column}) j WHERE j.key='contentHash' AND j.type='text' AND length(j.value)=64"),vec![])? {
+                        roots.push((path.clone(),row.valueAt(0)?.asString()?));
+                    }
+                }
+            }
+            self.transaction(|tx| {
+                tx.execute("DELETE FROM sync_owner_blob_references WHERE path LIKE 'sql:%'",vec![])?;
+                for (path,hash) in roots {
+                    tx.execute("INSERT OR IGNORE INTO sync_owner_blob_references VALUES(?1,?2)",vec![text(&hash),text(&format!("sql:{path}"))])?;
+                }
+                // Also covers users who migrated before blob reclamation existed.
+                for entry in host.list(&format!("{root}/blobs"))? {
+                    let hash = entry.path.rsplit('/').next().unwrap_or_default();
+                    if entry.isDirectory || crate::SyncBlobIo::validateContentHash(hash).is_err() { continue; }
+                    let after = host.modifiedAt(&entry.path)? / 1000 + TRANSFER_GRACE_MS;
+                    tx.execute("INSERT OR IGNORE INTO sync_file_garbage VALUES(?1,?2)",vec![text(hash),SqliteValue::Integer(after)])?;
+                }
+                Ok(())
+            })?;
+        }
+        let candidates = self.0.query("SELECT hash FROM sync_file_garbage g WHERE after_ms<=?1
+            AND hash NOT IN (SELECT hash FROM sync_blob_leases WHERE expires_ms>?1)
+            AND NOT EXISTS (SELECT 1 FROM sync_blob_references r JOIN originals o ON o.id=r.operation_id
+                WHERE r.hash=g.hash AND (o.pending<>0 OR o.domain<>'runtime_file') UNION ALL
+                SELECT 1 FROM sync_owner_blob_references WHERE hash=g.hash)", vec![SqliteValue::Integer(now)])?;
+        let started = operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(Error::Message)?;
+        let mut removed = Vec::new();
         for row in candidates {
+            if operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(Error::Message)?.saturating_sub(started) >= 1000 { break; }
             let hash = row.valueAt(0)?.asString()?;
             crate::SyncBlobIo::validateContentHash(&hash).map_err(Error::Message)?;
             if workspace.contains(&hash) { continue; }
-            // Pending files, arbitrary transaction payloads and owner recovery state are durable roots.
-            let protected = self.0.query("SELECT 1 FROM sync_blob_references r JOIN originals o ON o.id=r.operation_id
-                WHERE r.hash=?1 AND (o.pending<>0 OR o.domain<>'runtime_file') UNION ALL
-                SELECT 1 FROM sync_owner_blob_references WHERE hash=?1 LIMIT 1", vec![text(&hash)])?;
-            if !protected.is_empty() { continue; }
             let referenced = !self.0.query("SELECT 1 FROM sync_blob_references r JOIN originals o ON o.id=r.operation_id WHERE r.hash=?1 LIMIT 1", vec![text(&hash)])?.is_empty();
-            let backed = self.file_sources(&hash)?.iter().any(|source| source.current(host).unwrap_or(false));
-            if referenced && !backed { continue; }
+            if referenced && !self.file_sources(&hash)?.iter().any(|source|source.current(host).unwrap_or(false)) { continue; }
             let path = format!("{root}/blobs/{hash}");
             if host.exists(&path)? { host.delete(&path, false)?; }
-            self.0.execute("DELETE FROM sync_file_garbage WHERE hash=?1", vec![text(&hash)])?;
+            removed.push(hash);
         }
+        self.transaction(|tx| {
+            for hash in removed { tx.execute("DELETE FROM sync_file_garbage WHERE hash=?1",vec![text(&hash)])?; }
+            tx.execute("DELETE FROM sync_blob_leases WHERE expires_ms<=?1",vec![SqliteValue::Integer(now)])?;
+            Ok(())
+        })?;
+        Ok(())
+    }
+
+    pub(crate) fn lease_blob(&mut self, hash: &str) -> Result<(), Error> {
+        let expires = operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(Error::Message)? + TRANSFER_GRACE_MS;
+        self.0.execute("INSERT INTO sync_blob_leases VALUES(?1,?2) ON CONFLICT(hash) DO UPDATE SET expires_ms=excluded.expires_ms WHERE expires_ms<?2-60000",
+            vec![text(hash),SqliteValue::Integer(expires)])?;
         Ok(())
     }
 

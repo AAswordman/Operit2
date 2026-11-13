@@ -772,9 +772,7 @@ resources/
         ...
 ```
 
-最小可参考示例：
-- `examples/packages/external/template_try/`
-- 里面同时演示了 `workflow_templates`、`workspace_templates`、目录资源和最小 `main.ts`
+参考实现应按 [插件创作流程](./PLUGIN_CREATION_WORKFLOW.md) 提供的 VFS 入口查找当前已安装插件。选择实际声明了 `workflow_templates`、`workspace_templates` 或目录资源的包，读取其 manifest 和随包源码；没有对应安装包时，以本指南的格式和当前类型定义为准。
 
 ## 4. 创建 ToolPkg
 
@@ -1366,15 +1364,11 @@ my_toolpkg/
 
 ToolPkg 涉及 main、子包、UI、hook 与 provider 等上下文，单次执行一个函数不能替代安装与场景验证。任一步出现错误停止定位，不改包 id 或自动执行其他安装流程。
 
-## 11. 当前版本示例
+## 11. 按需查阅已安装插件
 
-Operit 插件开发套件 的示例路径为 `examples/packages/`，不是旧版根目录 `examples/`：
+本套件不复制插件示例或维护归档文件索引。AI 从 `/operitapp/data/extensions/device/packages/` 与 `/operitapp/data/extensions/space/packages/` 自行列举用户安装的插件，并按需读取 `/operitapp/data/cache/toolpkg/` 中已有的 ToolPkg 缓存。缓存可能不存在或过期，应与实际安装文件核验，不能当作完整安装列表。
 
-- `examples/packages/external/template_try/`：清单、资源、工作流模板与工作区模板注册。
-- `examples/packages/buildin/workflow/`：工具、UI、依赖公共接口及其构建契约。
-- `examples/packages/buildin/goal_mode/`：界面与插件注册示例。
-
-随软件携带的示例提供源码与构建配置，排除 `dist/`、`build/`、`tests-dist/` 生成目录。按所选示例的真实 `package.json` 和说明构建，输出可读的普通 JS；并非每个示例都采用相同打包命令。阅读 Skill 的示例不会自动将该包安装到当前 runtime。
+需要查看某个归档而没有可读缓存时，只将选中的 `.toolpkg` 解压到独立临时目录，不覆盖运行缓存或批量解压其他包。按所选插件实际附带的 manifest、`package.json` 和源码确定构建方式；成品未附带源码时明确说明，不把它当作完整开发项目。完整步骤见 [插件创作流程](./PLUGIN_CREATION_WORKFLOW.md)。
 
 ## 12. 参考资料
 

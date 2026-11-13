@@ -18,7 +18,7 @@ use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeContext;
 use operit_tools::runtime_support::{
     CachedMcpToolInfo, CoreNodeToolRuntime, CoreRouteChangeHandler, CoreRouteResumeContext,
-    RuntimeBundledExternalSkillAsset, RuntimeBundledExternalSkillPackageAsset,
+    RuntimeBundledExternalSkillAsset,
     RuntimeChatCallRequest, RuntimeChatSendRequest,
     RuntimeChatSlot, RuntimeCoreNodeRouteState, RuntimePluginAsset, RuntimeSkillCatalogEntry,
     RuntimeStructuredEditAction, RuntimeStructuredEditOperation, ToolRuntimeSupport,
@@ -41,7 +41,7 @@ use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
 use crate::plugins::BuiltinPluginAssets::{BUILTIN_PLUGIN_ASSETS, BUNDLED_EXTERNAL_PLUGIN_ASSETS};
 use crate::plugins::BundledExternalSkillAssets::{
-    BundledSkillPackage, BUILTIN_SKILL_NAMES, BUNDLED_EXTERNAL_SKILL_ASSETS, BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS,
+    BUILTIN_SKILL_NAMES, BUNDLED_EXTERNAL_SKILL_ASSETS,
 };
 use crate::services::TtsPlaybackService::TtsPlaybackService;
 
@@ -563,11 +563,6 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     #[allow(non_snake_case)]
     fn bundledExternalSkillAssets(&self) -> &'static [RuntimeBundledExternalSkillAsset] {
         runtimeBundledExternalSkillAssets()
-    }
-
-    /// Exposes shared package members used when materializing bundled skill examples.
-    fn bundledExternalSkillPackageAssets(&self) -> &'static [RuntimeBundledExternalSkillPackageAsset] {
-        runtimeBundledExternalSkillPackageAssets()
     }
 
     /// Returns whether a skill is visible to AI package activation.
@@ -1252,27 +1247,6 @@ fn runtimeBundledExternalSkillAssets() -> &'static [RuntimeBundledExternalSkillA
                     bytes: asset.bytes,
                 })
                 .collect()
-        })
-        .as_slice()
-}
-
-/// Returns archive references without decoding or retaining example media in memory.
-#[allow(non_snake_case)]
-fn runtimeBundledExternalSkillPackageAssets() -> &'static [RuntimeBundledExternalSkillPackageAsset] {
-    static ASSETS: OnceLock<Vec<RuntimeBundledExternalSkillPackageAsset>> = OnceLock::new();
-    ASSETS
-        .get_or_init(|| {
-            BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS.iter().map(|asset| {
-                RuntimeBundledExternalSkillPackageAsset {
-                    skillName: asset.skill_name,
-                    path: asset.path,
-                    archive: match asset.package {
-                        BundledSkillPackage::Builtin(index) => runtimeBuiltinPluginAssets()[index].bytes,
-                        BundledSkillPackage::External(index) => runtimeBundledExternalPluginAssets()[index].bytes,
-                    },
-                    member: asset.member,
-                }
-            }).collect()
         })
         .as_slice()
 }
