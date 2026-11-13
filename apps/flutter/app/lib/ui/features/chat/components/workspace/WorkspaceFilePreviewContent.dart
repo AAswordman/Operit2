@@ -264,7 +264,10 @@ class _WorkspaceHtmlPreview extends StatelessWidget {
     }
     return WorkspaceHtmlPreviewWidget(
       relativePath: filePath,
-      onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
+      onReadWorkspaceFileBytes: (path) => onReadWorkspaceFileBytes(
+        // The HTTP preview server returns URL paths without a leading slash.
+        filePath.startsWith('/') && !path.startsWith('/') ? '/$path' : path,
+      ),
     );
   }
 }

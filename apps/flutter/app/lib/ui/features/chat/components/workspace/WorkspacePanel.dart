@@ -35,7 +35,6 @@ import 'WorkspaceTabStrip.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'browser/automation/WorkspaceWebVisitSessionRegistry.dart';
 import 'browser/tabs/WorkspaceBrowserTabModels.dart';
-import 'file_preview/WorkspaceTextDocument.dart';
 import 'file_preview/WorkspaceTextCloseDialog.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
 import 'terminal/WorkspaceTerminalLaunch.dart';
@@ -2035,24 +2034,6 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   }
 
   /// Selects a tab after a content widget requests activation.
-  void _selectWorkspaceTab(WorkspaceTab tab, {int paneIndex = 0}) {
-    final tabs = _tabsForPane(paneIndex);
-    final index = tabs.indexOf(tab);
-    if (index < 0) {
-      return;
-    }
-    setState(() {
-      _setSelectedIndexForPane(paneIndex, index);
-    });
-    if (tab.kind == WorkspaceTabKind.browser &&
-        tab.browserSessionId != null &&
-        tab.browserSessionId!.isNotEmpty) {
-      try {
-        _browserViewStore.selectSession(tab.browserSessionId!);
-      } catch (_) {}
-    }
-  }
-
   /// Closes a tab after its content widget requests closure.
   void _closeWorkspaceTab(WorkspaceTab tab, {int paneIndex = 0}) {
     final tabs = _tabsForPane(paneIndex);
@@ -2103,57 +2084,12 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     await _terminalSessions.closePtySession(sessionId);
   }
 
-  /// Activates an existing file tab without reloading its editable draft.
-  bool _activateOpenFile(String absolutePath) {
-    for (final paneIndex in <int>[0, 1]) {
-      final tabs = _tabsForPane(paneIndex);
-      final index = tabs.indexWhere(
-        (tab) =>
-            tab.kind == WorkspaceTabKind.filePreview &&
-            tab.absolutePath == absolutePath,
-      );
-      if (index >= 0) {
-        _selectWorkspaceTab(tabs[index], paneIndex: paneIndex);
-        return true;
-      }
-    }
-    return false;
-  }
-
-  /// Opens a file once and gives editable formats a persistent document.
-  Future<void> _openFileTab(WorkspaceFileEntry entry) async {
-    if (_activateOpenFile(entry.path)) return;
-    final previewKind = workspacePreviewKindForPath(entry.path);
-    WorkspaceTextDocument? document;
-    // HTML is loaded by the preview server; pre-reading its text duplicates
-    // the core/VFS round trip and allocates an unused copy of the document.
-    if (previewKind == WorkspaceFilePreviewKind.text ||
-        previewKind == WorkspaceFilePreviewKind.markdown) {
-      document = WorkspaceTextDocument(
-        await widget.onReadWorkspaceTextFile(entry.relativePath),
-      );
-    }
-
-    if (!mounted) {
-      return;
-    }
-
-    // Another open request may complete while this file read is pending.
-    if (_activateOpenFile(entry.path)) return;
-    final tab = WorkspaceTab(
-      kind: WorkspaceTabKind.filePreview,
-      title: entry.name,
-      icon: workspacePreviewIconForKind(previewKind),
-      filePath: entry.relativePath,
-      absolutePath: entry.path,
-      textDocument: document,
-      previewKind: previewKind,
-    );
-    setState(() {
-      _session.tabs.add(tab);
-      _session.selectedIndex = _session.tabs.length - 1;
-    });
-  }
+  /// Shares file preview navigation with Markdown links in the chat pane.
+  Future<void> _openFileTab(WorkspaceFileEntry entry) => _session.openFile(
+    path: entry.path,
+    relativePath: entry.relativePath,
+    readText: widget.onReadWorkspaceTextFile,
+  );
 }
 
 enum _WorkspaceDropZone { center, left, right, top, bottom }

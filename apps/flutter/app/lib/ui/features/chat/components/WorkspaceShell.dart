@@ -6,6 +6,8 @@ import 'package:flutter/material.dart';
 import 'package:operit_ui/operit_ui.dart';
 
 import '../../../common/components/AdaptiveSidePanel.dart';
+import '../../../common/markdown/MarkdownLink.dart';
+import '../../../common/markdown/MarkdownFileScope.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../main/layout/SidebarDockController.dart';
 import '../../../main/layout/NavigationLayoutMetrics.dart';
@@ -64,6 +66,21 @@ class WorkspaceShell extends StatelessWidget {
   final Future<void> Function() onUnbindWorkspace;
   final Widget child;
 
+  /// Opens resolved message paths even while the workspace panel is unmounted.
+  Future<void> _openLinkedFile(String path) async {
+    final resolved = resolveMarkdownFilePath(
+      path,
+      fileDirectory,
+      decodePath: false,
+    );
+    await _session.openFile(
+      path: resolved,
+      relativePath: resolved,
+      readText: onReadWorkspaceTextFile,
+    );
+    onWorkspaceOpenChanged(true);
+  }
+
   /// Builds the workspace panel with plugins rendered as peer tabs.
   @override
   Widget build(BuildContext context) {
@@ -72,52 +89,57 @@ class WorkspaceShell extends StatelessWidget {
     final dockController = usesMainLayoutAttachment
         ? SidebarDockScope.maybeOf(context)
         : null;
-    return AdaptiveSidePanel(
-      open: workspaceOpen,
-      widePanelPadding: EdgeInsets.zero,
-      onOpenChanged: onWorkspaceOpenChanged,
-      layout: workspaceSidePanelLayout,
-      // Match the phone shell: cover only the body, leaving the original
-      // title and workspace toggle in the host toolbar visible.
-      overlayTopInset: usesMainLayoutAttachment
-          ? ThemeTopBarChrome.toolbarHeight + MediaQuery.paddingOf(context).top
-          : 0,
-      defaultWidth: workspaceDefaultWidth,
-      defaultWidthFraction: workspaceDefaultWidthFraction,
-      minWidth: workspaceMinWidth,
-      minContentWidth: workspaceMinChatWidth,
-      resizeHandleHitWidth: workspaceResizeHandleHitWidth,
-      resizeHandleVisualWidth: workspaceResizeHandleVisualWidth,
-      resizeHandleHeight: workspaceResizeHandleHeight,
-      closedDropTarget: _WorkspacePluginDropTarget(
-        controller: dockController,
-        onAccepted: () => onWorkspaceOpenChanged(true),
-      ),
-      panel: SafeArea(
-        top: false,
-        left: false,
-        right: false,
-        child: WorkspacePanel(
-          session: _session,
-          sidebarDockController: dockController,
-          currentChatId: currentChatId,
-          hasBoundWorkspace: hasBoundWorkspace,
-          workspacePath: workspacePath,
-          fileDirectory: fileDirectory,
-          chatCore: chatCore,
-          onListWorkspaceFiles: onListWorkspaceFiles,
-          onMutateWorkspaceFile: onMutateWorkspaceFile,
-          onListWorkspaceBindingDirectories: onListWorkspaceBindingDirectories,
-          onReadWorkspaceTextFile: onReadWorkspaceTextFile,
-          onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
-          onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
-          onOpenWorkspaceFile: onOpenWorkspaceFile,
-          onCreateWorkspace: onCreateWorkspace,
-          onBindWorkspace: onBindWorkspace,
-          onUnbindWorkspace: onUnbindWorkspace,
+    return MarkdownLinkScope(
+      onOpenFile: _openLinkedFile,
+      child: AdaptiveSidePanel(
+        open: workspaceOpen,
+        widePanelPadding: EdgeInsets.zero,
+        onOpenChanged: onWorkspaceOpenChanged,
+        layout: workspaceSidePanelLayout,
+        // Match the phone shell: cover only the body, leaving the original
+        // title and workspace toggle in the host toolbar visible.
+        overlayTopInset: usesMainLayoutAttachment
+            ? ThemeTopBarChrome.toolbarHeight +
+                  MediaQuery.paddingOf(context).top
+            : 0,
+        defaultWidth: workspaceDefaultWidth,
+        defaultWidthFraction: workspaceDefaultWidthFraction,
+        minWidth: workspaceMinWidth,
+        minContentWidth: workspaceMinChatWidth,
+        resizeHandleHitWidth: workspaceResizeHandleHitWidth,
+        resizeHandleVisualWidth: workspaceResizeHandleVisualWidth,
+        resizeHandleHeight: workspaceResizeHandleHeight,
+        closedDropTarget: _WorkspacePluginDropTarget(
+          controller: dockController,
+          onAccepted: () => onWorkspaceOpenChanged(true),
         ),
+        panel: SafeArea(
+          top: false,
+          left: false,
+          right: false,
+          child: WorkspacePanel(
+            session: _session,
+            sidebarDockController: dockController,
+            currentChatId: currentChatId,
+            hasBoundWorkspace: hasBoundWorkspace,
+            workspacePath: workspacePath,
+            fileDirectory: fileDirectory,
+            chatCore: chatCore,
+            onListWorkspaceFiles: onListWorkspaceFiles,
+            onMutateWorkspaceFile: onMutateWorkspaceFile,
+            onListWorkspaceBindingDirectories:
+                onListWorkspaceBindingDirectories,
+            onReadWorkspaceTextFile: onReadWorkspaceTextFile,
+            onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
+            onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
+            onOpenWorkspaceFile: onOpenWorkspaceFile,
+            onCreateWorkspace: onCreateWorkspace,
+            onBindWorkspace: onBindWorkspace,
+            onUnbindWorkspace: onUnbindWorkspace,
+          ),
+        ),
+        child: child,
       ),
-      child: child,
     );
   }
 }

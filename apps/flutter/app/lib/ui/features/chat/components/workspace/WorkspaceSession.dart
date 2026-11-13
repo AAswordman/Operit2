@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import 'WorkspaceTabModels.dart';
+import 'file_preview/WorkspaceTextDocument.dart';
 import '../../../../common/contributions/PluginWorkspacePresentation.dart';
 import '../../../../common/icons/MaterialIconNameResolver.dart';
 
@@ -32,6 +33,55 @@ class WorkspaceSession extends ChangeNotifier {
   double splitRatio = 0.5;
   bool secondaryPaneFirst = false;
   int tabIdentitySequence = 0;
+
+  /// Reuses file previews and their drafts across Markdown links and the file tree.
+  Future<void> openFile({
+    required String path,
+    required String relativePath,
+    required Future<String> Function(String path) readText,
+  }) async {
+    bool activate() {
+      for (final pane in [tabs, secondaryTabs]) {
+        final index = pane.indexWhere(
+          (tab) =>
+              tab.kind == WorkspaceTabKind.filePreview &&
+              tab.absolutePath == path,
+        );
+        if (index < 0) continue;
+        if (identical(pane, tabs)) {
+          selectedIndex = index;
+        } else {
+          secondarySelectedIndex = index;
+        }
+        notifyListeners();
+        return true;
+      }
+      return false;
+    }
+
+    if (activate()) return;
+    final kind = workspacePreviewKindForPath(path);
+    final document =
+        kind == WorkspaceFilePreviewKind.text ||
+            kind == WorkspaceFilePreviewKind.markdown
+        ? WorkspaceTextDocument(await readText(relativePath))
+        : null;
+    // A second request may have opened this file while its contents loaded.
+    if (activate()) return;
+    tabs.add(
+      WorkspaceTab(
+        kind: WorkspaceTabKind.filePreview,
+        title: path.split('/').last,
+        icon: workspacePreviewIconForKind(kind),
+        filePath: relativePath,
+        absolutePath: path,
+        textDocument: document,
+        previewKind: kind,
+      ),
+    );
+    selectedIndex = tabs.length - 1;
+    notifyListeners();
+  }
 
   /// Semantic conversation context forwarded opaquely to independently owned plugin pages.
   Map<String, Object?> _pluginHostState = const {};

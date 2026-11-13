@@ -11,6 +11,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
+import 'package:operit2/ui/common/markdown/MarkdownLink.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceFilePreviewContent.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceTabModels.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceTabStrip.dart';
@@ -1419,6 +1420,44 @@ void main() {
       expect(document.isDirty, isTrue);
     },
   );
+
+  testWidgets('Markdown preview resolves file links beside its own document', (
+    tester,
+  ) async {
+    final opened = <String>[];
+    final browser = <String?>[];
+    final document = WorkspaceTextDocument('[report](../report.txt)');
+    await tester.pumpWidget(
+      _app(
+        MarkdownLinkScope(
+          onOpenFile: (path) async {
+            opened.add(path);
+          },
+          child: WorkspaceTextPreview(
+            tab: _textTab(document, kind: WorkspaceFilePreviewKind.markdown),
+            onWriteWorkspaceFileBytes: (_, _) async {},
+            onOpenBrowser: ({url, localFilePath, workspaceHtmlPath}) {
+              browser.add(url);
+            },
+            splitMarkdownContent: (_) async => [],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Markdown 预览'));
+    await tester.pumpAndSettle();
+    final preview = tester.widget<StreamMarkdownRenderer>(
+      find.byType(StreamMarkdownRenderer),
+    );
+    preview.onLinkClick!('../中文%20报告.txt');
+    await tester.pumpAndSettle();
+    expect(opened, ['/workspace/中文 报告.txt']);
+    expect(browser, isEmpty);
+    preview.onLinkClick!('https://example.org/report.txt');
+    expect(browser, ['https://example.org/report.txt']);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('Markdown zoom corrects the scroll viewport before painting', (
     tester,

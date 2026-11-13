@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import '../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../common/components/RetainedPage.dart';
 import '../../../../../common/markdown/StreamMarkdownRenderer.dart';
+import '../../../../../common/markdown/MarkdownLink.dart';
 import '../../../../../theme/OperitGlassSurface.dart';
 import '../WorkspaceTabModels.dart';
 import 'WorkspaceTextDocument.dart';
@@ -674,8 +675,28 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
                                     isStreaming: false,
                                     textColor: theme.colorScheme.onSurface,
                                     backgroundColor: Colors.transparent,
-                                    onLinkClick: (url) =>
-                                        widget.onOpenBrowser(url: url),
+                                    onLinkClick: (url) {
+                                      final path = markdownFileLinkPath(url);
+                                      if (path == null) {
+                                        widget.onOpenBrowser(url: url);
+                                        return;
+                                      }
+                                      final file =
+                                          widget.tab.absolutePath ??
+                                          widget.tab.filePath!;
+                                      final separator = file.lastIndexOf('/');
+                                      final base = separator < 0
+                                          ? null
+                                          : file.substring(0, separator + 1);
+                                      openMarkdownFileLink(
+                                        url,
+                                        null,
+                                        basePath: base,
+                                        onOpenFile: MarkdownLinkScope.maybeOf(
+                                          context,
+                                        )?.onOpenFile,
+                                      );
+                                    },
                                     splitMarkdownContent:
                                         widget.splitMarkdownContent,
                                   ),

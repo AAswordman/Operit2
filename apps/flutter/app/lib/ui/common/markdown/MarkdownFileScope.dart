@@ -4,18 +4,29 @@ import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core;
 
 /// Resolves historical links against the directory saved on their message.
-String resolveMarkdownFilePath(String source, String? base) {
+/// Set [decodePath] to false when the input is already a decoded file path.
+String resolveMarkdownFilePath(
+  String source,
+  String? base, {
+  bool decodePath = true,
+}) {
   final value = source.trim();
   if (value.isEmpty || base == null || base.isEmpty) return value;
-  if (value.startsWith('#') ||
+  if ((decodePath && value.startsWith('#')) ||
       value.startsWith('/') ||
       RegExp(r'^[A-Za-z][A-Za-z0-9+.-]*:').hasMatch(value)) {
     return value;
   }
-  final relative = Uri.tryParse(value);
-  if (relative == null) return value;
+  final relative = decodePath ? Uri.tryParse(value) : null;
+  if (decodePath && relative == null) return value;
+  final String path;
+  try {
+    path = decodePath ? Uri.decodeComponent(relative!.path) : value;
+  } on FormatException {
+    return value;
+  }
   final parts = base.split('/').where((p) => p.isNotEmpty).toList();
-  for (final part in Uri.decodeComponent(relative.path).split('/')) {
+  for (final part in path.split('/')) {
     if (part.isEmpty || part == '.') continue;
     if (part == '..') {
       if (parts.isEmpty) return value;

@@ -252,7 +252,7 @@ impl WorkspaceService {
         chatId: String,
         relativePath: String,
     ) -> Result<String, String> {
-        let filePath = self.filePathForChat(&chatId, &relativePath)?;
+        let filePath = self.previewFilePathForChat(&chatId, &relativePath)?;
         self.vfs().readFile(&filePath)
     }
 
@@ -263,7 +263,7 @@ impl WorkspaceService {
         chatId: String,
         relativePath: String,
     ) -> Result<WorkspaceFileBytes, String> {
-        let filePath = self.filePathForChat(&chatId, &relativePath)?;
+        let filePath = self.previewFilePathForChat(&chatId, &relativePath)?;
         let bytes = self.vfs().readFileBytes(&filePath)?;
         Ok(WorkspaceFileBytes {
             base64Content: STANDARD.encode(bytes),
@@ -278,7 +278,7 @@ impl WorkspaceService {
         relativePath: String,
         content: String,
     ) -> Result<(), String> {
-        let filePath = self.filePathForChat(&chatId, &relativePath)?;
+        let filePath = self.previewFilePathForChat(&chatId, &relativePath)?;
         self.trackWorkspaceChange(&filePath, || self.vfs()
             .writeFile(&filePath, &content, false))
     }
@@ -291,7 +291,7 @@ impl WorkspaceService {
         relativePath: String,
         base64Content: String,
     ) -> Result<(), String> {
-        let filePath = self.filePathForChat(&chatId, &relativePath)?;
+        let filePath = self.previewFilePathForChat(&chatId, &relativePath)?;
         let bytes = STANDARD
             .decode(base64Content.as_bytes())
             .map_err(|error| error.to_string())?;
@@ -302,7 +302,7 @@ impl WorkspaceService {
     /// Opens a chat-bound workspace file through the host file opener.
     #[allow(non_snake_case)]
     pub fn openWorkspaceFile(&self, chatId: String, relativePath: String) -> Result<(), String> {
-        let filePath = self.filePathForChat(&chatId, &relativePath)?;
+        let filePath = self.previewFilePathForChat(&chatId, &relativePath)?;
         self.vfs().openFile(&filePath)
     }
 
@@ -409,6 +409,15 @@ impl WorkspaceService {
             Some(id) => self.workspaceStore.getById(&id).map_err(|error| error.to_string()),
             None => Ok(None),
         }
+    }
+
+    /// Accepts resolved Markdown file addresses without changing tree mutation paths.
+    #[allow(non_snake_case)]
+    fn previewFilePathForChat(&self, chatId: &str, path: &str) -> Result<String, String> {
+        if path.trim().starts_with('/') {
+            return VfsPath::normalizeVfsPath(path);
+        }
+        self.filePathForChat(chatId, path)
     }
 
     /// Reuses the same persisted base as file tools when this chat has no workspace.
