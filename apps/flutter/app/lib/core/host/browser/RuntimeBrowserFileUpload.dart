@@ -11,15 +11,16 @@ class RuntimeBrowserFileUpload {
   RuntimeBrowserFileUpload(this._controller);
 
   final WebViewController _controller;
+  int _nextCaptureId = 0;
 
   /// Runs an automation action while capturing the file chooser it opens.
   Future<void> run(String script) {
-    return _controller.runJavaScript(_captureScript(script));
+    return _capture(() => _controller.runJavaScript(script));
   }
 
   /// Evaluates an automation action and preserves its JavaScript return value.
   Future<Object?> evaluate(String script) {
-    return _controller.runJavaScriptReturningResult(_captureScript(script));
+    return _capture(() => _controller.runJavaScriptReturningResult(script));
   }
 
   /// Applies host-provided files, clears the selection, or cancels the chooser.
@@ -33,12 +34,33 @@ window.__operitBrowserFileChooser.run(() =>
 ''');
   }
 
-  /// Wraps page code in the chooser runtime without changing global evaluation.
-  String _captureScript(String script) {
-    return '''
+  /// Keeps chooser capture active while the WebView executes unmodified code.
+  ///
+  /// Page-owned eval is subject to CSP. Separate native calls preserve script
+  /// completion values and global declarations without evaluating a string in
+  /// the page. Unique scopes keep overlapping actions and navigation independent.
+  Future<T> _capture<T>(Future<T> Function() action) async {
+    final captureId = _nextCaptureId++;
+    await _controller.runJavaScript('''
 $_fileChooserRuntimeScript
-window.__operitBrowserFileChooser.run(() => (0, eval)(${jsonEncode(script)}));
-''';
+window.__operitBrowserFileChooser.beginCapture($captureId);
+''');
+    var actionFailed = false;
+    try {
+      return await action();
+    } catch (_) {
+      actionFailed = true;
+      rethrow;
+    } finally {
+      try {
+        await _controller.runJavaScript(
+          'window.__operitBrowserFileChooser?.endCapture($captureId);',
+        );
+      } catch (_) {
+        // A navigation or disposed WebView must not hide the action's error.
+        if (!actionFailed) rethrow;
+      }
+    }
   }
 
   /// Decodes the internal host payload while preserving explicit cancellation.
@@ -91,28 +113,44 @@ const _fileChooserRuntimeScript = r'''
   class BrowserFileChooser {
     /** Creates the lifecycle state for one page and its accessible frames. */
     constructor() {
-      this.captureDepth = 0;
+      this.captureScopes = new Set();
       this.pendingInput = null;
       this.documents = new WeakSet();
       this.frames = new WeakSet();
       this.onClick = this.capture.bind(this);
     }
 
+    /** Counts only the capture scopes still active in this document. */
+    get captureDepth() {
+      return this.captureScopes.size;
+    }
+
+    /** Opens an independent scope for a native or in-page automation action. */
+    beginCapture(scope = Symbol()) {
+      this.installDocument(document);
+      this.captureScopes.add(scope);
+      return scope;
+    }
+
+    /** Ignores scopes belonging to an earlier document after navigation. */
+    endCapture(scope) {
+      this.captureScopes.delete(scope);
+    }
+
     /** Captures chooser requests only for the duration of an automation action. */
     run(action) {
-      this.installDocument(document);
-      this.captureDepth++;
+      const scope = this.beginCapture();
       let asynchronous = false;
       try {
         const result = action();
         if (result && typeof result.then === 'function') {
-          const pending = Promise.resolve(result).finally(() => { this.captureDepth--; });
+          const pending = Promise.resolve(result).finally(() => { this.endCapture(scope); });
           asynchronous = true;
           return pending;
         }
         return result;
       } finally {
-        if (!asynchronous) this.captureDepth--;
+        if (!asynchronous) this.endCapture(scope);
       }
     }
 

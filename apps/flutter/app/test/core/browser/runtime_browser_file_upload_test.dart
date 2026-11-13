@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -93,9 +94,88 @@ void main() {
     },
   );
 
-  test('evaluation preserves the decoded WebView return value', () async {
-    expect(await upload.evaluate('42'), 42);
-    expect(platform.evaluations, hasLength(1));
+  test(
+    'evaluation preserves the result and sends the original script',
+    () async {
+      const script = 'var answer = 40; answer + 2;';
+      expect(await upload.evaluate(script), 42);
+      expect(platform.evaluations, [script]);
+      expect(platform.scripts, hasLength(2));
+      expect(platform.scripts.first, contains('beginCapture(0)'));
+      expect(platform.scripts.last, contains('endCapture(0)'));
+    },
+  );
+
+  test(
+    'actions execute directly between opening and closing capture',
+    () async {
+      const script = 'document.querySelector("input")?.click();';
+      await upload.run(script);
+      expect(platform.scripts, hasLength(3));
+      expect(platform.scripts.first, contains('beginCapture(0)'));
+      expect(platform.scripts[1], script);
+      expect(platform.scripts.last, contains('endCapture(0)'));
+      expect(platform.evaluations, isEmpty);
+    },
+  );
+
+  test('capture stays open until asynchronous evaluation finishes', () async {
+    final result = Completer<Object>();
+    platform.pendingResult = result.future;
+    final evaluation = upload.evaluate('pending');
+    await Future<void>.delayed(Duration.zero);
+    expect(platform.evaluations, ['pending']);
+    expect(platform.scripts, hasLength(1));
+    result.complete(42);
+    expect(await evaluation, 42);
+    expect(platform.scripts.last, contains('endCapture(0)'));
+  });
+
+  test('failed capture setup does not execute the action', () async {
+    final failure = StateError('WebView unavailable');
+    platform.failure = failure;
+    await expectLater(upload.evaluate('42'), throwsA(same(failure)));
+    expect(platform.evaluations, isEmpty);
+    expect(platform.scripts, hasLength(1));
+  });
+
+  test('evaluation failures propagate and release capture', () async {
+    final failure = StateError('page script failed');
+    platform.evaluationFailure = failure;
+    await expectLater(upload.evaluate('broken'), throwsA(same(failure)));
+    expect(platform.scripts.last, contains('endCapture(0)'));
+  });
+
+  test('action failures propagate and release capture', () async {
+    final failure = StateError('click failed');
+    platform.failureForScript = (script) => script == 'broken' ? failure : null;
+    await expectLater(upload.run('broken'), throwsA(same(failure)));
+    expect(platform.scripts.last, contains('endCapture(0)'));
+  });
+
+  test('cleanup failures do not hide the original evaluation error', () async {
+    final failure = StateError('original page error');
+    platform.evaluationFailure = failure;
+    platform.failureForScript = (script) => script.contains('?.endCapture(')
+        ? StateError('WebView disposed during cleanup')
+        : null;
+    await expectLater(upload.evaluate('broken'), throwsA(same(failure)));
+  });
+
+  test('cleanup failures after successful actions remain failures', () async {
+    final failure = StateError('WebView disposed during cleanup');
+    platform.failureForScript = (script) =>
+        script.contains('?.endCapture(') ? failure : null;
+    await expectLater(upload.evaluate('42'), throwsA(same(failure)));
+  });
+
+  test('each native action uses a distinct capture scope', () async {
+    await upload.evaluate('first');
+    await upload.evaluate('second');
+    expect(platform.scripts[0], contains('beginCapture(0)'));
+    expect(platform.scripts[1], contains('endCapture(0)'));
+    expect(platform.scripts[2], contains('beginCapture(1)'));
+    expect(platform.scripts[3], contains('endCapture(1)'));
   });
 }
 
@@ -117,18 +197,23 @@ class _RecordingController extends PlatformWebViewController {
   final scripts = <String>[];
   final evaluations = <String>[];
   Object? failure;
+  Object? evaluationFailure;
+  Object? Function(String script)? failureForScript;
+  Future<Object>? pendingResult;
 
   /// Records one upload attempt and propagates an explicitly configured error.
   @override
   Future<void> runJavaScript(String javaScript) async {
     scripts.add(javaScript);
     if (failure case final error?) throw error;
+    if (failureForScript?.call(javaScript) case final error?) throw error;
   }
 
   /// Returns the decoded value provided by the shared WebView controller API.
   @override
   Future<Object> runJavaScriptReturningResult(String javaScript) async {
     evaluations.add(javaScript);
-    return 42;
+    if (evaluationFailure case final error?) throw error;
+    return pendingResult ?? Future.value(42);
   }
 }

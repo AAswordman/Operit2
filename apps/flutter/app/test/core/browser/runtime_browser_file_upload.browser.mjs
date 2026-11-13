@@ -155,3 +155,85 @@ export async function verifyManualFileSelection(page) {
   const pending = await page.evaluate(() => window.__operitBrowserFileChooser.pendingInput);
   if (pending !== null) throw new Error('Manual file selection was intercepted');
 }
+
+/** Verifies native script injection on a page that explicitly forbids unsafe-eval. */
+export async function verifyBrowserFileUploadCsp(page, runtimeScript) {
+  await page.goto('about:blank');
+  await page.setContent(`
+    <meta http-equiv="Content-Security-Policy" content="script-src 'self'">
+    <input id="file" type="file">
+    <button id="button">Click</button>
+  `);
+  const session = await page.context().newCDPSession(page);
+  const checks = [];
+  let captureId = 0;
+
+  /** Uses native injection while keeping CSP restrictions on page-owned eval. */
+  async function inject(expression) {
+    const response = await session.send('Runtime.evaluate', {
+      expression,
+      returnByValue: true,
+      awaitPromise: true,
+      allowUnsafeEvalBlockedByCSP: false,
+    });
+    if (response.exceptionDetails) {
+      throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+    }
+    return response.result.value;
+  }
+
+  /** Mirrors the host's separate capture, native execution, and cleanup calls. */
+  async function evaluate(script) {
+    const scope = captureId++;
+    await inject(`${runtimeScript}\nwindow.__operitBrowserFileChooser.beginCapture(${scope});`);
+    try {
+      return await inject(script);
+    } finally {
+      await inject(`window.__operitBrowserFileChooser?.endCapture(${scope});`);
+    }
+  }
+
+  function check(condition, label) {
+    if (!condition) throw new Error(label);
+    checks.push(label);
+  }
+
+  try {
+    let evalBlocked = false;
+    try {
+      await inject("(0, eval)('1 + 1')");
+    } catch (error) {
+      evalBlocked = error.message.includes('EvalError') && error.message.includes('Content Security Policy');
+    }
+    check(evalBlocked, 'strict CSP rejects the original indirect-eval path');
+    check(await evaluate('1 + 1') === 2, 'native evaluation succeeds under strict CSP');
+    check((await evaluate('({width: innerWidth})')).width > 0, 'object results survive strict CSP');
+    check(await evaluate('var __cspGlobal = 40; __cspGlobal + 2;') === 42, 'statement completion values are preserved');
+    check(await evaluate('window.__cspGlobal') === 40, 'global declarations survive later calls');
+    await inject("document.getElementById('button').addEventListener('click', () => window.__clicked = true);");
+    await evaluate("document.getElementById('button').click();");
+    check(await inject('window.__clicked') === true, 'click handlers execute under strict CSP');
+    check(await evaluate("(async () => { await Promise.resolve(); document.getElementById('file').click(); return 42; })()") === 42,
+      'asynchronous file chooser actions preserve their results');
+    check(await inject("window.__operitBrowserFileChooser.pendingInput === document.getElementById('file')"),
+      'asynchronous file chooser requests are intercepted');
+    await inject(`window.__operitBrowserFileChooser.run(() => window.__operitBrowserFileChooser.upload([
+      {name: 'csp.txt', base64: btoa('CSP upload'), type: 'text/plain'}
+    ]));`);
+    check(await inject("document.getElementById('file').files[0].text()") === 'CSP upload',
+      'file uploads still work under strict CSP');
+    for (const script of ['const = invalid', 'throw new Error("page failure")']) {
+      let failed = false;
+      try {
+        await evaluate(script);
+      } catch {
+        failed = true;
+      }
+      check(failed && await inject('window.__operitBrowserFileChooser.captureDepth') === 0,
+        `errors propagate and release capture: ${script}`);
+    }
+    return checks;
+  } finally {
+    await session.detach();
+  }
+}
