@@ -17,6 +17,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   operit_system_fonts
   printing
   record_windows
+  share_plus
   url_launcher_windows
   webview_all_windows
 )

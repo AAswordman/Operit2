@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
+use operit_util::FileUtils::FileUtils;
 use operit_host_api::{HostError, HostErrorKind, HostResult, RuntimeStorageHost};
 use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership, RUNTIME_CHAT_OUTPUTS_DIR_PATH, LEGACY_CHAT_ATTACHMENTS_DIR_PATH};
 use crate::FileSyncPolicy::{FileSyncPolicy, FileReference, POLICY_PATH, REFERENCE_SUFFIX, MAX_POLICY_BYTES, readLimitedForScan, ignored, readIgnoreForScan, isControl};
@@ -151,6 +152,13 @@ impl WorkspaceFileSyncStore {
     /// Traverses accessible files and retains prior inventory beneath permission failures.
     fn scanUnlocked(&self) -> Result<usize, String> {
         let mut state = self.load()?;
+        // Incompatible names are outside sync scope, including old recovery state.
+        self.operations().ignoreNonPortableFileOperations().map_err(|e| e.to_string())?;
+        let previousCounts = (state.files.len(), state.references.len(), state.deferred.len());
+        state.files.retain(|path, _| FileUtils::isPortableFilePath(path));
+        state.references.retain(|path, _| FileUtils::isPortableFilePath(path));
+        state.deferred.retain(|path, _| FileUtils::isPortableFilePath(path));
+        if previousCounts != (state.files.len(), state.references.len(), state.deferred.len()) { self.save(&state)?; }
         self.recoverPending(&mut state)?;
         // Received states outside the current policy remain durable. Re-enabling
         // a path restores the latest received version instead of losing it.
@@ -180,7 +188,7 @@ impl WorkspaceFileSyncStore {
             }
             let Some(entries) = self.scanRead(self.host.list(root), root, &mut skipped)? else { continue; };
             for entry in entries {
-                if !entry.isDirectory { continue; }
+                if !entry.isDirectory || !FileUtils::isPortableFilePath(&entry.path) { continue; }
                 let Some(policy) = self.scanRead(FileSyncPolicy::loadForScan(self.host.as_ref(), &entry.path), &entry.path, &mut skipped)? else { continue; };
                 let Some(mut rules) = self.scanRead(policy.rulesForScan(self.host.as_ref(), &entry.path), &entry.path, &mut skipped)? else { continue; };
                 let mut candidates = Inventory::new();
@@ -201,6 +209,7 @@ impl WorkspaceFileSyncStore {
         for (path, stamp) in &large {
             if isSkipped(path, &skipped) { continue; }
             let sidecar = format!("{path}{REFERENCE_SUFFIX}");
+            if !FileUtils::isPortableFilePath(&sidecar) { skipped.push(path.clone()); continue; }
             // A formerly small file exceeding the limit is no longer uploaded,
             // but changing a limit must not erase the peer's existing copy.
             let Some(referenceStamp) = self.scanRead(self.captureReference(path, stamp, state.references.get(path)), path, &mut skipped)? else {
@@ -314,6 +323,7 @@ impl WorkspaceFileSyncStore {
             if let Some(rule) = rule { rules.push(rule); }
         }
         for entry in entries {
+            if !FileUtils::isPortableFilePath(&entry.path) { continue; }
             validatePath(&entry.path)?;
             entry.path.strip_prefix(&format!("{directory}/")).ok_or_else(|| format!("Managed entry escaped directory: {}", entry.path))?;
             if isSkipped(&entry.path, skipped) { continue; }
@@ -333,6 +343,9 @@ impl WorkspaceFileSyncStore {
     pub fn applyOperation(&self, operation: &SyncOperation, bootstrap: bool) -> Result<bool, String> {
         let applied = self.materializeOperation(operation, bootstrap)?;
         self.operations().appendOperation(operation).map_err(|e| e.to_string())?;
+        if !FileUtils::isPortableFilePath(&operation.entityId) {
+            self.operations().ignoreFileOperations(&operation.domain, &operation.entityId).map_err(|e| e.to_string())?;
+        }
         Ok(applied)
     }
 
@@ -353,6 +366,10 @@ impl WorkspaceFileSyncStore {
         let operations = self.operations();
         let mut decisions = Vec::new();
         for operation in batch {
+            if !FileUtils::isPortableFilePath(&operation.entityId) {
+                decisions.push(false);
+                continue;
+            }
             let apply = bootstrap || operations.shouldApplyOperation(operation).map_err(|e| e.to_string())?;
             if apply {
                 self.applyUnlocked(&operation.entityId, &operation.operation, operation.payload.clone())?;
@@ -379,6 +396,7 @@ impl WorkspaceFileSyncStore {
 
     /// Saves a complete recovery intent before materializing the incoming state.
     fn applyUnlocked(&self, path: &str, operation: &str, payload: serde_json::Value) -> Result<(), String> {
+        if !FileUtils::isPortableFilePath(path) { return Ok(()); }
         let next: Option<RuntimeFileSnapshot> = match operation {
             "upsert" => Some(serde_json::from_value(payload).map_err(|e| e.to_string())?),
             "delete" => None,
@@ -402,6 +420,7 @@ impl WorkspaceFileSyncStore {
 
     /// Policy decisions precede content transfer as well as materialization.
     pub fn wantsBlob(&self, operation: &SyncOperation) -> Result<bool, String> {
+        if !FileUtils::isPortableFilePath(&operation.entityId) { return Ok(false); }
         let snapshot = if operation.operation == "upsert" { Some(serde_json::from_value::<RuntimeFileSnapshot>(operation.payload.clone()).map_err(|e| e.to_string())?) } else { None };
         self.accepts(&operation.entityId, snapshot.as_ref())
     }
@@ -418,6 +437,7 @@ impl WorkspaceFileSyncStore {
     }
 
     pub(crate) fn captureLimit(&self, path: &str) -> Result<Option<usize>, String> {
+        if !FileUtils::isPortableFilePath(path) { return Ok(None); }
         let state = self.load()?;
         if state.references.contains_key(path) { return Ok(None); }
         let root = managedDirectory(path)?;
@@ -433,6 +453,7 @@ impl WorkspaceFileSyncStore {
 
     /// Evaluates incoming policy limits while retaining typed errors from local rules.
     fn acceptsForScan(&self, path: &str, snapshot: Option<&RuntimeFileSnapshot>) -> HostResult<bool> {
+        if !FileUtils::isPortableFilePath(path) { return Ok(false); }
         let root = managedDirectory(path).map_err(HostError::new)?;
         let policy = FileSyncPolicy::loadForScan(self.host.as_ref(), &root)?;
         if !policy.includesForScan(self.host.as_ref(), &root, path, false)? { return Ok(false); }
@@ -455,6 +476,10 @@ impl WorkspaceFileSyncStore {
 
     /// Completes an interrupted incoming write before any scan can publish local changes.
     fn recoverPending(&self, state: &mut ScanState) -> Result<(), String> {
+        if state.pending.as_ref().is_some_and(|(path, _)| !FileUtils::isPortableFilePath(path)) {
+            state.pending = None;
+            return self.save(state);
+        }
         let content = match &state.pending {
             Some((_, Some(snapshot))) => Some(self.files().readBlob(&snapshot.reference)?),
             _ => None,

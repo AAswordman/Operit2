@@ -32,6 +32,24 @@ ThemeData buildOperitThemeData(
   return ThemeData(
     colorScheme: colorScheme,
     scaffoldBackgroundColor: Colors.transparent,
+    // The scene background lives above the Navigator. A solid transition fill
+    // would cover it until the editor route finishes entering or leaving.
+    pageTransitionsTheme: PageTransitionsTheme(
+      builders: {
+        ...const PageTransitionsTheme().builders,
+        TargetPlatform.android:
+            const _ThemePredictiveBackPageTransitionsBuilder(),
+        TargetPlatform.windows: const ZoomPageTransitionsBuilder(
+          backgroundColor: Colors.transparent,
+        ),
+        TargetPlatform.linux: const ZoomPageTransitionsBuilder(
+          backgroundColor: Colors.transparent,
+        ),
+        TargetPlatform.fuchsia: const ZoomPageTransitionsBuilder(
+          backgroundColor: Colors.transparent,
+        ),
+      },
+    ),
     canvasColor: colorScheme.surface,
     textTheme: textTheme,
     inputDecorationTheme: _inputDecorationTheme(colorScheme, textTheme),
@@ -63,6 +81,40 @@ ThemeData buildOperitThemeData(
     fontFamilyFallback: fontFamilyFallback,
     useMaterial3: true,
   );
+}
+
+/// Preserves Android's predictive back gesture and keeps ordinary navigation
+/// transparent to the background shared by all routes.
+class _ThemePredictiveBackPageTransitionsBuilder
+    extends PredictiveBackPageTransitionsBuilder {
+  const _ThemePredictiveBackPageTransitionsBuilder();
+
+  @override
+  Widget buildTransitions<T>(
+    PageRoute<T> route,
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    final theme = Theme.of(context);
+    // Keep the framework's gesture observer mounted. Only its transition sees
+    // a transparent surface; the page retains the original Material colors.
+    return Theme(
+      data: theme.copyWith(
+        colorScheme: theme.colorScheme.copyWith(surface: Colors.transparent),
+      ),
+      child: Builder(
+        builder: (context) => super.buildTransitions(
+          route,
+          context,
+          animation,
+          secondaryAnimation,
+          Theme(data: theme, child: child),
+        ),
+      ),
+    );
+  }
 }
 
 /// Builds the shared theme for Material 3 DropdownMenu widgets.

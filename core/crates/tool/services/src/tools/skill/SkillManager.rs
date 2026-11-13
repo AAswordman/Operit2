@@ -333,18 +333,49 @@ impl SkillManager {
             .collect()
     }
 
-    /// Installs one bundled external skill into the skills directory.
+    /// Compares every shipped file, including shared example resources, with an installed skill.
+    /// None means this application has no bundled update source for the skill.
+    #[allow(non_snake_case)]
+    pub fn bundledSkillNeedsUpdate(
+        &self,
+        skill: &SkillPackage,
+        runtimeSupport: &dyn ToolRuntimeSupport,
+    ) -> Result<Option<bool>, String> {
+        let assets = runtimeSupport.bundledExternalSkillAssets();
+        if !assets.iter().any(|asset| asset.skillName == skill.name) {
+            return Ok(None);
+        }
+        let differs = |path: &str, bytes: &[u8]| -> Result<bool, String> {
+            let path = hostPath(&skill.directory.join(normalizeAssetRelativePath(path)?));
+            if !self.filesystem.fileExists(&path)?.exists {
+                return Ok(true);
+            }
+            Ok(self.filesystem.readFileBytes(&path)? != bytes)
+        };
+        for asset in assets.iter().filter(|asset| asset.skillName == skill.name) {
+            if differs(asset.path, asset.bytes)? {
+                return Ok(Some(true));
+            }
+        }
+        for asset in runtimeSupport
+            .bundledExternalSkillPackageAssets()
+            .iter()
+            .filter(|asset| asset.skillName == skill.name)
+        {
+            if differs(asset.path, &asset.readBytes()?)? {
+                return Ok(Some(true));
+            }
+        }
+        Ok(Some(false))
+    }
+
+    /// Installs or explicitly updates a bundled skill, retaining its location and settings.
     #[allow(non_snake_case)]
     pub fn importBundledExternalSkill(
         &self,
         skillName: &str,
         runtimeSupport: &dyn ToolRuntimeSupport,
     ) -> Result<SkillPackage, String> {
-        if self.getAvailableSkills().contains_key(skillName) {
-            return Err(format!(
-                "Skill already exists in an installation location: {skillName}"
-            ));
-        }
         let skillAssets = runtimeSupport
             .bundledExternalSkillAssets()
             .iter()
@@ -353,65 +384,119 @@ impl SkillManager {
         if skillAssets.is_empty() {
             return Err(format!("Bundled external skill not found: {}", skillName));
         }
-
-        let skillsRoot = self.getSkillsRootDir();
-        let skillsRootPath = hostPath(&skillsRoot);
-        self.filesystem
-            .makeDirectory(&skillsRootPath, true)
-            .map_err(|error| format!("Cannot access skills directory: {}", error))?;
-
-        let skillRoot = skillsRoot.join(skillName);
-        let skillRootPath = hostPath(&skillRoot);
-        let skillRootInfo = self
-            .filesystem
-            .fileExists(&skillRootPath)
-            .map_err(|error| error.to_string())?;
-        if skillRootInfo.exists && !skillRootInfo.isDirectory {
-            return Err(format!(
-                "Skill path is not a directory: {}",
-                skillRoot.to_string_lossy()
-            ));
+        // Resolve existing ownership first so a shared installation is updated in place.
+        let (installed, errors) = self.getAvailableSkillsSnapshot();
+        if let Some(error) = errors.get(skillName) {
+            return Err(error.clone());
         }
-        self.filesystem
-            .makeDirectory(&skillRootPath, true)
-            .map_err(|error| format!("Failed to create skill directory: {}", error))?;
-
-        clearBundledSkillFiles(self.filesystem.as_ref(), &skillRoot)?;
-        for asset in skillAssets {
-            let normalizedPath = normalizeAssetRelativePath(asset.path)?;
-            let outputFile = skillRoot.join(normalizedPath);
-            self.filesystem
-                .writeFileBytes(&hostPath(&outputFile), asset.bytes)
-                .map_err(|error| format!("Failed to write bundled skill asset: {}", error))?;
-        }
-        for asset in runtimeSupport
-            .bundledExternalSkillPackageAssets()
-            .iter()
-            .filter(|asset| asset.skillName == skillName)
-        {
-            let normalizedPath = normalizeAssetRelativePath(asset.path)?;
-            let outputFile = skillRoot.join(normalizedPath);
-            let bytes = asset.readBytes()?;
-            self.filesystem
-                .writeFileBytes(&hostPath(&outputFile), &bytes)
-                .map_err(|error| format!("Failed to write bundled skill package asset: {}", error))?;
-        }
-
-        let builtin = runtimeSupport.builtinSkillNames().contains(&skillName);
-        ExtensionStore::default().registerDevice(
-            "skill",
-            skillName,
-            skillName,
-            serde_json::json!({"visible": !builtin, "builtin": builtin}),
-        )?;
-        let skills = self.getAvailableSkills();
-        let Some(skill) = skills.get(skillName) else {
-            return Err(format!(
-                "Skill '{}' was not loaded after creation",
-                skillName
-            ));
+        let existing = installed.get(skillName);
+        let store = ExtensionStore::default();
+        let record = existing
+            .map(|_| store.record("skill", skillName))
+            .transpose()?;
+        let skillRoot = existing.map(|skill| skill.directory.clone()).unwrap_or(
+            self.getSkillsRootDir()
+                .join(normalizeAssetRelativePath(skillName)?),
+        );
+        let parent = skillRoot
+            .parent()
+            .ok_or("Invalid bundled skill directory")?;
+        // Stage beside the skills root so catalog scans never see an incomplete skill.
+        let staging = parent.parent().ok_or("Invalid bundled skill root")?
+            .join(format!(".bundled_skill_{}", uuid::Uuid::new_v4()));
+        let prepared = staging.join("prepared");
+        let previous = staging.join("previous");
+        self.filesystem.makeDirectory(&hostPath(&prepared), true)?;
+        let install = || {
+            for asset in skillAssets {
+                let outputFile = prepared.join(normalizeAssetRelativePath(asset.path)?);
+                self.filesystem
+                    .writeFileBytes(&hostPath(&outputFile), asset.bytes)?;
+            }
+            for asset in runtimeSupport
+                .bundledExternalSkillPackageAssets()
+                .iter()
+                .filter(|asset| asset.skillName == skillName)
+            {
+                let outputFile = prepared.join(normalizeAssetRelativePath(asset.path)?);
+                self.filesystem
+                    .writeFileBytes(&hostPath(&outputFile), &asset.readBytes()?)?;
+            }
+            let skillFile = directSkillFile(self.filesystem.as_ref(), &prepared)
+                .ok_or("Bundled skill has no SKILL.md")?;
+            let (name, description) = parseSkillMetadata(self.filesystem.as_ref(), &skillFile)?;
+            if name != skillName {
+                return Err(format!(
+                    "Bundled skill identity mismatch: expected {skillName}, got {name}"
+                ));
+            }
+            let fileName = skillFile.file_name().ok_or("Invalid bundled skill file")?;
+            let hadPrevious = self.filesystem.fileExists(&hostPath(&skillRoot))?.exists;
+            if hadPrevious {
+                self.filesystem
+                    .moveFile(&hostPath(&skillRoot), &hostPath(&previous))?;
+            }
+            if let Err(error) = self
+                .filesystem
+                .moveFile(&hostPath(&prepared), &hostPath(&skillRoot))
+            {
+                if hadPrevious {
+                    self.filesystem
+                        .moveFile(&hostPath(&previous), &hostPath(&skillRoot))
+                        .map_err(|rollback| {
+                            format!("{error}; failed to restore previous skill: {rollback}")
+                        })?;
+                }
+                return Err(error);
+            }
+            let builtin = runtimeSupport.builtinSkillNames().contains(&skillName);
+            let published =
+                if let Some(record) = &record {
+                    // Preserve visibility, scope and any other user settings.
+                    let mut settings = record.settings.clone();
+                    settings["builtin"] = serde_json::json!(builtin);
+                    settings["bundled"] = serde_json::json!(true);
+                    store.setSettings("skill", skillName, settings)
+                } else {
+                    store.registerDevice("skill", skillName, skillName,
+                    serde_json::json!({"visible": !builtin, "builtin": builtin, "bundled": true}))
+                };
+            if let Err(error) = published {
+                self.filesystem.deleteFile(&hostPath(&skillRoot), true)?;
+                if hadPrevious {
+                    self.filesystem
+                        .moveFile(&hostPath(&previous), &hostPath(&skillRoot))
+                        .map_err(|rollback| {
+                            format!("{error}; failed to restore previous skill: {rollback}")
+                        })?;
+                }
+                return Err(error);
+            }
+            operit_store::ExtensionStore::notifyCatalogChanged();
+            Ok(SkillPackage {
+                name,
+                description,
+                skillFile: skillRoot.join(fileName),
+                directory: skillRoot.clone(),
+            })
         };
-        Ok(skill.clone())
+        let result = if record
+            .as_ref()
+            .is_some_and(|record| record.scope == "space")
+        {
+            operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::new(
+                operit_store::RuntimeStorageHost::defaultRuntimeStorageHost(),
+                operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+            )
+            .trackChanges(&[self.paths.runtime_storage_key(&skillRoot)?], install)
+        } else {
+            install()
+        };
+        // Keep the backup available if restoring it failed.
+        if !self.filesystem.fileExists(&hostPath(&previous))?.exists || result.is_ok() {
+            let _ = self.filesystem.deleteFile(&hostPath(&staging), true);
+        }
+        result
     }
 
     /// Installs the bundled package-builder skill used by quick plugin creation.
@@ -716,23 +801,6 @@ fn normalizeAssetRelativePath(path: &str) -> Result<PathBuf, String> {
         return Err(format!("Invalid plugin type asset path: {}", path));
     }
     Ok(normalized)
-}
-
-#[allow(non_snake_case)]
-fn clearBundledSkillFiles(
-    filesystem: &VisualFileSystem,
-    skillRoot: &Path,
-) -> Result<(), String> {
-    let children = filesystem
-        .listFiles(&hostPath(skillRoot))
-        .map_err(|error| format!("Failed to read bundled skill directory: {}", error))?;
-    for child in children {
-        let path = skillRoot.join(child.name);
-        filesystem
-            .deleteFile(&hostPath(&path), child.isDirectory)
-            .map_err(|error| format!("Failed to clear bundled skill entry: {}", error))?;
-    }
-    Ok(())
 }
 
 #[allow(non_snake_case)]

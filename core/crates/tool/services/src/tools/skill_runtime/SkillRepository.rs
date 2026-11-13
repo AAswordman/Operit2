@@ -81,7 +81,15 @@ impl SkillRepository {
             .getBundledExternalSkillCandidates(self.runtimeSupport.as_ref())
     }
 
-    /// Installs one bundled external skill.
+    /// Returns whether the installed skill differs from the bundled update source.
+    #[allow(non_snake_case)]
+    #[operit_route_macros::operit_core_internal]
+    pub fn bundledSkillNeedsUpdate(&self, skill: &SkillPackage) -> Result<Option<bool>, String> {
+        self.skillManager
+            .bundledSkillNeedsUpdate(skill, self.runtimeSupport.as_ref())
+    }
+
+    /// Installs or explicitly updates one bundled external skill.
     #[allow(non_snake_case)]
     pub fn importBundledExternalSkill(&self, skillName: &str) -> Result<SkillPackage, String> {
         self.skillManager

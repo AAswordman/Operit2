@@ -415,13 +415,6 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
     _wasExecutionActive = isExecutionActive;
     _scheduleFollowLatest();
 
-    final bodyChildren = widget.mergeRender(
-      startIndex: widget.group.startIndex,
-      endIndexInclusive: widget.group.endIndexInclusive,
-      renderInstanceKeyPrefix: 'group-${widget.group.stableKey}',
-      shouldRenderNode: _renderToolGroupXmlNode,
-    );
-
     return SelectionContainer.disabled(
       child: _ThinkToolsGroupAlpha(
         visible: widget.forceExpandGroups || widget.isVisible,
@@ -479,50 +472,57 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                 duration: widget.forceExpandGroups
                     ? _instantDuration
                     : _contentFadeDuration,
-                child: Padding(
-                  padding: const EdgeInsets.only(top: 2, bottom: 4, left: 10),
-                  child: Container(
-                    decoration: BoxDecoration(
-                      border: Border(
-                        left: BorderSide(
-                          color: Theme.of(
-                            context,
-                          ).colorScheme.outlineVariant.withValues(alpha: 0.55),
-                          width: 1.5,
+                builder: (context) {
+                  final bodyChildren = widget.mergeRender(
+                    startIndex: widget.group.startIndex,
+                    endIndexInclusive: widget.group.endIndexInclusive,
+                    renderInstanceKeyPrefix: 'group-${widget.group.stableKey}',
+                    shouldRenderNode: _renderToolGroupXmlNode,
+                  );
+                  return Padding(
+                    padding: const EdgeInsets.only(top: 2, bottom: 4, left: 10),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        border: Border(
+                          left: BorderSide(
+                            color: Theme.of(context).colorScheme.outlineVariant
+                                .withValues(alpha: 0.55),
+                            width: 1.5,
+                          ),
                         ),
                       ),
-                    ),
-                    padding: const EdgeInsets.only(left: 12),
-                    child: ConstrainedBox(
-                      constraints: const BoxConstraints(
-                        maxHeight: _maxBodyHeight,
-                      ),
-                      child: NotificationListener<ScrollNotification>(
-                        onNotification: _handleBodyScrollNotification,
-                        child: Listener(
-                          onPointerDown: _handleBodyPointerStart,
-                          onPointerUp: _handleBodyPointerEnd,
-                          onPointerCancel: _handleBodyPointerEnd,
-                          onPointerPanZoomStart: _handleBodyPointerStart,
-                          onPointerPanZoomEnd: _handleBodyPointerEnd,
-                          child: Scrollbar(
-                            controller: _bodyScrollController,
-                            child: ListView(
+                      padding: const EdgeInsets.only(left: 12),
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxHeight: _maxBodyHeight,
+                        ),
+                        child: NotificationListener<ScrollNotification>(
+                          onNotification: _handleBodyScrollNotification,
+                          child: Listener(
+                            onPointerDown: _handleBodyPointerStart,
+                            onPointerUp: _handleBodyPointerEnd,
+                            onPointerCancel: _handleBodyPointerEnd,
+                            onPointerPanZoomStart: _handleBodyPointerStart,
+                            onPointerPanZoomEnd: _handleBodyPointerEnd,
+                            child: Scrollbar(
                               controller: _bodyScrollController,
-                              primary: false,
-                              shrinkWrap: true,
-                              padding: const EdgeInsets.only(right: 14),
-                              children: <Widget>[
-                                for (final child in bodyChildren)
-                                  _KeepAliveGroupItem(child: child),
-                              ],
+                              child: ListView(
+                                controller: _bodyScrollController,
+                                primary: false,
+                                shrinkWrap: true,
+                                padding: const EdgeInsets.only(right: 14),
+                                children: <Widget>[
+                                  for (final child in bodyChildren)
+                                    _KeepAliveGroupItem(child: child),
+                                ],
+                              ),
                             ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
+                  );
+                },
               ),
             ],
           ),
@@ -568,12 +568,12 @@ class _ThinkToolsContentVisibility extends StatefulWidget {
   const _ThinkToolsContentVisibility({
     required this.visible,
     required this.duration,
-    required this.child,
+    required this.builder,
   });
 
   final bool visible;
   final Duration duration;
-  final Widget child;
+  final WidgetBuilder builder;
 
   @override
   State<_ThinkToolsContentVisibility> createState() =>
@@ -586,6 +586,7 @@ class _ThinkToolsContentVisibilityState
   late final AnimationController _controller;
   late final Animation<double> _alpha;
   late bool _present;
+  Widget? _body;
 
   @override
   void initState() {
@@ -632,9 +633,13 @@ class _ThinkToolsContentVisibilityState
   @override
   Widget build(BuildContext context) {
     if (!_present) {
+      _body = null;
       return const SizedBox.shrink();
     }
-    return FadeTransition(opacity: _alpha, child: widget.child);
+    // Closing reuses the last visible tree for its exit fade. Do not prepare
+    // updated details while collapsed, including during the outgoing animation.
+    if (widget.visible) _body = widget.builder(context);
+    return FadeTransition(opacity: _alpha, child: _body);
   }
 }
 

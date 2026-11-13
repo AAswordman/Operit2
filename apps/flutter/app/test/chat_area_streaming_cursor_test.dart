@@ -15,6 +15,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/MarkdownRemoteImage.dart';
+import 'package:operit2/ui/common/markdown/EnhancedCodeBlock.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'support/semantic_markdown_fixture.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
@@ -1349,7 +1350,193 @@ void main() {
     );
   });
 
-  for (final entry in ['initial', 'switch', 'empty snapshot']) {
+  testWidgets('bottom button reanchors only after the latest window is ready', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    final autoScroll = ValueNotifier(false);
+    final loaded = Completer<void>();
+    addTearDown(scroll.dispose);
+    addTearDown(autoScroll.dispose);
+    var latestRequests = 0;
+    final parsed = <String>[];
+    final older = List.generate(80, (index) => _heightTestMessage(index));
+    final latest = List.generate(
+      80,
+      (index) => _heightTestMessage(index + 100),
+    );
+    Future<void> render({
+      required bool newer,
+      required bool loading,
+      required List<ChatUiMessage> messages,
+    }) => tester.pumpWidget(
+      _chatArea(
+        messages: messages,
+        isLoading: false,
+        hasNewerDisplayHistory: newer,
+        isLoadingDisplayWindow: loading,
+        scrollController: scroll,
+        autoScrollToBottom: autoScroll,
+        onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+        onShowLatestDisplayWindow: () {
+          latestRequests++;
+          return loaded.future;
+        },
+        splitMarkdownContent: (content) {
+          parsed.add(content);
+          return _splitMarkdownContent(content);
+        },
+      ),
+    );
+    await render(newer: true, loading: false, messages: older);
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('回到底部'));
+    await tester.pump();
+    expect(latestRequests, 1);
+    await render(newer: false, loading: true, messages: latest);
+    await tester.pumpAndSettle();
+    expect(find.text('Height row 100 line 0'), findsOneWidget);
+    parsed.clear();
+    await render(newer: false, loading: false, messages: latest);
+    await tester.pumpAndSettle();
+    expect(find.text('Height row 179 line 0'), findsOneWidget);
+    expect(scroll.position.extentAfter, lessThanOrEqualTo(1));
+    expect(parsed.length, lessThan(20));
+    final position = scroll.position;
+    loaded.complete();
+    await tester.pumpAndSettle();
+    expect(scroll.position, same(position));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets(
+    'bottom button ignores a latest-window completion after switching chats',
+    (tester) async {
+      final scroll = ScrollController();
+      final autoScroll = ValueNotifier(false);
+      final loaded = Completer<void>();
+      addTearDown(scroll.dispose);
+      addTearDown(autoScroll.dispose);
+      await tester.pumpWidget(
+        _chatArea(
+          messages: List.generate(80, (index) => _heightTestMessage(index)),
+          isLoading: false,
+          hasNewerDisplayHistory: true,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+          onShowLatestDisplayWindow: () => loaded.future,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('回到底部'));
+      await tester.pump();
+      autoScroll.value = false;
+      await tester.pumpWidget(
+        _chatArea(
+          currentChatId: 'other-chat',
+          messages: List.generate(
+            80,
+            (index) => _heightTestMessage(index + 200),
+          ),
+          isLoading: false,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+        ),
+      );
+      await tester.pumpAndSettle();
+      final position = scroll.position;
+      loaded.complete();
+      await tester.pumpAndSettle();
+      expect(autoScroll.value, isFalse);
+      expect(scroll.position, same(position));
+      expect(find.text('Height row 200 line 0'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
+  for (final live in [false, true]) {
+    testWidgets('bottom button skips intermediate history, live=$live', (
+      tester,
+    ) async {
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final scroll = ScrollController();
+      final autoScroll = ValueNotifier(false);
+      final stream = StreamController<MarkdownStreamEvent>.broadcast();
+      addTearDown(scroll.dispose);
+      addTearDown(autoScroll.dispose);
+      addTearDown(stream.close);
+      final parsed = <String>[];
+      final messages = List.generate(
+        500,
+        (index) => _aiMessage(
+          timestamp: index + 1,
+          completedAt: live && index == 499 ? 0 : 1,
+          stream: live && index == 499 ? stream.stream : null,
+          parts: [
+            MessagePart(
+              partId: 'bottom-$index',
+              sequence: 0,
+              kind: MessagePartKind.markdown,
+              content: 'Bottom row $index',
+              toolCallId: null,
+              toolName: null,
+              attributes: const {},
+            ),
+          ],
+        ),
+      );
+      await tester.pumpWidget(
+        _chatArea(
+          messages: messages,
+          isLoading: false,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+          splitMarkdownContent: (content) {
+            parsed.add(content);
+            return _splitMarkdownContent(content);
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('Bottom row 0'), findsOneWidget);
+      parsed.clear();
+      await tester.tap(find.byTooltip('回到底部'));
+      for (var frame = 0; frame < 20; frame++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      await tester.pumpAndSettle();
+      expect(autoScroll.value, isTrue);
+      expect(scroll.position.extentAfter, lessThanOrEqualTo(1));
+      expect(
+        parsed.length,
+        lessThan(20),
+        reason: 'Intermediate Markdown requests: ${parsed.length}',
+      );
+      expect(parsed, isNot(contains('Bottom row 250')));
+      if (!live) expect(find.text('Bottom row 499'), findsOneWidget);
+      debugPrint(
+        'Bottom button live=$live: ${parsed.length}/500 Markdown requests',
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox());
+    });
+  }
+
+  for (final entry in [
+    'initial',
+    'switch',
+    'empty snapshot',
+    'live switch',
+    'code switch',
+  ]) {
     testWidgets('$entry long chat only parses messages near the bottom', (
       tester,
     ) async {
@@ -1359,7 +1546,11 @@ void main() {
       addTearDown(tester.view.resetDevicePixelRatio);
       final scroll = ScrollController();
       final autoScroll = ValueNotifier(true);
+      final code =
+          '```dart\n${List.generate(5000, (index) => 'final value$index = $index;').join('\n')}\n```';
       final parsed = <String>[];
+      final live = StreamController<MarkdownStreamEvent>.broadcast();
+      addTearDown(live.close);
       final messages = List<ChatUiMessage>.generate(
         80,
         (index) => _aiMessage(
@@ -1368,14 +1559,17 @@ void main() {
               partId: 'cold-open-$entry-$index',
               sequence: 0,
               kind: MessagePartKind.markdown,
-              content: '$entry conversation response $index',
+              content: entry == 'code switch' && index == 79
+                  ? code
+                  : '$entry conversation response $index',
               toolCallId: null,
               toolName: null,
               attributes: const {},
             ),
           ],
           timestamp: index + 1,
-          completedAt: 1,
+          stream: entry == 'live switch' && index == 79 ? live.stream : null,
+          completedAt: entry == 'live switch' && index == 79 ? 0 : 1,
         ),
       );
       addTearDown(() {
@@ -1385,8 +1579,10 @@ void main() {
       if (entry != 'initial') {
         await tester.pumpWidget(
           _chatArea(
-            currentChatId: entry == 'switch' ? 'previous-chat' : 'long-chat',
-            message: entry == 'switch'
+            currentChatId: entry.endsWith('switch')
+                ? 'previous-chat'
+                : 'long-chat',
+            message: entry.endsWith('switch')
                 ? _aiMessage(parts: const [], timestamp: 1000)
                 : null,
             isLoading: false,
@@ -1403,16 +1599,57 @@ void main() {
           isLoading: false,
           scrollController: scroll,
           autoScrollToBottom: autoScroll,
-          splitMarkdownContent: (content) {
+          splitMarkdownContent: (content) async {
             parsed.add(content);
-            return _splitMarkdownContent(content);
+            final events = await _splitMarkdownContent(content);
+            return content == code
+                ? [
+                    for (final event in events)
+                      MarkdownStreamEvent.fromJson({
+                        ...event.toJson(),
+                        'nodeType': 'CodeBlock',
+                      }),
+                  ]
+                : events;
           },
         ),
       );
       await tester.pumpAndSettle();
+      if (entry == 'live switch') {
+        for (final event in await _splitMarkdownContent(
+          '$entry conversation response 79',
+        )) {
+          live.add(event);
+        }
+        await tester.pumpAndSettle();
+      }
       // Count all requests, including work from rows that were already unmounted.
-      expect(parsed, contains('$entry conversation response 79'));
-      expect(parsed.length, lessThan(20), reason: 'Parsed: $parsed');
+      if (entry != 'live switch') {
+        expect(
+          parsed,
+          contains(
+            entry == 'code switch' ? code : '$entry conversation response 79',
+          ),
+        );
+      }
+      if (entry == 'code switch') {
+        expect(find.byType(EnhancedCodeBlock), findsOneWidget);
+        expect(
+          find
+              .descendant(
+                of: find.byType(EnhancedCodeBlock),
+                matching: find.byType(Text),
+              )
+              .evaluate()
+              .length,
+          lessThan(150),
+        );
+      }
+      expect(
+        parsed.length,
+        lessThan(20),
+        reason: 'Markdown requests: ${parsed.length}',
+      );
       expect(parsed, isNot(contains('$entry conversation response 0')));
       expect(scroll.offset, scroll.position.maxScrollExtent);
       debugPrint('$entry long chat: ${parsed.length}/80 Markdown requests');
@@ -2447,6 +2684,7 @@ Widget _chatArea({
   Widget Function(Widget)? bodyBuilder,
   MarkdownContentSplitter splitMarkdownContent = _splitMarkdownContent,
   RevealMessageForLocator? onRevealMessageForLocator,
+  Future<void> Function()? onShowLatestDisplayWindow,
 }) {
   final owner = bridge ?? _ScriptedGeneratedChatBridge();
   final clients = GeneratedCoreProxyClients(owner);
@@ -2473,7 +2711,7 @@ Widget _chatArea({
     onAutoScrollToBottomChanged: onAutoScrollToBottomChanged ?? (_) {},
     onLoadOlderDisplayWindow: () async {},
     onLoadNewerDisplayWindow: () async {},
-    onShowLatestDisplayWindow: () async {},
+    onShowLatestDisplayWindow: onShowLatestDisplayWindow ?? () async {},
     onToggleFavoriteMessage: (timestamp, isFavorite) async {},
     onDeleteMessage: (timestamp) async {},
     onDeleteMessagesFrom: (timestamp) async => true,

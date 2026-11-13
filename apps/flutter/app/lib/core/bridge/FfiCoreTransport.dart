@@ -6,6 +6,7 @@ import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:flutter/services.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../link/CoreLinkCodec.dart';
 import '../logging/ClientLogger.dart';
@@ -195,6 +196,13 @@ class _FfiConnection implements Finalizable {
   final Map<int, Completer<Uint8List>> _pending = {};
   final Map<int, StreamController<Uint8List>> _watches = {};
   int _nextRequest = 1;
+  int _receivedBatches = 0;
+  int _receivedFrames = 0;
+  String _receiveStage = 'idle';
+  int _receiveSlot = -1;
+  final Stopwatch _receiveClock = Stopwatch()..start();
+  int? _lastReceiveMillis;
+  int? _receiveGapMillis;
   final _views = <(int, int), WeakReference<CoreLinkSharedBuffer>>{};
   late final _viewFinalizer =
       Finalizer<((int, int), WeakReference<CoreLinkSharedBuffer>)>((entry) {
@@ -345,36 +353,163 @@ class _FfiConnection implements Finalizable {
   /// Routes one uniformly batched delivery while retaining each frame's own attachments.
   void _receive(dynamic message) {
     var index = -1;
+    final now = _receiveClock.elapsedMilliseconds;
+    _receiveGapMillis = _lastReceiveMillis == null
+        ? null
+        : now - _lastReceiveMillis!;
+    _lastReceiveMillis = now;
+    _receivedBatches++;
+    _receiveStage = 'batch';
+    _receiveSlot = -1;
     try {
       final frames = message as List<dynamic>;
       if (frames.isEmpty) throw const FormatException('Empty Core FFI batch');
       for (index = 0; index < frames.length; index++) {
+        _receiveStage = 'frame';
+        _receiveSlot = -1;
         _receiveFrame(frames[index] as List<dynamic>);
+        _receivedFrames++;
       }
     } catch (error, stack) {
       close(error, stack, _failureContext(message, index));
     }
   }
 
-  /// Describes only the failing envelope header without logging application payloads.
+  /// Captures bounded object shapes and aliases without traversing payloads or cycles.
   String _failureContext(dynamic message, int index) {
-    var context = 'batchType=${message.runtimeType} batchIndex=$index';
-    if (message is! List) return context;
-    context += ' batchLength=${message.length}';
-    if (index < 0 || index >= message.length) return context;
-    final frame = message[index];
-    context += ' frameType=${frame.runtimeType}';
-    if (frame is! List || frame.isEmpty || frame[0] is! Uint8List) {
-      return context;
+    final context = StringBuffer(
+      'diagnostics=ffi-v1 nativePort=${_port.sendPort.nativePort} '
+      'batchType=${message.runtimeType} batchIndex=$index '
+      'receiveBatch=$_receivedBatches receivedFrames=$_receivedFrames '
+      'stage=$_receiveStage failingSlot=$_receiveSlot '
+      'connectionAgeMs=${_receiveClock.elapsedMilliseconds} '
+      'receiveGapMs=$_receiveGapMillis '
+      'nativeApi=${NativeApi.majorVersion}.${NativeApi.minorVersion}',
+    );
+    try {
+      context.write(' lifecycle=${SchedulerBinding.instance.lifecycleState}');
+    } catch (_) {
+      context.write(' lifecycle=unavailable');
     }
-    final bytes = frame[0] as Uint8List;
-    context += ' envelopeLength=${frame.length} bytes=${bytes.length}';
-    if (bytes.length >= 9) {
-      context +=
-          ' kind=${bytes[0]} '
-          'id=${ByteData.sublistView(bytes, 1, 9).getInt64(0, Endian.little)}';
+    try {
+      if (message is! List) return context.toString();
+      context.write(
+        ' batchLength=${message.length} batchIdentity=${identityHashCode(message)}',
+      );
+      if (index < 0 || index >= message.length) return context.toString();
+      final frame = message[index];
+      context.write(
+        ' frameType=${frame.runtimeType} frame=${_diagnosticShape(frame)}',
+      );
+      // Inspect the bad frame first, so large batches cannot hide the fault in truncated logs.
+      if (frame is List) {
+        final slots = frame.length < 33 ? frame.length : 33;
+        for (var slot = 0; slot < slots; slot++) {
+          final value = frame[slot];
+          context.write(
+            '\nffi_rx_slot index=$index slot=$slot ${_diagnosticShape(value)}',
+          );
+          if (slot == 0 || slot % 4 == 2) {
+            context.write(' ${_diagnosticAliases(message, frame, value)}');
+          }
+        }
+        if (slots < frame.length) {
+          context.write('\nffi_rx_slots_omitted=${frame.length - slots}');
+          if (_receiveSlot >= slots && _receiveSlot < frame.length) {
+            context.write(
+              '\nffi_rx_failing_slot slot=$_receiveSlot ${_diagnosticShape(frame[_receiveSlot])}',
+            );
+          }
+        }
+      }
+      final count = message.length < 128 ? message.length : 128;
+      for (var frameIndex = 0; frameIndex < count; frameIndex++) {
+        final candidate = message[frameIndex];
+        context.write(
+          '\nffi_rx_frame index=$frameIndex ${_diagnosticShape(candidate)}',
+        );
+        if (candidate is List && candidate.isNotEmpty) {
+          context.write(' metadata=${_diagnosticShape(candidate[0])}');
+        }
+      }
+      if (count < message.length) {
+        context.write('\nffi_rx_frames_omitted=${message.length - count}');
+      }
+    } catch (diagnosticError) {
+      // Diagnostic failures must never replace the original receiver error.
+      context.write(
+        '\nffi_rx_diagnostic_error type=${diagnosticError.runtimeType}',
+      );
     }
-    return context;
+    return context.toString();
+  }
+
+  /// Logs only byte headers and shallow type samples; never invokes arbitrary toString().
+  String _diagnosticShape(dynamic value) {
+    if (value == null) return 'type=Null';
+    if (value is int) return 'type=int value=$value';
+    final result = StringBuffer(
+      'type=${value.runtimeType} identity=${identityHashCode(value)}',
+    );
+    if (value is! List) return result.toString();
+    result.write(' length=${value.length}');
+    if (value is Uint8List) {
+      if (value.length >= 9) {
+        result.write(
+          ' kind=${value[0]} id=${ByteData.sublistView(value, 1, 9).getInt64(0, Endian.little)}',
+        );
+      }
+      return result.toString();
+    }
+    final count = value.length < 16 ? value.length : 16;
+    var byteValues = 0;
+    var lists = 0;
+    final types = <String>[];
+    for (var i = 0; i < count; i++) {
+      final entry = value[i];
+      if (entry is int && entry >= 0 && entry <= 255) byteValues++;
+      if (entry is List) lists++;
+      if (i < 8) {
+        types.add(
+          '${entry.runtimeType}${entry is List ? "(length=${entry.length})" : ""}',
+        );
+      }
+    }
+    result.write(
+      ' sampled=$count byteValues=$byteValues lists=$lists types=[${types.join(",")}]',
+    );
+    // A list of integers may be an alternate byte representation. Decode only its header.
+    if (count >= 9 && byteValues == count) {
+      final header = Uint8List.fromList(
+        List<int>.generate(9, (i) => value[i] as int),
+      );
+      result.write(
+        ' possibleKind=${header[0]} possibleId=${ByteData.sublistView(header, 1, 9).getInt64(0, Endian.little)}',
+      );
+    }
+    return result.toString();
+  }
+
+  /// Compares identities with a bounded scan; self-referential arrays cannot recurse.
+  String _diagnosticAliases(List batch, List frame, dynamic value) {
+    if (value is! List) return 'aliases=not-list';
+    final aliases = <String>[];
+    if (identical(value, batch)) aliases.add('batch');
+    if (identical(value, frame)) aliases.add('currentFrame');
+    var scanned = 0;
+    final count = batch.length < 128 ? batch.length : 128;
+    for (var i = 0; i < count && scanned < 2048 && aliases.length < 16; i++) {
+      final candidate = batch[i];
+      scanned++;
+      if (identical(value, candidate)) aliases.add('frame[$i]');
+      if (candidate is! List) continue;
+      final slots = candidate.length < 33 ? candidate.length : 33;
+      for (var j = 0; j < slots && scanned < 2048 && aliases.length < 16; j++) {
+        scanned++;
+        if (identical(value, candidate[j])) aliases.add('frame[$i].slot[$j]');
+      }
+    }
+    return 'aliases=[${aliases.join(",")}] aliasScan=$scanned aliasFrameLimit=$count';
   }
 
   /// Adopts one frame's receipts and routes its connection-local correlation id.
@@ -384,12 +519,19 @@ class _FfiConnection implements Finalizable {
     if (envelope.isEmpty || (envelope.length - 1) % 4 != 0) {
       throw const FormatException('Invalid Core FFI shared envelope');
     }
+    _receiveStage = 'metadata';
+    _receiveSlot = 0;
     final bytes = (envelope[0] as Uint8List).asUnmodifiableView();
     final buffers = <CoreLinkSharedBuffer>[];
     for (var index = 1; index < envelope.length; index += 4) {
+      _receiveStage = 'receipt';
+      _receiveSlot = index;
       final token = envelope[index] as int;
+      _receiveSlot = index + 1;
       final receipt = envelope[index + 1] as Uint8List;
+      _receiveSlot = index + 2;
       final address = envelope[index + 2] as int;
+      _receiveSlot = index + 3;
       final length = envelope[index + 3] as int;
       if (receipt.length != 1 || token == 0 || address == 0 || length < 0) {
         throw const FormatException('Invalid Core FFI buffer receipt');
@@ -404,6 +546,8 @@ class _FfiConnection implements Finalizable {
           );
       buffers.add(buffer);
     }
+    _receiveStage = 'decode';
+    _receiveSlot = -1;
     attachCoreLinkBuffers(bytes, buffers);
     if (bytes.length < 9) {
       throw const FormatException('Truncated Core FFI frame');
@@ -411,6 +555,7 @@ class _FfiConnection implements Finalizable {
     final kind = bytes[0];
     final id = ByteData.sublistView(bytes, 1, 9).getInt64(0, Endian.little);
     final payload = sliceCoreLinkBytes(bytes, 9);
+    _receiveStage = 'dispatch';
     switch (kind) {
       case 0:
         final pending = _pending.remove(id);

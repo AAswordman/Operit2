@@ -20,6 +20,7 @@
 #include <operit_system_fonts/operit_system_fonts_plugin.h>
 #include <printing/printing_plugin.h>
 #include <record_windows/record_windows_plugin_c_api.h>
+#include <share_plus/share_plus_windows_plugin_c_api.h>
 #include <url_launcher_windows/url_launcher_windows.h>
 #include <webview_all_windows/webview_windows_plugin.h>
 
@@ -52,6 +53,8 @@ void RegisterPlugins(flutter::PluginRegistry* registry) {
       registry->GetRegistrarForPlugin("PrintingPlugin"));
   RecordWindowsPluginCApiRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("RecordWindowsPluginCApi"));
+  SharePlusWindowsPluginCApiRegisterWithRegistrar(
+      registry->GetRegistrarForPlugin("SharePlusWindowsPluginCApi"));
   UrlLauncherWindowsRegisterWithRegistrar(
       registry->GetRegistrarForPlugin("UrlLauncherWindows"));
   WebviewWindowsPluginRegisterWithRegistrar(

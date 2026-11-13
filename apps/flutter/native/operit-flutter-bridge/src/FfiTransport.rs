@@ -6,7 +6,7 @@ use crate::BridgeExports;
 use crate::BridgeTransport::{BridgeStreams, StreamAction, StreamSubmission, WATCH_BATCH_CAPACITY};
 use crate::OperitFlutterBridge;
 use futures_util::FutureExt;
-use operit_host_native_common::DartPort::{DartPort, PostCObject};
+use operit_host_native_common::DartPort::{recent_post_diagnostics, DartPort, PostCObject};
 use operit_host_native_common::SharedBuffer::{
     shared_allocate, shared_data, shared_release, shared_retain, shared_seal, SharedBuffer,
 };
@@ -80,7 +80,8 @@ impl FfiSession {
                 Ok(connection) => connection,
                 Err(error) => {
                     operit_util::AppLogger::AppLogger::e(
-                        "CoreFfiTransport", &format!("Unable to start FFI streams: {error}"),
+                        "CoreFfiTransport",
+                        &format!("Unable to start FFI streams: {error}"),
                     );
                     return false;
                 }
@@ -119,7 +120,8 @@ impl FfiSession {
         );
         if let Err(error) = result {
             operit_util::AppLogger::AppLogger::e(
-                "CoreFfiTransport", &format!("Unable to schedule FFI delivery: {error}"),
+                "CoreFfiTransport",
+                &format!("Unable to schedule FFI delivery: {error}"),
             );
             self.close();
             return false;
@@ -346,10 +348,25 @@ pub(crate) fn connectionDescriptor(
 /// Records the original Dart receiver failure without scheduling work on the failed session.
 unsafe extern "C" fn ffi_report_failure(bytes: *const u8, length: usize) {
     let message = String::from_utf8_lossy(std::slice::from_raw_parts(bytes, length));
-    operit_util::AppLogger::AppLogger::e(
-        "CoreFfiTransport",
-        &format!("pid={} {message}", std::process::id()),
-    );
+    let port = message.split_whitespace().find_map(|field| {
+        field
+            .strip_prefix("nativePort=")
+            .and_then(|value| value.parse().ok())
+    });
+    let history = recent_post_diagnostics(port);
+    // Separate records keep the malformed frame and its neighbors visible in Android logcat.
+    for line in message.lines() {
+        operit_util::AppLogger::AppLogger::e(
+            "CoreFfiTransport",
+            &format!("pid={} {line}", std::process::id()),
+        );
+    }
+    for line in history {
+        operit_util::AppLogger::AppLogger::e(
+            "CoreFfiTransport",
+            &format!("pid={} {line}", std::process::id()),
+        );
+    }
 }
 
 /// Installs the VM port and initializes this connection's shared stream owner exactly once.

@@ -215,4 +215,47 @@ fn shared_skill_install_restores_complete_examples_without_plugin_installation()
     support.setSkillVisibleToAi(&skill.name, false).unwrap();
     assert!(manager.ensureBuiltinSkills(support.as_ref()).is_empty());
     assert!(!support.isSkillVisibleToAi(&skill.name));
+    assert_eq!(repository.bundledSkillNeedsUpdate(&skill).unwrap(), Some(false));
+
+    // Legacy installations have the stable name but no builtin/source metadata or version.
+    let legacy = "---\nname: PackageBuilder\ndescription: Legacy package builder\n---\n# PackageBuilder\n";
+    filesystem.writeFile(&skill.skillFile.to_string_lossy(), legacy, false).unwrap();
+    let store = operit_store::ExtensionStore::ExtensionStore::default();
+    store.setSettings("skill", &skill.name, serde_json::json!({"visible": true})).unwrap();
+    assert!(manager.ensureBuiltinSkills(support.as_ref()).is_empty());
+    assert_eq!(repository.readSkillDisplayName(&skill).unwrap(), "PackageBuilder");
+    assert_eq!(repository.bundledSkillNeedsUpdate(&skill).unwrap(), Some(true));
+    let stale = skill.directory.join("obsolete-reference.md");
+    filesystem.writeFile(&stale.to_string_lossy(), "old instructions", false).unwrap();
+    let updated = repository.importBundledExternalSkill(&skill.name).unwrap();
+    assert_eq!(updated.directory, skill.directory);
+    assert_eq!(repository.readSkillDisplayName(&updated).unwrap(), "Operit 插件开发套件");
+    assert!(repository.isSkillVisibleToAi(&skill.name));
+    assert!(!filesystem.fileExists(&stale.to_string_lossy()).unwrap().exists);
+    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
+
+    // Type definitions and compressed example resources are independently updateable.
+    let types = updated.directory.join("types/toolpkg.d.ts");
+    filesystem.writeFile(&types.to_string_lossy(), "old declarations", false).unwrap();
+    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(true));
+    repository.setSkillVisibleToAi(&skill.name, false).unwrap();
+    repository.importBundledExternalSkill(&skill.name).unwrap();
+    assert!(!repository.isSkillVisibleToAi(&skill.name));
+    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
+    let resource = BUNDLED_EXTERNAL_SKILL_PACKAGE_ASSETS.iter()
+        .find(|asset| asset.skill_name == skill.name).unwrap();
+    filesystem.deleteFile(&updated.directory.join(resource.path).to_string_lossy(), false).unwrap();
+    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(true));
+    repository.importBundledExternalSkill(&skill.name).unwrap();
+    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
+
+    // Explicit updates preserve space ownership as well as visibility.
+    store.moveScope("skill", &skill.name, "space").unwrap();
+    let shared = repository.getAvailableSkillPackages().remove(&skill.name).unwrap();
+    filesystem.writeFile(&shared.skillFile.to_string_lossy(), legacy, false).unwrap();
+    let updated = repository.importBundledExternalSkill(&skill.name).unwrap();
+    assert_eq!(updated.directory, shared.directory);
+    assert_eq!(store.record("skill", &skill.name).unwrap().scope, "space");
+    assert!(!repository.isSkillVisibleToAi(&skill.name));
+    assert_eq!(repository.bundledSkillNeedsUpdate(&updated).unwrap(), Some(false));
 }

@@ -84,6 +84,8 @@
 	<string>Operit2 uses your current location to add a location attachment to a chat when you request it.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>Operit uses your current location only when you request a location attachment.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>Operit saves images to your photo library when you choose Save Image from the share sheet.</string>
 	<key>NSCameraUsageDescription</key>
 	<string>Operit2 uses the camera to scan device connection codes and capture photos for chat attachments.</string>
 	<key>NSBonjourServices</key>

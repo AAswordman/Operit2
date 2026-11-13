@@ -157,6 +157,7 @@ class _ChatAreaState extends State<ChatArea>
   bool _bottomFollowCompleting = false;
   double? _lastScrollMaxExtent;
   int? _pendingJumpToMessageTimestamp;
+  bool _pendingScrollToBottom = false;
   int _messageNavigationGeneration = 0;
   int? _layoutAnchorTimestamp;
   bool _initialLayoutOriginChosen = false;
@@ -245,12 +246,13 @@ class _ChatAreaState extends State<ChatArea>
     // Start at the tail instead of laying out from the oldest row and then
     // chasing an estimated maxScrollExtent. Those intermediate layouts mount
     // offscreen rows and start their Markdown requests before discarding them.
+    // Initial origin also applies to live conversations: the follower owns
+    // subsequent growth, but opening a stream must not walk older rows first.
     // Keep this origin stable as messages arrive or older history is loaded.
     if (!_initialLayoutOriginChosen && widget.messages.isNotEmpty) {
       _initialLayoutOriginChosen = true;
       if (_layoutAnchorTimestamp == null &&
           _ownsBottomScroll() &&
-          !_hasLiveBottomStream() &&
           widget.messages.length > 1) {
         _layoutAnchorTimestamp = widget.messages.last.timestamp;
       }
@@ -761,25 +763,18 @@ class _ChatAreaState extends State<ChatArea>
         message.contentStream != null;
   }
 
-  /// Replaces any message locator target with an explicit bottom request.
+  /// Reanchors at the tail without traversing intermediate history layouts.
   Future<void> _scrollToBottomFromNavigator() async {
     _clearPendingMessageJump();
+    _stopBottomFollow();
+    final generation = _messageNavigationGeneration;
+    _pendingScrollToBottom = true;
     widget.onAutoScrollToBottomChanged(true);
     if (widget.hasNewerDisplayHistory) {
       await widget.onShowLatestDisplayWindow();
-      return;
     }
-    final scroll = widget.scrollController;
-    if (!scroll.hasClients ||
-        scroll.positions.length != 1 ||
-        !scroll.position.hasPixels) {
-      return;
-    }
-    await scroll.animateTo(
-      scroll.position.maxScrollExtent,
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-    );
+    if (!mounted || generation != _messageNavigationGeneration) return;
+    if (_pendingScrollToBottom) setState(_applyPendingMessageJump);
   }
 
   /// Reveals a timestamp and ignores completions superseded by user navigation.
@@ -815,6 +810,15 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Makes the target the layout origin so earlier rows grow away from it.
   void _applyPendingMessageJump() {
+    if (_pendingScrollToBottom) {
+      if (widget.hasNewerDisplayHistory ||
+          widget.isLoadingDisplayWindow ||
+          widget.messages.isEmpty) {
+        return;
+      }
+      _pendingScrollToBottom = false;
+      _pendingJumpToMessageTimestamp = widget.messages.last.timestamp;
+    }
     final timestamp = _pendingJumpToMessageTimestamp;
     if (timestamp == null) {
       return;
@@ -840,6 +844,7 @@ class _ChatAreaState extends State<ChatArea>
   void _clearPendingMessageJump() {
     _messageNavigationGeneration++;
     _pendingJumpToMessageTimestamp = null;
+    _pendingScrollToBottom = false;
   }
 
   /// Collects render anchors for currently visible chat message rows.

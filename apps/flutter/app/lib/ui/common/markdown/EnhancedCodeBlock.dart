@@ -7,7 +7,6 @@ import 'package:flutter/services.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 import 'package:webview_all/webview_all.dart';
 
-import '../interactions/ChainedScrollController.dart';
 import '../interactions/MessagePressShield.dart';
 import 'CanvasMonospaceCodeBlockBody.dart';
 import 'MarkdownCodeTypeface.dart';
@@ -68,6 +67,17 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
   bool showFullscreenPreview = false;
   CodeBlockPreviewType? fullscreenPreviewType;
   Timer? _copiedResetTimer;
+  late String _code = sanitizeUtf16(widget.code);
+  late List<String> _lines = _code.split('\n');
+
+  @override
+  void didUpdateWidget(covariant EnhancedCodeBlock oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.code != widget.code) {
+      _code = sanitizeUtf16(widget.code);
+      _lines = _code.split('\n');
+    }
+  }
 
   @override
   void dispose() {
@@ -77,11 +87,7 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
 
   @override
   Widget build(BuildContext context) {
-    final code = sanitizeUtf16(widget.code);
-    final lines = code.split('\n');
-    final highlightedLines = <InlineSpan>[
-      for (final line in lines) _highlightSyntaxLine(line, widget.language),
-    ];
+    final code = _code;
     final isMermaid = widget.language.toLowerCase() == 'mermaid';
     final isHtml =
         widget.language.toLowerCase() == 'html' ||
@@ -96,17 +102,12 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
       padding: EdgeInsets.zero,
       minimumSize: const Size(22, 22),
       fixedSize: const Size(22, 22),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(4),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(4)),
     );
-    final codeBody = Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: CanvasMonospaceCodeBlockBody(
-        lines: lines,
-        highlightedLines: highlightedLines,
-        autoWrapEnabled: autoWrapEnabled,
-      ),
+    final codeBody = CanvasMonospaceCodeBlockBody(
+      lines: _lines,
+      highlightLine: (line) => _highlightSyntaxLine(line, widget.language),
+      autoWrapEnabled: autoWrapEnabled,
     );
     final block = MessagePressShieldRegion(
       child: Semantics(
@@ -262,7 +263,9 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
                                 ? const Color(0xFFAAAAAA)
                                 : Theme.of(context).colorScheme.primary,
                           ),
-                          tooltip: autoWrapEnabled ? 'Disable word wrap' : 'Enable word wrap',
+                          tooltip: autoWrapEnabled
+                              ? 'Disable word wrap'
+                              : 'Enable word wrap',
                         ),
                       ),
                       const SizedBox(width: 2),
@@ -321,14 +324,7 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
               else
                 ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: 420),
-                  child: ChainedSingleChildScrollView(
-                    child: autoWrapEnabled
-                        ? codeBody
-                        : SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: codeBody,
-                          ),
-                  ),
+                  child: codeBody,
                 ),
             ],
           ),

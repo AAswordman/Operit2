@@ -712,3 +712,126 @@ fn systemd_escaped_filenames_do_not_block_workspace_sync_or_alias_directories() 
     assert!(!b.host.exists("workspaces/project/usr/lib/systemd/system/system-systemd/x2dcryptsetup.slice").unwrap());
     assert_eq!(std::fs::read(&escaped).unwrap(), b"[Slice]");
 }
+
+// Models originals written by older peers, including blobs that were never downloaded.
+fn legacy_file_operation(node: &Node, path: &str, kind: &str) -> SyncOperation {
+    use operit_store::SyncOperationStore::{NewSyncOperation, SyncOperationSemantics};
+    node.log().appendLocalOperation("legacy-peer", NewSyncOperation {
+        domain: RUNTIME_FILE_SYNC_DOMAIN.into(), entityType: "file".into(),
+        entityId: path.into(), operation: kind.into(), semantics: SyncOperationSemantics::EntityState,
+        payload: if kind == "upsert" { serde_json::json!({"contentHash": "a".repeat(64), "size": 7}) } else { serde_json::Value::Null },
+    }).unwrap()
+}
+
+#[cfg(unix)]
+#[test]
+fn incompatible_names_stay_local_while_normal_files_sync() {
+    let a = Node::new();
+    let b = Node::new();
+    let excluded = [
+        "workspaces/p/query??&MsgID=123.jpg", "workspaces/p/CON.txt",
+        "workspaces/p/trailing.", "workspaces/p/trailing ", "workspaces/p/a:b.txt",
+        "workspaces/p/nested?/ok.txt", "workspaces/p/a\\b.txt",
+        "workspaces/CON/.operit/sync.json",
+        "runtime/data/chat_outputs/chat/.operit/attachments/id/image?.jpg",
+        "runtime/data/chat_attachments/chat/id/NUL.jpg",
+    ];
+    for path in excluded { a.write(path, b"keep local"); }
+    let allowed = ["workspaces/p/中文 图片.jpg", "runtime/data/chat_outputs/chat/good.txt", "runtime/data/chat_attachments/chat/id/good.jpg"];
+    for path in allowed { a.write(path, b"sync"); }
+    assert_eq!(a.workspace().scan().unwrap(), allowed.len());
+    assert_eq!(a.ops().len(), allowed.len());
+    a.send(&b);
+    for path in excluded {
+        assert_eq!(a.host.readBytes(path).unwrap(), b"keep local");
+        assert!(!b.host.exists(path).unwrap(), "{path}");
+    }
+    for path in allowed { assert_eq!(b.host.readBytes(path).unwrap(), b"sync"); }
+    assert_eq!(a.workspace().scan().unwrap(), 0);
+    assert_eq!(b.workspace().scan().unwrap(), 0);
+}
+
+#[test]
+fn excluded_inventory_and_recovery_state_are_discarded_without_blobs_or_deletions() {
+    let node = Node::new();
+    let path = "runtime/data/chat_outputs/chat/.operit/attachments/id/image?.jpg";
+    let op = legacy_file_operation(&node, path, "upsert");
+    let mut old = serde_json::json!({"files": {}, "references": {}, "deferred": {}, "pending": [path, op.payload]});
+    old["files"][path] = serde_json::json!({"size": 7, "modifiedAt": 1});
+    old["references"][path] = serde_json::json!({"size": 7, "modifiedAt": 1});
+    old["deferred"][path] = op.payload.clone();
+    node.write("runtime/sync/workspace_inventory.json", &serde_json::to_vec(&old).unwrap());
+    node.write("workspaces/p/good.txt", b"normal");
+    assert_eq!(node.workspace().scan().unwrap(), 1);
+    let ops = node.ops();
+    assert_eq!(ops.len(), 1);
+    assert_eq!(ops[0].entityId, "workspaces/p/good.txt");
+    assert_eq!(ops[0].operation, "upsert");
+    let state: serde_json::Value = serde_json::from_slice(&node.host.readBytes("runtime/sync/workspace_inventory.json").unwrap()).unwrap();
+    assert!(state["files"].get(path).is_none());
+    assert!(state["references"].get(path).is_none());
+    assert!(state["deferred"].as_object().unwrap().is_empty());
+    assert!(state["pending"].is_null());
+    assert_eq!(node.workspace().scan().unwrap(), 0);
+}
+
+#[test]
+fn incoming_incompatible_files_skip_transfer_materialization_and_relay() {
+    let old = Node::new();
+    let target = Node::new();
+    let files = RuntimeFileSyncStore::new(target.host.clone(), SYNC);
+    for path in ["workspaces/p/image?.jpg", "workspaces/CON/file.txt", "workspaces/p/nul.jpg", "workspaces/p/trailing."] {
+        for kind in ["upsert", "delete"] {
+            let op = legacy_file_operation(&old, path, kind);
+            assert!(RuntimeFileSyncStore::requiredBlob(&op).unwrap().is_none());
+            assert!(!target.workspace().wantsBlob(&op).unwrap());
+            assert!(!target.workspace().applyOperation(&op, false).unwrap());
+            assert!(target.log().applicationOperations().unwrap().is_empty());
+            assert!(target.ops().is_empty());
+            // Large legacy envelopes must also skip before reading their absent blob.
+            let mut envelope = op.clone();
+            envelope.payload = serde_json::json!({"transactionBlob": {"contentHash": "b".repeat(64), "size": 40000}});
+            assert!(RuntimeFileSyncStore::requiredBlob(&envelope).unwrap().is_none());
+            assert_eq!(files.hydrateTransaction(envelope.clone()).unwrap(), envelope);
+        }
+    }
+    old.write("workspaces/p/good.txt", b"normal");
+    old.workspace().scan().unwrap();
+    old.send(&target);
+    assert_eq!(target.host.readBytes("workspaces/p/good.txt").unwrap(), b"normal");
+}
+
+#[cfg(unix)]
+#[test]
+fn excluded_incoming_updates_and_deletes_leave_existing_local_file_untouched() {
+    let source = Node::new();
+    let target = Node::new();
+    let path = "workspaces/p/image?.jpg";
+    target.write(path, b"original");
+    for kind in ["upsert", "delete"] {
+        let op = legacy_file_operation(&source, path, kind);
+        target.workspace().applyOperation(&op, false).unwrap();
+        assert_eq!(target.host.readBytes(path).unwrap(), b"original");
+    }
+    assert!(target.ops().is_empty());
+}
+
+#[test]
+fn pending_excluded_originals_are_retired_and_cannot_be_requeued() {
+    let source = Node::new();
+    let target = Node::new();
+    let excluded = legacy_file_operation(&source, "workspaces/p/old?.jpg", "upsert");
+    let normal = legacy_file_operation(&source, "workspaces/p/good.txt", "upsert");
+    let mut envelope = excluded.clone();
+    let reference = RuntimeFileSyncStore::new(source.host.clone(), SYNC).storeJsonBlob(&excluded).unwrap();
+    envelope.payload = serde_json::json!({"transactionBlob": reference});
+    // The receiver intentionally never downloads the envelope blob.
+    target.log().receiveOperations(&[envelope.clone(), normal.clone()]).unwrap();
+    assert_eq!(target.log().pendingOperationCount().unwrap(), 2);
+    target.workspace().scan().unwrap();
+    assert_eq!(target.log().pendingOperationIds().unwrap(), vec![normal.opId.clone()]);
+    assert_eq!(target.log().applicationOperations().unwrap(), vec![normal.clone()]);
+    target.log().receiveOperations(&[excluded.clone(), envelope]).unwrap();
+    assert_eq!(target.log().pendingOperationIds().unwrap(), vec![normal.opId]);
+    assert!(target.ops().iter().all(|op| op.opId != excluded.opId));
+}

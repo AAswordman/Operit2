@@ -265,8 +265,22 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
         let market_marker = market_origins.get(&("skill".into(), skill.name.clone()));
         let builtin = ExtensionStore::ExtensionStore::default()
             .record("skill", &skill.name)?.settings["builtin"] == true;
+        let bundled_update = if market_marker.is_none() {
+            skill_repository.bundledSkillNeedsUpdate(skill)?
+        } else {
+            None
+        };
+        let builtin = builtin || (bundled_update.is_some()
+            && app.toolHandler.runtimeSupport().builtinSkillNames().contains(&skill.name.as_str()));
         installed.push(ExtensionCatalogEntry {
-            source: if builtin { "builtin" } else if market_marker.is_some() { "market" } else { "manual" }.into(),
+            source: if market_marker.is_some() { "market" } else if builtin { "builtin" }
+                else if bundled_update.is_some() { "bundled" } else { "manual" }.into(),
+            update_state: match bundled_update {
+                Some(true) => "available",
+                Some(false) => "current",
+                None if market_marker.is_some() => "unknown",
+                None => "noSource",
+            }.into(),
             display_name: skill_repository.readSkillDisplayName(skill)?,
             description: skill.description.clone(),
             category: "Skill".into(),

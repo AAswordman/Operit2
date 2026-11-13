@@ -305,8 +305,25 @@ List<String> parseUnifiedHunkHeaders(String diff) {
 }
 
 ({int additions, int deletions}) unifiedDiffStats(String diff) {
-  final document = WorkspaceDiffDocument.parse(diff);
-  return (additions: document.additions, deletions: document.deletions);
+  // Collapsed file cards need counts, not parsed rows or intraline highlights.
+  final header = RegExp(r'@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@');
+  var inHunk = false;
+  var additions = 0;
+  var deletions = 0;
+  for (var offset = 0; offset < diff.length;) {
+    final marker = diff.codeUnitAt(offset);
+    if (marker == 0x40 && header.matchAsPrefix(diff, offset) != null) {
+      inHunk = true;
+    } else if (inHunk && marker == 0x2b) {
+      additions++;
+    } else if (inHunk && marker == 0x2d) {
+      deletions++;
+    }
+    final newline = diff.indexOf('\n', offset);
+    if (newline < 0) break;
+    offset = newline + 1;
+  }
+  return (additions: additions, deletions: deletions);
 }
 
 /// Unified (single column) diff with foldable gaps between hunks.

@@ -17,7 +17,13 @@
 - The availability worker subscribes to the same Host browser even while the
   add-device dialog is closed. An offline paired network device reconnects using
   ranked discovered addresses, with its saved address as a fallback. Each
-  alternative gets a bounded connection and authentication attempt.
+  alternative gets a bounded connection and authentication attempt. While an
+  allowed outbound network peer is offline, the worker also actively refreshes
+  the shared browser at most once every 15 seconds, using a one-second scan for
+  all peers. This recovers a missed port-change announcement without opening the
+  direct-link dialog. A failed initial subscription is retried during these
+  refreshes. Blocking scans run on Host tasks and do not delay shutdown; healthy
+  channels do not trigger active scans.
 - A discovered `nodeId` is only a dial hint. After a session handshake verifies
   the expected node and proves possession of the existing pairing secret, the
   runtime persists the successful address **and transport** in the outbound
@@ -79,9 +85,10 @@ cargo test -p operit-node-runtime --no-default-features --features peer-runtime 
 ```
 
 These tests use real loopback TCP listeners with deterministic discovery events.
-They cover automatic reconnection after a listener changes port, endpoint and
-transport persistence, failed credential proofs, address fallback, and pairing
-removal during an in-flight update.
+They cover automatic reconnection after a listener changes port (including
+missed browse callbacks), subscription retries, shared and rate-limited refreshes,
+shutdown during a blocking scan, endpoint and transport persistence, failed
+credential proofs, address fallback, and pairing removal during an in-flight update.
 
 Run UI checks from `apps/flutter/app`:
 

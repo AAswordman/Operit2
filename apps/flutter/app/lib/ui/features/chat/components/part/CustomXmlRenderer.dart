@@ -716,9 +716,9 @@ class _ThinkPanelState extends State<_ThinkPanel> {
         : null;
     return SelectionContainer.disabled(
       child: Semantics(
-        label: contentText.isEmpty
-            ? thinkingTitle
-            : '$thinkingTitle\n$contentText',
+        // The visible preview/body owns its text semantics. A collapsed header
+        // must not also expose the full hidden transcript to accessibility.
+        label: thinkingTitle,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[

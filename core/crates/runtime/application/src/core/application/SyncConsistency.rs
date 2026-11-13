@@ -24,6 +24,7 @@ impl OperitApplication {
     /// All synchronization entry points use this same owner/source inventory.
     pub(super) fn transactionRegistry<'a>(&'a self, schema: &'a PreferenceMergeSchema, operations: &[SyncOperation]) -> Result<Registry<'a>,String> {
         let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
+        self.runtimeSyncOperationStore()?.ignoreNonPortableFileOperations().map_err(|e|e.to_string())?;
         let skipped = self.runtimeSyncOperationStore()?.skippedOperations().map_err(|e|e.to_string())?;
         let operations = operations.iter().chain(&skipped).collect::<Vec<_>>();
         let mut registry = PreferenceMerge::registry(storage.clone(), schema, operations.iter().copied(), |_,_|true)?;
@@ -92,7 +93,8 @@ impl OperitApplication {
         }
         for operation in operations.iter().filter(|op|!matches!(op.domain.as_str(),"preferences"|CHAT_SYNC_DOMAIN|PLUGIN_STORAGE_SYNC_DOMAIN)) {
             if operation.domain == operit_store::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN
-                && operit_util::RuntimeStorageLayout::runtimeStorageOwnership(&operation.entityId) != Ok(operit_util::RuntimeStorageLayout::RuntimeStorageOwnership::Space) {
+                && (operit_util::RuntimeStorageLayout::runtimeStorageOwnership(&operation.entityId) != Ok(operit_util::RuntimeStorageLayout::RuntimeStorageOwnership::Space)
+                    || !operit_util::FileUtils::FileUtils::isPortableFilePath(&operation.entityId)) {
                 registry.journal.ignoreFileOperations(&operation.domain, &operation.entityId).map_err(|e|e.to_string())?;
                 continue;
             }

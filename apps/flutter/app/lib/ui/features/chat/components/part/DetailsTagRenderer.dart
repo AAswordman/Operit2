@@ -28,10 +28,15 @@ class _DetailsTagRendererState extends State<DetailsTagRenderer> {
 
   @override
   Widget build(BuildContext context) {
-    final tagName = _extractTagName(widget.xmlContent) ?? 'details';
-    final inner = _extractContentFromXml(widget.xmlContent, tagName);
-    final summary = _extractSummary(inner);
-    final body = _removeSummary(inner).trim();
+    final summary = _extractSummary(widget.xmlContent);
+    final body = expanded
+        ? _removeSummary(
+            _extractContentFromXml(
+              widget.xmlContent,
+              _extractTagName(widget.xmlContent) ?? 'details',
+            ),
+          ).trim()
+        : '';
 
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),

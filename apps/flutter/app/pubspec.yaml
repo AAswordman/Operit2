@@ -119,6 +119,7 @@ dependencies:
   qr_flutter: ^4.1.0
   zxing2: ^0.2.4
   image: ^4.10.0
+  share_plus: ^13.3.1
 
 dev_dependencies:
   video_player_platform_interface: ^6.9.0
@@ -140,6 +141,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
+  share_plus_platform_interface: ^7.2.0
 
 dependency_overrides:
   desktop_multi_window:

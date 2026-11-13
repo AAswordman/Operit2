@@ -42,6 +42,8 @@ PODS:
     - FlutterMacOS
   - record_macos (1.2.1):
     - FlutterMacOS
+  - share_plus (0.0.1):
+    - FlutterMacOS
   - url_launcher_macos (0.0.1):
     - FlutterMacOS
   - video_player_avfoundation (0.0.1):
@@ -70,6 +72,7 @@ DEPENDENCIES:
   - package_info_plus (from `Flutter/ephemeral/.symlinks/plugins/package_info_plus/macos`)
   - printing (from `Flutter/ephemeral/.symlinks/plugins/printing/macos`)
   - record_macos (from `Flutter/ephemeral/.symlinks/plugins/record_macos/macos`)
+  - share_plus (from `Flutter/ephemeral/.symlinks/plugins/share_plus/macos`)
   - url_launcher_macos (from `Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos`)
   - video_player_avfoundation (from `Flutter/ephemeral/.symlinks/plugins/video_player_avfoundation/darwin`)
   - webview_flutter_wkwebview (from `Flutter/ephemeral/.symlinks/plugins/webview_flutter_wkwebview/darwin`)
@@ -115,6 +118,8 @@ EXTERNAL SOURCES:
     :path: Flutter/ephemeral/.symlinks/plugins/printing/macos
   record_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/record_macos/macos
+  share_plus:
+    :path: Flutter/ephemeral/.symlinks/plugins/share_plus/macos
   url_launcher_macos:
     :path: Flutter/ephemeral/.symlinks/plugins/url_launcher_macos/macos
   video_player_avfoundation:
@@ -142,6 +147,7 @@ SPEC CHECKSUMS:
   package_info_plus: 12f1c5c2cfe8727ca46cbd0b26677728972d9a5b
   printing: 1dd6a1fce2209ec240698e2439a4adbb9b427637
   record_macos: ccd7864c9922136e50c2937b21384f0b175922f2
+  share_plus: 1fa619de8392a4398bfaf176d441853922614e89
   url_launcher_macos: 175a54c831f4375a6cf895875f716ee5af3888ce
   video_player_avfoundation: e54d03b3b19f64f2c557354f72ce538387541ba6
   webview_flutter_wkwebview: 08f7e3ddafd07a1c7319987f5af4ddb173964b24

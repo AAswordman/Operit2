@@ -578,6 +578,40 @@ mod tests {
         (vfs, root)
     }
 
+    /// Startup logging must reach the active identity's physical storage only.
+    #[test]
+    fn runtime_log_files_resolve_through_identity_storage() {
+        let root = std::env::temp_dir().join(format!("operit-vfs-logs-{}", uuid::Uuid::new_v4()));
+        for identity in ["identity-a", "identity-b"] {
+            let runtime = root
+                .join("Library/Application Support/Operit2/runtime/identities")
+                .join(identity);
+            let storage = Arc::new(NativeRuntimeStorageHost::new(
+                runtime.clone(),
+                root.join("workspaces").join(identity),
+            ));
+            let vfs = VisualFileSystem::fromStorage(
+                Arc::new(PosixFileSystemHost::new()),
+                storage,
+            ).unwrap();
+            vfs.makeDirectory("/operitapp/data/logs", true).unwrap();
+            for name in ["operit.log", "toolpkg.log"] {
+                let path = format!("/operitapp/data/logs/{name}");
+                assert!(!vfs.fileExists(&path).unwrap().exists);
+                vfs.writeFile(&path, "", false).unwrap();
+                let mut writer = vfs.openAppendFile(&path).unwrap();
+                writer.append(identity.as_bytes()).unwrap();
+                assert_eq!(
+                    std::fs::read_to_string(runtime.join("logs").join(name)).unwrap(),
+                    identity,
+                );
+                assert_eq!(vfs.readFile(&path).unwrap(), identity);
+            }
+            assert!(!runtime.join("operitapp").exists());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
     #[test]
     fn resource_inputs_keep_vfs_native_and_relative_compatibility() {
         let (vfs, root) = vfs();

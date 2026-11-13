@@ -12,6 +12,96 @@ import 'package:operit2/ui/features/chat/components/part/ToolDisplayComponents.d
 import 'package:operit2/ui/features/chat/components/part/ToolCallResultMergeRender.dart';
 
 void main() {
+  testWidgets('collapsed tool groups never prepare their detail bodies', (
+    tester,
+  ) async {
+    var bodyPreparations = 0;
+    var bodyBuilds = 0;
+    final nodes = [
+      _xml('<tool name="edit_file"></tool>'),
+      _xml('<tool_result name="edit_file">large result</tool_result>'),
+    ];
+    Future<void> render() => tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh'),
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        home: Scaffold(
+          body: Builder(
+            builder: (context) =>
+                const ThinkToolsXmlNodeGrouper(
+                  showThinkingProcess: true,
+                ).renderGroup(
+                  group: const MarkdownGroupItem(
+                    startIndex: 0,
+                    endIndexInclusive: 1,
+                    stableKey: 'lazy',
+                  ),
+                  nodes: nodes,
+                  rendererId: 'collapsed-lazy',
+                  isVisible: true,
+                  isLastNode: true,
+                  textColor: Colors.black,
+                  xmlRenderer:
+                      ({
+                        required xmlContent,
+                        required isStreaming,
+                        required textColor,
+                        xmlStream,
+                        xmlMarkdownEventStream,
+                        renderInstanceKey,
+                      }) => const SizedBox(),
+                  mergeRender:
+                      ({
+                        required startIndex,
+                        required endIndexInclusive,
+                        required renderInstanceKeyPrefix,
+                        required shouldRenderNode,
+                      }) {
+                        bodyPreparations++;
+                        return [
+                          Builder(
+                            builder: (context) {
+                              bodyBuilds++;
+                              return const Text('Heavy tool details');
+                            },
+                          ),
+                        ];
+                      },
+                  xmlStreamResolver: (_) => null,
+                  xmlMarkdownEventStreamResolver: (_) => null,
+                  onLinkClick: null,
+                  fillMaxWidth: true,
+                  textStyle: const TextStyle(),
+                ),
+          ),
+        ),
+      ),
+    );
+    await render();
+    await tester.pumpAndSettle();
+    expect(bodyPreparations, 0);
+    expect(bodyBuilds, 0);
+    await render();
+    await tester.pumpAndSettle();
+    expect(bodyPreparations, 0);
+    await tester.tap(find.textContaining('1 次调用'));
+    await tester.pumpAndSettle();
+    expect(bodyPreparations, greaterThan(0));
+    expect(find.text('Heavy tool details'), findsOneWidget);
+    final preparationsBeforeClose = bodyPreparations;
+    await tester.tap(find.textContaining('1 次调用'));
+    await tester.pumpAndSettle();
+    expect(bodyPreparations, preparationsBeforeClose);
+    final preparationsAfterClose = bodyPreparations;
+    final buildsAfterClose = bodyBuilds;
+    await render();
+    await tester.pumpAndSettle();
+    expect(bodyPreparations, preparationsAfterClose);
+    expect(bodyBuilds, buildsAfterClose);
+    expect(find.text('Heavy tool details', skipOffstage: false), findsNothing);
+  });
+
   group('MarkdownEventNodeBuilder streaming cursor', () {
     test(
       'keeps trailing empty and line-break nodes from owning the cursor',
@@ -206,14 +296,13 @@ void main() {
       _xml('<custom>Visible content</custom>'),
     ]) {
       test('keeps ${boundary.content} between separate activity groups', () {
-        final items = const ThinkToolsXmlNodeGrouper(
-          showThinkingProcess: true,
-        ).group([
-          _xml('<tool name="read_file"/>'),
-          boundary,
-          _xml('<think>plan</think>'),
-          _xml('<tool name="grep_code"/>'),
-        ], 'renderer');
+        final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
+            .group([
+              _xml('<tool name="read_file"/>'),
+              boundary,
+              _xml('<think>plan</think>'),
+              _xml('<tool name="grep_code"/>'),
+            ], 'renderer');
 
         expect(items, hasLength(3));
         expect((items[0] as MarkdownGroupItem).endIndexInclusive, 0);
@@ -223,25 +312,23 @@ void main() {
     }
 
     test('keeps thinking without calls or searches ungrouped', () {
-      final items = const ThinkToolsXmlNodeGrouper(
-        showThinkingProcess: true,
-      ).group([
-        _xml('<think>plan</think>'),
-        _xml('<thinking>continue</thinking>'),
-      ], 'renderer');
+      final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: true)
+          .group([
+            _xml('<think>plan</think>'),
+            _xml('<thinking>continue</thinking>'),
+          ], 'renderer');
 
       expect(items, hasLength(2));
       expect(items, everyElement(isA<MarkdownSingleItem>()));
     });
 
     test('does not include hidden thinking in an activity group', () {
-      final items = const ThinkToolsXmlNodeGrouper(
-        showThinkingProcess: false,
-      ).group([
-        _xml('<tool name="read_file"/>'),
-        _xml('<think>plan</think>'),
-        _xml('<tool name="grep_code"/>'),
-      ], 'renderer');
+      final items = const ThinkToolsXmlNodeGrouper(showThinkingProcess: false)
+          .group([
+            _xml('<tool name="read_file"/>'),
+            _xml('<think>plan</think>'),
+            _xml('<tool name="grep_code"/>'),
+          ], 'renderer');
 
       expect(items, hasLength(3));
       expect((items[0] as MarkdownGroupItem).endIndexInclusive, 0);

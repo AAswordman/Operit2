@@ -38,7 +38,9 @@ class FileDiffDisplay extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final stats = unifiedDiffStats(diff.diffContent);
+    final stats = showHeader
+        ? unifiedDiffStats(diff.diffContent)
+        : (additions: 0, deletions: 0);
     final (fileName, directory) = _splitPath(diff.path);
     return SelectionContainer.disabled(
       child: Container(

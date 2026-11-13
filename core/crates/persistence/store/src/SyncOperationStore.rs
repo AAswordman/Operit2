@@ -1915,6 +1915,18 @@ impl SyncOperationStore {
 
     pub fn pendingOperationCount(&self) -> Result<usize, SyncOperationStoreError> { Ok(self.pendingOperationIds()?.len()) }
 
+    /// Excludes old and pending file states without reading their blobs or touching live paths.
+    pub fn ignoreNonPortableFileOperations(&self) -> Result<(), SyncOperationStoreError> {
+        let paths = self.withJournal(|journal| journal.transaction(|tx| {
+            Ok(tx.query("SELECT DISTINCT target FROM originals WHERE domain=?1", vec![crate::Transaction::text(crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN)])?
+                .iter().map(|row| row.valueAt(0)?.asString()).collect::<Result<Vec<_>, _>>()?)
+        }))?;
+        for path in paths.into_iter().filter(|path| !operit_util::FileUtils::FileUtils::isPortableFilePath(path)) {
+            self.ignoreFileOperations(crate::RuntimeFileSyncStore::RUNTIME_FILE_SYNC_DOMAIN, &path)?;
+        }
+        Ok(())
+    }
+
     /// Retains receipts and identity checks while dropping synchronization work outside declared ownership.
     pub fn ignoreFileOperations(&self, domain: &str, path: &str) -> Result<(), SyncOperationStoreError> {
         let routes = crate::PreferenceLayout::routes(self.storageHost.clone()).map_err(SyncOperationStoreError::Message)?;
@@ -1928,7 +1940,7 @@ impl SyncOperationStore {
             }
             Ok(())
         }))?;
-        operit_util::AppLogger::AppLogger::i("TransactionSync", &format!("sync_file.ignored domain={domain} path={path} reason=unregistered"));
+        operit_util::AppLogger::AppLogger::i("TransactionSync", &format!("sync_file.ignored domain={domain} path={path} reason=excluded"));
         Ok(())
     }
 

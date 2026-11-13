@@ -14,6 +14,8 @@ use uuid::Uuid;
 use super::ChatServiceCore::getMimeTypeFromPath;
 
 const ATTACHMENT_UPLOAD_MAX_CHUNK_BYTES: usize = 1024 * 1024;
+// Leave room for reference suffixes and the Host writer's private staging filename.
+const ATTACHMENT_FILE_NAME_MAX_BYTES: usize = 180;
 
 /// Imports attachments through the shared policy into their final file or source location.
 #[derive(Clone)]
@@ -90,7 +92,7 @@ impl AttachmentTransferManager {
             .and_then(|n| n.to_str())
             .ok_or("Invalid attachment filename")?
             .to_string();
-        validateAttachmentFileName(&name)?;
+        let name = attachmentStorageFileName(&name)?;
         let policy = self.chatPolicy(&chatId)?;
         if source.size as u64 > policy.maxFileBytes.min(policy.maxTotalBytes) {
             let reference = operit_store::FileSyncPolicy::FileReference::new(
@@ -146,7 +148,7 @@ impl AttachmentTransferManager {
         fileName: String,
         expectedByteLength: i64,
     ) -> Result<String, String> {
-        validateAttachmentFileName(&fileName)?;
+        let fileName = attachmentStorageFileName(&fileName)?;
         validateLength(Some(expectedByteLength))?;
         let source: operit_vfs::MountRegistry::MountSource =
             serde_json::from_str(&sourceJson).map_err(|e| e.to_string())?;
@@ -227,11 +229,11 @@ impl AttachmentTransferManager {
         let reference: operit_store::FileSyncPolicy::FileReference =
             serde_json::from_str(&referenceJson).map_err(|e| e.to_string())?;
         reference.validate()?;
-        let name = format!(
+        let name = attachmentStorageFileName(&format!(
             "{}{}",
             reference.fileName,
             operit_store::FileSyncPolicy::REFERENCE_SUFFIX
-        );
+        ))?;
         let path = selectedAttachmentStoragePath(&chatId, &Uuid::new_v4().simple().to_string(), &name)?;
         let bytes = reference.bytes()?;
         self.storageHost
@@ -268,6 +270,7 @@ impl AttachmentTransferManager {
         fileName: String,
         expectedByteLength: Option<i64>,
     ) -> Result<AttachmentInfo, String> {
+        let fileName = attachmentStorageFileName(&fileName)?;
         let path = selectedAttachmentStoragePath(&chatId, &uploadId, &fileName)?;
         let length = self.committedLength(&path, expectedByteLength)?;
         self.persistentInfo(&path, fileName, length)
@@ -296,6 +299,7 @@ impl AttachmentTransferManager {
         fileName: String,
         expectedByteLength: Option<i64>,
     ) -> Result<String, String> {
+        let fileName = attachmentStorageFileName(&fileName)?;
         let path = sourceAttachmentPath(&uploadId, &fileName)?;
         let size = self.committedLength(&path, expectedByteLength)?;
         let reference = operit_store::FileSyncPolicy::FileReference::new(
@@ -411,7 +415,7 @@ impl AttachmentTransferManager {
         fileName: String,
         expectedByteLength: Option<i64>,
     ) -> Result<String, String> {
-        validateAttachmentFileName(&fileName)?;
+        attachmentStorageFileName(&fileName)?;
         validateLength(expectedByteLength)?;
         Ok(Uuid::new_v4().simple().to_string())
     }
@@ -431,6 +435,35 @@ pub(crate) fn validateAttachmentFileName(fileName: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Keeps portable names unchanged; UUID-owned directories make a fixed fallback unique.
+fn attachmentStorageFileName(fileName: &str) -> Result<String, String> {
+    validateAttachmentFileName(fileName)?;
+    if fileName.len() <= ATTACHMENT_FILE_NAME_MAX_BYTES
+        && operit_util::FileUtils::FileUtils::isPortableFileName(fileName)
+    {
+        return Ok(fileName.to_string());
+    }
+    // Preserve locator semantics even when a client uploads an existing reference file.
+    let (base, suffix) = fileName
+        .strip_suffix(operit_store::FileSyncPolicy::REFERENCE_SUFFIX)
+        .map_or((fileName, ""), |base| {
+            (base, operit_store::FileSyncPolicy::REFERENCE_SUFFIX)
+        });
+    let base = base.trim_end_matches([' ', '.']);
+    let extension = base
+        .rsplit_once('.')
+        .map(|(_, extension)| extension)
+        .filter(|extension| {
+            !extension.is_empty()
+                && extension.len() <= 16
+                && extension.bytes().all(|value| value.is_ascii_alphanumeric())
+        });
+    Ok(match extension {
+        Some(extension) => format!("attachment.{extension}{suffix}"),
+        None => format!("attachment{suffix}"),
+    })
+}
+
 /// Rejects invalid declared lengths before starting a Host write.
 fn validateLength(length: Option<i64>) -> Result<(), String> {
     if length.is_some_and(|length| length < 0) {
@@ -440,7 +473,7 @@ fn validateLength(length: Option<i64>) -> Result<(), String> {
 }
 
 fn sourceAttachmentPath(id: &str, name: &str) -> Result<String, String> {
-    validateAttachmentFileName(name)?;
+    let name = attachmentStorageFileName(name)?;
     let id = Uuid::parse_str(id).map_err(|_| "Invalid attachment identity")?;
     Ok(format!(
         "runtime/data/attachment_sources/{}/{name}",
@@ -454,7 +487,7 @@ fn selectedAttachmentStoragePath(
     attachmentId: &str,
     fileName: &str,
 ) -> Result<String, String> {
-    validateAttachmentFileName(fileName)?;
+    let fileName = attachmentStorageFileName(fileName)?;
     let id = Uuid::parse_str(attachmentId).map_err(|_| "Invalid attachment identity")?;
     let manager = operit_store::repository::ChatHistoryManager::ChatHistoryManager::default()
         .map_err(|e| e.to_string())?;
@@ -502,6 +535,80 @@ pub(crate) fn isSelectedAttachment(
 mod tests {
     use super::*;
 
+    #[test]
+    fn portable_attachment_names_are_preserved() {
+        for name in [
+            "需求文档.pdf",
+            "image.jpg",
+            ".env",
+            "a & b=1.txt",
+            "COM10.txt",
+        ] {
+            assert_eq!(attachmentStorageFileName(name).unwrap(), name);
+        }
+        let boundary = format!("{}.jpg", "a".repeat(ATTACHMENT_FILE_NAME_MAX_BYTES - 4));
+        assert_eq!(attachmentStorageFileName(&boundary).unwrap(), boundary);
+    }
+
+    #[test]
+    fn nonportable_attachment_names_use_a_bounded_idempotent_fallback() {
+        for (name, expected) in [
+            ("_cgi-bin_mmwebwx-bin_webwxgetmsgimg??&MsgID=123&skey=example&mmweb_appid=wx_webfilehelper.jpg", "attachment.jpg"),
+            ("photo?.jpg", "attachment.jpg"),
+            ("photo*.PNG", "attachment.PNG"),
+            ("report<draft>.pdf", "attachment.pdf"),
+            ("report|draft.txt", "attachment.txt"),
+            ("report\"draft.txt", "attachment.txt"),
+            ("photo.jpg ", "attachment.jpg"),
+            ("photo.jpg.", "attachment.jpg"),
+            ("CON", "attachment"),
+            ("nul.txt", "attachment.txt"),
+            ("PrN .pdf", "attachment.pdf"),
+            ("AUX.png", "attachment.png"),
+            ("COM1.txt", "attachment.txt"),
+            ("LPT9.txt", "attachment.txt"),
+            ("COM¹.txt", "attachment.txt"),
+            ("LPT².txt", "attachment.txt"),
+            ("COM³.txt", "attachment.txt"),
+            ("CONIN$", "attachment"),
+            ("CONOUT$", "attachment"),
+            ("bad?.invalid-extension", "attachment"),
+        ] {
+            let actual = attachmentStorageFileName(name).unwrap();
+            assert_eq!(actual, expected, "{name:?}");
+            assert_eq!(attachmentStorageFileName(&actual).unwrap(), actual);
+        }
+        for name in [
+            format!("{}.pdf", "a".repeat(181)),
+            format!("{}.jpg", "图".repeat(90)),
+        ] {
+            let actual = attachmentStorageFileName(&name).unwrap();
+            assert!(actual.starts_with("attachment."));
+            assert!(actual.len() <= ATTACHMENT_FILE_NAME_MAX_BYTES);
+        }
+        let id = Uuid::new_v4().simple().to_string();
+        assert!(sourceAttachmentPath(&id, "photo?.jpg")
+            .unwrap()
+            .ends_with("/attachment.jpg"));
+        let other = Uuid::new_v4().simple().to_string();
+        assert_ne!(
+            sourceAttachmentPath(&id, "photo?.jpg").unwrap(),
+            sourceAttachmentPath(&other, "photo?.jpg").unwrap()
+        );
+    }
+
+    #[test]
+    fn fallback_preserves_file_reference_suffixes() {
+        let suffix = operit_store::FileSyncPolicy::REFERENCE_SUFFIX;
+        for name in ["photo?.jpg".to_string(), format!("{}.pdf", "a".repeat(170))] {
+            let actual = attachmentStorageFileName(&format!("{name}{suffix}")).unwrap();
+            assert!(actual.starts_with("attachment."));
+            assert!(actual.ends_with(suffix));
+            assert!(actual.len() <= ATTACHMENT_FILE_NAME_MAX_BYTES);
+            assert_eq!(attachmentStorageFileName(&actual).unwrap(), actual);
+        }
+    }
+
     /// Rejects names and identities that would escape the durable source directory.
     #[test]
     fn source_paths_cannot_escape_the_attachment_directory() {
@@ -519,5 +626,4 @@ mod tests {
         assert!(validateLength(None).is_ok());
         assert!(validateLength(Some(0)).is_ok());
     }
-
 }

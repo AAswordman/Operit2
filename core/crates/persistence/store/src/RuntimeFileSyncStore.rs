@@ -3,6 +3,7 @@
 use std::sync::Arc;
 
 use operit_host_api::RuntimeStorageHost;
+use operit_util::FileUtils::FileUtils;
 use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -103,7 +104,7 @@ impl RuntimeFileSyncStore {
         self.storageHost
             .writeBytes(storagePath, content)
             .map_err(|error| error.to_string())?;
-        self.recordSnapshot(storagePath, content, initial)?;
+        if FileUtils::isPortableFilePath(storagePath) { self.recordSnapshot(storagePath, content, initial)?; }
         Ok(())
     }
 
@@ -141,7 +142,7 @@ impl RuntimeFileSyncStore {
             let mut replaced = std::collections::BTreeSet::new();
             let managed = crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone());
             for path in paths {
-                if requireSpaceFile(&path).is_err() || crate::PluginStorage::ownsFile(self.storageHost.clone(),&path).map_err(|e|e.to_string())? { continue; }
+                if !FileUtils::isPortableFilePath(&path) || requireSpaceFile(&path).is_err() || crate::PluginStorage::ownsFile(self.storageHost.clone(),&path).map_err(|e|e.to_string())? { continue; }
                 let limit = if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(&path) {
                     match managed.captureLimit(&path)? { Some(limit) => Some(limit), None => continue }
                 } else { None };
@@ -206,6 +207,7 @@ impl RuntimeFileSyncStore {
     /// Records an observed deletion without deleting a possibly recreated local file.
     pub(crate) fn recordDeletion(&self, storagePath: &str) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if !FileUtils::isPortableFilePath(storagePath) { return Ok(()); }
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
@@ -249,6 +251,7 @@ impl RuntimeFileSyncStore {
     fn captureFiles(&self, paths: &[String]) -> Result<std::collections::BTreeMap<String, (i64, i64)>, String> {
         let mut files = std::collections::BTreeMap::new();
         for path in paths {
+            if !FileUtils::isPortableFilePath(path) { continue; }
             if !self.storageHost.exists(path).map_err(|e|e.to_string())? { continue; }
             let Some((parent, _)) = path.rsplit_once('/') else {
                 for entry in self.storageHost.list(path).map_err(|e|e.to_string())? { self.captureEntry(entry, &mut files)?; }
@@ -264,6 +267,7 @@ impl RuntimeFileSyncStore {
     /// Visits each listed entry once, excluding registered databases and device-local files.
     fn captureEntry(&self, entry: operit_host_api::RuntimeStorageEntry, files: &mut std::collections::BTreeMap<String, (i64, i64)>) -> Result<(), String> {
         let path = &entry.path;
+        if !FileUtils::isPortableFilePath(path) { return Ok(()); }
         if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(path) { return Ok(()); }
         if crate::PluginStorage::ownsFile(self.storageHost.clone(), path).map_err(|e|e.to_string())? { return Ok(()); }
         if entry.isDirectory {
@@ -286,6 +290,7 @@ impl RuntimeFileSyncStore {
         payload: serde_json::Value,
     ) -> Result<(), String> {
         requireSpaceFile(storagePath)?;
+        if !FileUtils::isPortableFilePath(storagePath) { return Ok(()); }
         if crate::PluginStorage::ownsFile(storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
@@ -317,6 +322,7 @@ impl RuntimeFileSyncStore {
     pub fn requiredBlob(
         operation: &SyncOperation,
     ) -> Result<Option<RuntimeFileSyncReference>, String> {
+        if operation.domain == RUNTIME_FILE_SYNC_DOMAIN && !FileUtils::isPortableFilePath(&operation.entityId) { return Ok(None); }
         if let Some(reference) = crate::SyncBlobIo::transaction_reference(operation)? {
             return Ok(Some(reference));
         }
@@ -353,6 +359,7 @@ impl RuntimeFileSyncStore {
 
     /// Restores the verified original, leaving SQL initializers to their streaming reader.
     pub fn hydrateTransaction(&self, operation: SyncOperation) -> Result<SyncOperation,String> {
+        if operation.domain == RUNTIME_FILE_SYNC_DOMAIN && !FileUtils::isPortableFilePath(&operation.entityId) { return Ok(operation); }
         let Some(reference) = crate::SyncBlobIo::transaction_reference(&operation)? else { return Ok(operation); };
         let initialization = operation.operation == "initialize" && operation.entityType == "initialization";
         if initialization && matches!(operation.domain.as_str(), "chat"|"plugin_storage") { return Ok(operation); }

@@ -2,6 +2,11 @@
 use super::*;
 use operit_host_api::ServiceDiscovery::{DiscoveredService, DiscoverySubscription};
 
+pub(super) struct DiscoveryRefresh {
+    pub subscription: Option<Box<dyn DiscoverySubscription>>,
+    pub scan: Result<(), CoreLinkError>,
+}
+
 impl HostRuntimePeerService {
     /// Retains current service endpoints for both paired and unpaired nodes.
     pub(super) fn rememberDiscoveryRecords(&self, records: &[DiscoveredService]) {
@@ -26,6 +31,34 @@ impl HostRuntimePeerService {
                 None
             }
         }
+    }
+
+    /// Actively refreshes the shared Host browser when passive announcements were missed.
+    /// Blocking discovery and subscription work stays off the connection coordinator.
+    pub(super) async fn refreshReconnectionDiscovery(&self, retrySubscription: bool) -> Result<DiscoveryRefresh, CoreLinkError> {
+        let host = self.state.host.serviceDiscoveryHost.clone()
+            .ok_or_else(|| error("Discovery Host is not installed"))?;
+        let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.as_ref()
+            .ok_or_else(|| error("Host scheduler is not installed"))?;
+        let service = self.clone();
+        let (subscribed, subscription) = tokio::sync::oneshot::channel();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        scheduler.scheduleHostRuntimeTask("peer-rediscovery", Box::new(move || {
+            if subscribed.is_closed() { return; }
+            let subscription = if retrySubscription { service.subscribeDiscovery() } else { None };
+            if subscribed.send(subscription).is_err() || sender.is_closed() { return; }
+            let _ = sender.send(host.discover("_operit-link._tcp.local.", 1_000));
+        })).map_err(|failure| error(failure.to_string()))?;
+        // The async worker owns a retried subscription while the blocking scan runs,
+        // so stopping it releases the subscription without waiting for discovery.
+        let subscription = subscription.await.map_err(|_| error("Background subscription cancelled"))?;
+        let records = receiver.await.map_err(|_| error("Background discovery cancelled"))?;
+        let scan = records.map_err(|failure| error(failure.to_string())).map(|records| {
+            self.rememberDiscoveryRecords(&records);
+            operit_util::AppLogger::AppLogger::trace_detail("RuntimePeerService", &format!(
+                "Background LAN discovery refreshed records={}", records.len()));
+        });
+        Ok(DiscoveryRefresh { subscription, scan })
     }
 
     /// Tries fresh discovered addresses before the saved endpoint, preserving non-network carriers.
