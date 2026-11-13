@@ -2233,7 +2233,7 @@ mod tests {
             zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
             zip.write_all(source.as_bytes()).unwrap();
         }
-        let assets = Box::leak(vec![RuntimePluginAsset {
+        let assets = Box::leak(vec![RuntimePluginAsset { modified_at: 0,
             name: "scan_probe.toolpkg", sha256: "scan-probe-v1",
             bytes: Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice()),
         }].into_boxed_slice());
@@ -2532,7 +2532,7 @@ mod tests {
     /// Package discovery must work without interactive approval in both restricted AI modes.
     #[tokio::test(flavor = "current_thread")]
     async fn package_activation_does_not_require_write_approval() {
-        static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset {
+        static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset { modified_at: 0,
             name: "clock_probe.js", sha256: "", bytes: br#"/* METADATA
             {"name":"clock_probe","description":"Clock query tools","enabledByDefault":true,
              "tools":[{"name":"get_current_date","description":"Get the current date and time","parameters":[],"display":{"label":{"en":"Clock","fr":"Horloge"},"icon":"time"}}]}
@@ -2604,7 +2604,7 @@ mod tests {
             zip.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
             zip.write_all(content.as_bytes()).unwrap();
         }
-        let assets = Box::leak(vec![RuntimePluginAsset {
+        let assets = Box::leak(vec![RuntimePluginAsset { modified_at: 0,
             name: "configuration_probe.toolpkg", sha256: "",
             bytes: Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice()),
         }].into_boxed_slice());
@@ -2684,10 +2684,10 @@ mod tests {
             Box::leak(zip.finish().unwrap().into_inner().into_boxed_slice())
         }
         let assets = Box::leak(vec![
-            RuntimePluginAsset { name: "healthy.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+            RuntimePluginAsset { modified_at: 0, name: "healthy.toolpkg", sha256: "", bytes: archive(serde_json::json!({
                 "toolpkg_id":"healthy_plugin", "resources":[{"key":"text","path":"data.txt","mime":"text/plain"}]
             })) },
-            RuntimePluginAsset { name: "broken_theme.toolpkg", sha256: "", bytes: archive(serde_json::json!({
+            RuntimePluginAsset { modified_at: 0, name: "broken_theme.toolpkg", sha256: "", bytes: archive(serde_json::json!({
                 "toolpkg_id":"broken_theme", "themes":[{"id":"default","path":"theme.json","preview":"preview.png","files":[
                     {"path":"theme.json","mediaType":"application/json"}, {"path":"preview.png","mediaType":"image/png"}
                 ]}]

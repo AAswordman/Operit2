@@ -2614,7 +2614,8 @@ fn empty_preference_preparation_only_initializes_requested_owners() {
     use crate::{PreferenceMerge::{self, PreferenceMergeSchema, PreferenceMergeStore},
         PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore, PreferencesDataStore}};
     let storage = Arc::new(MemoryStorageHost::default());
-    PreferencesDataStore::newWithStorage(storage.clone(), "runtime/plugin_data/space/com.operit.test/existing.preferences.json")
+    let other = "runtime/plugin_data/space/com.operit.test/existing.preferences.json";
+    CoreNodeStateStore::newWithStorage(storage.clone(), other)
         .edit(|values| values.set(&stringPreferencesKey("value"), json!("existing"))).unwrap();
     let path = "runtime/config/preferences/requested.preferences.json";
     CoreNodeStateStore::newWithStorage(storage.clone(), path)
@@ -2622,9 +2623,12 @@ fn empty_preference_preparation_only_initializes_requested_owners() {
     let schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore::values(path, false,
         |storage, path| PreferencesDataStore::newWithStorage(storage, path))] };
     let outcomes = PreferenceMerge::applyIndependentOperations(storage.clone(), &schema, &[], &[], |_, _| true);
-    assert_eq!(outcomes.len(), 1);
-    assert_eq!(outcomes[0].paths, BTreeSet::from([path.into()]));
-    assert!(outcomes[0].result.is_ok(), "{:?}", outcomes[0].result);
+    assert!(outcomes.iter().all(|o| o.paths == BTreeSet::from([path.into()]) && o.result.is_ok()));
+    assert!(PreferencesDataStore::newWithStorage(storage.clone(), path).isSyncPrepared().unwrap());
+    assert!(!PreferencesDataStore::newWithStorage(storage.clone(), other).isSyncPrepared().unwrap());
+    let history = SyncOperationStore::new(storage.clone(), "runtime/sync").preferenceHistory().unwrap();
+    assert!(!history.is_empty());
+    assert!(history.iter().all(|op| crate::PreferencesDataStore::PreferencesSyncedEntry::operationPath(op).unwrap() == path));
     let writes = storage.writeCount();
     assert!(PreferenceMerge::applyIndependentOperations(storage.clone(), &schema, &[], &[], |_, _| true).is_empty());
     assert_eq!(storage.writeCount(), writes);

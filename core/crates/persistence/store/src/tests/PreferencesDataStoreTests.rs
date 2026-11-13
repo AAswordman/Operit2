@@ -2070,6 +2070,9 @@ fn catalog_identity_alias_requires_declared_catalog_keys_and_transaction_semanti
     let schema = identityHistorySchema();
     let path = schema.stores[0].path.as_str();
     let host = Arc::new(MemoryStorageHost::default());
+    let journal = SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH);
+    journal.localDeviceId().unwrap();
+    let writes = host.writeCount();
     let mut operation =
         nativePreferenceOperation(path, vec![("unrelated", json!("entity_a"))], 1);
     operation.operation = "alias".into();
@@ -2079,11 +2082,13 @@ fn catalog_identity_alias_requires_declared_catalog_keys_and_transaction_semanti
         host.clone(),
         &schema,
         &[],
-        &[operation],
+        &[operation.clone()],
         |_, _| true,
     )
     .is_err());
-    assert_eq!(host.writeCount(), 0);
+    assert_eq!(host.writeCount(), writes);
+    assert!(!host.exists(path).unwrap());
+    assert_eq!(journal.skippedOperations().unwrap(), vec![operation]);
 }
 
 /// A transport page cannot establish identity while the source's later edits are still in flight.
@@ -2140,13 +2145,13 @@ fn catalog_identity_persists_and_late_edits_follow_the_canonical_record() {
     assert_eq!(journal.preferenceHistory().unwrap(), history);
 }
 
-/// An offline delta from a different schema cannot mutate a current-version counter.
+/// Identity schema steps convert offline deltas without inventing an erased source baseline.
 #[test]
 fn offline_old_schema_increment_is_converted_after_a_local_upgrade() {
     let host = Arc::new(MemoryStorageHost::default());
     let path = "runtime/config/preferences/offline-counter.preferences.json";
     let store = PreferencesDataStore::newNodeLocalWithStorage(host.clone(), path, false)
-        .withSchema(4, |_, _| Ok(()));
+        .withMigration(4, |_, _| Ok(()));
     store.data().unwrap();
     let mut baseline = nativePreferenceOperation(path, vec![("counter", json!(10))], 1);
     baseline.payload["schemaVersion"] = json!(4);
@@ -2161,13 +2166,13 @@ fn offline_old_schema_increment_is_converted_after_a_local_upgrade() {
     for _ in 0..2 {
         let outcomes = crate::PreferenceMerge::applyIndependentOperations(
             host.clone(),
-            &crate::PreferenceMerge::PreferenceMergeSchema { stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false, |storage,path| PreferencesDataStore::newWithStorage(storage,path).withSchema(4, |_,_|Ok(())))] },
+            &crate::PreferenceMerge::PreferenceMergeSchema { stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false, |storage,path| PreferencesDataStore::newWithStorage(storage,path).withMigration(4, |_,_|Ok(())))] },
             &[],
             &operations,
             |_, _| true,
         );
         assert!(outcomes.iter().all(|outcome| !outcome.skipped));
-        assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()));
+        assert!(outcomes.iter().all(|outcome| outcome.result.is_ok()), "{:?}", outcomes.iter().map(|o| &o.result).collect::<Vec<_>>());
         assert_eq!(
             store.data().unwrap().get(&stringPreferencesKey("counter")),
             Some(&json!(12))

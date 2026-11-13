@@ -1211,6 +1211,7 @@ fn runtimeBuiltinPluginAssets() -> &'static [RuntimePluginAsset] {
                     name: asset.name,
                     bytes: asset.bytes,
                     sha256: asset.sha256,
+                    modified_at: asset.modified_at,
                 })
                 .collect()
         })
@@ -1228,6 +1229,7 @@ fn runtimeBundledExternalPluginAssets() -> &'static [RuntimePluginAsset] {
                     name: asset.name,
                     bytes: asset.bytes,
                     sha256: asset.sha256,
+                    modified_at: asset.modified_at,
                 })
                 .collect()
         })

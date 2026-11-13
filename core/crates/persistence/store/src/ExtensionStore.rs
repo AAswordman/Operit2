@@ -348,6 +348,13 @@ impl ExtensionStore {
         owner.ok_or_else(|| format!("Extension is not registered: package:{name}"))
     }
 
+    /// Reads the canonical source mtime in the same units used by file synchronization.
+    pub fn sourceModifiedAt(&self, kind: &str, id: &str) -> Result<i64, String> {
+        let record = self.record(kind, id)?;
+        let path = format!("{}/{}", Self::root(kind, &record.scope)?, record.sourceName);
+        self.storage.modifiedAt(&path).map_err(|e| e.to_string())
+    }
+
     /// Reads an exact identity and rejects multiple installed owners rather than overriding either.
     pub fn record(&self, kind: &str, id: &str) -> Result<ExtensionRecord, String> {
         let mut records = self.recordsForId(kind, id)?;
@@ -437,6 +444,7 @@ impl ExtensionStore {
         sourceName: &str,
         members: Vec<String>,
         scope: &str,
+        modifiedAt: i64,
     ) -> Result<(), String> {
         validateSegment(sourceName)?;
         let mut record = self.record("package", id)?;
@@ -453,6 +461,11 @@ impl ExtensionStore {
         let previousSource = record.sourceName.clone();
         record.sourceName = sourceName.to_string();
         record.settings["builtin"] = Value::Bool(false);
+        record.settings["bundledModifiedAt"] = modifiedAt.into();
+        let path = format!("{}/{}", Self::root("package", scope)?, sourceName);
+        if modifiedAt > 0 {
+            self.storage.setModifiedAt(&path, modifiedAt).map_err(|e| e.to_string())?;
+        }
         record.settings["members"] =
             serde_json::to_value(members).map_err(|error| error.to_string())?;
         self.publishPackageSource(&record, &previousSource)
@@ -512,7 +525,9 @@ impl ExtensionStore {
                 .storage
                 .readBytes(&path)
                 .map_err(|error| error.to_string())?;
-            self.writeOwnedBytes(record, &path, &bytes)?;
+            // The source is already installed. Republishing must retain its original mtime.
+            RuntimeFileSyncStore::new(self.storage.clone(), RUNTIME_SYNC_DIR_PATH)
+                .recordSnapshot(&path, &bytes, false)?;
         }
         self.write(record)?;
         if !previousSource.is_empty() && previousSource != record.sourceName {
@@ -553,14 +568,19 @@ impl ExtensionStore {
         );
         // Persist the source snapshot before touching the target. A failed move can resume even
         // after both records exist or only part of the source has been removed.
-        let source = if self.storage.exists(&journal).map_err(|e| e.to_string())? {
-            let source: ExtensionRecord = serde_json::from_slice(
+        let (source, modifiedTimes) = if self.storage.exists(&journal).map_err(|e| e.to_string())? {
+            let saved: Value = serde_json::from_slice(
                 &self
                     .storage
                     .readBytes(&journal)
                     .map_err(|e| e.to_string())?,
             )
             .map_err(|e| e.to_string())?;
+            let source: ExtensionRecord = serde_json::from_value(saved.clone()).map_err(|e| e.to_string())?;
+            // Old interrupted moves have no timestamps and retain their previous recovery path.
+            let modifiedTimes: BTreeMap<String, i64> = serde_json::from_value(
+                saved.get("fileModifiedAt").cloned().unwrap_or_else(|| serde_json::json!({}))
+            ).map_err(|e| e.to_string())?;
             if source.kind != kind || source.id != id || source.scope == scope {
                 return Err(
                     "An unfinished scope move must be retried in its original direction".into(),
@@ -568,7 +588,7 @@ impl ExtensionStore {
             }
             self.validate(&source)?;
             self.requireFileOnlyScopeMove(&source)?;
-            source
+            (source, modifiedTimes)
         } else {
             let mut source = self.record(kind, id)?;
             if source.scope == scope { return Ok(()); }
@@ -588,18 +608,21 @@ impl ExtensionStore {
             }
             self.requireFileOnlyScopeMove(&source)?;
             source.files = self.snapshot(&source)?;
+            let modifiedTimes = source.files.keys().map(|relative| {
+                let path = self.filePath(&source, relative)?;
+                Ok((relative.clone(), self.storage.modifiedAt(&path).map_err(|e| e.to_string())?))
+            }).collect::<Result<BTreeMap<_, _>, String>>()?;
+            let mut saved = serde_json::to_value(&source).map_err(|e| e.to_string())?;
+            saved["fileModifiedAt"] = serde_json::to_value(&modifiedTimes).map_err(|e| e.to_string())?;
             self.storage
-                .writeBytes(
-                    &journal,
-                    &serde_json::to_vec(&source).map_err(|e| e.to_string())?,
-                )
+                .writeBytes(&journal, &serde_json::to_vec(&saved).map_err(|e| e.to_string())?)
                 .map_err(|e| e.to_string())?;
-            source
+            (source, modifiedTimes)
         };
         let mut target = source.clone();
         target.scope = scope.to_string();
         self.validate(&target)?;
-        self.materialize(&target)?;
+        self.materialize(&target, &modifiedTimes)?;
         target.files.clear();
         self.write(&target)?;
         self.remove(&source)?;
@@ -1216,13 +1239,21 @@ impl ExtensionStore {
         }
     }
 
-    fn materialize(&self, record: &ExtensionRecord) -> Result<(), String> {
+    fn materialize(&self, record: &ExtensionRecord, modifiedTimes: &BTreeMap<String, i64>) -> Result<(), String> {
         for (relative, encoded) in &record.files {
-            self.writeOwnedBytes(
-                record,
-                &self.filePath(record, relative)?,
-                &STANDARD.decode(encoded).map_err(|e| e.to_string())?,
-            )?;
+            let path = self.filePath(record, relative)?;
+            let bytes = STANDARD.decode(encoded).map_err(|e| e.to_string())?;
+            if let Some(time) = modifiedTimes.get(relative) {
+                if record.scope == "space" {
+                    RuntimeFileSyncStore::new(self.storage.clone(), RUNTIME_SYNC_DIR_PATH)
+                        .writeBytesWithModifiedAt(&path, &bytes, *time)?;
+                } else {
+                    self.storage.writeBytes(&path, &bytes).map_err(|e| e.to_string())?;
+                    self.storage.setModifiedAt(&path, *time).map_err(|e| e.to_string())?;
+                }
+            } else {
+                self.writeOwnedBytes(record, &path, &bytes)?;
+            }
         }
         Ok(())
     }

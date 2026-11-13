@@ -4,7 +4,7 @@ use operit_host_api::RuntimeStorageHost;
 use operit_host_native_storage::NativeRuntimeStorageHost;
 use operit_store::{PreferenceMerge::{applyIndependentOperations, PreferenceMergeSchema, PreferenceMergeStore},
     PreferencesDataStore::{PreferencesDataStore, PreferencesSyncedEntry, stringPreferencesKey},
-    SyncOperationStore::{SyncOperation, SyncOperationStore}, Transaction::{self, Rule}};
+    SyncOperationStore::{SyncOperation, SyncOperationStore, SyncOperationKnowledge}, Transaction::{self, Rule}};
 use serde_json::{json, Value};
 
 const PATH: &str = "runtime/config/preferences/version-check.preferences.json";
@@ -151,11 +151,19 @@ fn unknown_owners_skip_while_an_independent_owner_commits() {
     source.store(PATH, 2).edit(|p| p.set(&stringPreferencesKey("healthy"), true)).unwrap();
     source.store("runtime/config/preferences/unknown.preferences.json", 2).edit(|p| p.set(&stringPreferencesKey("unknown"), true)).unwrap();
     let target = Fixture::new();
-    let outcomes = apply(&target, &source.history(), 2);
-    assert!(outcomes.iter().any(|o| o.paths.contains(PATH) && o.result.is_ok()));
-    assert!(outcomes.iter().any(|o| !o.paths.contains(PATH) && !o.skipped && o.result.is_err()));
-    assert_eq!(target.value("healthy"), Some(json!(true)));
-    assert!(!target.host.exists("runtime/config/preferences/unknown.preferences.json").unwrap());
+    let incoming = source.history();
+    for _ in 0..2 {
+        let outcomes = apply(&target, &incoming, 2);
+        assert!(outcomes.iter().any(|o| o.paths.contains(PATH) && o.result.is_ok()));
+        assert!(outcomes.iter().all(|o| !o.skipped && o.result.is_ok()), "{:?}", outcomes.iter().map(|o| &o.result).collect::<Vec<_>>());
+        assert_eq!(target.value("healthy"), Some(json!(true)));
+        assert!(!target.host.exists("runtime/config/preferences/unknown.preferences.json").unwrap());
+        let journal = target.journal();
+        assert!(journal.pendingOperations().unwrap().is_empty());
+        assert!(journal.skippedOperations().unwrap().is_empty());
+        let receipt = journal.receipt().unwrap();
+        assert!(incoming.iter().all(|op| receipt.containsSequence(&op.originDeviceId, op.sequence)));
+    }
 }
 
 #[test]

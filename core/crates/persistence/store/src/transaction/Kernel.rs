@@ -342,14 +342,15 @@ impl<'a> Registry<'a> {
                 Ok(snapshot) => snapshot,
                 Err(error) => { errors.push(format!("{path}: {error}")); continue; }
             };
-            let mut manifest = snapshot.manifest()?;
-            match (owner.content_digest)(&snapshot) {
-                Ok(digest) => manifest.digest = digest,
+            let manifest = match (owner.content_digest)(&snapshot) {
+                Ok(digest) => snapshot.manifest_with_digest(digest)?,
                 Err(error) => {
+                    let mut manifest = snapshot.manifest()?;
                     manifest.damaged = true;
                     operit_util::AppLogger::AppLogger::w("TransactionSync", &format!("sync_consistency.damaged owner={} error={error}", snapshot.data.owner.path));
+                    manifest
                 },
-            }
+            };
             manifests.push(manifest);
         }
         Ok((manifests,pending,errors))

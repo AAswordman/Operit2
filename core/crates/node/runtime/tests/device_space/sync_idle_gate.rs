@@ -270,6 +270,8 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
 
     // The first pass converges with the remote and seeds the clock baseline.
     observer.synchronizeOnce().await.unwrap();
+    assert_eq!(synchronizedMethodCount(&peers[1], "syncConsistency"), 1,
+        "matching final contents need one full scan; only repairs require another scan");
     let markersAfterFirstPass = fullPassMarkers(&peers[1]);
     let probesAfterFirstPass = synchronizedMethodCount(&peers[1], "syncClockDigest");
     let fullClockCallsAfterFirstPass = synchronizedMethodCount(&peers[1], "syncClock");

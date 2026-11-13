@@ -2143,7 +2143,14 @@ impl RuntimePackageManager {
             &candidate.sourcePath,
         )
         .ok_or_else(|| format!("Bundled package asset not found: {}", candidate.sourcePath))?;
-        Ok(installed.as_slice() != asset.bytes)
+        if installed.as_slice() == asset.bytes { return Ok(false); }
+        // Legacy installations have no source timestamp; retain their one-time update path.
+        // New installations keep their release mtime through scope moves and peer transfers.
+        if asset.modified_at > 0 && record.settings["bundledModifiedAt"].as_i64().unwrap_or(0) > 0 {
+            return Ok(asset.modified_at > ExtensionStore::default()
+                .sourceModifiedAt("package", &candidate.packageName)?);
+        }
+        Ok(true)
     }
 
     #[allow(non_snake_case)]
@@ -2308,6 +2315,7 @@ impl RuntimePackageManager {
                 &sourceFileName,
                 members,
                 scope.as_str(),
+                sourceAsset.modified_at,
             )
         })();
         if let Err(error) = registration {

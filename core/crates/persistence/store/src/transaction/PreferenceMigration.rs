@@ -126,7 +126,7 @@ fn route_rules(store: &PreferencesDataStore, original: &Transaction, version: u3
             break;
         };
         if schema.migrate.apply(from, &mut context).is_err()
-            || context.rules.as_ref().is_none_or(Vec::is_empty)
+            || context.rules.is_none()
         {
             break;
         }

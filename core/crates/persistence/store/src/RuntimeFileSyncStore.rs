@@ -74,12 +74,17 @@ impl RuntimeFileSyncStore {
 
     /// Writes a complete Space file snapshot and records its synchronization operation.
     pub fn writeBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
-        self.writeSnapshot(storagePath, content, false)
+        self.writeSnapshot(storagePath, content, false, None)
+    }
+
+    /// Copies a file with its source mtime before recording the synchronized snapshot.
+    pub(crate) fn writeBytesWithModifiedAt(&self, path: &str, content: &[u8], modifiedAt: i64) -> Result<(), String> {
+        self.writeSnapshot(path, content, false, Some(modifiedAt))
     }
 
     /// Seeds an unseen file below explicit edits and deletion tombstones in conflict order.
     pub fn initializeBytes(&self, storagePath: &str, content: &[u8]) -> Result<(), String> {
-        self.writeSnapshot(storagePath, content, true)
+        self.writeSnapshot(storagePath, content, true, None)
     }
 
     /// Reports whether this file has synchronized state, even when it has been deleted.
@@ -89,7 +94,7 @@ impl RuntimeFileSyncStore {
     }
 
     /// Writes explicit changes and initial seeds through the same file synchronization path.
-    fn writeSnapshot(&self, storagePath: &str, content: &[u8], initial: bool) -> Result<(), String> {
+    fn writeSnapshot(&self, storagePath: &str, content: &[u8], initial: bool, modifiedAt: Option<i64>) -> Result<(), String> {
         if initial && self.hasSnapshot(storagePath)? {
             return Ok(());
         }
@@ -97,13 +102,18 @@ impl RuntimeFileSyncStore {
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
+        let write = || -> Result<(), String> {
+            self.storageHost.writeBytes(storagePath, content).map_err(|e| e.to_string())?;
+            if let Some(time) = modifiedAt {
+                self.storageHost.setModifiedAt(storagePath, time).map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        };
         if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(storagePath) {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
-                .trackPaths(&[storagePath], || self.storageHost.writeBytes(storagePath, content).map_err(|e| e.to_string()));
+                .trackPaths(&[storagePath], write);
         }
-        self.storageHost
-            .writeBytes(storagePath, content)
-            .map_err(|error| error.to_string())?;
+        write()?;
         if FileUtils::isPortableFilePath(storagePath) { self.recordSnapshot(storagePath, content, initial)?; }
         Ok(())
     }

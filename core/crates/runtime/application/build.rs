@@ -99,7 +99,7 @@ fn main() {
     push_plugin_asset_struct(&mut code);
     code.push_str("pub static BUILTIN_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
     for asset in &assets {
-        push_plugin_asset(&mut code, asset);
+        push_plugin_asset(&mut code, asset, &manifest_dir, "buildin");
     }
     code.push_str("];\n");
     code.push_str("\n");
@@ -109,7 +109,7 @@ fn main() {
     );
     code.push_str("pub static BUNDLED_EXTERNAL_PLUGIN_ASSETS: &[PluginAsset] = &[\n");
     for asset in &external_assets {
-        push_plugin_asset(&mut code, asset);
+        push_plugin_asset(&mut code, asset, &manifest_dir, "external");
     }
     code.push_str("];\n");
     fs::write(generated, code).expect("write builtin plugin asset list");
@@ -119,13 +119,50 @@ fn main() {
 }
 
 /// Embeds each immutable package fingerprint alongside its exact compiled bytes.
-fn push_plugin_asset(code: &mut String, asset: &BuildinAsset) {
+fn push_plugin_asset(code: &mut String, asset: &BuildinAsset, manifest_dir: &Path, kind: &str) {
     let bytes = fs::read(&asset.path).expect("read packaged plugin asset");
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
+    let modified_at = plugin_source_modified_at(manifest_dir, kind, asset);
     code.push_str(&format!(
-        "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}), sha256: {:?} }},\n",
-        asset.name, asset.path.to_string_lossy(), sha256,
+        "    PluginAsset {{ name: {:?}, bytes: include_bytes!({:?}), sha256: {:?}, modified_at: {} }},\n",
+        asset.name, asset.path.to_string_lossy(), sha256, modified_at,
     ));
+}
+
+/// Uses source history rather than checkout or archive generation time for release ordering.
+fn plugin_source_modified_at(manifest_dir: &Path, kind: &str, asset: &BuildinAsset) -> i64 {
+    use std::process::Command;
+    use std::time::UNIX_EPOCH;
+    fn mtime(path: &Path) -> i64 {
+        fs::metadata(path).and_then(|m| m.modified()).ok()
+            .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+            .and_then(|time| i64::try_from(time.as_micros()).ok()).unwrap_or(0)
+    }
+    let Ok(plugins) = pluginsSourceRoot(manifest_dir).canonicalize() else {
+        return mtime(&asset.path);
+    };
+    let stem = Path::new(&asset.name).file_stem().expect("plugin stem");
+    let base = plugins.join("packages").join(kind);
+    let source = [base.join(stem), base.join(stem).with_extension("ts"), base.join(&asset.name)]
+        .into_iter().find(|path| path.exists()).unwrap_or_else(|| asset.path.clone());
+    println!("cargo:rerun-if-changed={}", source.display());
+    let git = |args: &[&str]| Command::new("git").current_dir(&plugins)
+        .args(args).arg("--").arg(&source).output().ok().filter(|out| out.status.success());
+    let committed = git(&["log", "-1", "--format=%ct"])
+        .and_then(|out| String::from_utf8(out.stdout).ok())
+        .and_then(|time| time.trim().parse::<i64>().ok()).unwrap_or(0) * 1_000_000;
+    let clean = git(&["status", "--porcelain", "--untracked-files=all"])
+        .is_some_and(|out| out.stdout.is_empty());
+    if committed > 0 && clean { return committed; }
+    let edited = git(&["ls-files", "-z", "--cached", "--others", "--exclude-standard", "--full-name"])
+        .map(|out| {
+            // --full-name paths are relative to the repository, not plugins/.
+            let repo = plugins.parent().expect("repository root");
+            out.stdout.split(|byte| *byte == 0).filter(|path| !path.is_empty())
+                .filter_map(|path| std::str::from_utf8(path).ok())
+                .map(|path| mtime(&repo.join(path))).max().unwrap_or(0)
+        }).unwrap_or(0);
+    committed.max(edited).max(if source.is_file() { mtime(&source) } else { 0 })
 }
 
 /// Declares the compiled package metadata shared by both asset collections.
@@ -135,6 +172,7 @@ fn push_plugin_asset_struct(code: &mut String) {
     code.push_str("    pub name: &'static str,\n");
     code.push_str("    pub bytes: &'static [u8],\n");
     code.push_str("    pub sha256: &'static str,\n");
+    code.push_str("    pub modified_at: i64,\n");
     code.push_str("}\n\n");
 }
 

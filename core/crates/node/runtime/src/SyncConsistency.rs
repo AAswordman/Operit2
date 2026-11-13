@@ -45,6 +45,7 @@ impl SpacePersistenceSyncService {
 
     /// Structural damage selects the complete peer; every correction is verified before completion.
     pub(super) async fn synchronizeConsistency(&self, target: &str, clocks: Option<(&Value, &Value)>, force: bool) -> Result<bool, String> {
+        let startedAt = currentTimeMillis();
         let (local, remote) = self.consistencyReports(target).await?;
         if let Some((a,b)) = clocks {
             if !reportsAtExchange(&local, &remote, &serde_json::from_value(a.clone()).map_err(|e|e.to_string())?,
@@ -52,7 +53,6 @@ impl SpacePersistenceSyncService {
         }
         let plans = correctionPlans(&local, &remote, force);
         let correctionCount = plans.len();
-        let startedAt = currentTimeMillis();
         for (a, b, choice) in plans {
             let source = if choice == Source::Local { a } else { b }.expect("source exists");
             operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
@@ -87,8 +87,9 @@ impl SpacePersistenceSyncService {
                 Err(error) => return Err(error),
             }
         }
-        // Repairs advance receipts themselves; verify fresh contents, not pre-repair clocks.
-        let (latest_local, latest_remote) = self.consistencyReports(target).await?;
+        // Only repairs invalidate the already verified content reports.
+        let (latest_local, latest_remote) = if correctionCount == 0 { (local, remote) }
+            else { self.consistencyReports(target).await? };
         let complete = verifyReports(&latest_local, &latest_remote)?;
         operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
             "sync_consistency.done target={target} mode=full_snapshot corrections={correctionCount} complete={complete} elapsedMs={}", currentTimeMillis() - startedAt));
