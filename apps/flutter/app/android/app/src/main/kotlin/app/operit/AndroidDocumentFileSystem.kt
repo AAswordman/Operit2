@@ -59,7 +59,7 @@ class AndroidDocumentFileSystem(
             }
             "openFile", "shareFile" -> {
                 val target = node(request.getString("path"))
-                require(!target.info().getBoolean("isDirectory")) { "Cannot open a directory as a file" }
+                require(!target.stat().getBoolean("isDirectory")) { "Cannot open a directory as a file" }
                 // Validate the real read capability, including revoked SAF grants.
                 target.input().use { }
                 val id = if (target.file == null) target.documentId() else null
