@@ -237,14 +237,18 @@ class _WorkspaceFileBrowserContentState
 
   /// Requests entries for the current path only after validating its namespace.
   void _loadCurrentPath() {
-    if (!_directorySelectionEnabled &&
-        !_isWorkspaceRelativePath(_currentPath)) {
-      _entriesFuture = Future<List<WorkspaceFileEntry>>.error(
-        StateError('工作区目录路径必须是相对路径'),
-      );
-      return;
-    }
-    _entriesFuture = widget.onListWorkspaceFiles(_currentPath);
+    final entries = Future<List<WorkspaceFileEntry>>.sync(() {
+      if (!_directorySelectionEnabled &&
+          !_isWorkspaceRelativePath(_currentPath)) {
+        throw StateError('工作区目录路径必须是相对路径');
+      }
+      return widget.onListWorkspaceFiles(_currentPath);
+    });
+    // A refresh can fail before the next frame attaches the tree/FutureBuilder,
+    // or be replaced before it is rendered. Observe errors immediately while
+    // keeping the original result available to the listing's error and retry UI.
+    entries.ignore();
+    _entriesFuture = entries;
   }
 
   Future<List<WorkspaceFileEntry>> _listTreeDirectory(String path) {

@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 
 import 'dart:async';
-import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
@@ -14,72 +13,13 @@ import '../components/StoreDetailKit.dart';
 import '../components/StoreVisuals.dart';
 import '../market/MarketInstallStateStore.dart';
 import '../market/ArtifactMarketSupport.dart';
-import '../market/MarketStatsSupport.dart';
+import '../market/MarketFilters.dart';
+import '../components/MarketSortMenu.dart';
 
-String marketSortLabel(MarketSortOption sort) => switch (sort) {
-  MarketSortOption.updated => '最近更新',
-  MarketSortOption.downloads => '下载最多',
-  MarketSortOption.likes => '最受欢迎',
-};
+export '../components/MarketSortMenu.dart' show MarketSortMenu;
 
-String marketSortId(MarketSortOption sort) => switch (sort) {
-  MarketSortOption.updated => 'updated',
-  MarketSortOption.downloads => 'downloads',
-  MarketSortOption.likes => 'likes',
-};
-
-/// Number of pages a listing spans.
-int marketPageCount(core_proxy.MarketListPage page) {
-  if (page.pageSize <= 0) {
-    return page.page;
-  }
-  return math.max(1, (page.total + page.pageSize - 1) ~/ page.pageSize);
-}
-
-/// Compact menu that switches the listing order.
-class MarketSortMenu extends StatelessWidget {
-  const MarketSortMenu({
-    super.key,
-    required this.sort,
-    required this.onChanged,
-    this.compact = false,
-  });
-
-  final MarketSortOption sort;
-  final ValueChanged<MarketSortOption> onChanged;
-  final bool compact;
-
-  /// Shows the current order in the tooltip when only the icon is visible.
-  @override
-  Widget build(BuildContext context) {
-    return PopupMenuButton<MarketSortOption>(
-      tooltip: '排序：${marketSortLabel(sort)}',
-      initialValue: sort,
-      onSelected: onChanged,
-      icon: compact ? const Icon(Icons.sort_rounded, size: 20) : null,
-      itemBuilder: (context) => <PopupMenuEntry<MarketSortOption>>[
-        for (final option in MarketSortOption.values)
-          PopupMenuItem<MarketSortOption>(
-            value: option,
-            child: Text(marketSortLabel(option)),
-          ),
-      ],
-      child: compact
-          ? null
-          : Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  const Icon(Icons.sort_rounded, size: 20),
-                  const SizedBox(width: 6),
-                  Text(marketSortLabel(sort)),
-                ],
-              ),
-            ),
-    );
-  }
-}
+export '../market/MarketFilters.dart'
+    show marketSortLabel, marketSortId, marketPageCount;
 
 /// Full marketplace listing for one sort, type or category, paged on scroll.
 class StoreBrowseScreen extends StatefulWidget {
@@ -104,7 +44,10 @@ class StoreBrowseScreen extends StatefulWidget {
 }
 
 class _StoreBrowseScreenState extends State<StoreBrowseScreen> {
-  late MarketSortOption _sort = widget.initialSort;
+  late MarketFilters _filters = MarketFilters.forSort(
+    widget.initialSort,
+    categoryId: widget.categoryId,
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -119,8 +62,9 @@ class _StoreBrowseScreenState extends State<StoreBrowseScreen> {
       ),
       actions: (context) => <Widget>[
         MarketSortMenu(
-          sort: _sort,
-          onChanged: (sort) => setState(() => _sort = sort),
+          clients: widget.clients,
+          filters: _filters,
+          onChanged: (filters) => setState(() => _filters = filters),
         ),
       ],
       child: Material(
@@ -128,8 +72,9 @@ class _StoreBrowseScreenState extends State<StoreBrowseScreen> {
         child: StoreMarketListing(
           clients: widget.clients,
           type: widget.type,
-          categoryId: widget.categoryId,
-          sort: _sort,
+          categoryId: _filters.categoryId,
+          sort: _filters.sort,
+          timeRange: _filters.timeRange,
         ),
       ),
     );
@@ -144,10 +89,18 @@ class StoreMarketListing extends StatefulWidget {
     required this.sort,
     this.type,
     this.categoryId,
+    this.timeRange,
   });
 
   final GeneratedCoreProxyClients clients;
   final MarketSortOption sort;
+  final MarketTimeRange? timeRange;
+
+  MarketFilters get filters => MarketFilters(
+    sort: sort,
+    timeRange: timeRange ?? MarketFilters.forSort(sort).timeRange,
+    categoryId: categoryId,
+  );
   final String? type;
   final String? categoryId;
 
@@ -185,7 +138,8 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.sort != widget.sort ||
         oldWidget.type != widget.type ||
-        oldWidget.categoryId != widget.categoryId) {
+        oldWidget.categoryId != widget.categoryId ||
+        oldWidget.timeRange != widget.timeRange) {
       unawaited(_reload());
     }
   }
@@ -203,30 +157,12 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
     }
   }
 
-  Future<core_proxy.MarketListPage> _loadPage(int page) {
-    final type = widget.type;
-    final categoryId = widget.categoryId;
-    final sort = marketSortId(widget.sort);
-    if (type != null && categoryId != null) {
-      return _market.getTypeCategoryPage(
-        type: type,
-        categoryId: categoryId,
-        sort: sort,
-        page: page,
-      );
-    }
-    if (type != null) {
-      return _market.getTypePage(type: type, sort: sort, page: page);
-    }
-    if (categoryId != null) {
-      return _market.getCategoryPage(
-        categoryId: categoryId,
-        sort: sort,
-        page: page,
-      );
-    }
-    return _market.getListPage(sort: sort, page: page);
-  }
+  Future<core_proxy.MarketListPage> _loadPage(int page) => loadMarketPage(
+    _market,
+    filters: widget.filters,
+    type: widget.type,
+    page: page,
+  );
 
   Future<void> _reload() async {
     final generation = ++_generation;
@@ -238,6 +174,22 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
       _error = null;
     });
     try {
+      final filters = widget.filters;
+      if (filters.timeRange != MarketTimeRange.all) {
+        final items = await loadMarketPeriodEntries(
+          _market,
+          filters: filters,
+          type: widget.type,
+          isCancelled: () => !mounted || generation != _generation,
+        );
+        if (!mounted || generation != _generation) return;
+        setState(() {
+          _items = items;
+          _page = _pageCount = 1;
+          _loading = false;
+        });
+        return;
+      }
       final page = await _loadPage(1);
       if (!mounted || generation != _generation) return;
       setState(() {
@@ -378,7 +330,7 @@ class _StoreMarketListingState extends State<StoreMarketListing> {
                   hasScrollBody: false,
                   child: Center(
                     child: Text(
-                      '这里还没有内容',
+                      '没有符合筛选条件的内容',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
                   ),

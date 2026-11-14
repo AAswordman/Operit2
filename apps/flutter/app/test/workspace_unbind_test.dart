@@ -10,6 +10,7 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceHomeContent.dart';
+import 'package:operit2/ui/features/chat/components/workspace/WorkspaceFileBrowserContent.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceOverviewModels.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceUnbindDialog.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
@@ -29,6 +30,9 @@ Widget _app(Widget child) => OperitTheme(
 );
 
 void main() {
+  final unbindTitle = lookupAppLocalizations(
+    const Locale('zh'),
+  ).workspaceUnbindTitle;
   Future<void> mountHome(
     WidgetTester tester, {
     String? path,
@@ -68,20 +72,26 @@ void main() {
 
   Future<void> openDialog(
     WidgetTester tester,
-    Future<void> Function() onUnbind,
-  ) async {
+    Future<void> Function() onUnbind, {
+    Widget? workspace,
+  }) async {
     await tester.pumpWidget(
       _app(
         Builder(
-          builder: (context) => TextButton(
-            onPressed: () => showDialog<void>(
-              context: context,
-              barrierDismissible: false,
-              useRootNavigator: false,
-              builder: (_) =>
-                  WorkspaceUnbindDialog(onUnbindWorkspace: onUnbind),
-            ),
-            child: const Text('打开确认'),
+          builder: (context) => Column(
+            children: [
+              if (workspace != null) Expanded(child: workspace),
+              TextButton(
+                onPressed: () => showDialog<void>(
+                  context: context,
+                  barrierDismissible: false,
+                  useRootNavigator: false,
+                  builder: (_) =>
+                      WorkspaceUnbindDialog(onUnbindWorkspace: onUnbind),
+                ),
+                child: const Text('打开确认'),
+              ),
+            ],
           ),
         ),
       ),
@@ -101,6 +111,7 @@ void main() {
     expect(find.text('创建工作区'), findsNothing);
     expect(find.text('选择工作区'), findsNothing);
     await tester.tap(find.text('解除绑定'));
+    await tester.pumpAndSettle();
     expect(taps, 1);
   });
 
@@ -139,11 +150,39 @@ void main() {
       tester,
       () => viewModel.unbindChatFromWorkspace('bound-chat'),
     );
-    await tester.tap(find.widgetWithText(FilledButton, '解除绑定'));
+    await tester.tap(find.widgetWithText(FilledButton, unbindTitle));
     await tester.pumpAndSettle();
     expect(bridge.calls, hasLength(1));
     expect(bridge.calls.single.methodName, 'unbindChatFromWorkspace');
     expect((bridge.calls.single.args as Map)['chatId'], 'bound-chat');
+    expect(find.byType(WorkspaceUnbindDialog), findsNothing);
+  });
+
+  testWidgets('missing workspace directory does not prevent unbinding', (
+    tester,
+  ) async {
+    final bridge = _UnbindBridge();
+    final viewModel = ChatViewModel(bridge: bridge);
+    await openDialog(
+      tester,
+      () => viewModel.unbindChatFromWorkspace('missing-directory-chat'),
+      workspace: WorkspaceFileBrowserContent(
+        rootLabel: '/iCloud/APP查岗',
+        rootRelativePath: '',
+        onListWorkspaceFiles: (_) async =>
+            throw StateError('Directory does not exist: /iCloud/APP查岗'),
+        onOpenFile: (_) async {},
+      ),
+    );
+    await tester.tap(find.widgetWithText(FilledButton, unbindTitle));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(bridge.calls, hasLength(1));
+    expect(bridge.calls.single.methodName, 'unbindChatFromWorkspace');
+    expect(
+      (bridge.calls.single.args as Map)['chatId'],
+      'missing-directory-chat',
+    );
     expect(find.byType(WorkspaceUnbindDialog), findsNothing);
   });
 
@@ -156,7 +195,7 @@ void main() {
       calls++;
       return pending.future;
     });
-    await tester.tap(find.widgetWithText(FilledButton, '解除绑定'));
+    await tester.tap(find.widgetWithText(FilledButton, unbindTitle));
     await tester.pump();
     expect(find.byType(CircularProgressIndicator), findsOneWidget);
     expect(
@@ -192,7 +231,7 @@ void main() {
         throw StateError('runtime unavailable');
       }
     });
-    await tester.tap(find.widgetWithText(FilledButton, '解除绑定'));
+    await tester.tap(find.widgetWithText(FilledButton, unbindTitle));
     await tester.pumpAndSettle();
     expect(find.byType(WorkspaceUnbindDialog), findsOneWidget);
     expect(find.textContaining('解除绑定失败，请重试。'), findsOneWidget);
@@ -201,7 +240,7 @@ void main() {
       tester.widget<FilledButton>(find.byType(FilledButton)).onPressed,
       isNotNull,
     );
-    await tester.tap(find.widgetWithText(FilledButton, '解除绑定'));
+    await tester.tap(find.widgetWithText(FilledButton, unbindTitle));
     await tester.pumpAndSettle();
     expect(calls, 2);
     expect(find.byType(WorkspaceUnbindDialog), findsNothing);

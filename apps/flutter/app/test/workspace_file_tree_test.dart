@@ -536,6 +536,90 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('refresh errors stay in the file tree and can be retried', (
+    tester,
+  ) async {
+    var missing = false;
+    await mount(
+      tester,
+      list: (_) async {
+        if (missing) {
+          throw StateError('Directory does not exist: /iCloud/APP查岗');
+        }
+        return [_entry('README.md')];
+      },
+    );
+    missing = true;
+    await tester.tap(find.byTooltip('刷新'));
+    // The request can fail before the next frame attaches the tree listener.
+    await tester.idle();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(
+      find.byTooltip('Bad state: Directory does not exist: /iCloud/APP查岗'),
+      findsOneWidget,
+    );
+    expect(find.text('重试'), findsOneWidget);
+    missing = false;
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.text('README.md'), findsOneWidget);
+  });
+
+  testWidgets('synchronous directory failures also stay in the file tree', (
+    tester,
+  ) async {
+    var missing = false;
+    await mount(
+      tester,
+      list: (_) {
+        if (missing) throw StateError('Directory unavailable');
+        return Future.value([_entry('README.md')]);
+      },
+    );
+    missing = true;
+    await tester.tap(find.byTooltip('刷新'));
+    await tester.idle();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.text('重试'), findsOneWidget);
+    missing = false;
+    await tester.tap(find.text('重试'));
+    await tester.pumpAndSettle();
+    expect(find.text('README.md'), findsOneWidget);
+  });
+
+  testWidgets('directory picker refresh errors stay local and recover', (
+    tester,
+  ) async {
+    var missing = false;
+    await tester.pumpWidget(
+      _app(
+        WorkspaceFileBrowserContent(
+          rootLabel: '/',
+          rootRelativePath: '/',
+          onListWorkspaceFiles: (_) async {
+            if (missing) throw StateError('Directory unavailable');
+            return [_entry('project', folder: true)];
+          },
+          onSelectCurrentDirectory: (_) async {},
+          onOpenFile: (_) async {},
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    missing = true;
+    await tester.tap(find.byTooltip('刷新'));
+    await tester.idle();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    expect(find.textContaining('Directory unavailable'), findsOneWidget);
+    missing = false;
+    await tester.tap(find.byTooltip('刷新'));
+    await tester.pumpAndSettle();
+    expect(find.text('project'), findsOneWidget);
+  });
+
   testWidgets(
     'root errors allow retry and late loads are safe after disposal',
     (tester) async {

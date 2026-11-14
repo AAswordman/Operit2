@@ -7,9 +7,16 @@ const v1RuntimeStates = {
     macos: { type: "bash", programType: "bash", packages: "native", python: "python3", paths: "posix" },
     ohos: { type: "shell", programType: "shell", packages: "apk", python: "python3", paths: "posix" },
 };
+/** Reads the active native call rather than module-local prelude functions unavailable to SDK closures.
+ * @param {string} key
+ */
+function v1CallValue(key) {
+    const state = globalThis.__operitGetCallState(globalThis.__operitCurrentCallId);
+    return state && state.params ? state.params[key] : undefined;
+}
 /** Resolves exactly the conditional state selected by the Rust package manager. */
 function v1RuntimeState() {
-    const id = getState();
+    const id = v1CallValue('__operit_package_state');
     if (id === undefined || !Object.prototype.hasOwnProperty.call(v1RuntimeStates, id))
         throw new Error("V1 runtime requires a supported package state");
     return v1RuntimeStates[id];
@@ -92,7 +99,7 @@ function v1RequireCompleted(result) {
 async function v1CreateSession(params) {
     const state = v1RuntimeState();
     const name = v1RequiredText(params.sessionName, "sessionName");
-    const session = await __operitV1CanonicalTools.System.terminal.create("v1_" + getCallerName() + "_" + name, state.type);
+    const session = await __operitV1CanonicalTools.System.terminal.create("v1_" + v1CallValue('__operit_package_caller_name') + "_" + name, state.type);
     await v1InitializeSession(session, state);
     return session;
 }
@@ -101,7 +108,7 @@ async function v1Execute(params) {
     v1RuntimeState();
     const command = v1RequiredText(params.command, "command");
     const sessionId = params.sessionId === ""
-        ? (await v1CreateSession({ sessionName: "default_" + getChatId() })).sessionId
+        ? (await v1CreateSession({ sessionName: "default_" + v1CallValue('__operit_package_chat_id') })).sessionId
         : v1RequiredText(params.sessionId, "sessionId");
     return __operitV1CanonicalTools.System.terminal.exec(sessionId, command, v1Timeout(params.timeoutMs, 15000));
 }
@@ -111,7 +118,7 @@ async function v1Terminal(params) {
     if (params.background !== undefined && params.background !== "true" && params.background !== "false")
         throw new Error("background must be 'true' or 'false'");
     const background = params.background === "true";
-    const name = "terminal_" + getChatId() + (background ? "_background_" + Date.now() : "");
+    const name = "terminal_" + v1CallValue('__operit_package_chat_id') + (background ? "_background_" + Date.now() : "");
     const session = await v1CreateSession({ sessionName: name });
     if (background) {
         const pending = __operitV1CanonicalTools.System.terminal.exec(session.sessionId, command, v1Timeout(params.timeoutMs, 0));
@@ -127,7 +134,7 @@ function v1ReportBackgroundError(error) {
 }
 /** Executes one installed runtime program and preserves its real output and exit status. */
 async function v1Program(command, timeoutMs) {
-    const session = await v1CreateSession({ sessionName: "program_" + getChatId() });
+    const session = await v1CreateSession({ sessionName: "program_" + v1CallValue('__operit_package_chat_id') });
     const result = await v1Execute({ command, sessionId: session.sessionId, timeoutMs: v1Timeout(timeoutMs, 60000) });
     v1RequireCompleted(result);
     return result;
@@ -147,7 +154,7 @@ function v1Utf8Hex(value) {
 /** Runs Node source as one quoted argument without changing embedded shell or JavaScript strings. */
 async function v1RunNode(params) {
     const state = v1RuntimeState();
-    const session = await __operitV1CanonicalTools.System.terminal.create("v1_node_" + getCallerName() + "_" + getChatId(), state.programType);
+    const session = await __operitV1CanonicalTools.System.terminal.create("v1_node_" + v1CallValue('__operit_package_caller_name') + "_" + v1CallValue('__operit_package_chat_id'), state.programType);
     const script = v1RequiredText(params.script, "script");
     const launcher = "eval(Buffer.from('" + v1Utf8Hex(script) + "','hex').toString('utf8'))";
     const command = state.programType === "powershell"
@@ -200,7 +207,7 @@ const v1FfmpegReadiness = new Map();
 /** Makes the historical built-in media capability available in existing Alpine runtimes too. */
 async function v1EnsureFfmpeg(state) {
     if (state.packages !== 'apk') return;
-    const key = getState();
+    const key = v1CallValue('__operit_package_state');
     let ready = v1FfmpegReadiness.get(key);
     if (!ready) {
         ready = v1Program('command -v ffmpeg >/dev/null 2>&1 || apk add --no-cache ffmpeg', 120000);

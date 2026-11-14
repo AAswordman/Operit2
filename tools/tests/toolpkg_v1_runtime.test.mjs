@@ -22,13 +22,9 @@ function provider(state, execute) {
   const calls = [];
   const sessions = new Map();
   const context = vm.createContext({
-    exports: {}, console,
-    /** Supplies the state selected by Rust instead of inferring an operating system. */
-    getState() { return state; },
-    /** Supplies the actual invoking package identity. */
-    getCallerName() { return 'legacy.package'; },
-    /** Supplies a stable conversation identity for session isolation. */
-    getChatId() { return 'chat-a'; },
+    exports: {}, console, __operitCurrentCallId: 'provider-call',
+    /** Supplies the actual native call context without exposing module-local prelude functions. */
+    __operitGetCallState() { return {params: {__operit_package_state: state, __operit_package_caller_name: 'legacy.package', __operit_package_chat_id: 'chat-a'}}; },
     Tools: { System: { terminal: {
       /** Creates and reuses one host session for each explicit name and interpreter. */
       async create(name, type) {
@@ -59,7 +55,8 @@ function adapter(version = '1.0.0', respond) {
   const canonicalCalls = [];
   const context = vm.createContext({ version, state: 'linux', __operitCurrentCallId: 'test-call', __calls: calls, __respond: respond,
     /** Provides the active ToolPkg contract on every invocation. */
-    __operitGetCallState() { return { params: { __operit_toolpkg_api_version: context.version, containerPackageName: context.owner } }; },
+    __operitGetCallState() { return { params: { __operit_toolpkg_api_version: context.version, containerPackageName: context.owner,
+      __operit_package_state: context.state, __operit_package_caller_name: 'legacy.package', __operit_package_chat_id: 'chat-a' } }; },
     /** Publishes bootstrap globals just as the execution runtime does. */
     __operitExpose(name, value) { context[name] = value; },
     /** Tracks host requests through the production structured transport. */
@@ -76,9 +73,6 @@ function adapter(version = '1.0.0', respond) {
     __operitActivateCall() {},
     /** Snapshots the plain public request through the host-owned transport contract. */
     __operitHostSnapshotJsonObject(value) { return context.__operitSnapshotJsonObject(value); },
-    getState() { return context.state; },
-    getCallerName() { return 'legacy.package'; },
-    getChatId() { return 'chat-a'; },
     canonicalCalls,
   });
   vm.runInContext(readSdkScript('ToolPkgApiRuntimeScript.rs'), context);

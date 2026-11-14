@@ -41,7 +41,15 @@ void main() {
         'total': 50,
         'items': [
           for (var i = (page - 1) * 25; i < page * 25; i++)
-            {..._entry().toJson(), 'id': 'rank-$i', 'title': 'Plugin $i'},
+            {
+              ..._entry().toJson(),
+              'id': 'rank-$i',
+              'title': 'Plugin $i',
+              'createdAt': DateTime.now()
+                  .toUtc()
+                  .subtract(const Duration(days: 1))
+                  .toIso8601String(),
+            },
         ],
       };
     final clients = GeneratedCoreProxyClients(bridge);
@@ -110,6 +118,10 @@ void main() {
     expect(tester.state(find.byType(StoreMarketListing)), same(listState));
     expect(scroll.offset, offset);
     expect(bridge.listPages, calls);
+    expect(
+      tester.widget<StoreMarketListing>(find.byType(StoreMarketListing)).sort,
+      MarketSortOption.downloads,
+    );
     expect(find.text('下载最多'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });

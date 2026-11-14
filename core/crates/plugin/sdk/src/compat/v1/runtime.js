@@ -182,6 +182,61 @@ function __operitInstallV1Runtime(runtime) {
 
     var terminal = canonical.System.terminal;
     var currentTerminal = runtime.Tools.System.terminal;
+    // One-shot Android commands must bypass the v1 Linux terminal and its path rewrites.
+    var shellSequence = 0;
+    var shellScope = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+    /** Executes with the host's existing Android privilege policy and returns the v1 ADB receipt.
+     * @param {string} command
+     * @returns {Promise<import('../../../../../../../plugins/types-v1/results').ADBResultData>}
+     */
+    async function androidShell(command) {
+        if (typeof command !== 'string' || !command.trim() || command.includes('\0')) {
+            throw new TypeError('Tools.System.shell requires a nonblank command without NUL');
+        }
+        var callState = runtime.__operitGetCallState(runtime.__operitCurrentCallId);
+        if (!callState || !callState.params || callState.params.__operit_package_state !== 'android') {
+            throw new Error('Tools.System.shell requires Android');
+        }
+        // Each invocation owns its session, including concurrent callers and timeout cleanup.
+        var session = await terminal.create('v1_android_shell_' + shellScope + '_' + (++shellSequence), 'shell');
+        var failed = false;
+        try {
+            var result = await terminal.exec(session.sessionId, command, 20000);
+            if (result.timedOut) throw new Error('Android shell timed out: ' + result.output);
+            if (result.exitCode !== 0) {
+                throw new Error('Android shell exited with code ' + result.exitCode + ': ' + result.output);
+            }
+            return {
+                command: result.command,
+                output: result.output,
+                exitCode: result.exitCode,
+                /** Preserves useful string conversion alongside the structured legacy fields.
+                 * @this {import('../../../../../../../plugins/types-v1/results').ADBResultData}
+                 */
+                toString: function() { return this.output; },
+            };
+        } catch (error) {
+            failed = true;
+            throw error;
+        } finally {
+            try {
+                var closed = await terminal.close(session.sessionId);
+                if (!closed.success) throw new Error('Android shell cleanup failed: ' + closed.message);
+            } catch (error) {
+                // Keep the command's failure visible if cleanup fails as well.
+                if (!failed) throw error;
+            }
+        }
+    }
+    var legacyShell = api.method().between('1.0.0', '2.0.0', androidShell).build('Tools.System.shell');
+    Object.defineProperty(runtime.Tools.System, 'shell', {
+        configurable: true,
+        /** Keeps the supplemental legacy entry point out of the v2 API. */
+        get: function() {
+            var version = api.currentVersion();
+            return version === '1.0.0' || version === '1.0.1' ? legacyShell : undefined;
+        },
+    });
     currentTerminal.create = api.method()
         .between('1.0.0', '2.0.0',
             /** Creates a legacy session using the package state selected by Rust.

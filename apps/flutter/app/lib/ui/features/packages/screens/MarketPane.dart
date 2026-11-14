@@ -19,7 +19,7 @@ import '../components/StoreVisuals.dart';
 import '../market/MarketInstallStateStore.dart';
 import '../market/ArtifactMarketSupport.dart';
 import '../market/MarketRecommendations.dart';
-import '../market/MarketStatsSupport.dart';
+import '../market/MarketFilters.dart';
 import '../model/ExtensionCatalogController.dart';
 import '../model/GitHubAccountState.dart';
 import 'StoreBrowseScreen.dart';
@@ -43,7 +43,7 @@ class _MarketPaneState extends State<MarketPane> {
   late final MarketInstallStateStore _installState;
   late final GitHubAccountState _account = GitHubAccountState.of(_clients);
   StoreKind? _kind;
-  MarketSortOption _kindSort = MarketSortOption.updated;
+  MarketFilters _kindFilters = const MarketFilters();
   int _homeGeneration = 0;
   bool _homeLoading = true;
   String? _homeError;
@@ -224,7 +224,9 @@ class _MarketPaneState extends State<MarketPane> {
     } else if (kind != null) {
       body = StoreMarketListing(
         clients: _clients,
-        sort: _kindSort,
+        sort: _kindFilters.sort,
+        timeRange: _kindFilters.timeRange,
+        categoryId: _kindFilters.categoryId,
         type: kind.marketType,
       );
       bodyKey = 'kind:${kind.id}';
@@ -303,9 +305,12 @@ class _MarketPaneState extends State<MarketPane> {
               ),
               if (showSort)
                 MarketSortMenu(
-                  sort: _kindSort,
+                  clients: _clients,
+                  categories: _categories.isEmpty ? null : _categories,
+                  filters: _kindFilters,
                   compact: compactActions,
-                  onChanged: (sort) => setState(() => _kindSort = sort),
+                  onChanged: (filters) =>
+                      setState(() => _kindFilters = filters),
                 ),
               const SizedBox(width: 4),
               _CreatorEntry(account: _account, compact: compactActions),

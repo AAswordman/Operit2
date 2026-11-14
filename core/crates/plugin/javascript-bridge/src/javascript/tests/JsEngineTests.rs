@@ -291,6 +291,7 @@ struct TestPluginConfigExecutionHost {
     toolCatalogError: Arc<Mutex<Option<String>>>,
     callerContext: Arc<Mutex<Option<Value>>>,
     capturedCallerContext: Option<Value>,
+    legacyShellCalls: Arc<Mutex<Vec<Value>>>,
     #[cfg(not(target_arch = "wasm32"))]
     toolPkgIpcThreadName: Arc<Mutex<Option<String>>>,
     #[cfg(not(target_arch = "wasm32"))]
@@ -394,6 +395,23 @@ impl JsExecutionHost for TestPluginConfigExecutionHost {
         &self,
         request: JsToolCallRequest,
     ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<JsToolCallResult> {
+        if matches!(request.tool_name.as_str(), "create_terminal_session" | "execute_in_terminal_session" | "close_terminal_session") {
+            self.legacyShellCalls.lock().unwrap().push(serde_json::json!({
+                "tool": request.tool_name, "params": request.parameters,
+            }));
+            let data = match request.tool_name.as_str() {
+                "create_terminal_session" => {
+                    let terminal_type = request.parameters.get("type").unwrap();
+                    serde_json::json!({"sessionId":"native-shell", "terminalType":terminal_type, "platform":"android", "terminal":"android-system", "isNewSession":true})
+                }
+                "execute_in_terminal_session" => {
+                    let command = request.parameters.get("command").and_then(Value::as_str).unwrap();
+                    serde_json::json!({"command":command, "output":"raw native output\n", "exitCode":if command == "denied" { 1 } else { 0 }, "timedOut":command == "timeout"})
+                }
+                _ => serde_json::json!({"success":true, "sessionId":"native-shell", "message":"closed"}),
+            };
+            return Box::pin(async move { JsToolCallResult { success:true, data:JsToolCallResultData::Value(data), error:None } });
+        }
         if request.tool_name == "storage_request" {
             let decoded = request.parameters.get("request").cloned()
                 .ok_or_else(|| "Missing storage request".to_string())
@@ -5986,4 +6004,90 @@ async fn wasm_usearch_indexes_searches_deletes_and_restores_real_vectors() {
     }
     assert_eq!(host.wasmModuleReads.load(Ordering::Relaxed), 1);
     engine.destroy();
+}
+
+/// Exercises the actual compiled SDK/bootstrap and native boundary with no Android process execution.
+#[tokio::test(flavor = "current_thread")]
+async fn v1_android_shell_uses_native_system_terminal_and_cleans_up() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("v1-shell");
+    for version in ["1.0.0", "1.0.1"] {
+        let host = Arc::new(TestPluginConfigExecutionHost::default());
+        let engine = super::JsEngine::new_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+            context_key: format!("v1-shell:{version}"), container_package_name: "legacy.shell".into(),
+            api_version: version.into(), text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources:BTreeMap::new() }),
+        }).unwrap();
+        let mut params = testParams();
+        params.insert("__operit_package_state".into(), Value::String("android".into()));
+        let script = r#"
+            exports.run = async function() {
+                var receipt = await Tools.System.shell('dumpsys usagestats');
+                var errors = [];
+                for (var command of ['denied', 'timeout']) {
+                    try { await Tools.System.shell(command); }
+                    catch (error) { errors.push(error.message); }
+                }
+                return {command:receipt.command, output:receipt.output, exitCode:receipt.exitCode,
+                    text:String(receipt), terminal:typeof Tools.System.terminal, errors:errors};
+            };
+        "#;
+        let output = engine.execute_script_function(script, "run", &params, &BTreeMap::new(), None, true, None).await;
+        let result: Value = serde_json::from_str(&expect_js_output(output, "native v1 shell")).unwrap();
+        assert_eq!(result["command"], "dumpsys usagestats");
+        assert_eq!(result["output"], "raw native output\n");
+        assert_eq!(result["text"], result["output"]);
+        assert_eq!(result["exitCode"], 0);
+        assert_eq!(result["terminal"], "object");
+        assert!(result["errors"][0].as_str().unwrap().contains("code 1"));
+        assert!(result["errors"][1].as_str().unwrap().contains("timed out"));
+        let calls = host.legacyShellCalls.lock().unwrap();
+        assert_eq!(calls.len(), 9);
+        for chunk in calls.chunks(3) {
+            assert_eq!(chunk[0]["tool"], "create_terminal_session");
+            assert_eq!(chunk[0]["params"]["type"], "shell");
+            assert_eq!(chunk[1]["tool"], "execute_in_terminal_session");
+            assert_eq!(chunk[2]["tool"], "close_terminal_session");
+        }
+        drop(calls);
+        let legacy = engine.execute_script_function(
+            "exports.legacy = async function() { return await Tools.System.terminal.create('audit'); };",
+            "legacy", &params, &BTreeMap::new(), None, true, None,
+        ).await;
+        let legacy: Value = serde_json::from_str(&expect_js_output(legacy, "native legacy terminal")).unwrap();
+        assert_eq!(legacy["terminalType"], "bash");
+        engine.destroy();
+    }
+}
+
+/// Uses the existing environment host unchanged; v1 preference behavior lives entirely in the SDK adapter.
+#[tokio::test(flavor = "current_thread")]
+async fn v1_shared_preferences_use_existing_environment_host() {
+    testJavaScriptRuntimeHost();
+    register_test_runtime_storage("v1-preferences-config");
+    for version in ["1.0.0", "1.0.1"] {
+        let host = Arc::new(TestPluginConfigExecutionHost::default());
+        let make_engine = || super::JsEngine::new_toolpkg_execution_engine(host.clone(), ToolPkgExecutionContext {
+            context_key: format!("v1-preferences-config:{version}"), container_package_name: "com.raineiris.messenger".into(),
+            api_version: version.into(), text_resource_host: Arc::new(StaticToolPkgTextResourceHost { resources: BTreeMap::new() }),
+        }).unwrap();
+        let engine = make_engine();
+        let wrote = engine.execute_script_function(
+            "exports.write = function() { return Java.getContext().getSharedPreferences('toolpkg_messenger', 0).edit().putBoolean('bridge_enabled', true).putString('bridges_json', '[{\"id\":\"bridge_1\"}]').commit(); };",
+            "write", &testParams(), &BTreeMap::new(), None, true, None,
+        ).await;
+        assert_eq!(expect_js_output(wrote, "v1 preference config write"), "true");
+        engine.destroy();
+        assert_eq!(host.environment.lock().unwrap().len(), 1);
+        assert!(host.environment.lock().unwrap().keys().all(|key| key.starts_with("__OPERIT_V1_PREFS_")));
+        let engine = make_engine();
+        let fallback = "exports.bridge_status = function() { var p=Java.getApplicationContext().getSharedPreferences('toolpkg_messenger',0); return {global_enabled:p.getBoolean('bridge_enabled',false),bridge_count:JSON.parse(p.getString('bridges_json','[]')).length}; };";
+        let source = std::env::var("OPERIT_MARKET_MESSENGER_CORE").ok().map(|path| std::fs::read_to_string(path).unwrap()).unwrap_or_else(|| fallback.into());
+        let read = engine.execute_script_function(&source, "bridge_status", &testParams(), &BTreeMap::new(), None, true, None).await;
+        let read: Value = serde_json::from_str(&expect_js_output(read, "reopened v1 preference config")).unwrap();
+        assert_eq!(read["global_enabled"], true);
+        assert_eq!(read["bridge_count"], 1);
+        assert!(host.environmentOwners.lock().unwrap().iter().all(|owner| owner ==
+            &operit_plugin_sdk::javascript::JsEnvironmentOwner::Package("com.raineiris.messenger".into())));
+        engine.destroy();
+    }
 }
