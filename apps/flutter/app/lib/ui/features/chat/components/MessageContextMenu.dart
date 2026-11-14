@@ -776,6 +776,13 @@ String cleanMessageContent(String content) {
       .replaceAll(ChatMarkupRegex.attachmentTag, '')
       .replaceAll(ChatMarkupRegex.attachmentSelfClosingTag, '')
       .replaceAll(
+        RegExp(
+          r'<meta(?=[\s/>])[^>]*(?:/>|>[\s\S]*?(?:</meta\s*>|$))',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .replaceAll(
         RegExp(r'<status\b[\s\S]*?</status>', caseSensitive: false),
         '',
       )
