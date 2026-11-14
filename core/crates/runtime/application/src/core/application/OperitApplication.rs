@@ -965,11 +965,11 @@ impl OperitApplication {
     }
 
     pub fn syncReadSnapshot(&self, owner: serde_json::Value, token: String) -> Result<serde_json::Value, String> {
-        self.exportConsistencySnapshot(serde_json::from_value(owner).map_err(|e| e.to_string())?, &token)
+        self.exportConsistencySnapshot(serde_json::from_value(owner).map_err(|e| e.to_string())?, &token, false)
     }
 
     pub fn syncReadCoverage(&self, owner: serde_json::Value, token: String) -> Result<serde_json::Value, String> {
-        self.exportConsistencyCoverage(serde_json::from_value(owner).map_err(|e| e.to_string())?, &token)
+        self.exportConsistencySnapshot(serde_json::from_value(owner).map_err(|e| e.to_string())?, &token, true)
     }
 
     pub fn syncRepairSnapshot(&self, owner: serde_json::Value, expected: String, reference: serde_json::Value) -> Result<bool, String> {
@@ -1006,22 +1006,29 @@ impl OperitApplication {
                 Err(error) => (None,vec![error]),
             }
         } else { (None,vec![]) };
-        let failed_domains = if errors.is_empty() { vec![] } else if domains.is_empty() {
-            vec!["preferences".to_owned(),CHAT_SYNC_DOMAIN.into(),PLUGIN_STORAGE_SYNC_DOMAIN.into(),RUNTIME_FILE_SYNC_DOMAIN.into()]
-        } else { domains };
+        let owners = operations.iter().map(|op|registry.target(op).map(|path|(op.opId.clone(),path)))
+            .collect::<Result<BTreeMap<_,_>,_>>()?;
         let files = self.runtimeFileSyncStore()?;
         let operations = operations.into_iter().map(|op|files.prepareTransactionForTransport(op)).collect::<Result<Vec<_>,_>>()?;
         Ok(serde_json::json!({"operations":boundSyncOperationPage(operations,DEFAULT_SYNC_PAGE_BYTES),"remaining":remaining,
-            "progressErrors":progress_errors,"errors":errors,"failedDomains":failed_domains}))
+            "progressErrors":progress_errors,"errors":errors,"owners":owners}))
     }
 
     /// Durably receives originals and materializes independent owners without acknowledging failed application.
     #[allow(non_snake_case)]
     pub fn syncApplyOperations(&self, operations: serde_json::Value) -> Result<serde_json::Value,String> {
         let operations: Vec<SyncOperation> = serde_json::from_value(operations).map_err(|e|e.to_string())?;
+        let received = operations.len();
         let files = self.runtimeFileSyncStore()?;
         let mut errors = Vec::new();
-        let operations = operations.into_iter().map(|op| files.hydrateTransaction(op)).collect::<Result<Vec<_>,_>>()?;
+        let mut failedOperationIds = Vec::new();
+        let operations = operations.into_iter().filter_map(|op| {
+            let id = op.opId.clone();
+            match files.hydrateTransaction(op) {
+                Ok(op) => Some(op),
+                Err(error) => { failedOperationIds.push(id); errors.push(error); None },
+            }
+        }).collect::<Vec<_>>();
         let journal = self.runtimeSyncOperationStore()?;
         let application = journal.lockApplication().map_err(|e|e.to_string())?;
         journal.receiveOperations(&operations).map_err(|e|e.to_string())?;
@@ -1037,9 +1044,11 @@ impl OperitApplication {
         drop(application);
         operit_store::SyncAppliedChanges::publish(&storage,&report.applied);
         let chats = report.applied.iter().filter_map(synchronizedChatId).collect();
-        if let Err(error) = self.refreshSynchronizedChatFlows(&chats) { errors.push(format!("chat refresh: {error}")); }
-        Ok(serde_json::json!({"received":operations.len(),"applied":report.applied.len(),"skipped":report.skipped,"pending":report.pending.len(),
-            "pendingOperationIds":report.pending,"pendingOwners":pending_owners,"errors":errors}))
+        if let Err(error) = self.dispatchSynchronizedChatChanges(chats) {
+            AppLogger::e("CoreSyncTrace", &format!("sync_apply.chat_refresh: {error}"));
+        }
+        Ok(serde_json::json!({"received":received,"applied":report.applied.len(),"skipped":report.skipped,"pending":report.pending.len(),
+            "pendingOperationIds":report.pending,"pendingOwners":pending_owners,"failedOperationIds":failedOperationIds,"errors":errors}))
     }
 
     /// Applies one route-transported Binding operation without moving persistent sync clocks.
@@ -1060,133 +1069,26 @@ impl OperitApplication {
         Ok(serde_json::json!({ "applied": true }))
     }
 
-    /// Refreshes quiescent opened chat flows after synchronized SQL state is committed.
-    #[allow(non_snake_case)]
-    fn refreshSynchronizedChatFlows(
-        &self,
-        chatIds: &std::collections::BTreeSet<String>,
-    ) -> Result<(), String> {
-        if chatIds.is_empty() {
-            return Ok(());
-        }
+    /// Consumes committed chat changes through the runtime queue, independently of sync results.
+    fn dispatchSynchronizedChatChanges(&self, chatIds: std::collections::BTreeSet<String>) -> Result<(), String> {
+        if chatIds.is_empty() { return Ok(()); }
         let store = SqlChatSyncStore::default().map_err(|error| error.to_string())?;
-        let mut deletedChatIds = Vec::new();
-        let mut liveChatIds = Vec::new();
-        for chatId in chatIds {
-            if store.chatIsDeleted(chatId).map_err(|error| error.to_string())? {
-                deletedChatIds.push(chatId.clone());
-            } else {
-                liveChatIds.push(chatId.clone());
-            }
-        }
-        if !deletedChatIds.is_empty() {
-            self.dispatchSynchronizedChatDeletions(deletedChatIds)?;
-        }
-        if liveChatIds.is_empty() {
-            return Ok(());
-        }
-        let mut holder = self.chatRuntimeHolder.try_lock().map_err(|_| {
-            "chat runtime holder is busy during synchronized chat refresh".to_string()
-        })?;
-        let mut refreshed = 0usize;
-        for (slot, core) in holder.cores.iter_mut() {
-            let activeChatIds = core.activeStreamingChatIds();
-            AppLogger::trace(
-                "CoreSyncTrace",
-                &format!(
-                    "sync_apply.chat_flow_refresh_core slot={:?} activeChatIds={}",
-                    slot,
-                    activeChatIds.join(",")
-                ),
-            );
-            for chatId in &liveChatIds {
-                let flowSnapshot = core
-                    .chatHistoryDelegate
-                    .chatMessageFlowsByChatId
-                    .lock()
-                    .expect("chat message flow registry mutex must not be poisoned")
-                    .get(chatId)
-                    .cloned()
-                    .map(|flow| flow.value());
-                let flowSnapshotMessages = flowSnapshot.as_deref().unwrap_or(&[]);
-                let streamMessages = flowSnapshotMessages
-                    .iter()
-                    .filter(|message| message.contentStream.is_some())
-                    .count();
-                let lastMessage = flowSnapshotMessages.last().map(|message| {
-                    format!(
-                        "ts={} sender={} chars={} stream={}",
-                        message.timestamp,
-                        message.sender,
-                        message.displayText().chars().count(),
-                        message
-                            .contentStream
-                            .as_ref()
-                            .map(|stream| stream.descriptor.streamId.as_str())
-                            .unwrap_or("none")
-                    )
-                });
-                if activeChatIds
-                    .iter()
-                    .any(|activeChatId| activeChatId == chatId)
-                {
-                    AppLogger::trace(
-                        "CoreSyncTrace",
-                        &format!(
-                            "sync_apply.chat_flow_skip slot={:?} chatId={} reason=active_local_stream flowOpened={} snapshotMessages={} streamMessages={} last={}",
-                            slot,
-                            chatId,
-                            flowSnapshot.is_some(),
-                            flowSnapshotMessages.len(),
-                            streamMessages,
-                            lastMessage.as_deref().unwrap_or("none")
-                        ),
-                    );
-                    continue;
-                }
-                AppLogger::trace(
-                    "CoreSyncTrace",
-                    &format!(
-                        "sync_apply.chat_flow_refresh slot={:?} chatId={} activeLocal=false flowOpened={} snapshotMessages={} streamMessages={} last={}",
-                        slot,
-                        chatId,
-                        flowSnapshot.is_some(),
-                        flowSnapshotMessages.len(),
-                        streamMessages,
-                        lastMessage.as_deref().unwrap_or("none")
-                    ),
-                );
-                core.chatHistoryDelegate
-                    .refreshChatMessagesFromPersistence(chatId.clone());
-                refreshed += 1;
-            }
-        }
-        AppLogger::trace(
-            "CoreSyncTrace",
-            &format!(
-                "sync_apply.chat_flow_refresh chatCount={} coreFlowRefreshCount={}",
-                chatIds.len(),
-                refreshed
-            ),
-        );
-        Ok(())
-    }
-
-    /// Applies committed chat deletions once the shared runtime is available, including active streams.
-    fn dispatchSynchronizedChatDeletions(&self, chatIds: Vec<String>) -> Result<(), String> {
-        let scheduler = self.hostManager.hostRuntimeTaskSchedulerHost.clone().ok_or_else(|| {
-            "runtime task scheduler host must be configured for synchronized chat deletion".to_string()
-        })?;
+        let changes = chatIds.into_iter().map(|id|store.chatIsDeleted(&id).map(|deleted|(id,deleted)))
+            .collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+        let scheduler = self.hostManager.hostRuntimeTaskSchedulerHost.clone().ok_or("Runtime scheduler is required for synchronized chat changes")?;
         let holder = self.chatRuntimeHolder.clone();
-        scheduler.scheduleHostRuntimeAsyncTask("operit-chat-sync-deletion", Box::new(move || {
+        scheduler.scheduleHostRuntimeAsyncTask("operit-chat-sync-refresh", Box::new(move || {
             Box::pin(async move {
                 let mut holder = holder.lock().await;
                 for core in holder.cores.values_mut() {
-                    for chatId in &chatIds {
-                        if let Err(error) = core.applySynchronizedChatDeletion(chatId.clone()).await {
-                            AppLogger::e("CoreSyncTrace", &format!(
-                                "sync_apply.chat_deletion_cleanup chatId={chatId}: {error}"
-                            ));
+                    let active = core.activeStreamingChatIds();
+                    for (chatId, deleted) in &changes {
+                        if *deleted {
+                            if let Err(error) = core.applySynchronizedChatDeletion(chatId.clone()).await {
+                                AppLogger::e("CoreSyncTrace", &format!("sync_apply.chat_deletion_cleanup chatId={chatId}: {error}"));
+                            }
+                        } else if !active.iter().any(|id| id == chatId) {
+                            core.chatHistoryDelegate.refreshChatMessagesFromPersistence(chatId.clone());
                         }
                     }
                 }

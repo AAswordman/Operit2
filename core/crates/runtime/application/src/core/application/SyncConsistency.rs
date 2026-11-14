@@ -153,29 +153,24 @@ impl OperitApplication {
         }
         Ok(json!({"manifests":manifests,"pendingOwners":pending,"skipped":skipped,"errors":errors,"boundary":operit_store::Transaction::digest(&receipt)?}))
     }
-    pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str) -> Result<Value,String> {
+    /// Captures one CAS-bound file or its coverage through the same owner path.
+    pub(super) fn exportConsistencySnapshot(&self, owner: Owner, token: &str, coverage_only: bool) -> Result<Value,String> {
         let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
         let mut snapshot = registry.snapshot(&owner)?;
         if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
+        snapshot.covered.extend(pending.iter().filter(|op|registry.target(op).as_ref()==Ok(&owner.path)).map(|op|op.opId.clone()));
+        if coverage_only {
+            return serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&FileCoverage { owner, covered: snapshot.covered })?).map_err(|e|e.to_string());
+        }
         let content = if owner.backend == operit_store::Transaction::Backend::DataStore {
             let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
             let declaration = schema.owner(&owner.path)?.ok_or("Unknown preference file")?;
             Some(operit_store::Transaction::preference::file_snapshot(&(declaration.open)(storage,&owner.path),token).map_err(|e|e.to_string())?)
         } else { None };
-        snapshot.covered.extend(pending.iter().filter(|op|registry.target(op).as_ref()==Ok(&owner.path)).map(|op|op.opId.clone()));
         let definition = registry.snapshot_definition(&owner)?;
         serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&CorrectionFile { snapshot, content, definition })?).map_err(|e|e.to_string())
-    }
-    pub(super) fn exportConsistencyCoverage(&self, owner: Owner, token: &str) -> Result<Value,String> {
-        let pending = self.runtimeSyncOperationStore()?.pendingOperations().map_err(|e|e.to_string())?;
-        let schema = PreferenceSpaceMerge::schema();
-        let registry = self.transactionRegistry(&schema,&pending)?;
-        let mut snapshot = registry.snapshot(&owner)?;
-        if snapshot.token()? != token { return Err("Snapshot changed; synchronize again".into()); }
-        snapshot.covered.extend(pending.iter().filter(|op|registry.target(op).as_ref()==Ok(&owner.path)).map(|op|op.opId.clone()));
-        serde_json::to_value(self.runtimeFileSyncStore()?.storeJsonBlob(&FileCoverage { owner, covered: snapshot.covered })?).map_err(|e|e.to_string())
     }
     pub(super) fn repairConsistencySnapshot(&self, owner: Owner, expected: &str, reference: FileCorrectionReference) -> Result<bool,String> {
         let journal = self.runtimeSyncOperationStore()?;

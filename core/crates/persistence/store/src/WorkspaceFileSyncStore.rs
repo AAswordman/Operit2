@@ -354,12 +354,12 @@ impl WorkspaceFileSyncStore {
         Ok(self.materializeOperations(&[operation], bootstrap)?[0])
     }
 
-    /// Scans once and records versions only after each complete file is materialized.
+    /// Excludes non-portable paths before validation and records only materialized versions.
     pub fn materializeOperations(&self, batch: &[&SyncOperation], bootstrap: bool) -> Result<Vec<bool>, String> {
         if batch.is_empty() { return Ok(Vec::new()); }
         for operation in batch {
-            validateFilePath(&operation.entityId)?;
             if !Self::owns(operation) || operation.entityType != "file" { return Err("Invalid workspace operation".into()); }
+            if FileUtils::isPortableFilePath(&operation.entityId) { validateFilePath(&operation.entityId)?; }
         }
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         self.scanUnlocked()?;

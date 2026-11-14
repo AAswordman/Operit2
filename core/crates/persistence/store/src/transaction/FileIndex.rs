@@ -24,10 +24,12 @@ pub(crate) struct FileSource {
 }
 
 impl FileSource {
+    /// Metadata changes require content verification, not rejection of identical bytes.
     pub fn current(&self, host: &dyn RuntimeStorageHost) -> Result<bool, Error> {
         crate::RuntimeFileSyncStore::requireSpaceFile(&self.path).map_err(Error::Message)?;
-        Ok(operit_util::FileUtils::FileUtils::isPortableFilePath(&self.path)
-            && host.exists(&self.path)? && host.modifiedAt(&self.path)? == self.modified_at)
+        if !operit_util::FileUtils::FileUtils::isPortableFilePath(&self.path) || !host.exists(&self.path)? { return Ok(false); }
+        let observed = Self { modified_at: host.modifiedAt(&self.path)?, ..self.clone() };
+        Ok(observed.modified_at == self.modified_at || verify_source(host, &observed)?)
     }
 }
 
@@ -213,6 +215,7 @@ impl Journal {
     }
 }
 
+/// Hashes a stable live file without retaining its contents in memory.
 fn verify_source(host: &dyn RuntimeStorageHost, source: &FileSource) -> Result<bool, Error> {
     use sha2::{Digest, Sha256};
     validateBlobReference(&source.reference).map_err(Error::Message)?;
@@ -224,5 +227,6 @@ fn verify_source(host: &dyn RuntimeStorageHost, source: &FileSource) -> Result<b
         offset += bytes.len() as u64;
         digest.update(&bytes);
     }
-    Ok(offset == source.reference.size as u64 && format!("{:x}",digest.finalize()) == source.reference.contentHash && source.current(host)?)
+    Ok(offset == source.reference.size as u64 && format!("{:x}",digest.finalize()) == source.reference.contentHash
+        && host.modifiedAt(&source.path)? == source.modified_at)
 }

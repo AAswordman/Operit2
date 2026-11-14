@@ -382,7 +382,8 @@ impl RuntimeFileSyncStore {
     }
 
     pub fn readStagedJson<T:serde::de::DeserializeOwned>(&self, reference:&RuntimeFileSyncReference) -> Result<(T,std::sync::Arc<crate::Transaction::sql_snapshot::SqlSnapshot>),String> {
-        crate::Transaction::sql_snapshot::read_staged(self.storageHost.clone(),&self.blobReadPath(reference)?,reference)
+        validateBlobReference(reference)?;
+        crate::Transaction::sql_snapshot::read_staged(self.storageHost.clone(),&self.blobReadPath(&reference.contentHash)?,reference)
     }
 
     pub fn readSqlInitialization(&self, operation:&SyncOperation) -> Result<crate::Transaction::compaction::Initialization,String> {
@@ -391,25 +392,17 @@ impl RuntimeFileSyncStore {
         crate::Transaction::sql_snapshot::validate_initialization(operation,original,sql)
     }
 
-    /// Checks local blob presence without reading or hashing its contents.
+    /// Checks cached bytes or a live source, verifying sources whose metadata changed.
     pub fn hasBlob(&self, reference: &RuntimeFileSyncReference) -> Result<bool, String> {
         validateBlobReference(reference)?;
-        Ok(self.fileSource(&reference.contentHash)?.is_some() || self.storageHost.exists(&self.blobStoragePath(reference)?).map_err(|e|e.to_string())?)
+        Ok(self.storageHost.exists(&self.blobStoragePath(reference)?).map_err(|e|e.to_string())? || self.fileSource(&reference.contentHash)?.is_some())
     }
 
     /// Reads one bounded range from a verified content-addressed blob.
     pub fn readBlobChunk(&self, contentHash: &str, offset: i64, length: i64) -> Result<Vec<u8>, String> {
         let offset = u64::try_from(offset).map_err(|_| "blob chunk offset must not be negative")?;
         let length = usize::try_from(length).map_err(|_| "blob chunk length must not be negative or overflow")?;
-        crate::SyncBlobIo::validateContentHash(contentHash)?;
-        self.syncOperationStore.withJournal(|journal|journal.lease_blob(contentHash)).map_err(|e|e.to_string())?;
-        let source = self.fileSource(contentHash)?;
-        let path = source.as_ref().map(|source| source.path.clone()).unwrap_or(self.blobPath(contentHash)?);
-        let bytes = self.storageHost.readBytesRange(&path, offset, length).map_err(|e|e.to_string())?;
-        if source.is_some_and(|source| !source.current(self.storageHost.as_ref()).unwrap_or(false)) {
-            return Err("File changed during synchronization; refresh its index".into());
-        }
-        Ok(bytes)
+        self.storageHost.readBytesRange(&self.blobReadPath(contentHash)?, offset, length).map_err(|e|e.to_string())
     }
 
     /// Verifies and persists one complete content-addressed blob.
@@ -458,7 +451,8 @@ impl RuntimeFileSyncStore {
 
     /// Verifies all source bytes while decoding; only the decoded object and a fixed I/O buffer coexist.
     pub fn readJsonBlob<T: serde::de::DeserializeOwned>(&self, reference: &RuntimeFileSyncReference) -> Result<T, String> {
-        crate::SyncBlobIo::read_json(self.storageHost.as_ref(), &self.blobReadPath(reference)?, reference)
+        validateBlobReference(reference)?;
+        crate::SyncBlobIo::read_json(self.storageHost.as_ref(), &self.blobReadPath(&reference.contentHash)?, reference)
     }
 
     /// Reads and verifies one complete content-addressed blob.
@@ -466,7 +460,7 @@ impl RuntimeFileSyncStore {
         validateBlobReference(reference)?;
         let content = self
             .storageHost
-            .readBytes(&self.blobReadPath(reference)?)
+            .readBytes(&self.blobReadPath(&reference.contentHash)?)
             .map_err(|error| format!("blob {}: {error}", reference.contentHash))?;
         verifyBlob(reference, &content)?;
         Ok(content)
@@ -485,16 +479,25 @@ impl RuntimeFileSyncStore {
         Ok(())
     }
 
+    /// Resolves a live carrier only while its content identity remains valid.
     fn fileSource(&self, hash: &str) -> Result<Option<crate::Transaction::FileSource>, String> {
-        validateContentHash(hash)?;
         Ok(self.syncOperationStore.withJournal(|journal| journal.file_sources(hash)).map_err(|e|e.to_string())?
             .into_iter().find(|source| source.current(self.storageHost.as_ref()).unwrap_or(false)))
     }
 
-    fn blobReadPath(&self, reference: &RuntimeFileSyncReference) -> Result<String, String> {
-        validateBlobReference(reference)?;
-        self.syncOperationStore.withJournal(|journal|journal.lease_blob(&reference.contentHash)).map_err(|e|e.to_string())?;
-        Ok(self.fileSource(&reference.contentHash)?.map(|source| source.path).unwrap_or(self.blobPath(&reference.contentHash)?))
+    /// Pins verified live bytes in the leased immutable carrier before any range is served.
+    fn blobReadPath(&self, hash: &str) -> Result<String, String> {
+        let path = self.blobPath(hash)?;
+        self.syncOperationStore.withJournal(|journal|journal.lease_blob(hash)).map_err(|e|e.to_string())?;
+        if !self.storageHost.exists(&path).map_err(|e|e.to_string())? {
+            if let Some(source) = self.fileSource(hash)? {
+                crate::SyncBlobIo::write_stream(self.storageHost.as_ref(), &path, &source.reference, |writer| {
+                    let mut reader = crate::LegacyTransactionImport::JournalReader::new(self.storageHost.as_ref(), &source.path, 0, source.reference.size as u64 + 1);
+                    std::io::copy(&mut reader, writer).map(|_|()).map_err(|e|e.to_string())
+                })?;
+            }
+        }
+        Ok(path)
     }
 
     /// Resolves one validated blob hash below the private synchronization root.

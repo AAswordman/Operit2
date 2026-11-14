@@ -140,13 +140,20 @@ fn externally_changed_files_never_serve_the_previous_hash() {
     files.writeBytes(FILE, b"before").unwrap();
     let reference = RuntimeFileSyncReference { contentHash: contentHash(b"before"), size: 6 };
     let modified_at = host.modifiedAt(FILE).unwrap();
-    host.writeBytes(FILE, b"external edit").unwrap();
     host.setModifiedAt(FILE, modified_at + 1000).unwrap();
-    assert!(!files.hasBlob(&reference).unwrap());
-    assert!(files.readBlobChunk(&reference.contentHash, 0, 64).is_err());
+    assert!(files.hasBlob(&reference).unwrap(), "metadata changes cannot invalidate identical content");
+    assert_eq!(files.readBlobChunk(&reference.contentHash, 0, 3).unwrap(), b"bef");
+    host.writeBytes(FILE, b"external edit").unwrap();
+    host.setModifiedAt(FILE, modified_at + 2000).unwrap();
+    assert_eq!(files.readBlobChunk(&reference.contentHash, 3, 3).unwrap(), b"ore", "an active transfer retains its original bytes");
     files.writeBytes(FILE, b"external edit").unwrap();
+    collect(&files);
+    assert!(!files.hasBlob(&reference).unwrap(), "unreferenced expired carriers are collected");
     let reference = RuntimeFileSyncReference { contentHash: contentHash(b"external edit"), size: 13 };
-    assert_eq!(files.readBlob(&reference).unwrap(), b"external edit");
+    host.writeBytes(FILE, b"changed content").unwrap();
+    host.setModifiedAt(FILE, modified_at + 3000).unwrap();
+    assert!(!files.hasBlob(&reference).unwrap(), "changed bytes cannot serve the old hash");
+    assert!(files.readBlob(&reference).is_err());
     files.delete(FILE).unwrap();
     assert!(!files.hasBlob(&reference).unwrap());
 }

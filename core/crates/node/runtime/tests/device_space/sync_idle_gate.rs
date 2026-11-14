@@ -774,6 +774,17 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
             "syncOperationsSince" if self.fault == "incremental" && self.faultPending.swap(false, std::sync::atomic::Ordering::SeqCst) => {
                 Err(operit_link::CoreLinkError::internal("invalid incremental payload"))
             }
+            "syncOperationsSince" if self.fault == "hydrate" && self.faultPending.load(std::sync::atomic::Ordering::SeqCst) => {
+                let path = self.snapshot.lock().unwrap().data.owner.path.clone();
+                operit_link::toCoreValue(serde_json::json!({"owners":{"broken:1":path},"errors":[],"operations":[{
+                    "opId":"broken:1","originDeviceId":"broken","sequence":1,"domain":"chat","entityType":"message","entityId":"chat",
+                    "operation":"upsert","semantics":"transaction","payload":{},"createdAt":1,"schemaVersion":1}]}))
+                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
+            }
+            "syncApplyOperations" if self.fault == "hydrate" && self.faultPending.load(std::sync::atomic::Ordering::SeqCst) => {
+                operit_link::toCoreValue(serde_json::json!({"failedOperationIds":["broken:1"],"errors":["transaction blob is missing"]}))
+                    .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
+            }
             "syncReadSnapshot" | "syncReadCoverage" if request.methodName == self.fault && self.faultPending.swap(false, std::sync::atomic::Ordering::SeqCst) => {
                 Err(operit_link::CoreLinkError::internal("Snapshot changed; synchronize again"))
             }
@@ -794,10 +805,12 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
                 let args: serde_json::Value = operit_link::fromCoreValue(request.args).unwrap();
                 let mut snapshot = self.snapshot.lock().unwrap();
                 let applied = args["expected"] == snapshot.token().unwrap()
+                    && !(self.fault == "repeated-writes" && self.reports.load(std::sync::atomic::Ordering::SeqCst) <= 4)
                     && !(self.fault == "syncRepairSnapshot" && self.faultPending.swap(false, std::sync::atomic::Ordering::SeqCst));
                 if applied {
                     snapshot.data = self.authority.lock().unwrap().data.clone();
-                    if self.fault == "pending" { self.faultPending.store(false, std::sync::atomic::Ordering::SeqCst); }
+                    if self.fault == "hydrate" { assert_eq!(args["reference"]["skipped"], serde_json::json!(["broken:1"])); }
+                    if matches!(self.fault, "pending" | "hydrate") { self.faultPending.store(false, std::sync::atomic::Ordering::SeqCst); }
                 }
                 operit_link::toCoreValue(applied).map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
             },
@@ -829,12 +842,12 @@ async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retr
     use operit_store::Transaction::{Backend, Data, Owner, Snapshot};
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
-    for fault in ["syncReadSnapshot", "syncReadCoverage", "manifest", "syncRepairSnapshot", "incremental", "pending", "storage"] {
+    for fault in ["syncReadSnapshot", "syncReadCoverage", "manifest", "syncRepairSnapshot", "repeated-writes", "incremental", "hydrate", "pending", "storage"] {
         let (mut routers, _access, peers, _) = gateMesh(&format!("sync-quiet-{fault}"));
         let snapshots = ["z", "a"].map(|node| {
             let mut data = Data::empty(Owner { backend: Backend::Sql,
                 path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(), format: 1, layout: 1 });
-            data.values.insert("record".into(), serde_json::json!({"columns":["value"],"rows":[[{"Text":node}]]}));
+            data.values.insert("record".into(), serde_json::json!({"columns":["value"],"rows":[[{"Text":if fault == "hydrate" {"same"} else {node}}]]}));
             Arc::new(StdMutex::new(Snapshot { damage: None, node: node.into(), data, covered: BTreeSet::new(), generation: 0 }))
         });
         for (index, router) in routers.iter_mut().enumerate() {

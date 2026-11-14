@@ -722,6 +722,7 @@ fn legacy_file_operation(node: &Node, path: &str, kind: &str) -> SyncOperation {
     }).unwrap()
 }
 
+/// Scanning retains incompatible source files locally and synchronizes portable names.
 #[cfg(unix)]
 #[test]
 fn incompatible_names_stay_local_while_normal_files_sync() {
@@ -734,6 +735,8 @@ fn incompatible_names_stay_local_while_normal_files_sync() {
         "workspaces/CON/.operit/sync.json",
         "runtime/data/chat_outputs/chat/.operit/attachments/id/image?.jpg",
         "runtime/data/chat_attachments/chat/id/NUL.jpg",
+        "runtime/data/chat_outputs/chat/...",
+        "workspaces/p/..../nested.txt",
     ];
     for path in excluded { a.write(path, b"keep local"); }
     let allowed = ["workspaces/p/中文 图片.jpg", "runtime/data/chat_outputs/chat/good.txt", "runtime/data/chat_attachments/chat/id/good.jpg"];
@@ -774,12 +777,13 @@ fn excluded_inventory_and_recovery_state_are_discarded_without_blobs_or_deletion
     assert_eq!(node.workspace().scan().unwrap(), 0);
 }
 
+/// Incoming excluded names never require blobs, materialization, or further replication.
 #[test]
 fn incoming_incompatible_files_skip_transfer_materialization_and_relay() {
     let old = Node::new();
     let target = Node::new();
     let files = RuntimeFileSyncStore::new(target.host.clone(), SYNC);
-    for path in ["workspaces/p/image?.jpg", "workspaces/CON/file.txt", "workspaces/p/nul.jpg", "workspaces/p/trailing."] {
+    for path in ["workspaces/p/image?.jpg", "workspaces/CON/file.txt", "workspaces/p/nul.jpg", "workspaces/p/trailing.", "workspaces/p/.", "workspaces/p/..", "runtime/data/chat_outputs/chat/...", "workspaces/p/..../nested.txt"] {
         for kind in ["upsert", "delete"] {
             let op = legacy_file_operation(&old, path, kind);
             assert!(RuntimeFileSyncStore::requiredBlob(&op).unwrap().is_none());
@@ -815,22 +819,25 @@ fn excluded_incoming_updates_and_deletes_leave_existing_local_file_untouched() {
     assert!(target.ops().is_empty());
 }
 
+/// Excluded legacy records are retired even when their transport blobs are unavailable.
 #[test]
 fn pending_excluded_originals_are_retired_and_cannot_be_requeued() {
-    let source = Node::new();
-    let target = Node::new();
-    let excluded = legacy_file_operation(&source, "workspaces/p/old?.jpg", "upsert");
-    let normal = legacy_file_operation(&source, "workspaces/p/good.txt", "upsert");
-    let mut envelope = excluded.clone();
-    let reference = RuntimeFileSyncStore::new(source.host.clone(), SYNC).storeJsonBlob(&excluded).unwrap();
-    envelope.payload = serde_json::json!({"transactionBlob": reference});
-    // The receiver intentionally never downloads the envelope blob.
-    target.log().receiveOperations(&[envelope.clone(), normal.clone()]).unwrap();
-    assert_eq!(target.log().pendingOperationCount().unwrap(), 2);
-    target.workspace().scan().unwrap();
-    assert_eq!(target.log().pendingOperationIds().unwrap(), vec![normal.opId.clone()]);
-    assert_eq!(target.log().applicationOperations().unwrap(), vec![normal.clone()]);
-    target.log().receiveOperations(&[excluded.clone(), envelope]).unwrap();
-    assert_eq!(target.log().pendingOperationIds().unwrap(), vec![normal.opId]);
-    assert!(target.ops().iter().all(|op| op.opId != excluded.opId));
+    for path in ["workspaces/p/old?.jpg", "workspaces/p/.", "workspaces/p/..", "runtime/data/chat_outputs/chat/...", "workspaces/p/..../nested.txt"] {
+        let source = Node::new();
+        let target = Node::new();
+        let excluded = legacy_file_operation(&source, path, "upsert");
+        let normal = legacy_file_operation(&source, "workspaces/p/good.txt", "upsert");
+        let mut envelope = excluded.clone();
+        let reference = RuntimeFileSyncStore::new(source.host.clone(), SYNC).storeJsonBlob(&excluded).unwrap();
+        envelope.payload = serde_json::json!({"transactionBlob": reference});
+        // The receiver intentionally never downloads the envelope blob.
+        target.log().receiveOperations(&[envelope.clone(), normal.clone()]).unwrap();
+        assert_eq!(target.log().pendingOperationCount().unwrap(), 2);
+        target.workspace().scan().unwrap();
+        assert_eq!(target.log().pendingOperationIds().unwrap(), vec![normal.opId.clone()]);
+        assert_eq!(target.log().applicationOperations().unwrap(), vec![normal.clone()]);
+        target.log().receiveOperations(&[excluded.clone(), envelope]).unwrap();
+        assert_eq!(target.log().pendingOperationIds().unwrap(), vec![normal.opId]);
+        assert!(target.ops().iter().all(|op| op.opId != excluded.opId));
+    }
 }

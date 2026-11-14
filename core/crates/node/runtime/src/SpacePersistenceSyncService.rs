@@ -908,9 +908,9 @@ impl SpacePersistenceSyncService {
     ) -> Result<bool, String> {
         let mut seen = BTreeSet::new();
         let mut boundary = None;
-        let mut force = false;
+        let mut failed = BTreeMap::<String, BTreeSet<String>>::new();
         let mut compatible = true;
-        for _ in 0..3 {
+        loop {
             for page in 0..MAX_SYNC_PAGES_PER_PASS {
                 if !self.storageReplicationAllowed(targetNodeId)? { return Ok(false); }
                 let exchange: Result<bool, String> = async {
@@ -949,13 +949,15 @@ impl SpacePersistenceSyncService {
                     }
                     self.recordPendingWork(targetNodeId, "local export", &localPage);
                     self.recordPendingWork(targetNodeId, "remote export", &remotePage);
-                    force |= [&local, &remote, &localPage, &remotePage].iter()
-                        .any(|report|report["errors"].as_array().is_some_and(|errors|!errors.is_empty()));
+                    let mut owners = BTreeMap::<String, String>::new();
+                    for report in [&localPage, &remotePage] {
+                        if let Some(routes) = report.get("owners") { owners.extend(serde_json::from_value::<BTreeMap<String,String>>(routes.clone()).map_err(|e|e.to_string())?); }
+                    }
                     let operations = mergeSyncOperations(localPage["operations"].clone(), remotePage["operations"].clone())?;
                     let done = operations.is_empty() || !pageAddsNewOperations(&mut seen, &operations);
                     if !done || operations.is_empty() {
                         let sizes = syncOperationWireSizes(&operations)?;
-                        if !self.applySynchronizedOperationBatch(targetNodeId, &operations, &sizes).await? { return Ok(true); }
+                        if !self.applySynchronizedOperationBatch(targetNodeId, &operations, &sizes, &owners, &mut failed).await? { return Ok(true); }
                     }
                     boundary = done.then_some((local, remote));
                     Ok(done)
@@ -966,14 +968,13 @@ impl SpacePersistenceSyncService {
                     Err(error) => {
                         if !compatible || SYNC_NETWORK_FAILURE.try_with(std::cell::Cell::get).unwrap_or(false) { return Err(error); }
                         self.recordPendingWork(targetNodeId, "incremental exchange", &json!({"errors":[error]}));
-                        force = true;
                         break;
                     }
                 }
             }
             // Repeated/capped pages and replay failures all reach the same final correction.
             if !self.storageReplicationAllowed(targetNodeId)? { return Ok(false); }
-            if !self.synchronizeConsistency(targetNodeId, boundary.as_ref().map(|(a,b)|(a,b)), force).await? {
+            if !self.synchronizeConsistency(targetNodeId, boundary.as_ref().map(|(a,b)|(a,b)), &mut failed).await? {
                 boundary = None;
                 seen.clear();
                 continue;
@@ -987,7 +988,6 @@ impl SpacePersistenceSyncService {
             }
             return Ok(true);
         }
-        Err("Synchronization changed during final correction".into())
     }
 
     /// Applies one transport page on both peers, split into messages that fit
@@ -998,6 +998,8 @@ impl SpacePersistenceSyncService {
         targetNodeId: &str,
         operations: &[Value],
         sizes: &[usize],
+        owners: &BTreeMap<String, String>,
+        failed: &mut BTreeMap<String, BTreeSet<String>>,
     ) -> Result<bool, String> {
         if let Err(error) = self.synchronizeRequiredBlobs(targetNodeId, operations).await {
             if SYNC_NETWORK_FAILURE.try_with(std::cell::Cell::get).unwrap_or(false) { return Err(error); }
@@ -1016,13 +1018,22 @@ impl SpacePersistenceSyncService {
             let mut errors = Vec::new();
             let mut pending = BTreeSet::new();
             for (side, result) in [("remote", remote), ("local", local)] {
-                match result {
+                let failedIds = match result {
                     Ok(report) => {
                         self.recordPendingWork(targetNodeId, &format!("{side} apply"), &report);
                         pending.extend(pendingOperationIds(&report));
                         errors.extend(report["errors"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned));
+                        report["failedOperationIds"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect::<Vec<_>>()
                     }
-                    Err(error) => errors.push(format!("{side} apply: {error}")),
+                    Err(error) => {
+                        if SYNC_NETWORK_FAILURE.try_with(std::cell::Cell::get).unwrap_or(false) { return Err(error); }
+                        errors.push(format!("{side} apply: {error}"));
+                        chunk.iter().filter_map(|op|op["opId"].as_str().map(str::to_owned)).collect()
+                    },
+                };
+                for id in failedIds {
+                    let owner = owners.get(&id).ok_or_else(||format!("Failed transaction has no correction owner: {id}"))?;
+                    failed.entry(owner.clone()).or_default().insert(id);
                 }
             }
             if !errors.is_empty() { return Err(errors.join("; ")); }
