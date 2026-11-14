@@ -65,6 +65,18 @@ class WindowsMsiTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "Required Windows release file"):
                 installer.write_payload(root, root / "payload.wxs")
 
+    # A valid AOT release must reject leftover JIT assets from an earlier Debug build.
+    def test_payload_rejects_debug_assets_in_otherwise_complete_release(self):
+        for debug_asset in installer.DEBUG_ASSET_FILES:
+            with self.subTest(asset=debug_asset), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                for name in (*installer.REQUIRED_FILES, debug_asset):
+                    path = root / name
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_bytes(b"payload")
+                with self.assertRaisesRegex(RuntimeError, "Debug-only Flutter asset"):
+                    installer.write_payload(root, root / "payload.wxs")
+
 
 if __name__ == "__main__":
     unittest.main()

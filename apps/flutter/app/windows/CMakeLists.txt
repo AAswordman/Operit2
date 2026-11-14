@@ -108,8 +108,9 @@ if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
   set(CMAKE_INSTALL_PREFIX "${BUILD_BUNDLE_DIR}" CACHE PATH "..." FORCE)
 endif()
 
-set(INSTALL_BUNDLE_DATA_DIR "${CMAKE_INSTALL_PREFIX}/data")
-set(INSTALL_BUNDLE_LIB_DIR "${CMAKE_INSTALL_PREFIX}")
+# Keep destinations relative so release packaging can install into a fresh tree.
+set(INSTALL_BUNDLE_DATA_DIR "data")
+set(INSTALL_BUNDLE_LIB_DIR ".")
 
 # Install Bash after the bundle prefix is configured so its target expression is
 # evaluated in the destination, alongside the other application runtime files.
@@ -122,7 +123,7 @@ include(InstallRequiredSystemLibraries)
 install(FILES ${CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS}
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 
-install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "${CMAKE_INSTALL_PREFIX}"
+install(TARGETS ${BINARY_NAME} RUNTIME DESTINATION "."
   COMPONENT Runtime)
 
 install(FILES "${FLUTTER_ICU_DATA_FILE}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"
@@ -158,11 +159,16 @@ set(FLUTTER_ASSET_DIR_NAME "flutter_assets")
 install(CODE "
   if(NOT \"\${CMAKE_INSTALL_CONFIG_NAME}\" STREQUAL \"Debug\" AND
      NOT \"\${CMAKE_INSTALL_CONFIG_NAME}\" STREQUAL \"Profile\")
-    file(REMOVE_RECURSE \"${INSTALL_BUNDLE_DATA_DIR}/${FLUTTER_ASSET_DIR_NAME}\")
+    file(REMOVE_RECURSE \"\${CMAKE_INSTALL_PREFIX}/${INSTALL_BUNDLE_DATA_DIR}/${FLUTTER_ASSET_DIR_NAME}\")
   endif()
   " COMPONENT Runtime)
 install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
-  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" COMPONENT Runtime)
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" CONFIGURATIONS Debug COMPONENT Runtime)
+# Flutter shares its asset output across build modes and leaves the debug kernel
+# behind. AOT bundles must not include those JIT-only files.
+install(DIRECTORY "${PROJECT_BUILD_DIR}/${FLUTTER_ASSET_DIR_NAME}"
+  DESTINATION "${INSTALL_BUNDLE_DATA_DIR}" CONFIGURATIONS Profile Release COMPONENT Runtime
+  REGEX "/flutter_assets/(kernel_blob[.]bin|vm_snapshot_data|isolate_snapshot_data)$" EXCLUDE)
 
 # Install the AOT library on non-Debug builds only.
 install(FILES "${AOT_LIBRARY}" DESTINATION "${INSTALL_BUNDLE_DATA_DIR}"

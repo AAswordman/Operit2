@@ -9,6 +9,9 @@ plugins {
 
 val embedded = rootProject != project
 val mainAndroid = if (embedded) project(":app").extensions.getByType<ApplicationExtension>() else null
+val providerVersion = Properties().apply {
+    layout.projectDirectory.file("version.properties").asFile.inputStream().use { load(it) }
+}
 
 android {
     namespace = "app.operit.accessibility"
@@ -17,11 +20,12 @@ android {
         applicationId = "app.operit.accessibility"
         minSdk = 26
         targetSdk = 35
-        versionCode = if (embedded) requireNotNull(mainAndroid?.defaultConfig?.versionCode) else 1
-        versionName = if (embedded) requireNotNull(mainAndroid?.defaultConfig?.versionName) else "1.0.0"
+        versionCode = providerVersion.getProperty("versionCode").toInt()
+        versionName = providerVersion.getProperty("versionName")
     }
     buildFeatures { aidl = true }
     sourceSets.getByName("main").aidl.srcDir("contract/src/main/aidl")
+    sourceSets.getByName("main").java.srcDir("contract/src/main/kotlin")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

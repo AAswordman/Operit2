@@ -26,6 +26,10 @@ REQUIRED_FILES = (
     "data/icudtl.dat", "data/app.so", "data/flutter_assets/AssetManifest.bin",
     "Operit2DataCleanup.exe", "README-Windows.txt",
 ) + tuple(f"bash/{name}" for name in BASH_REQUIRED_FILES)
+DEBUG_ASSET_FILES = tuple(
+    f"data/flutter_assets/{name}"
+    for name in ("kernel_blob.bin", "vm_snapshot_data", "isolate_snapshot_data")
+)
 
 
 # Maps supported SemVer channels to strictly ordered Windows Installer versions.
@@ -54,6 +58,9 @@ def path_id(prefix: str, relative: Path) -> str:
 
 # Harvests the complete app tree with stable component identities and HKCU key paths.
 def write_payload(release_dir: Path, destination: Path) -> None:
+    for relative in DEBUG_ASSET_FILES:
+        if (release_dir / relative).exists():
+            raise RuntimeError(f"Debug-only Flutter asset in Windows release: {relative}")
     for relative in REQUIRED_FILES:
         if not (release_dir / relative).is_file():
             raise RuntimeError(f"Required Windows release file not found: {release_dir / relative}")

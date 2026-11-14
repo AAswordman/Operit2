@@ -1,8 +1,24 @@
 <resources>
     <string name="app_name">Operit2 Accessibility</string>
     <string name="service_description">Let Operit2 discover system windows, read complete accessibility trees and interact with the selected window.</string>
-    <string name="setup_description">Install this companion alongside Operit2, then enable Operit2 Accessibility in system accessibility settings.</string>
-    <string name="open_settings">Open accessibility settings</string>
-    <string name="status_enabled">Accessibility service connected</string>
-    <string name="status_disabled">Accessibility service is disabled</string>
+    <string name="brand_name">Operit Accessibility</string>
+    <string name="provider_label">A companion for Operit</string>
+    <string name="hero_title">A smoother way\nto get things done.</string>
+    <string name="hero_description">Connect Operit to your screen, so it can read interfaces and carry out the actions you request.</string>
+    <string name="open_settings">Enable accessibility</string>
+    <string name="manage_settings">Manage accessibility</string>
+    <string name="status_enabled">Connected and ready</string>
+    <string name="status_disabled">Ready when you are</string>
+    <string name="badge_enabled">●  SERVICE CONNECTED</string>
+    <string name="badge_disabled">●  WAITING FOR ACCESS</string>
+    <string name="description_enabled">The service is connected. Return to Operit to use screen interaction tools.</string>
+    <string name="description_disabled">Enable the service in Android settings to connect Operit to your screen.</string>
+    <string name="steps_title">Two steps to get connected</string>
+    <string name="step_one_title">Enable system access</string>
+    <string name="step_one_description">Tap the button above, acknowledge the risks, then enable Operit2 Accessibility in system settings.</string>
+    <string name="step_two_title">Return to Operit</string>
+    <string name="step_two_description">Use screen interaction tools to read interfaces, tap, swipe and enter text.</string>
+    <string name="control_title">You stay in control</string>
+    <string name="control_description">This service can read screen content and perform actions. It is provided for Operit. You can turn it off in system accessibility settings at any time.</string>
+    <string name="version_label">Provider v%1$s · Operit</string>
 </resources>

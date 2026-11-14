@@ -1,0 +1,9 @@
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape>
+            <gradient android:startColor="#3888FF" android:endColor="#1D4ED8" android:angle="315" />
+            <corners android:radius="18dp" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_provider_foreground" />
+</layer-list>

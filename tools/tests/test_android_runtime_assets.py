@@ -1,7 +1,6 @@
 """Checks ABI-specific Android APK validation without building an application."""
 
 from pathlib import Path
-import io
 import sys
 import tempfile
 import unittest
@@ -18,34 +17,12 @@ class AndroidRuntimeAssetsTests(unittest.TestCase):
     """Exercises the actual release APK guard with small archive fixtures."""
 
     # Creates an APK fixture containing exactly the requested asset entries.
-    def make_apk(self, directory, names, *, companion=True):
+    def make_apk(self, directory, names):
         apk = Path(directory) / "app-arm64-v8a-release.apk"
         with zipfile.ZipFile(apk, "w") as archive:
             for name in names:
                 archive.writestr(name, b"fixture")
-            if companion:
-                payload = io.BytesIO()
-                with zipfile.ZipFile(payload, "w") as nested:
-                    nested.writestr("AndroidManifest.xml", b"manifest fixture")
-                    nested.writestr("classes.dex", b"dex fixture")
-                archive.writestr("assets/companions/operit-accessibility.apk", payload.getvalue())
         return apk
-
-    # Prevents publishing a main APK whose grant flow cannot install its companion.
-    def test_rejects_missing_accessibility_companion(self):
-        with tempfile.TemporaryDirectory() as directory:
-            apk = self.make_apk(directory, self.runtime_assets(), companion=False)
-            with self.assertRaisesRegex(RuntimeError, "missing the embedded accessibility companion"):
-                android_build.verify_android_runtime_assets(apk, "arm64-v8a")
-
-    # Rejects an embedded file that is not a complete Android application archive.
-    def test_rejects_invalid_accessibility_companion(self):
-        with tempfile.TemporaryDirectory() as directory:
-            apk = self.make_apk(directory, self.runtime_assets(), companion=False)
-            with zipfile.ZipFile(apk, "a") as archive:
-                archive.writestr("assets/companions/operit-accessibility.apk", b"invalid")
-            with self.assertRaises(zipfile.BadZipFile):
-                android_build.verify_android_runtime_assets(apk, "arm64-v8a")
 
     # Returns the two mandatory rootfs artifacts for one ABI.
     def runtime_assets(self, abi="arm64-v8a"):

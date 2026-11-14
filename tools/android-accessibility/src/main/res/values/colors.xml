@@ -1,0 +1,14 @@
+<resources>
+    <color name="provider_background">#F3F6FB</color>
+    <color name="provider_surface">#FFFFFF</color>
+    <color name="provider_text">#14243E</color>
+    <color name="provider_secondary">#63738B</color>
+    <color name="provider_primary">#2563EB</color>
+    <color name="provider_soft">#E8EFFF</color>
+    <color name="provider_line">#E1E8F2</color>
+    <color name="provider_success">#128362</color>
+    <color name="provider_success_soft">#E4F5EF</color>
+    <color name="provider_pending">#9A650E</color>
+    <color name="provider_pending_soft">#FFF3DB</color>
+    <color name="provider_icon_background">#2563EB</color>
+</resources>

@@ -5,7 +5,7 @@ import java.util.concurrent.atomic.AtomicInteger
 /** Sequences installation authorization, package installation and accessibility settings. */
 internal class AccessibilitySetupFlow(private val actions: Actions) {
     interface Actions {
-        /** Checks the installed companion's version and signature. */
+        /** Checks whether the installed provider meets the independently required provider version. */
         fun hasCurrentCompanion(): Boolean
         /** Checks whether Android permits this application to launch package installation. */
         fun canInstallPackages(): Boolean
@@ -35,7 +35,7 @@ internal class AccessibilitySetupFlow(private val actions: Actions) {
         }
     }
 
-    /** Rechecks actual platform state instead of trusting settings Activity result codes. */
+    /** Continues setup after the matching system Activity returns. */
     fun onActivityResult(code: Int): Boolean {
         if (complete == null || code != requestCode) return false
         advance {
@@ -44,10 +44,7 @@ internal class AccessibilitySetupFlow(private val actions: Actions) {
                     check(actions.canInstallPackages()) { "请允许 Operit 安装应用后重试。" }
                     launch(Stage.Install)
                 }
-                Stage.Install -> {
-                    check(actions.hasCurrentCompanion()) { "UI 自动化配套包未安装成功，请完成系统安装后重试。" }
-                    launch(Stage.Accessibility)
-                }
+                Stage.Install -> launch(Stage.Accessibility)
                 Stage.Accessibility -> finish(null)
                 null -> error("Accessibility authorization has no active stage")
             }

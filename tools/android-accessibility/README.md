@@ -10,18 +10,24 @@ not used by this transport.
 Normal Flutter Android builds include this project automatically and embed its
 signed APK at `assets/companions/operit-accessibility.apk`. Debug/profile builds
 embed the debug companion; release builds share the main application's release
-certificate. The embedded companion uses the main application's version code.
+certificate. The companion has its own version in `version.properties`; both
+its APK and the main app's required provider version read this single source.
+Increase the provider version when distributing a provider update. The main
+app compares the installed provider version with this requirement, independently
+of its own version code or ABI-specific APK version codes.
 This integration runs for `fvm flutter run`, `fvm flutter build apk --debug`,
 profile and release builds. Debug uses the main application's actual debug
-signing configuration and does not require release signing credentials. Every
-variant validates the embedded APK and its version during asset staging.
+signing configuration and does not require release signing credentials.
 
-In Operit2's Android authorization list, click **UI 自动化 → 授予**. Operit2 opens
-the unknown-source authorization screen when needed, then the system installer,
-and continues to accessibility settings after verifying installation. Confirm
-installation and enable **Operit2 Accessibility** there. A current, same-signature
-installation skips the installer. Status is satisfied only after the service is
-enabled. No download or separate manual APK distribution is needed.
+In Operit2's Android authorization list, click **UI 自动化 → 授予**. Enter the
+displayed risk acknowledgment exactly to continue. Operit2 installs the embedded
+provider when it is absent or older than the required provider version, requesting
+unknown-source authorization when necessary, then opens accessibility settings.
+A current or newer provider goes directly to accessibility settings. Enable
+**Operit2 Accessibility** there. Status is satisfied only when the provider meets
+the required version and its service is enabled. The provider's own setup screen
+uses the same exact-text acknowledgment before opening settings for activation.
+No download or separate manual APK distribution is needed for normal main APKs.
 
 For standalone development, build and install only the companion as follows.
 

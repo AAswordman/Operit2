@@ -52,7 +52,10 @@ class WindowsBashBuildTests(unittest.TestCase):
             'set(FLUTTER_TARGET_PLATFORM "windows-x64")\n'
             f'set(OPERIT_REPO_ROOT "{self.root.as_posix()}")\n'
             f'set(OPERIT_PLUGIN_SYNC_PYTHON "{Path(sys.executable).as_posix()}")\n'
-            f'include("{cmake.as_posix()}")\n', encoding="utf-8",
+            f'include("{cmake.as_posix()}")\n'
+            # The parent Flutter CMake project owns installation of this target's output.
+            'install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/$<CONFIG>/bash"\n'
+            '  DESTINATION "." COMPONENT Runtime)\n', encoding="utf-8",
         )
         configured = self.invoke("cmake", "-S", self.root, "-B", self.build,
                                  "-G", "Visual Studio 17 2022", "-A", "x64")

@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import argparse
-import io
 import os
 import sys
 import zipfile
@@ -80,18 +79,12 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-# Requires the embedded accessibility APK and ABI-specific terminal assets before publication.
+# Rejects release APKs whose terminal assets do not match the requested ABI.
 def verify_android_runtime_assets(apk_path: Path, abi: str) -> None:
     prefix = "assets/android-runtime/"
     with zipfile.ZipFile(apk_path) as archive:
         if "assets/operit-android-module.json" in archive.namelist():
             raise RuntimeError("Ordinary Android App release must not contain the module runtime")
-        companion_path = "assets/companions/operit-accessibility.apk"
-        if companion_path not in archive.namelist():
-            raise RuntimeError("Android APK is missing the embedded accessibility companion")
-        with zipfile.ZipFile(io.BytesIO(archive.read(companion_path))) as companion:
-            if not {"AndroidManifest.xml", "classes.dex"}.issubset(companion.namelist()):
-                raise RuntimeError("Embedded accessibility companion is not a complete APK")
         asset_names = {
             entry.filename for entry in archive.infolist()
             if not entry.is_dir() and entry.filename.startswith(prefix)

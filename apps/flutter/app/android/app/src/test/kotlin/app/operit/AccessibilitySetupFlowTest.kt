@@ -3,18 +3,18 @@ package app.operit
 import org.junit.Assert.*
 import org.junit.Test
 
-/** Checks installation sequencing, denial, verified state and late Android results. */
+/** Exercises installation sequencing, permission denial and late Android results. */
 class AccessibilitySetupFlowTest {
     private class Fixture : AccessibilitySetupFlow.Actions {
-        var installed = false
+        var providerCurrent = false
         var canInstall = false
         var launchError: Exception? = null
         val launches = mutableListOf<Pair<String, Int>>()
         val completions = mutableListOf<Throwable?>()
         val flow = AccessibilitySetupFlow(this)
 
-        /** Reports the simulated PackageManager result. */
-        override fun hasCurrentCompanion() = installed
+        /** Reports whether the simulated installed provider meets the required version. */
+        override fun hasCurrentCompanion() = providerCurrent
         /** Reports the simulated unknown-source authorization. */
         override fun canInstallPackages() = canInstall
         /** Records the unknown-source settings Activity. */
@@ -34,7 +34,7 @@ class AccessibilitySetupFlowTest {
         fun resume() = flow.onActivityResult(launches.last().second)
     }
 
-    /** Requires installation permission and verified installation before opening accessibility. */
+    /** Opens the installer after source authorization and continues to accessibility settings. */
     @Test
     fun firstGrantInstallsAndContinuesToSettings() {
         val fixture = Fixture()
@@ -45,7 +45,6 @@ class AccessibilitySetupFlowTest {
         fixture.resume()
         assertEquals("install", fixture.launches.last().first)
         assertTrue(fixture.completions.isEmpty())
-        fixture.installed = true
         fixture.resume()
         assertEquals("accessibility", fixture.launches.last().first)
         fixture.resume()
@@ -53,12 +52,22 @@ class AccessibilitySetupFlowTest {
         assertEquals(3, fixture.launches.map { it.second }.toSet().size)
     }
 
-    /** Avoids reinstalling a current companion even when unknown-source installs are disabled. */
+    /** Opens the bundled installer directly when installation is already authorized. */
     @Test
-    fun currentCompanionOpensOnlyAccessibility() {
-        val fixture = Fixture().apply { installed = true }
+    fun authorizedSourceOpensInstallerDirectly() {
+        val fixture = Fixture().apply { canInstall = true }
+        fixture.start()
+        assertEquals(listOf("install"), fixture.launches.map { it.first })
+    }
+
+    /** Skips installation and its source authorization when the provider is already current. */
+    @Test
+    fun currentProviderOpensAccessibilityWithoutReinstalling() {
+        val fixture = Fixture().apply { providerCurrent = true }
         fixture.start()
         assertEquals(listOf("accessibility"), fixture.launches.map { it.first })
+        fixture.resume()
+        assertEquals(listOf<Throwable?>(null), fixture.completions)
     }
 
     /** Stops immediately when the user denies unknown-source authorization. */
@@ -71,14 +80,14 @@ class AccessibilitySetupFlowTest {
         assertEquals(listOf("permission"), fixture.launches.map { it.first })
     }
 
-    /** Prevents canceled or failed installation from progressing to service authorization. */
+    /** Continues to accessibility settings without inspecting the installed package. */
     @Test
-    fun installationMustBeVerifiedBeforeAccessibility() {
+    fun installerReturnOpensAccessibilityWithoutPackageValidation() {
         val fixture = Fixture().apply { canInstall = true }
         fixture.start()
         fixture.resume()
-        assertNotNull(fixture.completions.single())
-        assertEquals(listOf("install"), fixture.launches.map { it.first })
+        assertTrue(fixture.completions.isEmpty())
+        assertEquals(listOf("install", "accessibility"), fixture.launches.map { it.first })
     }
 
     /** Prevents stale Android callbacks from resuming a later request or stage. */

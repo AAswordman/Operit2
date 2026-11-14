@@ -1,8 +1,24 @@
 <resources>
     <string name="app_name">Operit2 无障碍服务</string>
     <string name="service_description">允许 Operit2 发现系统窗口、读取完整无障碍树并操作目标窗口。</string>
-    <string name="setup_description">请与 Operit2 一同安装，并在系统无障碍设置中启用 Operit2 无障碍服务。</string>
-    <string name="open_settings">打开无障碍设置</string>
-    <string name="status_enabled">无障碍服务已连接</string>
-    <string name="status_disabled">无障碍服务尚未启用</string>
+    <string name="brand_name">Operit 无障碍</string>
+    <string name="provider_label">独立服务提供者</string>
+    <string name="hero_title">连接屏幕，\n让操作顺畅发生。</string>
+    <string name="hero_description">为 Operit 连接屏幕交互能力，读取界面、执行操作，完成你交付的任务。</string>
+    <string name="open_settings">开启无障碍服务</string>
+    <string name="manage_settings">管理无障碍服务</string>
+    <string name="status_enabled">已连接，随时就绪</string>
+    <string name="status_disabled">准备好了，等待开启</string>
+    <string name="badge_enabled">●  服务已连接</string>
+    <string name="badge_disabled">●  等待系统授权</string>
+    <string name="description_enabled">无障碍服务已连接。返回 Operit，即可使用屏幕交互工具。</string>
+    <string name="description_disabled">在系统设置中开启服务，即可为 Operit 连接屏幕交互能力。</string>
+    <string name="steps_title">两步，完成连接</string>
+    <string name="step_one_title">开启系统授权</string>
+    <string name="step_one_description">点击上方按钮，确认风险后，在系统设置中找到并开启「Operit2 无障碍服务」。</string>
+    <string name="step_two_title">回到 Operit，开始使用</string>
+    <string name="step_two_description">通过屏幕交互工具读取界面，并执行点击、滑动与文字输入。</string>
+    <string name="control_title">授权，始终由你掌控</string>
+    <string name="control_description">此服务可以读取屏幕内容并执行操作，仅供 Operit 调用。你可以随时在系统无障碍设置中关闭服务。</string>
+    <string name="version_label">提供者 v%1$s · Operit</string>
 </resources>

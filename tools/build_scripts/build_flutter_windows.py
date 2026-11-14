@@ -2,17 +2,37 @@
 import argparse
 import sys
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from build_windows_msi import build_windows_msi
 
 from common import (
     DIST_DIR,
     release_asset_name,
     FLUTTER_APP_DIR,
+    RELEASE_DIR,
     compress_zip,
     flutter_command,
     flutter_pub_get,
+    require_command,
     run,
 )
+
+
+# Installs only the current CMake payload into a fresh tree before packaging it.
+def package_windows_app(archive_path: Path, installer_path: Path) -> None:
+    work = (RELEASE_DIR / "work").resolve()
+    work.mkdir(parents=True, exist_ok=True)
+    with TemporaryDirectory(dir=work, prefix="windows-app-") as temporary:
+        release_dir = Path(temporary).resolve()
+        if release_dir.parent != work:
+            raise RuntimeError(f"Windows release staging escapes its workspace: {release_dir}")
+        run([
+            require_command("cmake"), "--install",
+            FLUTTER_APP_DIR / "build/windows/x64", "--config", "Release",
+            "--prefix", release_dir, "--component", "Runtime",
+        ])
+        build_windows_msi(release_dir, installer_path)
+        compress_zip(release_dir, archive_path)
 
 
 # Parses command-line options for the Windows Flutter build.
@@ -36,11 +56,9 @@ def main() -> int:
     if args.build_number:
         command.extend(["--build-number", args.build_number])
     run(command, cwd=FLUTTER_APP_DIR)
-    release_dir = FLUTTER_APP_DIR / "build" / "windows" / "x64" / "runner" / "Release"
     archive_path = args.archive_path or DIST_DIR / release_asset_name("app", "windows", "x86_64", "zip")
     installer_path = args.installer_path or archive_path.with_suffix(".msi")
-    build_windows_msi(release_dir, installer_path)
-    compress_zip(release_dir, archive_path)
+    package_windows_app(archive_path, installer_path)
     print(f"Windows archive: {archive_path}", flush=True)
     return 0
 

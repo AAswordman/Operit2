@@ -52,8 +52,10 @@ are required. This command builds packages without installing them on a phone.
 
 ## Windows Bash runtime
 
-Windows App ZIP/MSI and CLI ZIP packages include a checksum-pinned PortableGit
-runtime under `bash/`, including its upstream licenses. The Windows host starts
+Windows App ZIP/MSI and CLI ZIP packages include Bash and common Unix commands
+selected from checksum-pinned PortableGit under `bash/`, including their transitive
+DLL dependencies, terminal descriptions, and upstream licenses. Git, Git GUI,
+Perl, Vim aliases, and development files are excluded. The Windows host starts
 `bash/bin/bash.exe` beside the executable and does not require a system Git
 installation or Git on PATH. Both x86_64 and aarch64 CLI packages stage their
 corresponding runtime. Flutter's normal Windows CMake build stages the runtime

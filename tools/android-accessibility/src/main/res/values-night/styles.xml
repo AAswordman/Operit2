@@ -1,0 +1,14 @@
+<resources>
+    <style name="ProviderTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:colorAccent">@color/provider_primary</item>
+        <item name="android:windowBackground">@color/provider_background</item>
+        <item name="android:colorBackground">@color/provider_background</item>
+        <item name="android:textColorPrimary">@color/provider_text</item>
+        <item name="android:textColorSecondary">@color/provider_secondary</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+    </style>
+</resources>
