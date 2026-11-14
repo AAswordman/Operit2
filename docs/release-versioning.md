@@ -51,6 +51,7 @@ current prerelease version  -> preview channel
 Stable channel accepts only stable GitHub releases.
 
 Preview channel accepts prerelease and stable GitHub releases.
+Both channels use the main repository and support [incremental updates](incremental-updates.md).
 
 ## GitHub Releases
 
@@ -110,15 +111,16 @@ operit2-app-macos-universal-2.0.0-preview.16.pkg
 operit2-firmware-esp32-2432s028-2.0.0-preview.16.zip
 ```
 
-Release packages are published without separate checksum files. CLI archives
+Release packages have authenticated `.update.json` manifests and optional
+`.patch.gz` incremental transfer assets. CLI archives
 contain the executable, installer script, uninstaller script, and README.
 
 Windows App builds produce both a portable ZIP and a Chinese MSI installer from
 the same Flutter release directory. The MSI installs for the current user under
 `%LOCALAPPDATA%\Programs\Operit2`, creates desktop and Start menu shortcuts, and
 registers repair/uninstall in Windows Settings. Upgrades replace the application
-files and preserve the separate user data directory. The ZIP remains the updater's
-download format. Both packages include the Visual C++ runtime DLLs from the build
+files and preserve the separate user data directory. The updater selects ZIP for
+portable installations and MSI for registered MSI installations. Both packages include the Visual C++ runtime DLLs from the build
 toolchain so users do not need to install a separate redistributable.
 
 MSI packaging requires the .NET 8 SDK or newer. The build restores the pinned WiX
@@ -245,7 +247,8 @@ tools/release/secrets/github.env
 
 That directory is ignored by git.
 
-Default publish command on Windows:
+Publishing uses the current authenticated `gh` session. The optional
+`--github-env` explicitly loads a credentials file. Default publish command on Windows:
 
 ```powershell
 .\.venv\Scripts\python.exe tools\release\publish_dist.py
@@ -360,7 +363,7 @@ and an `EMSDK` environment variable. It writes the board-specific ZIP bundle to
 full 4 MiB initial-flash image, split flash images, `partitions.csv`, and a
 manifest with verified offsets and SHA-256 digests.
 
-The release scripts read GitHub credentials from:
+Legacy build helpers and an explicit `--github-env` can read GitHub credentials from:
 
 ```text
 tools/release/secrets/github.env
@@ -405,8 +408,9 @@ The build and publish scripts must enforce these rules:
 - Derive the GitHub prerelease flag from the release version.
 - Build only the selected `--scope` assets.
 - Increment Flutter `buildNumber` by 1 after successful App/full asset builds.
-- Publish staged files through the GitHub REST API with `GITHUB_TOKEN`.
-- Check an existing GitHub release's prerelease flag before uploading staged files.
+- Publish staged packages, manifests and deltas through authenticated `gh`.
+- Verify every uploaded GitHub asset digest before publishing the draft.
+- Reject changes to an existing public release; allow retrying its matching draft.
 
 For the first public preview:
 

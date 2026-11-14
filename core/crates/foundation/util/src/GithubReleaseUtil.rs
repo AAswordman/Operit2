@@ -26,6 +26,18 @@ pub struct ReleaseInfo {
     pub downloadUrl: String,
     pub releaseNotes: String,
     pub releasePageUrl: String,
+    pub packageSha256: Option<String>,
+    pub fullPackageAvailable: bool,
+    pub patchAssetNames: Vec<String>,
+    pub updateManifest: Option<ReleaseManifestAsset>,
+}
+
+/// GitHub-authenticated metadata for the selected package's incremental transfers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReleaseManifestAsset {
+    pub name: String,
+    pub url: String,
+    pub digest: String,
 }
 
 #[cfg(test)]
@@ -67,6 +79,7 @@ pub enum FullUpdateProgressEvent {
 /// High-level stage of full update preparation.
 pub enum FullUpdateStage {
     DownloadingPackage,
+    ReconstructingPackage,
     Ready,
 }
 
@@ -110,6 +123,8 @@ struct GitHubRelease {
 struct GitHubReleaseAsset {
     name: String,
     browser_download_url: String,
+    #[serde(default)]
+    digest: Option<String>,
 }
 
 #[allow(non_snake_case)]
@@ -700,25 +715,28 @@ where
     }
 }
 
-/// Selects the newest release containing the exact target asset.
+/// Selects the newest release containing the exact full asset or its authenticated manifest.
 #[allow(non_snake_case)]
 fn selectLatestReleaseInfo(
     releases: Vec<GitHubRelease>,
     target: &FullUpdateTarget,
     channel: FullUpdateChannel,
 ) -> Result<Option<ReleaseInfo>, String> {
-    let mut selected: Option<(ParsedVersion, GitHubRelease, GitHubReleaseAsset)> = None;
+    let mut selected: Option<(ParsedVersion, GitHubRelease, String)> = None;
     for release in releases {
         if release.draft {
             continue;
         }
         let expectedAssetName = target.assetNameForVersion(&release.tag_name)?;
-        let Some(packageAsset) = release
+        let hasPackage = release
             .assets
             .iter()
-            .find(|asset| asset.name == expectedAssetName)
-            .cloned()
-        else {
+            .any(|asset| asset.name == expectedAssetName);
+        let hasManifest = release
+            .assets
+            .iter()
+            .any(|asset| asset.name == format!("{expectedAssetName}.update.json"));
+        if !hasPackage && !hasManifest {
             continue;
         };
         let parsed = parseVersion(&release.tag_name)?;
@@ -733,18 +751,59 @@ fn selectLatestReleaseInfo(
             None => true,
         };
         if replace {
-            selected = Some((parsed, release, packageAsset));
+            selected = Some((parsed, release, expectedAssetName));
         }
     }
-    Ok(
-        selected.map(|(_, latestRelease, packageAsset)| ReleaseInfo {
-            version: latestRelease.tag_name.trim_start_matches('v').to_string(),
-            assetName: packageAsset.name.clone(),
-            downloadUrl: packageAsset.browser_download_url.clone(),
-            releaseNotes: latestRelease.body.unwrap_or_default(),
-            releasePageUrl: latestRelease.html_url,
-        }),
-    )
+    selected
+        .map(
+            |(_, latestRelease, assetName)| -> Result<ReleaseInfo, String> {
+                let packageAsset = latestRelease
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name == assetName);
+                let manifestName = format!("{assetName}.update.json");
+                let updateManifest = latestRelease
+                    .assets
+                    .iter()
+                    .find(|asset| asset.name == manifestName)
+                    .map(|asset| ReleaseManifestAsset {
+                        name: asset.name.clone(),
+                        url: asset.browser_download_url.clone(),
+                        digest: asset.digest.clone().unwrap_or_default(),
+                    });
+                let downloadUrl = match packageAsset {
+                    Some(asset) => asset.browser_download_url.clone(),
+                    None => updateManifest
+                        .as_ref()
+                        .ok_or("Update manifest is missing")?
+                        .url
+                        .strip_suffix(".update.json")
+                        .ok_or("Invalid manifest asset download URL")?
+                        .to_owned(),
+                };
+                let patchPrefix = format!("{assetName}.from-");
+                Ok(ReleaseInfo {
+                    version: latestRelease.tag_name.trim_start_matches('v').to_string(),
+                    assetName,
+                    downloadUrl,
+                    releaseNotes: latestRelease.body.unwrap_or_default(),
+                    releasePageUrl: latestRelease.html_url,
+                    packageSha256: packageAsset.and_then(|asset| asset.digest.clone()),
+                    fullPackageAvailable: packageAsset.is_some(),
+                    patchAssetNames: latestRelease
+                        .assets
+                        .iter()
+                        .filter(|asset| {
+                            asset.name.starts_with(&patchPrefix)
+                                && asset.name.ends_with(".patch.gz")
+                        })
+                        .map(|asset| asset.name.clone())
+                        .collect(),
+                    updateManifest,
+                })
+            },
+        )
+        .transpose()
 }
 
 #[allow(non_snake_case)]
@@ -767,7 +826,7 @@ impl std::fmt::Display for FullUpdateChannel {
 }
 
 /// Rejects cancellation before opening or publishing a package.
-fn ensureDownloadActive(control: &HttpDownloadControl) -> Result<(), String> {
+pub(crate) fn ensureDownloadActive(control: &HttpDownloadControl) -> Result<(), String> {
     if control.isCancelled() {
         Err("UPDATE_CANCELLED".into())
     } else {
@@ -775,10 +834,10 @@ fn ensureDownloadActive(control: &HttpDownloadControl) -> Result<(), String> {
     }
 }
 
-struct DownloadAttempt {
-    storage: Arc<dyn RuntimeStorageHost>,
-    path: String,
-    published: bool,
+pub(crate) struct DownloadAttempt {
+    pub(crate) storage: Arc<dyn RuntimeStorageHost>,
+    pub(crate) path: String,
+    pub(crate) published: bool,
 }
 impl Drop for DownloadAttempt {
     /// Removes only this attempt on errors, cancellation or a dropped future.
@@ -790,11 +849,13 @@ impl Drop for DownloadAttempt {
 }
 
 /// Validates the release source before creating a native file. Shared by app and CLI downloads.
-fn validateUpdatePackageSource(url: &str, name: &str) -> Result<(), String> {
+pub(crate) fn validateUpdatePackageSource(url: &str, name: &str) -> Result<(), String> {
     validatePackageFileName(name)?;
-    let prefix = "https://github.com/AAswordman/Operit2/releases/download/";
+    let prefix = format!(
+        "https://github.com/{GITHUB_RELEASE_OWNER}/{GITHUB_RELEASE_REPO}/releases/download/"
+    );
     let path = url
-        .strip_prefix(prefix)
+        .strip_prefix(&prefix)
         .ok_or("Update URL must reference this project's HTTPS release assets")?;
     let (tag, asset) = path.split_once('/').ok_or("Missing release tag/asset")?;
     if tag.is_empty() || asset != name || !name.starts_with("operit2-") || name.contains(['?', '#'])
@@ -805,7 +866,7 @@ fn validateUpdatePackageSource(url: &str, name: &str) -> Result<(), String> {
 }
 
 /// Rejects HTML error pages and mismatched archives before any installer sees them.
-fn validateDownloadedUpdatePackage(prefix: &[u8], name: &str) -> Result<(), String> {
+pub(crate) fn validateDownloadedUpdatePackage(prefix: &[u8], name: &str) -> Result<(), String> {
     let length = if name.ends_with(".msi") { 8 } else { 4 };
     if prefix.len() < length {
         return Err("Downloaded update package is too short".into());
@@ -814,7 +875,7 @@ fn validateDownloadedUpdatePackage(prefix: &[u8], name: &str) -> Result<(), Stri
         prefix[..4] == *b"xar!"
     } else if name.ends_with(".msi") {
         prefix[..8] == [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
-    } else if name.ends_with(".tar.gz") {
+    } else if name.ends_with(".tar.gz") || name.ends_with(".patch.gz") {
         prefix[..2] == [0x1f, 0x8b]
     } else if [".zip", ".apk", ".hap", ".ipa"]
         .iter()
@@ -864,8 +925,8 @@ impl Drop for StagedUpdate {
     }
 }
 
-/// Streams into a Host-owned virtual storage session and commits only a verified package.
-async fn downloadUpdatePackage<F>(
+/// Commits complete transfers; signed containers receive header checks and patches are verified during reconstruction.
+pub(crate) async fn downloadUpdatePackage<F>(
     url: &str,
     out: &str,
     name: &str,
@@ -873,6 +934,39 @@ async fn downloadUpdatePackage<F>(
     control: HttpDownloadControl,
     onEvent: F,
 ) -> Result<(), String>
+where
+    F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
+{
+    downloadPackageResource(url, out, name, context, control, false, onEvent)
+        .await
+        .map(|_| ())
+}
+
+/// Downloads an optional patch while distinguishing removal from failed transfers.
+pub(crate) async fn downloadOptionalUpdatePackage<F>(
+    url: &str,
+    out: &str,
+    name: &str,
+    context: &HostManager,
+    control: HttpDownloadControl,
+    onEvent: F,
+) -> Result<bool, String>
+where
+    F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
+{
+    downloadPackageResource(url, out, name, context, control, true, onEvent).await
+}
+
+/// Streams one resource transactionally and commits only a complete response.
+async fn downloadPackageResource<F>(
+    url: &str,
+    out: &str,
+    name: &str,
+    context: &HostManager,
+    control: HttpDownloadControl,
+    optional: bool,
+    onEvent: F,
+) -> Result<bool, String>
 where
     F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
 {
@@ -903,76 +997,93 @@ where
         .monotonicTimeMillis()
         .map_err(|error| error.to_string())?;
     let active = control.clone();
-    requestUpdateHttp(
-        http,
-        updateHttpRequest(url, "GET"),
-        control.clone(),
-        move |event| {
-            ensureDownloadActive(&active)?;
-            let mut state = sink.lock().map_err(|error| error.to_string())?;
-            match event {
-                UpdateHttpEvent::Head(head) => {
-                    state.total = head
-                        .headers
-                        .iter()
-                        .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                        .ok_or("Update response has no Content-Length")?
-                        .1
-                        .parse::<u64>()
-                        .map_err(|error| error.to_string())?;
-                    if state.total == 0 {
-                        return Err("Update package Content-Length must be positive".into());
-                    }
-                }
-                UpdateHttpEvent::Bytes(bytes) => {
-                    let next = state
-                        .received
-                        .checked_add(bytes.len() as u64)
-                        .ok_or("Update byte count overflow")?;
-                    if next > state.total {
-                        return Err("Update package exceeds Content-Length".into());
-                    }
-                    state
-                        .writer
-                        .as_mut()
-                        .expect("active update session")
-                        .writeChunk(&bytes)
-                        .map_err(|error| error.to_string())?;
-                    let prefixBytes = bytes.len().min(8 - state.prefix.len());
-                    state.prefix.extend_from_slice(&bytes[..prefixBytes]);
-                    let now = scheduler
-                        .monotonicTimeMillis()
-                        .map_err(|error| error.to_string())?;
-                    let speed = (next - state.received).saturating_mul(1000)
-                        / now.saturating_sub(lastTime).max(1);
-                    lastTime = now;
-                    state.received = next;
-                    let event = FullUpdateProgressEvent::DownloadProgress {
-                        readBytes: state.received,
-                        totalBytes: state.total,
-                        speedBytesPerSec: speed,
-                    };
-                    drop(state);
-                    onEvent(event);
+    let consume = move |event| {
+        ensureDownloadActive(&active)?;
+        let mut state = sink.lock().map_err(|error| error.to_string())?;
+        match event {
+            UpdateHttpEvent::Head(head) => {
+                state.total = head
+                    .headers
+                    .iter()
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .ok_or("Update response has no Content-Length")?
+                    .1
+                    .parse::<u64>()
+                    .map_err(|error| error.to_string())?;
+                if state.total == 0 {
+                    return Err("Update package Content-Length must be positive".into());
                 }
             }
-            Ok(())
-        },
-    )
-    .await?;
+            UpdateHttpEvent::Bytes(bytes) => {
+                let next = state
+                    .received
+                    .checked_add(bytes.len() as u64)
+                    .ok_or("Update byte count overflow")?;
+                if next > state.total {
+                    return Err("Update package exceeds Content-Length".into());
+                }
+                state
+                    .writer
+                    .as_mut()
+                    .expect("active update session")
+                    .writeChunk(&bytes)
+                    .map_err(|error| error.to_string())?;
+                let prefixBytes = bytes.len().min(8 - state.prefix.len());
+                state.prefix.extend_from_slice(&bytes[..prefixBytes]);
+                let now = scheduler
+                    .monotonicTimeMillis()
+                    .map_err(|error| error.to_string())?;
+                let speed = (next - state.received).saturating_mul(1000)
+                    / now.saturating_sub(lastTime).max(1);
+                lastTime = now;
+                state.received = next;
+                let event = FullUpdateProgressEvent::DownloadProgress {
+                    readBytes: state.received,
+                    totalBytes: state.total,
+                    speedBytesPerSec: speed,
+                };
+                drop(state);
+                onEvent(event);
+            }
+        }
+        Ok(())
+    };
+    let present = if optional {
+        crate::UpdateHttp::requestOptional(
+            http,
+            updateHttpRequest(url, "GET"),
+            control.clone(),
+            consume,
+        )
+        .await?
+    } else {
+        requestUpdateHttp(
+            http,
+            updateHttpRequest(url, "GET"),
+            control.clone(),
+            consume,
+        )
+        .await?;
+        true
+    };
     ensureDownloadActive(&control)?;
+    if !present {
+        return Ok(false);
+    }
     let mut state = state.lock().map_err(|error| error.to_string())?;
     if state.received != state.total || state.total == 0 {
         return Err("Update package is incomplete".into());
     }
-    validateDownloadedUpdatePackage(&state.prefix, name)?;
+    if !name.ends_with(".patch.gz") {
+        validateDownloadedUpdatePackage(&state.prefix, name)?;
+    }
     state
         .writer
         .take()
         .expect("active update session")
         .commit()
         .map_err(|error| error.to_string())?;
-    Ok(())
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -1074,6 +1185,7 @@ mod tests {
                 .identifiers
                 .is_empty(),
             assets: vec![GitHubReleaseAsset {
+                digest: None,
                 name: target.assetNameForVersion(version).unwrap(),
                 browser_download_url: "https://example.com/update".to_string(),
             }],
@@ -1327,6 +1439,7 @@ mod tests {
             draft: false,
             prerelease: true,
             assets: vec![GitHubReleaseAsset {
+                digest: None,
                 name: "operit2-cli-windows-x86_64-2.0.0-preview.1.zip".to_string(),
                 browser_download_url:
                     "https://github.com/AAswordman/Operit2/releases/download/v2.0.0-preview.1/operit2-cli-windows-x86_64-2.0.0-preview.1.zip"
@@ -1397,6 +1510,7 @@ mod tests {
                         draft: false,
                         prerelease: version == "2.0.0-preview.16",
                         assets: vec![GitHubReleaseAsset {
+                            digest: None,
                             name,
                             browser_download_url: "https://example.com/update".to_string(),
                         }],
@@ -1427,6 +1541,7 @@ mod tests {
                 draft: false,
                 prerelease: version != "2.0.0",
                 assets: vec![GitHubReleaseAsset {
+                    digest: None,
                     name: target.assetNameForVersion(version).unwrap(),
                     browser_download_url: "https://example.com/update".to_string(),
                 }],

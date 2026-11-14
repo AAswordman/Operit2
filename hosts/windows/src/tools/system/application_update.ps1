@@ -169,6 +169,7 @@ function Invoke-OperitMsiUpdate([int]$ParentPid, [string]$Package, [string]$Exec
             throw 'Windows Installer did not register the expected updated product.'
         }
         Write-OperitUpdateResult $Log 'installed' $metadata.release ''
+        Set-Content -LiteralPath (Join-Path (Split-Path -LiteralPath $Ready) 'installer.finished') -Value ''
         Start-Process -FilePath $Executable -WorkingDirectory $installation.folder
     } catch {
         $details = $_ | Out-String
@@ -180,5 +181,7 @@ function Invoke-OperitMsiUpdate([int]$ParentPid, [string]$Package, [string]$Exec
             Show-OperitUpdateMessage ('Operit 更新未完成。' + [Environment]::NewLine + $details + [Environment]::NewLine + '日志：' + $Log) 'Operit 更新失败'
         }
         exit 1
+    } finally {
+        Set-Content -LiteralPath (Join-Path (Split-Path -LiteralPath $Ready) 'installer.finished') -Value ''
     }
 }

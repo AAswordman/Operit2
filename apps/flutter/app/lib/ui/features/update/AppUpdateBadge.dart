@@ -75,7 +75,14 @@ class _AppUpdateBadgeState extends State<AppUpdateBadge> {
         children: [
           Padding(
             padding: const EdgeInsets.only(top: 2, right: 22),
-            child: child,
+            child: InkWell(
+              key: const ValueKey('app-update-logo'),
+              borderRadius: BorderRadius.circular(16),
+              onTap: () => unawaited(
+                showAppUpdateDialog(context, controller: _controller),
+              ),
+              child: child,
+            ),
           ),
           Positioned(
             top: 0,

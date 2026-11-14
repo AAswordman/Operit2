@@ -12,6 +12,7 @@ mod bluetooth;
 mod document_filesystem;
 mod filesystem;
 mod http;
+mod update_base;
 #[cfg(target_os = "android")]
 mod jni_thread;
 #[cfg(target_os = "android")]

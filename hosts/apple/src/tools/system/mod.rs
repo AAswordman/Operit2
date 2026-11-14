@@ -41,6 +41,7 @@ impl SystemOperationHost for AppleSystemOperationHost {
                 .parent()
                 .and_then(Path::parent)
                 .ok_or_else(|| HostError::new("Application bundle metadata is unavailable"))?;
+            if !contents.join("Info.plist").is_file() { return Ok(None); }
             let metadata = Command::new("/usr/bin/plutil")
                 .args(["-extract", "OperitDistributionType", "raw", "-o", "-"])
                 .arg(contents.join("Info.plist"))

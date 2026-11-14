@@ -1,5 +1,5 @@
 use crate::core::application::ApplicationUpdate::{
-    ApplicationUpdateInfo, ApplicationUpdateInstallResult, ApplicationUpdateProgress,
+    ApplicationUpdatePlan, ApplicationUpdateInfo, ApplicationUpdateInstallResult, ApplicationUpdateProgress,
 };
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
@@ -373,6 +373,9 @@ impl OperitApplication {
         );
         self.dispatchPluginLoading()?;
         crate::services::ModelCatalogService::startKeepingFresh();
+        if let Err(error) = super::ApplicationUpdate::cleanupCache(&self.hostManager) {
+            AppLogger::e("ApplicationUpdateCache", &error);
+        }
         self.initialized = true;
         AppLogger::i(
             "OperitApplication",
@@ -812,6 +815,26 @@ impl OperitApplication {
         async move { manager.download(version, context).await }
     }
 
+    /// Calculates full and incremental availability before starting a transfer.
+    pub fn planApplicationUpdate(&self, version: String) -> impl std::future::Future<Output = Result<ApplicationUpdatePlan, String>> + 'static {
+        let manager = self.applicationUpdate.clone();
+        let context = self.hostManager.clone();
+        async move { manager.plan(version, context).await }
+    }
+
+    /// Verifies a selected old original against the authenticated patch declaration.
+    pub fn supplyApplicationUpdateBase(&self, version: String, sourcePath: String) -> impl std::future::Future<Output = Result<ApplicationUpdatePlan, String>> + 'static {
+        let manager = self.applicationUpdate.clone();
+        let context = self.hostManager.clone();
+        async move { manager.supplyBase(version, sourcePath, context) }
+    }
+
+    /// Selects the available full package after the user declines to supply an original.
+    pub fn selectApplicationUpdateFull(&self, version: String) -> Result<ApplicationUpdatePlan, String> {
+        self.applicationUpdate.chooseFull(version)
+    }
+
+    /// Cancels the current package download or import operation.
     pub fn cancelApplicationUpdateDownload(&self) {
         self.applicationUpdate.cancel();
     }

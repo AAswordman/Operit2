@@ -1,0 +1,71 @@
+name: Publish Release and Preview
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_revision:
+        description: Exact source commit built by all selected runs (40-character SHA)
+        type: string
+        required: true
+      run_ids:
+        description: Comma-separated successful platform build run IDs
+        type: string
+        required: true
+      draft:
+        description: Keep the uploaded release as a draft
+        type: boolean
+        default: true
+      full_only:
+        description: Publish full installers without incremental metadata
+        type: boolean
+        default: false
+      patch_only:
+        description: Publish incremental patches without full installers
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  actions: read
+
+concurrency:
+  group: operit2-release-publish
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_revision }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Prepare and publish verified packages
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_REVISION: ${{ inputs.source_revision }}
+          RUN_IDS: ${{ inputs.run_ids }}
+          KEEP_DRAFT: ${{ inputs.draft }}
+          FULL_ONLY: ${{ inputs.full_only }}
+          PATCH_ONLY: ${{ inputs.patch_only }}
+        run: |
+          python - <<'PY'
+          import os, re, subprocess, sys
+          from pathlib import Path
+          revision = os.environ['SOURCE_REVISION']
+          if not re.fullmatch(r'[0-9a-f]{40}', revision):
+              raise ValueError('Source revision must be a full commit SHA')
+          actual = subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip()
+          if actual != revision:
+              raise ValueError('Checked-out source does not match requested commit')
+          sys.path.insert(0, 'tools/release')
+          from incremental import publish_runs
+          runs = [value.strip() for value in os.environ['RUN_IDS'].split(',')]
+          print(publish_runs(runs, Path('tools/release/dist'), 3,
+                             os.environ['KEEP_DRAFT'] == 'true',
+                             full_only=os.environ['FULL_ONLY'] == 'true',
+                             patch_only=os.environ['PATCH_ONLY'] == 'true'))
+          PY

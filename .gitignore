@@ -210,6 +210,7 @@ plugins/**/.sync_hot_reload_state.json
 
 # Local build tool caches
 .ci-tools/
+tools/release/bases/
 
 
 AGENTS.md

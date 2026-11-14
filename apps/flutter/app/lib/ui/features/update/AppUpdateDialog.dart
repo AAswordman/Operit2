@@ -59,25 +59,58 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       if (release == null) return const SizedBox.shrink();
       final colors = Theme.of(context).colorScheme;
       final phase = controller.phase;
+      if (phase == AppUpdatePhase.unavailable) {
+        return PopScope(
+          canPop: false,
+          child: OperitDialogScaffold(
+            title: '暂时无法完成更新',
+            icon: const Icon(Icons.info_outline),
+            maxWidth: 480,
+            actions: [
+              FilledButton(
+                onPressed: () {
+                  controller.acknowledgeUnavailable();
+                  Navigator.of(context).pop();
+                },
+                child: const Text('知道了'),
+              ),
+            ],
+            child: Text(
+              '当前无法取得更新所需的安装包，且没有可用的完整包。请自行下载 ${release.version} 的安装包进行安装，或找到上一次安装（版本 ${controller.plan?.baseVersion ?? release.currentVersion}）的原始安装包后再试。',
+            ),
+          ),
+        );
+      }
+      final needsBase = phase == AppUpdatePhase.awaitingBase;
+      final validatingBase = phase == AppUpdatePhase.validatingBase;
+      final planning = phase == AppUpdatePhase.planning;
       final downloading = phase == AppUpdatePhase.downloading;
+      final reconstructing = phase == AppUpdatePhase.reconstructing;
       final preparing = phase == AppUpdatePhase.preparing;
       final installing = phase == AppUpdatePhase.installing;
       final failed = phase == AppUpdatePhase.failed;
       final awaiting = phase == AppUpdatePhase.awaitingInstall;
       final permission = phase == AppUpdatePhase.awaitingPermission;
       final status = switch (phase) {
-        AppUpdatePhase.downloading => '正在下载安装包…',
+        AppUpdatePhase.planning => '正在检查完整包与增量更新…',
+        AppUpdatePhase.awaitingBase => '需要上一次安装的原始安装包',
+        AppUpdatePhase.validatingBase => '正在校验所选安装包…',
+        AppUpdatePhase.downloading =>
+          controller.plan?.mode == AppUpdateMode.incremental
+              ? '正在下载增量补丁…'
+              : '正在下载完整安装包…',
+        AppUpdatePhase.reconstructing => '正在合并并校验安装包…',
         AppUpdatePhase.preparing => '正在准备安装，请稍候…',
         AppUpdatePhase.installing => '正在启动更新安装，应用即将重启…',
         AppUpdatePhase.awaitingInstall =>
           controller.restartRequired ? '下载完成，重启即可安装新版本' : '安装请求已提交，请完成系统确认',
         AppUpdatePhase.awaitingPermission => '需要允许安装应用',
         AppUpdatePhase.failed =>
-          controller.packageReceipt == null ? '下载失败' : '安装未完成',
+          controller.packageReceipt == null ? '更新未完成' : '安装未完成',
         _ => '准备下载更新…',
       };
       return PopScope(
-        canPop: !preparing && !installing,
+        canPop: !preparing && !installing && !validatingBase,
         child: OperitDialogScaffold(
           title: '更新 Operit',
           icon: Icon(
@@ -87,15 +120,25 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
           ),
           maxWidth: 480,
           actions: [
-            if (!preparing && !installing)
+            if (needsBase) ...[
+              TextButton(
+                onPressed: () => unawaited(controller.withoutBase()),
+                child: const Text('我没安装包了'),
+              ),
+              FilledButton(
+                onPressed: () => unawaited(controller.selectBase()),
+                child: const Text('选择'),
+              ),
+            ],
+            if (!needsBase && !validatingBase && !preparing && !installing)
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: Text(downloading ? '后台下载' : '关闭'),
+                child: Text(downloading || reconstructing ? '后台更新' : '关闭'),
               ),
-            if (downloading)
+            if (downloading || reconstructing)
               TextButton(
                 onPressed: controller.cancelDownload,
-                child: const Text('取消下载'),
+                child: const Text('取消更新'),
               ),
             if (failed)
               TextButton(
@@ -111,7 +154,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
               FilledButton(
                 onPressed: () => unawaited(controller.start()),
                 child: Text(
-                  controller.packageReceipt == null ? '重新下载' : '重新安装',
+                  controller.packageReceipt == null ? '重试更新' : '重新安装',
                 ),
               ),
             if (awaiting)
@@ -145,27 +188,51 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 style: TextStyle(color: colors.onSurfaceVariant),
               ),
               const SizedBox(height: 24),
-              Row(
-                children: [
-                  Icon(
-                    failed
-                        ? Icons.error_outline
-                        : awaiting
-                        ? Icons.check_circle_outline
-                        : Icons.downloading_rounded,
-                    size: 20,
-                    color: failed ? colors.error : colors.primary,
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      status,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
-                    ),
+              if (needsBase || validatingBase) ...[
+                Text(
+                  '你还有上一次安装（版本 ${controller.plan!.baseVersion}）的安装包吗？',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '请选择当时安装此应用的原始安装包。校验通过后，将下载增量补丁并合并为新版本安装包。',
+                  style: TextStyle(color: colors.onSurfaceVariant),
+                ),
+                if (controller.plan!.incrementalBytes != null) ...[
+                  const SizedBox(height: 8),
+                  Text(
+                    '增量下载约 ${formatUpdateBytes(controller.plan!.incrementalBytes!)}',
                   ),
                 ],
-              ),
-              if (downloading || preparing || installing) ...[
+                const SizedBox(height: 18),
+              ],
+              if (!needsBase)
+                Row(
+                  children: [
+                    Icon(
+                      failed
+                          ? Icons.error_outline
+                          : awaiting
+                          ? Icons.check_circle_outline
+                          : Icons.downloading_rounded,
+                      size: 20,
+                      color: failed ? colors.error : colors.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        status,
+                        style: const TextStyle(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
+              if (planning ||
+                  validatingBase ||
+                  downloading ||
+                  reconstructing ||
+                  preparing ||
+                  installing) ...[
                 const SizedBox(height: 14),
                 LinearProgressIndicator(
                   value: downloading ? controller.progress : null,
@@ -199,7 +266,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '下载完成后会自动准备安装。你可以关闭此窗口，稍后点击更新图标查看进度。',
+                  '下载完成后会校验安装包并准备安装。你可以关闭此窗口，稍后点击 Operit 标志查看进度。',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
                   ),

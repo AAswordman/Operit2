@@ -3316,6 +3316,13 @@ pub struct ApplicationUpdateTarget {
     pub installTiming: AppInstallTiming,
 }
 
+/// Selects one authoritative package source without probing alternate providers on failure.
+pub enum ApplicationUpdateBase {
+    InstalledPackage(Box<dyn FileSource>),
+    RetainedPackage,
+    Unavailable,
+}
+
 /// Controls when a platform installer may modify files used by the current process.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum AppInstallTiming {
@@ -3337,6 +3344,10 @@ impl AppInstallTiming {
 pub mod UiAutomation;
 
 pub trait SystemOperationHost: Send + Sync {
+    /// Selects the platform's package source; desktop installers use node-local retained packages.
+    fn applicationUpdateBase(&self) -> HostResult<ApplicationUpdateBase> {
+        Ok(ApplicationUpdateBase::RetainedPackage)
+    }
     /// Reports the running application's distribution; None disables in-app updates.
     fn applicationUpdateTarget(&self) -> HostResult<Option<ApplicationUpdateTarget>> {
         Ok(None)

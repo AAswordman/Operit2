@@ -276,6 +276,10 @@ impl FlutterSystemOperationBridge {
 }
 
 impl SystemOperationHost for FlutterSystemOperationBridge {
+    /// Preserves installed-package access instead of replacing it with the desktop default.
+    fn applicationUpdateBase(&self) -> HostResult<operit_host_api::ApplicationUpdateBase> {
+        self.host.applicationUpdateBase()
+    }
     /// Preserves the selected host's application installation identity.
     fn applicationUpdateTarget(
         &self,

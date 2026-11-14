@@ -325,6 +325,18 @@ pub const RUNTIME_APPLICATION_UPDATES: RuntimeStoragePathDefinition = RuntimeSto
     RuntimeStorageOwnership::Ephemeral,
 );
 pub const RUNTIME_APPLICATION_UPDATES_DIR_PATH: &str = RUNTIME_APPLICATION_UPDATES.path;
+/// Retains package bases on this node without including installers in Space sync.
+pub const RUNTIME_APPLICATION_UPDATE_BASES: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/application_update_bases",
+    RuntimeStorageOwnership::CoreNode,
+);
+pub const RUNTIME_APPLICATION_UPDATE_BASES_DIR_PATH: &str = RUNTIME_APPLICATION_UPDATE_BASES.path;
+/// Remembers target-specific incremental failures locally across application restarts.
+pub const RUNTIME_APPLICATION_UPDATE_STATE: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/application_update_state",
+    RuntimeStorageOwnership::CoreNode,
+);
+pub const RUNTIME_APPLICATION_UPDATE_STATE_DIR_PATH: &str = RUNTIME_APPLICATION_UPDATE_STATE.path;
 /// Persistent shared output directories and their saved conversation bindings.
 pub const RUNTIME_CHAT_OUTPUTS_DIR_PATH: &str = "runtime/data/chat_outputs";
 pub const RUNTIME_CHAT_OUTPUT_BINDINGS_DIR_PATH: &str = "runtime/data/chat_output_bindings";
@@ -533,6 +545,8 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     EXTENSIONS_PLUGIN_DATA,
     RUNTIME_CLEAN_ON_EXIT,
     RUNTIME_APPLICATION_UPDATES,
+    RUNTIME_APPLICATION_UPDATE_BASES,
+    RUNTIME_APPLICATION_UPDATE_STATE,
     LEGACY_CHAT_ATTACHMENTS,
     RUNTIME_ATTACHMENT_SOURCES,
     RuntimeStoragePathDefinition::tree(RUNTIME_CHAT_OUTPUTS_DIR_PATH, RuntimeStorageOwnership::Space),

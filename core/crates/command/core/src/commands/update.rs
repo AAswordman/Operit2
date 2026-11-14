@@ -42,14 +42,16 @@ async fn run_update_run(
         None => target,
     };
     let packageName = target.assetName()?;
+    let currentAsset = target.assetNameForVersion(currentVersion)?;
     let channel = GithubReleaseUtil::fullUpdateChannelForVersion(currentVersion)?;
     let channelText = channel.to_string();
     match GithubReleaseUtil::checkForFullUpdate(currentVersion, target).await? {
         FullUpdateStatus::Available(info) => {
-            let packagePath = GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
-                info.downloadUrl.clone(),
-                info.assetName.clone(),
+            let packagePath = operit_util::IncrementalUpdate::prepareUpdate(
+                info.clone(),
+                currentAsset,
                 context,
+                operit_host_api::HttpDownloadControl::new(),
                 |_| {},
             )
             .await?;

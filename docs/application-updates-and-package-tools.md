@@ -1,5 +1,14 @@
 # 应用更新与原生应用管理
 
+Release / Preview 平台增量补丁、基包保留、发布工具和 CI 配置见
+[跨平台增量更新](incremental-updates.md)。
+App、CLI、TUI 共用 `operit-util::IncrementalUpdate` 的方案计算和执行，
+按已校验的清单和准确基包选择传输，重建完整安装包后复用下文安装链路。
+App 通过 `planUpdate` / `executeUpdate` 在需要旧安装包时等待用户选择，
+CLI/TUI 通过 `prepareUpdate` 执行相同方案；缺少基包时只有存在完整包才能下载。
+只有本次增量传输小于完整包时才选择增量。基包提取或重建校验失败会记录该目标版本，
+下次更新直接使用完整包；决定保存在本机，普通网络中断和取消不禁用增量。
+
 ## 分层与调用链
 
 App、CLI、TUI 共用 `operit-util::GithubReleaseUtil` 的版本渠道、发布资产命名、发布检查、Host HTTP 下载、取消、安装包格式校验和失败文件清理。
@@ -7,12 +16,18 @@ App、CLI、TUI 共用 `operit-util::GithubReleaseUtil` 的版本渠道、发布
 App 的 `OperitApplication` 提供以下代理接口：
 
 - `checkApplicationUpdate`：通过本机 `SystemOperationHost::applicationUpdateTarget` 获取架构与安装发行类型，按共享发布规则选择资产，返回版本、说明和发布页等展示信息。平台目录、注册表及 macOS 发行元数据由 Host 读取。
-- `applicationUpdateProgressFlow`：推送已接收字节和总字节。
-- `downloadApplicationUpdate(version)`：使用核心已选定的发布资产下载，返回不透明凭证。
+- `applicationUpdateProgressFlow`：推送下载／合并校验阶段、已接收字节和总字节。
+- `planApplicationUpdate(version)`：统一计算完整包和适用增量是否存在、大小及原始基包是否就绪，保存执行方案；只发清单和补丁的版本也可发现。
+- `supplyApplicationUpdateBase(version, sourcePath)`：按已保存方案中的基包大小和 SHA-256 验证用户选中的旧安装包，校验成功才允许下载补丁。
+- `selectApplicationUpdateFull(version)`：处理用户没有旧包的选择；存在完整包则选全量，否则返回不可更新状态。
+- `downloadApplicationUpdate(version)`：执行保存的方案，返回不透明凭证。
 - `cancelApplicationUpdateDownload`：取消当前 Host HTTP 下载。
 - `installApplicationUpdate(receipt)`：更新模块验证凭证，通过 VFS 检查文件并取得文件引用，再调用通用的 `SystemOperationHost::installApp(source, timing)`。安装执行时机由 Host 报告的安装身份决定，Windows 更新要求当前进程退出后执行。版本选择、凭证、重试和安装状态复用属于更新模块，VFS 不包含任何安装或更新业务入口。
 
 Flutter 使用本机 `ProxyCoreRuntimeBridge`，不受当前对话所选设备影响。它只保存展示状态和凭证、订阅进度、响应按钮。它不判断平台、ABI、发行渠道或安装格式，不解析 Info.plist，不发安装包 HTTP 请求，不创建、校验、删除或安装本地文件。代理代码通过项目既有的代码生成流程生成，没有新增平台 MethodChannel。
+
+应用不常驻显示安装包导入卡片。发现新版后，Operit Logo 和关于页的更新操作进入同一个弹窗。
+仅在计划需要旧包时显示“选择”和“我没安装包了”；没有旧包且没有完整包时，显示无法完成更新的说明，只有“知道了”操作。
 
 CLI/TUI 保留命令行和终端交互，其检查/下载继续调用同一共享实现。VFS 只负责路径映射和文件访问；解析结果实现通用 `FileSource` 文件引用接口，系统安装器和 CLI 原生 Host 消费这个引用，在 Host 内部取得本机路径。普通 `install_app` 复用 `PathMapper::resolveFileResourcePath` 接受绝对路径兼容输入，再通过 VFS 取得文件引用。`AppInstallTiming` 只描述立即执行或当前进程退出后执行，不包含更新版本、下载凭证或升级校验。无法处理延迟安装的 provider 明确报错。
 

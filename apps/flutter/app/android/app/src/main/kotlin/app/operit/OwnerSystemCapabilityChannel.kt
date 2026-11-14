@@ -315,7 +315,7 @@ class OwnerSystemCapabilityChannel(
                             check(response.getBoolean("ok")) { response.optString("error", "File presentation failed") }
                             mapOf("resultJson" to JSONObject().put("success", true).toString())
                         }
-                        "install_app", "uninstall_app", "list_installed_apps", "start_app", "stop_app", "get_app_usage_time" ->
+                        "application_update_base", "install_app", "uninstall_app", "list_installed_apps", "start_app", "stop_app", "get_app_usage_time" ->
                             mapOf("resultJson" to packageOperations.execute(operation, JSONObject(paramsJson)).toString())
                         "execute_privileged_command" -> systemExecutePrivilegedCommand(JSONObject(paramsJson))
                         else -> throw IllegalArgumentException("unsupported system operation: $operation")

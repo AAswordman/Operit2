@@ -7,6 +7,9 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../../../common/OperitLogoMark.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../../../../core/update/AppUpdateController.dart';
+import '../../update/AppUpdateBadge.dart';
+import '../../update/AppUpdateDialog.dart';
 
 final Uri _projectUri = Uri.parse('https://github.com/AAswordman/Operit2');
 final Uri _documentationUri = Uri.parse(
@@ -92,14 +95,16 @@ class _AboutHeaderState extends State<_AboutHeader> {
     final colorScheme = Theme.of(context).colorScheme;
     return Column(
       children: <Widget>[
-        DecoratedBox(
-          decoration: BoxDecoration(
-            color: colorScheme.primaryContainer,
-            shape: BoxShape.circle,
-          ),
-          child: Padding(
-            padding: const EdgeInsets.all(20),
-            child: OperitLogoMark(size: 76, color: colorScheme.primary),
+        AppUpdateBadge(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: colorScheme.primaryContainer,
+              shape: BoxShape.circle,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(20),
+              child: OperitLogoMark(size: 76, color: colorScheme.primary),
+            ),
           ),
         ),
         const SizedBox(height: 14),
@@ -133,7 +138,39 @@ class _AboutHeaderState extends State<_AboutHeader> {
             );
           },
         ),
+        const _AboutUpdateAction(),
       ],
+    );
+  }
+}
+
+/// Shows an update action only when shared release discovery has found a newer version.
+class _AboutUpdateAction extends StatelessWidget {
+  /// Creates the conditional About-page update entry.
+  const _AboutUpdateAction();
+
+  /// Uses the same controller and dialog as the sidebar logo.
+  @override
+  Widget build(BuildContext context) {
+    final controller =
+        AppUpdateScope.maybeOf(context) ?? AppUpdateController.instance;
+    return ListenableBuilder(
+      listenable: controller,
+      builder: (context, _) => controller.visible
+          ? Padding(
+              padding: const EdgeInsets.only(top: 12),
+              child: FilledButton.tonalIcon(
+                onPressed: () =>
+                    showAppUpdateDialog(context, controller: controller),
+                icon: const Icon(Icons.system_update_alt),
+                label: Text(
+                  controller.busy
+                      ? '查看更新进度'
+                      : '更新至 ${controller.release!.version}',
+                ),
+              ),
+            )
+          : const SizedBox.shrink(),
     );
   }
 }

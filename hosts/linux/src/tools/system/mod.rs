@@ -29,6 +29,9 @@ impl SystemOperationHost for LinuxSystemOperationHost {
     fn applicationUpdateTarget(
         &self,
     ) -> HostResult<Option<operit_host_api::ApplicationUpdateTarget>> {
+        if !std::env::current_exe()?.parent().is_some_and(|parent| parent.join("data/flutter_assets").is_dir()) {
+            return Ok(None);
+        }
         Ok(Some(operit_host_api::ApplicationUpdateTarget {
             installTiming: operit_host_api::AppInstallTiming::Immediate,
             arch: std::env::consts::ARCH.into(),

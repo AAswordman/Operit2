@@ -14,13 +14,14 @@ pub(crate) enum UpdateHttpEvent {
 type Consumer = Box<dyn FnMut(UpdateHttpEvent) -> Result<(), String> + Send>;
 struct RequestState {
     consumer: Option<Consumer>,
-    completion: Option<oneshot::Sender<Result<(), String>>>,
+    completion: Option<oneshot::Sender<Result<bool, String>>>,
     receivedHead: bool,
+    optional: bool,
 }
 
 impl RequestState {
     /// Releases the sink before notifying the waiting caller, including file handles.
-    fn finish(&mut self, result: Result<(), String>) {
+    fn finish(&mut self, result: Result<bool, String>) {
         self.consumer = None;
         if let Some(sender) = self.completion.take() {
             let _ = sender.send(result);
@@ -31,6 +32,12 @@ impl RequestState {
     fn deliver(&mut self, event: UpdateHttpEvent) {
         if self.consumer.is_none() {
             return;
+        }
+        if let UpdateHttpEvent::Head(head) = &event {
+            if !self.receivedHead && self.optional && matches!(head.statusCode, 404 | 410) {
+                self.finish(Ok(false));
+                return;
+            }
         }
         let error = match &event {
             UpdateHttpEvent::Head(_) if self.receivedHead => {
@@ -84,6 +91,29 @@ pub(crate) async fn request(
     control: HttpDownloadControl,
     consume: impl FnMut(UpdateHttpEvent) -> Result<(), String> + Send + 'static,
 ) -> Result<(), String> {
+    requestResource(host, request, control, false, consume)
+        .await
+        .map(|_| ())
+}
+
+/// Treats only HTTP 404 and 410 as an absent resource, never transport or integrity failures.
+pub(crate) async fn requestOptional(
+    host: Arc<dyn HttpHost>,
+    request: HttpRequestData,
+    control: HttpDownloadControl,
+    consume: impl FnMut(UpdateHttpEvent) -> Result<(), String> + Send + 'static,
+) -> Result<bool, String> {
+    requestResource(host, request, control, true, consume).await
+}
+
+/// Shares ordered streaming and cancellation for required and optional resources.
+async fn requestResource(
+    host: Arc<dyn HttpHost>,
+    request: HttpRequestData,
+    control: HttpDownloadControl,
+    optional: bool,
+    consume: impl FnMut(UpdateHttpEvent) -> Result<(), String> + Send + 'static,
+) -> Result<bool, String> {
     if control.isCancelled() {
         return Err("UPDATE_CANCELLED".into());
     }
@@ -92,6 +122,7 @@ pub(crate) async fn request(
         consumer: Some(Box::new(consume)),
         completion: Some(sender),
         receivedHead: false,
+        optional,
     }));
     let guard = RequestGuard {
         host,
@@ -125,7 +156,7 @@ pub(crate) async fn request(
                 let mut state = closeState.lock().expect("update HTTP state");
                 let result = result.and_then(|()| {
                     if state.receivedHead {
-                        Ok(())
+                        Ok(true)
                     } else {
                         Err("HTTP Host closed without headers".into())
                     }

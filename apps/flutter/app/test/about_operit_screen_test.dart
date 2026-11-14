@@ -18,6 +18,7 @@ void main() {
     expect(find.text('版本 2.0.0+15'), findsOneWidget);
     expect(find.text('项目源码'), findsOneWidget);
 
+    await tester.ensureVisible(find.text('开源许可证'));
     await tester.tap(find.text('开源许可证'));
     await tester.pumpAndSettle();
 

@@ -2,7 +2,9 @@
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../bridge/PlatformCoreProxy.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
+import '../proxy/generated/CoreProxyModels.g.dart' show ApplicationUpdatePlan;
 import '../logging/ClientLogger.dart';
+import '../link/CoreLinkProtocol.dart';
 import 'AppUpdateModels.dart';
 
 /// Presentation adapter only. Core and Host own target selection, HTTP, files and installation.
@@ -13,6 +15,57 @@ class CoreAppUpdateBackend extends AppUpdateBackend {
     ),
   }) : _clients = clients;
   final GeneratedCoreProxyClients _clients;
+
+  /// Maps only explicit Core decisions to UI states.
+  AppUpdatePlan _plan(ApplicationUpdatePlan value) => AppUpdatePlan(
+    mode: switch (value.mode) {
+      'full' => AppUpdateMode.full,
+      'incremental' => AppUpdateMode.incremental,
+      'needs_base' => AppUpdateMode.needsBase,
+      'unavailable' => AppUpdateMode.unavailable,
+      _ => throw StateError('核心未返回可识别的更新方案'),
+    },
+    fullAvailable: value.fullAvailable,
+    incrementalAvailable: value.incrementalAvailable,
+    baseVersion: value.baseVersion,
+    fullBytes: value.fullBytes,
+    incrementalBytes: value.incrementalBytes,
+  );
+
+  /// Requests an authoritative plan before the first transfer.
+  @override
+  Future<AppUpdatePlan> plan(AppUpdateRelease release) async => _plan(
+    await _clients.application.planApplicationUpdate(version: release.version),
+  );
+
+  /// Verifies the selected old installer without downloading patch data.
+  @override
+  Future<AppUpdatePlan> supplyBase(
+    AppUpdateRelease release,
+    String path,
+  ) async {
+    try {
+      return _plan(
+        await _clients.application.supplyApplicationUpdateBase(
+          version: release.version,
+          sourcePath: path,
+        ),
+      );
+    } on CoreLinkError catch (error) {
+      if (error.message.startsWith('UPDATE_BASE_MISMATCH:')) {
+        throw const AppUpdateBaseMismatch();
+      }
+      rethrow;
+    }
+  }
+
+  /// Uses the existing plan when the user has no original installer.
+  @override
+  Future<AppUpdatePlan> chooseFull(AppUpdateRelease release) async => _plan(
+    await _clients.application.selectApplicationUpdateFull(
+      version: release.version,
+    ),
+  );
 
   @override
   Future<AppUpdateRelease?> check() async {
@@ -29,12 +82,18 @@ class CoreAppUpdateBackend extends AppUpdateBackend {
   @override
   Future<String> download(
     AppUpdateRelease release,
-    AppUpdateProgress progress,
-  ) async {
+    AppUpdateProgress progress, {
+    void Function()? onReconstructing,
+  }) async {
     final subscription = _clients.application
         .applicationUpdateProgressFlow()
         .listen(
           (event) {
+            if (event.stage == 'reconstructing') {
+              onReconstructing?.call();
+              return;
+            }
+            if (event.stage != 'downloading') return;
             progress(
               event.receivedBytes,
               event.totalBytes > 0 ? event.totalBytes : null,
@@ -57,6 +116,10 @@ class CoreAppUpdateBackend extends AppUpdateBackend {
         version: release.version,
       );
     } catch (error) {
+      if (error is CoreLinkError &&
+          error.message.startsWith('UPDATE_UNAVAILABLE')) {
+        throw const AppUpdateUnavailable();
+      }
       if (error.toString().contains('UPDATE_CANCELLED')) {
         throw const AppUpdateCancelled();
       }

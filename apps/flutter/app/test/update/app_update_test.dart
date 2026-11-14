@@ -35,11 +35,32 @@ class Backend extends AppUpdateBackend {
   AppUpdateProgress? onProgress;
   @override
   Future<AppUpdateRelease?> check() async => release;
+
+  /// Models a full-only release from the shared planner.
+  @override
+  Future<AppUpdatePlan> plan(AppUpdateRelease release) async =>
+      const AppUpdatePlan(
+        mode: AppUpdateMode.full,
+        fullAvailable: true,
+        incrementalAvailable: false,
+      );
+
+  /// Does not accept originals for a full-only plan.
+  @override
+  Future<AppUpdatePlan> supplyBase(
+    AppUpdateRelease release,
+    String path,
+  ) async => throw StateError('No baseline requested');
+
+  /// Confirms the full route in this fixture.
+  @override
+  Future<AppUpdatePlan> chooseFull(AppUpdateRelease release) => plan(release);
   @override
   Future<String> download(
     AppUpdateRelease r,
-    AppUpdateProgress progress,
-  ) async {
+    AppUpdateProgress progress, {
+    void Function()? onReconstructing,
+  }) async {
     downloads++;
     onProgress = progress;
     progress(48 * 1024 * 1024, 120 * 1024 * 1024);
@@ -120,6 +141,7 @@ void main() {
       final controller = AppUpdateController(backend: backend);
       await controller.check();
       final pending = controller.start();
+      await Future<void>.delayed(Duration.zero);
       await controller.cancelDownload();
       expect(controller.error, contains('取消下载失败'));
       expect(controller.phase, AppUpdatePhase.downloading);
@@ -299,14 +321,14 @@ void main() {
       expect(backend.downloads, 1);
       expect(find.text('40%'), findsOneWidget);
       await capture('update-download-dialog');
-      await tester.tap(find.text('后台下载'));
+      await tester.tap(find.text('后台更新'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       await tester.tap(find.byKey(const ValueKey('app-update-badge')));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(backend.downloads, 1);
-      await tester.tap(find.text('取消下载'));
+      await tester.tap(find.text('取消更新'));
       await tester.pump();
       expect(controller.phase, AppUpdatePhase.available);
       expect(backend.installs, 0);

@@ -1,6 +1,8 @@
 """Build release filenames from the shared App and CLI release version."""
 
 from pathlib import Path
+import hashlib
+import json
 import re
 import tomllib
 
@@ -86,6 +88,53 @@ def release_asset_names() -> frozenset[str]:
 # Rejects outdated filenames and unrelated files before publishing release assets.
 def validate_release_assets(assets: list[Path]) -> None:
     expected = release_asset_names()
-    invalid = [path.name for path in assets if path.name not in expected]
+    available = {path.name: path for path in assets}
+    allowed = set(expected)
+    for manifest_path in assets:
+        if not manifest_path.name.endswith(".update.json"):
+            continue
+        package_name = manifest_path.name.removesuffix(".update.json")
+        if package_name not in expected:
+            continue
+        manifest_name = manifest_path.name
+        package = available.get(package_name)
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        if set(manifest) != {"schema", "version", "assetName", "sha256", "size", "patches"}:
+            raise RuntimeError(f"Invalid update manifest fields: {manifest_name}")
+        if (manifest["schema"] != 1 or manifest["version"] != release_version()
+                or manifest["assetName"] != package_name
+                or not isinstance(manifest["size"], int) or not 0 < manifest["size"] <= 16 * 1024 ** 3
+                or not isinstance(manifest["sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", manifest["sha256"]) is None
+                or not isinstance(manifest["patches"], list) or len(manifest["patches"]) > 64):
+            raise RuntimeError(f"Update manifest does not match package: {manifest_name}")
+        if package is not None and (manifest["size"] != package.stat().st_size
+                                    or manifest["sha256"] != file_sha256(package)):
+            raise RuntimeError(f"Update manifest does not match package: {manifest_name}")
+        if package is None and not manifest["patches"]:
+            raise RuntimeError(f"Patch-only target has no patches: {manifest_name}")
+        allowed.add(manifest_name)
+        bases = set()
+        for patch in manifest["patches"]:
+            if set(patch) != {"baseVersion", "baseSha256", "baseSize", "assetName", "sha256", "size"}:
+                raise RuntimeError(f"Invalid patch declaration: {manifest_name}")
+            base_hash = patch["baseSha256"]
+            if (re.fullmatch(r"[0-9a-f]{64}", base_hash) is None or base_hash in bases
+                    or patch["baseSize"] <= 0 or not 0 < patch["size"] < manifest["size"]
+                    or RELEASE_VERSION_PATTERN.fullmatch(patch["baseVersion"]) is None
+                    or patch["assetName"] != f"{package_name}.from-{base_hash}.patch.gz"):
+                raise RuntimeError(f"Invalid patch identity: {manifest_name}")
+            bases.add(base_hash)
+            delta = available.get(patch["assetName"])
+            if delta is None or delta.stat().st_size != patch["size"] or file_sha256(delta) != patch["sha256"]:
+                raise RuntimeError(f"Patch is missing or corrupt: {patch['assetName']}")
+            allowed.add(delta.name)
+    invalid = [path.name for path in assets if path.name not in allowed]
     if invalid:
         raise RuntimeError(f"Release assets do not match the current versioned naming rule: {invalid}")
+
+
+# Hashes staged artifacts without loading large installers into memory.
+def file_sha256(path: Path) -> str:
+    with path.open("rb") as source:
+        return hashlib.file_digest(source, "sha256").hexdigest()

@@ -6,25 +6,24 @@ import sys
 from pathlib import Path
 
 from build_release import (
-    DEFAULT_GITHUB_ENV,
     DEFAULT_RELEASE_REPO,
     DIST_DIR,
-    github_auth,
     load_env_file,
     parse_semver,
-    publish_release,
     release_version,
-    verify_github_publish_access,
     validate_release_assets,
 )
+from gh_publish import publish
 
 
 # Parses command-line options for publishing already-built release assets.
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Publish existing Operit2 assets from tools/release/dist.")
     parser.add_argument("--tag", default="")
-    parser.add_argument("--repo", default=DEFAULT_RELEASE_REPO)
-    parser.add_argument("--github-env", default=str(DEFAULT_GITHUB_ENV))
+    parser.add_argument("--repo")
+    parser.add_argument("--github-env", help="Explicit credentials file; otherwise use the current gh login")
+    parser.add_argument("--notes-file", type=Path)
+    parser.add_argument("--source-revision")
     parser.add_argument("--draft", action="store_true")
     parser.add_argument(
         "--prerelease",
@@ -64,23 +63,20 @@ def main() -> int:
         raise RuntimeError("--prerelease was set for a stable release version")
 
     assets = release_assets()
-    load_env_file(Path(args.github_env))
-    auth = github_auth()
-    verify_github_publish_access(args.repo, auth)
+    if args.github_env:
+        load_env_file(Path(args.github_env))
+    repo = args.repo or DEFAULT_RELEASE_REPO
 
     print(f"Release tag: {tag}")
-    print(f"Release repo: {args.repo}")
+    print(f"Release repo: {repo}")
     print(f"Release draft: {args.draft}")
     print(f"Release prerelease: {is_prerelease}")
     print("Release assets:")
     for asset in assets:
         print(f" - {asset.name}")
 
-    if args.check_only:
-        print("Publish check passed")
-        return 0
-
-    publish_release(tag, args.repo, args.draft, is_prerelease, auth)
+    notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else None
+    print(publish(DIST_DIR, repo, args.draft, notes, args.source_revision, args.check_only))
     return 0
 
 

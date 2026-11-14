@@ -89,8 +89,7 @@ pub fn installPortableApp(package: &str) -> HostResult<Option<AppOperationData>>
             packageName: package.to_string(),
             success: true,
             details: format!(
-                "更新已准备，将在应用退出后替换并重新打开；旧版备份：{}；安装日志：{}",
-                backup.display(),
+                "更新已准备，将在应用退出后替换并重新打开；安装日志：{}",
                 log.display()
             ),
         })
@@ -292,6 +291,7 @@ cleanup() {
     printf '%s\n' 'Installation failed; previous version restored.'
   fi
   if [ "$moved_old" -eq 1 ] && [ -f "$target/$executable" ]; then
+    : > "$(dirname "$ready")/installer.finished"
     nohup "$target/$executable" </dev/null >/dev/null 2>&1 &
   fi
   exit "$code"
@@ -302,6 +302,7 @@ while kill -0 "$parent_pid" 2>/dev/null; do sleep 1; done
 mv "$target" "$backup"
 moved_old=1
 mv "$staged" "$target"
+case "$backup" in "$(dirname "$target")"/.operit-backup-*) rm -rf -- "$backup" ;; esac
 printf '%s\n' 'installed'
 "#;
 
@@ -321,6 +322,11 @@ try {
   $movedOld = $true
   Move-Item -LiteralPath $Staged -Destination $Target
   Start-Process -FilePath (Join-Path $Target $Executable) -WorkingDirectory $Target
+  $backupPath = [IO.Path]::GetFullPath($Backup)
+  if ([IO.Path]::GetDirectoryName($backupPath) -eq [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Target)) -and
+      [IO.Path]::GetFileName($backupPath).StartsWith('.operit-backup-')) {
+    Remove-Item -LiteralPath $backupPath -Recurse -Force -ErrorAction Continue
+  }
   Write-Output 'installed'
 } catch {
   Write-Output ($_ | Out-String)
@@ -331,6 +337,7 @@ try {
   }
 } finally {
   Remove-Item -LiteralPath $Lock -ErrorAction SilentlyContinue
+  Set-Content -LiteralPath (Join-Path (Split-Path -LiteralPath $Ready) 'installer.finished') -Value ''
 }
 "#;
 
@@ -382,7 +389,7 @@ mod tests {
             let dir = fixture();
             let target = dir.join("installed app");
             let stage = dir.join("staged app");
-            let backup = dir.join("backup");
+            let backup = dir.join(".operit-backup-test");
             fs::create_dir_all(&target).unwrap();
             fs::write(target.join("version"), b"old").unwrap();
             let executable = target.join("operit");
@@ -421,7 +428,7 @@ mod tests {
                 if fail { b"old" } else { b"new" }
             );
             if !fail {
-                assert_eq!(fs::read(backup.join("version")).unwrap(), b"old");
+                assert!(!backup.exists());
             }
             fs::remove_dir_all(dir).unwrap();
         }

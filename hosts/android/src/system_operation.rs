@@ -64,6 +64,16 @@ impl AndroidSystemOperationHost {
 }
 
 impl SystemOperationHost for AndroidSystemOperationHost {
+    /// Reads the package owner identity through the existing Android interaction channel.
+    fn applicationUpdateBase(&self) -> HostResult<operit_host_api::ApplicationUpdateBase> {
+        #[derive(serde::Deserialize)]
+        struct Base { path: Option<String> }
+        let base: Base = self.packageRequest("application_update_base", serde_json::json!({}))?;
+        Ok(match base.path {
+            Some(path) => operit_host_api::ApplicationUpdateBase::InstalledPackage(Box::new(crate::update_base::InstalledApk(path.into()))),
+            None => operit_host_api::ApplicationUpdateBase::Unavailable,
+        })
+    }
     /// Selects the APK matching the runtime's Android ABI.
     fn applicationUpdateTarget(
         &self,

@@ -633,16 +633,18 @@ async fn run_update_with_progress(
 ) -> Result<(), String> {
     let package_name = target.assetName()?;
     let target_for_install = target.clone();
+    let current_asset = target.assetNameForVersion(current_version)?;
     let channel = GithubReleaseUtil::fullUpdateChannelForVersion(current_version)?;
     let status = GithubReleaseUtil::checkForFullUpdate(current_version, target).await?;
     match status {
         FullUpdateStatus::Available(info) => {
             let last_line_len = Arc::new(Mutex::new(0usize));
             let progress_line_len = Arc::clone(&last_line_len);
-            let package_path = GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
-                info.downloadUrl.clone(),
-                info.assetName.clone(),
+            let package_path = operit_util::IncrementalUpdate::prepareUpdate(
+                info.clone(),
+                current_asset,
                 context,
+                operit_host_api::HttpDownloadControl::new(),
                 move |event| match event {
                     FullUpdateProgressEvent::StageChanged { stage: _, message } => {
                         let mut last_line_len = progress_line_len

@@ -1,0 +1,20 @@
+{
+  "manifest": {
+    "schema": 1,
+    "version": "2.0.0-preview.2",
+    "assetName": "operit2-app-android-arm64-v8a-2.0.0-preview.2.apk",
+    "sha256": "9ec4a4810ec2d768f83887d711d8e6b5ef953b1cffc2c14e52a6b5cb78741158",
+    "size": 80027,
+    "patches": [
+      {
+        "baseVersion": "2.0.0-preview.1",
+        "baseSha256": "82385937699e386bf157e868085ac0544f9ffcf14069c8890d6e629250ddeea3",
+        "baseSize": 80004,
+        "assetName": "operit2-app-android-arm64-v8a-2.0.0-preview.2.apk.from-82385937699e386bf157e868085ac0544f9ffcf14069c8890d6e629250ddeea3.patch.gz",
+        "sha256": "15a394367cca1866a991201e4f7e01f7be12eb9c32bd4ad3a8dc8eb177d47554",
+        "size": 170
+      }
+    ]
+  },
+  "patch": "H4sIAAAAAAAC//M3CnAMcfYwZGixYGQAgdlQuski0jxznkX2x/AXGRxRB0L85//56JB5opM3L2lSwN13i+cdWdLId+h6xg+L9uuCN55tfT/VWub/oYN+Qcu2nq4oEYyAmAIELAIQmhHG4BgVIE6AiZ0DwiguSUzKSWUcpUfpUXqUHqVH6VF6GNN5qeUKxZnpeakpCgWJydmJ6akKJYmZOQwAO7GkUK0JAAA="
+}

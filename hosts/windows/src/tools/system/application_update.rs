@@ -30,6 +30,9 @@ fn installation(executable: &Path) -> HostResult<bool> {
 /// Resolves this app copy's release format without changing other installed copies.
 pub(super) fn target() -> HostResult<Option<ApplicationUpdateTarget>> {
     let executable = std::fs::canonicalize(std::env::current_exe()?)?;
+    if !executable.parent().is_some_and(|parent| parent.join("data/flutter_assets").is_dir()) {
+        return Ok(None);
+    }
     Ok(Some(ApplicationUpdateTarget {
         installTiming: operit_host_api::AppInstallTiming::AfterProcessExit,
         arch: std::env::consts::ARCH.into(),

@@ -3,12 +3,30 @@ use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, HostMana
 use operit_host_api::HttpDownloadControl;
 use operit_host_api::{AppInstallTiming, AppOperationData, SystemOperationHost};
 use operit_store::PreferencesDataStore::StateFlow;
-use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_util::GithubReleaseUtil::{
-    FullUpdateProgressEvent, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil, ReleaseInfo,
+    FullUpdateProgressEvent, FullUpdateStage, FullUpdateStatus, FullUpdateTarget,
+    GithubReleaseUtil, ReleaseInfo,
 };
+use operit_util::IncrementalUpdate::{executeUpdate, planUpdate, UpdatePlan};
+use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+
+/// Removes obsolete updater files once, before runtime initialization is exposed.
+pub(crate) fn cleanupCache(context: &HostManager) -> Result<(), String> {
+    let Some(host) = &context.systemOperationHost else {
+        return Ok(());
+    };
+    let Some(target) = host.applicationUpdateTarget().map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
+    let target = FullUpdateTarget::fromApplicationTarget(target)?;
+    operit_util::IncrementalUpdate::cleanupUpdateCache(
+        crate::CORE_VERSION,
+        &target.assetNameForVersion(crate::CORE_VERSION)?,
+        context,
+    )
+}
 
 /// Presentation metadata only; the native download URL/path is never sent to the UI.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -20,6 +38,7 @@ pub struct ApplicationUpdateInfo {
 }
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplicationUpdateProgress {
+    pub stage: String,
     pub receivedBytes: u64,
     pub totalBytes: u64,
 }
@@ -28,6 +47,35 @@ pub struct ApplicationUpdateProgress {
 pub struct ApplicationUpdateInstallResult {
     pub installState: String,
     pub details: String,
+}
+/// Exposes one Core decision without package paths or transport URLs.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationUpdatePlan {
+    pub mode: String,
+    pub fullAvailable: bool,
+    pub incrementalAvailable: bool,
+    pub baseVersion: Option<String>,
+    pub fullBytes: Option<u64>,
+    pub incrementalBytes: Option<u64>,
+}
+impl ApplicationUpdatePlan {
+    /// Converts the private executable plan into presentation data.
+    fn fromPlan(plan: &UpdatePlan) -> Self {
+        Self {
+            mode: match plan.mode {
+                operit_util::IncrementalUpdate::UpdateMode::Full => "full",
+                operit_util::IncrementalUpdate::UpdateMode::Incremental => "incremental",
+                operit_util::IncrementalUpdate::UpdateMode::NeedsBase => "needs_base",
+                operit_util::IncrementalUpdate::UpdateMode::Unavailable => "unavailable",
+            }
+            .into(),
+            fullAvailable: plan.fullAvailable,
+            incrementalAvailable: plan.incrementalAvailable,
+            baseVersion: plan.baseVersion.clone(),
+            fullBytes: plan.fullBytes,
+            incrementalBytes: plan.incrementalBytes,
+        }
+    }
 }
 impl ApplicationUpdateInstallResult {
     /// Converts typed host feedback to the existing presentation protocol.
@@ -50,9 +98,12 @@ struct UpdateState {
     release: Option<ReleaseInfo>,
     download: Option<HttpDownloadControl>,
     prepared: Option<PreparedUpdate>,
+    plan: Option<UpdatePlan>,
     installTiming: AppInstallTiming,
+    target: Option<FullUpdateTarget>,
 }
 struct PreparedUpdate {
+    version: String,
     receipt: String,
     vfsPath: String,
     installation: Option<AppOperationData>,
@@ -77,6 +128,7 @@ impl ApplicationUpdateManager {
         Self {
             state: Arc::new(Mutex::new(UpdateState::default())),
             progress: StateFlow::new(ApplicationUpdateProgress {
+                stage: "idle".into(),
                 receivedBytes: 0,
                 totalBytes: 0,
             }),
@@ -107,7 +159,7 @@ impl ApplicationUpdateManager {
     ) -> Result<Option<ApplicationUpdateInfo>, String> {
         let scheduler = {
             let state = self.state.lock().map_err(|e| e.to_string())?;
-            if state.busy || state.prepared.is_some() {
+            if state.busy || (state.prepared.is_some() && state.release.is_some()) {
                 return Ok(state.release.as_ref().map(Self::info));
             }
             let scheduler = defaultHostRuntimeTaskSchedulerHost();
@@ -122,14 +174,19 @@ impl ApplicationUpdateManager {
         };
         let _busy = self.begin()?;
         let host = host.ok_or("SystemOperationHost is not registered for application updates")?;
-        let Some(target) = host.applicationUpdateTarget().map_err(|error| error.to_string())? else {
+        let Some(target) = host
+            .applicationUpdateTarget()
+            .map_err(|error| error.to_string())?
+        else {
             return Ok(None);
         };
         let installTiming = target.installTiming;
         let target = FullUpdateTarget::fromApplicationTarget(target)?;
-        let result = GithubReleaseUtil::checkForFullUpdate(crate::CORE_VERSION, target).await?;
+        let result =
+            GithubReleaseUtil::checkForFullUpdate(crate::CORE_VERSION, target.clone()).await?;
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
         state.installTiming = installTiming;
+        state.target = Some(target);
         state.release = match result {
             FullUpdateStatus::Available(info) => Some(info),
             FullUpdateStatus::UpToDate => None,
@@ -137,7 +194,74 @@ impl ApplicationUpdateManager {
         state.checkedAt = Some(scheduler.monotonicTimeMillis().map_err(|e| e.to_string())?);
         Ok(state.release.as_ref().map(Self::info))
     }
-    /// Stores the selected package virtually and keeps only its VFS path behind a receipt.
+    /// Calculates both transfer routes once when the user requests this update.
+    pub(super) async fn plan(
+        &self,
+        version: String,
+        context: HostManager,
+    ) -> Result<ApplicationUpdatePlan, String> {
+        let _busy = self.begin()?;
+        let (release, currentAsset, control) = {
+            let mut state = self.state.lock().map_err(|e| e.to_string())?;
+            let release = state
+                .release
+                .clone()
+                .filter(|r| r.version == version)
+                .ok_or("Update selection expired; check again")?;
+            let currentAsset = state
+                .target
+                .as_ref()
+                .ok_or("Update target is missing")?
+                .assetNameForVersion(crate::CORE_VERSION)?;
+            let control = HttpDownloadControl::new();
+            state.download = Some(control.clone());
+            state.plan = None;
+            (release, currentAsset, control)
+        };
+        let plan = planUpdate(release, currentAsset, &context, control).await?;
+        let result = ApplicationUpdatePlan::fromPlan(&plan);
+        self.state.lock().map_err(|e| e.to_string())?.plan = Some(plan);
+        Ok(result)
+    }
+
+    /// Verifies an original installer against the selected patch and preserves the plan on rejection.
+    pub(super) fn supplyBase(
+        &self,
+        version: String,
+        sourcePath: String,
+        context: HostManager,
+    ) -> Result<ApplicationUpdatePlan, String> {
+        let _busy = self.begin()?;
+        let (mut plan, control) = {
+            let mut state = self.state.lock().map_err(|e| e.to_string())?;
+            if !state.release.as_ref().is_some_and(|r| r.version == version) {
+                return Err("Update selection expired".into());
+            }
+            let plan = state.plan.take().ok_or("Update must be planned first")?;
+            let control = HttpDownloadControl::new();
+            state.download = Some(control.clone());
+            (plan, control)
+        };
+        let result = plan
+            .supplyBase(&sourcePath, &context, &control)
+            .map(|()| ApplicationUpdatePlan::fromPlan(&plan));
+        self.state.lock().map_err(|e| e.to_string())?.plan = Some(plan);
+        result
+    }
+
+    /// Applies the no-original choice using the same full-package availability decision.
+    pub(super) fn chooseFull(&self, version: String) -> Result<ApplicationUpdatePlan, String> {
+        let _busy = self.begin()?;
+        let mut state = self.state.lock().map_err(|e| e.to_string())?;
+        if !state.release.as_ref().is_some_and(|r| r.version == version) {
+            return Err("Update selection expired".into());
+        }
+        let plan = state.plan.as_mut().ok_or("Update must be planned first")?;
+        plan.chooseFull();
+        Ok(ApplicationUpdatePlan::fromPlan(plan))
+    }
+
+    /// Executes the stored Core decision and retains the result behind an opaque receipt.
     pub(super) async fn download(
         &self,
         version: String,
@@ -145,52 +269,61 @@ impl ApplicationUpdateManager {
     ) -> Result<String, String> {
         let vfs = (&context).vfs()?;
         let _busy = self.begin()?;
-        let (release, control) = {
+        let (plan, control) = {
             let mut state = self.state.lock().map_err(|e| e.to_string())?;
-            let release = state
-                .release
-                .clone()
-                .filter(|r| r.version == version)
-                .ok_or("Update selection expired; check again")?;
+            if !state.release.as_ref().is_some_and(|r| r.version == version) {
+                return Err("Update selection expired; check again".into());
+            }
             if let Some(prepared) = &state.prepared {
-                if vfs
-                    .fileExists(&prepared.vfsPath)
-                    .map(|entry| entry.exists && !entry.isDirectory)?
+                if prepared.version == version
+                    && vfs
+                        .fileExists(&prepared.vfsPath)
+                        .map(|entry| entry.exists && !entry.isDirectory)?
                 {
                     return Ok(prepared.receipt.clone());
                 }
             }
+            let plan = state
+                .plan
+                .take()
+                .ok_or("Update must be planned before downloading")?;
             let control = HttpDownloadControl::new();
             state.download = Some(control.clone());
-            (release, control)
+            (plan, control)
         };
         self.progress.set_value(ApplicationUpdateProgress {
+            stage: "downloading".into(),
             receivedBytes: 0,
             totalBytes: 0,
         });
         let progress = self.progress.clone();
-        let path = GithubReleaseUtil::downloadAndPrepareFullUpdateControlled(
-            release.downloadUrl,
-            release.assetName,
-            &context,
-            control,
-            move |event| {
-                if let FullUpdateProgressEvent::DownloadProgress {
-                    readBytes,
-                    totalBytes,
-                    ..
-                } = event
-                {
-                    progress.set_value(ApplicationUpdateProgress {
-                        receivedBytes: readBytes,
-                        totalBytes,
-                    });
-                }
-            },
-        )
+        let path = executeUpdate(plan, &context, control, move |event| match event {
+            FullUpdateProgressEvent::DownloadProgress {
+                readBytes,
+                totalBytes,
+                ..
+            } => progress.set_value(ApplicationUpdateProgress {
+                stage: "downloading".into(),
+                receivedBytes: readBytes,
+                totalBytes,
+            }),
+            FullUpdateProgressEvent::StageChanged { stage, .. } => {
+                progress.set_value(ApplicationUpdateProgress {
+                    stage: match stage {
+                        FullUpdateStage::ReconstructingPackage => "reconstructing",
+                        FullUpdateStage::Ready => "ready",
+                        FullUpdateStage::DownloadingPackage => "downloading",
+                    }
+                    .into(),
+                    receivedBytes: 0,
+                    totalBytes: 0,
+                })
+            }
+        })
         .await?;
         let receipt = uuid::Uuid::new_v4().to_string();
         self.state.lock().map_err(|e| e.to_string())?.prepared = Some(PreparedUpdate {
+            version,
             receipt: receipt.clone(),
             vfsPath: VisualFileSystem::runtimePath(&path)?,
             installation: None,
@@ -237,9 +370,12 @@ impl ApplicationUpdateManager {
             (vfs.file(&prepared.vfsPath)?, state.installTiming)
         };
         let host = context
-            .systemOperationHost.as_deref()
+            .systemOperationHost
+            .as_deref()
             .ok_or("SystemOperationHost is not registered for application updates")?;
-        let data = host.installApp(&source, timing).map_err(|error| error.to_string())?;
+        let data = host
+            .installApp(&source, timing)
+            .map_err(|error| error.to_string())?;
         if !data.success {
             return Err(data.details);
         }
@@ -295,8 +431,13 @@ mod tests {
                 downloadUrl: "private-native-url".into(),
                 releaseNotes: String::new(),
                 releasePageUrl: "release-page".into(),
+                packageSha256: None,
+                fullPackageAvailable: true,
+                patchAssetNames: Vec::new(),
+                updateManifest: None,
             });
             state.prepared = Some(PreparedUpdate {
+                version: "2.0.0".into(),
                 receipt: "opaque-receipt".into(),
                 vfsPath: VisualFileSystem::runtimePath(path).unwrap(),
                 installation: None,
@@ -323,6 +464,7 @@ mod tests {
     async fn restart_preparation_is_reused_without_another_host_request() {
         let manager = ApplicationUpdateManager::new();
         manager.state.lock().unwrap().prepared = Some(PreparedUpdate {
+            version: "2.0.0".into(),
             receipt: "prepared-receipt".into(),
             vfsPath: "/operitapp/data/temp/application_updates/private-package.msi".into(),
             installation: Some(AppOperationData {

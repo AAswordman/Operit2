@@ -14,6 +14,7 @@ pub mod DocumentConversionUtil;
 pub mod FFmpegUtil;
 pub mod FileUtils;
 pub mod GithubReleaseUtil;
+pub mod IncrementalUpdate;
 mod UpdateHttp;
 pub mod GlobalExceptionHandler;
 pub mod HtmlParserUtil;

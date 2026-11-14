@@ -17,6 +17,8 @@ class UpdateBridge extends NativeSidebarBridge {
   final calls = <CoreCallRequest>[];
   final progress = StreamController<CoreEvent>();
   final download = Completer<String>();
+  Object? baseError;
+  Object? downloadError;
   CoreWatchRequest? watch;
 
   @override
@@ -34,6 +36,7 @@ class UpdateBridge extends NativeSidebarBridge {
         };
       case 'downloadApplicationUpdate':
         expect(request.args, {'version': '1.1.0'});
+        if (downloadError != null) throw downloadError!;
         value = await download.future;
       case 'cancelApplicationUpdateDownload':
         download.completeError(StateError('UPDATE_CANCELLED'));
@@ -43,6 +46,31 @@ class UpdateBridge extends NativeSidebarBridge {
         value = {
           'installState': 'installer_opened',
           'details': 'Complete confirmation in the system installer',
+        };
+      case 'planApplicationUpdate':
+      case 'selectApplicationUpdateFull':
+        expect(request.args, {'version': '1.1.0'});
+        value = {
+          'mode': 'full',
+          'fullAvailable': true,
+          'incrementalAvailable': false,
+          'baseVersion': null,
+          'fullBytes': 120,
+          'incrementalBytes': null,
+        };
+      case 'supplyApplicationUpdateBase':
+        if (baseError != null) throw baseError!;
+        expect(request.args, {
+          'version': '1.1.0',
+          'sourcePath': '/operitapp/data/temp/selection/original.zip',
+        });
+        value = {
+          'mode': 'incremental',
+          'fullAvailable': false,
+          'incrementalAvailable': true,
+          'baseVersion': '1.0.0',
+          'fullBytes': 120,
+          'incrementalBytes': 48,
         };
       default:
         throw StateError('Unexpected update API: ${request.methodName}');
@@ -65,7 +93,11 @@ class UpdateBridge extends NativeSidebarBridge {
         target: request.target,
         propertyName: request.propertyName,
         kind: 'Snapshot',
-        valueBytes: encodeCoreLink({'receivedBytes': 48, 'totalBytes': 120}),
+        valueBytes: encodeCoreLink({
+          'stage': 'downloading',
+          'receivedBytes': 48,
+          'totalBytes': 120,
+        }),
         decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
       ),
     );
@@ -74,6 +106,58 @@ class UpdateBridge extends NativeSidebarBridge {
 
 void main() {
   setUpAll(ClientLogger.initialize);
+  test(
+    'maps explicit base rejection and vanished patch routes to presentation outcomes',
+    () async {
+      final bridge = UpdateBridge()
+        ..baseError = const CoreLinkError(
+          code: 'INTERNAL',
+          message: 'UPDATE_BASE_MISMATCH: wrong bytes',
+        )
+        ..downloadError = const CoreLinkError(
+          code: 'INTERNAL',
+          message: 'UPDATE_UNAVAILABLE: patch removed',
+        );
+      final backend = CoreAppUpdateBackend(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      final release = (await backend.check())!;
+      await expectLater(
+        backend.supplyBase(release, '/wrong'),
+        throwsA(isA<AppUpdateBaseMismatch>()),
+      );
+      await expectLater(
+        backend.download(release, (_, _) {}),
+        throwsA(isA<AppUpdateUnavailable>()),
+      );
+      expect(bridge.progress.hasListener, isFalse);
+      await bridge.progress.close();
+    },
+  );
+  test(
+    'generated plan APIs preserve availability and keep package paths inside Core',
+    () async {
+      final bridge = UpdateBridge();
+      final backend = CoreAppUpdateBackend(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      final release = (await backend.check())!;
+      final plan = await backend.plan(release);
+      expect(plan.mode, AppUpdateMode.full);
+      expect(plan.fullAvailable, isTrue);
+      expect((await backend.chooseFull(release)).mode, AppUpdateMode.full);
+      final supplied = await backend.supplyBase(
+        release,
+        '/operitapp/data/temp/selection/original.zip',
+      );
+      expect(supplied.mode, AppUpdateMode.incremental);
+      expect(supplied.fullAvailable, isFalse);
+      expect(supplied.baseVersion, '1.0.0');
+      expect(supplied.incrementalBytes, 48);
+      await bridge.progress.stream.listen((_) {}).cancel();
+      await bridge.progress.close();
+    },
+  );
   test(
     'generated update API transports metadata, progress and opaque receipt',
     () async {
