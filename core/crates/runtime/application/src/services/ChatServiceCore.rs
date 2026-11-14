@@ -255,6 +255,111 @@ pub struct ChatServiceCore {
     chatEnhancedAiServicesByChatId: Arc<Mutex<HashMap<String, EnhancedAIService>>>,
 }
 
+/// Owns one send's dependencies while every runtime slot remains available to navigation and routing.
+struct ChatUserMessageStarter {
+    chatId: String,
+    runtime: Option<operit_plugin_sdk::js_sdk::chat::ChatRuntime>,
+    service: Option<EnhancedAIService>,
+    coordinationAvailable: bool,
+    delegate: MessageCoordinationDelegate,
+    pendingQueueStore: Arc<PendingChatQueueStore>,
+}
+
+impl ChatUserMessageStarter {
+    /// Builds input callbacks against the captured originating conversation and its shared execution state.
+    fn inputContext(&self, chatId: &str, text: &str, attachments: &[AttachmentInfo],
+        replyToMessageTimestamp: Option<i64>, eventName: &str) -> ChatInputHookContext {
+        ChatInputHookContext {
+            chatId: chatId.to_string(), runtime: self.runtime.clone(), notifyReply: true,
+            text: text.to_string(), selectionStart: text.chars().count() as i32,
+            selectionEnd: text.chars().count() as i32,
+            hasAttachments: !attachments.is_empty(), attachmentCount: attachments.len() as i32,
+            attachments: Some(attachments.to_vec()), replyToMessageTimestamp,
+            isProcessing: self.delegate.messageProcessingDelegate.isChatProcessing(chatId),
+            inputStyle: "Runtime".to_string(), source: "Runtime".to_string(),
+            submitSource: "Send".to_string(), eventName: eventName.to_string(),
+        }
+    }
+
+    /// Runs the existing submit hooks and native turn pipeline without borrowing ChatRuntimeHolder.
+    async fn start(mut self, promptFunctionType: PromptFunctionType, participantId: Option<String>,
+        mut messageText: String, proxySenderNameOverride: Option<String>, chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>, attachments: Vec<AttachmentInfo>, replyToMessage: Option<ChatMessage>,
+        turnOptions: ChatTurnOptions, admittedLease: Option<operit_store::ChatExecutionLease::ChatExecutionLease>,
+    ) -> Result<ChatTurnSubmission, String> {
+        let hookChatId = self.chatId.clone();
+        if let Some(reply) = &replyToMessage {
+            self.delegate.chatHistoryDelegate.chatHistoryManager.loadChatMessageVariant(&hookChatId, reply.timestamp, reply.selectedVariantIndex)
+                .map_err(|error| error.to_string())?;
+        }
+        AppLogger::i(
+            "ChatServiceCore",
+            &format!(
+                "send accepted chatId={} persisted={} attachments={}",
+                hookChatId,
+                turnOptions.persistTurn,
+                attachments.len()
+            ),
+        );
+        if turnOptions.continuation.is_none() && !turnOptions.chatInputSubmitRequestedHandled {
+            let mut context = self.inputContext(
+                &hookChatId, &messageText, &attachments,
+                replyToMessage.as_ref().map(|message| message.timestamp), CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
+            );
+            context.notifyReply = turnOptions.notifyReply != Some(false);
+            let submitDecision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(context)
+            .await;
+            let submitDecision = submitDecision?;
+            if let Some(decision) = submitDecision {
+                match decision.action.as_str() {
+                    CHAT_INPUT_SUBMIT_ACTION_BLOCK | CHAT_INPUT_SUBMIT_ACTION_CONSUME => {
+                        if let Some(message) = &decision.message {
+                            self.delegate.messageProcessingDelegate.showToast(message.clone());
+                        }
+                        let outcome = if decision.action == CHAT_INPUT_SUBMIT_ACTION_CONSUME {
+                            MessageSendOutcome::Consumed { metadata: decision.metadata.into_iter().collect() }
+                        } else {
+                            MessageSendOutcome::Blocked { message: decision.message }
+                        };
+                        return Ok(ChatTurnSubmission::Handled(MessageSendResultData {
+                            chatId: hookChatId, message: messageText, aiResponse: JsOptional::Null,
+                            receivedAt: JsOptional::Null, sentAt: currentTimeMillis(), outcome,
+                        }));
+                    }
+                    CHAT_INPUT_SUBMIT_ACTION_REPLACE | CHAT_INPUT_SUBMIT_ACTION_ALLOW => {
+                        if let Some(message) = &decision.message {
+                            self.delegate.messageProcessingDelegate.showToast(message.clone());
+                        }
+                        if let Some(updatedText) = decision.text {
+                            messageText = updatedText;
+                        }
+                    }
+                    _ => return Err("Chat input returned an unvalidated submit action".to_string()),
+                };
+            }
+        }
+        if turnOptions.continuation.is_none() && !turnOptions.chatInputSubmittedHandled {
+            let mut context = self.inputContext(&hookChatId, &messageText, &attachments,
+                replyToMessage.as_ref().map(|message| message.timestamp), CHAT_INPUT_EVENT_SUBMITTED);
+            context.notifyReply = turnOptions.notifyReply != Some(false);
+            ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(context).await?;
+        }
+        ToolPkgInputMenuToggleBridge::invalidateToggleDefinitions();
+        if self.service.is_some() && self.coordinationAvailable {
+            self.pendingQueueStore.stateFlow().update(|queues| {
+                if let Some(queue) = queues.get_mut(&hookChatId) {
+                    if !queue.messages.is_empty() { queue.wasBlocked = true; }
+                }
+            });
+        }
+        let mut service = self.service.ok_or_else(|| "Chat AI runtime is not initialized".to_string())?;
+        if !self.coordinationAvailable { return Err("Chat coordination runtime is not initialized".to_string()); }
+        self.delegate.sendUserMessage(&mut service, promptFunctionType, participantId,
+            Some(hookChatId), messageText, proxySenderNameOverride, chatProviderIdOverride,
+            chatModelIdOverride, attachments, replyToMessage, turnOptions, admittedLease).await
+    }
+}
+
 impl ChatServiceCore {
     /// Creates a chat service core for the selected chat target mode.
     pub fn new(selectionMode: ChatSelectionMode, filesystem: Arc<VisualFileSystem>) -> Self {
@@ -309,12 +414,14 @@ impl ChatServiceCore {
 
     /// Executes only model inference on the Binding's owner; conversation and tools keep their own routes.
     #[operit_route_macros::operit_core_route(binding = bindingKey, permission = "target:runtime.execute")]
-    pub async fn generateLocalLlm(&self, bindingKey: String, modelBinding: String,
-        requestJson: String, settingsJson: String) -> Result<operit_local_models::LocalInference::LocalChatResponse, String> {
+    pub fn generateLocalLlm(&self, bindingKey: String, modelBinding: String,
+        requestJson: String, settingsJson: String) -> impl std::future::Future<Output = Result<operit_local_models::LocalInference::LocalChatResponse, String>> + 'static {
         let _ = bindingKey;
         let context = self.runtimeToolHandler().getContext();
-        let storage = context.runtimeStorageHost.clone().ok_or("Local inference requires runtime storage")?;
-        super::LocalLlmService::executeLocalLlm(context, modelBinding, requestJson, settingsJson).await
+        async move {
+            context.runtimeStorageHost.as_ref().ok_or("Local inference requires runtime storage")?;
+            super::LocalLlmService::executeLocalLlm(context, modelBinding, requestJson, settingsJson).await
+        }
     }
 
     /// Clones the plugin execution host before releasing the borrowed chat core.
@@ -373,19 +480,6 @@ impl ChatServiceCore {
         self.pendingQueueStore.stateFlow()
     }
 
-    /// Marks an existing queue as blocked when a new turn starts for its chat.
-    fn markPendingQueueBlocked(&mut self, chatId: &str) {
-        let mut queueStateByChatId = self.pendingQueueStateFlow().value();
-        let Some(queueState) = queueStateByChatId.get_mut(chatId) else {
-            return;
-        };
-        if queueState.messages.is_empty() || queueState.wasBlocked {
-            return;
-        }
-        queueState.wasBlocked = true;
-        self.pendingQueueStateFlow().set_value(queueStateByChatId);
-    }
-
     /// Creates delegates without opening a chat before plugin runtime dependencies are ready.
     fn initializeDelegates(&mut self) {
         self.chatHistoryDelegate = ChatHistoryDelegate::new(self.selectionMode.clone());
@@ -404,7 +498,12 @@ impl ChatServiceCore {
     }
 
     /// Restores persisted history once without resolving execution configuration and retains actual storage errors.
-    pub async fn initializeChatConfiguration(&mut self) -> Result<(), String> {
+    pub fn initializeChatConfiguration(&mut self) -> impl std::future::Future<Output = Result<(), String>> + 'static {
+        std::future::ready(self.initializeChatHistory())
+    }
+
+    /// Initializes shared history synchronously before capturing an independent operation.
+    fn initializeChatHistory(&mut self) -> Result<(), String> {
         if let Some(result) = &self.chatConfigurationInitialization {
             return result.clone();
         }
@@ -535,7 +634,7 @@ impl ChatServiceCore {
 
     /// Accepts a host-authored message through the same native turn pipeline and exposes immediate errors explicitly.
     #[operit_route_macros::operit_core_route(binding = chatIdOverride)]
-    pub async fn sendUserMessage(
+    pub fn sendUserMessage(
         &mut self,
         promptFunctionType: PromptFunctionType,
         participantId: Option<String>,
@@ -547,17 +646,17 @@ impl ChatServiceCore {
         attachments: Vec<AttachmentInfo>,
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
-    ) -> Result<(), String> {
-        self.startUserMessage(promptFunctionType, participantId, chatIdOverride, messageText,
-            proxySenderNameOverride, chatProviderIdOverride, chatModelIdOverride, attachments, replyToMessage, turnOptions, None).await?;
-        Ok(())
+    ) -> impl std::future::Future<Output = Result<(), String>> + 'static {
+        let pending = self.startUserMessage(promptFunctionType, participantId, chatIdOverride, messageText,
+            proxySenderNameOverride, chatProviderIdOverride, chatModelIdOverride, attachments, replyToMessage, turnOptions, None);
+        async move { pending.await.map(|_| ()) }
     }
 
     /// Receives bounded UTF-8 chunks, then enters the existing turn pipeline.
     /// An explicit empty commit chunk plus EOF is required; an interrupted
     /// upload must never turn its received prefix into a chat message.
     #[operit_route_macros::operit_core_route(binding = chatIdOverride)]
-    pub async fn sendUserMessageStream(
+    pub fn sendUserMessageStream(
         &mut self,
         promptFunctionType: PromptFunctionType,
         participantId: Option<String>,
@@ -570,20 +669,23 @@ impl ChatServiceCore {
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
         text: operit_util::stream::ReverseStream::ReverseStream<String>,
-    ) -> Result<(), String> {
-        let messageText = super::chat_input_stream::receive(text, expectedByteLength).await?;
-        self.sendUserMessage(promptFunctionType, participantId, chatIdOverride, messageText,
-            proxySenderNameOverride, chatProviderIdOverride, chatModelIdOverride,
-            attachments, replyToMessage, turnOptions).await
+    ) -> impl std::future::Future<Output = Result<(), String>> + 'static {
+        let starter = self.captureUserMessageStarter(chatIdOverride, &turnOptions, None);
+        async move {
+            let messageText = super::chat_input_stream::receive(text, expectedByteLength).await?;
+            starter?.start(promptFunctionType, participantId, messageText,
+                proxySenderNameOverride, chatProviderIdOverride, chatModelIdOverride,
+                attachments, replyToMessage, turnOptions, None).await.map(|_| ())
+        }
     }
 
     /// Starts the actual originating generation or returns an explicit hook ownership decision for native receipt observers.
-    pub(crate) async fn startUserMessage(
+    pub(crate) fn startUserMessage(
         &mut self,
         promptFunctionType: PromptFunctionType,
         participantId: Option<String>,
         chatIdOverride: Option<String>,
-        mut messageText: String,
+        messageText: String,
         proxySenderNameOverride: Option<String>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
@@ -591,85 +693,37 @@ impl ChatServiceCore {
         replyToMessage: Option<ChatMessage>,
         turnOptions: ChatTurnOptions,
         admittedLease: Option<operit_store::ChatExecutionLease::ChatExecutionLease>,
-    ) -> Result<ChatTurnSubmission, String> {
+    ) -> impl std::future::Future<Output = Result<ChatTurnSubmission, String>> + 'static {
+        let starter = self.captureUserMessageStarter(chatIdOverride, &turnOptions, admittedLease.as_ref());
+        async move {
+            starter?.start(promptFunctionType, participantId, messageText,
+                proxySenderNameOverride, chatProviderIdOverride, chatModelIdOverride,
+                attachments, replyToMessage, turnOptions, admittedLease).await
+        }
+    }
+
+    /// Captures only shared chat state and the originating selection before any plugin or model wait.
+    fn captureUserMessageStarter(
+        &mut self, chatIdOverride: Option<String>, turnOptions: &ChatTurnOptions,
+        admittedLease: Option<&operit_store::ChatExecutionLease::ChatExecutionLease>,
+    ) -> Result<ChatUserMessageStarter, String> {
         if admittedLease.is_some() != turnOptions.deferSequenceCompletion
             || turnOptions.deferSequenceCompletion != turnOptions.nativeExecutionId.is_some() {
             return Err("Native sequence execution requires its admitted lease and exact execution identity".to_string());
         }
-        if chatIdOverride.is_none() { self.initializeChatConfiguration().await?; }
-        let hookChatId = self.inputChatId(chatIdOverride.clone())?;
-        if let Some(reply) = &replyToMessage {
-            self.chatHistoryDelegate.chatHistoryManager.loadChatMessageVariant(&hookChatId, reply.timestamp, reply.selectedVariantIndex)
-                .map_err(|error| error.to_string())?;
+        if chatIdOverride.is_none() { self.initializeChatHistory()?; }
+        let chatId = self.inputChatId(chatIdOverride)?;
+        let service = self.newEnhancedAiServiceForChat(&chatId);
+        let mut delegate = MessageCoordinationDelegate::forBackgroundWork(
+            self.chatHistoryDelegate.clone_for_core(), self.messageProcessingDelegate.clone_for_core());
+        if let Some(coordinator) = &self.messageCoordinationDelegate {
+            delegate.tokenStatisticsDelegate = coordinator.tokenStatisticsDelegate.clone();
         }
-        AppLogger::i(
-            "ChatServiceCore",
-            &format!(
-                "send accepted chatId={} persisted={} attachments={}",
-                hookChatId,
-                turnOptions.persistTurn,
-                attachments.len()
-            ),
-        );
-        if turnOptions.continuation.is_none() && !turnOptions.chatInputSubmitRequestedHandled {
-            let mut context = self.buildChatInputHookContextAtEnd(
-                &hookChatId, &messageText, &attachments,
-                replyToMessage.as_ref().map(|message| message.timestamp), CHAT_INPUT_EVENT_SUBMIT_REQUESTED,
-            );
-            context.notifyReply = turnOptions.notifyReply != Some(false);
-            let submitDecision = ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(context)
-            .await;
-            let submitDecision = submitDecision?;
-            if let Some(decision) = submitDecision {
-                match decision.action.as_str() {
-                    CHAT_INPUT_SUBMIT_ACTION_BLOCK | CHAT_INPUT_SUBMIT_ACTION_CONSUME => {
-                        if let Some(message) = &decision.message {
-                            self.messageProcessingDelegate.showToast(message.clone());
-                        }
-                        let outcome = if decision.action == CHAT_INPUT_SUBMIT_ACTION_CONSUME {
-                            MessageSendOutcome::Consumed { metadata: decision.metadata.into_iter().collect() }
-                        } else {
-                            MessageSendOutcome::Blocked { message: decision.message }
-                        };
-                        return Ok(ChatTurnSubmission::Handled(MessageSendResultData {
-                            chatId: hookChatId, message: messageText, aiResponse: JsOptional::Null,
-                            receivedAt: JsOptional::Null, sentAt: currentTimeMillis(), outcome,
-                        }));
-                    }
-                    CHAT_INPUT_SUBMIT_ACTION_REPLACE | CHAT_INPUT_SUBMIT_ACTION_ALLOW => {
-                        if let Some(message) = &decision.message {
-                            self.messageProcessingDelegate.showToast(message.clone());
-                        }
-                        if let Some(updatedText) = decision.text {
-                            messageText = updatedText;
-                        }
-                    }
-                    _ => return Err("Chat input returned an unvalidated submit action".to_string()),
-                };
-            }
-        }
-        if turnOptions.continuation.is_none() && !turnOptions.chatInputSubmittedHandled {
-            let mut context = self.buildChatInputHookContextAtEnd(&hookChatId, &messageText, &attachments,
-                replyToMessage.as_ref().map(|message| message.timestamp), CHAT_INPUT_EVENT_SUBMITTED);
-            context.notifyReply = turnOptions.notifyReply != Some(false);
-            ToolPkgChatInputHookBridge::dispatchRegisteredChatInputHooks(context).await?;
-        }
-        ToolPkgInputMenuToggleBridge::invalidateToggleDefinitions();
-        if self.enhancedAiService.is_some() && self.messageCoordinationDelegate.is_some() {
-            self.markPendingQueueBlocked(&hookChatId);
-        }
-        let mut service = self.newEnhancedAiServiceForChat(&hookChatId)
-            .ok_or_else(|| "Chat AI runtime is not initialized".to_string())?;
-        let delegate = self.messageCoordinationDelegate.as_mut()
-            .ok_or_else(|| "Chat coordination runtime is not initialized".to_string())?;
-        delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
-        delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
-        let result = delegate.sendUserMessage(&mut service, promptFunctionType, participantId,
-            Some(hookChatId), messageText, proxySenderNameOverride, chatProviderIdOverride,
-            chatModelIdOverride, attachments, replyToMessage, turnOptions, admittedLease).await;
-        self.chatHistoryDelegate = delegate.chatHistoryDelegate.clone_for_core();
-        self.messageProcessingDelegate = delegate.messageProcessingDelegate.clone_for_core();
-        result
+        Ok(ChatUserMessageStarter {
+            chatId, runtime: self.chatInputRuntime.clone(), service, delegate,
+            coordinationAvailable: self.messageCoordinationDelegate.is_some(),
+            pendingQueueStore: self.pendingQueueStore.clone(),
+        })
     }
 
     /// Commits complete original input exactly once without requesting any participant, configuration, or model.
@@ -1139,29 +1193,32 @@ impl ChatServiceCore {
 
     /// Resolves and publishes only generic display identity, ordered participants and plugin-authored initialization data.
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub async fn chatConfiguration(
+    pub fn chatConfiguration(
         &self,
         chatId: String,
-    ) -> Result<ChatConfigurationDisplayResult, String> {
-        self.chatHistoryDelegate.requireChatExists(&chatId)?;
-        let service = self
-            .enhancedAiService
-            .as_ref()
-            .ok_or_else(|| "Chat display requires an initialized plugin runtime".to_string())?;
-        let mut api=ChatConfigurationApi::ready(&service.tool_handler).await;
-        let support=service.provider_runtime_context.support();
-        let configuration=api.resolveDisplay(ChatConfigurationRequest {
-            purpose: ChatConfigurationPurpose::Display,
-            chatId: Some(chatId.clone()),
-            chatExtension: None,
-            participantId: None,
-            promptFunctionType: PromptFunctionType::CHAT,
-            defaultModelBinding: support.modelBindingForFunction(FunctionType::CHAT)?,
-            defaultTtsConfigId: support.defaultTtsConfigId()?,
-        }).await?;
-        self.chatHistoryDelegate
-            .publishChatConfiguration(&chatId, configuration.clone());
-        Ok(configuration)
+    ) -> impl std::future::Future<Output = Result<ChatConfigurationDisplayResult, String>> + 'static {
+        let captured = self.chatHistoryDelegate.requireChatExists(&chatId).and_then(|()| {
+            let service = self.enhancedAiService.clone()
+                .ok_or_else(|| "Chat display requires an initialized plugin runtime".to_string())?;
+            Ok((service, self.chatHistoryDelegate.clone_for_core()))
+        });
+        async move {
+            let (service, history) = captured?;
+            let mut api=ChatConfigurationApi::ready(&service.tool_handler).await;
+            let support=service.provider_runtime_context.support();
+            let configuration=api.resolveDisplay(ChatConfigurationRequest {
+                purpose: ChatConfigurationPurpose::Display,
+                chatId: Some(chatId.clone()),
+                chatExtension: None,
+                participantId: None,
+                promptFunctionType: PromptFunctionType::CHAT,
+                defaultModelBinding: support.modelBindingForFunction(FunctionType::CHAT)?,
+                defaultTtsConfigId: support.defaultTtsConfigId()?,
+            }).await?;
+            history
+                .publishChatConfiguration(&chatId, configuration.clone());
+            Ok(configuration)
+        }
     }
 
     /// Resolves the message author through the current chat configuration for model and voice playback.

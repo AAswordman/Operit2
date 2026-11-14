@@ -98,11 +98,133 @@ pub fn operit_plugin_sdk_expose(_attribute: TokenStream, item: TokenStream) -> T
     item
 }
 
+/// Reads the same explicit ownership contract used by generated local proxy dispatch.
+fn owned_future_output(output: &ReturnType) -> Option<&Type> {
+    let ReturnType::Type(_, ty) = output else { return None; };
+    let Type::ImplTrait(future) = ty.as_ref() else { return None; };
+    if !future.bounds.iter().any(|bound| matches!(bound,
+        syn::TypeParamBound::Lifetime(lifetime) if lifetime.ident == "static")) { return None; }
+    for bound in &future.bounds {
+        let syn::TypeParamBound::Trait(bound) = bound else { continue; };
+        let segment = bound.path.segments.last()?;
+        if segment.ident != "Future" { continue; }
+        let PathArguments::AngleBracketed(args) = &segment.arguments else { continue; };
+        for argument in &args.args {
+            if let GenericArgument::AssocType(output) = argument {
+                if output.ident == "Output" { return Some(&output.ty); }
+            }
+        }
+    }
+    None
+}
+
+/// Captures routed operations synchronously and exposes only futures independent of the service borrow.
+fn expand_owned_core_route(arguments: CoreRouteArguments, mut function: ImplItemFn, output: Type)
+    -> syn::Result<proc_macro2::TokenStream> {
+    let original = function.sig.ident.clone();
+    let local = format_ident!("__operit_core_local_{}", original);
+    let call = format_ident!("__operit_core_route_call_{}", original);
+    let push = format_ident!("__operit_core_route_push_{}", original);
+    let binding = format_ident!("__operit_core_binding_{}", original);
+    let permission = format_ident!("__operit_core_permission_{}", original);
+    let binding_name = arguments.binding.to_string();
+    let permission_value = arguments.permission;
+    let names = function_argument_names(&function)?;
+    if !names.iter().any(|name| name == &arguments.binding) {
+        return Err(Error::new_spanned(&function.sig, "Binding argument is missing"));
+    }
+    let reverse = function.sig.inputs.iter().filter_map(|arg| {
+        let FnArg::Typed(arg) = arg else { return None; };
+        let Type::Path(ty) = arg.ty.as_ref() else { return None; };
+        if ty.path.segments.last()?.ident != "ReverseStream" { return None; }
+        let Pat::Ident(name) = arg.pat.as_ref() else { return None; };
+        Some((name.ident.clone(), arg.ty.clone()))
+    }).collect::<Vec<_>>();
+    if reverse.len() > 1 { return Err(Error::new_spanned(&function.sig, "Routed methods accept one ReverseStream input")); }
+    let entries = names.iter().filter(|name| reverse.first().map(|v| &v.0) != Some(*name)).map(|name| quote! {
+        operit_rslink_runtime::core_arg_entry(stringify!(#name), &#name)
+            .expect("annotated route argument must be serializable")
+    });
+    let route_args = quote! { operit_rslink_runtime::core_route_args(vec![#(#entries),*]) };
+    let logical_output: ReturnType = syn::parse_quote!(-> #output);
+    let decode_response = route_call_decode(&logical_output);
+    let remote = if let Some((input, _)) = reverse.first() {
+        quote! { operit_rslink_runtime::core_route_reverse_stream(
+            runtime.as_ref(), stringify!(#original), args, #input).await.map_err(|error| error.message) }
+    } else { quote! {
+        let __core_route_response = operit_rslink_runtime::core_route_call_response(
+            runtime.as_ref(), stringify!(#original), args).await;
+        #decode_response
+    } };
+    let signature = function.sig.clone();
+    let attrs = function.attrs.clone();
+    let vis = function.vis.clone();
+    let decode = function.sig.inputs.iter().filter_map(|arg| {
+        let FnArg::Typed(arg) = arg else { return None; };
+        let Pat::Ident(name) = arg.pat.as_ref() else { return None; };
+        if reverse.first().map(|v| &v.0) == Some(&name.ident) { return None; }
+        let name = &name.ident;
+        let ty = owned_decode_type(&arg.ty);
+        Some(quote! { let #name: #ty = operit_rslink_runtime::decode_core_arg(&mut args, stringify!(#name))?; })
+    }).collect::<Vec<_>>();
+    let encoding = render_return_encoding(&logical_output);
+    let helper = if let Some((input, ty)) = reverse.first() { quote! {
+        /// Captures a typed input consumer before releasing the chat runtime lock.
+        #[doc(hidden)]
+        #vis fn #push(&mut self, request: operit_link::CorePushRequest, #input: #ty)
+            -> impl std::future::Future<Output = Result<(), operit_link::CoreLinkError>> + 'static {
+            let pending = (|| -> Result<_, operit_link::CoreLinkError> {
+                let mut args = operit_rslink_runtime::object_args(request.args)?;
+                #(#decode)*
+                Ok(self.#local(#(#names),*))
+            })();
+            async move { pending?.await.map_err(|error| operit_link::CoreLinkError::internal(error.to_string())) }
+        }
+    } } else { quote! {
+        /// Captures a value operation before releasing the chat runtime lock.
+        #[doc(hidden)]
+        #vis fn #call(&mut self, request: operit_link::CoreCallRequest)
+            -> impl std::future::Future<Output = Result<operit_link::CoreValue, operit_link::CoreLinkError>> + 'static {
+            let pending = (|| -> Result<_, operit_link::CoreLinkError> {
+                let mut args = operit_rslink_runtime::object_args(request.args)?;
+                #(#decode)*
+                Ok(self.#local(#(#names),*))
+            })();
+            async move { let __core_result = pending?.await; #encoding }
+        }
+    } };
+    function.sig.ident = local.clone();
+    Ok(quote! {
+        #(#attrs)*
+        #vis #signature {
+            if let Some(runtime) = operit_link::coreRouteRuntime() {
+                let args = #route_args;
+                if runtime.shouldRoute(stringify!(#original), &args).expect("annotated route resolution failed") {
+                    return Box::pin(async move { #remote })
+                        as std::pin::Pin<Box<dyn std::future::Future<Output = #output> + 'static>>;
+                }
+            }
+            Box::pin(self.#local(#(#names),*))
+                as std::pin::Pin<Box<dyn std::future::Future<Output = #output> + 'static>>
+        }
+        #[doc(hidden)]
+        #function
+        #[doc(hidden)]
+        #vis fn #binding() -> &'static str { #binding_name }
+        #[doc(hidden)]
+        #vis fn #permission() -> &'static str { #permission_value }
+        #helper
+    })
+}
+
 /// Generates the public routed entry point and its protocol-safe local implementation.
 fn expand_core_route(
     arguments: CoreRouteArguments,
     mut function: ImplItemFn,
 ) -> syn::Result<proc_macro2::TokenStream> {
+    if let Some(output) = owned_future_output(&function.sig.output).cloned() {
+        return expand_owned_core_route(arguments, function, output);
+    }
     let original_name = function.sig.ident.clone();
     let local_name = format_ident!("__operit_core_local_{}", original_name);
     let binding_argument = arguments.binding;

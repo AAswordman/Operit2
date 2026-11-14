@@ -69,6 +69,13 @@ impl SpaceRuntime {
                     };
                     return operit_tools::tools::packTool::ToolPkgRouteRuntime::dispatch(handler, &request.methodName, request.args).await;
                 }
+                if crate::generated_space_call_is_owned(&request.methodName) {
+                    let pending = {
+                        let mut holder = holder.lock().await;
+                        crate::generated_space_capture_call(holder.getCore(ChatRuntimeSlot::MAIN), request)
+                    };
+                    return pending.await;
+                }
                 let mut holder = holder.lock().await;
                 let core = holder.getCore(ChatRuntimeSlot::MAIN);
                 crate::generated_space_call_on_chat_core(core, request).await

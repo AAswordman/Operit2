@@ -3434,6 +3434,63 @@ mod tests {
         peer.close();
     }
 
+    /// A stalled input must leave all slots and unrelated route changes available, including newly created chats.
+    #[tokio::test]
+    async fn stalled_chat_upload_keeps_navigation_and_other_chat_routes_available() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let storage = Arc::new(TestRuntimeStorageHost::default());
+        let (runtime, holder) = testLocalRuntimeWithHolder(storage);
+        let active = {
+            let mut holder = holder.lock().await;
+            let manager = &holder.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate.chatHistoryManager;
+            for id in ["upload-active", "upload-other"] {
+                manager.saveChatHistory(operit_model::ChatEntity::ChatEntity::new(
+                    id.into(), id.into(), 0).toChatHistory(Vec::new())).unwrap();
+            }
+            manager.beginChatExecution("upload-active").unwrap()
+        };
+        let request = CorePushRequest::new("stalled-chat-upload", CORE_INTERNAL_TARGET, "sendUserMessageStream")
+            .withArgs(operit_link::toCoreValue(serde_json::json!({
+                "promptFunctionType": PromptFunctionType::CHAT, "participantId": null,
+                "chatIdOverride": "upload-active", "expectedByteLength": 3,
+                "proxySenderNameOverride": null, "chatProviderIdOverride": null,
+                "chatModelIdOverride": null, "attachments": [], "replyToMessage": null,
+                "turnOptions": ChatTurnOptions::default(),
+            })).unwrap());
+        let mut input = runtime.spaceRuntime.openPush(request).await.unwrap();
+        // Capacity is one. The second send proves that the actual generated consumer entered its upload wait.
+        for chunk in ["a", "b"] {
+            tokio::time::timeout(Duration::from_secs(2), input.send(CoreValue::String(chunk.into())))
+                .await.expect("the upload consumer must start").unwrap();
+        }
+        {
+            let mut holder = tokio::time::timeout(Duration::from_secs(2), holder.lock()).await
+                .expect("an upload must not reserve every chat runtime");
+            let core = holder.getCore(ChatRuntimeSlot::MAIN);
+            core.switchChatLocal("upload-other".into()).await.unwrap();
+            core.chatHistoryDelegate.chatHistoryManager.saveChatHistory(
+                operit_model::ChatEntity::ChatEntity::new("upload-new".into(), "New Chat".into(), 0)
+                    .toChatHistory(Vec::new())).unwrap();
+            holder.getCore(ChatRuntimeSlot::DETACHED("upload-window".into()))
+                .switchChatLocal("upload-new".into()).await.unwrap();
+        }
+        for id in ["upload-other", "upload-new", "upload-active"] {
+            let response = tokio::time::timeout(Duration::from_secs(2), runtime.callSpace(CoreCallRequest::new(
+                format!("route-{id}"), CORE_INTERNAL_TARGET, "beforeChangeRoute",
+                operit_link::toCoreValue(serde_json::json!({"chatId": id})).unwrap(),
+            ))).await.expect("another chat's route check must not wait for the upload");
+            if id == "upload-active" {
+                assert!(response.result.unwrap_err().message.contains("Conversation is executing"));
+            } else { response.result.unwrap(); }
+        }
+        assert!(input.close().await.unwrap_err().message.contains("Text upload incomplete"));
+        active.release().unwrap();
+        let holder = holder.lock().await;
+        assert!(!holder.cores[&ChatRuntimeSlot::MAIN].chatHistoryDelegate.chatHistoryManager
+            .hasUserMessage("upload-active".into()).unwrap());
+    }
+
     /// Manual selection moves the binding without resuming a turn and preserves it on rejection.
     #[tokio::test]
     async fn manual_chat_execution_device_selection_checks_idle_and_does_not_resume() {

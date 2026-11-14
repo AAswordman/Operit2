@@ -1130,14 +1130,18 @@ async fn runAdmittedChatTurn(
             chatInputSubmitRequestedHandled: true, chatInputSubmittedHandled: true,
             notifyReply: Some(false), ..ChatTurnOptions::default()
         };
-        let submission = core.startUserMessage(PromptFunctionType::CHAT, participantId, Some(chatId.clone()),
-            message, None, None, None, attachments, reply, options, Some(admitted.lease.clone())).await?;
+        core.startUserMessage(PromptFunctionType::CHAT, participantId, Some(chatId.clone()),
+            message, None, None, None, attachments, reply, options, Some(admitted.lease.clone()))
+    };
+    let submission = submission.await?;
+    {
+        let mut runtime = holder.lock().await;
         if admitted.cancelled.load(Ordering::Acquire) {
-            core.cancelNativeChatExecution(chatId, &admitted.handle.executionId).await?;
+            runtime.getCore(admitted.slot.clone())
+                .cancelNativeChatExecution(chatId, &admitted.handle.executionId).await?;
         }
         runtime.observeStats();
-        submission
-    };
+    }
     submission.wait().await
 }
 
