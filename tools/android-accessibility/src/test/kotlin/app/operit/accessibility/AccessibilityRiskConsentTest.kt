@@ -1,6 +1,5 @@
-package app.operit
+package app.operit.accessibility
 
-import app.operit.accessibility.AccessibilityRiskConsent
 import org.junit.Assert.*
 import org.junit.Test
 

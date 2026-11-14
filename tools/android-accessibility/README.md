@@ -19,14 +19,15 @@ This integration runs for `fvm flutter run`, `fvm flutter build apk --debug`,
 profile and release builds. Debug uses the main application's actual debug
 signing configuration and does not require release signing credentials.
 
-In Operit2's Android authorization list, click **UI 自动化 → 授予**. Enter the
-displayed risk acknowledgment exactly to continue. Operit2 installs the embedded
+In Operit2's Android authorization list, click **UI 自动化 → 授予**. Operit2 installs the embedded
 provider when it is absent or older than the required provider version, requesting
 unknown-source authorization when necessary, then opens accessibility settings.
 A current or newer provider goes directly to accessibility settings. Enable
 **Operit2 Accessibility** there. Status is satisfied only when the provider meets
-the required version and its service is enabled. The provider's own setup screen
-uses the same exact-text acknowledgment before opening settings for activation.
+the required version and its service is enabled. Only the provider's own setup
+screen requests an exact-text risk acknowledgment when the user clicks enable.
+Confirmation is saved in the provider's private preferences and survives app
+restarts, service reauthorization and APK updates. Canceling does not save consent.
 No download or separate manual APK distribution is needed for normal main APKs.
 
 For standalone development, build and install only the companion as follows.

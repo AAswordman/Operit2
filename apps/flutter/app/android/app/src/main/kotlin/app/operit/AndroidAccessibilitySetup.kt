@@ -11,13 +11,11 @@ import android.os.Build
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
 import androidx.core.content.FileProvider
-import app.operit.accessibility.AccessibilityRiskConsent
 import java.io.File
 
 /** Owns the embedded companion's installation and Android accessibility authorization. */
 internal class AndroidAccessibilitySetup(private val activity: Activity) : AccessibilitySetupFlow.Actions {
     private val flow = AccessibilitySetupFlow(this)
-    private val riskConsent = AccessibilityRiskConsent(activity)
 
     /** Reports the companion service's accessibility authorization state. */
     fun status(): String {
@@ -35,9 +33,7 @@ internal class AndroidAccessibilitySetup(private val activity: Activity) : Acces
     /** Begins the install-and-authorize sequence after an explicit grant action. */
     fun request(complete: (Throwable?) -> Unit) {
         check(Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) { "UI 自动化需要 Android 8.0 或更新版本。" }
-        riskConsent.request { accepted ->
-            if (accepted) flow.request(complete) else complete(null)
-        }
+        flow.request(complete)
     }
 
     /** Resumes the matching installation or settings stage. */
@@ -45,7 +41,6 @@ internal class AndroidAccessibilitySetup(private val activity: Activity) : Acces
 
     /** Finishes pending authorization when its channel is detached. */
     fun release() {
-        riskConsent.release()
         flow.release()
     }
 

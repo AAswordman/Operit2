@@ -2,6 +2,7 @@ package app.operit.accessibility
 
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.Context
 import android.graphics.Typeface
 import android.text.Editable
 import android.text.TextWatcher
@@ -11,12 +12,17 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 
-/** Shares the same explicit, exact-text acknowledgment across both Android applications. */
+/** Records the provider's one-time, exact-text risk acknowledgment. */
 class AccessibilityRiskConsent(private val activity: Activity) {
     private var dialog: AlertDialog? = null
+    private val preferences = activity.getSharedPreferences("accessibility_risk_consent", Context.MODE_PRIVATE)
 
-    /** Presents the localized risk statement and accepts only the unchanged acknowledgment. */
+    /** Requests the exact acknowledgment only until the user has confirmed it once. */
     fun request(complete: (Boolean) -> Unit) {
+        if (preferences.getBoolean("accepted", false)) {
+            complete(true)
+            return
+        }
         check(dialog == null) { "Accessibility risk acknowledgment is already open" }
         val chinese = activity.resources.configuration.locales[0].language == "zh"
         val phrase = if (chinese) CHINESE_ACKNOWLEDGMENT else ENGLISH_ACKNOWLEDGMENT
@@ -78,7 +84,10 @@ class AccessibilityRiskConsent(private val activity: Activity) {
             })
             confirm.setOnClickListener {
                 accepted = matches(input.text.toString(), phrase)
-                if (accepted) prompt.dismiss()
+                if (accepted) {
+                    preferences.edit().putBoolean("accepted", true).apply()
+                    prompt.dismiss()
+                }
             }
         }
         dialog = prompt

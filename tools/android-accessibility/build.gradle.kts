@@ -25,7 +25,6 @@ android {
     }
     buildFeatures { aidl = true }
     sourceSets.getByName("main").aidl.srcDir("contract/src/main/aidl")
-    sourceSets.getByName("main").java.srcDir("contract/src/main/kotlin")
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -48,6 +47,10 @@ android {
         }
         buildTypes.getByName("release").signingConfig = signingConfigs.getByName("operitRelease")
     }
+}
+
+dependencies {
+    testImplementation("junit:junit:4.13.2")
 }
 
 androidComponents {
