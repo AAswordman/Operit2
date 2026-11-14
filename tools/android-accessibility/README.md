@@ -7,6 +7,24 @@ not used by this transport.
 
 ## Build and install
 
+Normal Flutter Android builds include this project automatically and embed its
+signed APK at `assets/companions/operit-accessibility.apk`. Debug/profile builds
+embed the debug companion; release builds share the main application's release
+certificate. The embedded companion uses the main application's version code.
+This integration runs for `fvm flutter run`, `fvm flutter build apk --debug`,
+profile and release builds. Debug uses the main application's actual debug
+signing configuration and does not require release signing credentials. Every
+variant validates the embedded APK and its version during asset staging.
+
+In Operit2's Android authorization list, click **UI 自动化 → 授予**. Operit2 opens
+the unknown-source authorization screen when needed, then the system installer,
+and continues to accessibility settings after verifying installation. Confirm
+installation and enable **Operit2 Accessibility** there. A current, same-signature
+installation skips the installer. Status is satisfied only after the service is
+enabled. No download or separate manual APK distribution is needed.
+
+For standalone development, build and install only the companion as follows.
+
 Use JDK 17 or newer and an Android SDK with API 35. Run from the repository root:
 
 ```powershell

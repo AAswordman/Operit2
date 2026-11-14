@@ -49,7 +49,7 @@ class AndroidUiAutomation(private val context: Context) {
             connection = null
             val intent = Intent().setComponent(ComponentName("app.operit.accessibility", "app.operit.accessibility.UiAutomationBinderService"))
             check(context.bindService(intent, pending, Context.BIND_AUTO_CREATE)) {
-                "Install the Operit2 Accessibility companion built from tools/android-accessibility"
+                "请在应用权限设置中点击 UI 自动化的授予按钮，安装并启用 Operit2 Accessibility。"
             }
             connection = pending
             pending

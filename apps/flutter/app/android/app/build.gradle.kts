@@ -1,5 +1,7 @@
 import java.io.FileInputStream
 import java.util.Properties
+import java.util.zip.ZipFile
+import com.android.build.api.variant.BuiltArtifactsLoader
 import javax.inject.Inject
 import org.gradle.api.DefaultTask
 import org.gradle.api.file.DirectoryProperty
@@ -8,6 +10,7 @@ import org.gradle.api.provider.ListProperty
 import org.gradle.api.provider.Property
 import org.gradle.api.tasks.Input
 import org.gradle.api.tasks.InputDirectory
+import org.gradle.api.tasks.Internal
 import org.gradle.api.tasks.OutputDirectory
 import org.gradle.api.tasks.PathSensitive
 import org.gradle.api.tasks.PathSensitivity
@@ -82,14 +85,53 @@ abstract class StageOperitAndroidJniLibraries : Sync() {
     abstract val outputDirectory: DirectoryProperty
 }
 
+/** Embeds the signed companion APK produced by the matching Android build. */
+abstract class StageOperitAccessibilityApk : DefaultTask() {
+    @get:InputDirectory
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val apkDirectory: DirectoryProperty
+
+    @get:Internal
+    abstract val artifactsLoader: Property<BuiltArtifactsLoader>
+
+    @get:Input
+    abstract val expectedVersionCode: Property<Int>
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @get:Inject
+    abstract val fileSystemOperations: FileSystemOperations
+
+    /** Requires one APK and stages it under the runtime's stable asset name. */
+    @TaskAction
+    fun stageApk() {
+        val artifacts = artifactsLoader.get().load(apkDirectory.get())
+            ?: throw GradleException("Accessibility companion APK metadata is missing")
+        val apk = artifacts.elements.single()
+        check(apk.versionCode == expectedVersionCode.get()) {
+            "Accessibility companion version does not match this application"
+        }
+        val sourceApk = File(apk.outputFile)
+        check(sourceApk.isFile) { "Accessibility companion APK is missing: $sourceApk" }
+        ZipFile(sourceApk).use { archive ->
+            check(archive.getEntry("AndroidManifest.xml") != null && archive.getEntry("classes.dex") != null) {
+                "Accessibility companion is not a complete APK: $sourceApk"
+            }
+        }
+        fileSystemOperations.sync {
+            from(sourceApk) {
+                into("companions")
+                rename { "operit-accessibility.apk" }
+            }
+            into(outputDirectory)
+        }
+    }
+}
+
 val localProperties = Properties()
 val localPropertiesFile = rootProject.file("local.properties")
 localProperties.load(FileInputStream(localPropertiesFile))
-
-// Reads a required signing property from local.properties.
-fun requiredLocalProperty(name: String): String =
-    localProperties.getProperty(name)
-        ?: throw GradleException("Missing Android release signing property: $name")
 
 data class OperitRustTarget(
     val flutterPlatform: String,
@@ -144,10 +186,12 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file(requiredLocalProperty("RELEASE_STORE_FILE"))
-            storePassword = requiredLocalProperty("RELEASE_STORE_PASSWORD")
-            keyAlias = requiredLocalProperty("RELEASE_KEY_ALIAS")
-            keyPassword = requiredLocalProperty("RELEASE_KEY_PASSWORD")
+            // Release signing is validated by validateSigningRelease when building that variant.
+            // Debug builds must not require release credentials during project configuration.
+            storeFile = localProperties.getProperty("RELEASE_STORE_FILE")?.let { file(it) }
+            storePassword = localProperties.getProperty("RELEASE_STORE_PASSWORD")
+            keyAlias = localProperties.getProperty("RELEASE_KEY_ALIAS")
+            keyPassword = localProperties.getProperty("RELEASE_KEY_PASSWORD")
         }
     }
 
@@ -225,6 +269,28 @@ androidComponents {
         val assets = variant.sources.assets
             ?: throw GradleException("Android variant ${variant.name} has no asset sources")
         assets.addGeneratedSourceDirectory(stagedAssets) { it.outputDirectory }
+        val companionBuildType = when (variant.buildType) {
+            "debug", "profile" -> "debug"
+            "release" -> "release"
+            else -> throw GradleException("Unsupported accessibility companion build type: ${variant.buildType}")
+        }
+        val companionApk = configurations.create("${variant.name}AccessibilityApk") {
+            isCanBeConsumed = false
+            isCanBeResolved = true
+        }
+        dependencies.add(companionApk.name, dependencies.project(mapOf(
+            "path" to ":accessibilityCompanion",
+            "configuration" to "${companionBuildType}Apk",
+        )))
+        val stagedCompanion = tasks.register<StageOperitAccessibilityApk>(
+            "stageOperitAccessibilityApk" + variant.name.replaceFirstChar { it.uppercase() },
+        ) {
+            dependsOn(companionApk)
+            apkDirectory.set(layout.dir(provider { companionApk.singleFile }))
+            artifactsLoader.set(variant.artifacts.getBuiltArtifactsLoader())
+            expectedVersionCode.set(requireNotNull(android.defaultConfig.versionCode))
+        }
+        assets.addGeneratedSourceDirectory(stagedCompanion) { it.outputDirectory }
     }
 }
 
@@ -503,4 +569,17 @@ val verifyOperitAndroidRuntimeArtifacts = tasks.register("verifyOperitAndroidRun
 tasks.named("preBuild") {
     dependsOn(syncOperitPlugins)
     dependsOn(verifyOperitAndroidRuntimeArtifacts)
+}
+
+val verifyOperitAndroidReleaseSigning = tasks.register("verifyOperitAndroidReleaseSigning") {
+    doLast {
+        for (key in listOf("RELEASE_STORE_FILE", "RELEASE_STORE_PASSWORD", "RELEASE_KEY_ALIAS", "RELEASE_KEY_PASSWORD")) {
+            check(!localProperties.getProperty(key).isNullOrBlank()) {
+                "Missing Android release signing property: $key"
+            }
+        }
+    }
+}
+tasks.matching { it.name == "preReleaseBuild" }.configureEach {
+    dependsOn(verifyOperitAndroidReleaseSigning)
 }

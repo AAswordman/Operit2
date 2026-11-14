@@ -27,3 +27,5 @@ plugins {
 }
 
 include(":app")
+include(":accessibilityCompanion")
+project(":accessibilityCompanion").projectDir = file("../../../../tools/android-accessibility")

@@ -37,6 +37,7 @@ class RuntimeMethodChannelRouter(
     }
 
     fun clear() {
+        androidPlatformChannel.clear()
         documentInputChannel.clear()
         runtimeChannel?.setMethodCallHandler(null)
         runtimeChannel = null

@@ -25,6 +25,7 @@ class AndroidPlatformChannel(
     private val runtimeHost: AndroidRuntimeHost,
 ) {
     private val storageAccess = AndroidStorageAccess(activity)
+    private val accessibilitySetup = AndroidAccessibilitySetup(activity)
     private var pendingPermissionResult: MethodChannel.Result? = null
     private var pendingShizukuAuthorizationResult: MethodChannel.Result? = null
     private var pendingShizukuAuthorizationListener: Shizuku.OnRequestPermissionResultListener? = null
@@ -325,6 +326,7 @@ class AndroidPlatformChannel(
                 hasBluetoothConnectPermission() && hasBluetoothScanPermission(),
             ),
             "android.overlay" to requirement("android.overlay", canDrawOverlays()),
+            "android.accessibility" to requirementWithStatus("android.accessibility", accessibilitySetup.status()),
             "android.batteryOptimization" to requirement(
                 "android.batteryOptimization",
                 activity.isExternalRuntime || isIgnoringBatteryOptimizations(),
@@ -366,6 +368,16 @@ class AndroidPlatformChannel(
                 result.success(null)
             }
             "android.shizuku" -> requestShizukuAuthorization(result)
+            "android.accessibility" -> {
+                try {
+                    accessibilitySetup.request { error ->
+                        if (error == null) result.success(null)
+                        else result.error("ACCESSIBILITY_SETUP_ERROR", error.message, null)
+                    }
+                } catch (error: Exception) {
+                    result.error("ACCESSIBILITY_SETUP_ERROR", error.message, null)
+                }
+            }
             "android.root" -> requestRootAuthorization(call, result)
             else -> {
                 result.error("INVALID_ONBOARDING_REQUIREMENT", "Invalid onboarding requirement", null)
@@ -486,7 +498,11 @@ class AndroidPlatformChannel(
     }
 
     /** Routes settings completion to the pending install or file-management permission slot. */
-    fun onActivityResult(requestCode: Int): Boolean = storageAccess.onActivityResult(requestCode)
+    fun onActivityResult(requestCode: Int): Boolean =
+        accessibilitySetup.onActivityResult(requestCode) || storageAccess.onActivityResult(requestCode)
+
+    /** Releases pending accessibility setup when the runtime channel is detached. */
+    fun clear() = accessibilitySetup.release()
 
     /** Requests notification posting access required by Android task status surfaces. */
     private fun requestNotificationPermission(result: MethodChannel.Result) {

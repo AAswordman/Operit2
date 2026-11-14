@@ -151,18 +151,28 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         if (surface.attached) surface.manager.updateViewLayout(surface.view,next);
         surface.params = next;
     }
+    /** Attaches the engine only after its view has an Android window parent. */
     private void show(Surface surface) {
         if (!permitted()) throw new IllegalStateException("Overlay permission is missing");
         surface.params.alpha=surface.opacity;
-        if (!surface.attached) { surface.manager.addView(surface.view,surface.params); surface.attached=true; }
+        if (!surface.attached) {
+            surface.manager.addView(surface.view,surface.params); surface.attached=true;
+            surface.view.attachToFlutterEngine(surface.engine);
+        }
         else surface.manager.updateViewLayout(surface.view,surface.params);
         surface.engine.getLifecycleChannel().appIsResumed();
     }
+    /** Unregisters the accessibility bridge before removing the view's Android parent. */
+    private static void hide(Surface surface) {
+        surface.view.detachFromFlutterEngine();
+        if (surface.attached) { surface.manager.removeViewImmediate(surface.view); surface.attached=false; }
+    }
+    /** Disconnects the view before destroying its engine and removing the owned surface. */
     private static void destroy(Surface surface) {
         if (surface.closed) return;
         surface.closed=true; surfaces.remove(surface.id);
-        if (surface.attached) { surface.manager.removeViewImmediate(surface.view); surface.attached=false; }
-        surface.view.detachFromFlutterEngine(); surface.engine.destroy();
+        hide(surface);
+        surface.engine.destroy();
     }
     @Override public void onMethodCall(MethodCall call, MethodChannel.Result result) {
         try {
@@ -197,14 +207,13 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 surfaces.put(surface.id,surface);
                 try {
                     engineConfigurer.configure(surface.engine);
+                    // Establish the Android parent before enabling engine accessibility callbacks.
+                    surface.params.alpha=0;
+                    surface.manager.addView(surface.view,surface.params); surface.attached=true;
                     surface.view.attachToFlutterEngine(surface.engine);
                     surface.engine.getDartExecutor().executeDartEntrypoint(
                         new DartExecutor.DartEntrypoint(loader.findAppBundlePath(),"main"),
                         java.util.Arrays.asList("floating_windows.window",call.argument("arguments")));
-                    // Attach immediately so the first Flutter frame has real
-                    // viewport metrics. Dart reveals the prepared surface.
-                    surface.params.alpha=0;
-                    surface.manager.addView(surface.view,surface.params); surface.attached=true;
                     surface.engine.getLifecycleChannel().appIsResumed();
                     result.success(surface.id);
                 } catch (Exception error) { destroy(surface); throw error; }
@@ -240,7 +249,7 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 case "update": apply(surface,(Map<?,?>)call.arguments); result.success(null); return;
                 case "show": show(surface); result.success(null); return;
                 case "hide":
-                    if (surface.attached) { surface.manager.removeViewImmediate(surface.view); surface.attached=false; }
+                    hide(surface);
                     result.success(null); return;
                 case "close": result.success(null); handler.post(() -> destroy(surface)); return;
                 default: result.notImplemented();

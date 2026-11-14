@@ -894,6 +894,16 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
             action: HostRequirementAction::OpenSystemSettings,
         },
         HostOnboardingRequirement {
+            id: "android.accessibility".to_string(),
+            title: "UI 自动化".to_string(),
+            description: "可选。点击授予以安装内置的 UI 自动化配套包，再到系统无障碍设置中启用 Operit2 Accessibility。"
+                .to_string(),
+            capabilityIds: vec![],
+            isRequired: false,
+            status: HostRequirementStatus::Missing,
+            action: HostRequirementAction::HostManaged,
+        },
+        HostOnboardingRequirement {
             id: "android.shizuku".to_string(),
             title: "Shizuku".to_string(),
             description: "可选。需先启动 Shizuku 或 Sui；授权后 Operit 可以使用支持 Shizuku 的 Android 系统能力。"
@@ -3545,11 +3555,11 @@ mod tests {
         assert_eq!(raw, structured);
     }
 
-    /// Verifies that Android privilege choices are optional onboarding items.
+    /// Verifies that Android privilege and accessibility choices remain optional.
     #[test]
     fn androidPrivilegeOnboardingRequirementsAreOptional() {
         let descriptor = HostEnvironmentDescriptor::android();
-        for id in ["android.shizuku", "android.root"] {
+        for id in ["android.shizuku", "android.root", "android.accessibility"] {
             let requirement = descriptor
                 .onboardingRequirements
                 .iter()
