@@ -806,7 +806,7 @@ struct Operit1TtsHttpResponsePipelineStep {
 }
 
 #[allow(non_snake_case)]
-/// Resolves a fixed character model using Kotlin's effective saved-index semantics.
+/// Resolves fixed character models with the same missing-binding policy as function models.
 fn resolveOperit1CharacterChatModelBinding(
     parsed: &ParsedOperit1Snapshot,
     preferences: &HashMap<String, Operit1PreferenceValue>,
@@ -819,19 +819,17 @@ fn resolveOperit1CharacterChatModelBinding(
     if bindingMode.as_deref() != Some("FIXED_CONFIG") {
         return Ok(None);
     }
-    let configId = requiredPreferenceString(
+    let configId = optionalPreferenceString(
         preferences,
         &format!("character_card_{cardId}_chat_model_config_id"),
-        &format!("Operit1 角色卡固定模型缺少配置 ID：{cardId}"),
-    )?;
+    )?.unwrap_or_default();
     let modelIndex = optionalPreferenceI32(
         preferences,
         &format!("character_card_{cardId}_chat_model_index"),
     )?
     .unwrap_or(0);
-    let config = parsed.configById(configId)?;
+    let (config, modelIndex) = parsed.resolveModelBinding(&configId, modelIndex)?;
     let modelIds = splitModelIds(&config.modelName);
-    let modelIndex = operit1EffectiveModelIndex(&modelIds, modelIndex);
     modelIds
         .get(modelIndex as usize)
         .cloned()

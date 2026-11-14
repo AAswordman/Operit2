@@ -24,9 +24,8 @@ impl Operit1SnapshotImportManager {
         let mut bindings = HashMap::new();
         for (function, value) in mappings {
             let mapping = decodeFunctionMapping(value)?;
-            let config = parsed.configById(&mapping.configId)?;
+            let (config, modelIndex) = parsed.resolveModelBinding(&mapping.configId, mapping.modelIndex)?;
             let modelIds = splitModelIds(&config.modelName);
-            let modelIndex = operit1EffectiveModelIndex(&modelIds, mapping.modelIndex);
             let modelId = modelIds.get(modelIndex)
                 .cloned().ok_or_else(|| {
                     format!("Operit1 功能绑定的配置没有模型：{function:?}/{}", config.id)
@@ -208,17 +207,20 @@ impl ParsedOperit1Snapshot {
         })
     }
 
-    /// Previews the same effective chat selection that Kotlin uses when reading a saved model index.
+    /// Previews the effective chat binding using the same resolution as full snapshot import.
     #[allow(non_snake_case)]
     fn modelConfigPreview(&self) -> Result<Operit1ModelConfigSnapshotPreview, String> {
+        let (chatConfig, chatModelIndex) = self.resolveModelBinding(
+            &self.chatMapping.configId, self.chatMapping.modelIndex,
+        )?;
         let configs = self
             .configs
             .iter()
             .map(|config| {
                 let providerBinding = config.providerBinding()?;
                 let modelIds = splitModelIds(&config.modelName);
-                let selectedModelIndex = (self.chatMapping.configId == config.id)
-                    .then(|| operit1EffectiveModelIndex(&modelIds, self.chatMapping.modelIndex) as i32);
+                let selectedModelIndex = (chatConfig.id == config.id)
+                    .then_some(chatModelIndex as i32);
                 let selectedModelId =
                     selectedModelIndex.and_then(|index| modelIds.get(index as usize).cloned());
                 Ok(Operit1ModelConfigPreview {
@@ -234,10 +236,10 @@ impl ParsedOperit1Snapshot {
             })
             .collect::<Result<Vec<_>, String>>()?;
 
-        let chatConfigId = Some(self.chatMapping.configId.clone());
+        let chatConfigId = Some(chatConfig.id.clone());
         let chatConfig = configs
             .iter()
-            .find(|config| config.configId == self.chatMapping.configId);
+            .find(|config| Some(&config.configId) == chatConfigId.as_ref());
         let chatModelIndex = chatConfig.and_then(|config| config.selectedModelIndex);
         let chatModelId = chatConfig.and_then(|config| config.selectedModelId.clone());
 
@@ -257,8 +259,25 @@ impl ParsedOperit1Snapshot {
         self.modelConfigPreview()?
             .configs
             .into_iter()
-            .find(|config| config.configId == self.chatMapping.configId)
+            .find(|config| config.selectedModelId.is_some())
             .ok_or_else(|| format!("快照里没有聊天模型配置：{}", self.chatMapping.configId))
+    }
+
+    /// Preserves valid bindings and replaces missing or empty bindings with the first configured model.
+    fn resolveModelBinding(&self, configId: &str, requestedIndex: i32) -> Result<(&Operit1ModelConfig, usize), String> {
+        if let Some(config) = self.configs.iter().find(|config| config.id == configId) {
+            let models = splitModelIds(&config.modelName);
+            if !models.is_empty() {
+                return Ok((config, operit1EffectiveModelIndex(&models, requestedIndex)));
+            }
+        }
+        let config = self.configs.iter()
+            .find(|config| !splitModelIds(&config.modelName).is_empty())
+            .ok_or("Operit1 快照中没有配置任何模型，无法迁移模型绑定")?;
+        AppLogger::i("Operit1SnapshotImport", &format!(
+            "Replacing unresolved model binding {configId} with the first configured model from {}", config.id,
+        ));
+        Ok((config, 0))
     }
 
     #[allow(non_snake_case)]

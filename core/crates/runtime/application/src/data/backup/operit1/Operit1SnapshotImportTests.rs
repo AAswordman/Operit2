@@ -498,9 +498,73 @@ fn model_index_migration_matches_kotlin_for_all_binding_paths() {
     }
 }
 
-/// Rejects absent configurations and empty model bindings instead of inventing an imported model.
+/// Uses source order for broken function and character bindings without filtering model capabilities.
 #[test]
-fn model_index_migration_rejects_missing_and_empty_bound_configs() {
+fn model_binding_import_uses_first_configured_model_for_missing_and_empty_configs() {
+    let root = std::env::temp_dir().join(format!("operit1-model-rebinding-{}", Uuid::new_v4()));
+    let (manager, _) = snapshotImportManager(&root);
+    let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
+    parsed.configs = serde_json::from_value(serde_json::json!([
+        {"id":"draft","name":"Empty draft","modelName":" , , "},
+        {"id":"z-first","name":"First configured","modelName":" first-model,second-model "},
+        {"id":"a-later","name":"Later configured","modelName":"later-first,later-second"}
+    ])).unwrap();
+    let missing = "f815b541-8014-48c8-bd4c-0d135f98426a";
+    parsed.chatMapping = decodeFunctionMapping(serde_json::json!({"configId":missing,"modelIndex":1})).unwrap();
+    parsed.archive.datastorePreferences.get_mut(ENTRY_FUNCTIONAL_CONFIGS).unwrap().insert(
+        KEY_FUNCTION_CONFIG_MAPPING.to_string(), Operit1PreferenceValue::String(serde_json::json!({
+            "CHAT":{"configId":missing,"modelIndex":1},
+            "SUMMARY":{"configId":"draft","modelIndex":1},
+            "IMAGE_RECOGNITION":{"configId":missing},
+            "AUDIO_RECOGNITION":{"configId":missing},
+            "VIDEO_RECOGNITION":{"configId":missing},
+            "MEMORY":{"configId":"a-later","modelIndex":1}
+        }).to_string()),
+    );
+    let preview = parsed.modelConfigPreview().unwrap();
+    assert_eq!(preview.chatConfigId.as_deref(), Some("z-first"));
+    assert_eq!(preview.chatModelId.as_deref(), Some("first-model"));
+    assert_eq!(preview.chatModelIndex, Some(0));
+    assert_eq!(preview.configs[1].selectedModelIndex, Some(0));
+    assert_eq!(parsed.selectedChatConfig().unwrap().configId, "z-first");
+    assert_eq!(parsed.chatMapping.configId, missing, "Resolution must not rewrite source metadata");
+    let result = manager.importAllModelConfigsFromParsed(&parsed).unwrap();
+    assert_eq!(result.providerId, "z-first");
+    assert_eq!(result.modelId, "first-model");
+    assert_eq!(result.importedModelCount, 4);
+    let bindings = FunctionalConfigManager::default().functionModelBindingFlow().unwrap().first().unwrap();
+    for function in [FunctionType::CHAT, FunctionType::SUMMARY, FunctionType::IMAGE_RECOGNITION,
+        FunctionType::AUDIO_RECOGNITION, FunctionType::VIDEO_RECOGNITION, FunctionType::MEMORY] {
+        let binding = &bindings[&function];
+        if function == FunctionType::MEMORY {
+            assert_eq!(binding.providerId, "a-later");
+            assert_eq!(binding.modelId, "later-second");
+        } else {
+            assert_eq!(binding.providerId, "z-first");
+            assert_eq!(binding.modelId, "first-model");
+        }
+    }
+    let providers = ModelConfigManager::default().getProviderProfiles().unwrap();
+    for id in ["draft", "z-first", "a-later"] {
+        assert!(providers.iter().any(|provider| provider.id == id));
+    }
+    for configId in [Some(missing), Some("draft"), None] {
+        let cards = parsed.archive.datastorePreferences.get_mut(ENTRY_CHARACTER_CARDS).unwrap();
+        cards.insert("character_card_card-1_chat_model_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_CONFIG".to_string()));
+        cards.insert("character_card_card-1_chat_model_index".to_string(), Operit1PreferenceValue::Int(1));
+        cards.remove("character_card_card-1_chat_model_config_id");
+        if let Some(id) = configId {
+            cards.insert("character_card_card-1_chat_model_config_id".to_string(), Operit1PreferenceValue::String(id.to_string()));
+        }
+        let card = &buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap()[0];
+        assert_eq!(card.chatProviderId.as_deref(), Some("z-first"));
+        assert_eq!(card.chatModelId.as_deref(), Some("first-model"));
+    }
+}
+
+/// Rejects snapshots that have no actual model to bind, including empty draft-only configurations.
+#[test]
+fn model_binding_import_rejects_snapshots_without_any_models() {
     let root = std::env::temp_dir().join(format!("operit1-invalid-model-binding-{}", Uuid::new_v4()));
     let (manager, _) = snapshotImportManager(&root);
     let mut parsed = ParsedOperit1Snapshot::fromSource(completeSnapshotFixture(21)).unwrap();
@@ -508,11 +572,12 @@ fn model_index_migration_rejects_missing_and_empty_bound_configs() {
     cards.insert("character_card_card-1_chat_model_binding_mode".to_string(), Operit1PreferenceValue::String("FIXED_CONFIG".to_string()));
     cards.insert("character_card_card-1_chat_model_config_id".to_string(), Operit1PreferenceValue::String("test-model".to_string()));
     parsed.configs[0].modelName = " , , ".to_string();
-    assert!(manager.importAllModelConfigsFromParsed(&parsed).unwrap_err().starts_with("Operit1 功能绑定的配置没有模型：CHAT/"));
-    assert!(buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap_err().starts_with("Operit1 角色卡绑定的配置没有模型：card-1/"));
+    assert!(manager.importAllModelConfigsFromParsed(&parsed).unwrap_err().starts_with("Operit1 快照中没有配置任何模型"));
+    assert!(buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap_err().starts_with("Operit1 快照中没有配置任何模型"));
     parsed.configs.clear();
-    assert!(manager.importAllModelConfigsFromParsed(&parsed).unwrap_err().starts_with("快照里没有模型配置：test-model"));
-    assert!(buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap_err().starts_with("快照里没有模型配置：test-model"));
+    assert!(parsed.modelConfigPreview().unwrap_err().starts_with("Operit1 快照中没有配置任何模型"));
+    assert!(manager.importAllModelConfigsFromParsed(&parsed).unwrap_err().starts_with("Operit1 快照中没有配置任何模型"));
+    assert!(buildOperit2CharacterCards(&parsed, &SnapshotFileImportPlan::new()).unwrap_err().starts_with("Operit1 快照中没有配置任何模型"));
 }
 
 /// Executes the production source bridge and target projection using the same database bytes retained in the ZIP.

@@ -31,7 +31,11 @@ and `getModelByIndex` semantics. Model names are split on commas, trimmed and
 filtered for empty entries before indexing. An index outside that list selects
 index 0, as it does in Operit1; the preview, function bindings and fixed character
 bindings all use that effective selection. A binding to an absent configuration
-or a configuration with no models remains an error. Unbound empty configurations
+or a configuration with no models selects the first model of the first nonempty
+configuration in source `config_list` order, without checking function capability,
+endpoint availability or credentials. Preview, function bindings and fixed character
+bindings use the same resolution. Valid existing bindings remain unchanged. A
+snapshot with no configured models is an explicit error. Empty configurations
 remain importable as draft providers.
 
 Provider display names may repeat in Operit1. The shared provider importer retains
