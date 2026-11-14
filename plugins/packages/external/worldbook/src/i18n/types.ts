@@ -1,9 +1,7 @@
-import type { WorldBookRegexI18n } from "./regex.js";
 import type { WorldBookServiceI18n } from "./service.js";
 import type { WorldBookContentSnippet } from "./snippets.js";
 
 export interface WorldBookI18n {
-  regex: WorldBookRegexI18n;
   service: WorldBookServiceI18n;
   contentSnippets: WorldBookContentSnippet[];
   unknown: string;

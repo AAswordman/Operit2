@@ -2232,7 +2232,6 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
           [
             renderToolbarAction("search", t.actionSearch, toggleSearchBar, showSearchBar),
             renderToolbarAction("refresh", t.actionRefresh, () => doRefresh()),
-            renderToolbarAction("rule", t.regex.title, () => ctx.navigate("toolpkg:com.operit.worldbook:ui:regex_manager")),
             renderToolbarAction("createNewFolder", t.groupNewButton, doOpenGroupCreate),
             renderToolbarAction("uploadFile", t.buttonImport, doOpenImport),
             renderToolbarAction("add", t.newEntryButton, doCreate)

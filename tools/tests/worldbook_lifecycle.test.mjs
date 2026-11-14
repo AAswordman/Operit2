@@ -15,14 +15,15 @@ function runtime({ failOpen = false } = {}) {
   const lifecycle = [];
   const estimateHooks = [];
   const finalizeHooks = [];
+  const routes = [];
   let root = '/config/worldbook';
   const context = vm.createContext({
     getLang: () => 'zh-CN',
     console, Icons: { Book: 'book' },
     ToolPkg: {
       getConfigDir: () => root,
-      registerUiRoute() {}, registerNavigationEntry() {},
-      registerSystemPromptComposeHook() {}, registerMessageTransformHook() {}, registerMessageStreamTransform() {},
+      registerUiRoute: route => routes.push(route), registerNavigationEntry() {},
+      registerSystemPromptComposeHook() {},
       registerPromptFinalizeHook: hook => finalizeHooks.push(hook),
       registerPromptEstimateFinalizeHook: hook => estimateHooks.push(hook),
       registerAppLifecycleHook: (hook) => lifecycle.push(hook),
@@ -61,7 +62,7 @@ function runtime({ failOpen = false } = {}) {
   const storage = load(path.join(dist, 'shared/worldbook_storage.js'));
   const variables = load(path.join(dist, 'shared/worldbook_variables.js'));
   return {
-    main, storage, variables, files, calls, messages, lifecycle, estimateHooks, finalizeHooks,
+    main, storage, variables, files, calls, messages, lifecycle, estimateHooks, finalizeHooks, routes,
     changeRoot(value) { root = value; },
     setEntries(entries) { files.set(`${root}/entries.json`, JSON.stringify(entries)); },
     count(method, file) { return calls.filter(([m, f]) => m === method && (!file || f.endsWith(file))).length; },
@@ -87,9 +88,9 @@ const final = (id, chat, card) => event('before_finalize_prompt', id, chat, card
 test('keyword injection is registered for both sends and independent estimates', async () => {
   const r = runtime();
   r.main.registerToolPkg();
-  assert.equal(r.estimateHooks.length, 2);
-  assert.equal(r.finalizeHooks.length, 2);
-  r.setEntries([entry('keyword lore', { always_active: false, keywords: ['hello'], inject_target: 'user' })]);
+  assert.equal(r.estimateHooks.length, 1);
+  assert.equal(r.finalizeHooks.length, 1);
+  r.setEntries([entry('keyword lore', { always_active: false, keywords: ['^HELLO$'], is_regex: true, inject_target: 'user' })]);
   const estimate = await r.estimateHooks[0].function(final());
   const send = await r.finalizeHooks[0].function(final('send'));
   assert.match(estimate.processedInput, /keyword lore/);
@@ -100,6 +101,7 @@ test('registration performs no storage I/O; lifecycle and concurrent first reads
   const r = runtime();
   r.main.registerToolPkg();
   assert.equal(r.calls.length, 0);
+  assert.deepEqual(r.routes.map(route => route.id), ['worldbook_manager']);
   assert.equal(r.lifecycle.length, 1);
   assert.equal(r.lifecycle[0].event, 'application_on_create');
   await Promise.all([
@@ -143,6 +145,7 @@ test('legacy data migrates once and storage root changes open the new root', asy
 
 test('system and final hooks share one entries/variables/history snapshot; next send sees external edits', async () => {
   const r = runtime();
+  r.files.set('/config/worldbook/regex_scripts.json', '{invalid legacy replacement rules');
   r.setEntries([entry('old'), entry('user-old', { inject_target: 'user' })]);
   await r.storage.initializeWorldBookStorage();
   r.calls.length = 0;
@@ -153,7 +156,7 @@ test('system and final hooks share one entries/variables/history snapshot; next 
   assert.equal(r.count('read', 'variables.json'), 1);
   assert.equal(r.count('history'), 1);
   assert.equal(r.count('mkdir'), 0);
-  assert.equal(r.count('exists', 'regex_scripts.json'), 1);
+  assert.equal(r.count('exists', 'regex_scripts.json'), 0);
   assert.match((await r.main.systemPromptHook(system('send-2'))).systemPrompt, /new/);
   assert.match((await r.main.finalizeHook(final('send-2'))).processedInput, /user-new/);
   assert.equal(r.count('read', 'entries.json'), 2);

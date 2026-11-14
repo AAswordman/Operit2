@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.worldbook",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "author": [
@@ -14,8 +14,8 @@
     "default": "World Book"
   },
   "description": {
-    "zh": "世界书/知识库插件，支持条目注入和酒馆格式正则规则，可分别处理保存内容、显示内容及发送给模型的内容。",
-    "en": "World Book / Lorebook with prompt injection and SillyTavern-format regex rules for stored text, display text, and model prompts.",
+    "zh": "世界书/知识库插件，支持关键词匹配、条目注入和变量模板。",
+    "en": "World Book / Lorebook with keyword matching, prompt injection, and variable templates.",
     "default": "World Book / Lorebook plugin for prompt injection"
   },
   "enabled_by_default": false,
