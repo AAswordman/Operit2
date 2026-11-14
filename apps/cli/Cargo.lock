@@ -3147,6 +3147,7 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
+ "operit-data-rescue",
  "operit-edge-contract",
  "operit-host-api",
  "operit-js-bridge",

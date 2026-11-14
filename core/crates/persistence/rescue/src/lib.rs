@@ -9,7 +9,10 @@ use operit_host_api::ArchiveStagingHost;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use zip::{ZipArchive, ZipWriter, CompressionMethod, write::SimpleFileOptions};
+use zip::ZipArchive;
+
+pub mod archive;
+pub mod secrets;
 
 pub const CHUNK_BYTES: usize = 64 * 1024;
 const MAX_METADATA_BYTES: u64 = 16 * 1024 * 1024;
@@ -174,61 +177,16 @@ impl DataRescue {
     /// Hashes each exported payload while writing its portable archive entry.
     fn write_export(&self, id: &str) -> Result<Value, String> {
         self.host.report_progress(RescueProgress::new("scan", None, "files"));
-        let mut files = self.host.list_files()?;
-        files.sort_by(|a, b| a.path.cmp(&b.path));
-        validate_source_files(&files)?;
-        let output = ArchiveIo::new(self.archives.clone(), id, 0);
-        let mut zip = ZipWriter::new(output);
-        let options = SimpleFileOptions::default().large_file(true)
-            .compression_method(CompressionMethod::Deflated);
-        // Export progress measures source bytes; plaintext preferences can change output size.
-        let mut progress = RescueProgress::new("export", Some(payload_bytes(&files)?), "bytes");
-        self.host.report_progress(progress.clone());
-        for file in &mut files {
-            let source_length = file.byte_length;
-            zip.start_file(format!("payload/{}", file.path), options).map_err(text)?;
-            if let Some(plaintext) = self.host.export_preferences(&file.path)? {
-                file.byte_length = plaintext.len() as u64;
-                file.sha256 = format!("{:x}", Sha256::digest(&plaintext));
-                zip.write_all(&plaintext).map_err(text)?;
-                progress.advance(self.host.as_ref(), source_length);
-                continue;
-            }
-            let mut offset = 0;
-            let mut hash = Sha256::new();
-            while offset < file.byte_length {
-                let count = (file.byte_length - offset).min(CHUNK_BYTES as u64) as usize;
-                let bytes = self.host.read_file(&file.path, offset, count)?;
-                if bytes.len() != count { return Err(format!("Source changed or was truncated: {}", file.path)); }
-                hash.update(&bytes);
-                zip.write_all(&bytes).map_err(text)?;
-                offset += bytes.len() as u64;
-                progress.advance(self.host.as_ref(), bytes.len() as u64);
-            }
-            if !self.host.read_file(&file.path, offset, 1)?.is_empty() {
-                return Err(format!("Source grew while exporting: {}", file.path));
-            }
-            file.sha256 = format!("{:x}", hash.finalize());
-        }
-        let mut finalize = RescueProgress::new("finalizeExport", Some(3), "items");
-        self.host.report_progress(finalize.clone());
-        let manifest = RescueManifest {
-            format: "operit.data-rescue".into(), version: 1,
-            layout: self.host.layout().into(), files,
-            metadata: self.host.describe()?,
-        };
-        let manifest_bytes = serde_json::to_vec(&manifest).map_err(text)?;
-        if manifest_bytes.len() as u64 > MAX_METADATA_BYTES {
-            return Err("Manifest exceeds 16 MiB".into());
-        }
-        zip.start_file("manifest.json", options).map_err(text)?;
-        zip.write_all(&manifest_bytes).map_err(text)?;
-        finalize.advance(self.host.as_ref(), 1);
-        zip.finish().map_err(text)?;
-        finalize.advance(self.host.as_ref(), 1);
+        let manifest = archive::write_archive(
+            ArchiveIo::new(self.archives.clone(), id, 0), self.host.layout(),
+            self.host.describe()?, self.host.list_files()?,
+            |path, offset, length| self.host.read_file(path, offset, length),
+            |file| self.host.export_preferences(&file.path),
+            |progress| self.host.report_progress(progress),
+        )?;
         let byte_length = self.archives.sealArchive(id).map_err(text)?;
         let reference = self.archives.archiveFileReference(id).map_err(text)?;
-        finalize.advance(self.host.as_ref(), 1);
+        self.host.report_progress(RescueProgress { phase: "finalizeExport".into(), completed: 3, total: Some(3), unit: "items".into() });
         Ok(json!({"archiveId": id, "byteLength": byte_length, "fileReference": reference, "fileCount": manifest.files.len()}))
     }
 
@@ -236,42 +194,7 @@ impl DataRescue {
     pub fn inspect(&self, id: &str) -> Result<RescueManifest, String> {
         let length = self.archives.sealArchive(id).map_err(text)?;
         let mut zip = ZipArchive::new(ArchiveIo::new(self.archives.clone(), id, length)).map_err(text)?;
-        if zip.len() == 0 || zip.len() > MAX_FILES + 1 { return Err("Invalid archive entry count".into()); }
-        let mut scan = RescueProgress::new("readManifest", Some(zip.len() as u64), "files");
-        self.host.report_progress(scan.clone());
-        let mut names = BTreeSet::new();
-        for index in 0..zip.len() {
-            let file = zip.by_index_raw(index).map_err(text)?;
-            if file.encrypted() { return Err("Encrypted rescue archive entries are not supported".into()); }
-            if !names.insert(file.name().to_owned()) { return Err("Duplicate archive entry".into()); }
-            if file.is_dir() || file.unix_mode().is_some_and(|mode| mode & 0o170000 == 0o120000) {
-                return Err("Directory and symlink ZIP entries are not accepted".into());
-            }
-            scan.advance(self.host.as_ref(), 1);
-        }
-        let manifest: RescueManifest = {
-            let mut entry = zip.by_name("manifest.json").map_err(text)?;
-            if entry.size() > MAX_METADATA_BYTES { return Err("Manifest exceeds 16 MiB".into()); }
-            let mut bytes = Vec::new();
-            (&mut entry).take(MAX_METADATA_BYTES + 1).read_to_end(&mut bytes).map_err(text)?;
-            if bytes.len() as u64 > MAX_METADATA_BYTES { return Err("Manifest exceeds 16 MiB".into()); }
-            serde_json::from_slice(&bytes).map_err(text)?
-        };
-        if manifest.format != "operit.data-rescue" || manifest.version != 1 {
-            return Err("Unsupported data rescue format or version".into());
-        }
-        if manifest.layout != self.host.layout() { return Err("This archive uses a different Host storage layout".into()); }
-        validate_files(&manifest.files)?;
-        let expected: BTreeSet<_> = std::iter::once("manifest.json".to_string())
-            .chain(manifest.files.iter().map(|file| format!("payload/{}", file.path))).collect();
-        if names != expected { return Err("Archive entries do not match the manifest".into()); }
-        let mut progress = RescueProgress::new("verifyArchive", Some(payload_bytes(&manifest.files)?), "bytes");
-        self.host.report_progress(progress.clone());
-        for file in &manifest.files {
-            let mut entry = zip.by_name(&format!("payload/{}", file.path)).map_err(text)?;
-            verify_payload(&mut entry, file, |chunk| { progress.advance(self.host.as_ref(), chunk.len() as u64); Ok(()) })?;
-        }
-        Ok(manifest)
+        archive::inspect_archive(&mut zip, self.host.layout(), |progress| self.host.report_progress(progress))
     }
 
     /// Verifies the entire archive, stages complete files, then publishes one explicit restore.
@@ -300,8 +223,7 @@ impl DataRescue {
         let mut progress = RescueProgress::new("restore", Some(payload_bytes(&manifest.files)?), "bytes");
         self.host.report_progress(progress.clone());
         for file in &manifest.files {
-            let mut entry = zip.by_name(&format!("payload/{}", file.path)).map_err(text)?;
-            verify_payload(&mut entry, file, |chunk| {
+            archive::read_payload(&mut zip, file, |chunk| {
                 self.host.write_restore(restore_id, &file.path, chunk)?;
                 progress.advance(self.host.as_ref(), chunk.len() as u64);
                 Ok(())
@@ -356,25 +278,6 @@ fn validate_ancestors(paths: &BTreeSet<&str>) -> Result<(), String> {
                 return Err(format!("Rescue paths overlap: {} and {}", &path[..index], path));
             }
         }
-    }
-    Ok(())
-}
-
-/// Verifies bounded decompression, declared size, SHA-256, and ZIP authentication.
-fn verify_payload(reader: &mut impl Read, file: &RescueFile, mut consume: impl FnMut(&[u8]) -> Result<(), String>) -> Result<(), String> {
-    let mut hash = Sha256::new();
-    let mut total = 0u64;
-    let mut buffer = [0u8; CHUNK_BYTES];
-    loop {
-        let count = reader.read(&mut buffer).map_err(text)?;
-        if count == 0 { break; }
-        total = total.checked_add(count as u64).ok_or("Payload size overflow")?;
-        if total > file.byte_length { return Err(format!("Payload exceeds declared size: {}", file.path)); }
-        hash.update(&buffer[..count]);
-        consume(&buffer[..count])?;
-    }
-    if total != file.byte_length || format!("{:x}", hash.finalize()) != file.sha256 {
-        return Err(format!("Payload integrity check failed: {}", file.path));
     }
     Ok(())
 }

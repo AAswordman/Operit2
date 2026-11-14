@@ -2037,6 +2037,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "operit-data-rescue"
+version = "0.1.0"
+dependencies = [
+ "base64",
+ "operit-host-api",
+ "serde",
+ "serde_json",
+ "sha2",
+ "uuid",
+ "zip",
+]
+
+[[package]]
 name = "operit-edge-contract"
 version = "0.1.0"
 dependencies = [
@@ -2535,6 +2548,7 @@ dependencies = [
  "js-sys",
  "json5",
  "md-5",
+ "operit-data-rescue",
  "operit-edge-contract",
  "operit-host-api",
  "operit-js-bridge",

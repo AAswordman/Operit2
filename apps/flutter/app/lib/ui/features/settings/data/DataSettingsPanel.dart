@@ -10,6 +10,7 @@ import 'package:operit_folder_access/operit_folder_access.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/bridge/PlatformCoreProxy.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/logging/DiagnosticLogExporter.dart';
 import '../../../../core/host/FileSaveService.dart';
@@ -17,7 +18,6 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../core/snapshot/SnapshotImportUploader.dart';
-import '../../../../core/host/SelectedFileInput.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/StorageDirectorySelectionError.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
@@ -376,13 +376,12 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     try {
       await session.commitRaw();
       await session.discard();
-      if (!mounted) {
-        return;
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(l10n.settingsDataSnapshotImported)),
+        );
       }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataSnapshotImported)),
-      );
-      _reload();
+      await platformCoreProxy.restartApplication();
     } catch (error) {
       await session.discard();
       if (!mounted) {
