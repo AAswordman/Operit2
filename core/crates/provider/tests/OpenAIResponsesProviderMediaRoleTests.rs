@@ -17,7 +17,7 @@ fn shared_responses_wrappers_keep_tool_images_in_function_output() {
     ] {
         let responses_provider = OpenAIResponsesProvider::new(
             "https://example.test/v1/responses".to_string(),
-            "test-key".to_string(),
+            "test-key".to_string().into(),
             "test-model".to_string(),
             provider_type.to_string(),
             Vec::new(),
@@ -84,7 +84,7 @@ fn shared_responses_history_images_and_encrypted_reasoning_are_preserved() {
     };
     let provider = OpenAIResponsesProvider::new(
         "https://example.test/v1/responses".to_string(),
-        "test-key".to_string(),
+        "test-key".to_string().into(),
         "test-model".to_string(),
         "OPENAI_RESPONSES_GENERIC".to_string(),
         Vec::new(),

@@ -8,7 +8,7 @@ use operit_util::ImagePoolManager::ImagePoolManager;
 fn test_provider() -> GeminiProvider {
     GeminiProvider::new(
         "http://localhost".to_string(),
-        String::new(),
+        String::new().into(),
         "gemini-test".to_string(),
         "GEMINI".to_string(),
         Vec::new(),
@@ -17,15 +17,14 @@ fn test_provider() -> GeminiProvider {
     )
 }
 
-/// Requests SSE explicitly and keeps API keys containing query delimiters intact.
+/// Negotiates SSE while deferring credential encoding to the shared HTTP transport.
 #[test]
 fn streaming_request_negotiates_sse_and_encodes_query_authentication() {
-    let mut provider = test_provider();
-    provider.api_key = "key&with=delimiters".to_string();
+    let provider = test_provider();
     let url = url::Url::parse(&provider.request_url(true).unwrap()).unwrap();
     let pairs = url.query_pairs().collect::<std::collections::BTreeMap<_, _>>();
     assert_eq!(pairs.get("alt").map(|s| s.as_ref()), Some("sse"));
-    assert_eq!(pairs.get("key").map(|s| s.as_ref()), Some("key&with=delimiters"));
+    assert!(!pairs.contains_key("key"));
     let url = url::Url::parse(&provider.request_url(false).unwrap()).unwrap();
     assert!(!url.query_pairs().any(|(name, _)| name == "alt"));
 }

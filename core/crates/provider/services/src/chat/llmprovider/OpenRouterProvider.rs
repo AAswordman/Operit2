@@ -1,3 +1,4 @@
+use super::ApiKeyProvider::KeyGetter;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -17,7 +18,7 @@ impl OpenRouterProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -47,7 +48,7 @@ impl OpenRouterProvider {
         Self {
             inner: OpenAIProvider::new_with_capabilities(
                 api_endpoint,
-                api_key,
+                key_getter,
                 model_name,
                 "OPENROUTER_PARENT".to_string(),
                 merged_headers,

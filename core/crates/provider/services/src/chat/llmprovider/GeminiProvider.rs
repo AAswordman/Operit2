@@ -1,3 +1,5 @@
+use super::ApiKeyProvider::KeyGetter;
+use super::ProviderHttp::KeyAuthentication;
 use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
 use futures_util::StreamExt;
@@ -34,7 +36,8 @@ use operit_util::ChatMarkupRegex::{attr_value, tag_ranges, ChatMarkupRegex};
 #[derive(Clone)]
 pub struct GeminiProvider {
     pub api_endpoint: String,
-    pub api_key: String,
+    pub key_getter: KeyGetter,
+
     pub model_name: String,
     pub provider_type: String,
     pub custom_headers: Vec<(String, String)>,
@@ -64,7 +67,7 @@ impl GeminiProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -73,7 +76,7 @@ impl GeminiProvider {
     ) -> Self {
         Self::new_with_request_options(
             api_endpoint,
-            api_key,
+            key_getter,
             model_name,
             provider_type,
             custom_headers,
@@ -87,7 +90,7 @@ impl GeminiProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_request_options(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -97,7 +100,7 @@ impl GeminiProvider {
     ) -> Self {
         Self {
             api_endpoint,
-            api_key,
+            key_getter,
             model_name,
             provider_type,
             custom_headers,
@@ -165,6 +168,7 @@ impl GeminiProvider {
         &self,
         request: super::ProviderHttp::RequestBuilder,
     ) -> Result<super::ProviderHttp::Response, AiServiceError> {
+        let request = request.key_getter(self.key_getter.clone(), self.key_authentication());
         if self.is_cancelled() {
             return Err(AiServiceError::RequestCancelled);
         }
@@ -709,6 +713,14 @@ impl GeminiProvider {
         Ok(())
     }
 
+    /// Selects Gemini authentication from its declared request options.
+    fn key_authentication(&self) -> KeyAuthentication {
+        match &self.api_key_header_name {
+            Some(name) => KeyAuthentication::Header(name.clone()),
+            None => KeyAuthentication::Query("key".into()),
+        }
+    }
+
     /// Builds the authenticated Gemini URL with explicit SSE response negotiation.
     fn request_url(&self, stream: bool) -> Result<String, AiServiceError> {
         if let Some(api_key_header_name) = self.api_key_header_name.as_deref() {
@@ -738,7 +750,6 @@ impl GeminiProvider {
         let url = format!("{base_url}/v1beta/models/{}:{method}", self.model_name);
         let mut url = url::Url::parse(&url)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        url.query_pairs_mut().append_pair("key", &self.api_key);
         if stream {
             url.query_pairs_mut().append_pair("alt", "sse");
         }
@@ -748,16 +759,6 @@ impl GeminiProvider {
     fn headers(&self) -> Result<HeaderMap, AiServiceError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if let Some(api_key_header_name) = self.api_key_header_name.as_deref() {
-            if !self.api_key.trim().is_empty() {
-                headers.insert(
-                    HeaderName::from_bytes(api_key_header_name.as_bytes())
-                        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?,
-                    HeaderValue::from_str(self.api_key.trim())
-                        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?,
-                );
-            }
-        }
         for (name, value) in &self.custom_headers {
             headers.insert(
                 HeaderName::from_bytes(name.as_bytes())
@@ -778,6 +779,7 @@ impl GeminiProvider {
         loop {
             let request_body = self.create_request_body(&request)?;
             let response = match super::ProviderHttp::post(self.request_url(false)?)
+                .key_getter(self.key_getter.clone(), self.key_authentication())
                 .headers(self.headers()?)
                 .json(&request_body)
                 .send()

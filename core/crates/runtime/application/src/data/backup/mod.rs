@@ -14,6 +14,9 @@ pub(crate) mod Operit1SnapshotArchive;
 pub mod Operit1SnapshotImportManager;
 #[path = "RawSnapshotBackupManager.rs"]
 pub mod RawSnapshotBackupManager;
+#[cfg(test)]
+#[path = "RawSnapshotDiagnosticTests.rs"]
+mod raw_snapshot_diagnostic_tests;
 
 pub use Operit1SnapshotImportManager::*;
 pub use RawSnapshotBackupManager::*;

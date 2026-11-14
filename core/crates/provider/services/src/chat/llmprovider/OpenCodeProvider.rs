@@ -1,5 +1,6 @@
+use super::ApiKeyProvider::KeyGetter;
 use async_trait::async_trait;
-use http::header::{HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::Value;
 use std::ops::{Deref, DerefMut};
 
@@ -21,7 +22,8 @@ pub struct OpenCodeProvider {
     base_endpoint: String,
     model_name: String,
     protocol: ApiProviderType,
-    api_key: String,
+    key_getter: KeyGetter,
+
     custom_headers: Vec<(String, String)>,
 }
 
@@ -216,7 +218,7 @@ impl OpenCodeProvider {
     pub fn new(
         base_endpoint: String,
         provider_id: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         custom_headers: Vec<(String, String)>,
         protocol: ApiProviderType,
@@ -244,7 +246,7 @@ impl OpenCodeProvider {
                 OpenCodeResponsesProvider {
                     inner: OpenAIResponsesProvider::new(
                     endpoint,
-                    api_key.clone(),
+                    key_getter.clone(),
                     model_name.clone(),
                     "OPENCODE".to_string(),
                     headers.clone(),
@@ -260,7 +262,7 @@ impl OpenCodeProvider {
             ApiProviderType::ANTHROPIC_GENERIC => OpenCodeDelegate::Claude(OpenCodeClaudeProvider {
                 inner: ClaudeProvider::new(
                     endpoint,
-                    api_key.clone(),
+                    key_getter.clone(),
                     model_name.clone(),
                     "OPENCODE".to_string(),
                     headers.clone(),
@@ -271,7 +273,7 @@ impl OpenCodeProvider {
                 OpenCodeGeminiProvider {
                     inner: GeminiProvider::new_with_request_options(
                         endpoint,
-                        api_key.clone(),
+                        key_getter.clone(),
                         model_name.clone(),
                         "OPENCODE".to_string(),
                         headers.clone(),
@@ -284,7 +286,7 @@ impl OpenCodeProvider {
             _ => OpenCodeDelegate::Chat(OpenCodeChatProvider {
                 inner: OpenAIProvider::new_with_capabilities_and_reasoning(
                     endpoint,
-                    api_key.clone(),
+                    key_getter.clone(),
                     model_name.clone(),
                     "OPENCODE".to_string(),
                     headers.clone(),
@@ -301,7 +303,7 @@ impl OpenCodeProvider {
             base_endpoint,
             model_name,
             protocol,
-            api_key,
+            key_getter,
             custom_headers: headers,
         })
     }
@@ -309,10 +311,8 @@ impl OpenCodeProvider {
     /// Fetches the OpenCode model catalog using its OpenAI-compatible endpoint.
     async fn get_models_list_internal(&self) -> Result<Vec<ModelOption>, AiServiceError> {
         let mut request = super::ProviderHttp::get(OpenCodeRouting::models_endpoint(&self.base_endpoint))
+            .key_getter(self.key_getter.clone(), super::ProviderHttp::KeyAuthentication::Bearer)
             .header(CONTENT_TYPE, "application/json");
-        if !self.api_key.trim().is_empty() {
-            request = request.header(AUTHORIZATION, format!("Bearer {}", self.api_key.trim()));
-        }
         for (name, value) in &self.custom_headers {
             request = request.header(
                 HeaderName::from_bytes(name.as_bytes())

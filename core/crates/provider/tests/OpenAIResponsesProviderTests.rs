@@ -12,7 +12,7 @@ fn paused_responses_reads_active_parent_usage() {
     use crate::chat::llmprovider::AIService::AIService;
     use crate::chat::llmprovider::ProviderMediaTestSupport::test_runtime_context;
     let mut provider = OpenAIResponsesProvider::new(
-        "https://fixture.invalid/responses".into(), String::new(), "test".into(),
+        "https://fixture.invalid/responses".into(), String::new().into(), "test".into(),
         "OPENAI_RESPONSES".into(), Vec::new(), false, false, false, Vec::new(), true,
         test_runtime_context(),
     );

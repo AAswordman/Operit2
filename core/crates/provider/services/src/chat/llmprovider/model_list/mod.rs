@@ -22,6 +22,17 @@ pub(super) enum DiscoveryProtocol {
 }
 
 impl DiscoveryProtocol {
+    /// Declares where the shared transport must encode the request's credential.
+    pub(super) fn authentication(
+        self,
+    ) -> crate::chat::llmprovider::ProviderHttp::KeyAuthentication {
+        use crate::chat::llmprovider::ProviderHttp::KeyAuthentication;
+        match self {
+            Self::Gemini => KeyAuthentication::Query("key".into()),
+            Self::Anthropic => KeyAuthentication::Header("x-api-key".into()),
+            Self::Bearer | Self::OpenCode => KeyAuthentication::Bearer,
+        }
+    }
     /// Selects the model-discovery protocol once from the configured provider type.
     pub(super) fn for_provider(provider_type: &ApiProviderType) -> Self {
         match provider_type {
@@ -51,14 +62,13 @@ impl DiscoveryProtocol {
     pub(super) fn request_headers(
         self,
         provider: &ProviderProfile,
-        operation: &ProviderOperationSpec,
     ) -> Result<Vec<(String, String)>, String> {
         let custom_headers = request::custom_headers(provider)?;
         match self {
             Self::Gemini => request::merge_custom_headers(request::json_headers(), &custom_headers),
-            Self::Anthropic => request::anthropic_headers(provider, operation, &custom_headers),
+            Self::Anthropic => request::anthropic_headers(&custom_headers),
             Self::Bearer | Self::OpenCode => {
-                request::bearer_headers(self, provider, operation, &custom_headers)
+                request::bearer_headers(self, provider, &custom_headers)
             }
         }
     }

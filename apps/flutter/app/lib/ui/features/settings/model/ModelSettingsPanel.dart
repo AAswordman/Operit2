@@ -18,6 +18,7 @@ import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
 import 'CodexLoginDialog.dart';
+import 'ApiKeyPoolEditor.dart';
 import 'ModelConnectionTestCapabilities.dart';
 import 'ProviderLogo.dart';
 import '../tts/TtsSettingsPanel.dart';
@@ -202,9 +203,9 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
           providerType: provider.providerType,
           endpoint: provider.endpoint,
           apiKey: result.apiKey,
-          useMultipleApiKeys: provider.useMultipleApiKeys,
-          apiKeyPool: provider.apiKeyPool,
-          currentKeyIndex: provider.currentKeyIndex,
+          useMultipleApiKeys: result.useMultipleApiKeys,
+          apiKeyPool: result.apiKeyPool,
+          currentKeyIndex: 0,
           keyRotationMode: provider.keyRotationMode,
           customHeaders: result.customHeaders,
           requestLimitPerMinute: result.requestLimitPerMinute,
@@ -261,8 +262,8 @@ class ModelSettingsPanelState extends State<ModelSettingsPanel> {
           ),
           endpoint: saveResult.endpoint,
           apiKey: saveResult.apiKey,
-          useMultipleApiKeys: provider.useMultipleApiKeys,
-          apiKeyPool: provider.apiKeyPool,
+          useMultipleApiKeys: saveResult.useMultipleApiKeys,
+          apiKeyPool: saveResult.apiKeyPool,
           currentKeyIndex: provider.currentKeyIndex,
           keyRotationMode: provider.keyRotationMode,
           customHeaders: saveResult.customHeaders,
@@ -643,6 +644,8 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
     required this.providerTypeId,
     required this.endpoint,
     required this.apiKey,
+    required this.useMultipleApiKeys,
+    required this.apiKeyPool,
     required this.customHeaders,
     required this.requestLimitPerMinute,
     required this.maxConcurrentRequests,
@@ -652,6 +655,8 @@ class _ProviderEditSaveResult extends _ProviderEditResult {
   final String providerTypeId;
   final String endpoint;
   final String apiKey;
+  final bool useMultipleApiKeys;
+  final List<core_proxy.ApiKeyInfo> apiKeyPool;
   final String customHeaders;
   final int requestLimitPerMinute;
   final int maxConcurrentRequests;
@@ -706,11 +711,16 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   late final TextEditingController _maxConcurrentController;
   String? _selectedProviderTypeId;
   core_proxy.CodexSessionStatus? _codexStatus;
+  late bool _useKeyPool;
+  late List<core_proxy.ApiKeyInfo> _keyPool;
+  bool _keyTesting = false;
 
   @override
   void initState() {
     super.initState();
     final provider = widget.provider;
+    _useKeyPool = provider?.useMultipleApiKeys ?? false;
+    _keyPool = List.of(provider?.apiKeyPool ?? const <core_proxy.ApiKeyInfo>[]);
     _nameController = TextEditingController(text: provider?.name ?? '');
     _endpointController = TextEditingController(text: provider?.endpoint ?? '');
     _apiKeyController = TextEditingController(text: provider?.apiKey ?? '');
@@ -889,6 +899,32 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
     );
   }
 
+  /// Probes a draft credential using the current endpoint, headers, and first model.
+  Future<core_proxy.ApiKeyInfo> _testPoolEntry(core_proxy.ApiKeyInfo entry) {
+    final provider = widget.provider!;
+    return widget.clients.application.testProviderApiKey(
+      provider: core_proxy.ProviderProfile(
+        id: provider.id,
+        name: _nameController.text.trim(),
+        providerTypeId: _selectedProviderTypeId!,
+        providerType: core_proxy.ApiProviderType.fromJson(
+          _selectedProviderTypeId,
+        ),
+        endpoint: _endpointController.text.trim(),
+        apiKey: _apiKeyController.text,
+        useMultipleApiKeys: _useKeyPool,
+        apiKeyPool: _keyPool,
+        currentKeyIndex: provider.currentKeyIndex,
+        keyRotationMode: provider.keyRotationMode,
+        customHeaders: _customHeadersController.text,
+        requestLimitPerMinute: int.parse(_requestLimitController.text),
+        maxConcurrentRequests: int.parse(_maxConcurrentController.text),
+        models: provider.models,
+      ),
+      keyId: entry.id,
+    );
+  }
+
   /// Saves provider settings from the dialog form.
   void _save() {
     if (!_formKey.currentState!.validate() || _selectedProviderTypeId == null) {
@@ -902,6 +938,9 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
             ? 'https://chatgpt.com/backend-api/codex/responses'
             : _endpointController.text.trim(),
         apiKey: _apiKeyController.text,
+        useMultipleApiKeys:
+            !_isCodexProvider && !_isLocalProvider && _useKeyPool,
+        apiKeyPool: _keyPool,
         customHeaders: _customHeadersController.text,
         requestLimitPerMinute: int.parse(_requestLimitController.text),
         maxConcurrentRequests: int.parse(_maxConcurrentController.text),
@@ -995,11 +1034,31 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                     status: _codexStatus,
                     onLogin: _openCodexLogin,
                   )
-                else
+                else if (!_useKeyPool || _isLocalProvider)
                   _DialogTextField(
                     controller: _apiKeyController,
                     label: l10n.settingsModelApiKey,
                     obscureText: true,
+                  ),
+                if (!_isCodexProvider && !_isLocalProvider)
+                  ApiKeyPoolEditor(
+                    singleKey: _apiKeyController.text,
+                    onResetHealth: widget.provider == null
+                        ? null
+                        : () => widget.clients.preferencesModelConfigManager
+                              .clearProviderApiKeyFailures(
+                                providerId: widget.provider!.id,
+                              ),
+                    enabled: _useKeyPool,
+                    entries: _keyPool,
+                    onEnabledChanged: (value) =>
+                        setState(() => _useKeyPool = value),
+                    onChanged: (entries) => setState(() => _keyPool = entries),
+                    onTestingChanged: (value) =>
+                        setState(() => _keyTesting = value),
+                    onTestEntry: widget.provider?.models.isNotEmpty == true
+                        ? _testPoolEntry
+                        : null,
                   ),
                 Theme(
                   data: Theme.of(context).copyWith(
@@ -1065,7 +1124,10 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
           onPressed: () => Navigator.of(context).pop(),
           child: Text(l10n.cancel),
         ),
-        FilledButton(onPressed: _save, child: Text(l10n.save)),
+        FilledButton(
+          onPressed: _keyTesting ? null : _save,
+          child: Text(l10n.save),
+        ),
       ],
     );
   }

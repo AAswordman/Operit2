@@ -25,7 +25,7 @@ impl LocalChatAIProvider {
     ) -> Self {
         let serializer = OpenAIProvider::new_with_capabilities(
             String::new(),
-            String::new(),
+            String::new().into(),
             model.clone(),
             "LOCAL_MODEL".into(),
             Vec::new(),

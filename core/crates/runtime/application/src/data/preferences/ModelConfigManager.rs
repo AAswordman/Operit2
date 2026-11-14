@@ -2,6 +2,23 @@
 use std::path::PathBuf;
 
 use std::collections::HashSet;
+use std::sync::{Arc, Mutex, OnceLock, Weak};
+use operit_providers::chat::llmprovider::ApiKeyProvider::{ApiKeyOutcome, ApiKeyPoolState};
+
+type PoolStateRegistry = Vec<(Weak<dyn operit_host_api::RuntimeStorageHost>, Arc<Mutex<ApiKeyPoolState>>)>;
+
+/// Shares node-local key health between managers using the same storage host.
+fn keyPoolState(storage: &Arc<dyn operit_host_api::RuntimeStorageHost>) -> Arc<Mutex<ApiKeyPoolState>> {
+    static REGISTRY: OnceLock<Mutex<PoolStateRegistry>> = OnceLock::new();
+    let mut registry = REGISTRY.get_or_init(|| Mutex::new(Vec::new())).lock().expect("key health registry mutex poisoned");
+    registry.retain(|(owner, _)| owner.strong_count() > 0);
+    if let Some((_, state)) = registry.iter().find(|(owner, _)| owner.upgrade().is_some_and(|owner| Arc::ptr_eq(&owner, storage))) {
+        return state.clone();
+    }
+    let state = Arc::new(Mutex::new(ApiKeyPoolState::default()));
+    registry.push((Arc::downgrade(storage), state.clone()));
+    state
+}
 
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -67,6 +84,8 @@ pub enum ModelConfigError {
     ConnectionTest(String),
     #[error("invalid thinking level: {0}")]
     InvalidThinkingLevel(String),
+    #[error("API key pool error: {0}")]
+    ApiKeyPool(String),
 }
 
 /// Reports the result of importing model configuration backup data.
@@ -101,6 +120,7 @@ pub struct ModelConfigManager {
 
     modelConfigDataStore: PreferencesDataStore,
     connectionTestDataStore: CoreNodeStateStore,
+    keyPoolState: Arc<Mutex<ApiKeyPoolState>>,
 }
 
 impl ModelConfigManager {
@@ -131,6 +151,7 @@ impl ModelConfigManager {
     pub fn default() -> Self {
         let storage = operit_store::RuntimeStorageHost::defaultRuntimeStorageHost();
         Self {
+            keyPoolState: keyPoolState(&storage),
             modelConfigDataStore: Self::preferenceStore(storage.clone(), operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH),
             connectionTestDataStore: CoreNodeStateStore::newWithStorage(storage, operit_util::RuntimeStorageLayout::RUNTIME_MODEL_CONNECTION_TESTS_PATH),
         }
@@ -278,8 +299,29 @@ impl ModelConfigManager {
         if provider.providerType == ApiProviderType::OPENAI_CODEX {
             provider.endpoint = "https://chatgpt.com/backend-api/codex/responses".to_string();
         }
+        provider.keyRotationMode = "STICKY_FAILOVER".to_string();
         self.modelConfigDataStore.try_edit_result(|preferences| {
             self.assertProviderExistsInPreferences(preferences, &provider.id)?;
+            let current = self.readProviderFromPreferences(preferences, &provider.id)?;
+            provider.currentKeyIndex = usize::try_from(current.currentKeyIndex)
+                .ok()
+                .and_then(|index| current.apiKeyPool.get(index))
+                .and_then(|selected| provider.apiKeyPool.iter().position(|entry| {
+                    entry.id == selected.id && entry.key == selected.key
+                }))
+                .unwrap_or(0) as i32;
+            for entry in &mut provider.apiKeyPool {
+                if let Some(saved) = current.apiKeyPool.iter().find(|saved| saved.id == entry.id && saved.key == entry.key) {
+                    entry.usageCount = saved.usageCount;
+                    entry.lastUsed = saved.lastUsed;
+                    entry.errorCount = saved.errorCount;
+                    if entry.availabilityStatus != saved.availabilityStatus || (!saved.isEnabled && entry.isEnabled) {
+                        self.keyPoolState.lock().expect("key health mutex poisoned").clear(&provider.id, &entry.key);
+                    }
+                } else {
+                    self.keyPoolState.lock().expect("key health mutex poisoned").clear(&provider.id, &entry.key);
+                }
+            }
             Self::assertProviderNameUniqueInPreferences(
                 preferences,
                 &provider.name,
@@ -289,6 +331,38 @@ impl ModelConfigManager {
             Ok::<(), ModelConfigError>(())
         })?;
         Ok(provider)
+    }
+
+    /// Reserves and persists one credential under the preference store's atomic edit lock.
+    pub(crate) fn reserveProviderApiKey(&self, providerId: &str) -> Result<String, ModelConfigError> {
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            let mut provider = self.readProviderFromPreferences(preferences, providerId)?;
+            let key = self.keyPoolState.lock().expect("key health mutex poisoned")
+                .reserve(&mut provider, operit_host_api::TimeUtils::currentTimeMillis())
+                .map_err(ModelConfigError::ApiKeyPool)?;
+            Self::writeProvider(preferences, &provider)?;
+            Ok(key)
+        })
+    }
+
+    /// Records exact-key feedback without moving affinity back after a late concurrent success.
+    pub(crate) fn reportProviderApiKey(&self, providerId: &str, key: &str, startedAt: i64, outcome: ApiKeyOutcome) -> Result<(), ModelConfigError> {
+        self.modelConfigDataStore.try_edit_result(|preferences| {
+            let mut provider = self.readProviderFromPreferences(preferences, providerId)?;
+            self.keyPoolState.lock().expect("key health mutex poisoned").report(
+                &mut provider, key, startedAt, outcome, operit_host_api::TimeUtils::currentTimeMillis(),
+            );
+            if outcome != ApiKeyOutcome::Success { Self::writeProvider(preferences, &provider)?; }
+            Ok(())
+        })
+    }
+
+    /// Clears node-local credential blocks and cooldowns after an explicit user action.
+    pub fn clearProviderApiKeyFailures(&self, providerId: &str) -> Result<(), ModelConfigError> {
+        let provider = self.getProviderProfile(providerId)?;
+        let mut state = self.keyPoolState.lock().expect("key health mutex poisoned");
+        for entry in &provider.apiKeyPool { state.clear(providerId, &entry.key); }
+        Ok(())
     }
 
     /// Replaces the default provider profile and preserves its id.
@@ -371,7 +445,17 @@ impl ModelConfigManager {
         if provider.providerType != ApiProviderType::OPENAI_CODEX {
             let providerCatalog = ModelCatalog::provider(&provider.providerTypeId)
                 .map_err(ModelConfigError::ModelListFetch)?;
-            let remoteModels = ModelListFetcher::fetch(&provider, &providerCatalog)
+            let getter = {
+                let reserveManager = self.clone();
+                let reportManager = self.clone();
+                let reserveId = providerId.to_string();
+                let reportId = reserveId.clone();
+                operit_providers::chat::llmprovider::ApiKeyProvider::KeyGetter::from_callbacks(
+                    Arc::new(move || reserveManager.reserveProviderApiKey(&reserveId).map_err(|error| error.to_string())),
+                    Arc::new(move |key, started, outcome| reportManager.reportProviderApiKey(&reportId, key, started, outcome).map_err(|error| error.to_string())),
+                )
+            };
+            let remoteModels = ModelListFetcher::fetch(&provider, &providerCatalog, getter)
                 .map_err(ModelConfigError::ModelListFetch)?;
             for remoteModel in remoteModels {
                 if seenModelIds.insert(remoteModel.modelId.to_ascii_lowercase()) {
@@ -763,6 +847,21 @@ impl ModelConfigManager {
         .await;
         self.saveConnectionTestResult(&provider, &model, stream, &outcome)?;
         outcome.map_err(ModelConfigError::ConnectionTest)
+    }
+
+    /// Tests one draft pool entry against the first configured model without saving the draft.
+    pub async fn testProviderApiKey(
+        &self,
+        provider: ProviderProfile,
+        keyId: &str,
+        providerRuntimeContext: ProviderRuntimeContext,
+    ) -> Result<operit_model::ApiKeyInfo::ApiKeyInfo, ModelConfigError> {
+        let entry = provider.apiKeyPool.iter().find(|entry| entry.id == keyId)
+            .ok_or_else(|| ModelConfigError::ApiKeyPool("API key entry not found".to_string()))?.clone();
+        if entry.key.trim().is_empty() { return Err(ModelConfigError::ApiKeyPool("API key is empty".to_string())); }
+        let model = provider.models.first().ok_or_else(|| ModelConfigError::ApiKeyPool("Configure a model before testing API keys".to_string()))?;
+        let config = self.resolveFromProfiles(&provider, model)?;
+        Ok(operit_providers::chat::llmprovider::ApiKeyPoolAvailabilityTester::test_pool_entry(entry, config, providerRuntimeContext).await)
     }
 
     /// Exports all provider profiles as formatted JSON.
@@ -2134,6 +2233,46 @@ mod tests {
 
         }
         fs::remove_dir_all(root).expect("remove model config test root");
+    }
+
+    /// Verifies concurrent requests retain affinity and stale drafts preserve fault-driven selection.
+    #[test]
+    fn api_key_pool_reservations_are_atomic_and_survive_editor_save() {
+        use operit_model::ApiKeyInfo::ApiKeyInfo;
+        let root = unique_test_root("api_key_pool_atomic");
+        setup_test_runtime(root.clone());
+        let manager = ModelConfigManager::default();
+        let id = ModelConfigManager::DEFAULT_PROVIDER_ID;
+        let mut provider = manager.getProviderProfile(id).unwrap();
+        provider.useMultipleApiKeys = true;
+        provider.apiKeyPool = (0..3).map(|i| ApiKeyInfo::new(i.to_string(), format!("fixture-{i}"))).collect();
+        let stale_editor = manager.updateProviderProfile(provider).unwrap();
+        let workers: Vec<_> = (0..12).map(|_| {
+            let manager = manager.clone();
+            std::thread::spawn(move || manager.reserveProviderApiKey(id).unwrap())
+        }).collect();
+        let mut keys: Vec<_> = workers.into_iter().map(|worker| worker.join().unwrap()).collect();
+        keys.sort();
+        assert!(keys.iter().all(|key| key == "fixture-0"));
+        manager.reportProviderApiKey(id, "fixture-0", 0, super::ApiKeyOutcome::Authentication).unwrap();
+        assert_eq!(manager.reserveProviderApiKey(id).unwrap(), "fixture-1");
+        manager.updateProviderProfile(stale_editor).unwrap();
+        let saved = manager.getProviderProfile(id).unwrap();
+        assert_eq!(saved.currentKeyIndex, 1);
+        assert_eq!(saved.apiKeyPool.iter().map(|key| key.usageCount).sum::<i64>(), 13);
+        assert_eq!(manager.reserveProviderApiKey(id).unwrap(), "fixture-1");
+        manager.reportProviderApiKey(id, "fixture-0", 0, super::ApiKeyOutcome::Success).unwrap();
+        assert_eq!(manager.reserveProviderApiKey(id).unwrap(), "fixture-1");
+        let mut edited = manager.getProviderProfile(id).unwrap();
+        edited.apiKeyPool[2].isEnabled = false;
+        edited.apiKeyPool.insert(0, ApiKeyInfo::new("new".into(), "fixture-new".into()));
+        manager.updateProviderProfile(edited).unwrap();
+        let another_manager = ModelConfigManager::default();
+        assert_eq!(another_manager.reserveProviderApiKey(id).unwrap(), "fixture-1");
+        assert_eq!(another_manager.getProviderProfile(id).unwrap().currentKeyIndex, 2);
+        another_manager.reportProviderApiKey(id, "fixture-1", 0, super::ApiKeyOutcome::Authentication).unwrap();
+        assert_eq!(manager.reserveProviderApiKey(id).unwrap(), "fixture-new");
+        assert_eq!(manager.getProviderProfile(id).unwrap().apiKeyPool[1].errorCount, 1);
     }
 
     #[test]

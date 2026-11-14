@@ -28,6 +28,7 @@ pub struct ToolPkgJsAiProviderService {
     executionChatId: String,
     providerRuntimeContextKey: String,
     runtimeContext: ProviderRuntimeContext,
+    keyGetter: super::ApiKeyProvider::KeyGetter,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -43,6 +44,7 @@ impl ToolPkgJsAiProviderService {
         config: ResolvedModelConfig,
         provider: ProviderToolPkgAiProviderRegistration,
         runtimeContext: ProviderRuntimeContext,
+        keyGetter: super::ApiKeyProvider::KeyGetter,
     ) -> Self {
         let normalizedProviderId = provider.providerId.trim().to_ascii_lowercase();
         Self {
@@ -59,6 +61,7 @@ impl ToolPkgJsAiProviderService {
             provider,
             tokenCounts: Arc::new(Mutex::new(ToolPkgProviderTokenCounts::default())),
             runtimeContext,
+            keyGetter,
         }
     }
 
@@ -72,6 +75,9 @@ impl ToolPkgJsAiProviderService {
         onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> Result<Value, AiServiceError> {
         let mut payload = eventPayload;
+        payload["config"]["apiKey"] = Value::String(
+            self.keyGetter.acquire().map_err(AiServiceError::RequestFailed)?,
+        );
         if let Value::Object(object) = &mut payload {
             object.insert(
                 "chatId".to_string(),
@@ -122,7 +128,6 @@ impl ToolPkgJsAiProviderService {
             "modelId": self.config.modelId,
             "apiProviderType": self.config.apiProviderTypeId,
             "apiProviderTypeId": self.config.apiProviderTypeId,
-            "apiKey": self.config.apiKey,
             "apiEndpoint": self.config.apiEndpoint,
             "modelId": self.config.modelId,
             "customHeaders": decodeJsonObjectString(&self.config.customHeaders),

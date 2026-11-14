@@ -158,19 +158,18 @@ class OnboardingStartupRouteStrategy extends StartupRouteStrategy {
     return _providerHasApiKey(boundProvider);
   }
 
+  /// Checks the credential source selected by the provider configuration.
   static bool _providerHasApiKey(core_proxy.ProviderProfile provider) {
-    if (provider.apiKey.trim().isNotEmpty) {
-      return true;
-    }
     if (!provider.useMultipleApiKeys) {
-      return false;
+      return provider.apiKey.trim().isNotEmpty;
     }
-    for (final key in provider.apiKeyPool) {
-      if (key is String && key.trim().isNotEmpty) {
-        return true;
-      }
-    }
-    return false;
+    return provider.apiKeyPool.any(
+      (entry) =>
+          entry.isEnabled &&
+          entry.key.trim().isNotEmpty &&
+          entry.availabilityStatus !=
+              core_proxy.ApiKeyAvailabilityStatus.unavailable,
+    );
   }
 }
 

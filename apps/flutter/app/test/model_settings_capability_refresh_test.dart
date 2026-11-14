@@ -19,6 +19,44 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
   setUp(ClientLogger.initialize);
+  testWidgets(
+    'provider editor persists the pool and imported identities through Core',
+    (tester) async {
+      final bridge = _ModelSettingsBridge();
+      final panelKey = GlobalKey<ModelSettingsPanelState>();
+      await _pumpModelSettings(tester, bridge, panelKey);
+      final l10n = AppLocalizations.of(panelKey.currentContext!)!;
+      await tester.tap(find.text('Test Provider'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip(l10n.settingsModelEditProvider));
+      await tester.pumpAndSettle();
+      final toggle = find.byKey(const ValueKey('api-key-pool-toggle'));
+      await tester.ensureVisible(toggle);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(find.text(l10n.settingsModelAddApiKey));
+      await tester.tap(find.text(l10n.settingsModelAddApiKey));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('pool-key-input')),
+        'first-key\nsecond-key',
+      );
+      await tester.tap(find.text(l10n.save).last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text(l10n.save).last);
+      await tester.pumpAndSettle();
+      final saved = bridge.savedProvider!;
+      expect(saved.id, bridge.provider.id);
+      expect(saved.models.single.id, 'test-model');
+      expect(saved.useMultipleApiKeys, isTrue);
+      expect(saved.apiKeyPool.map((entry) => entry.key), [
+        'first-key',
+        'second-key',
+      ]);
+      expect(saved.apiKeyPool.map((entry) => entry.id).toSet(), hasLength(2));
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final downloadedAt in <int?>[null, 1794000000000]) {
     testWidgets(
       'catalog update failure keeps model picker usable at $downloadedAt',
@@ -86,10 +124,7 @@ void main() {
           expect(find.text('HTTP 503'), findsOneWidget);
           // A tooltip inside the result bubble must be able to resolve its
           // anchor during layout, before the bubble is painted.
-          final copyTooltip = tester.state<TooltipState>(
-            find.byTooltip(l10n.settingsModelCopyError),
-          );
-          expect(copyTooltip.ensureTooltipVisible(), isTrue);
+          await tester.longPress(find.byTooltip(l10n.settingsModelCopyError));
           await tester.pumpAndSettle();
           expect(find.text(l10n.settingsModelCopyError), findsOneWidget);
         }
@@ -397,6 +432,7 @@ Future<void> _pumpModelSettings(
 }
 
 class _ModelSettingsBridge extends OperitRuntimeBridge {
+  core.ProviderProfile? savedProvider;
   core.FunctionModelBinding chatBinding = binding;
   String modelId = binding.modelId;
   String? resolutionError;
@@ -462,22 +498,24 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
     localRuntime: localRuntime,
   );
 
-  core.ProviderProfile get provider => core.ProviderProfile(
-    id: binding.providerId,
-    name: 'Test Provider',
-    providerTypeId: 'OPENAI',
-    providerType: core.ApiProviderType.openai,
-    endpoint: 'https://example.com/v1',
-    apiKey: '',
-    useMultipleApiKeys: false,
-    apiKeyPool: const [],
-    currentKeyIndex: 0,
-    keyRotationMode: 'ROUND_ROBIN',
-    customHeaders: '{}',
-    requestLimitPerMinute: 0,
-    maxConcurrentRequests: 1,
-    models: [model],
-  );
+  core.ProviderProfile get provider =>
+      savedProvider ??
+      core.ProviderProfile(
+        id: binding.providerId,
+        name: 'Test Provider',
+        providerTypeId: 'OPENAI',
+        providerType: core.ApiProviderType.openai,
+        endpoint: 'https://example.com/v1',
+        apiKey: '',
+        useMultipleApiKeys: false,
+        apiKeyPool: const [],
+        currentKeyIndex: 0,
+        keyRotationMode: 'ROUND_ROBIN',
+        customHeaders: '{}',
+        requestLimitPerMinute: 0,
+        maxConcurrentRequests: 1,
+        models: [model],
+      );
 
   core.ResolvedModelConfig get config => core.ResolvedModelConfig(
     providerId: binding.providerId,
@@ -601,7 +639,7 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
         result = model.toJson();
       case 'getModelConnectionTestResults':
         result = savedConnectionTests;
-      case 'testModelConnection':
+      case 'test_model_connection':
         connectionTestCalls++;
         await connectionTestGate?.future;
         final report = <String, Object?>{
@@ -633,8 +671,24 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
       case 'getCurrentTtsConfigId':
       case 'getSelectedSttConfigId':
         result = '';
+      case 'updateProviderProfile':
+        savedProvider = core.ProviderProfile.fromJson(
+          (request.args as Map)['provider'] as Map<String, Object?>,
+        );
+        result = savedProvider!.toJson();
       case 'getProviderCatalogEntries':
-        result = request.target.contains('Stt')
+        result = request.target == 'core/preferences.modelConfigManager'
+            ? [
+                const core.ProviderCatalogEntry(
+                  providerTypeId: 'OPENAI',
+                  displayName: 'OpenAI',
+                  defaultEndpoint: 'https://example.com/v1',
+                  endpointOptions: [],
+                  operations: [],
+                  models: [],
+                ).toJson(),
+              ]
+            : request.target == 'core/preferences.sttConfigManager'
             ? [
                 const core.SttProviderCatalogEntry(
                   providerTypeId: 'OPENAI_STT',

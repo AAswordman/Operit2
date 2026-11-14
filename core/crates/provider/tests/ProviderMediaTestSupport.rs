@@ -152,6 +152,17 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
         Err("test runtime does not expose provider profiles".to_string())
     }
 
+    /// Rejects pool reservation in the media-only test runtime.
+    fn reserveProviderApiKey(&self, _providerId: &str) -> Result<String, String> {
+        Err("test runtime does not expose API key pools".to_string())
+    }
+
+    /// Rejects feedback in the media-only test runtime.
+    fn reportProviderApiKey(&self, _: &str, _: &str, _: i64,
+        _: crate::chat::llmprovider::ApiKeyProvider::ApiKeyOutcome) -> Result<(), String> {
+        Err("test runtime does not expose API key pools".to_string())
+    }
+
     /// Reports that no package AI provider is registered in the test runtime.
     fn hasToolPkgAiProvider(&self, _providerId: &str) -> bool {
         false

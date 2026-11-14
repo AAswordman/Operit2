@@ -11,7 +11,7 @@ use serde_json::{json, Value};
 fn provider(vision: bool) -> OpenAIProvider {
     OpenAIProvider::new_with_capabilities(
         "https://example.test/v1/chat/completions".to_string(),
-        "test-key".to_string(),
+        "test-key".to_string().into(),
         "test-model".to_string(),
         "OPENAI_GENERIC".to_string(),
         Vec::new(),
@@ -260,7 +260,7 @@ fn audio_and_video_links_are_converted_to_openai_multimodal_parts() {
     );
     let multimodal_provider = OpenAIProvider::new_with_capabilities(
         "https://example.test/v1/chat/completions".to_string(),
-        "test-key".to_string(),
+        "test-key".to_string().into(),
         "test-model".to_string(),
         "OPENAI_GENERIC".to_string(),
         Vec::new(),

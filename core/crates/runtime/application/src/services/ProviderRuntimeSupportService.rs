@@ -624,6 +624,17 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
             .map_err(|error| error.to_string())
     }
 
+    /// Atomically reserves a credential through the configuration store.
+    fn reserveProviderApiKey(&self, providerId: &str) -> Result<String, String> {
+        ModelConfigManager::default().reserveProviderApiKey(providerId).map_err(|error| error.to_string())
+    }
+
+    /// Updates the shared provider-wide health decision from a typed transport outcome.
+    fn reportProviderApiKey(&self, providerId: &str, key: &str, startedAt: i64,
+        outcome: operit_providers::chat::llmprovider::ApiKeyProvider::ApiKeyOutcome) -> Result<(), String> {
+        ModelConfigManager::default().reportProviderApiKey(providerId, key, startedAt, outcome).map_err(|error| error.to_string())
+    }
+
     /// Returns whether a ToolPkg AI provider is registered.
     fn hasToolPkgAiProvider(&self, providerId: &str) -> bool {
         ToolPkgAiProviderRegistry::get(providerId).is_some()

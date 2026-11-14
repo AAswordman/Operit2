@@ -5,15 +5,13 @@ use operit_model::ModelConfigData::{
 };
 use serde_json::Value;
 
-use super::{request, response};
+use super::response;
 
 /// Builds Gemini's versioned model URL with the configured API key as a query parameter.
 pub(super) fn request_url(
     provider: &ProviderProfile,
     operation: &ProviderOperationSpec,
 ) -> Result<String, String> {
-    let api_key = request::selected_api_key(provider)
-        .ok_or_else(|| "Google model-list api key is required".to_string())?;
     let mut url = url::Url::parse(&provider.endpoint).map_err(|error| error.to_string())?;
     let segments: Vec<_> = url
         .path_segments()
@@ -34,8 +32,6 @@ pub(super) fn request_url(
     url.set_path(&path);
     url.set_query(None);
     url.set_fragment(None);
-    // Kotlin uses setQueryParameter("key", apiKey), not OAuth Bearer authentication.
-    url.query_pairs_mut().append_pair("key", api_key);
     Ok(url.to_string())
 }
 

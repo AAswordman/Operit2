@@ -1361,7 +1361,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelApiKeyPoolDescription =>
-      '给同一个模型配置准备多个 Key，用于多 Key 轮换。';
+      '持续使用健康的 Key；遇到鉴权、额度、限流或临时故障时切换，并跳过冷却中的 Key。';
 
   @override
   String settingsModelApiKeyPoolCount(int count) {
@@ -1369,7 +1369,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsModelApiKeyPoolEmpty => '还没有 Key。添加后，运行时会按当前配置使用 Key 池。';
+  String get settingsModelApiKeyPoolEmpty => 'Key 池为空，请添加 Key 后再启用。';
 
   @override
   String get settingsModelAddApiKey => '添加 Key';
@@ -1382,6 +1382,33 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsModelApiKeyEnabled => '启用这个 Key';
+
+  @override
+  String get settingsModelPoolAddSingle => '添加当前单 Key';
+
+  @override
+  String get settingsModelPoolPaste => '每行粘贴一个 Key，可批量添加。';
+
+  @override
+  String get settingsModelPoolNoEligible => '请至少启用一个非空且未标记为不可用的 Key。';
+
+  @override
+  String get settingsModelPoolUntested => '未测试';
+
+  @override
+  String get settingsModelPoolAvailable => '可用';
+
+  @override
+  String get settingsModelPoolUnavailable => '不可用';
+
+  @override
+  String get settingsModelPoolClearMarks => '重置 Key 状态';
+
+  @override
+  String get settingsModelPoolTest => '测试未检测的 Key';
+
+  @override
+  String get settingsModelPoolNeedsModel => '保存供应商并添加模型后，即可测试 Key。';
 
   @override
   String get settingsModelProviderId => '供应商 ID';

@@ -1,6 +1,8 @@
+use super::ApiKeyProvider::KeyGetter;
+use super::ProviderHttp::KeyAuthentication;
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use http::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::sync::{Arc, Mutex};
@@ -29,7 +31,8 @@ pub(crate) const RESPONSES_OUTPUT_ITEM_META_PROVIDER: &str = "openai:responses_o
 #[derive(Clone)]
 pub struct OpenAIResponsesProvider {
     pub responsesApiEndpoint: String,
-    pub api_key: String,
+    pub key_getter: KeyGetter,
+
     pub modelName: String,
     pub responsesProviderType: String,
     pub supportsVision: bool,
@@ -85,7 +88,7 @@ impl OpenAIResponsesProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         responsesApiEndpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         modelName: String,
         responsesProviderType: String,
         customHeaders: Vec<(String, String)>,
@@ -98,7 +101,7 @@ impl OpenAIResponsesProvider {
     ) -> Self {
         Self {
             responsesApiEndpoint,
-            api_key,
+            key_getter,
             modelName,
             responsesProviderType,
             supportsVision,
@@ -172,7 +175,7 @@ impl OpenAIResponsesProvider {
     fn parentProvider(&self) -> OpenAIProvider {
         OpenAIProvider::new_with_capabilities(
             self.responsesApiEndpoint.clone(),
-            self.api_key.clone(),
+            self.key_getter.clone(),
             self.modelName.clone(),
             self.responsesProviderType.clone(),
             self.customHeaders.clone(),
@@ -181,6 +184,7 @@ impl OpenAIResponsesProvider {
             self.supportsVideo,
             self.enableToolCall,
         )
+
         .with_responses_api(true)
     }
 
@@ -245,7 +249,7 @@ impl OpenAIResponsesProvider {
             .saveCodexTokens(tokens.clone())
             .map_err(AiServiceError::RequestFailed)?;
         let account_id = crate::chat::llmprovider::CodexOAuth::account_id_from_tokens(&tokens)?;
-        self.api_key = tokens.accessToken;
+        self.key_getter = tokens.accessToken.into();
         self.customHeaders
             .retain(|(name, _)| !name.eq_ignore_ascii_case("ChatGPT-Account-Id"));
         self.customHeaders
@@ -383,14 +387,6 @@ impl OpenAIResponsesProvider {
     fn headers(&self) -> Result<HeaderMap, AiServiceError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if !self.api_key.trim().is_empty() {
-            let value = format!("Bearer {}", self.api_key);
-            headers.insert(
-                AUTHORIZATION,
-                HeaderValue::from_str(&value)
-                    .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?,
-            );
-        }
         if self.responsesProviderType == "OPENAI_CODEX" {
             apply_codex_headers(&mut headers, &self.customHeaders)?;
         }
@@ -1291,7 +1287,7 @@ impl AIService for OpenAIResponsesProvider {
         // ProviderNotImplemented implementation.
         let parent = OpenAIProvider::new_with_capabilities(
             self.responsesApiEndpoint.clone(),
-            self.api_key.clone(),
+            self.key_getter.clone(),
             self.modelName.clone(),
             "OPENAI_RESPONSES_PARENT".to_string(),
             self.customHeaders.clone(),
@@ -1300,6 +1296,7 @@ impl AIService for OpenAIResponsesProvider {
             self.supportsVideo,
             self.enableToolCall,
         )
+
         .with_responses_api(true);
         AIService::calculate_input_tokens(&parent, chat_history, available_tools).await
     }
@@ -1366,6 +1363,7 @@ impl AIService for OpenAIResponsesProvider {
         }
 
         let response = super::ProviderHttp::post(&self.responsesApiEndpoint)
+            .key_getter(self.key_getter.clone(), KeyAuthentication::Bearer)
             .headers(self.headers()?)
             .json(&requestBody)
             .send()

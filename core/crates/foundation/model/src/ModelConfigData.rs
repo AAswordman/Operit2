@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use super::ApiKeyInfo::ApiKeyInfo;
+use crate::ApiKeyInfo::ApiKeyInfo;
 use super::BillingMode::BillingMode;
 use super::ModelParameter::ModelParameter;
 use crate::ModelThinking::{ModelThinkingSpec, ThinkingLevel};
@@ -627,7 +627,7 @@ impl ProviderProfile {
             useMultipleApiKeys: false,
             apiKeyPool: Vec::new(),
             currentKeyIndex: 0,
-            keyRotationMode: "ROUND_ROBIN".to_string(),
+            keyRotationMode: "STICKY_FAILOVER".to_string(),
             customHeaders: "{}".to_string(),
             requestLimitPerMinute: 0,
             maxConcurrentRequests: 0,

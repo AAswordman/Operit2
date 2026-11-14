@@ -1,6 +1,8 @@
+use super::ApiKeyProvider::KeyGetter;
+use super::ProviderHttp::KeyAuthentication;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use http::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::sync::{Arc, Mutex};
 
@@ -285,7 +287,8 @@ impl DeepseekResponsesPayloadAdapter {
 #[derive(Clone)]
 pub struct DeepseekProvider {
     pub api_endpoint: String,
-    pub api_key: String,
+    pub key_getter: KeyGetter,
+
     pub model_name: String,
     pub provider_type: String,
     pub supports_vision: bool,
@@ -313,7 +316,7 @@ impl DeepseekProvider {
     /// Creates a DeepSeek provider bound to one provider runtime context.
     pub fn new(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -326,7 +329,7 @@ impl DeepseekProvider {
     ) -> Self {
         Self {
             api_endpoint,
-            api_key,
+            key_getter,
             model_name,
             provider_type,
             supports_vision,
@@ -413,7 +416,7 @@ impl DeepseekProvider {
     fn open_ai_parent(&self, use_responses_api: bool) -> OpenAIProvider {
         OpenAIProvider::new_with_capabilities(
             self.api_endpoint.clone(),
-            self.api_key.clone(),
+            self.key_getter.clone(),
             self.model_name.clone(),
             self.provider_type.clone(),
             self.custom_headers.clone(),
@@ -422,6 +425,7 @@ impl DeepseekProvider {
             self.supports_video,
             self.enable_tool_call,
         )
+
         .with_responses_api(use_responses_api)
         .with_responses_stream_protocol(if use_responses_api {
             ResponsesStreamProtocol::Deepseek
@@ -678,11 +682,6 @@ impl DeepseekProvider {
     fn headers(&self) -> Result<HeaderMap, AiServiceError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if !self.api_key.trim().is_empty() {
-            let value = HeaderValue::from_str(&format!("Bearer {}", self.api_key.trim()))
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            headers.insert(AUTHORIZATION, value);
-        }
         for (name, value) in &self.custom_headers {
             let header_name = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
@@ -838,6 +837,7 @@ impl AIService for DeepseekProvider {
         }
 
         let response = super::ProviderHttp::post(&self.api_endpoint)
+            .key_getter(self.key_getter.clone(), KeyAuthentication::Bearer)
             .headers(self.headers()?)
             .json(&request_body)
             .send()
@@ -931,6 +931,7 @@ impl AIService for DeepseekProvider {
             })
         };
         let response = super::ProviderHttp::post(&self.api_endpoint)
+            .key_getter(self.key_getter.clone(), KeyAuthentication::Bearer)
             .headers(self.headers()?)
             .json(&request_body)
             .send()

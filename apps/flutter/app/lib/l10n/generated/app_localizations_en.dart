@@ -1415,7 +1415,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelApiKeyPoolDescription =>
-      'Prepare multiple keys for one model profile so runtime can rotate between them.';
+      'Keep using a healthy key. Switch on authentication, quota, rate limit, or temporary failures; cooling keys are skipped.';
 
   @override
   String settingsModelApiKeyPoolCount(int count) {
@@ -1424,7 +1424,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelApiKeyPoolEmpty =>
-      'No keys yet. Add keys and this profile will use the key pool.';
+      'No keys yet. Add a key before enabling this pool.';
 
   @override
   String get settingsModelAddApiKey => 'Add key';
@@ -1437,6 +1437,36 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsModelApiKeyEnabled => 'Enable this key';
+
+  @override
+  String get settingsModelPoolAddSingle => 'Add current single key';
+
+  @override
+  String get settingsModelPoolPaste =>
+      'Paste one key per line to add several at once.';
+
+  @override
+  String get settingsModelPoolNoEligible =>
+      'Enable at least one nonempty key that is not marked unavailable.';
+
+  @override
+  String get settingsModelPoolUntested => 'Untested';
+
+  @override
+  String get settingsModelPoolAvailable => 'Available';
+
+  @override
+  String get settingsModelPoolUnavailable => 'Unavailable';
+
+  @override
+  String get settingsModelPoolClearMarks => 'Reset key health';
+
+  @override
+  String get settingsModelPoolTest => 'Test untested keys';
+
+  @override
+  String get settingsModelPoolNeedsModel =>
+      'Save the provider and add a model before testing keys.';
 
   @override
   String get settingsModelProviderId => 'Provider ID';

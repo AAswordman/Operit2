@@ -122,6 +122,20 @@ impl ModelConfigConnectionTester {
         Ok(Self::report(configForTest, items))
     }
 
+    /// Tests one explicit credential using the provider's actual chat request implementation.
+    pub async fn testApiKey(config: ResolvedModelConfig, context: ProviderRuntimeContext) -> Result<(), String> {
+        let parameters = Self::testParameters(&config.apiProviderType, config.parameters.clone());
+        let mut service = MultiServiceManager::new(context).createServiceForConfig(config).map_err(|error| error.to_string())?;
+        let result = Self::executeTestRequest(&mut service, SendMessageRequest {
+            chat_history: vec![PromptTurn::new(PromptTurnKind::USER, "Hi")],
+            model_parameters: parameters, thinking: RequestThinking::default(), stream: false,
+            available_tools: Vec::new(), preserve_think_in_history: false, enable_retry: false,
+            on_non_fatal_error: None, on_tool_invocation: None,
+        }).await;
+        service.release();
+        result
+    }
+
     /// Runs every supported probe with the same user-selected response mode.
     async fn testService(
         mut service: Box<dyn AIService>,

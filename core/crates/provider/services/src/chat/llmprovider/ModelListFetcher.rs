@@ -8,6 +8,8 @@ use serde_json::Value;
 #[path = "model_list/mod.rs"]
 mod model_list;
 
+use super::ApiKeyProvider::KeyGetter;
+use super::ProviderHttp::execute_with_key_getter;
 use model_list::DiscoveryProtocol;
 
 pub struct ModelListFetcher;
@@ -17,6 +19,7 @@ impl ModelListFetcher {
     pub fn fetch(
         provider: &ProviderProfile,
         provider_catalog: &ProviderCatalogEntry,
+        getter: KeyGetter,
     ) -> Result<Vec<AvailableProviderModel>, String> {
         let operation = match provider_catalog
             .operations
@@ -27,7 +30,7 @@ impl ModelListFetcher {
             None => return Ok(Vec::new()),
         };
         let protocol = DiscoveryProtocol::for_provider(&provider.providerType);
-        let response = Self::request_json(provider, operation, protocol)?;
+        let response = Self::request_json(provider, operation, protocol, getter)?;
         protocol.parse_response(&response, operation)
     }
 
@@ -36,6 +39,7 @@ impl ModelListFetcher {
         provider: &ProviderProfile,
         operation: &ProviderOperationSpec,
         protocol: DiscoveryProtocol,
+        getter: KeyGetter,
     ) -> Result<Value, String> {
         if operation.handlerId != "http_json" {
             return Err(format!(
@@ -49,24 +53,18 @@ impl ModelListFetcher {
                 operation.method
             ));
         }
-        let request_url = protocol.request_url(provider, operation)?;
-        let request_headers = protocol.request_headers(provider, operation)?;
-        let response = defaultHttpHost()
-            .executeHttpRequest(HttpRequestData {
-                url: request_url,
-                method: operation.method.clone(),
-                headers: request_headers,
-                body: Vec::new(),
-                formFields: Vec::new(),
-                fileParts: Vec::new(),
-                connectTimeoutSeconds: 30,
-                readTimeoutSeconds: 120,
-                followRedirects: true,
-                ignoreSsl: false,
-                proxyHost: String::new(),
-                proxyPort: 0,
-            })
-            .map_err(|error| error.to_string())?;
+        let request = Self::request(provider, operation, protocol)?;
+        let getter = if operation.requiresApiKey || protocol == DiscoveryProtocol::Gemini {
+            getter.required()
+        } else {
+            getter
+        };
+        let response = execute_with_key_getter(
+            defaultHttpHost(),
+            request,
+            getter,
+            protocol.authentication(),
+        )?;
         let body = String::from_utf8(response.body)
             .map_err(|error| format!("list_models response body is not UTF-8: {error}"))?;
         if response.statusCode < 200 || response.statusCode >= 300 {
@@ -76,5 +74,26 @@ impl ModelListFetcher {
             ));
         }
         serde_json::from_str(&body).map_err(|error| error.to_string())
+    }
+    /// Encodes protocol metadata without looking up or materializing a credential.
+    fn request(
+        provider: &ProviderProfile,
+        operation: &ProviderOperationSpec,
+        protocol: DiscoveryProtocol,
+    ) -> Result<HttpRequestData, String> {
+        Ok(HttpRequestData {
+            url: protocol.request_url(provider, operation)?,
+            method: operation.method.clone(),
+            headers: protocol.request_headers(provider)?,
+            body: Vec::new(),
+            formFields: Vec::new(),
+            fileParts: Vec::new(),
+            connectTimeoutSeconds: 30,
+            readTimeoutSeconds: 120,
+            followRedirects: true,
+            ignoreSsl: false,
+            proxyHost: String::new(),
+            proxyPort: 0,
+        })
     }
 }

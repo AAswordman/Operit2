@@ -775,6 +775,19 @@ impl OperitApplication {
         }
     }
 
+    /// Tests one draft credential through this application's provider runtime without saving it.
+    pub fn test_provider_api_key(
+        &self,
+        provider: operit_model::ModelConfigData::ProviderProfile,
+        key_id: String,
+    ) -> impl std::future::Future<Output = Result<operit_model::ApiKeyInfo::ApiKeyInfo, String>> + 'static {
+        let runtime = self.providerRuntimeContext.clone();
+        async move {
+            ModelConfigManager::default().testProviderApiKey(provider, &key_id, runtime)
+                .await.map_err(|error| error.to_string())
+        }
+    }
+
     /// Checks the installed client using shared Rust release/channel/target rules.
     pub fn checkApplicationUpdate(
         &self,

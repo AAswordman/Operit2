@@ -121,7 +121,7 @@ fn responses_connection_probe_serializes_its_output_budget() {
 
     let provider = OpenAIProvider::new(
         "https://example.test/v1".to_string(),
-        String::new(),
+        String::new().into(),
         "test-model".to_string(),
         "OPENAI".to_string(),
         Vec::new(),

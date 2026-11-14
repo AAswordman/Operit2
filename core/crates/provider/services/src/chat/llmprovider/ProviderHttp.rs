@@ -11,6 +11,174 @@ use operit_host_api::{HttpHost, HttpRequestData, HttpResponseHead};
 use serde::{de::DeserializeOwned, Serialize};
 
 use super::AIService::AiServiceError;
+use super::ApiKeyProvider::{credential_id, ApiKeyOutcome, KeyGetter};
+use std::collections::HashSet;
+
+/// Defines the protocol location of the credential without inspecting endpoint strings.
+#[derive(Clone)]
+pub enum KeyAuthentication {
+    Bearer,
+    Header(String),
+    Query(String),
+}
+
+impl KeyAuthentication {
+    /// Treats an explicit authentication header as the request's fixed credential source.
+    pub(super) fn getter(&self, request: &HttpRequestData, getter: KeyGetter) -> KeyGetter {
+        let name = match self {
+            Self::Bearer => "Authorization",
+            Self::Header(name) => name,
+            Self::Query(_) => return getter,
+        };
+        match request.headers.iter().find(|(existing, value)| {
+            existing.eq_ignore_ascii_case(name) && !value.trim().is_empty()
+        }) {
+            Some((_, value)) => KeyGetter::fixed(value.clone()),
+            None => getter,
+        }
+    }
+}
+
+/// Converts typed HTTP metadata into an actionable credential outcome.
+pub fn key_outcome(status: i32, headers: &[(String, String)], now: i64) -> Option<ApiKeyOutcome> {
+    match status {
+        401 | 403 => Some(ApiKeyOutcome::Authentication),
+        402 => Some(ApiKeyOutcome::Quota),
+        429 => Some(ApiKeyOutcome::RateLimited {
+            retry_after_ms: headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+                .and_then(|(_, value)| {
+                    value
+                        .trim()
+                        .parse::<i64>()
+                        .ok()
+                        .map(|seconds| seconds.saturating_mul(1000))
+                        .or_else(|| {
+                            chrono::DateTime::parse_from_rfc2822(value)
+                                .ok()
+                                .map(|date| date.timestamp_millis().saturating_sub(now))
+                        })
+                }),
+        }),
+        408 | 500..=599 => Some(ApiKeyOutcome::Transient),
+        _ => None,
+    }
+}
+
+/// Writes the selected credential into its protocol-specific authentication location.
+pub fn apply_key(
+    request: &mut HttpRequestData,
+    auth: &KeyAuthentication,
+    key: &str,
+) -> Result<(), AiServiceError> {
+    if key.is_empty() {
+        return Ok(());
+    }
+    match auth {
+        KeyAuthentication::Bearer | KeyAuthentication::Header(_) => {
+            let (name, value) = match auth {
+                KeyAuthentication::Bearer => ("Authorization", {
+                    let mut parts = key.split_whitespace();
+                    if matches!((parts.next(), parts.next()), (Some(scheme), Some(_)) if scheme.eq_ignore_ascii_case("Bearer"))
+                    {
+                        key.to_string()
+                    } else {
+                        format!("Bearer {key}")
+                    }
+                }),
+                KeyAuthentication::Header(name) => (name.as_str(), key.to_string()),
+                _ => unreachable!(),
+            };
+            if request.headers.iter().any(|(existing, value)| {
+                existing.eq_ignore_ascii_case(name) && !value.trim().is_empty()
+            }) {
+                return Ok(());
+            }
+            HeaderValue::from_str(&value)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            request
+                .headers
+                .retain(|(existing, _)| !existing.eq_ignore_ascii_case(name));
+            request.headers.push((name.to_string(), value));
+        }
+        KeyAuthentication::Query(name) => {
+            let mut url = url::Url::parse(&request.url)
+                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+            let pairs: Vec<_> = url
+                .query_pairs()
+                .filter(|(existing, _)| existing != name.as_str())
+                .map(|(name, value)| (name.into_owned(), value.into_owned()))
+                .collect();
+            url.set_query(None);
+            url.query_pairs_mut()
+                .extend_pairs(pairs)
+                .append_pair(name, key);
+            request.url = url.to_string();
+        }
+    }
+    Ok(())
+}
+
+/// Carries one credential's feedback identity until its response body completes.
+struct KeyAttempt {
+    getter: KeyGetter,
+    key: String,
+    started_at: i64,
+}
+
+impl KeyAttempt {
+    /// Persists a typed outcome without logging credential material.
+    fn report(&self, outcome: ApiKeyOutcome) -> Result<(), AiServiceError> {
+        self.getter
+            .report(&self.key, self.started_at, outcome)
+            .map_err(AiServiceError::RequestFailed)
+    }
+}
+
+/// Applies the same affinity and status policy to synchronous model discovery.
+pub(super) fn execute_with_key_getter(
+    host: Arc<dyn HttpHost>,
+    request: HttpRequestData,
+    getter: KeyGetter,
+    auth: KeyAuthentication,
+) -> Result<operit_host_api::HttpResponseData, String> {
+    let getter = auth.getter(&request, getter);
+    let mut attempted = HashSet::new();
+    let mut previous = None;
+    loop {
+        let key = match getter.acquire() {
+            Ok(key) if attempted.insert(credential_id(&key)) => key,
+            Ok(_) | Err(_) if previous.is_some() => return previous.unwrap(),
+            Ok(_) => return Err("No untried API keys remain".into()),
+            Err(error) => return Err(error),
+        };
+        let mut request = request.clone();
+        apply_key(&mut request, &auth, &key).map_err(|error| error.to_string())?;
+        let started = operit_host_api::TimeUtils::currentTimeMillis();
+        match host.executeHttpRequest(request) {
+            Ok(response) => {
+                if let Some(outcome) = key_outcome(
+                    response.statusCode,
+                    &response.headers,
+                    operit_host_api::TimeUtils::currentTimeMillis(),
+                ) {
+                    getter.report(&key, started, outcome)?;
+                    previous = Some(Ok(response));
+                    continue;
+                }
+                if (200..300).contains(&response.statusCode) {
+                    getter.report(&key, started, ApiKeyOutcome::Success)?;
+                }
+                return Ok(response);
+            }
+            Err(error) => {
+                getter.report(&key, started, ApiKeyOutcome::Transport)?;
+                previous = Some(Err(error.to_string()));
+            }
+        }
+    }
+}
 
 /// Encodes a POST without allocating or owning a network client.
 pub(super) fn post(url: impl AsRef<str>) -> RequestBuilder {
@@ -27,6 +195,7 @@ pub(super) struct RequestBuilder {
     request: HttpRequestData,
     headers: HeaderMap,
     error: Option<AiServiceError>,
+    credentials: Option<(KeyGetter, KeyAuthentication)>,
 }
 
 impl RequestBuilder {
@@ -49,12 +218,19 @@ impl RequestBuilder {
             },
             headers: HeaderMap::new(),
             error: None,
+            credentials: None,
         }
     }
 
     /// Applies validated provider headers without opening a transport.
     pub(super) fn headers(mut self, headers: HeaderMap) -> Self {
         self.headers.extend(headers);
+        self
+    }
+
+    /// Attaches explicit credential decisions to every actual HTTP attempt, including provider retries.
+    pub(super) fn key_getter(mut self, getter: KeyGetter, auth: KeyAuthentication) -> Self {
+        self.credentials = Some((getter, auth));
         self
     }
 
@@ -127,7 +303,61 @@ impl RequestBuilder {
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))
             })
             .collect::<Result<_, _>>()?;
-        let mut body = ResponseBody::open(host, self.request)?;
+        if let Some((getter, auth)) = self.credentials {
+            let getter = auth.getter(&self.request, getter);
+            let mut attempted = HashSet::new();
+            let mut previous = None;
+            loop {
+                let key = match getter.acquire() {
+                    Ok(key) if attempted.insert(credential_id(&key)) => key,
+                    Ok(_) | Err(_) if previous.is_some() => return previous.unwrap(),
+                    Ok(_) => {
+                        return Err(AiServiceError::RequestFailed(
+                            "No untried API keys remain".into(),
+                        ))
+                    }
+                    Err(error) => return Err(AiServiceError::RequestFailed(error)),
+                };
+                let mut request = self.request.clone();
+                apply_key(&mut request, &auth, &key)?;
+                let attempt = KeyAttempt {
+                    getter: getter.clone(),
+                    key,
+                    started_at: operit_host_api::TimeUtils::currentTimeMillis(),
+                };
+                match Self::open_response(host.clone(), request).await {
+                    Ok(mut response) => {
+                        if let Some(outcome) = key_outcome(
+                            response.head.statusCode,
+                            &response.head.headers,
+                            operit_host_api::TimeUtils::currentTimeMillis(),
+                        ) {
+                            attempt.report(outcome)?;
+                            previous = Some(Ok(response));
+                            continue;
+                        }
+                        if response.status.is_success() {
+                            response.body.key_attempt = Some(attempt);
+                        }
+                        return Ok(response);
+                    }
+                    Err(error @ AiServiceError::ConnectionFailed(_)) => {
+                        attempt.report(ApiKeyOutcome::Transport)?;
+                        previous = Some(Err(error));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Self::open_response(host, self.request).await
+    }
+
+    /// Opens one request and preserves its response for the decision layer before body consumption.
+    async fn open_response(
+        host: Arc<dyn HttpHost>,
+        request: HttpRequestData,
+    ) -> Result<Response, AiServiceError> {
+        let mut body = ResponseBody::open(host, request)?;
         match body.events.recv().await {
             Some(Event::Head(head)) => {
                 let status = StatusCode::from_u16(
@@ -202,6 +432,7 @@ pub(super) struct ResponseBody {
     id: String,
     events: tokio::sync::mpsc::UnboundedReceiver<Event>,
     finished: bool,
+    key_attempt: Option<KeyAttempt>,
 }
 
 impl ResponseBody {
@@ -216,6 +447,7 @@ impl ResponseBody {
             id,
             events,
             finished: false,
+            key_attempt: None,
         };
         body.host
             .openHttpResponseStream(
@@ -249,10 +481,20 @@ impl Stream for ResponseBody {
             Poll::Ready(Some(Event::Bytes(bytes))) => Poll::Ready(Some(Ok(bytes))),
             Poll::Ready(Some(Event::Closed(Ok(())))) => {
                 self.finished = true;
+                if let Some(attempt) = self.key_attempt.take() {
+                    if let Err(error) = attempt.report(ApiKeyOutcome::Success) {
+                        return Poll::Ready(Some(Err(error)));
+                    }
+                }
                 Poll::Ready(None)
             }
             Poll::Ready(event) => {
                 self.finished = true;
+                if let Some(attempt) = self.key_attempt.take() {
+                    if let Err(error) = attempt.report(ApiKeyOutcome::Transport) {
+                        return Poll::Ready(Some(Err(error)));
+                    }
+                }
                 let error = match event {
                     Some(Event::Closed(Err(error))) => error,
                     Some(Event::Head(_)) => "HTTP Host sent duplicate response headers".to_string(),
@@ -274,3 +516,7 @@ impl Drop for ResponseBody {
 #[cfg(test)]
 #[path = "../../../../tests/ProviderHttpTests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../../../tests/ApiKeyPoolTransportTests.rs"]
+mod key_pool_tests;

@@ -17,6 +17,7 @@ pub struct RateLimitedAIService {
 }
 
 impl RateLimitedAIService {
+    /// Wraps a provider with shared request limits.
     pub fn new(
         delegate: Box<dyn AIService>,
         rateLimiter: Option<Arc<SlidingWindowRateLimiter>>,

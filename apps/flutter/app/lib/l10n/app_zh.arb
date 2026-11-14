@@ -674,7 +674,7 @@
     }
   },
   "settingsModelApiKeyPool": "API Key 池",
-  "settingsModelApiKeyPoolDescription": "给同一个模型配置准备多个 Key，用于多 Key 轮换。",
+  "settingsModelApiKeyPoolDescription": "持续使用健康的 Key；遇到鉴权、额度、限流或临时故障时切换，并跳过冷却中的 Key。",
   "settingsModelApiKeyPoolCount": "{count} 个 Key",
   "@settingsModelApiKeyPoolCount": {
     "placeholders": {
@@ -683,11 +683,20 @@
       }
     }
   },
-  "settingsModelApiKeyPoolEmpty": "还没有 Key。添加后，运行时会按当前配置使用 Key 池。",
+  "settingsModelApiKeyPoolEmpty": "Key 池为空，请添加 Key 后再启用。",
   "settingsModelAddApiKey": "添加 Key",
   "settingsModelEditApiKey": "编辑 Key",
   "settingsModelApiKeyName": "Key 名称",
   "settingsModelApiKeyEnabled": "启用这个 Key",
+  "settingsModelPoolAddSingle": "添加当前单 Key",
+  "settingsModelPoolPaste": "每行粘贴一个 Key，可批量添加。",
+  "settingsModelPoolNoEligible": "请至少启用一个非空且未标记为不可用的 Key。",
+  "settingsModelPoolUntested": "未测试",
+  "settingsModelPoolAvailable": "可用",
+  "settingsModelPoolUnavailable": "不可用",
+  "settingsModelPoolClearMarks": "重置 Key 状态",
+  "settingsModelPoolTest": "测试未检测的 Key",
+  "settingsModelPoolNeedsModel": "保存供应商并添加模型后，即可测试 Key。",
   "settingsModelProviderId": "供应商 ID",
   "settingsModelProvidersSection": "LLM 供应商",
   "settingsModelProviderType": "供应商类型",

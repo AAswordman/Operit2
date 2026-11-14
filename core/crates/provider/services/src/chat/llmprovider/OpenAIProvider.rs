@@ -1,6 +1,8 @@
+use super::ApiKeyProvider::KeyGetter;
+use super::ProviderHttp::KeyAuthentication;
 use async_trait::async_trait;
 use futures_util::StreamExt;
-use http::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION, CONTENT_TYPE};
+use http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -41,7 +43,8 @@ const PROVIDER_TRANSPORT_LOG_TAG: &str = "ProviderTransport";
 #[derive(Clone)]
 pub struct OpenAIProvider {
     pub api_endpoint: String,
-    pub api_key: String,
+    pub key_getter: KeyGetter,
+
     pub model_name: String,
     pub provider_type: String,
     pub supports_vision: bool,
@@ -480,7 +483,7 @@ impl StreamingJsonXmlConverter {
 impl OpenAIProvider {
     pub fn new(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -488,7 +491,7 @@ impl OpenAIProvider {
     ) -> Self {
         Self {
             api_endpoint,
-            api_key,
+            key_getter,
             model_name,
             provider_type,
             supports_vision: false,
@@ -506,7 +509,7 @@ impl OpenAIProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_capabilities(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -517,7 +520,7 @@ impl OpenAIProvider {
     ) -> Self {
         Self::new_with_capabilities_and_reasoning(
             api_endpoint,
-            api_key,
+            key_getter,
             model_name,
             provider_type,
             custom_headers,
@@ -533,7 +536,7 @@ impl OpenAIProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new_with_capabilities_and_reasoning(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -545,7 +548,7 @@ impl OpenAIProvider {
     ) -> Self {
         Self {
             api_endpoint,
-            api_key,
+            key_getter,
             model_name,
             provider_type,
             supports_vision,
@@ -681,6 +684,7 @@ impl OpenAIProvider {
         &self,
         request: super::ProviderHttp::RequestBuilder,
     ) -> Result<super::ProviderHttp::Response, AiServiceError> {
+        let request = request.key_getter(self.key_getter.clone(), self.key_authentication());
         let provider_model = self.provider_model();
         let endpoint = self.diagnosticEndpoint()?;
         let started_at = currentTimeMillis();
@@ -2419,14 +2423,17 @@ impl OpenAIProvider {
         ))
     }
 
+    /// Selects the declared authentication format for this OpenAI-compatible protocol.
+    fn key_authentication(&self) -> KeyAuthentication {
+        match self.provider_type.as_str() {
+            "MIMO" => KeyAuthentication::Header("api-key".into()),
+            _ => KeyAuthentication::Bearer,
+        }
+    }
+
     fn headers(&self) -> Result<HeaderMap, AiServiceError> {
         let mut headers = HeaderMap::new();
         headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
-        if !self.api_key.trim().is_empty() {
-            let value = HeaderValue::from_str(&format!("Bearer {}", self.api_key.trim()))
-                .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-            headers.insert(AUTHORIZATION, value);
-        }
         for (name, value) in &self.custom_headers {
             let header_name = HeaderName::from_bytes(name.as_bytes())
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
@@ -2498,6 +2505,7 @@ impl AIService for OpenAIProvider {
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
         let response = super::ProviderHttp::post(&self.api_endpoint)
+            .key_getter(self.key_getter.clone(), self.key_authentication())
             .headers(self.headers()?)
             .json(&json!({
                 "model": self.model_name,

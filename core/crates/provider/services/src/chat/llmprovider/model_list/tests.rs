@@ -64,13 +64,13 @@ fn google_model_list_uses_query_key_without_generated_bearer() {
         let operation = google_operation(&provider.providerType);
         assert_eq!(
             DiscoveryProtocol::for_provider(&provider.providerType)
-                .request_url(&provider, &operation)
+                .authenticated_url(&provider, &operation)
                 .unwrap(),
             "https://example.com/v1beta/models?key=google-test-key"
         );
         assert_eq!(
             DiscoveryProtocol::for_provider(&provider.providerType)
-                .request_headers(&provider, &operation)
+                .authenticated_headers(&provider, &operation)
                 .unwrap(),
             vec![("Content-Type".to_string(), "application/json".to_string())]
         );
@@ -103,20 +103,20 @@ fn google_model_list_preserves_configured_origin_and_version() {
         provider.endpoint = endpoint.to_string();
         assert_eq!(
             DiscoveryProtocol::for_provider(&provider.providerType)
-                .request_url(&provider, &operation)
+                .authenticated_url(&provider, &operation)
                 .unwrap(),
             format!("{expected}?key=google-test-key")
         );
     }
     provider.endpoint = "https://example.com/unknown-path".to_string();
     assert!(DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_url(&provider, &operation)
+        .authenticated_url(&provider, &operation)
         .is_err());
 }
 
 /// Encodes selected key-pool entries as one query parameter without leaking old keys.
 #[test]
-fn google_model_list_encodes_rotating_api_keys() {
+fn google_model_list_encodes_preferred_api_key() {
     use operit_model::ApiKeyInfo::ApiKeyInfo;
     let mut provider = test_provider("unused", "{}");
     provider.providerType = ApiProviderType::GOOGLE;
@@ -129,11 +129,11 @@ fn google_model_list_encodes_rotating_api_keys() {
         ApiKeyInfo::new("first".to_string(), "first-key".to_string()),
         ApiKeyInfo::new("second".to_string(), "key+&=? /".to_string()),
     ];
-    provider.currentKeyIndex = -1;
+    provider.currentKeyIndex = 2;
     let operation = google_operation(&provider.providerType);
     let url = url::Url::parse(
         &DiscoveryProtocol::for_provider(&provider.providerType)
-            .request_url(&provider, &operation)
+            .authenticated_url(&provider, &operation)
             .unwrap(),
     )
     .unwrap();
@@ -143,7 +143,7 @@ fn google_model_list_encodes_rotating_api_keys() {
     assert_eq!(query[0].1, "key+&=? /");
     provider.apiKeyPool.clear();
     assert!(DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_url(&provider, &operation)
+        .authenticated_url(&provider, &operation)
         .is_err());
 }
 
@@ -155,9 +155,9 @@ fn google_model_list_requires_configured_api_key() {
     provider.endpoint = "https://example.com/v1beta/models".to_string();
     assert_eq!(
         DiscoveryProtocol::for_provider(&provider.providerType)
-            .request_url(&provider, &google_operation(&provider.providerType))
+            .authenticated_url(&provider, &google_operation(&provider.providerType))
             .unwrap_err(),
-        "Google model-list api key is required"
+        "provider api key is required"
     );
 }
 
@@ -169,9 +169,10 @@ fn google_model_list_preserves_explicit_custom_headers() {
         r#"{"content-type":"application/custom","Authorization":"Token custom","X-Test":"test"}"#,
     );
     provider.providerType = ApiProviderType::GEMINI_GENERIC;
+    provider.endpoint = "https://example.com/v1beta/models".into();
     let operation = google_operation(&provider.providerType);
     let request_headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &operation)
+        .authenticated_headers(&provider, &operation)
         .unwrap();
     for (name, expected) in [
         ("Content-Type", "application/custom"),
@@ -187,7 +188,7 @@ fn google_model_list_preserves_explicit_custom_headers() {
     }
     provider.customHeaders = r#"{"X-Test":123}"#.to_string();
     assert!(DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &operation)
+        .authenticated_headers(&provider, &operation)
         .is_err());
 }
 
@@ -260,7 +261,7 @@ fn anthropic_model_list_uses_version_and_api_key_headers() {
         let mut provider = test_provider("sk-ant-test", "{}");
         provider.providerType = provider_type;
         let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-            .request_headers(&provider, &test_operation(true))
+            .authenticated_headers(&provider, &test_operation(true))
             .unwrap();
         assert_eq!(
             headers,
@@ -282,7 +283,7 @@ fn anthropic_custom_headers_override_protocol_headers_case_insensitively() {
     );
     provider.providerType = ApiProviderType::ANTHROPIC_GENERIC;
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &test_operation(true))
+        .authenticated_headers(&provider, &test_operation(true))
         .unwrap();
     for (name, expected) in [
         ("x-api-key", "custom-key"),
@@ -314,12 +315,12 @@ fn anthropic_invalid_authentication_and_version_are_reported() {
         let mut provider = test_provider(api_key, custom_headers);
         provider.providerType = ApiProviderType::ANTHROPIC;
         assert!(DiscoveryProtocol::for_provider(&provider.providerType)
-            .request_headers(&provider, &test_operation(true))
+            .authenticated_headers(&provider, &test_operation(true))
             .is_err());
     }
 }
 
-/// Authenticates Anthropic requests with the enabled key selected by rotation.
+/// Authenticates Anthropic discovery with the preferred enabled entry.
 #[test]
 fn anthropic_model_list_uses_the_selected_api_key_pool_entry() {
     use operit_model::ApiKeyInfo::ApiKeyInfo;
@@ -334,16 +335,16 @@ fn anthropic_model_list_uses_the_selected_api_key_pool_entry() {
         ApiKeyInfo::new("first".to_string(), "sk-ant-first".to_string()),
         ApiKeyInfo::new("second".to_string(), "sk-ant-second".to_string()),
     ];
-    provider.currentKeyIndex = -1;
+    provider.currentKeyIndex = 3;
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &test_operation(true))
+        .authenticated_headers(&provider, &test_operation(true))
         .unwrap();
     assert!(headers
         .iter()
         .any(|(name, value)| name == "x-api-key" && value == "sk-ant-second"));
     provider.apiKeyPool.clear();
     assert!(DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &test_operation(true))
+        .authenticated_headers(&provider, &test_operation(true))
         .is_err());
 }
 
@@ -352,7 +353,7 @@ fn anthropic_model_list_uses_the_selected_api_key_pool_entry() {
 fn generated_authorization_survives_empty_custom_header() {
     let provider = test_provider("sk-test", r#"{"Authorization":""}"#);
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &test_operation(true))
+        .authenticated_headers(&provider, &test_operation(true))
         .expect("headers should build");
     let authorization = headers
         .iter()
@@ -368,22 +369,12 @@ fn generated_authorization_survives_empty_custom_header() {
     );
 }
 
-/// Verifies bearer prefix is not duplicated.
-#[test]
-fn bearer_prefix_is_not_duplicated() {
-    assert_eq!(
-        request::bearer_authorization("Bearer sk-test"),
-        "Bearer sk-test"
-    );
-    assert_eq!(request::bearer_authorization("sk-test"), "Bearer sk-test");
-}
-
 /// Verifies non empty custom authorization is preserved.
 #[test]
 fn non_empty_custom_authorization_is_preserved() {
     let provider = test_provider("sk-test", r#"{"authorization":"Token custom"}"#);
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &test_operation(true))
+        .authenticated_headers(&provider, &test_operation(true))
         .expect("headers should build");
     let authorization = headers
         .iter()
@@ -447,7 +438,7 @@ fn opencode_model_urls_preserve_zen_and_go_base_paths() {
         let provider = opencode_provider(endpoint, "sk-test", "{}");
         assert_eq!(
             DiscoveryProtocol::for_provider(&provider.providerType)
-                .request_url(&provider, &opencode_operation())
+                .authenticated_url(&provider, &opencode_operation())
                 .unwrap(),
             expected
         );
@@ -463,7 +454,7 @@ fn opencode_model_listing_sets_agent_user_agent() {
         r#"{"user-agent":"custom-client","X-Test":"keep-me"}"#,
     );
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &opencode_operation())
+        .authenticated_headers(&provider, &opencode_operation())
         .unwrap();
     let user_agents: Vec<_> = headers
         .iter()
@@ -483,7 +474,7 @@ fn opencode_model_listing_sets_agent_user_agent() {
 fn opencode_public_model_catalog_does_not_require_an_api_key() {
     let provider = opencode_provider("https://opencode.ai/zen", "", "{}");
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &opencode_operation())
+        .authenticated_headers(&provider, &opencode_operation())
         .unwrap();
     assert!(!headers
         .iter()
@@ -496,12 +487,12 @@ fn ordinary_provider_operations_keep_their_catalog_paths() {
     let provider = test_provider("sk-test", "{}");
     assert_eq!(
         DiscoveryProtocol::for_provider(&provider.providerType)
-            .request_url(&provider, &test_operation(true))
+            .authenticated_url(&provider, &test_operation(true))
             .unwrap(),
         "https://example.com/v1/models"
     );
     assert!(DiscoveryProtocol::Bearer
-        .request_headers(&test_provider("", "{}"), &test_operation(true))
+        .authenticated_headers(&test_provider("", "{}"), &test_operation(true))
         .is_err());
 }
 
@@ -556,7 +547,7 @@ fn catalog_model_urls_preserve_nested_gateway_paths() {
         ] {
             provider.endpoint = format!("https://example.com:8443{path}");
             assert_eq!(
-                protocol.request_url(&provider, &operation).unwrap(),
+                protocol.authenticated_url(&provider, &operation).unwrap(),
                 format!("https://example.com:8443{expected}"),
                 "provider={} endpoint={}",
                 provider.providerType.name(),
@@ -638,7 +629,7 @@ fn catalog_model_urls_preserve_provider_namespaces() {
                 .unwrap();
         assert_eq!(
             DiscoveryProtocol::for_provider(&provider.providerType)
-                .request_url(&provider, &operation)
+                .authenticated_url(&provider, &operation)
                 .unwrap(),
             format!("https://example.com{expected}"),
         );
@@ -660,7 +651,7 @@ fn catalog_model_urls_reject_invalid_operation_paths() {
     let mut provider = test_provider("sk-test", "{}");
     provider.endpoint = "not a URL".to_string();
     assert!(DiscoveryProtocol::Bearer
-        .request_url(&provider, &test_operation(true))
+        .authenticated_url(&provider, &test_operation(true))
         .is_err());
 }
 
@@ -673,7 +664,7 @@ fn opencode_optional_auth_preserves_custom_authorization() {
         r#"{"authorization":"Bearer custom"}"#,
     );
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &opencode_operation())
+        .authenticated_headers(&provider, &opencode_operation())
         .unwrap();
     let authorization: Vec<_> = headers
         .iter()
@@ -683,9 +674,9 @@ fn opencode_optional_auth_preserves_custom_authorization() {
     assert_eq!(authorization, vec!["Bearer custom"]);
 }
 
-/// Verifies opencode optional auth uses enabled key pool and rotation.
+/// Uses the physical preferred entry without advancing it during header construction.
 #[test]
-fn opencode_optional_auth_uses_enabled_key_pool_and_rotation() {
+fn opencode_optional_auth_uses_preferred_pool_entry() {
     use operit_model::ApiKeyInfo::ApiKeyInfo;
     let mut provider = opencode_provider("https://opencode.ai/zen/go", "unused", "{}");
     provider.useMultipleApiKeys = true;
@@ -697,16 +688,59 @@ fn opencode_optional_auth_uses_enabled_key_pool_and_rotation() {
         ApiKeyInfo::new("first".to_string(), "sk-first".to_string()),
         ApiKeyInfo::new("second".to_string(), "Bearer sk-second".to_string()),
     ];
-    provider.currentKeyIndex = -1;
+    provider.currentKeyIndex = 3;
     let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &opencode_operation())
+        .authenticated_headers(&provider, &opencode_operation())
         .unwrap();
     assert!(headers.contains(&("Authorization".to_string(), "Bearer sk-second".to_string())));
     provider.apiKeyPool.clear();
-    let headers = DiscoveryProtocol::for_provider(&provider.providerType)
-        .request_headers(&provider, &opencode_operation())
-        .unwrap();
-    assert!(!headers
-        .iter()
-        .any(|(name, _)| name.eq_ignore_ascii_case("Authorization")));
+    assert!(DiscoveryProtocol::for_provider(&provider.providerType)
+        .authenticated_headers(&provider, &opencode_operation())
+        .is_err());
+}
+
+/// Exercises final request authentication through the production transport encoder.
+impl DiscoveryProtocol {
+    /// Resolves an isolated test profile through the actual key decision policy.
+    fn authenticated_request(
+        self,
+        provider: &ProviderProfile,
+        operation: &ProviderOperationSpec,
+    ) -> Result<operit_host_api::HttpRequestData, String> {
+        use crate::chat::llmprovider::ApiKeyProvider::{ApiKeyPoolState, KeyGetter};
+        use crate::chat::llmprovider::ProviderHttp::apply_key;
+        let mut request = super::super::ModelListFetcher::request(provider, operation, self)?;
+        let provider = provider.clone();
+        let getter = KeyGetter::from_callbacks(
+            std::sync::Arc::new(move || {
+                ApiKeyPoolState::default().reserve(&mut provider.clone(), 0)
+            }),
+            std::sync::Arc::new(|_, _, _| Ok(())),
+        );
+        let getter = if operation.requiresApiKey || self == Self::Gemini {
+            getter.required()
+        } else {
+            getter
+        };
+        let getter = self.authentication().getter(&request, getter);
+        apply_key(&mut request, &self.authentication(), &getter.acquire()?)
+            .map_err(|error| error.to_string())?;
+        Ok(request)
+    }
+    /// Returns the authenticated URL observed at the HTTP boundary.
+    fn authenticated_url(
+        self,
+        provider: &ProviderProfile,
+        operation: &ProviderOperationSpec,
+    ) -> Result<String, String> {
+        Ok(self.authenticated_request(provider, operation)?.url)
+    }
+    /// Returns the authenticated headers observed at the HTTP boundary.
+    fn authenticated_headers(
+        self,
+        provider: &ProviderProfile,
+        operation: &ProviderOperationSpec,
+    ) -> Result<Vec<(String, String)>, String> {
+        Ok(self.authenticated_request(provider, operation)?.headers)
+    }
 }

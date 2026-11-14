@@ -16,7 +16,7 @@ fn provider(responses: bool, vision: bool) -> DeepseekProvider {
                 "chat/completions"
             }
         ),
-        "test-key".to_string(),
+        "test-key".into(),
         "deepseek-flash".to_string(),
         "DEEPSEEK".to_string(),
         Vec::new(),

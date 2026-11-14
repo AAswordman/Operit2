@@ -2609,7 +2609,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsModelApiKeyPoolDescription.
   ///
   /// In en, this message translates to:
-  /// **'Prepare multiple keys for one model profile so runtime can rotate between them.'**
+  /// **'Keep using a healthy key. Switch on authentication, quota, rate limit, or temporary failures; cooling keys are skipped.'**
   String get settingsModelApiKeyPoolDescription;
 
   /// No description provided for @settingsModelApiKeyPoolCount.
@@ -2621,7 +2621,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsModelApiKeyPoolEmpty.
   ///
   /// In en, this message translates to:
-  /// **'No keys yet. Add keys and this profile will use the key pool.'**
+  /// **'No keys yet. Add a key before enabling this pool.'**
   String get settingsModelApiKeyPoolEmpty;
 
   /// No description provided for @settingsModelAddApiKey.
@@ -2647,6 +2647,60 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Enable this key'**
   String get settingsModelApiKeyEnabled;
+
+  /// No description provided for @settingsModelPoolAddSingle.
+  ///
+  /// In en, this message translates to:
+  /// **'Add current single key'**
+  String get settingsModelPoolAddSingle;
+
+  /// No description provided for @settingsModelPoolPaste.
+  ///
+  /// In en, this message translates to:
+  /// **'Paste one key per line to add several at once.'**
+  String get settingsModelPoolPaste;
+
+  /// No description provided for @settingsModelPoolNoEligible.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable at least one nonempty key that is not marked unavailable.'**
+  String get settingsModelPoolNoEligible;
+
+  /// No description provided for @settingsModelPoolUntested.
+  ///
+  /// In en, this message translates to:
+  /// **'Untested'**
+  String get settingsModelPoolUntested;
+
+  /// No description provided for @settingsModelPoolAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Available'**
+  String get settingsModelPoolAvailable;
+
+  /// No description provided for @settingsModelPoolUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Unavailable'**
+  String get settingsModelPoolUnavailable;
+
+  /// No description provided for @settingsModelPoolClearMarks.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset key health'**
+  String get settingsModelPoolClearMarks;
+
+  /// No description provided for @settingsModelPoolTest.
+  ///
+  /// In en, this message translates to:
+  /// **'Test untested keys'**
+  String get settingsModelPoolTest;
+
+  /// No description provided for @settingsModelPoolNeedsModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Save the provider and add a model before testing keys.'**
+  String get settingsModelPoolNeedsModel;
 
   /// No description provided for @settingsModelProviderId.
   ///

@@ -681,7 +681,7 @@
     }
   },
   "settingsModelApiKeyPool": "API key pool",
-  "settingsModelApiKeyPoolDescription": "Prepare multiple keys for one model profile so runtime can rotate between them.",
+  "settingsModelApiKeyPoolDescription": "Keep using a healthy key. Switch on authentication, quota, rate limit, or temporary failures; cooling keys are skipped.",
   "settingsModelApiKeyPoolCount": "{count} keys",
   "@settingsModelApiKeyPoolCount": {
     "placeholders": {
@@ -690,11 +690,20 @@
       }
     }
   },
-  "settingsModelApiKeyPoolEmpty": "No keys yet. Add keys and this profile will use the key pool.",
+  "settingsModelApiKeyPoolEmpty": "No keys yet. Add a key before enabling this pool.",
   "settingsModelAddApiKey": "Add key",
   "settingsModelEditApiKey": "Edit key",
   "settingsModelApiKeyName": "Key name",
   "settingsModelApiKeyEnabled": "Enable this key",
+  "settingsModelPoolAddSingle": "Add current single key",
+  "settingsModelPoolPaste": "Paste one key per line to add several at once.",
+  "settingsModelPoolNoEligible": "Enable at least one nonempty key that is not marked unavailable.",
+  "settingsModelPoolUntested": "Untested",
+  "settingsModelPoolAvailable": "Available",
+  "settingsModelPoolUnavailable": "Unavailable",
+  "settingsModelPoolClearMarks": "Reset key health",
+  "settingsModelPoolTest": "Test untested keys",
+  "settingsModelPoolNeedsModel": "Save the provider and add a model before testing keys.",
   "settingsModelProviderId": "Provider ID",
   "settingsModelProvidersSection": "LLM providers",
   "settingsModelProviderType": "Provider type",

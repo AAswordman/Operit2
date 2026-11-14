@@ -9,7 +9,7 @@ use serde_json::{json, Value};
 fn test_provider() -> ClaudeProvider {
     ClaudeProvider::new(
         "http://localhost".to_string(),
-        String::new(),
+        String::new().into(),
         "claude-test".to_string(),
         "CLAUDE".to_string(),
         Vec::new(),

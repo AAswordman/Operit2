@@ -59,35 +59,22 @@ pub(super) fn merge_custom_headers(
     Ok(headers)
 }
 
-/// Builds Bearer discovery headers and the OpenCode-owned client identity.
+/// Builds custom discovery headers and the OpenCode-owned client identity.
 pub(super) fn bearer_headers(
     protocol: DiscoveryProtocol,
     provider: &ProviderProfile,
-    operation: &ProviderOperationSpec,
     custom_headers: &Map<String, Value>,
 ) -> Result<Vec<(String, String)>, String> {
     let mut headers = json_headers();
     let is_opencode = protocol == DiscoveryProtocol::OpenCode;
-    let mut has_authorization = false;
     for (name, value) in custom_headers {
         let header_value = value
             .as_str()
             .ok_or_else(|| format!("customHeaders value for {name} is not a string"))?;
-        if name.eq_ignore_ascii_case("Authorization") {
-            if (operation.requiresApiKey || is_opencode) && header_value.trim().is_empty() {
-                // Preserve the existing contract for empty legacy authorization headers.
-                continue;
-            }
-            has_authorization = !header_value.trim().is_empty();
+        if name.eq_ignore_ascii_case("Authorization") && header_value.trim().is_empty() {
+            continue;
         }
         headers.push((name.clone(), header_value.to_string()));
-    }
-    if !has_authorization && (operation.requiresApiKey || is_opencode) {
-        if let Some(api_key) = selected_api_key(provider) {
-            headers.push(("Authorization".to_string(), bearer_authorization(api_key)));
-        } else if operation.requiresApiKey {
-            return Err("provider api key is required".to_string());
-        }
     }
     if is_opencode {
         headers = OpenCodeRouting::request_headers(&provider.endpoint, &provider.id, headers);
@@ -95,64 +82,23 @@ pub(super) fn bearer_headers(
     Ok(headers)
 }
 
-/// Builds Anthropic's version and key headers with explicit custom overrides.
+/// Builds Anthropic's version header with explicit custom overrides.
 pub(super) fn anthropic_headers(
-    provider: &ProviderProfile,
-    operation: &ProviderOperationSpec,
     custom_headers: &Map<String, Value>,
 ) -> Result<Vec<(String, String)>, String> {
     let mut headers = json_headers();
     headers.push(("anthropic-version".to_string(), "2023-06-01".to_string()));
-    if let Some(api_key) = selected_api_key(provider) {
-        headers.push(("x-api-key".to_string(), api_key.to_string()));
-    }
     let headers = merge_custom_headers(headers, custom_headers)?;
     if !headers.iter().any(|(name, value)| {
         name.eq_ignore_ascii_case("anthropic-version") && !value.trim().is_empty()
     }) {
         return Err("Anthropic anthropic-version header is required".to_string());
     }
-    if operation.requiresApiKey
-        && !headers
-            .iter()
-            .any(|(name, value)| name.eq_ignore_ascii_case("x-api-key") && !value.trim().is_empty())
+    if headers
+        .iter()
+        .any(|(name, value)| name.eq_ignore_ascii_case("x-api-key") && value.trim().is_empty())
     {
-        return Err("Anthropic x-api-key header is required".to_string());
+        return Err("Anthropic x-api-key header is required".into());
     }
     Ok(headers)
-}
-
-/// Preserves an explicit Bearer prefix while normalizing a raw API key.
-pub(super) fn bearer_authorization(api_key: &str) -> String {
-    let api_key = api_key.trim();
-    let mut parts = api_key.split_whitespace();
-    if matches!(
-        (parts.next(), parts.next()),
-        (Some(scheme), Some(_)) if scheme.eq_ignore_ascii_case("Bearer")
-    ) {
-        return api_key.to_string();
-    }
-    format!("Bearer {api_key}")
-}
-
-/// Selects the configured API key, including rotation through enabled pool entries.
-pub(super) fn selected_api_key(provider: &ProviderProfile) -> Option<&str> {
-    if provider.useMultipleApiKeys {
-        let api_keys: Vec<&str> = provider
-            .apiKeyPool
-            .iter()
-            .filter(|info| info.isEnabled && !info.key.trim().is_empty())
-            .map(|info| info.key.trim())
-            .collect();
-        if api_keys.is_empty() {
-            return None;
-        }
-        let index = provider.currentKeyIndex.rem_euclid(api_keys.len() as i32) as usize;
-        return Some(api_keys[index]);
-    }
-    let api_key = provider.apiKey.trim();
-    if api_key.is_empty() {
-        return None;
-    }
-    Some(api_key)
 }

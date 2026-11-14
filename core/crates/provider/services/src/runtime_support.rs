@@ -345,6 +345,13 @@ pub trait ProviderRuntimeSupport: Send + Sync {
         providerId: &str,
     ) -> Result<ProviderProfile, String>;
 
+    /// Atomically acquires the provider's preferred usable credential at request time.
+    fn reserveProviderApiKey(&self, providerId: &str) -> Result<String, String>;
+
+    /// Records a structured outcome for the credential used by an actual HTTP attempt.
+    fn reportProviderApiKey(&self, providerId: &str, key: &str, startedAt: i64,
+        outcome: crate::chat::llmprovider::ApiKeyProvider::ApiKeyOutcome) -> Result<(), String>;
+
     /// Returns whether a tool package AI provider is registered.
     fn hasToolPkgAiProvider(&self, providerId: &str) -> bool;
 

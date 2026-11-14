@@ -20,6 +20,7 @@ pub struct ApiKeyInfo {
 }
 
 impl ApiKeyInfo {
+    /// Creates an enabled, untested pool entry without usage history.
     pub fn new(id: String, key: String) -> Self {
         Self {
             id,
@@ -32,4 +33,15 @@ impl ApiKeyInfo {
             errorCount: 0,
         }
     }
+}
+
+/// Returns enabled, nonempty entries that have not been explicitly marked unavailable.
+pub fn candidate_keys(pool: &[ApiKeyInfo]) -> Vec<&ApiKeyInfo> {
+    pool.iter()
+        .filter(|entry| {
+            entry.isEnabled
+                && !entry.key.trim().is_empty()
+                && entry.availabilityStatus != ApiKeyAvailabilityStatus::UNAVAILABLE
+        })
+        .collect()
 }

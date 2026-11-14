@@ -47,7 +47,7 @@ fn streamingState() -> StreamingState {
 fn testProvider() -> OpenAIProvider {
     OpenAIProvider::new(
         "http://localhost".to_string(),
-        String::new(),
+        String::new().into(),
         "test-model".to_string(),
         "OPENAI_GENERIC".to_string(),
         Vec::new(),
@@ -59,7 +59,7 @@ fn testProvider() -> OpenAIProvider {
 fn visionTestProvider() -> OpenAIProvider {
     OpenAIProvider::new_with_capabilities(
         "http://localhost".to_string(),
-        String::new(),
+        String::new().into(),
         "test-model".to_string(),
         "OPENAI_GENERIC".to_string(),
         Vec::new(),

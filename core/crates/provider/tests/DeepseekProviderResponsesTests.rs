@@ -15,7 +15,7 @@ use operit_model::ToolPrompt::ToolPrompt;
 fn paused_deepseek_reads_active_parent_usage() {
     use crate::chat::llmprovider::AIService::{AIService, TokenCounts};
     let mut provider = DeepseekProvider::new(
-        "https://fixture.invalid/responses".into(), String::new(), "test".into(),
+        "https://fixture.invalid/responses".into(), String::new().into(), "test".into(),
         "DEEPSEEK".into(), Vec::new(), false, false, false, Vec::new(), true,
         test_runtime_context(),
     );
@@ -219,7 +219,7 @@ fn request_builder_preserves_reasoning_tool_and_result_order() {
             .expect("reasoning metadata");
     let provider = DeepseekProvider::new(
         "https://api.deepseek.com/v1/responses".to_string(),
-        String::new(),
+        String::new().into(),
         "deepseek-reasoner".to_string(),
         "DEEPSEEK".to_string(),
         Vec::new(),

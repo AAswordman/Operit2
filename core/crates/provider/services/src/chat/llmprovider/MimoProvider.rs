@@ -1,3 +1,4 @@
+use super::ApiKeyProvider::KeyGetter;
 use async_trait::async_trait;
 use serde_json::Value;
 
@@ -13,7 +14,7 @@ impl MimoProvider {
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         api_endpoint: String,
-        api_key: String,
+        key_getter: KeyGetter,
         model_name: String,
         provider_type: String,
         custom_headers: Vec<(String, String)>,
@@ -22,21 +23,13 @@ impl MimoProvider {
         _supports_video: bool,
         enable_tool_call: bool,
     ) -> Self {
-        let mut mimo_headers = custom_headers;
-        if !api_key.trim().is_empty()
-            && !mimo_headers
-                .iter()
-                .any(|(name, _)| name.eq_ignore_ascii_case("api-key"))
-        {
-            mimo_headers.push(("api-key".to_string(), api_key.clone()));
-        }
         Self {
             inner: KimiProvider::new(
                 api_endpoint,
-                api_key,
+                key_getter,
                 model_name,
                 provider_type,
-                mimo_headers,
+                custom_headers,
                 _supports_vision,
                 _supports_audio,
                 _supports_video,

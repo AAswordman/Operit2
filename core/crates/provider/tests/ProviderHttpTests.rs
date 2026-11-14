@@ -115,7 +115,7 @@ fn output() -> SharedAiResponseStream {
 fn claude() -> ClaudeProvider {
     ClaudeProvider::new(
         "https://fixture.invalid".to_string(),
-        String::new(),
+        String::new().into(),
         "test".to_string(),
         "CLAUDE".to_string(),
         Vec::new(),
@@ -127,7 +127,7 @@ fn claude() -> ClaudeProvider {
 fn gemini() -> GeminiProvider {
     GeminiProvider::new(
         "https://fixture.invalid".to_string(),
-        String::new(),
+        String::new().into(),
         "test".to_string(),
         "GEMINI".to_string(),
         Vec::new(),
@@ -328,7 +328,7 @@ async fn paused_gemini_keeps_streamed_usage() {
 async fn paused_openai_keeps_live_output_count() {
     let host = ControlledHost::new("data: {\"choices\":[{\"delta\":{\"content\":\"partial response with several tokens\"}}]}\n\n");
     let response = post("https://fixture.invalid").send_with_host(host).await.unwrap();
-    let provider = OpenAIProvider::new("https://fixture.invalid".into(), String::new(), "test".into(), "OPENAI_GENERIC".into(), Vec::new(), true);
+    let provider = OpenAIProvider::new("https://fixture.invalid".into(), String::new().into(), "test".into(), "OPENAI_GENERIC".into(), Vec::new(), true);
     let mut control = provider.clone();
     let output = output();
     let mut emitter = StreamEmitter::new(output.clone());
@@ -389,7 +389,7 @@ async fn openai_accepts_multiline_events_and_logs_invalid_json() {
         .unwrap();
     let provider = OpenAIProvider::new(
         "https://fixture.invalid".to_string(),
-        String::new(),
+        String::new().into(),
         "test".to_string(),
         "OPENAI_GENERIC".to_string(),
         Vec::new(),
@@ -416,7 +416,7 @@ async fn openai_invalid_event_still_requires_completion() {
     host.finish();
     let provider = OpenAIProvider::new(
         "https://fixture.invalid".to_string(),
-        String::new(),
+        String::new().into(),
         "test".to_string(),
         "OPENAI_GENERIC".to_string(),
         Vec::new(),

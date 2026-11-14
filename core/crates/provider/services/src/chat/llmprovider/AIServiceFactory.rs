@@ -229,8 +229,7 @@ pub enum ProviderCreateParams {
     },
     ToolPkgJsAiProviderService {
         provider_type_id: String,
-        provider_id: String,
-        model_id: String,
+        config: ResolvedModelConfig,
     },
 }
 
@@ -275,8 +274,7 @@ impl AIServiceFactory {
                 kind: ProviderServiceKind::ToolPkgJsAiProviderService,
                 params: ProviderCreateParams::ToolPkgJsAiProviderService {
                     provider_type_id,
-                    provider_id: config.providerId,
-                    model_id: config.modelId,
+                    config,
                 },
             });
         }
