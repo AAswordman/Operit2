@@ -613,7 +613,7 @@ impl OperitApplication {
             _ => return Err(format!("Unknown extension kind: {kind}")),
         };
         let mut result = BTreeMap::new();
-        for record in operit_store::ExtensionStore::ExtensionStore::default().records(&kind)? {
+        for record in operit_store::ExtensionStore::ExtensionStore::default().activeRecords(&kind)? {
             // Stale owners and rejected packages must not invalidate the loaded catalog's scopes.
             if packageOwners
                 .as_ref()
@@ -622,12 +622,7 @@ impl OperitApplication {
                 continue;
             }
             let scope = record.scope.clone();
-            if result.insert(record.id.clone(), scope.clone()).is_some() {
-                return Err(format!(
-                    "Extension ownership conflict: {} exists in both locations",
-                    record.id
-                ));
-            }
+            result.insert(record.id.clone(), scope.clone());
             if kind == "package" {
                 let members: Vec<String> =
                     serde_json::from_value(record.settings["members"].clone())

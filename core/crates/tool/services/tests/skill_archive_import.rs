@@ -71,6 +71,35 @@ impl Drop for Fixture {
     }
 }
 
+/// Skips even an unreadable local duplicate and never substitutes it for missing shared content.
+#[test]
+fn shared_skill_shadows_local_content_before_parsing() {
+    use operit_store::ExtensionStore::{recordPath, ExtensionStore};
+    let fixture = Fixture::new();
+    assert_eq!(fixture.import(&[("demo/SKILL.md", "---\nname: demo\n---\n# Local")], None),
+        "Imported skill: demo");
+    assert!(fixture.manager.getAvailableSkills().contains_key("demo"));
+    let store = ExtensionStore::default();
+    let mut record = store.record("skill", "demo").unwrap();
+    record.scope = "space".into();
+    let shared = fixture.root.join("runtime/extensions/space/skills/demo");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(shared.join("SKILL.md"), "---\nname: demo\n---\n# Shared").unwrap();
+    let descriptor = fixture.root.join(recordPath("skill", "demo", "space").unwrap());
+    std::fs::create_dir_all(descriptor.parent().unwrap()).unwrap();
+    std::fs::write(descriptor, serde_json::to_vec(&record).unwrap()).unwrap();
+    std::fs::write(fixture.installed_file("demo/SKILL.md"), [0xff]).unwrap();
+    let (skills, errors) = fixture.manager.refreshAvailableSkills();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert_eq!(skills.len(), 1);
+    assert_eq!(fixture.manager.readSkillContent("demo").unwrap(), "---\nname: demo\n---\n# Shared");
+    std::fs::remove_file(shared.join("SKILL.md")).unwrap();
+    let (skills, errors) = fixture.manager.refreshAvailableSkills();
+    assert!(!skills.contains_key("demo"));
+    assert!(!errors.is_empty());
+    assert_eq!(std::fs::read(fixture.installed_file("demo/SKILL.md")).unwrap(), [0xff]);
+}
+
 #[test]
 fn imports_all_packages_in_a_wrapped_archive_without_a_ten_skill_limit() {
     let fixture = Fixture::new();
@@ -197,7 +226,7 @@ fn reports_conflicts_and_invalid_names_while_importing_other_skills() {
             ("d-duplicate/SKILL.md", "---\nname: valid\n---\n# Duplicate"),
         ],
         None,
-    );
+    ).replace('\\', "/");
     assert!(
         result.starts_with("Imported 1 skills; failed: 3"),
         "{result}"

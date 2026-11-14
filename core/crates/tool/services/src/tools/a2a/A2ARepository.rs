@@ -43,8 +43,9 @@ impl A2ARepository {
         })
     }
 
+    /// Returns the effective installations selected by the shared extension policy.
     pub fn records(&self) -> Result<Vec<ExtensionRecord>, String> {
-        self.store.records("a2a")
+        self.store.activeRecords("a2a")
     }
 
     pub fn config(&self, id: &str) -> Result<A2AConfig, String> {
@@ -63,16 +64,12 @@ impl A2ARepository {
             .and_then(Value::as_object)
             .filter(|agents| !agents.is_empty())
             .ok_or("A2A configuration requires a nonempty a2aAgents object")?;
-        let records = self.records()?;
         let mut definitions = Vec::new();
         for (id, value) in agents {
             validate_id(id)?;
             let config: A2AConfig =
                 serde_json::from_value(value.clone()).map_err(|e| e.to_string())?;
             validate_config(&config)?;
-            if records.iter().filter(|r| r.id == *id).count() > 1 {
-                return Err(format!("Extension ownership conflict: a2a:{id}"));
-            }
             definitions.push((id.clone(), config));
         }
         Ok(definitions)

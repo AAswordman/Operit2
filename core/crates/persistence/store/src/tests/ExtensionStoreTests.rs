@@ -678,9 +678,9 @@ fn exact_record_reads_scale_linearly_for_one_hundred_plugins() {
     assert!(storage.lists.lock().unwrap().is_empty());
 }
 
-/// Preserves exact-identity validation and detects both installed owners on direct reads.
+/// Selects space ownership while preserving exact-identity validation.
 #[test]
-fn exact_record_read_rejects_conflicts_and_mismatched_paths() {
+fn exact_record_read_selects_space_and_rejects_mismatched_paths() {
     let storage = host();
     let store = ExtensionStore::new(storage.clone());
     register_package_owner(&store, "demo", &["demo"]);
@@ -688,10 +688,42 @@ fn exact_record_read_rejects_conflicts_and_mismatched_paths() {
     record.scope = "space".into();
     let shared = recordPath("package", "demo", "space").unwrap();
     storage.writeBytes(&shared, &serde_json::to_vec(&record).unwrap()).unwrap();
-    assert!(store.record("package", "demo").unwrap_err().starts_with("Extension ownership conflict:"));
+    assert_eq!(store.record("package", "demo").unwrap().scope, "space");
+    assert_eq!(store.packageOwner("demo").unwrap().scope, "space");
+    let selection = store.selection("package").unwrap();
+    assert_eq!(selection.records.len(), 1);
+    assert_eq!(selection.shadowed.len(), 1);
+    assert!(!(selection.sourceFilter("device"))("demo.toolpkg"));
+    assert!((selection.sourceFilter("space"))("demo.toolpkg"));
     record.id = "other".into();
     storage.writeBytes(&shared, &serde_json::to_vec(&record).unwrap()).unwrap();
     assert_eq!(store.record("package", "demo").unwrap_err(), "Extension identity does not match its record path");
+}
+
+/// Applies identical ownership and settings isolation to skills, MCP, and A2A.
+#[test]
+fn duplicate_extension_kinds_keep_local_data_and_use_shared_settings() {
+    let storage = host();
+    let store = ExtensionStore::new(storage.clone());
+    for (kind, source, settings) in [
+        ("skill", "demo", json!({"visible": true})),
+        ("mcp", "", json!({"server": {"url": "https://example.com/mcp"}, "metadata": {}})),
+        ("a2a", "", json!({"agent": {"url": "https://example.com/agent", "disabled": false, "headers": {}}})),
+    ] {
+        store.registerDevice(kind, "demo", source, settings.clone()).unwrap();
+        let local = recordPath(kind, "demo", "device").unwrap();
+        let bytes = storage.readBytes(&local).unwrap();
+        let mut shared = store.record(kind, "demo").unwrap();
+        shared.scope = "space".into();
+        store.write(&shared).unwrap();
+        assert_eq!(store.activeRecords(kind).unwrap().len(), 1);
+        assert_eq!(store.record(kind, "demo").unwrap().scope, "space");
+        let mut changed = settings;
+        changed["label"] = json!("shared-only");
+        store.setSettings(kind, "demo", changed).unwrap();
+        assert_eq!(storage.readBytes(&local).unwrap(), bytes);
+        assert_eq!(store.selection(kind).unwrap().shadowed.len(), 1);
+    }
 }
 
 /// Resolves ownership directly from persisted records without a runtime package manager.
@@ -863,10 +895,7 @@ fn deleting_failed_package_removes_conflicting_owners_and_preserves_other_packag
             )
             .unwrap();
     }
-    assert!(store
-        .record("package", "broken")
-        .unwrap_err()
-        .contains("ownership conflict"));
+    assert_eq!(store.record("package", "broken").unwrap().scope, "space");
     let before = clock(&storage);
     assert!(store.deleteFailedPackageInstallations("broken").unwrap());
     assert!(!store.deleteFailedPackageInstallations("broken").unwrap());
@@ -1026,9 +1055,9 @@ fn shared_builtin_customization_syncs_source_changes_without_deleting_configurat
     assert_eq!(target.readBytes(&config).unwrap(), b"shared configuration");
 }
 
-/// Shared ownership replaces the bundled local record without merging independent local settings.
+/// Shared ownership preserves the shadowed local installation and its settings.
 #[test]
-fn shared_builtin_owner_replaces_local_state() {
+fn shared_builtin_owner_preserves_local_state() {
     let storage = host();
     let store = ExtensionStore::new(storage.clone());
     let settings = |enabled: Value, order: u64| {
@@ -1051,11 +1080,6 @@ fn shared_builtin_owner_replaces_local_state() {
     canonical.settings["installationScope"] = json!("space");
     store.write(&canonical).unwrap();
     assert!(store
-        .record("package", "bundle")
-        .unwrap_err()
-        .contains("ownership conflict"));
-
-    assert!(store
         .acceptsBuiltinPackage("bundle")
         .unwrap());
     let merged = store.record("package", "bundle").unwrap();
@@ -1063,17 +1087,16 @@ fn shared_builtin_owner_replaces_local_state() {
     assert_eq!(merged.settings["enabledNames"], json!(["canonical"]));
     assert_eq!(merged.settings["order"], json!(2));
     assert_eq!(merged.settings["installationScope"], json!("space"));
-    assert!(store
-        .records("package")
-        .unwrap()
-        .iter()
-        .all(|record| record.scope == "space"));
+    let local = store.selection("package").unwrap().shadowed.remove(0);
+    assert_eq!(local.scope, "device");
+    assert_eq!(local.settings["enabledNames"], json!(["legacy"]));
+    assert_eq!(local.settings["order"], json!(7));
     assert!(store.acceptsBuiltinPackage("bundle").unwrap());
 }
 
-/// Genuine ownership conflicts must keep failing instead of being auto-merged.
+/// A shared external installation also shadows the local installation without selecting bundled code.
 #[test]
-fn builtin_scope_reconciliation_refuses_non_builtin_duplicates() {
+fn shared_external_owner_shadows_local_without_using_builtin_code() {
     let storage = host();
     let store = ExtensionStore::new(storage);
     register_package_owner(&store, "bundle", &["bundle"]);
@@ -1082,11 +1105,9 @@ fn builtin_scope_reconciliation_refuses_non_builtin_duplicates() {
     duplicate.settings["installationScope"] = json!("space");
     store.write(&duplicate).unwrap();
 
-    assert!(store.acceptsBuiltinPackage("bundle").unwrap_err().contains("ownership conflict"));
-    assert!(store
-        .record("package", "bundle")
-        .unwrap_err()
-        .contains("ownership conflict"));
+    assert!(!store.acceptsBuiltinPackage("bundle").unwrap());
+    assert_eq!(store.record("package", "bundle").unwrap().scope, "space");
+    assert_eq!(store.records("package").unwrap().len(), 2);
 }
 
 /// Keeps installation source and configuration in the same synchronized entity.
@@ -1137,9 +1158,9 @@ fn late_builtin_initialization_preserves_explicit_shared_installation() {
     assert_eq!(peer.record("package", "demo").unwrap(), expected);
 }
 
-/// Moves bundled ownership through the existing sync path and preserves the selected subpackage flags.
+/// Preserves local state during shared sync and rejects a move over the retained installation.
 #[test]
-fn builtin_scope_moves_sync_flags_and_allows_deleting_bundled_installations() {
+fn builtin_sync_preserves_shadowed_state_and_rejects_move_over_local() {
     let source = host();
     let target = host();
     let store = ExtensionStore::new(source.clone());
@@ -1165,8 +1186,8 @@ fn builtin_scope_moves_sync_flags_and_allows_deleting_bundled_installations() {
     assert!(peer.acceptsBuiltinPackage("demo").unwrap());
     assert_eq!(peer.record("package", "demo").unwrap(), store.record("package", "demo").unwrap());
     assert_eq!(clock(&target), before_adoption);
-    assert!(!target.exists(&recordPath("package", "demo", "device").unwrap()).unwrap());
-    assert!(!target.exists(&local_config).unwrap());
+    assert!(target.exists(&recordPath("package", "demo", "device").unwrap()).unwrap());
+    assert_eq!(target.readBytes(&local_config).unwrap(), b"old local configuration");
     assert_eq!(target.readBytes(&shared_config).unwrap(), b"shared configuration");
     assert_eq!(target.readBytes(&private_data).unwrap(), b"private device data");
     let before_toggle = clock(&source);
@@ -1175,13 +1196,14 @@ fn builtin_scope_moves_sync_flags_and_allows_deleting_bundled_installations() {
     store.setSettings("package", "demo", updated).unwrap();
     transfer(&source, &target, &operations(&source, &before_toggle)).unwrap();
     assert_eq!(peer.record("package", "demo").unwrap().settings["subpackageStates"]["demo_tools"], true);
-    let before_move = clock(&target);
-    peer.moveScope("package", "demo", "device").unwrap();
-    transfer(&target, &source, &operations(&target, &before_move)).unwrap();
+    assert!(peer.moveScope("package", "demo", "device").is_err());
+    let before_delete = clock(&target);
+    peer.delete("package", "demo").unwrap();
+    transfer(&target, &source, &operations(&target, &before_delete)).unwrap();
     assert!(!store.acceptsBuiltinPackage("demo").unwrap());
     assert!(store.record("package", "demo").is_err());
     assert!(peer.acceptsBuiltinPackage("demo").unwrap());
-    assert_eq!(target.readBytes(&local_config).unwrap(), b"shared configuration");
+    assert_eq!(target.readBytes(&local_config).unwrap(), b"old local configuration");
     assert_eq!(target.readBytes(&private_data).unwrap(), b"private device data");
     let local = peer.record("package", "demo").unwrap();
     assert_eq!(local.scope, "device");

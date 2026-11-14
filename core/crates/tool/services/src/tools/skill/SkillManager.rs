@@ -48,184 +48,102 @@ impl SkillManager {
         skillsDir.to_string_lossy().replace('\\', "/")
     }
 
-    /// Scans both locations using the same skill parser and rejects conflicting names explicitly.
+    /// Loads effective installations through the same source selection used by plugins.
     #[allow(non_snake_case)]
-    pub fn refreshAvailableSkills(
-        &self,
-    ) -> (BTreeMap<String, SkillPackage>, BTreeMap<String, String>) {
-        let mut skills = BTreeMap::new();
+    pub fn refreshAvailableSkills(&self) -> (BTreeMap<String, SkillPackage>, BTreeMap<String, String>) {
+        let mut skills = BTreeMap::<String, SkillPackage>::new();
         let mut errors = BTreeMap::new();
-        let mut conflicts = BTreeSet::new();
-        for scope in ["device", "space"] {
-            let root =
-                ExtensionStore::root("skill", scope).expect("Skill scope constants are valid");
-            let directory = self.paths.runtime_storage_path(&root);
-            let (scanned, scanErrors) = self.scanSkillsDirectory(directory);
-            errors.extend(scanErrors);
-            for (name, skill) in scanned {
-                if skills.contains_key(&name) || conflicts.contains(&name) {
-                    skills.remove(&name);
-                    conflicts.insert(name.clone());
-                    errors.insert(
-                        name.clone(),
-                        format!("Skill ownership conflict: {name} exists in both locations"),
-                    );
-                    continue;
-                }
-                let registration = (|| -> Result<(), String> {
-                    let source = skill
-                        .directory
-                        .file_name()
-                        .ok_or("Skill directory has no name")?
-                        .to_string_lossy();
-                    if scope == "device" {
-                        ExtensionStore::default().registerDevice(
-                            "skill",
-                            &name,
-                            &source,
-                            serde_json::json!({"visible": true}),
-                        )?;
-                    }
-                    let record = ExtensionStore::default().record("skill", &name)?;
-                    if record.scope != scope || record.sourceName != source {
-                        return Err(
-                            "Skill content does not match its registered location".to_string()
-                        );
-                    }
-                    Ok(())
-                })();
-                match registration {
-                    Ok(()) => {
-                        skills.insert(name, skill);
-                    }
-                    Err(error) => {
-                        errors.insert(name, error);
+        let store = ExtensionStore::default();
+        let scanned = (|| -> Result<(), String> {
+            let selection = store.selection("skill")?;
+            let owners = selection
+                .records
+                .iter()
+                .map(|record| (record.id.as_str(), record))
+                .collect::<BTreeMap<_, _>>();
+            for scope in operit_store::ExtensionStore::EXTENSION_LOAD_SCOPES {
+                let directory = self.paths.runtime_storage_path(&ExtensionStore::root("skill", scope)?);
+                let path = hostPath(&directory);
+                self.filesystem.makeDirectory(&path, true)?;
+                let acceptsSource = selection.sourceFilter(scope);
+                for child in self
+                    .filesystem
+                    .listFiles(&path)?
+                    .into_iter()
+                    .filter(|child| child.isDirectory && acceptsSource(&child.name))
+                {
+                    let parsed = (|| -> Result<Option<SkillPackage>, String> {
+                        let skill = self.readSkillDirectory(&directory.join(&child.name))?;
+                        if let Some(owner) = owners.get(skill.name.as_str()) {
+                            if owner.scope != scope {
+                                return Ok(None);
+                            }
+                            if owner.sourceName != child.name {
+                                return Err("Skill content does not match its registered location".into());
+                            }
+                        } else {
+                            store.registerDevice(
+                                "skill",
+                                &skill.name,
+                                &child.name,
+                                serde_json::json!({"visible": true}),
+                            )?;
+                        }
+                        if let Some(existing) = skills.get(&skill.name) {
+                            return Err(format!(
+                                "Duplicate scanned skill name: {} already loaded from {}",
+                                skill.name,
+                                existing.directory.display()
+                            ));
+                        }
+                        Ok(Some(skill))
+                    })();
+                    match parsed {
+                        Ok(Some(skill)) => {
+                            skills.insert(skill.name.clone(), skill);
+                        }
+                        Ok(None) => {}
+                        Err(error) => {
+                            errors.insert(child.name, error);
+                        }
                     }
                 }
             }
+            Ok(())
+        })();
+        if let Err(error) = scanned {
+            errors.insert("skills".into(), error);
         }
         (skills, errors)
     }
 
-    /// Scans the skills directory and returns loaded packages plus load errors.
-    #[allow(non_snake_case)]
-    fn scanSkillsDirectory(
-        &self,
-        skillsDir: PathBuf,
-    ) -> (BTreeMap<String, SkillPackage>, BTreeMap<String, String>) {
-        let mut availableSkills = BTreeMap::new();
-        let mut skillLoadErrors = BTreeMap::new();
-        // Files and the installation descriptor can arrive in different sync batches.
-        // Only published shared installations are visible; leftover empty directories are not skills.
-        let sharedSources = if skillsDir == self.paths.runtime_storage_path(
-            &ExtensionStore::root("skill", "space").expect("valid skill scope"),
-        ) {
-            match ExtensionStore::default().records("skill") {
-                Ok(records) => Some(records.into_iter().filter(|record| record.scope == "space")
-                    .map(|record| record.sourceName).collect::<BTreeSet<_>>()),
-                Err(error) => { skillLoadErrors.insert("skills".to_string(), error); return (availableSkills, skillLoadErrors); }
-            }
-        } else { None };
-        let skillsPath = hostPath(&skillsDir);
-
-        if let Err(error) = self.filesystem.makeDirectory(&skillsPath, true) {
-            skillLoadErrors.insert(
-                "skills".to_string(),
-                format!("Cannot access skills directory: {}", error),
-            );
-            return (availableSkills, skillLoadErrors);
+    /// Reads one skill directory without registering or executing its contents.
+    fn readSkillDirectory(&self, directory: &Path) -> Result<SkillPackage, String> {
+        let mut skillFile = directory.join("SKILL.md");
+        let primary = self.filesystem.fileExists(&hostPath(&skillFile))?;
+        if !primary.exists || primary.isDirectory {
+            skillFile = directory.join("skill.md");
         }
-
-        let children = match self.filesystem.listFiles(&skillsPath) {
-            Ok(children) => children,
-            Err(error) => {
-                skillLoadErrors.insert(
-                    "skills".to_string(),
-                    format!("Cannot read skills directory: {}", error),
-                );
-                return (availableSkills, skillLoadErrors);
-            }
+        let info = self.filesystem.fileExists(&hostPath(&skillFile))?;
+        if !info.exists || info.isDirectory {
+            return Err(format!("Missing SKILL.md in {}", directory.display()));
+        }
+        let (name, description) = parseSkillMetadata(self.filesystem.as_ref(), &skillFile)?;
+        let name = if name.trim().is_empty() {
+            directory
+                .file_name()
+                .ok_or("Skill directory has no name")?
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            name
         };
-
-        for child in children {
-            if !child.isDirectory {
-                continue;
-            }
-            let childName = child.name;
-            if sharedSources.as_ref().is_some_and(|sources| !sources.contains(&childName)) { continue; }
-            let childPath = skillsDir.join(&childName);
-            let primarySkillFile = childPath.join("SKILL.md");
-            let lowerSkillFile = childPath.join("skill.md");
-            let primaryInfo = match self.filesystem.fileExists(&hostPath(&primarySkillFile)) {
-                Ok(info) => info,
-                Err(error) => {
-                    skillLoadErrors.insert(childName.clone(), error.to_string());
-                    continue;
-                }
-            };
-            let skillFile = if primaryInfo.exists && !primaryInfo.isDirectory {
-                primarySkillFile
-            } else {
-                lowerSkillFile
-            };
-
-            let skillInfo = match self.filesystem.fileExists(&hostPath(&skillFile)) {
-                Ok(info) => info,
-                Err(error) => {
-                    skillLoadErrors.insert(childName.clone(), error.to_string());
-                    continue;
-                }
-            };
-            if !skillInfo.exists || skillInfo.isDirectory {
-                skillLoadErrors.insert(
-                    childName.clone(),
-                    format!("Missing SKILL.md in {}", childPath.to_string_lossy()),
-                );
-                continue;
-            }
-
-            match parseSkillMetadata(self.filesystem.as_ref(), &skillFile) {
-                Ok((name, description)) => {
-                    let skillName = if name.trim().is_empty() {
-                        childName.clone()
-                    } else {
-                        name
-                    };
-                    if availableSkills.contains_key(&skillName) {
-                        let existingDirName = match availableSkills.get(&skillName) {
-                            Some(skill) => match skill.directory.file_name() {
-                                Some(name) => name.to_string_lossy().replace('\\', "/"),
-                                None => skillName.clone(),
-                            },
-                            None => skillName.clone(),
-                        };
-                        skillLoadErrors.insert(
-                            childName.clone(),
-                            format!(
-                                "Duplicate scanned skill name: {} already loaded from {}",
-                                skillName, existingDirName
-                            ),
-                        );
-                        continue;
-                    }
-
-                    availableSkills.insert(
-                        skillName.clone(),
-                        SkillPackage {
-                            name: skillName,
-                            description,
-                            directory: childPath,
-                            skillFile,
-                        },
-                    );
-                }
-                Err(error) => {
-                    skillLoadErrors.insert(childName, format!("Failed to scan skill: {}", error));
-                }
-            }
-        }
-
-        (availableSkills, skillLoadErrors)
+        Ok(SkillPackage {
+            name,
+            description,
+            directory: directory.into(),
+            skillFile,
+        })
     }
 
     /// Reads the optional display label while preserving the skill's stable identity.

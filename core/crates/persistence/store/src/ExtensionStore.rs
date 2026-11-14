@@ -31,6 +31,27 @@ pub fn notifyCatalogChanged() {
 
 pub const SPACE_EXTENSION_RECORDS: &str = "runtime/extensions/space/records";
 
+/// Defines the installation precedence shared by every extension loader.
+pub const EXTENSION_LOAD_SCOPES: [&str; 2] = ["space", "device"];
+
+/// Separates effective installations from preserved local duplicates.
+#[derive(Default)]
+pub struct ExtensionSelection {
+    pub records: Vec<ExtensionRecord>,
+    pub shadowed: Vec<ExtensionRecord>,
+}
+
+impl ExtensionSelection {
+    /// Admits published shared sources and excludes shadowed local sources before parsing.
+    pub fn sourceFilter(&self, scope: &str) -> impl Fn(&str) -> bool + '_ {
+        let shared = scope == "space";
+        let records = if shared { &self.records } else { &self.shadowed };
+        let sources = records.iter().filter(|record| record.scope == scope)
+            .map(|record| record.sourceName.as_str()).collect::<std::collections::BTreeSet<_>>();
+        move |source| sources.contains(source) == shared
+    }
+}
+
 /// Atomic installation ownership and configuration. Embedded bytes only support legacy migration.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ExtensionRecord {
@@ -258,7 +279,7 @@ impl ExtensionStore {
     pub fn records(&self, kind: &str) -> Result<Vec<ExtensionRecord>, String> {
         Self::root(kind, "device")?;
         let mut records = Vec::new();
-        for scope in ["device", "space"] {
+        for scope in EXTENSION_LOAD_SCOPES {
             for entry in self
                 .storage
                 .list(&format!("runtime/extensions/{scope}/records"))
@@ -282,6 +303,26 @@ impl ExtensionStore {
             }
         }
         Ok(records)
+    }
+
+    /// Selects one installation per identity without deleting or merging local data.
+    pub fn selection(&self, kind: &str) -> Result<ExtensionSelection, String> {
+        let mut selected = std::collections::BTreeSet::new();
+        let mut records = Vec::new();
+        let mut shadowed = Vec::new();
+        for record in self.records(kind)? {
+            if selected.insert(record.id.clone()) {
+                records.push(record);
+            } else {
+                shadowed.push(record);
+            }
+        }
+        Ok(ExtensionSelection { records, shadowed })
+    }
+
+    /// Returns the same effective owners used by direct identity lookups.
+    pub fn activeRecords(&self, kind: &str) -> Result<Vec<ExtensionRecord>, String> {
+        Ok(self.selection(kind)?.records)
     }
 
     /// Reads and upgrades one descriptor through the same validation used by full scans.
@@ -322,7 +363,7 @@ impl ExtensionStore {
     /// Checks only the two canonical paths for an identity, independent of catalog size.
     fn recordsForId(&self, kind: &str, id: &str) -> Result<Vec<ExtensionRecord>, String> {
         let mut records = Vec::new();
-        for scope in ["device", "space"] {
+        for scope in EXTENSION_LOAD_SCOPES {
             let path = recordPath(kind, id, scope)?;
             if self.storage.exists(&path).map_err(|e| e.to_string())? {
                 records.push(self.readRecord(&path)?);
@@ -335,7 +376,7 @@ impl ExtensionStore {
     pub fn packageOwner(&self, packageName: &str) -> Result<ExtensionRecord, String> {
         let name = packageName.trim();
         let mut owner = None;
-        for record in self.records("package")? {
+        for record in self.activeRecords("package")? {
             let members: Vec<String> = serde_json::from_value(record.settings["members"].clone())
                 .map_err(|error| format!("Invalid package members: {error}"))?;
             if record.id == name || members.iter().any(|member| member == name) {
@@ -348,16 +389,10 @@ impl ExtensionStore {
         owner.ok_or_else(|| format!("Extension is not registered: package:{name}"))
     }
 
-    /// Reads an exact identity and rejects multiple installed owners rather than overriding either.
+    /// Reads the effective owner, with space taking precedence over a local duplicate.
     pub fn record(&self, kind: &str, id: &str) -> Result<ExtensionRecord, String> {
-        let mut records = self.recordsForId(kind, id)?;
-        match records.len() {
-            1 => Ok(records.remove(0)),
-            0 => Err(format!("Extension is not registered: {kind}:{id}")),
-            _ => Err(format!(
-                "Extension ownership conflict: {kind}:{id} exists in both locations"
-            )),
-        }
+        self.recordsForId(kind, id)?.into_iter().next()
+            .ok_or_else(|| format!("Extension is not registered: {kind}:{id}"))
     }
 
     /// Registers newly imported device content or a built-in resource with an explicit initial state.
@@ -403,22 +438,11 @@ impl ExtensionStore {
         }
     }
 
-    /// Selects bundled code from its real owner; a shared installation replaces the local bundled record.
+    /// Selects bundled code from its effective owner while preserving shadowed installations.
     pub fn acceptsBuiltinPackage(&self, id: &str) -> Result<bool, String> {
-        let records = self.records("package")?.into_iter()
-            .filter(|record| record.id == id).collect::<Vec<_>>();
-        let local = records.iter().find(|record| record.scope == "device");
-        let shared = records.iter().find(|record| record.scope == "space");
-        let owner = match (local, shared) {
-            (Some(local), Some(shared)) => {
-                if local.settings["builtin"] != true || !local.sourceName.is_empty() {
-                    return Err(format!("Extension ownership conflict: package:{id}"));
-                }
-                self.remove(local)?;
-                shared
-            }
-            (Some(record), None) | (None, Some(record)) => record,
-            (None, None) => {
+        let owner = match self.recordsForId("package", id)?.into_iter().next() {
+            Some(record) => record,
+            None => {
                 let local = recordPath("package", id, "device")?.replace("/records/", "/uninstalled/");
                 if self.storage.exists(&local).map_err(|e| e.to_string())? {
                     return Ok(false);

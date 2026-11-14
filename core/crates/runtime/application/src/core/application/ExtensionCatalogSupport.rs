@@ -54,7 +54,7 @@ pub struct ExtensionCatalogCandidate {
     pub subpackage_count: usize,
 }
 
-/// A package load or import failure represented independently of valid rows.
+/// A load failure or nonfatal installation warning shown alongside valid rows.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionCatalogDiagnostic {
@@ -394,6 +394,19 @@ pub(super) fn snapshot(app: &OperitApplication) -> Result<ExtensionCatalogSnapsh
             can_delete: false,
         }
     }));
+    for kind in ["package", "skill", "mcp", "a2a"] {
+        for record in ExtensionStore::ExtensionStore::default().selection(kind)?.shadowed {
+            diagnostics.push(ExtensionCatalogDiagnostic {
+                source_path: ExtensionStore::recordPath(kind, &record.id, &record.scope)?,
+                package_id: Some(record.id.clone()),
+                display_name: record.id.clone(),
+                code: "duplicate_scope".into(),
+                message: format!("重复安装：{} 已使用 space 版本，local 版本已跳过，本地数据保留。", record.id),
+                package_kind: kind.into(),
+                can_delete: false,
+            });
+        }
+    }
     diagnostics.sort_by_cached_key(|entry| (entry.display_name.to_lowercase(), entry.source_path.clone()));
 
     Ok(ExtensionCatalogSnapshot {

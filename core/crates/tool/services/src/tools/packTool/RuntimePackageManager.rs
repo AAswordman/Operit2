@@ -269,13 +269,15 @@ struct PackageScanCandidateResult {
 #[derive(Default)]
 struct PackageScanActivation {
     states: BTreeMap<String, (bool, bool)>,
+    selection: operit_store::ExtensionStore::ExtensionSelection,
 }
 
 impl PackageScanActivation {
     /// Reads activation flags once for an entire scan, including the initial cold start.
     fn read() -> Result<Self, String> {
         let mut states = BTreeMap::new();
-        for record in ExtensionStore::default().records("package")? {
+        let selection = ExtensionStore::default().selection("package")?;
+        for record in &selection.records {
             let enabled: Vec<String> = serde_json::from_value(record.settings["enabledNames"].clone())
                 .map_err(|error| format!("Invalid activation state for {}: {error}", record.id))?;
             let disabled: Vec<String> = serde_json::from_value(record.settings["disabledNames"].clone())
@@ -285,7 +287,15 @@ impl PackageScanActivation {
                 disabled.iter().any(|name| name.trim() == record.id),
             ));
         }
-        Ok(Self { states })
+        Ok(Self { states, selection })
+    }
+
+    /// Rejects a local candidate by identity before its registration code can execute.
+    fn shadowedIssue(&self, id: &str, scope: &str, path: &str) -> Option<ToolPkgLoadIssue> {
+        (scope == "device" && self.selection.records.iter()
+            .any(|record| record.id == id && record.scope == "space"))
+            .then(|| newToolPkgLoadIssue(path.into(), Some(id.into()), id.into(),
+                "duplicate_scope", format!("重复安装：{id} 已使用 space 版本，local 版本已跳过，本地数据保留。"), "package"))
     }
 
     /// Applies the same owner and built-in defaults as the effective enabled-package projection.
@@ -833,7 +843,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn isInstalledMarketToolPkg(&self, file: &Path) -> Result<bool, String> {
         let root = self.storePaths.runtime_storage_key(file)?;
-        let records = ExtensionStore::default().records("package")?;
+        let records = ExtensionStore::default().activeRecords("package")?;
         let record = records.iter().find(|record| {
             ExtensionStore::root("package", &record.scope)
                 .is_ok_and(|directory| format!("{directory}/{}", record.sourceName) == root)
@@ -1433,12 +1443,13 @@ impl RuntimePackageManager {
         &self,
         issue: &ToolPkgLoadIssue,
     ) -> Result<FailedPackageDeletionTarget, String> {
+        if issue.code == "duplicate_scope" { return Err("A skipped local installation is not a load failure".into()); }
         let source = Path::new(&issue.sourcePath);
         let installedScope = ["device", "space"].into_iter().find(|scope| {
             let root = ExtensionStore::root("package", scope).expect("valid package scope");
             source.parent() == Some(self.storePaths.runtime_storage_path(&root).as_path())
         });
-        let records = ExtensionStore::default().records("package")?;
+        let records = ExtensionStore::default().activeRecords("package")?;
         // Even an unreadable archive can still have a registered installation owner.
         let owner = if issue.packageName.is_none() {
             records
@@ -1476,6 +1487,7 @@ impl RuntimePackageManager {
     /// Reports deletion eligibility using the same installed targets as the delete operation.
     #[allow(non_snake_case)]
     pub fn canDeleteToolPkgLoadIssue(&self, issue: &ToolPkgLoadIssue) -> Result<bool, String> {
+        if issue.code == "duplicate_scope" { return Ok(false); }
         if issue.packageKind == "a2a" {
             return Ok(ExtensionStore::default().records("a2a")?.iter().any(|record| Some(&record.id) == issue.packageName.as_ref()));
         }
@@ -2798,7 +2810,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     fn scanExternalPackages(&mut self, baseSnapshot: &PackageScanSnapshot, activation: &PackageScanActivation) -> PackageScanSnapshot {
         let mut files = Vec::new();
-        for scope in ["device", "space"] {
+        for scope in operit_store::ExtensionStore::EXTENSION_LOAD_SCOPES {
             let root =
                 ExtensionStore::root("package", scope).expect("Package scope constants are valid");
             let directory = self.storePaths.runtime_storage_path(&root);
@@ -2808,32 +2820,20 @@ impl RuntimePackageManager {
                     .map_err(|e| e.to_string())?;
                 // Upgrade old bundles before scanning; a file arriving before its descriptor
                 // is staged data, not an unregistered device-local installation.
-                let sharedSources = if scope == "space" {
-                    Some(
-                        ExtensionStore::default()
-                            .records("package")?
-                            .into_iter()
-                            .filter(|record| record.scope == "space")
-                            .map(|record| record.sourceName)
-                            .collect::<BTreeSet<_>>(),
-                    )
-                } else {
-                    None
-                };
-                let entries = self
+                let acceptsSource = activation.selection.sourceFilter(scope);
+                let mut entries = self
                     .filesystem
                     .listFiles(&vfsPathString(&directory))
                     .map_err(|e| e.to_string())?;
+                entries.sort_by(|left, right| left.name.cmp(&right.name));
                 files.extend(
                     entries
                         .into_iter()
                         .filter(|entry| {
                             !entry.isDirectory
-                                && sharedSources
-                                    .as_ref()
-                                    .is_none_or(|sources| sources.contains(&entry.name))
+                                && acceptsSource(&entry.name)
                         })
-                        .map(|entry| directory.join(entry.name)),
+                        .map(|entry| (scope, directory.join(entry.name))),
                 );
                 Ok(())
             })();
@@ -2850,12 +2850,11 @@ impl RuntimePackageManager {
                 return snapshot;
             }
         }
-        files.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
 
         let previousCache = self.externalPackageScanCache.clone();
         let mut nextCache = BTreeMap::new();
         let mut results = Vec::new();
-        for file in files {
+        for (scope, file) in files {
             if !isExternalPackageCandidateFile(&file) {
                 continue;
             }
@@ -2893,7 +2892,7 @@ impl RuntimePackageManager {
                     "external"
                 }
             );
-            let result = previousCache
+            let mut result = previousCache
                 .get(&cacheKey)
                 .filter(|entry| entry.signature == signature && activation.matches(&entry.result))
                 .map(|entry| entry.result.clone())
@@ -2904,6 +2903,11 @@ impl RuntimePackageManager {
                         self.parseExternalPackageCandidate(&file, activation)
                     }
                 });
+            if let Some(name) = Self::packageNameFromScanResult(&result) {
+                if let Some(issue) = activation.shadowedIssue(&name, scope, &cacheKey) {
+                    result = PackageScanCandidateResult { issues: vec![issue], ..Default::default() };
+                }
+            }
             self.reportEnabledPackageScanProgress(&result, activation);
             nextCache.insert(
                 cacheKey,
@@ -3221,8 +3225,14 @@ impl RuntimePackageManager {
         let mut result = PackageScanCandidateResult {
             phase: "external".into(), sourcePath: sourcePath.into(), ..Default::default()
         };
-        let scanned = (|| -> Result<ToolPkgLoadResult, String> {
+        let scanned = (|| -> Result<Option<ToolPkgLoadResult>, String> {
             let manifest = ToolPkgArchiveParser::readToolPkgManifest(bytes)?;
+            if !isBuiltIn {
+                if let Some(issue) = activation.shadowedIssue(&manifest.toolpkgId, configScope.as_str(), sourcePath) {
+                    result.issues.push(issue);
+                    return Ok(None);
+                }
+            }
             let package = ToolPackage {
                 name: manifest.toolpkgId, is_built_in: isBuiltIn,
                 enabled_by_default: manifest.enabledByDefault, ..Default::default()
@@ -3236,7 +3246,7 @@ impl RuntimePackageManager {
             if !result.registrationEnabled {
                 return ToolPkgArchiveParser::readToolPkgCatalog(
                     bytes, sourceType.clone(), sourcePath, isBuiltIn,
-                );
+                ).map(Some);
             }
             beginPackageLoadProgress(sourcePath);
             let issues = RefCell::new(Vec::new());
@@ -3253,10 +3263,10 @@ impl RuntimePackageManager {
                 )
             });
             result.issues.extend(issues.into_inner());
-            loaded
+            loaded.map(Some)
         })();
         match scanned {
-            Ok(loaded) => result.toolPkgLoadResult = Some(loaded),
+            Ok(loaded) => result.toolPkgLoadResult = loaded,
             Err(error) => result.issues.push(newToolPkgLoadIssue(
                 sourcePath.into(), None, packageProgressDisplayName(sourcePath),
                 "toolpkg_load", error,
@@ -3287,44 +3297,24 @@ impl RuntimePackageManager {
         candidateResults: Vec<PackageScanCandidateResult>,
         baseSnapshot: Option<&PackageScanSnapshot>,
     ) -> PackageScanSnapshot {
-        let mut stagedAvailablePackages = baseSnapshot
-            .map(|snapshot| snapshot.availablePackages.clone())
-            .unwrap_or_default();
-        let mut stagedToolPkgContainers = baseSnapshot
-            .map(|snapshot| snapshot.toolPkgContainers.clone())
-            .unwrap_or_default();
-        let mut stagedToolPkgSubpackages = baseSnapshot
-            .map(|snapshot| snapshot.toolPkgSubpackages.clone())
-            .unwrap_or_default();
-        let mut stagedToolPkgLoadIssues = baseSnapshot
-            .map(|snapshot| snapshot.toolPkgLoadIssues.clone())
-            .unwrap_or_default();
+        let PackageScanSnapshot {
+            availablePackages: mut stagedAvailablePackages,
+            toolPkgContainers: mut stagedToolPkgContainers,
+            toolPkgSubpackages: mut stagedToolPkgSubpackages,
+            toolPkgLoadIssues: mut stagedToolPkgLoadIssues,
+        } = baseSnapshot.cloned().unwrap_or_default();
 
         for result in candidateResults {
             appendUniqueToolPkgLoadIssues(&mut stagedToolPkgLoadIssues, &result.issues);
             if let Some(packageMetadata) = result.toolPackage {
-                if result.phase == "external"
+                if (result.phase == "external"
                     && !Self::prepareExternalStandalonePackageOverride(
                         &packageMetadata.name,
                         &mut stagedAvailablePackages,
                         &mut stagedToolPkgContainers,
                         &mut stagedToolPkgSubpackages,
-                    )
+                    )) || stagedAvailablePackages.contains_key(&packageMetadata.name)
                 {
-                    stagedToolPkgLoadIssues.push(newToolPkgLoadIssue(
-                        result.sourcePath.clone(),
-                        Some(packageMetadata.name.clone()),
-                        packageMetadata.display_name.resolve(false),
-                        "duplicate_package",
-                        format!(
-                            "A package with name '{}' is already registered",
-                            packageMetadata.name
-                        ),
-                        "package",
-                    ));
-                    continue;
-                }
-                if stagedAvailablePackages.contains_key(&packageMetadata.name) {
                     stagedToolPkgLoadIssues.push(newToolPkgLoadIssue(
                         result.sourcePath.clone(),
                         Some(packageMetadata.name.clone()),
@@ -3500,51 +3490,26 @@ impl RuntimePackageManager {
                 continue;
             }
             let registration = (|| -> Result<(), String> {
-                let (builtin, sourceName, members) = match snapshot.toolPkgContainers.get(name) {
-                    Some(container) => {
-                        let builtin = container.sourceType == ToolPkgSourceType::ASSET;
-                        let sourceName = if builtin {
-                            String::new()
-                        } else {
-                            Path::new(&container.sourcePath)
-                                .file_name()
-                                .ok_or("Package source filename is missing")?
-                                .to_string_lossy()
-                                .to_string()
-                        };
-                        let mut members = vec![name.clone()];
-                        members.extend(
-                            container
-                                .subpackages
-                                .iter()
-                                .map(|child| child.packageName.clone()),
-                        );
-                        (builtin, sourceName, members)
-                    }
-                    None => {
-                        let sourceName = if package.is_built_in {
-                            String::new()
-                        } else {
-                            let entry = self
-                                .externalPackageScanCache
-                                .values()
-                                .find(|entry| {
-                                    entry
-                                        .result
-                                        .toolPackage
-                                        .as_ref()
-                                        .is_some_and(|candidate| candidate.name == *name)
-                                })
-                                .ok_or("Scanned package lost its concrete source")?;
-                            Path::new(&entry.result.sourcePath)
-                                .file_name()
-                                .ok_or("Package source filename is missing")?
-                                .to_string_lossy()
-                                .to_string()
-                        };
-                        (package.is_built_in, sourceName, vec![name.clone()])
-                    }
+                let container = snapshot.toolPkgContainers.get(name);
+                let builtin = package.is_built_in;
+                let sourcePath = if builtin {
+                    None
+                } else if let Some(container) = container {
+                    Some(container.sourcePath.as_str())
+                } else {
+                    Some(self.externalPackageScanCache.values()
+                        .find(|entry| entry.result.toolPackage.as_ref()
+                            .is_some_and(|candidate| candidate.name == *name))
+                        .ok_or("Scanned package lost its concrete source")?.result.sourcePath.as_str())
                 };
+                let sourceName = sourcePath.map(|path| Path::new(path).file_name()
+                    .ok_or("Package source filename is missing")
+                    .map(|name| name.to_string_lossy().into_owned()))
+                    .transpose()?.unwrap_or_default();
+                let mut members = vec![name.clone()];
+                if let Some(container) = container {
+                    members.extend(container.subpackages.iter().map(|child| child.packageName.clone()));
+                }
                 let store = ExtensionStore::default();
                 let requiredScope = snapshot
                     .toolPkgContainers
@@ -3553,7 +3518,7 @@ impl RuntimePackageManager {
                     .transpose()?
                     .flatten();
                 let existing = store
-                    .records("package")?
+                    .activeRecords("package")?
                     .into_iter()
                     .any(|record| record.id == *name);
                 if !existing {
@@ -3579,27 +3544,8 @@ impl RuntimePackageManager {
                 {
                     return Err(format!("Package source does not match its owner: {name}"));
                 }
-                if !builtin {
-                    let sourcePath = match snapshot.toolPkgContainers.get(name) {
-                        Some(container) => container.sourcePath.clone(),
-                        None => self
-                            .externalPackageScanCache
-                            .values()
-                            .find(|entry| {
-                                entry
-                                    .result
-                                    .toolPackage
-                                    .as_ref()
-                                    .is_some_and(|candidate| candidate.name == *name)
-                            })
-                            .ok_or("Package source is missing")?
-                            .result
-                            .sourcePath
-                            .clone(),
-                    };
-                    let actual = self
-                        .storePaths
-                        .runtime_storage_key(Path::new(&sourcePath))?;
+                if let Some(sourcePath) = sourcePath {
+                    let actual = self.storePaths.runtime_storage_key(Path::new(sourcePath))?;
                     let expected = format!(
                         "{}/{}",
                         ExtensionStore::root("package", &record.scope)?,
@@ -4173,7 +4119,7 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     pub fn getCustomizedPackageNames(&self) -> Result<Vec<String>, String> {
         Ok(ExtensionStore::default()
-            .records("package")?
+            .activeRecords("package")?
             .into_iter()
             .filter(|record| record.settings["customized"] == true)
             .map(|record| record.id)
@@ -4183,7 +4129,7 @@ impl RuntimePackageManager {
     /// Resolves an installed built-in identity that accepts a custom implementation.
     fn customizablePackage(&self, packageName: &str) -> Result<Option<ExtensionRecord>, String> {
         Ok(ExtensionStore::default()
-            .records("package")?
+            .activeRecords("package")?
             .into_iter()
             .find(|record| {
                 record.id == packageName
@@ -6243,6 +6189,7 @@ mod package_registration_tests {
             states: BTreeMap::from([
                 ("disabled".into(), (false, true)), ("external".into(), (true, false)),
             ]),
+            ..Default::default()
         };
         for (name, builtin, default, expected) in [
             ("disabled", true, true, false), ("external", false, false, true),

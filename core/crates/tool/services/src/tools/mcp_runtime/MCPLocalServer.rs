@@ -674,19 +674,10 @@ impl MCPLocalServer {
     #[allow(non_snake_case)]
     fn readMCPConfig(&self) -> Result<MCPConfig, String> {
         let mut config = MCPConfig::default();
-        for record in ExtensionStore::default().records("mcp")? {
+        for record in ExtensionStore::default().activeRecords("mcp")? {
             let server = serde_json::from_value(record.settings["server"].clone())
                 .map_err(|e| e.to_string())?;
-            if config
-                .mcpServers
-                .insert(record.id.clone(), server)
-                .is_some()
-            {
-                return Err(format!(
-                    "MCP ownership conflict: {} exists in both locations",
-                    record.id
-                ));
-            }
+            config.mcpServers.insert(record.id.clone(), server);
             let metadata = serde_json::from_value(record.settings["metadata"].clone())
                 .map_err(|e| e.to_string())?;
             config.pluginMetadata.insert(record.id, metadata);
@@ -699,7 +690,7 @@ impl MCPLocalServer {
     fn writeMCPConfig(&self, config: &MCPConfig) -> Result<(), String> {
         let config = self.autoFillMissingMetadata(config.clone());
         let store = ExtensionStore::default();
-        let records = store.records("mcp")?;
+        let records = store.activeRecords("mcp")?;
         for record in &records {
             if let Some(server) = config.mcpServers.get(&record.id) {
                 if record.scope == "space"

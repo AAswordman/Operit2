@@ -293,6 +293,15 @@ void main() {
         canDelete: false,
       ),
       core_proxy.ExtensionCatalogDiagnostic(
+        sourcePath: '/runtime/extensions/device/records/skill-demo.json',
+        packageId: 'demo',
+        displayName: 'Skipped local duplicate',
+        code: 'duplicate_scope',
+        message: '重复安装：已使用 space 版本，local 版本已跳过，本地数据保留。',
+        packageKind: 'skill',
+        canDelete: false,
+      ),
+      core_proxy.ExtensionCatalogDiagnostic(
         sourcePath: '/runtime/extensions/device/packages/broken.toolpkg',
         packageId: null,
         displayName: 'Broken installed archive',
@@ -304,10 +313,12 @@ void main() {
     ]);
     await tester.pumpWidget(_manager(bridge));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('2 个文件加载失败'));
+    await tester.tap(find.text('3 条加载诊断'));
     await tester.pumpAndSettle();
 
     expect(find.byTooltip('此加载错误没有可删除的安装来源'), findsOneWidget);
+    expect(find.byTooltip('已使用设备空间版本，本机副本和数据保留'), findsOneWidget);
+    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
     expect(find.byTooltip('删除失败来源'), findsOneWidget);
     await tester.tap(find.byTooltip('删除失败来源'));
     await tester.pumpAndSettle();
@@ -770,6 +781,8 @@ core_proxy.ToolPkgContainerRuntime _toolpkgRuntime() =>
       desktopWidgets: [],
       appLifecycleHooks: [],
       messageProcessingPlugins: [],
+      messageTransformHooks: [],
+      messageStreamTransforms: [],
       xmlRenderPlugins: [],
       inputMenuTogglePlugins: [],
       chatInputHooks: [],

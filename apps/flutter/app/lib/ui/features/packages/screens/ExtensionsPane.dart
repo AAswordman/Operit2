@@ -346,8 +346,7 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
                               ExtensionCard(
                                 controller: _controller,
                                 entry: entry,
-                                showKind:
-                                    _grouping != ExtensionGrouping.kind,
+                                showKind: _grouping != ExtensionGrouping.kind,
                                 showScope:
                                     _grouping != ExtensionGrouping.location,
                               ),
@@ -365,8 +364,7 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
                             controller: _controller,
                             entry: entry,
                             showKind: _grouping != ExtensionGrouping.kind,
-                            showScope:
-                                _grouping != ExtensionGrouping.location,
+                            showScope: _grouping != ExtensionGrouping.location,
                             showEnabledState: false,
                             trailing: ExtensionEnableSwitch(
                               controller: _controller,
@@ -411,10 +409,8 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
         ),
         sliver: SliverList.separated(
           itemCount: rows.length,
-          itemBuilder: (context, index) => Material(
-            type: MaterialType.transparency,
-            child: rows[index],
-          ),
+          itemBuilder: (context, index) =>
+              Material(type: MaterialType.transparency, child: rows[index]),
           separatorBuilder: (context, index) => Divider(
             height: 1,
             thickness: 1,
@@ -448,12 +444,12 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    '加载失败的文件',
+                    '加载诊断',
                     style: SettingsControlStyles.sectionTitleTextStyle(context),
                   ),
                   const SizedBox(height: 4),
                   Text(
-                    '这些文件没能加载，所以不会出现在列表里。',
+                    '查看加载错误和重复安装警告。',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -469,8 +465,12 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
                             for (final diagnostic in diagnostics)
                               StoreListRow(
                                 leading: StoreRowGlyph(
-                                  icon: Icons.error_outline_rounded,
-                                  color: theme.colorScheme.error,
+                                  icon: diagnostic.code == 'duplicate_scope'
+                                      ? Icons.warning_amber_rounded
+                                      : Icons.error_outline_rounded,
+                                  color: diagnostic.code == 'duplicate_scope'
+                                      ? theme.colorScheme.tertiary
+                                      : theme.colorScheme.error,
                                 ),
                                 title: diagnostic.displayName,
                                 subtitle:
@@ -493,7 +493,9 @@ class _ExtensionsPaneState extends State<ExtensionsPane> {
   Widget _diagnosticAction(core_proxy.ExtensionCatalogDiagnostic diagnostic) {
     if (!diagnostic.canDelete) {
       return Tooltip(
-        message: diagnostic.packageKind == 'skill'
+        message: diagnostic.code == 'duplicate_scope'
+            ? '已使用设备空间版本，本机副本和数据保留'
+            : diagnostic.packageKind == 'skill'
             ? '技能扫描错误会在目录刷新时重新计算'
             : '此加载错误没有可删除的安装来源',
         child: const Icon(Icons.info_outline_rounded),
@@ -664,10 +666,10 @@ class _AttentionBlock extends StatelessWidget {
               StoreListRow(
                 leading: StoreRowGlyph(
                   icon: Icons.report_gmailerrorred_rounded,
-                  color: theme.colorScheme.error,
+                  color: theme.colorScheme.tertiary,
                 ),
-                title: '${diagnostics.length} 个文件加载失败',
-                subtitle: '查看加载原因，可删除损坏的安装来源',
+                title: '${diagnostics.length} 条加载诊断',
+                subtitle: '查看加载错误和重复安装警告',
                 trailing: const Icon(Icons.chevron_right_rounded),
                 onTap: onShowDiagnostics,
               ),
@@ -692,9 +694,7 @@ class _EmptyLibrary extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
           Icon(
-            query.isEmpty
-                ? Icons.extension_outlined
-                : Icons.search_off_rounded,
+            query.isEmpty ? Icons.extension_outlined : Icons.search_off_rounded,
             size: 40,
             color: theme.colorScheme.onSurfaceVariant,
           ),
