@@ -1488,7 +1488,7 @@ impl EnhancedAIService {
             .await
     }
 
-    /// Builds a model runtime exclusively from one validated plugin-resolved descriptor.
+    /// Builds the chat runtime from its execution profile and recognition function bindings.
     #[allow(non_snake_case)]
     pub fn createSendMessageRuntime(
         &mut self,
@@ -1518,9 +1518,9 @@ impl EnhancedAIService {
             // Do not let the retired Core preference silently veto the plugin's switch.
             disableUserPreferenceDescription: false,
             aiName,
-            hasImageRecognition: modelConfig.capabilities.directImage,
-            hasAudioRecognition: modelConfig.capabilities.directAudio,
-            hasVideoRecognition: modelConfig.capabilities.directVideo,
+            hasImageRecognition: self.multi_service_manager.hasImageRecognitionConfigured()?,
+            hasAudioRecognition: self.multi_service_manager.hasAudioRecognitionConfigured()?,
+            hasVideoRecognition: self.multi_service_manager.hasVideoRecognitionConfigured()?,
             chatModelHasDirectAudio: modelConfig.capabilities.directAudio,
             chatModelHasDirectVideo: modelConfig.capabilities.directVideo,
             chatModelHasDirectImage: modelConfig.capabilities.directImage,

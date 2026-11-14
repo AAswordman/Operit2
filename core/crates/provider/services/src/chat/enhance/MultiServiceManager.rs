@@ -1019,19 +1019,19 @@ impl MultiServiceManager {
         format!("{providerId}:{modelId}")
     }
 
-    /// Reports whether the chat model binding supports direct image input.
+    /// Reports whether the image-recognition function binding supports image input.
     pub fn hasImageRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
         let config = self.getModelConfigForFunction(FunctionType::IMAGE_RECOGNITION)?;
         Ok(config.capabilities.directImage)
     }
 
-    /// Reports whether the chat model binding supports direct audio input.
+    /// Reports whether the audio-recognition function binding supports audio input.
     pub fn hasAudioRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
         let config = self.getModelConfigForFunction(FunctionType::AUDIO_RECOGNITION)?;
         Ok(config.capabilities.directAudio)
     }
 
-    /// Reports whether the chat model binding supports direct video input.
+    /// Reports whether the video-recognition function binding supports video input.
     pub fn hasVideoRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
         let config = self.getModelConfigForFunction(FunctionType::VIDEO_RECOGNITION)?;
         Ok(config.capabilities.directVideo)
