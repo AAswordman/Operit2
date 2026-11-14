@@ -291,8 +291,10 @@ public class WebViewProxyApi extends PigeonApiWebView {
     return (ProxyApiRegistrar) super.getPigeonRegistrar();
   }
 
+  /** Releases script registrations before destroying the native view. */
   @Override
   public void destroy(@NonNull WebView pigeon_instance) {
+    getPigeonRegistrar().userScripts.removeAll(pigeon_instance);
     pigeon_instance.destroy();
   }
 }

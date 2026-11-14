@@ -67,24 +67,40 @@ String buildComposeDslWebViewBridgeRuntimeScript({
         window.__operitInstallComposeDslJavascriptInterfaces(initialInterfaces);
         return;
       }
-      var channel = window[channelName];
-      if (!channel || typeof channel.postMessage !== 'function') {
-        return;
-      }
       var sequence = 0;
       var pending = {};
       var installed = {};
+      var queued = [];
+      // Drain startup calls when invoked by a call or the host's interface refresh.
+      function flushQueuedMessages() {
+        var channel = window[channelName];
+        if (!channel || typeof channel.postMessage !== 'function') {
+          return;
+        }
+        while (queued.length > 0) {
+          var message = queued.shift();
+          try {
+            channel.postMessage(message.raw);
+          } catch (error) {
+            var failed = pending[message.id];
+            delete pending[message.id];
+            failed.reject(error);
+          }
+        }
+      }
       // Correlate asynchronous host messages with their page-side promises.
       function send(type, payload) {
         sequence += 1;
         var id = String(Date.now()) + ':' + String(sequence);
         return new Promise(function(resolve, reject) {
-          pending[id] = { resolve: resolve, reject: reject };
-          channel.postMessage(JSON.stringify({
+          var raw = JSON.stringify({
             id: id,
             type: type,
             payload: payload === undefined ? null : payload
-          }));
+          });
+          pending[id] = { resolve: resolve, reject: reject };
+          queued.push({ id: id, raw: raw });
+          flushQueuedMessages();
         });
       }
       // Resolve only the request identified by the native response envelope.
@@ -174,6 +190,8 @@ String buildComposeDslWebViewBridgeRuntimeScript({
           }
           window.__operitComposeDslInstalledJavascriptInterfaces[interfaceName] = true;
         }
+        // Host lifecycle refreshes resume queued calls without timers or deadlines.
+        flushQueuedMessages();
         window.dispatchEvent(new Event('operitComposeDslInterfacesReady'));
       }
       window.__operitInstallComposeDslJavascriptInterfaces = installInterfaces;

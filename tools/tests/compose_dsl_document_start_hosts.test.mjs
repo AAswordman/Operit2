@@ -5,12 +5,14 @@ const root = new URL('../../', import.meta.url);
 /** Loads a workspace source file for checking the native registration contract. */
 function source(path) { return readFileSync(new URL(path, root), 'utf8'); }
 
-test('Android uses the Kotlin document-start API and owns removable ScriptHandlers', () => {
+test('Android selects native document-start by provider capability and owns removable scripts', () => {
   const native = source('apps/flutter/thirdparty/webview_flutter_android/android/src/main/java/io/flutter/plugins/webviewflutter/WebViewUserScripts.java');
   assert.match(native, /WebViewCompat\.addDocumentStartJavaScript\(view, source, Collections\.singleton\("\*"\)\)/);
   assert.match(native, /ScriptHandler handler/);
   assert.match(native, /handler\.remove\(\)/);
-  assert.doesNotMatch(native, /evaluateJavascript|loadDataWithBaseURL/);
+  assert.match(native, /if \(WebViewFeature\.isFeatureSupported\(WebViewFeature\.DOCUMENT_START_SCRIPT\)\)/);
+  assert.match(native, /if \(script\.handler == null\) view\.evaluateJavascript\(script\.source, null\)/);
+  assert.doesNotMatch(native, /throw new UnsupportedOperationException|loadDataWithBaseURL/);
 });
 
 test('application awaits document-start registration and never rewrites URL resource HTML', () => {

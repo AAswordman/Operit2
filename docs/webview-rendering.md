@@ -37,6 +37,25 @@ bridge therefore uses page-wide CSS zoom with the application's JavaScript-enabl
 browser. It retains a main-frame document-start script separately from user
 scripts, applies zoom to the current document, and restores preexisting inline
 root zoom when reset. Application zoom itself does not require page JavaScript.
+
+## Android legacy WebView scripts
+
+Android checks the active provider's `DOCUMENT_START_SCRIPT` capability when
+registering a user script. Supported providers use AndroidX document-start
+registration. Providers without it (including affected vendor WebViews) retain
+the same removable script handles and inject with `evaluateJavascript` at page
+start, commit and completion. Scripts execute once per document in registration
+order; reloads get fresh document state. Removing scripts, destroying a view or
+detaching the engine releases the corresponding registrations.
+
+Lifecycle injection cannot guarantee execution before the page's own first
+script, and targets the main frame. Pages that need host interfaces should wait
+for `operitComposeDslInterfacesReady` when the interface is not yet present.
+The Compose bridge queues calls while its native channel is unavailable. The
+host's existing lifecycle interface refresh drains queued calls when the channel
+is available, without polling or introducing a bridge timeout. Reinstalling
+interface descriptors preserves the existing transport and pending calls.
+
 ## Windows composition
 
 WebView2 supplies a composition visual directly to the Windows engine. Flutter

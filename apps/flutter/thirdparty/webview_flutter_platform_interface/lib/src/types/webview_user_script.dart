@@ -3,6 +3,9 @@ import 'package:flutter/foundation.dart';
 /// The lifecycle point at which a user script is injected.
 enum WebViewUserScriptInjectionTime {
   /// Inject after the document object is created and before page scripts run.
+  ///
+  /// Android providers without document-start support inject into the main frame
+  /// from navigation callbacks, which may run after the page's own scripts.
   documentStart,
 }
 

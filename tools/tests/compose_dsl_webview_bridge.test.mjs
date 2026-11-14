@@ -17,18 +17,24 @@ function runtime(interfaces = descriptors) {
 }
 
 /** Emulates asynchronous host delivery without assuming interface discovery is immediate. */
-function page() {
+function page({ channelReady = true } = {}) {
   const messages = [];
   const events = [];
+  let now = 1000;
+  const channel = { postMessage(raw) { messages.push(JSON.parse(raw)); } };
   const context = vm.createContext({
+    Date: { now() { return now; } },
     Event: class { /** Records the event name exposed to page listeners. */ constructor(type) { this.type = type; } },
     dispatchEvent(event) { events.push(event.type); },
-    __ComposeDslWebViewHostBridgeChannel__: {
-      postMessage(raw) { messages.push(JSON.parse(raw)); },
-    },
+    __ComposeDslWebViewHostBridgeChannel__: channelReady ? channel : undefined,
   });
   context.window = context;
-  return { context, messages, events };
+  return {
+    context, messages, events, channel,
+    advanceClock(milliseconds) {
+      now += milliseconds;
+    },
+  };
 }
 
 /** Delivers one successful native response to the production request promise. */
@@ -78,6 +84,53 @@ test('descriptor refresh adds and removes methods without replacing the host tra
   assert.equal(context.ChanzhiHost, undefined);
   assert.equal(context.OtherHost, undefined);
   assert.equal(context.__operitComposeDslWebViewHostReceive, receiver);
+});
+
+test('calls made before the native channel exists drain once in order on host refresh', async () => {
+  const pageState = page({ channelReady: false });
+  const { context, messages, channel } = pageState;
+  vm.runInContext(runtime(), context);
+  const first = context.ChanzhiHost.loadData();
+  const second = context.ChanzhiHost.saveData({ keep: true });
+  assert.equal(messages.length, 0);
+  vm.runInContext(runtime(), context);
+  assert.equal(messages.length, 0);
+  context.__ComposeDslWebViewHostBridgeChannel__ = channel;
+  context.__operitInstallComposeDslJavascriptInterfaces(descriptors);
+  assert.deepEqual(messages.map(message => message.payload.methodName), ['loadData', 'saveData']);
+  messages.forEach((message, index) => respond(context, message, index));
+  assert.deepEqual(await Promise.all([first, second]), [0, 1]);
+  context.__operitInstallComposeDslJavascriptInterfaces(descriptors);
+  assert.equal(messages.length, 2);
+});
+
+test('queued calls have no bridge deadline and resume on host readiness without polling', async () => {
+  const { context, messages, channel, advanceClock } = page({ channelReady: false });
+  vm.runInContext(runtime(), context);
+  let settled = false;
+  const pending = context.ChanzhiHost.loadData();
+  pending.then(() => { settled = true; }, () => { settled = true; });
+  advanceClock(3600000);
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(messages.length, 0);
+  assert.doesNotMatch(runtime(), /\b(?:setTimeout|setInterval|channelDeadline|channelPoll)\b/);
+  context.__ComposeDslWebViewHostBridgeChannel__ = channel;
+  vm.runInContext(runtime(), context);
+  assert.equal(messages.length, 1);
+  respond(context, messages[0], 'retained');
+  assert.equal(await pending, 'retained');
+});
+
+test('transport errors reject their request without blocking subsequent calls', async () => {
+  const { context, messages, channel } = page();
+  vm.runInContext(runtime(), context);
+  context.__ComposeDslWebViewHostBridgeChannel__ = { postMessage() { throw new Error('channel closed'); } };
+  await assert.rejects(context.ChanzhiHost.loadData(), /channel closed/);
+  context.__ComposeDslWebViewHostBridgeChannel__ = channel;
+  const next = context.ChanzhiHost.loadData();
+  respond(context, messages[0], 'ok');
+  assert.equal(await next, 'ok');
 });
 
 test('startup reads saved todos on each entry instead of writing empty initialization', async () => {

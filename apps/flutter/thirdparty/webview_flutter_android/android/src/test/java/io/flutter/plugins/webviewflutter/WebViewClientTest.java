@@ -8,6 +8,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -27,7 +28,7 @@ public class WebViewClientTest {
   @Test
   public void onPageStarted() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientProxyApi.WebViewClientImpl(mockApi);
     final WebView webView = mock(WebView.class);
@@ -40,7 +41,7 @@ public class WebViewClientTest {
   @Test
   public void onReceivedError() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView webView = mock(WebView.class);
@@ -55,7 +56,7 @@ public class WebViewClientTest {
   @Test
   public void urlLoading() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView webView = mock(WebView.class);
@@ -68,7 +69,7 @@ public class WebViewClientTest {
   @Test
   public void urlLoadingForMainFrame() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     instance.setReturnValueForShouldOverrideUrlLoading(false);
@@ -83,7 +84,7 @@ public class WebViewClientTest {
   @Test
   public void urlLoadingForMainFrameWithOverride() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     instance.setReturnValueForShouldOverrideUrlLoading(true);
@@ -98,7 +99,7 @@ public class WebViewClientTest {
   @Test
   public void urlLoadingNotForMainFrame() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView webView = mock(WebView.class);
@@ -112,7 +113,7 @@ public class WebViewClientTest {
   @Test
   public void urlLoadingNotForMainFrameWithOverride() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView webView = mock(WebView.class);
@@ -126,7 +127,7 @@ public class WebViewClientTest {
   @Test
   public void doUpdateVisitedHistory() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView webView = mock(WebView.class);
@@ -140,7 +141,7 @@ public class WebViewClientTest {
   @Test
   public void onReceivedHttpError() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView webView = mock(WebView.class);
@@ -157,7 +158,7 @@ public class WebViewClientTest {
   @Test
   public void onFormResubmission() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView view = mock(WebView.class);
@@ -171,7 +172,7 @@ public class WebViewClientTest {
   @Test
   public void onLoadResource() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView view = mock(WebView.class);
@@ -184,7 +185,7 @@ public class WebViewClientTest {
   @Test
   public void onPageCommitVisible() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView view = mock(WebView.class);
@@ -197,7 +198,7 @@ public class WebViewClientTest {
   @Test
   public void onReceivedClientCertRequest() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView view = mock(WebView.class);
@@ -210,7 +211,7 @@ public class WebViewClientTest {
   @Test
   public void onReceivedLoginRequest() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView view = mock(WebView.class);
@@ -226,7 +227,7 @@ public class WebViewClientTest {
   @Test
   public void onReceivedSslError() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView view = mock(WebView.class);
@@ -240,7 +241,7 @@ public class WebViewClientTest {
   @Test
   public void onScaleChanged() {
     final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
-    when(mockApi.getPigeonRegistrar()).thenReturn(new TestProxyApiRegistrar());
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
     final android.webkit.WebView view = mock(WebView.class);
