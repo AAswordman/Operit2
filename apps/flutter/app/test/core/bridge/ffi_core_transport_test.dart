@@ -56,7 +56,8 @@ late void Function(Pointer<Void>) _fixtureBufferSeal;
 late Pointer<Void> Function(Pointer<Void>) _fixtureBufferRetain;
 late Pointer<Uint8> Function(Pointer<Void>) _fixtureBufferView;
 late int Function(Pointer<Void>) _fixtureBufferLength;
-late int Function() _fixtureLiveAllocations;
+late int Function(Pointer<Void>) _fixtureTrackAllocation;
+late bool Function(int) _fixtureAllocationIsLive;
 final List<String> _nativeFailures = [];
 
 /// Captures the host log call without using a Core request or the client logger.
@@ -155,9 +156,14 @@ Future<void> _loadPortFixture() async {
         Bool Function(Pointer<Void>, Int64, Pointer<_BatchFrame>, UintPtr),
         bool Function(Pointer<Void>, int, Pointer<_BatchFrame>, int)
       >('fixture_send_batch');
-  _fixtureLiveAllocations = native
-      .lookupFunction<UintPtr Function(), int Function()>(
-        'fixture_live_allocations',
+  _fixtureTrackAllocation = native
+      .lookupFunction<
+        UintPtr Function(Pointer<Void>),
+        int Function(Pointer<Void>)
+      >('fixture_track_allocation');
+  _fixtureAllocationIsLive = native
+      .lookupFunction<Bool Function(UintPtr), bool Function(int)>(
+        'fixture_allocation_is_live',
       );
 }
 
@@ -493,6 +499,7 @@ void main() {
 
   test('VM collection releases delivered shared ownership receipts', () async {
     final messages = ReceivePort();
+    final adopted = ReceivePort();
     final exit = ReceivePort();
     final isolate = await Isolate.spawn(_receiveOneEnvelope, [
       messages.sendPort,
@@ -502,14 +509,28 @@ void main() {
           )
           .address,
       _fixtureBufferRelease.address,
+      _fixtureLibrary
+          .lookup<NativeFunction<UintPtr Function(Pointer<Void>)>>(
+            'fixture_track_allocation',
+          )
+          .address,
+      adopted.sendPort,
     ], onExit: exit.sendPort);
     final port = await messages.first as SendPort;
     messages.close();
-    final baseline = _fixtureLiveAllocations();
     final token = _fixtureBufferAllocate(1024 * 1024);
     _fixtureBufferSeal(token);
     final handles = calloc<Pointer<Void>>()..value = token;
     final frame = _fixtureAllocate(9);
+    final tokenProbe = _fixtureTrackAllocation(token);
+    final payloadProbe = _fixtureTrackAllocation(
+      _fixtureBufferView(token).cast(),
+    );
+    final metadataProbe = _fixtureTrackAllocation(frame.cast());
+    expect(
+      [tokenProbe, payloadProbe, metadataProbe].every(_fixtureAllocationIsLive),
+      isTrue,
+    );
     try {
       expect(
         _fixtureSend(
@@ -523,10 +544,13 @@ void main() {
         isTrue,
       );
       _fixtureBufferRelease.asFunction<void Function(Pointer<Void>)>()(token);
+      expect(_fixtureAllocationIsLive(tokenProbe), isFalse);
+      final adoptedProbe = await adopted.first as int;
+      final probes = [metadataProbe, payloadProbe, adoptedProbe];
       await exit.first;
       for (
         var attempt = 0;
-        attempt < 16 && _fixtureLiveAllocations() != baseline;
+        attempt < 16 && probes.any(_fixtureAllocationIsLive);
         attempt++
       ) {
         final pressure = List.generate(
@@ -536,9 +560,15 @@ void main() {
         await Future<void>.delayed(const Duration(milliseconds: 10));
         expect(pressure.last[0], 31);
       }
-      expect(_fixtureLiveAllocations(), baseline);
+      expect(
+        probes.where(_fixtureAllocationIsLive),
+        isEmpty,
+        reason:
+            'Metadata, shared payload and adopted handle must all be released',
+      );
     } finally {
       calloc.free(handles);
+      adopted.close();
       exit.close();
       isolate.kill();
     }
@@ -680,10 +710,73 @@ void main() {
     await proxy.call(_call('connected', 'echo', null));
     await transport.close();
     final bytes = _fixtureAllocate(64);
-    final allocated = _fixtureLiveAllocations();
-    expect(_fixtureSend(host.post, host.port, bytes, 64, nullptr, 0), isFalse);
-    expect(_fixtureLiveAllocations(), allocated - 1);
+    final token = _fixtureBufferAllocate(128);
+    _fixtureBufferSeal(token);
+    final handles = calloc<Pointer<Void>>()..value = token;
+    final metadataProbe = _fixtureTrackAllocation(bytes.cast());
+    final payloadProbe = _fixtureTrackAllocation(
+      _fixtureBufferView(token).cast(),
+    );
+    final tokenProbe = _fixtureTrackAllocation(token);
+    try {
+      expect(
+        _fixtureSend(host.post, host.port, bytes, 64, handles, 1),
+        isFalse,
+      );
+      expect(_fixtureAllocationIsLive(metadataProbe), isFalse);
+      expect(_fixtureAllocationIsLive(payloadProbe), isTrue);
+      expect(_fixtureAllocationIsLive(tokenProbe), isTrue);
+    } finally {
+      _fixtureBufferRelease.asFunction<void Function(Pointer<Void>)>()(token);
+      calloc.free(handles);
+    }
+    expect(_fixtureAllocationIsLive(tokenProbe), isFalse);
+    expect(_fixtureAllocationIsLive(payloadProbe), isFalse);
   });
+
+  test(
+    'metadata-only batches preserve byte slots and ordered watch values',
+    () async {
+      final failureCount = _nativeFailures.length;
+      await proxy.call(_call('metadataSetup', 'echo', null));
+      final values = <Object?>[];
+      final done = Completer<void>();
+      proxy
+          .watchStream(_watch('metadataBatch'))
+          .listen(
+            (event) => values.add(event.value),
+            onError: done.completeError,
+            onDone: done.complete,
+          );
+      while (host.watches.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      final watch = host.watches.entries.single;
+      final expected = <Object?>['early'];
+      for (var batch = 0; batch < 256; batch++) {
+        host.batch(
+          List.generate(12, (index) {
+            final value = 'frame-${batch * 12 + index}'.padRight(280, '.');
+            expected.add(value);
+            return (
+              1,
+              watch.value,
+              encodeCoreLinkMessage([
+                watch.key,
+                [null, 'core/test7', 'items', 'Changed', value],
+              ]),
+            );
+          }),
+        );
+        await Future<void>.delayed(Duration.zero);
+      }
+      host.send(3, watch.value, Uint8List(0));
+      await done.future;
+      expect(values, expected);
+      expect(platformMethods, ['connectCoreFfi']);
+      expect(_nativeFailures, hasLength(failureCount));
+    },
+  );
 
   test(
     'one batch preserves independent binary tables and watch identities',
@@ -908,6 +1001,11 @@ void _receiveOneEnvelope(List<Object> arguments) {
       Pointer<NativeFunction<Void Function(Pointer<Void>)>>.fromAddress(
         arguments[2] as int,
       );
+  final trackAllocation =
+      Pointer<NativeFunction<UintPtr Function(Pointer<Void>)>>.fromAddress(
+        arguments[3] as int,
+      ).asFunction<int Function(Pointer<Void>)>();
+  final adopted = arguments[4] as SendPort;
   final port = ReceivePort();
   parent.send(port.sendPort);
   port.listen((dynamic message) {
@@ -922,6 +1020,7 @@ void _receiveOneEnvelope(List<Object> arguments) {
     if (view.first != 0 || view.last != 0) {
       throw StateError('Invalid adopted binary contents');
     }
+    adopted.send(trackAllocation(token));
     Isolate.exit();
   });
 }

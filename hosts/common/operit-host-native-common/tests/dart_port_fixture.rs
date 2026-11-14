@@ -10,32 +10,45 @@ use dart_port::{DartPort, PostCObject};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-struct CountingAllocator;
+struct TrackingAllocator;
 
-static LIVE_ALLOCATIONS: AtomicUsize = AtomicUsize::new(0);
+// These probes observe only allocations explicitly selected by ownership tests.
+// Fixed storage avoids allocating recursively inside the allocator's release hook.
+static TRACKED_ALLOCATIONS: [AtomicUsize; 16] = [const { AtomicUsize::new(0) }; 16];
+static NEXT_ALLOCATION_PROBE: AtomicUsize = AtomicUsize::new(0);
 
 #[global_allocator]
-static ALLOCATOR: CountingAllocator = CountingAllocator;
+static ALLOCATOR: TrackingAllocator = TrackingAllocator;
 
-unsafe impl GlobalAlloc for CountingAllocator {
-    /// Counts successful allocations owned by this isolated fixture library.
+unsafe impl GlobalAlloc for TrackingAllocator {
+    /// Uses the system allocator without counting unrelated diagnostic allocations.
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let pointer = System.alloc(layout);
-        if !pointer.is_null() {
-            LIVE_ALLOCATIONS.fetch_add(1, Ordering::Relaxed);
-        }
-        pointer
+        System.alloc(layout)
     }
 
-    /// Counts releases made by the production payload finalizer.
+    /// Records the actual release of each watched allocation without dereferencing it.
     unsafe fn dealloc(&self, pointer: *mut u8, layout: Layout) {
+        for probe in &TRACKED_ALLOCATIONS {
+            let _ =
+                probe.compare_exchange(pointer as usize, 0, Ordering::AcqRel, Ordering::Acquire);
+        }
         System.dealloc(pointer, layout);
-        LIVE_ALLOCATIONS.fetch_sub(1, Ordering::Relaxed);
     }
 
-    /// Resizes one existing allocation without changing the live count.
+    /// Keeps a watched allocation's identity when the system allocator resizes it.
     unsafe fn realloc(&self, pointer: *mut u8, layout: Layout, size: usize) -> *mut u8 {
-        System.realloc(pointer, layout, size)
+        let resized = System.realloc(pointer, layout, size);
+        if !resized.is_null() {
+            for probe in &TRACKED_ALLOCATIONS {
+                let _ = probe.compare_exchange(
+                    pointer as usize,
+                    resized as usize,
+                    Ordering::AcqRel,
+                    Ordering::Acquire,
+                );
+            }
+        }
+        resized
     }
 }
 
@@ -138,8 +151,17 @@ pub unsafe extern "C" fn fixture_buffer_length(handle: *const BufferHandle) -> u
     (*handle).bytes().len()
 }
 
-/// Reports native ownership independently of Dart references or connection state.
+/// Watches one live allocation until its real allocator release, independently of address reuse.
 #[no_mangle]
-pub extern "C" fn fixture_live_allocations() -> usize {
-    LIVE_ALLOCATIONS.load(Ordering::Relaxed)
+pub extern "C" fn fixture_track_allocation(pointer: *mut std::ffi::c_void) -> usize {
+    assert!(!pointer.is_null());
+    let index = NEXT_ALLOCATION_PROBE.fetch_add(1, Ordering::Relaxed);
+    TRACKED_ALLOCATIONS[index].store(pointer as usize, Ordering::Release);
+    index
+}
+
+/// Reports whether the selected allocation has reached its actual native deallocation.
+#[no_mangle]
+pub extern "C" fn fixture_allocation_is_live(index: usize) -> bool {
+    TRACKED_ALLOCATIONS[index].load(Ordering::Acquire) != 0
 }

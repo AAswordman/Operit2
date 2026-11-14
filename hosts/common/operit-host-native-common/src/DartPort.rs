@@ -75,26 +75,58 @@ impl DartPort {
                 )
             })
             .collect();
+        // The VM's ApiMessageSerializer keys its WeakTable with ObjectPtr. With compressed
+        // pointers, aligned native addresses compare by their low 32 bits. Keep EVERY
+        // descriptor, including the root, in one allocation smaller than 4 GiB so distinct
+        // C objects cannot alias when the VM assigns references. Payloads stay zero-copy.
+        let frame_count = frames.len();
+        let object_count = frames
+            .iter()
+            .try_fold(1 + frame_count, |count, (_, buffers)| {
+                count
+                    .checked_add(1)?
+                    .checked_add(buffers.len().checked_mul(4)?)
+            })
+            .expect("Dart descriptor count must fit in address space");
+        assert!(
+            object_count <= u32::MAX as usize / std::mem::size_of::<DartObject>(),
+            "Dart descriptor graph must fit within a 32-bit address span"
+        );
+        let mut objects = Vec::with_capacity(object_count);
+        objects.resize_with(1 + frame_count, || integer_object(0));
         let mut peers = Vec::new();
-        let mut frames: Vec<Vec<DartObject>> = frames
-            .into_iter()
-            .map(|(bytes, buffers)| frame_objects(bytes, buffers, &mut peers))
+        let mut ranges = Vec::with_capacity(frame_count);
+        for (bytes, buffers) in frames {
+            let start = objects.len();
+            frame_objects(bytes, buffers, &mut peers, &mut objects);
+            ranges.push(start..objects.len());
+        }
+        let base = objects.as_mut_ptr();
+        let mut pointers: Vec<Vec<*mut DartObject>> = ranges
+            .iter()
+            .map(|range| {
+                range
+                    .clone()
+                    .map(|index| unsafe { base.add(index) })
+                    .collect()
+            })
             .collect();
-        let mut pointers: Vec<Vec<*mut DartObject>> = frames
-            .iter_mut()
-            .map(|frame| frame.iter_mut().map(|object| object as *mut _).collect())
+        for (index, frame) in pointers.iter_mut().enumerate() {
+            unsafe { base.add(1 + index).write(array_object(frame)) };
+        }
+        let mut batch: Vec<*mut DartObject> = (1..1 + frame_count)
+            .map(|index| unsafe { base.add(index) })
             .collect();
-        let mut envelopes: Vec<DartObject> = pointers
-            .iter_mut()
-            .map(|frame| array_object(frame))
-            .collect();
-        let mut batch: Vec<*mut DartObject> = envelopes
-            .iter_mut()
-            .map(|object| object as *mut _)
-            .collect();
-        let mut message = array_object(&mut batch);
-        let diagnostic =
-            PostDiagnostic::capture(self.id, &message, &envelopes, &frames, &pointers, &headers);
+        unsafe { base.write(array_object(&mut batch)) };
+        let frames: Vec<_> = ranges.iter().map(|range| &objects[range.clone()]).collect();
+        let diagnostic = PostDiagnostic::capture(
+            self.id,
+            &objects[0],
+            &objects[1..1 + frame_count],
+            &frames,
+            &pointers,
+            &headers,
+        );
         let sequence = diagnostic.sequence;
         {
             let mut history = post_history()
@@ -105,7 +137,7 @@ impl DartPort {
             }
             history.push_back(diagnostic);
         }
-        let accepted = unsafe { (self.post)(self.id, &mut message) };
+        let accepted = unsafe { (self.post)(self.id, base) };
         // The VM may already have finalized peers. Never inspect their data after posting.
         if let Some(diagnostic) = post_history()
             .lock()
@@ -129,8 +161,8 @@ fn frame_objects(
     bytes: Vec<u8>,
     buffers: Vec<Bytes>,
     peers: &mut Vec<*mut c_void>,
-) -> Vec<DartObject> {
-    let mut objects = Vec::with_capacity(1 + 4 * buffers.len());
+    objects: &mut Vec<DartObject>,
+) {
     objects.push(external_object(bytes.into(), peers));
     for bytes in buffers {
         let payload = SharedBuffer::sealed(bytes);
@@ -155,7 +187,6 @@ fn frame_objects(
         objects.push(integer_object(address));
         objects.push(integer_object(length));
     }
-    objects
 }
 
 /// Encodes a borrowed array whose backing pointers remain alive through the VM post call.
@@ -204,6 +235,7 @@ fn external_object(bytes: Bytes, peers: &mut Vec<*mut c_void>) -> DartObject {
 // It is process-wide and bounded to 32 batches, 128 frames and one receipt per frame.
 static POST_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
+/// Returns the bounded process-wide post recorder without retaining business payloads.
 fn post_history() -> &'static Mutex<VecDeque<PostDiagnostic>> {
     static HISTORY: OnceLock<Mutex<VecDeque<PostDiagnostic>>> = OnceLock::new();
     HISTORY.get_or_init(|| Mutex::new(VecDeque::with_capacity(32)))
@@ -220,6 +252,7 @@ struct ObjectDiagnostic {
 }
 
 impl ObjectDiagnostic {
+    /// Copies initialized descriptor fields before the VM can assume payload ownership.
     fn capture(object: &DartObject) -> Self {
         let mut result = Self {
             address: object as *const _ as usize,
@@ -240,6 +273,7 @@ impl ObjectDiagnostic {
         result
     }
 
+    /// Formats the captured descriptor without dereferencing native addresses.
     fn describe(&self) -> String {
         format!(
             "object=0x{:x} type={} typedType={:?} length={:?} data={:x?} peer={:x?}",
@@ -273,11 +307,12 @@ struct PostDiagnostic {
 }
 
 impl PostDiagnostic {
+    /// Records the outgoing graph while all descriptor and pointer arrays are live.
     fn capture(
         port: i64,
         root: &DartObject,
         envelopes: &[DartObject],
-        frames: &[Vec<DartObject>],
+        frames: &[&[DartObject]],
         pointers: &[Vec<*mut DartObject>],
         headers: &[(Option<u8>, Option<i64>)],
     ) -> Self {
@@ -360,4 +395,84 @@ pub fn recent_post_diagnostics(port: Option<i64>) -> Vec<String> {
         }
     }
     lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::cell::RefCell;
+    use std::collections::HashSet;
+
+    thread_local! {
+        static GRAPH_ERROR: RefCell<Option<String>> = const { RefCell::new(None) };
+    }
+
+    /// Validates VM reference identities and frame contents without taking buffer ownership.
+    unsafe fn validate_graph(root: *mut DartObject) -> Result<(), String> {
+        let mut pending = vec![root];
+        let mut addresses = HashSet::new();
+        let mut identities = HashSet::new();
+        while let Some(pointer) = pending.pop() {
+            let address = pointer as usize;
+            if !addresses.insert(address) || !identities.insert(address as u32) {
+                return Err("Distinct descriptors share a VM reference identity".into());
+            }
+            match (*pointer).kind {
+                6 => {
+                    let array = (*pointer).value.array;
+                    pending.extend_from_slice(std::slice::from_raw_parts(
+                        array.values,
+                        array.length as usize,
+                    ));
+                }
+                3 => {}
+                13 if (*pointer).value.external_typed_data.kind == 2 => {}
+                kind => return Err(format!("Unexpected descriptor type: {kind}")),
+            }
+        }
+        let min = *addresses.iter().min().unwrap();
+        let max = *addresses.iter().max().unwrap();
+        if max - min > u32::MAX as usize {
+            return Err("Descriptor graph has no bounded 32-bit address span".into());
+        }
+        let batch = (*root).value.array;
+        for index in 0..batch.length as usize {
+            let frame = (**batch.values.add(index)).value.array;
+            if frame.length as usize != 1 + 4 * (index % 3) {
+                return Err(format!("Invalid frame slot count at {index}"));
+            }
+            let metadata = (**frame.values).value.external_typed_data;
+            let bytes = std::slice::from_raw_parts(metadata.data, metadata.length as usize);
+            if bytes.len() != 309 || bytes[0] != 1 || bytes[1..9] != (index as i64).to_le_bytes() {
+                return Err(format!("Invalid metadata at {index}"));
+            }
+        }
+        Ok(())
+    }
+
+    /// Rejects the validated post so the sender must release every external buffer itself.
+    unsafe extern "C" fn inspect_post(_: i64, root: *mut DartObject) -> bool {
+        GRAPH_ERROR.with(|error| *error.borrow_mut() = validate_graph(root).err());
+        false
+    }
+
+    /// Checks complete graphs at production batch sizes, including roots and buffer receipts.
+    #[test]
+    fn batch_descriptors_preserve_compressed_reference_identity() {
+        for count in [1, 12, 128] {
+            let frames = (0..count)
+                .map(|index| {
+                    let mut metadata = vec![0; 309];
+                    metadata[0] = 1;
+                    metadata[1..9].copy_from_slice(&(index as i64).to_le_bytes());
+                    let buffers = (0..index % 3)
+                        .map(|size| Bytes::from(vec![index as u8; size]))
+                        .collect();
+                    (metadata, buffers)
+                })
+                .collect();
+            assert!(!DartPort::new(inspect_post, 1).sendBatch(frames));
+            GRAPH_ERROR.with(|error| assert_eq!(*error.borrow(), None));
+        }
+    }
 }
