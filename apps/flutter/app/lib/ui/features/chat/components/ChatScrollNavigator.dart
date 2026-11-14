@@ -6,9 +6,6 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../l10n/generated/app_localizations.dart';
-import '../../../../core/proxy/generated/CoreProxyModels.g.dart'
-    show ChatMessageDisplayMode;
-import '../../../common/ChatMessageIdentity.dart';
 import '../viewmodel/ChatViewModel.dart';
 import 'ChatScrollRailGeometry.dart';
 import 'ChatMessageLocatorContent.dart';
@@ -109,17 +106,16 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
   List<ChatMessageLocatorPreview> _locatorEntries =
       const <ChatMessageLocatorPreview>[];
 
-  late List<ChatMessageLocatorPreview> _visibleEntries;
+  bool _locatorLoadFailed = false;
   int? _hoveredEntryIndex;
   double _hoveredEntryCenter = 0;
   int _locatorLoadGeneration = 0;
 
-  /// Loads history previews once instead of generating them on pointer motion.
+  /// Loads global index metadata and bounded previews through the dedicated index API.
   @override
   void initState() {
     super.initState();
     widget.messageNavigation?.addListener(_onMessageNavigation);
-    _visibleEntries = _fallbackEntriesFromMessages();
     _loadLocatorEntries();
   }
 
@@ -137,9 +133,6 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
     final favoritesChanged =
         !identical(oldWidget.messages, widget.messages) &&
         _favoritesChanged(oldWidget.messages, widget.messages);
-    if (!identical(oldWidget.messages, widget.messages)) {
-      _visibleEntries = _fallbackEntriesFromMessages();
-    }
     final messagesChanged =
         oldWidget.messages.length != widget.messages.length ||
         oldWidget.messages.firstOrNull?.timestamp !=
@@ -160,18 +153,18 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
   /// Builds an isolated paint-driven rail and a preview only for the selected row.
   @override
   Widget build(BuildContext context) {
-    if (widget.messages.isEmpty ||
-        widget.viewportHeight <= 60.0 ||
-        !widget.viewportHeight.isFinite) {
+    if (widget.viewportHeight <= 60.0 || !widget.viewportHeight.isFinite) {
       return const SizedBox.shrink();
     }
 
     final entries = _getEntries();
     final activeTimestamp = _resolveActiveTimestamp();
-    final geometry = ChatScrollRailGeometry(
-      entryCount: entries.length,
-      viewportHeight: widget.viewportHeight,
-    );
+    final geometry = entries.isEmpty
+        ? null
+        : ChatScrollRailGeometry(
+            entryCount: entries.length,
+            viewportHeight: widget.viewportHeight,
+          );
     final hoveredIndex = _hoveredEntryIndex;
 
     return LayoutBuilder(
@@ -185,29 +178,43 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
         );
         return Stack(
           children: <Widget>[
-            Positioned(
-              right: 0,
-              top: 0,
-              bottom: 0,
-              width: ChatScrollRailGeometry.interactionWidth,
-              child: _MessageTickRail(
-                key: ValueKey(widget.currentChatId),
-                entries: entries,
-                activeTimestamp: activeTimestamp,
-                geometry: geometry,
-                onHoverEntry: (index, center) {
-                  if (_hoveredEntryIndex == index &&
-                      _hoveredEntryCenter == center) {
-                    return;
-                  }
-                  setState(() {
-                    _hoveredEntryIndex = index;
-                    _hoveredEntryCenter = center;
-                  });
-                },
-                onTapTick: _handleJumpToMessage,
+            if (_locatorLoadFailed)
+              Positioned(
+                right: 0,
+                top: 16,
+                child: IconButton(
+                  key: const ValueKey('chat-message-index-retry'),
+                  tooltip: AppLocalizations.of(
+                    context,
+                  )!.messageLocatorLoadFailed,
+                  onPressed: _loadLocatorEntries,
+                  icon: const Icon(Icons.refresh_rounded),
+                ),
               ),
-            ),
+            if (geometry != null)
+              Positioned(
+                right: 0,
+                top: 0,
+                bottom: 0,
+                width: ChatScrollRailGeometry.interactionWidth,
+                child: _MessageTickRail(
+                  key: ValueKey(widget.currentChatId),
+                  entries: entries,
+                  activeTimestamp: activeTimestamp,
+                  geometry: geometry,
+                  onHoverEntry: (index, center) {
+                    if (_hoveredEntryIndex == index &&
+                        _hoveredEntryCenter == center) {
+                      return;
+                    }
+                    setState(() {
+                      _hoveredEntryIndex = index;
+                      _hoveredEntryCenter = center;
+                    });
+                  },
+                  onTapTick: _handleJumpToMessage,
+                ),
+              ),
             if (hoveredIndex != null &&
                 hoveredIndex < entries.length &&
                 previewWidth > 0)
@@ -277,31 +284,7 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
 
   /// Returns the current cached history preview collection.
   List<ChatMessageLocatorPreview> _getEntries() {
-    return _locatorEntries.isNotEmpty ? _locatorEntries : _visibleEntries;
-  }
-
-  /// Projects the loaded transcript into locator previews once per message update.
-  List<ChatMessageLocatorPreview> _fallbackEntriesFromMessages() {
-    return widget.messages.indexed
-        .map<ChatMessageLocatorPreview>((item) {
-          final idx = item.$1;
-          final msg = item.$2;
-          final text = msg.displayText;
-          return ChatMessageLocatorPreview(
-            messageIndex: idx,
-            timestamp: msg.timestamp,
-            sender: msg.sender,
-            displayName: readChatMessageIdentity(msg)?.title.trim() ?? '',
-            previewContent: text,
-            contentLength: text.length,
-            displayMode:
-                msg.displayMode == ChatMessageDisplayMode.hiddenPlaceholder
-                ? 'HIDDEN_PLACEHOLDER'
-                : 'NORMAL',
-            isFavorite: msg.isFavorite,
-          );
-        })
-        .toList(growable: false);
+    return _locatorEntries;
   }
 
   /// Routes a confirmed tap to its visible row or its history timestamp.
@@ -343,30 +326,33 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
     super.dispose();
   }
 
-  /// Rejects stale preview loads after a chat or history window changes.
+  /// Reads the complete lightweight index and rejects responses from superseded chats.
   Future<void> _loadLocatorEntries() async {
     final generation = ++_locatorLoadGeneration;
     final chatId = widget.currentChatId;
     if (chatId == null || chatId.trim().isEmpty) {
       setState(() {
         _locatorEntries = const <ChatMessageLocatorPreview>[];
+        _locatorLoadFailed = false;
       });
       return;
     }
-    List<ChatMessageLocatorPreview> entries;
+    setState(() => _locatorLoadFailed = false);
     try {
-      entries = await widget.loadLocatorEntries(chatId, '');
+      final entries = await widget.loadLocatorEntries(chatId, '');
+      if (!mounted || generation != _locatorLoadGeneration) return;
+      setState(() {
+        _locatorEntries = entries;
+        _hoveredEntryIndex = null;
+      });
     } catch (_) {
-      // The transcript remains navigable while history is unavailable.
-      return;
+      if (!mounted || generation != _locatorLoadGeneration) return;
+      setState(() {
+        _locatorEntries = const <ChatMessageLocatorPreview>[];
+        _hoveredEntryIndex = null;
+        _locatorLoadFailed = true;
+      });
     }
-    if (!mounted || generation != _locatorLoadGeneration) {
-      return;
-    }
-    setState(() {
-      _locatorEntries = entries;
-      _hoveredEntryIndex = null;
-    });
   }
 }
 

@@ -117,7 +117,7 @@ fn output_bindings_survive_branches_promotion_deletion_and_workspace_changes() {
         .unwrap();
     assert_eq!(manager.fileDirectoryForChat(&branch.id).unwrap(), base);
     assert_eq!(
-        manager.loadChatMessages(&branch.id).unwrap()[0].parts[0].attributes["file_base_path"],
+        manager.loadChatMessagesRange(branch.id.clone(), "asc".to_string(), 0, 79).unwrap()[0].parts[0].attributes["file_base_path"],
         base
     );
 

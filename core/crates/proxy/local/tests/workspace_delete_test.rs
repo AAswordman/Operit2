@@ -123,7 +123,7 @@ async fn workspace_deletion_preserves_chats_and_mounted_files() {
                     .set_value(Some(chats[0].id.clone()));
                 let messages = chats
                     .iter()
-                    .map(|chat| manager.loadChatMessages(&chat.id).unwrap())
+                    .map(|chat| manager.loadChatMessagesRange(chat.id.clone(), "asc".to_string(), 0, 79).unwrap())
                     .collect::<Vec<_>>();
                 (workspace, survivor, chats, messages)
             };
@@ -199,7 +199,7 @@ async fn workspace_deletion_preserves_chats_and_mounted_files() {
                     assert_eq!(retained.workspaceId, None);
                     assert_eq!(retained.title, chat.title);
                     assert_eq!(
-                        manager.loadChatMessages(&chat.id).unwrap(),
+                        manager.loadChatMessagesRange(chat.id.clone(), "asc".to_string(), 0, 79).unwrap(),
                         original_messages
                     );
                 }

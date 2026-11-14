@@ -2261,6 +2261,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _autoScrollToBottomNotifier.value = value;
   }
 
+  /// Reads the complete lightweight message index independently of the transcript window.
   Future<List<ChatMessageLocatorPreview>> _loadMessageLocatorEntries(
     String chatId,
     String query,

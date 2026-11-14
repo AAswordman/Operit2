@@ -139,27 +139,43 @@ ChatMessage _message([
 /// Exercises actual generated projection requests, revision watches, and widget lifetime.
 void main() {
   testWidgets(
-    'one window dispatches one batch and identical prepares reuse it',
+    'only mounted rows acquire projections and inactive rows stay idle',
     (tester) async {
       final bridge = _ProjectionBridge();
       addTearDown(bridge.revisions.close);
-      final cache = MessageTransformCache(GeneratedCoreProxyClients(bridge));
+      final clients = GeneratedCoreProxyClients(bridge);
+      final cache = MessageTransformCache(clients);
       addTearDown(cache.dispose);
       final messages = [
         for (var index = 0; index < 80; index++)
           ChatMessage.fromJson({..._message().toJson(), 'timestamp': index}),
       ];
-      cache.prepare('chat', messages, 79);
+      await tester.pumpWidget(
+        _rows(clients, [messages.last], cache: cache, depthAnchor: 79),
+      );
       expect(bridge.requests, hasLength(1));
-      expect(bridge.requests.single['messages'], hasLength(80));
-      expect(cache.isPreparingHistory, true);
+      expect(bridge.requests.single['messages'], hasLength(1));
       bridge.complete(0, 'shown');
-      await tester.pump();
-      expect(cache.isPreparingHistory, false);
-      for (var repeat = 0; repeat < 200; repeat++) {
-        cache.prepare('chat', messages, 79);
+      await tester.pumpAndSettle();
+      for (var repeat = 0; repeat < 20; repeat++) {
+        await tester.pumpWidget(
+          _rows(clients, [messages.last], cache: cache, depthAnchor: 79),
+        );
       }
       expect(bridge.requests, hasLength(1));
+      await tester.pumpWidget(const SizedBox());
+      bridge.invalidate(1);
+      await tester.pump();
+      expect(bridge.requests, hasLength(1));
+      await tester.pumpWidget(
+        _rows(clients, [messages[78]], cache: cache, depthAnchor: 79),
+      );
+      expect(bridge.requests, hasLength(2));
+      expect(bridge.requests.last['messages'], hasLength(1));
+      bridge.complete(1, 'next row');
+      await tester.pumpAndSettle();
+      expect(find.text('next row'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 
@@ -188,41 +204,44 @@ void main() {
   });
 
   testWidgets(
-    'batch failures settle history and stale batches cannot reveal another chat',
+    'mounted batches fail explicitly and stale batches cannot reveal another chat',
     (tester) async {
       final bridge = _ProjectionBridge();
       addTearDown(bridge.revisions.close);
-      final cache = MessageTransformCache(GeneratedCoreProxyClients(bridge));
+      final clients = GeneratedCoreProxyClients(bridge);
+      final cache = MessageTransformCache(clients);
       addTearDown(cache.dispose);
       final first = _message();
       final second = ChatMessage.fromJson({...first.toJson(), 'timestamp': 43});
-      cache.prepare('chat', const [], null);
-      expect(cache.isPreparingHistory, false);
-      cache.prepare('chat', [first, second], 43);
-      expect(cache.isPreparingHistory, true);
+      await tester.pumpWidget(
+        _rows(clients, [first, second], cache: cache, depthAnchor: 43),
+      );
       expect(bridge.requests, hasLength(1));
       expect(bridge.requests.single['messages'], hasLength(2));
       bridge.completions[0].completeError(StateError('invalid pattern'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('invalid pattern'), findsNWidgets(2));
+      // Shared cache watches are subscribed before the row's fake-async build.
+      await tester.runAsync(() async => bridge.invalidate(1));
       await tester.pump();
-      expect(cache.isPreparingHistory, false);
-
-      bridge.invalidate(1);
+      expect(bridge.requests, hasLength(2));
+      await tester.pumpWidget(
+        _rows(
+          clients,
+          [first],
+          cache: cache,
+          chatId: 'other-chat',
+          depthAnchor: 42,
+        ),
+      );
+      expect(bridge.requests, hasLength(3));
+      bridge.complete(1, 'old chat');
       await tester.pump();
-      expect(cache.isPreparingHistory, false);
-      final third = ChatMessage.fromJson({...first.toJson(), 'timestamp': 44});
-      cache.prepare('chat', [first, second, third], 44);
-      expect(cache.isPreparingHistory, false);
-      cache.prepare('other-chat', [first], 42);
-      expect(cache.isPreparingHistory, true);
-      // Old requests must not reveal the newly selected conversation.
-      for (var index = 1; index < bridge.completions.length - 1; index++) {
-        bridge.complete(index, 'old chat');
-      }
-      await tester.pump();
-      expect(cache.isPreparingHistory, true);
-      bridge.complete(bridge.completions.length - 1, 'new chat');
-      await tester.pump();
-      expect(cache.isPreparingHistory, false);
+      expect(find.text('old chat'), findsNothing);
+      bridge.complete(2, 'new chat');
+      await tester.pumpAndSettle();
+      expect(find.text('new chat'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
     },
   );
 
@@ -272,38 +291,36 @@ void main() {
     );
   }
 
-  testWidgets('history cache reuses completed rows across viewport mounts', (
-    tester,
-  ) async {
-    final bridge = _ProjectionBridge();
-    addTearDown(bridge.revisions.close);
-    final clients = GeneratedCoreProxyClients(bridge);
-    final cache = MessageTransformCache(clients);
-    addTearDown(cache.dispose);
-    final first = _message();
-    final second = ChatMessage.fromJson({...first.toJson(), 'timestamp': 43});
-    cache.prepare('chat', [first, second], 43);
-    expect(bridge.requests, hasLength(1));
-    bridge.complete(0, '', ['first shown', 'second shown']);
-    await tester.pump();
-    Widget render(ChatMessage message) => MaterialApp(
-      home: TransformedChatMessage(
-        message: message,
-        chatId: 'chat',
-        depthAnchor: 43,
-        clients: clients,
-        cache: cache,
-        builder: (projected) => Text(projected.parts.single.content),
-      ),
-    );
-    await tester.pumpWidget(render(first));
-    expect(find.text('first shown'), findsOneWidget);
-    await tester.pumpWidget(render(second));
-    expect(find.text('second shown'), findsOneWidget);
-    expect(bridge.requests, hasLength(1));
-    expect(find.byType(LinearProgressIndicator), findsNothing);
-    await tester.pumpWidget(const SizedBox());
-  });
+  testWidgets(
+    'history cache projects new viewport rows and reuses completed remounts',
+    (tester) async {
+      final bridge = _ProjectionBridge();
+      addTearDown(bridge.revisions.close);
+      final clients = GeneratedCoreProxyClients(bridge);
+      final cache = MessageTransformCache(clients);
+      addTearDown(cache.dispose);
+      final first = _message();
+      final second = ChatMessage.fromJson({...first.toJson(), 'timestamp': 43});
+      await tester.pumpWidget(
+        _rows(clients, [first], cache: cache, depthAnchor: 43),
+      );
+      bridge.complete(0, 'first shown');
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        _rows(clients, [second], cache: cache, depthAnchor: 43),
+      );
+      expect(bridge.requests, hasLength(2));
+      bridge.complete(1, 'second shown');
+      await tester.pumpAndSettle();
+      expect(find.text('second shown'), findsOneWidget);
+      await tester.pumpWidget(
+        _rows(clients, [first], cache: cache, depthAnchor: 43),
+      );
+      expect(find.text('first shown'), findsOneWidget);
+      expect(bridge.requests, hasLength(2));
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
 
   testWidgets(
     'display invalidation projects the original and ignores stale completions',
@@ -390,3 +407,29 @@ void main() {
     );
   }
 }
+
+/// Mounts only the supplied viewport rows against one shared projection owner.
+Widget _rows(
+  GeneratedCoreProxyClients clients,
+  List<ChatMessage> messages, {
+  required MessageTransformCache cache,
+  required int depthAnchor,
+  String chatId = 'chat',
+}) => MaterialApp(
+  localizationsDelegates: AppLocalizations.localizationsDelegates,
+  supportedLocales: AppLocalizations.supportedLocales,
+  home: Column(
+    children: [
+      for (final message in messages)
+        TransformedChatMessage(
+          key: ValueKey(message.timestamp),
+          message: message,
+          chatId: chatId,
+          clients: clients,
+          depthAnchor: depthAnchor,
+          cache: cache,
+          builder: (projected) => Text(projected.parts.single.content),
+        ),
+    ],
+  ),
+);

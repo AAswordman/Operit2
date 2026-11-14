@@ -1425,9 +1425,8 @@ impl ChatServiceCore {
             ..message
         };
         let depth = self.chatHistoryDelegate.chatHistoryManager
-            .loadChatMessageLocatorPreviews(chatId.clone(), String::new())
-            .expect("message depth query must succeed").iter()
-            .filter(|item| item.timestamp > messageTimestamp).count() as i32;
+            .loadChatMessageDepths(&chatId, &[messageTimestamp])
+            .expect("message depth query must succeed")[0];
         let editedMessage = match ToolPkgMessageTransformBridge::transform(
             &chatId, editedMessage, "before_persist", depth, true,
         ).await {

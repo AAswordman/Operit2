@@ -209,7 +209,7 @@ fn missing_workspace_chat_deletion_preserves_lock_policy_and_removes_history() {
     assert!(database.chatDao().getChatById(CHAT_ID).unwrap().is_none());
     assert!(database
         .messageDao()
-        .getMessagesForChat(CHAT_ID)
+        .getMessagesForChatAsc(CHAT_ID, 80)
         .unwrap()
         .is_empty());
     assert!(histories.value().is_empty());
@@ -535,7 +535,7 @@ fn promote_chat_to_root_preserves_contents_and_publishes_metadata() {
     let mut expected = database.chatDao().getChatById("recent").unwrap().unwrap();
     let parent = database.chatDao().getChatById("pinned").unwrap();
     let child = database.chatDao().getChatById("older").unwrap();
-    let messages = manager.loadChatMessages("recent").unwrap();
+    let messages = manager.loadChatMessagesRange("recent".to_string(), "asc".to_string(), 0, 79).unwrap();
     let clock = manager.syncClock().unwrap();
     let histories = manager.chatHistoriesFlow().unwrap();
 
@@ -547,7 +547,7 @@ fn promote_chat_to_root_preserves_contents_and_publishes_metadata() {
     assert_eq!(promoted, expected);
     assert_eq!(database.chatDao().getChatById("pinned").unwrap(), parent);
     assert_eq!(database.chatDao().getChatById("older").unwrap(), child);
-    assert_eq!(manager.loadChatMessages("recent").unwrap(), messages);
+    assert_eq!(manager.loadChatMessagesRange("recent".to_string(), "asc".to_string(), 0, 79).unwrap(), messages);
     assert!(manager.getBranches("pinned".to_string()).unwrap().is_empty());
     assert_eq!(manager.getBranches("recent".to_string()).unwrap()[0].id, "older");
     assert_eq!(histories.value().into_iter().find(|chat| chat.id == "recent").unwrap().parentChatId, None);
@@ -781,7 +781,7 @@ fn failed_message_update_keeps_the_complete_previous_revision() {
     manager
         .addMessage("older".to_string(), message.clone())
         .unwrap();
-    let before = manager.loadChatMessages("older").unwrap();
+    let before = manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap();
     let clockBefore = manager.syncClock().unwrap();
     database.store().executeBatch(
         "CREATE TRIGGER reject_parts BEFORE INSERT ON message_parts BEGIN SELECT RAISE(ABORT, 'injected part failure'); END;"
@@ -789,7 +789,7 @@ fn failed_message_update_keeps_the_complete_previous_revision() {
     message.provider = "changed-provider".to_string();
     message.replace_with_markdown("changed".to_string());
     assert!(manager.updateMessage("older".to_string(), message).is_err());
-    assert_eq!(manager.loadChatMessages("older").unwrap(), before);
+    assert_eq!(manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap(), before);
     assert_eq!(manager.syncClock().unwrap(), clockBefore);
 }
 
@@ -827,7 +827,7 @@ fn failed_variant_insert_does_not_leave_an_empty_revision() {
     manager
         .addMessage("older".to_string(), message.clone())
         .unwrap();
-    let before = manager.loadChatMessages("older").unwrap();
+    let before = manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap();
     let clockBefore = manager.syncClock().unwrap();
     database.store().executeBatch(
         "CREATE TRIGGER reject_variant_parts BEFORE INSERT ON message_parts WHEN NEW.variantIndex > 0 BEGIN SELECT RAISE(ABORT, 'injected variant failure'); END;"
@@ -840,7 +840,7 @@ fn failed_variant_insert_does_not_leave_an_empty_revision() {
         .getVariantsForMessage("older", 100)
         .unwrap()
         .is_empty());
-    assert_eq!(manager.loadChatMessages("older").unwrap(), before);
+    assert_eq!(manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap(), before);
     assert_eq!(manager.syncClock().unwrap(), clockBefore);
     database
         .store()
@@ -868,7 +868,7 @@ fn failed_message_deletions_preserve_parts_and_variants() {
         manager
             .addMessageVariant("older".to_string(), 100, message)
             .unwrap();
-        let before = manager.loadChatMessages("older").unwrap();
+        let before = manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap();
         let clockBefore = manager.syncClock().unwrap();
         database.store().executeBatch(
             "CREATE TRIGGER reject_delete BEFORE DELETE ON messages BEGIN SELECT RAISE(ABORT, 'injected delete failure'); END;"
@@ -880,7 +880,7 @@ fn failed_message_deletions_preserve_parts_and_variants() {
             _ => unreachable!(),
         };
         assert!(result.is_err());
-        assert_eq!(manager.loadChatMessages("older").unwrap(), before);
+        assert_eq!(manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap(), before);
         assert_eq!(
             database
                 .messagePartDao()
@@ -978,7 +978,7 @@ fn incomplete_import_cannot_commit_a_message_without_parts() {
     manager
         .addMessage("older".to_string(), message.clone())
         .unwrap();
-    let before = manager.loadChatMessages("older").unwrap();
+    let before = manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap();
     let clockBefore = manager.syncClock().unwrap();
     let chat = database.chatDao().getChatById("older").unwrap().unwrap();
     let message = MessageEntity::fromChatMessage("older".to_string(), message, 0, 0);
@@ -986,6 +986,6 @@ fn incomplete_import_cannot_commit_a_message_without_parts() {
         .syncStore
         .commitImportedChatRecords(chat, vec![message], Vec::new(), Vec::new())
         .is_err());
-    assert_eq!(manager.loadChatMessages("older").unwrap(), before);
+    assert_eq!(manager.loadChatMessagesRange("older".to_string(), "asc".to_string(), 0, 79).unwrap(), before);
     assert_eq!(manager.syncClock().unwrap(), clockBefore);
 }

@@ -401,30 +401,6 @@ impl ChatHistoryManager {
         self.hydrateMessages(snapshot.messages, snapshot.variants, snapshot.parts)
     }
 
-    /// Loads a chat history row with display-ready messages.
-    fn loadDisplayHistory(
-        &self,
-        chatHistory: ChatHistory,
-    ) -> ChatHistoryManagerResult<ChatHistory> {
-        let messages = self.loadChatMessages(&chatHistory.id)?;
-        Ok(ChatHistory {
-            messages,
-            ..chatHistory
-        })
-    }
-
-    /// Loads display-ready histories for a list of chat entities.
-    fn loadDisplayHistories(
-        &self,
-        chatHistories: Vec<ChatHistory>,
-    ) -> ChatHistoryManagerResult<Vec<ChatHistory>> {
-        let mut completeHistories = Vec::new();
-        for chatHistory in chatHistories {
-            completeHistories.push(self.loadDisplayHistory(chatHistory)?);
-        }
-        Ok(completeHistories)
-    }
-
     /// Converts one chat and its messages into an archive entry.
     fn buildOperitArchivedChat(
         &self,
@@ -1593,34 +1569,6 @@ impl ChatHistoryManager {
         Ok(self.chatDao.getChatById(&chatId)?.map(|chat| chat.title))
     }
 
-    /// Loads all hydrated messages for one chat.
-    pub fn loadChatMessages(&self, chatId: &str) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        self.loadMessagesSnapshot(
-            chatId,
-            "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC",
-            sqliteParams![chatId],
-        )
-    }
-
-    /// Loads hydrated messages with optional summary-message filtering.
-    pub fn loadChatMessagesWithOptions(
-        &self,
-        chatId: String,
-        order: Option<String>,
-        limit: Option<i32>,
-    ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        let normalizedOrder = order.map(|order| order.trim().to_lowercase());
-        let direction = match normalizedOrder.as_deref() {
-            Some("desc") => "DESC",
-            _ => "ASC",
-        };
-        let (sql, params) = match limit {
-            Some(limit) => (format!("SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp {direction} LIMIT ?2"), sqliteParams![chatId, limit.max(1)]),
-            None => (format!("SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp {direction}"), sqliteParams![chatId]),
-        };
-        self.loadMessagesSnapshot(&chatId, &sql, params)
-    }
-
     /// Loads hydrated messages inside an inclusive zero-based index range.
     pub fn loadChatMessagesRange(
         &self,
@@ -1733,6 +1681,11 @@ impl ChatHistoryManager {
         Ok(self.messageDao.existsUserMessage(&chatId)?)
     }
 
+    /// Checks for a newer committed user turn without loading conversation messages.
+    pub fn hasUserMessageAfter(&self, chatId: &str, timestamp: i64) -> ChatHistoryManagerResult<bool> {
+        Ok(self.messageDao.existsUserMessageAfterTimestamp(chatId, timestamp)?)
+    }
+
     /// Loads runtime-visible messages for model context.
     pub fn loadRuntimeChatMessages(
         &self,
@@ -1750,55 +1703,48 @@ impl ChatHistoryManager {
             sqliteParams![chatId])
     }
 
-    /// Counts later persisted messages without hydrating previews, parts or variants.
-    pub fn loadChatMessageDepths(&self, chatId: &str, timestamps: &[i64]) -> ChatHistoryManagerResult<Vec<i32>> {
-        let Some(first) = timestamps.iter().min() else { return Ok(Vec::new()); };
-        let later = self.messageDao.getMessageTimestampsAfter(chatId, *first)?;
-        Ok(timestamps.iter().map(|timestamp| (later.len() - later.partition_point(|value| value <= timestamp)) as i32).collect())
+    /// Loads model context through a historical message, including the summary at that point.
+    pub fn loadRuntimeChatMessagesUpTo(
+        &self,
+        chatId: String,
+        upToTimestampInclusive: i64,
+    ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
+        self.loadMessagesSnapshot(&chatId,
+            r#"
+            WITH latest AS (
+                SELECT MAX(timestamp) AS timestamp FROM messages
+                WHERE chatId = ?1 AND sender = 'summary' AND timestamp <= ?2
+            )
+            SELECT messages.* FROM messages, latest
+            WHERE chatId = ?1
+                AND (latest.timestamp IS NULL OR messages.timestamp >= latest.timestamp)
+                AND messages.timestamp <= ?2
+            ORDER BY messages.timestamp ASC
+            "#,
+            sqliteParams![chatId, upToTimestampInclusive])
     }
 
-    /// Loads lightweight message previews for locator search UI.
+    /// Counts later persisted messages without hydrating previews, parts or variants.
+    pub fn loadChatMessageDepths(&self, chatId: &str, timestamps: &[i64]) -> ChatHistoryManagerResult<Vec<i32>> {
+        timestamps.iter().map(|timestamp| {
+            Ok(self.messageDao.countMessagesAfterTimestamp(chatId, *timestamp)?)
+        }).collect()
+    }
+
+    /// Reads the global message index with bounded previews and no hydrated message bodies.
     pub fn loadChatMessageLocatorPreviews(
         &self,
         chatId: String,
         query: String,
     ) -> ChatHistoryManagerResult<Vec<ChatMessageLocatorPreview>> {
-        if !query.trim().is_empty() {
-            return Ok(self.messageDao.searchLocatorPreviewsForChat(
-                &chatId,
-                query.trim(),
-                LOCATOR_PREVIEW_CHAR_COUNT,
-            )?);
-        }
-
-        Ok(self
-            .messageDao
-            .getLocatorPreviewsForChat(&chatId, LOCATOR_PREVIEW_CHAR_COUNT)?)
+        Ok(self.messageDao.getMessageLocatorIndex(
+            &chatId, query.trim(), LOCATOR_PREVIEW_CHAR_COUNT,
+        )?)
     }
 
-    /// Loads hydrated messages starting at a timestamp.
-    pub fn loadChatMessagesFromTimestamp(
-        &self,
-        chatId: String,
-        startTimestampInclusive: i64,
-    ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        self.loadMessagesSnapshot(
-            &chatId,
-            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 ORDER BY timestamp ASC",
-            sqliteParams![chatId, startTimestampInclusive],
-        )
-    }
-
-    /// Loads hydrated messages inside an inclusive timestamp window.
-    pub fn loadChatMessagesWindow(
-        &self,
-        chatId: String,
-        startTimestampInclusive: i64,
-        endTimestampInclusive: i64,
-    ) -> ChatHistoryManagerResult<Vec<ChatMessage>> {
-        self.loadMessagesSnapshot(&chatId,
-            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 AND timestamp <= ?3 ORDER BY timestamp ASC",
-            sqliteParams![chatId, startTimestampInclusive, endTimestampInclusive])
+    /// Resolves one exact persisted message position without reading its body.
+    pub fn loadChatMessageIndexPosition(&self, chatId: &str, timestamp: i64) -> ChatHistoryManagerResult<Option<i32>> {
+        Ok(self.messageDao.getMessageIndexPosition(chatId, timestamp)?)
     }
 
     /// Loads hydrated messages after a timestamp in ascending order.

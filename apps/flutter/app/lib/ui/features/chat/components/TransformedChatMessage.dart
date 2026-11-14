@@ -10,7 +10,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/ChatResponsePresentation.dart';
 
 /// Retains completed display copies across viewport mounts without changing canonical messages.
-class MessageTransformCache extends ChangeNotifier {
+class MessageTransformCache {
   /// Observes one invalidation subscription for the entire displayed history window.
   MessageTransformCache(this.clients) {
     _subscription = clients.chatRuntimeHolderMain
@@ -19,18 +19,25 @@ class MessageTransformCache extends ChangeNotifier {
           (revision) {
             final initial = _revision == null;
             _revision = revision;
-            if (initial) return;
-            unawaited(_project(_entries.values.toList()));
+            if (initial) {
+              for (final entry in _entries.values) {
+                entry.revision = revision;
+              }
+              return;
+            }
+            for (final entry in _entries.values) {
+              if (entry.mounts > 0) _enqueue(entry);
+            }
           },
           onError: (Object error, StackTrace stack) {
             for (final entry in _entries.values) {
+              if (entry.mounts == 0) continue;
               entry.snapshot.value = AsyncSnapshot.withError(
                 ConnectionState.done,
                 error,
                 stack,
               );
             }
-            _updateHistoryReadiness();
           },
         );
   }
@@ -41,62 +48,89 @@ class MessageTransformCache extends ChangeNotifier {
   String? _chatId;
   int? _revision;
   bool _disposed = false;
-  Set<int> _windowTimestamps = <int>{};
-  bool _historyReady = false;
-  bool _preparingHistory = false;
+  final _pending = <_MessageProjection>{};
+  bool _dispatchScheduled = false;
 
-  /// Keeps initial history behind one transcript-level loader until its display copies settle.
-  bool get isPreparingHistory => _preparingHistory;
-
-  /// Prepares the whole visible history window so scrolling reuses already projected rows.
-  void prepare(
-    String chatId,
-    List<core_proxy.ChatMessage> messages,
-    int? depthAnchor,
-  ) {
-    if (_chatId != chatId) {
-      _entries.clear();
-      _historyReady = false;
+  /// Changes conversation ownership without projecting any unmounted messages.
+  void bindChat(String? chatId) {
+    if (_chatId == chatId) return;
+    for (final entry in _entries.values) {
+      if (entry.mounts == 0) entry.snapshot.dispose();
     }
+    _entries.clear();
+    _pending.clear();
     _chatId = chatId;
-    final retained = messages.map((message) => message.timestamp).toSet();
-    _windowTimestamps = retained;
-    // Keep a bounded set of previous window entries so returning rows retain measured content.
-    for (final timestamp in _entries.keys.toList()) {
-      if (_entries.length <= retained.length + 256) break;
-      if (!retained.contains(timestamp)) _entries.remove(timestamp);
-    }
-    final changed = <_MessageProjection>[];
-    for (final message in messages) {
-      final existing = _entries[message.timestamp];
-      if (existing != null &&
-          identical(existing.source, message) &&
-          existing.depthAnchor == depthAnchor) {
-        continue;
-      }
-      final entry = _MessageProjection(
-        message,
-        existing?.snapshot.value.data,
-        depthAnchor,
-      );
-      _entries[message.timestamp] = entry;
-      changed.add(entry);
-    }
-    unawaited(_project(changed));
-    _updateHistoryReadiness();
   }
 
-  /// Opens initial history together and keeps subsequent reprojections in the mounted transcript.
-  void _updateHistoryReadiness() {
-    if (_disposed || _historyReady) return;
-    final preparing = _windowTimestamps.any((timestamp) {
-      final snapshot = _entries[timestamp]!.snapshot.value;
-      return !snapshot.hasData && !snapshot.hasError;
+  /// Acquires one mounted row and reuses only its exact source and rule revision.
+  _MessageProjection _retain(
+    String chatId,
+    core_proxy.ChatMessage message,
+    int? depthAnchor,
+  ) {
+    bindChat(chatId);
+    final existing = _entries.remove(message.timestamp);
+    final unchanged =
+        existing != null &&
+        identical(existing.source, message) &&
+        existing.depthAnchor == depthAnchor;
+    final entry = unchanged
+        ? existing
+        : _MessageProjection(
+            message,
+            existing?.snapshot.value.data,
+            depthAnchor,
+          );
+    if (!unchanged && existing != null && existing.mounts == 0) {
+      _pending.remove(existing);
+      existing.snapshot.dispose();
+    }
+    entry.mounts++;
+    _entries[message.timestamp] = entry;
+    if (!unchanged || entry.revision != _revision || entry.generation == 0) {
+      _enqueue(entry);
+    }
+    _trim();
+    return entry;
+  }
+
+  /// Releases viewport ownership before queued work can prepare an offscreen row.
+  void _release(_MessageProjection entry) {
+    entry.mounts--;
+    if (entry.mounts != 0) return;
+    _pending.remove(entry);
+    if (_entries[entry.source.timestamp] != entry) entry.snapshot.dispose();
+    _trim();
+  }
+
+  /// Bounds retained projections while keeping all currently mounted rows owned.
+  void _trim() {
+    for (final timestamp in _entries.keys.toList()) {
+      if (_entries.length <= 256) break;
+      final entry = _entries[timestamp]!;
+      if (entry.mounts != 0) continue;
+      _entries.remove(timestamp);
+      _pending.remove(entry);
+      entry.snapshot.dispose();
+    }
+  }
+
+  /// Batches only rows acquired by this layout, excluding rows unmounted before dispatch.
+  void _enqueue(_MessageProjection entry) {
+    if (usesLiveStream(entry.source)) {
+      unawaited(_project([entry]));
+      return;
+    }
+    _pending.add(entry);
+    if (_dispatchScheduled) return;
+    _dispatchScheduled = true;
+    scheduleMicrotask(() {
+      _dispatchScheduled = false;
+      if (_disposed) return;
+      final entries = _pending.where((entry) => entry.mounts > 0).toList();
+      _pending.clear();
+      unawaited(_project(entries));
     });
-    if (!preparing && _windowTimestamps.isNotEmpty) _historyReady = true;
-    if (_preparingHistory == preparing) return;
-    _preparingHistory = preparing;
-    notifyListeners();
   }
 
   /// Keeps live output on its original incremental stream until the completed display copy is ready.
@@ -107,6 +141,7 @@ class MessageTransformCache extends ChangeNotifier {
   Future<void> _project(List<_MessageProjection> entries) async {
     final pending = <(_MessageProjection, int)>[];
     for (final entry in entries) {
+      entry.revision = _revision;
       final generation = ++entry.generation;
       final hasText = entry.source.parts.any(
         (part) =>
@@ -170,16 +205,17 @@ class MessageTransformCache extends ChangeNotifier {
         );
       }
     }
-    _updateHistoryReadiness();
   }
 
   /// Releases the owning window's subscription; outstanding requests cannot publish after disposal.
-  @override
   void dispose() {
     _disposed = true;
     unawaited(_subscription.cancel());
+    _pending.clear();
+    for (final entry in _entries.values) {
+      if (entry.mounts == 0) entry.snapshot.dispose();
+    }
     _entries.clear();
-    super.dispose();
   }
 }
 
@@ -199,6 +235,8 @@ class _MessageProjection {
   final int? depthAnchor;
   final ValueNotifier<AsyncSnapshot<core_proxy.ChatMessage>> snapshot;
   int generation = 0;
+  int mounts = 0;
+  int? revision;
 }
 
 /// Projects plugin display text while edit and copy actions retain their canonical message.
@@ -227,13 +265,12 @@ class TransformedChatMessage extends StatefulWidget {
 
 class _TransformedChatMessageState extends State<TransformedChatMessage> {
   late MessageTransformCache _cache;
+  late _MessageProjection _entry;
 
   /// Binds the supplied window cache or owns an isolated single-message cache.
   void _bind() {
     _cache = widget.cache ?? MessageTransformCache(widget.clients);
-    if (widget.cache == null) {
-      _cache.prepare(widget.chatId, [widget.message], widget.depthAnchor);
-    }
+    _entry = _cache._retain(widget.chatId, widget.message, widget.depthAnchor);
   }
 
   /// Initializes projection ownership before rendering the first row.
@@ -249,16 +286,25 @@ class _TransformedChatMessageState extends State<TransformedChatMessage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.clients.bridge != widget.clients.bridge ||
         oldWidget.cache != widget.cache) {
+      _cache._release(_entry);
       if (oldWidget.cache == null) _cache.dispose();
       _bind();
-    } else if (widget.cache == null) {
-      _cache.prepare(widget.chatId, [widget.message], widget.depthAnchor);
+    } else if (oldWidget.message != widget.message ||
+        oldWidget.chatId != widget.chatId ||
+        oldWidget.depthAnchor != widget.depthAnchor) {
+      _cache._release(_entry);
+      _entry = _cache._retain(
+        widget.chatId,
+        widget.message,
+        widget.depthAnchor,
+      );
     }
   }
 
   /// Releases only caches owned by this row.
   @override
   void dispose() {
+    _cache._release(_entry);
     if (widget.cache == null) _cache.dispose();
     super.dispose();
   }
@@ -266,9 +312,8 @@ class _TransformedChatMessageState extends State<TransformedChatMessage> {
   /// Renders completed projections and explicit failures while retaining valid prior display copies.
   @override
   Widget build(BuildContext context) {
-    final entry = _cache._entries[widget.message.timestamp]!;
     return ValueListenableBuilder<AsyncSnapshot<core_proxy.ChatMessage>>(
-      valueListenable: entry.snapshot,
+      valueListenable: _entry.snapshot,
       builder: (context, snapshot, _) {
         if (snapshot.hasError) {
           return Text(
@@ -278,7 +323,8 @@ class _TransformedChatMessageState extends State<TransformedChatMessage> {
           );
         }
         if (!snapshot.hasData) {
-          return const SizedBox.shrink();
+          // Keep pending rows measurable so lazy layout does not mount the entire history.
+          return const SizedBox(height: 64);
         }
         return widget.builder(snapshot.requireData);
       },

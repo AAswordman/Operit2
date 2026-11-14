@@ -12,10 +12,10 @@ import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
-import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
+    hide ChatMessageLocatorPreview;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/MarkdownRemoteImage.dart';
-import 'package:operit2/ui/common/components/M3LoadingIndicator.dart';
 import 'package:operit2/ui/common/markdown/EnhancedCodeBlock.dart';
 import 'package:operit2/ui/common/markdown/MarkdownNodeGrouper.dart';
 import 'support/semantic_markdown_fixture.dart';
@@ -50,7 +50,7 @@ class _PositionPeakController extends ScrollController {
 /// Verifies transcript rendering and scroll ownership across asynchronous updates.
 void main() {
   testWidgets(
-    'keeps initial history loading centered until all projections finish',
+    'mounts the viewport without preparing its complete history window',
     (tester) async {
       final scroll = ScrollController();
       final autoScroll = ValueNotifier(true);
@@ -60,21 +60,7 @@ void main() {
       addTearDown(autoScroll.dispose);
       addTearDown(bridge.dispose);
       final messages = [
-        for (var index = 1; index <= 3; index++)
-          _aiMessage(
-            timestamp: index,
-            parts: [
-              MessagePart(
-                partId: 'body-$index',
-                sequence: 0,
-                kind: MessagePartKind.markdown,
-                content: 'history message $index',
-                toolCallId: null,
-                toolName: null,
-                attributes: const {},
-              ),
-            ],
-          ),
+        for (var index = 1; index <= 80; index++) _heightTestMessage(index),
       ];
       Widget render(String chatId) => _chatArea(
         currentChatId: chatId,
@@ -85,33 +71,43 @@ void main() {
         autoScrollToBottom: autoScroll,
       );
       await tester.pumpWidget(render('first'));
-      expect(bridge.delayedProjections, hasLength(1));
-      expect(find.byType(M3LoadingIndicator), findsOneWidget);
-      expect(find.byType(LinearProgressIndicator), findsNothing);
-      final center = tester.getCenter(find.byType(M3LoadingIndicator));
-      expect(center, tester.getCenter(find.byType(ChatArea)));
-      expect(find.byType(CustomScrollView), findsNothing);
-
-      bridge.completeMessageProjection(0);
-      await tester.pumpAndSettle();
-      expect(find.byType(M3LoadingIndicator), findsNothing);
       expect(find.byType(CustomScrollView), findsOneWidget);
-      expect(find.text('history message 3'), findsOneWidget);
-
+      expect(bridge.delayedProjections, isNotEmpty);
+      expect(
+        (bridge.delayedProjections.first.message as List).length,
+        lessThan(40),
+      );
       await tester.pumpWidget(render('second'));
-      expect(bridge.delayedProjections, hasLength(2));
-      expect(tester.getCenter(find.byType(M3LoadingIndicator)), center);
+      final oldRequests = bridge.delayedProjections.length;
       await tester.pumpWidget(render('third'));
-      expect(bridge.delayedProjections, hasLength(3));
-      bridge.completeMessageProjection(1);
+      for (var index = 0; index < oldRequests; index++) {
+        bridge.completeMessageProjection(index);
+      }
       await tester.pump();
-      expect(find.byType(M3LoadingIndicator), findsOneWidget);
-      expect(find.byType(CustomScrollView), findsNothing);
-      bridge.completeMessageProjection(2);
+      expect(find.byType(CustomScrollView), findsOneWidget);
+      expect(find.text('Height row 80 line 0'), findsNothing);
+      for (var round = 0; round < 10; round++) {
+        final requests = bridge.delayedProjections.toList();
+        for (var index = 0; index < requests.length; index++) {
+          if (!requests[index].result.isCompleted) {
+            bridge.completeMessageProjection(index);
+          }
+        }
+        await tester.pump(const Duration(milliseconds: 16));
+      }
       await tester.pumpAndSettle();
-      expect(find.byType(M3LoadingIndicator), findsNothing);
-      expect(find.byType(LinearProgressIndicator), findsNothing);
-      expect(find.text('history message 3'), findsOneWidget);
+      expect(find.text('Height row 80 line 0'), findsOneWidget);
+      final requested = bridge.delayedProjections.expand(
+        (request) => request.message as List,
+      );
+      expect(
+        requested.any(
+          (message) =>
+              (message as Map)['timestamp'] == messages.first.timestamp,
+        ),
+        false,
+      );
+      expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox());
     },
   );
@@ -722,6 +718,186 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  for (final entry in ['switch', 'bottom button', 'latest locator']) {
+    for (final messageCount in [1, 2]) {
+      testWidgets('$entry keeps $messageCount short rows at the natural top', (
+        tester,
+      ) async {
+        final scroll = ScrollController();
+        final autoScroll = ValueNotifier(entry == 'switch');
+        addTearDown(scroll.dispose);
+        addTearDown(autoScroll.dispose);
+        var messages = List.generate(
+          messageCount,
+          (index) => _heightTestMessage(index),
+        );
+
+        /// Renders the same short history with a fresh or navigated origin.
+        Widget transcript(String chatId) => _chatArea(
+          currentChatId: chatId,
+          messages: messages,
+          isLoading: false,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+        );
+
+        await tester.pumpWidget(transcript('previous'));
+        await tester.pumpAndSettle();
+        if (entry == 'switch') {
+          await tester.pumpWidget(transcript('switched'));
+        } else if (entry == 'bottom button') {
+          tester
+              .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
+              .onRequestScrollToBottom();
+        } else {
+          tester
+              .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
+              .onJumpToMessage(messages.length - 1);
+        }
+        await tester.pumpAndSettle();
+        final firstRow = find.byWidgetPredicate(
+          (widget) =>
+              widget is CursorStyleChatMessage &&
+              widget.message.timestamp == messages.first.timestamp,
+        );
+        expect(
+          tester.getTopLeft(firstRow).dy -
+              tester.getTopLeft(find.byType(CustomScrollView)).dy,
+          closeTo(16, 0.01),
+        );
+        expect(
+          scroll.position.minScrollExtent,
+          scroll.position.maxScrollExtent,
+        );
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, 200));
+        await tester.pumpAndSettle();
+        expect(
+          tester.getTopLeft(firstRow).dy -
+              tester.getTopLeft(find.byType(CustomScrollView)).dy,
+          closeTo(16, 0.01),
+        );
+
+        // A short prefix and an overflowing tail have a positive top offset.
+        autoScroll.value = true;
+        messages = [
+          ...messages.take(messageCount - 1),
+          _heightTestMessage(messageCount - 1, lines: 40),
+        ];
+        await tester.pumpWidget(
+          transcript(entry == 'switch' ? 'switched' : 'previous'),
+        );
+        await tester.pumpAndSettle();
+        final tail = find.byWidgetPredicate(
+          (widget) =>
+              widget is CursorStyleChatMessage &&
+              widget.message.timestamp == messages.last.timestamp,
+        );
+        final tailRow = find.ancestor(
+          of: tail,
+          matching: find.byType(ChatMessageExtentBox),
+        );
+        expect(
+          tester.getBottomLeft(find.byType(CustomScrollView)).dy -
+              tester.getBottomLeft(tailRow).dy,
+          closeTo(16, 0.01),
+        );
+        autoScroll.value = false;
+        scroll.jumpTo(scroll.position.minScrollExtent);
+        await tester.pumpAndSettle();
+        expect(
+          tester.getTopLeft(firstRow).dy -
+              tester.getTopLeft(find.byType(CustomScrollView)).dy,
+          closeTo(16, 0.01),
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      });
+    }
+
+    for (final lines in [1, 8, 40]) {
+      testWidgets('$entry keeps the bottom gap fixed with $lines tail lines', (
+        tester,
+      ) async {
+        final scroll = ScrollController();
+        final autoScroll = ValueNotifier(entry == 'switch');
+        addTearDown(scroll.dispose);
+        addTearDown(autoScroll.dispose);
+        var messages = List.generate(
+          80,
+          (index) => _heightTestMessage(index, lines: index == 79 ? lines : 1),
+        );
+
+        /// Reuses the transcript owner while its chat and bottom inset change.
+        Widget transcript(String chatId, {double inset = 0}) => _chatArea(
+          currentChatId: chatId,
+          messages: messages,
+          isLoading: false,
+          bottomContentInset: inset,
+          scrollController: scroll,
+          autoScrollToBottom: autoScroll,
+          onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+        );
+
+        /// Measures the actual last row instead of trusting scroll metrics.
+        void expectBottomGap(double inset) {
+          final tail = find.byWidgetPredicate(
+            (widget) =>
+                widget is CursorStyleChatMessage &&
+                widget.message.timestamp == messages.last.timestamp,
+          );
+          final row = find.ancestor(
+            of: tail,
+            matching: find.byType(ChatMessageExtentBox),
+          );
+          final viewportBottom = tester
+              .getBottomLeft(find.byType(CustomScrollView))
+              .dy;
+          expect(
+            viewportBottom - tester.getBottomLeft(row).dy,
+            closeTo(16 + inset, 0.01),
+          );
+          expect(scroll.position.extentAfter, lessThanOrEqualTo(1));
+        }
+
+        await tester.pumpWidget(transcript('previous'));
+        await tester.pumpAndSettle();
+        if (entry == 'switch') {
+          await tester.pumpWidget(transcript('switched'));
+        } else if (entry == 'bottom button') {
+          await tester.tap(find.byTooltip('回到底部'));
+        } else {
+          tester
+              .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
+              .onJumpToMessage(messages.length - 1);
+        }
+        await tester.pumpAndSettle();
+        expectBottomGap(0);
+
+        // Returning by manual scrolling must reach the same physical endpoint.
+        await tester.drag(find.byType(CustomScrollView), const Offset(0, 200));
+        await tester.pumpAndSettle();
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        expectBottomGap(0);
+
+        autoScroll.value = true;
+        final chatId = entry == 'switch' ? 'switched' : 'previous';
+        await tester.pumpWidget(transcript(chatId, inset: 56));
+        await tester.pumpAndSettle();
+        expectBottomGap(56);
+
+        // Appending a row must retain the origin's viewport alignment.
+        messages = [...messages, _heightTestMessage(80)];
+        await tester.pumpWidget(transcript(chatId, inset: 56));
+        await tester.pumpAndSettle();
+        expectBottomGap(56);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      });
+    }
+  }
+
   for (final messageCount in [1, 80, 500]) {
     testWidgets(
       'paints the switched chat at its bottom with $messageCount rows',
@@ -733,10 +909,6 @@ void main() {
         /// Observes the active viewport even while an old keyed viewport unmounts.
         Widget observePaint(Widget child) => CustomPaint(
           foregroundPainter: _ScrollPositionPaintProbe(() {
-            if (find.byType(M3LoadingIndicator).evaluate().isNotEmpty) {
-              expect(find.byType(Scrollable), findsNothing);
-              return;
-            }
             final position = tester
                 .state<ScrollableState>(find.byType(Scrollable).first)
                 .position;
@@ -801,8 +973,7 @@ void main() {
             bodyBuilder: observePaint,
           ),
         );
-        expect(find.byType(M3LoadingIndicator), findsOneWidget);
-        expect(paints, isEmpty);
+        expect(paints, isNotEmpty);
         await tester.pump();
         expect(paints, isNotEmpty);
         for (final (pixels, bottom) in paints) {
@@ -1425,6 +1596,266 @@ void main() {
     );
   });
 
+  for (final scenario in [
+    (older: true, tailOrigin: false),
+    (older: true, tailOrigin: true),
+    (older: false, tailOrigin: false),
+  ]) {
+    final older = scenario.older;
+    testWidgets(
+      'scrolling automatically loads ${older ? 'older' : 'newer'} history without moving visible messages, tail origin=${scenario.tailOrigin}',
+      (tester) async {
+        final scroll = ScrollController();
+        final autoScroll = ValueNotifier(scenario.tailOrigin);
+        final loaded = Completer<void>();
+        addTearDown(scroll.dispose);
+        addTearDown(autoScroll.dispose);
+        var requests = 0;
+        var messages = [
+          for (var index = 20; index < 40; index++)
+            _heightTestMessage(index, lines: 8),
+        ];
+
+        /// Holds the body request open while the user keeps scrolling.
+        Future<void> load() {
+          requests++;
+          return loaded.future;
+        }
+
+        /// Publishes the expanded body window through the normal widget update.
+        Future<void> render({bool hasMore = true}) => tester.pumpWidget(
+          _chatArea(
+            messages: messages,
+            isLoading: false,
+            hasOlderDisplayHistory: older && hasMore,
+            hasNewerDisplayHistory: !older && hasMore,
+            scrollController: scroll,
+            autoScrollToBottom: autoScroll,
+            onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+            onLoadOlderDisplayWindow: load,
+            onLoadNewerDisplayWindow: load,
+          ),
+        );
+
+        await render();
+        await tester.pumpAndSettle();
+        expect(requests, 0);
+        expect(find.textContaining('Load more history'), findsNothing);
+        expect(find.textContaining('Load newer history'), findsNothing);
+        expect(find.byKey(const ValueKey('row-load-older')), findsNothing);
+        expect(find.byKey(const ValueKey('row-load-newer')), findsNothing);
+
+        autoScroll.value = false;
+        if (!older) {
+          scroll.jumpTo(scroll.position.maxScrollExtent);
+          await tester.pumpAndSettle();
+        }
+        scroll.jumpTo(
+          older
+              ? scroll.position.minScrollExtent + 450
+              : scroll.position.maxScrollExtent - 450,
+        );
+        await tester.pumpAndSettle();
+        expect(
+          requests,
+          0,
+          reason: 'A programmatic position change is not a scroll request',
+        );
+        // Scroll through newly measured rows until the real boundary enters the prefetch range.
+        for (var step = 0; step < messages.length && requests == 0; step++) {
+          await tester.drag(
+            find.byType(CustomScrollView),
+            Offset(0, older ? 120 : -120),
+          );
+          await tester.pumpAndSettle();
+        }
+        expect(
+          requests,
+          1,
+          reason:
+              'older=$older before=${scroll.position.extentBefore} after=${scroll.position.extentAfter} viewport=${scroll.position.viewportDimension}',
+        );
+        await tester.drag(
+          find.byType(CustomScrollView),
+          Offset(0, older ? 40 : -40),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          requests,
+          1,
+          reason: 'A pending boundary request must not be duplicated',
+        );
+
+        final viewport = tester.getRect(find.byType(CustomScrollView));
+        final visible = find
+            .byType(CursorStyleChatMessage)
+            .evaluate()
+            .firstWhere((element) {
+              final rect = tester.getRect(find.byWidget(element.widget));
+              return rect.top >= viewport.top && rect.top < viewport.bottom;
+            });
+        final timestamp =
+            (visible.widget as CursorStyleChatMessage).message.timestamp;
+        final anchor = find.byWidgetPredicate(
+          (widget) =>
+              widget is CursorStyleChatMessage &&
+              widget.message.timestamp == timestamp,
+        );
+        final before = tester.getTopLeft(anchor).dy;
+        messages = older
+            ? [
+                for (var index = 0; index < 20; index++)
+                  _heightTestMessage(index, lines: 8),
+                ...messages,
+              ]
+            : [
+                ...messages,
+                for (var index = 40; index < 60; index++)
+                  _heightTestMessage(index, lines: 8),
+              ];
+        await render();
+        loaded.complete();
+        await tester.pumpAndSettle();
+        expect(tester.getTopLeft(anchor).dy, closeTo(before, 0.1));
+        expect(autoScroll.value, isFalse);
+        expect(requests, 1);
+        scroll.jumpTo(
+          older
+              ? scroll.position.minScrollExtent
+              : scroll.position.maxScrollExtent,
+        );
+        await tester.pumpAndSettle();
+        await tester.drag(
+          find.byType(CustomScrollView),
+          Offset(0, older ? 100 : -100),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          requests,
+          2,
+          reason: 'The next boundary must allow another body batch',
+        );
+        await render(hasMore: false);
+        await tester.drag(
+          find.byType(CustomScrollView),
+          Offset(0, older ? 100 : -100),
+        );
+        await tester.pumpAndSettle();
+        expect(
+          requests,
+          2,
+          reason: 'Exhausted history must stop requesting more bodies',
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  for (final mouseWheel in [false, true]) {
+    testWidgets(
+      'short history loads on ${mouseWheel ? 'mouse wheel' : 'touch overscroll'} without a load row',
+      (tester) async {
+        final scroll = ScrollController();
+        final autoScroll = ValueNotifier(false);
+        final loaded = Completer<void>();
+        addTearDown(scroll.dispose);
+        addTearDown(autoScroll.dispose);
+        var requests = 0;
+        await tester.pumpWidget(
+          _chatArea(
+            messages: [_heightTestMessage(20)],
+            isLoading: false,
+            hasOlderDisplayHistory: true,
+            scrollController: scroll,
+            autoScrollToBottom: autoScroll,
+            onLoadOlderDisplayWindow: () {
+              requests++;
+              return loaded.future;
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(requests, 0);
+        if (mouseWheel) {
+          await tester.sendEventToBinding(
+            PointerScrollEvent(
+              position: tester.getCenter(find.byType(CustomScrollView)),
+              scrollDelta: const Offset(0, -120),
+            ),
+          );
+        } else {
+          await tester.drag(
+            find.byType(CustomScrollView),
+            const Offset(0, 120),
+          );
+        }
+        await tester.pumpAndSettle();
+        expect(requests, 1);
+        expect(find.textContaining('Loading...'), findsNothing);
+        loaded.complete();
+        await tester.pumpAndSettle();
+        expect(requests, 1);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets('history requests remain isolated when switching chats', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    final autoScroll = ValueNotifier(false);
+    final completions = <Completer<void>>[];
+    addTearDown(scroll.dispose);
+    addTearDown(autoScroll.dispose);
+
+    /// Mounts each chat with the same boundary identity to exercise request ownership.
+    Future<void> render(String chatId) => tester.pumpWidget(
+      _chatArea(
+        currentChatId: chatId,
+        messages: [_heightTestMessage(20)],
+        isLoading: false,
+        hasOlderDisplayHistory: true,
+        scrollController: scroll,
+        autoScrollToBottom: autoScroll,
+        onLoadOlderDisplayWindow: () {
+          final completion = Completer<void>();
+          completions.add(completion);
+          return completion.future;
+        },
+      ),
+    );
+
+    /// Sends the same upward wheel input to the active viewport.
+    Future<void> scrollOlder() => tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: tester.getCenter(find.byType(CustomScrollView)),
+        scrollDelta: const Offset(0, -120),
+      ),
+    );
+
+    await render('first');
+    await tester.pumpAndSettle();
+    await scrollOlder();
+    await tester.pumpAndSettle();
+    expect(completions, hasLength(1));
+    await render('second');
+    await tester.pumpAndSettle();
+    completions.first.complete();
+    await tester.pumpAndSettle();
+    expect(completions, hasLength(1));
+    await scrollOlder();
+    await tester.pumpAndSettle();
+    expect(completions, hasLength(2));
+    completions.last.complete();
+    await tester.pumpAndSettle();
+    expect(completions, hasLength(2));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('bottom button reanchors only after the latest window is ready', (
     tester,
   ) async {
@@ -1476,7 +1907,9 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Height row 179 line 0'), findsOneWidget);
     expect(scroll.position.extentAfter, lessThanOrEqualTo(1));
-    expect(parsed.length, lessThan(20));
+    // Pending rows must fill the real viewport and its cache before their
+    // Markdown heights are available, including rows above a short tail.
+    expect(parsed.length, lessThan(40));
     final position = scroll.position;
     loaded.complete();
     await tester.pumpAndSettle();
@@ -1592,7 +2025,7 @@ void main() {
       expect(scroll.position.extentAfter, lessThanOrEqualTo(1));
       expect(
         parsed.length,
-        lessThan(20),
+        lessThan(40),
         reason: 'Intermediate Markdown requests: ${parsed.length}',
       );
       expect(parsed, isNot(contains('Bottom row 250')));
@@ -1720,13 +2153,30 @@ void main() {
           lessThan(150),
         );
       }
+      // The former limit counted a viewport left mostly blank below its tail.
+      // Allow pending rows to fill the viewport and cache while excluding the
+      // distant history checked below.
       expect(
         parsed.length,
-        lessThan(20),
+        lessThan(40),
         reason: 'Markdown requests: ${parsed.length}',
       );
       expect(parsed, isNot(contains('$entry conversation response 0')));
       expect(scroll.offset, scroll.position.maxScrollExtent);
+      final tail = find.byWidgetPredicate(
+        (widget) =>
+            widget is CursorStyleChatMessage &&
+            widget.message.timestamp == messages.last.timestamp,
+      );
+      final tailRow = find.ancestor(
+        of: tail,
+        matching: find.byType(ChatMessageExtentBox),
+      );
+      expect(
+        tester.getBottomLeft(find.byType(CustomScrollView)).dy -
+            tester.getBottomLeft(tailRow).dy,
+        closeTo(16, 0.01),
+      );
       debugPrint('$entry long chat: ${parsed.length}/80 Markdown requests');
 
       // Older history must remain reachable above the new layout origin.
@@ -2792,6 +3242,7 @@ Widget _chatArea({
   required ScrollController scrollController,
   required ValueNotifier<bool> autoScrollToBottom,
   bool isLoading = true,
+  bool hasOlderDisplayHistory = false,
   bool hasNewerDisplayHistory = false,
   bool isLoadingDisplayWindow = false,
   double bottomContentInset = 0,
@@ -2799,7 +3250,10 @@ Widget _chatArea({
   Widget Function(Widget)? bodyBuilder,
   MarkdownContentSplitter splitMarkdownContent = _splitMarkdownContent,
   RevealMessageForLocator? onRevealMessageForLocator,
+  LoadMessageLocatorEntries? loadLocatorEntries,
   Future<void> Function()? onShowLatestDisplayWindow,
+  Future<void> Function()? onLoadOlderDisplayWindow,
+  Future<void> Function()? onLoadNewerDisplayWindow,
 }) {
   final owner = bridge ?? _testChatBridge();
   final clients = GeneratedCoreProxyClients(owner);
@@ -2816,15 +3270,30 @@ Widget _chatArea({
     clients: clients,
     packageManager: clients.application.packageManager(),
     autoScrollToBottomListenable: autoScrollToBottom,
-    hasOlderDisplayHistory: false,
+    hasOlderDisplayHistory: hasOlderDisplayHistory,
     hasNewerDisplayHistory: hasNewerDisplayHistory,
     isLoadingDisplayWindow: isLoadingDisplayWindow,
-    loadLocatorEntries: (chatId, query) async => const [],
+    loadLocatorEntries:
+        loadLocatorEntries ??
+        (_, _) async => [
+          for (final row
+              in messages ?? (message == null ? <ChatUiMessage>[] : [message]))
+            ChatMessageLocatorPreview(
+              messageIndex: row.timestamp,
+              timestamp: row.timestamp,
+              sender: row.sender,
+              displayName: '',
+              previewContent: '',
+              contentLength: 0,
+              displayMode: 'NORMAL',
+              isFavorite: row.isFavorite,
+            ),
+        ],
     onRevealMessageForLocator:
         onRevealMessageForLocator ?? (timestamp) async => false,
     onAutoScrollToBottomChanged: onAutoScrollToBottomChanged ?? (_) {},
-    onLoadOlderDisplayWindow: () async {},
-    onLoadNewerDisplayWindow: () async {},
+    onLoadOlderDisplayWindow: onLoadOlderDisplayWindow ?? () async {},
+    onLoadNewerDisplayWindow: onLoadNewerDisplayWindow ?? () async {},
     onShowLatestDisplayWindow: onShowLatestDisplayWindow ?? () async {},
     onToggleFavoriteMessage: (timestamp, isFavorite) async {},
     onDeleteMessage: (timestamp) async {},

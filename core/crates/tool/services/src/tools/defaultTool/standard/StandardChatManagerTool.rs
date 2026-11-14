@@ -618,7 +618,7 @@ impl StandardChatManagerTool {
             Ok(None) => return toolError(tool, format!("Chat does not exist: {chatId}")),
             Err(error) => return toolError(tool, format!("Error loading chat: {error}")),
         }
-        match manager.loadChatMessagesWithOptions(chatId.clone(), Some(order.clone()), Some(limit))
+        match manager.loadChatMessagesRange(chatId.clone(), order.clone(), 0, limit - 1)
         {
             Ok(messages) => successData(
                 tool,

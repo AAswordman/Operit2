@@ -13,6 +13,44 @@ import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart'
 
 /// Exercises the production rail geometry and real pointer gesture boundaries.
 void main() {
+  testWidgets('global index navigates outside the mounted body window', (
+    tester,
+  ) async {
+    final jumps = <int>[];
+    var loads = 0;
+    await _pumpNavigator(
+      tester,
+      jumps: jumps,
+      messages: [_message(199)],
+      loadLocatorEntries: (_, query) async {
+        loads++;
+        expect(query, isEmpty);
+        return [
+          for (var index = 0; index < 200; index++)
+            _preview(index, favorite: index == 0),
+        ];
+      },
+    );
+    expect(loads, 1);
+    final dynamic painter = tester
+        .widget<CustomPaint>(
+          find.byKey(const ValueKey('chat-scroll-rail-paint')),
+        )
+        .painter;
+    expect(painter.ticks.length, 200);
+    expect(painter.ticks.first.isFavorite, isTrue);
+    _railScroll(tester).jumpTo(0);
+    await tester.pumpAndSettle();
+    final target = tester.getRect(
+      find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
+    );
+    await tester.tapAt(Offset(target.center.dx, target.top + 1));
+    await tester.pumpAndSettle();
+    expect(jumps, [0]);
+    expect(loads, 1);
+    expect(tester.takeException(), isNull);
+  });
+
   test('horizontal proximity grows smoothly and saturates beside the rail', () {
     const geometry = ChatScrollRailGeometry(
       entryCount: 20,
@@ -212,71 +250,60 @@ void main() {
     },
   );
 
-  for (final usePersistedEntries in <bool>[true, false]) {
-    testWidgets(
-      'preview uses participant names with sender fallback (persisted: $usePersistedEntries)',
-      (tester) async {
-        const names = <String>['Operit', 'Operit', '', '', '', ''];
-        final messages = List<ChatMessage>.generate(
-          names.length,
-          (index) => _message(
-            index,
-            roleName: index >= 4 ? '废弃角色卡名字' : '',
-            identityTitle: !usePersistedEntries && index < 2
-                ? names[index]
-                : null,
-          ),
-        );
-        await _pumpNavigator(
-          tester,
-          jumps: <int>[],
-          messages: messages,
-          loadLocatorEntries: (_, _) async => usePersistedEntries
-              ? <ChatMessageLocatorPreview>[
-                  for (final message in messages)
-                    ChatMessageLocatorPreview(
-                      messageIndex: message.timestamp,
-                      timestamp: message.timestamp,
-                      sender: message.sender,
-                      displayName: names[message.timestamp],
-                      previewContent: message.displayText,
-                      contentLength: message.displayText.length,
-                      displayMode: 'NORMAL',
-                      isFavorite: false,
-                    ),
-                ]
-              : <ChatMessageLocatorPreview>[],
-        );
-        final geometry = ChatScrollRailGeometry(
-          entryCount: names.length,
-          viewportHeight: 500,
-        );
-        final rect = tester.getRect(
-          find.byKey(const ValueKey<String>('chat-scroll-rail-paint')),
-        );
-        final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
-        await mouse.addPointer(location: Offset.zero);
-        const expectedTitles = <String>[
-          '用户 #1',
-          'Operit',
-          '用户 #3',
-          'AI',
-          '用户 #5',
-          'AI',
-        ];
-        for (var index = 0; index < names.length; index++) {
-          await mouse.moveTo(
-            Offset(rect.right - 8, rect.top + geometry.entryCenter(index)),
-          );
-          await tester.pump();
-          expect(find.text(expectedTitles[index]), findsOneWidget);
-          expect(find.textContaining('废弃角色卡名字'), findsNothing);
-          if (index.isEven) expect(find.textContaining('Operit'), findsNothing);
-        }
-        await mouse.removePointer();
-      },
+  testWidgets('preview uses identities returned by the global index', (
+    tester,
+  ) async {
+    const names = <String>['Operit', 'Operit', '', '', '', ''];
+    final messages = List<ChatMessage>.generate(
+      names.length,
+      (index) => _message(index, roleName: index >= 4 ? '废弃角色卡名字' : ''),
     );
-  }
+    await _pumpNavigator(
+      tester,
+      jumps: <int>[],
+      messages: messages,
+      loadLocatorEntries: (_, _) async => <ChatMessageLocatorPreview>[
+        for (final message in messages)
+          ChatMessageLocatorPreview(
+            messageIndex: message.timestamp,
+            timestamp: message.timestamp,
+            sender: message.sender,
+            displayName: names[message.timestamp],
+            previewContent: message.displayText,
+            contentLength: message.displayText.length,
+            displayMode: 'NORMAL',
+            isFavorite: false,
+          ),
+      ],
+    );
+    final geometry = ChatScrollRailGeometry(
+      entryCount: names.length,
+      viewportHeight: 500,
+    );
+    final rect = tester.getRect(
+      find.byKey(const ValueKey<String>('chat-scroll-rail-paint')),
+    );
+    final mouse = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await mouse.addPointer(location: Offset.zero);
+    const expectedTitles = <String>[
+      '用户 #1',
+      'Operit',
+      '用户 #3',
+      'AI',
+      '用户 #5',
+      'AI',
+    ];
+    for (var index = 0; index < names.length; index++) {
+      await mouse.moveTo(
+        Offset(rect.right - 8, rect.top + geometry.entryCenter(index)),
+      );
+      await tester.pump();
+      expect(find.text(expectedTitles[index]), findsOneWidget);
+      expect(find.textContaining('废弃角色卡名字'), findsNothing);
+      if (index.isEven) expect(find.textContaining('Operit'), findsNothing);
+    }
+    await mouse.removePointer();
+  });
 
   testWidgets('touch down previews and a completed tap jumps exactly once', (
     tester,
@@ -757,24 +784,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets(
-    'history failures preserve favorite markers from visible messages',
-    (tester) async {
-      await _pumpNavigator(
-        tester,
-        jumps: [],
-        messages: [_message(0, isFavorite: true)],
-        loadLocatorEntries: (_, _) async => throw StateError('offline'),
-      );
-      final dynamic painter = tester
-          .widget<CustomPaint>(
-            find.byKey(const ValueKey('chat-scroll-rail-paint')),
-          )
-          .painter;
-      expect(painter.ticks.single.isFavorite, isTrue);
-      expect(tester.takeException(), isNull);
-    },
-  );
+  testWidgets('index failures stay explicit and retry the index API', (
+    tester,
+  ) async {
+    var loads = 0;
+    await _pumpNavigator(
+      tester,
+      jumps: [],
+      messages: [_message(0, isFavorite: true)],
+      loadLocatorEntries: (_, _) async {
+        if (++loads == 1) throw StateError('offline');
+        return [_preview(0, favorite: true)];
+      },
+    );
+    expect(find.byKey(const ValueKey('chat-scroll-rail-paint')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('chat-message-index-retry')));
+    await tester.pumpAndSettle();
+    expect(loads, 2);
+    final dynamic painter = tester
+        .widget<CustomPaint>(
+          find.byKey(const ValueKey('chat-scroll-rail-paint')),
+        )
+        .painter;
+    expect(painter.ticks.single.isFavorite, isTrue);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 /// Finds the rail's independent native scroll controller.

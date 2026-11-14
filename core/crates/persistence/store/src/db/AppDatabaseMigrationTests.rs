@@ -147,7 +147,7 @@ fn version28_terminal_chat_migration_rolls_back_and_preserves_source_history() {
     MIGRATION_28_29(&database).unwrap();
     assert_eq!(database.store.getUserVersion().unwrap(), DATABASE_VERSION);
     assert!(database.chatDao().getChatById("v27-chat").unwrap().is_none());
-    assert!(database.messageDao().getMessagesForChat("v27-chat").unwrap().is_empty());
+    assert!(database.messageDao().getMessagesForChatAsc("v27-chat", 80).unwrap().is_empty());
     assert!(database.chatDao().getChatById("live-chat").unwrap().is_some());
     assert_eq!(database.store.queryScalar::<i64>("SELECT COUNT(*) FROM sync_sql_deletions WHERE opId='v27:1'", Vec::new()).unwrap(), 2);
     assert!(database.store.queryRows("PRAGMA foreign_key_check", Vec::new()).unwrap().is_empty());

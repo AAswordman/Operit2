@@ -33,21 +33,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 /// Number of persisted messages loaded per display-window query.
-pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 80;
-/// Number of user or summary messages that close one display page.
-const DISPLAY_PAGE_TRIGGER_COUNT: usize = 5;
-/// Number of display pages kept visible around locator jumps.
-const MAX_DISPLAY_PAGE_COUNT: usize = 2;
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-/// Defines one timestamp range used by the chat locator display window.
-struct DisplayPageRange {
-    startIndex: usize,
-    endIndexExclusive: usize,
-    startTimestampInclusive: i64,
-    endTimestampInclusive: i64,
-}
-
+pub const DISPLAY_WINDOW_QUERY_BATCH_SIZE: usize = 20;
 #[derive(Clone, Debug, PartialEq)]
 /// Defines whether chat selection follows global persisted state or stays local.
 pub enum ChatSelectionMode {
@@ -147,76 +133,6 @@ fn preserveLiveMessageStreams(
         message.completedAt = previousMessage.completedAt;
         message.completedExecutionGeneration = previousMessage.completedExecutionGeneration;
     }
-}
-
-/// Splits locator previews into timestamp ranges from oldest to newest.
-fn resolveDisplayPageRanges(messages: &[ChatMessageLocatorPreview]) -> Vec<DisplayPageRange> {
-    if messages.is_empty() {
-        return Vec::new();
-    }
-
-    let mut pageStartIndicesNewestFirst = Vec::<usize>::new();
-    let mut cursor = messages.len() as isize - 1;
-
-    while cursor >= 0 {
-        let mut pageStartIndex = 0usize;
-        let mut triggerCountInCurrentPage = 0usize;
-        let mut pageClosed = false;
-
-        while cursor >= 0 && !pageClosed {
-            let messageIndex = cursor as usize;
-            let message = &messages[messageIndex];
-            if isDisplayPageTriggerMessage(&message.sender) {
-                triggerCountInCurrentPage += 1;
-
-                if message.sender == "summary" {
-                    pageStartIndex = messageIndex;
-                    cursor -= 1;
-                    pageClosed = true;
-                }
-
-                if !pageClosed && triggerCountInCurrentPage >= DISPLAY_PAGE_TRIGGER_COUNT {
-                    pageStartIndex = messageIndex;
-                    cursor -= 1;
-                    pageClosed = true;
-                }
-            }
-
-            if !pageClosed {
-                cursor -= 1;
-            }
-        }
-
-        if !pageClosed {
-            pageStartIndex = 0;
-            cursor = -1;
-        }
-
-        pageStartIndicesNewestFirst.push(pageStartIndex);
-    }
-
-    pageStartIndicesNewestFirst.reverse();
-    pageStartIndicesNewestFirst
-        .iter()
-        .enumerate()
-        .map(|(index, pageStartIndex)| {
-            let pageEndExclusive = pageStartIndicesNewestFirst
-                .get(index + 1)
-                .copied()
-                .unwrap_or(messages.len());
-            DisplayPageRange {
-                startIndex: *pageStartIndex,
-                endIndexExclusive: pageEndExclusive,
-                startTimestampInclusive: messages[*pageStartIndex].timestamp,
-                endTimestampInclusive: messages[pageEndExclusive - 1].timestamp,
-            }
-        })
-        .collect()
-}
-
-/// Returns whether the sender closes display pages while navigating history.
-fn isDisplayPageTriggerMessage(sender: &str) -> bool {
-    sender == "user" || sender == "summary"
 }
 
 /// Coordinates chat history persistence, current-chat state, and display-window updates.
@@ -976,23 +892,17 @@ impl ChatHistoryDelegate {
     }
 
     #[allow(non_snake_case)]
-    /// Loads all persisted messages for a chat.
-    pub fn getChatHistory(&self, chatId: String) -> Vec<ChatMessage> {
-        self.chatHistoryManager
-            .loadChatMessages(&chatId)
-            .expect("ChatHistoryManager.loadChatMessages must succeed")
-    }
-
-    #[allow(non_snake_case)]
-    /// Loads persisted messages that should participate in runtime model context.
+    /// Loads the latest summary and its visible successors without hydrating compacted history.
     pub fn getRuntimeChatHistory(&self, chatId: String) -> Vec<ChatMessage> {
-        self.getChatHistory(chatId)
+        self.chatHistoryManager
+            .loadRuntimeChatMessages(chatId)
+            .expect("ChatHistoryManager.loadRuntimeChatMessages must succeed")
             .into_iter()
             .filter(|message| message.displayMode != operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode::HIDDEN_PLACEHOLDER)
             .collect()
     }
 
-    /// Loads runtime chat messages through one inclusive message timestamp.
+    /// Loads visible context through a historical message while retaining its summary checkpoint.
     #[allow(non_snake_case)]
     pub fn getRuntimeChatHistoryUpTo(
         &self,
@@ -1000,8 +910,11 @@ impl ChatHistoryDelegate {
         upToTimestampInclusive: i64,
     ) -> Vec<ChatMessage> {
         self.chatHistoryManager
-            .loadMessagesAfterLatestSummaryInRange(chatId, None, Some(upToTimestampInclusive))
-            .expect("ChatHistoryManager.loadMessagesAfterLatestSummaryInRange must succeed")
+            .loadRuntimeChatMessagesUpTo(chatId, upToTimestampInclusive)
+            .expect("ChatHistoryManager.loadRuntimeChatMessagesUpTo must succeed")
+            .into_iter()
+            .filter(|message| message.displayMode != operit_model::ChatMessageDisplayMode::ChatMessageDisplayMode::HIDDEN_PLACEHOLDER)
+            .collect()
     }
 
     #[allow(non_snake_case)]
@@ -1042,9 +955,9 @@ impl ChatHistoryDelegate {
     #[allow(non_snake_case)]
     /// Returns whether a chat contains at least one user-authored message.
     pub fn hasUserMessage(&self, chatId: String) -> bool {
-        self.getChatHistory(chatId)
-            .iter()
-            .any(|message| message.sender == "user")
+        self.chatHistoryManager
+            .hasUserMessage(chatId)
+            .expect("ChatHistoryManager.hasUserMessage must succeed")
     }
 
     #[allow(non_snake_case)]
@@ -1065,38 +978,31 @@ impl ChatHistoryDelegate {
             return false;
         }
 
+        if self.chatHistoryManager.loadChatMessageIndexPosition(&chatId, targetTimestamp)
+            .expect("ChatHistoryManager.loadChatMessageIndexPosition must succeed").is_none() {
+            return false;
+        }
+
         self.isLoadingDisplayWindow = true;
         self.currentChatWindow.isLoadingDisplayWindow = true;
         self.emitDisplayWindowState();
 
-        let locatorEntries = self
+        let mut revealedMessages = self
             .chatHistoryManager
-            .loadChatMessageLocatorPreviews(chatId.clone(), String::new())
-            .expect("ChatHistoryManager.loadChatMessageLocatorPreviews must succeed");
-        let pageRanges = resolveDisplayPageRanges(&locatorEntries);
-        let Some(targetPageIndex) = pageRanges.iter().position(|range| {
-            targetTimestamp >= range.startTimestampInclusive
-                && targetTimestamp <= range.endTimestampInclusive
-        }) else {
+            .loadChatMessagesDescUpTo(chatId.clone(), targetTimestamp, (DISPLAY_WINDOW_QUERY_BATCH_SIZE / 2) as i32)
+            .expect("ChatHistoryManager.loadChatMessagesDescUpTo must succeed");
+        if revealedMessages.first().map(|message| message.timestamp) != Some(targetTimestamp) {
             self.isLoadingDisplayWindow = false;
             self.currentChatWindow.isLoadingDisplayWindow = false;
             self.emitDisplayWindowState();
             return false;
-        };
-
-        let windowStartPageIndex = if targetPageIndex + 1 < pageRanges.len() {
-            targetPageIndex
-        } else {
-            targetPageIndex.saturating_sub(MAX_DISPLAY_PAGE_COUNT - 1)
-        };
-        let windowEndPageIndex =
-            (windowStartPageIndex + MAX_DISPLAY_PAGE_COUNT - 1).min(pageRanges.len() - 1);
-        let startTimestamp = pageRanges[windowStartPageIndex].startTimestampInclusive;
-        let endTimestamp = pageRanges[windowEndPageIndex].endTimestampInclusive;
-        let mut revealedMessages = self
-            .chatHistoryManager
-            .loadChatMessagesWindow(chatId.clone(), startTimestamp, endTimestamp)
-            .expect("ChatHistoryManager.loadChatMessagesWindow must succeed");
+        }
+        revealedMessages.reverse();
+        revealedMessages.extend(self.chatHistoryManager.loadChatMessagesAscAfter(
+            chatId.clone(), targetTimestamp, (DISPLAY_WINDOW_QUERY_BATCH_SIZE / 2) as i32,
+        ).expect("ChatHistoryManager.loadChatMessagesAscAfter must succeed"));
+        let startTimestamp = revealedMessages.first().expect("target window contains its target").timestamp;
+        let endTimestamp = revealedMessages.last().expect("target window contains its target").timestamp;
         let previousMessages = self
             .openedChatMessageFlowSnapshot(&chatId)
             .unwrap_or_default();
@@ -1112,11 +1018,9 @@ impl ChatHistoryDelegate {
         AppLogger::trace(
             "ChatFlowTrace",
             &format!(
-                "reveal_locator chatId={} target={} pages={}..{} loaded={} hasOlder={} hasNewer={}",
+                "reveal_locator chatId={} target={} loaded={} hasOlder={} hasNewer={}",
                 chatId,
                 targetTimestamp,
-                windowStartPageIndex,
-                windowEndPageIndex,
                 chat_flow_trace_summary(&revealedMessages),
                 hasOlder,
                 hasNewer

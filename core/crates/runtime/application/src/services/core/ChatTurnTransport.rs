@@ -91,8 +91,7 @@ impl ChatTurnTransport {
             ChatSendRequest::Continue { chatId, runtime, userMessageTimestamp, participantId, notifyReply, summaryPolicy } => {
                 let source = manager.loadChatMessageVariant(&chatId, userMessageTimestamp, 0).map_err(|error| error.to_string())?;
                 if source.sender != "user" { return Err("Continuation source is not a committed user message".to_string()); }
-                let messages = manager.loadChatMessages(&chatId).map_err(|error| error.to_string())?;
-                if messages.iter().any(|message| message.sender == "user" && message.timestamp > userMessageTimestamp) {
+                if manager.hasUserMessageAfter(&chatId, userMessageTimestamp).map_err(|error| error.to_string())? {
                     return Err("Continuation source was superseded by another committed user message".to_string());
                 }
                 (chatId, runtime, notifyReply, Some(userMessageTimestamp), AdmittedChatTurnWork::Continue { userMessageTimestamp, participantId, summaryPolicy })

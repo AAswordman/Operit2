@@ -8,6 +8,49 @@ import 'package:operit2/ui/features/chat/components/ChatMessageLocatorPanel.dart
 
 void main() {
   testWidgets(
+    'retains the complete preview index across search and favorite filtering',
+    (tester) async {
+      final queries = <String>[];
+      await _pumpPanel(
+        tester,
+        loadEntries: (query) async {
+          queries.add(query);
+          return [
+            for (var index = 1; index <= 205; index++)
+              if (query.isEmpty || index == 205)
+                _entry(index, favorite: index == 205),
+          ];
+        },
+      );
+      expect(
+        tester
+            .widget<ListView>(
+              find.byKey(const ValueKey('message-locator-results')),
+            )
+            .childrenDelegate
+            .estimatedChildCount,
+        409,
+      );
+      await tester.tap(find.widgetWithText(ChoiceChip, '收藏'));
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('message-locator-entry-205')),
+        findsOneWidget,
+      );
+      expect(queries, ['']);
+      await tester.enterText(find.byType(TextField), 'late match');
+      await tester.pump(const Duration(milliseconds: 250));
+      await tester.pumpAndSettle();
+      expect(queries, ['', 'late match']);
+      expect(
+        find.byKey(const ValueKey('message-locator-entry-205')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'searches persisted history and combines the query with favorites',
     (tester) async {
       final queries = <String>[];

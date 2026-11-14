@@ -170,6 +170,7 @@ class ChatMessageSliverList extends SliverList {
     required this.extents,
     required IndexedWidgetBuilder itemBuilder,
     required this.preserveViewport,
+    this.onScrollExtentChanged,
   }) : super(
          delegate: SliverChildBuilderDelegate(
            itemBuilder,
@@ -179,6 +180,7 @@ class ChatMessageSliverList extends SliverList {
 
   final List<ChatMessageExtent> extents;
   final ValueGetter<bool> preserveViewport;
+  final ValueChanged<double>? onScrollExtentChanged;
 
   /// Sums measured tail rows separately from estimates for unprepared content.
   @override
@@ -208,6 +210,7 @@ class ChatMessageSliverList extends SliverList {
       RenderChatMessageSliverList(
         childManager: context as SliverMultiBoxAdaptorElement,
         preserveViewport: preserveViewport,
+        onScrollExtentChanged: onScrollExtentChanged,
       );
 
   /// Updates viewport ownership without replacing the active scroll position.
@@ -217,6 +220,7 @@ class ChatMessageSliverList extends SliverList {
     covariant RenderChatMessageSliverList renderObject,
   ) {
     renderObject.preserveViewport = preserveViewport;
+    renderObject.onScrollExtentChanged = onScrollExtentChanged;
   }
 }
 
@@ -226,9 +230,11 @@ class RenderChatMessageSliverList extends RenderSliverList {
   RenderChatMessageSliverList({
     required super.childManager,
     required this.preserveViewport,
+    this.onScrollExtentChanged,
   });
 
   ValueGetter<bool> preserveViewport;
+  ValueChanged<double>? onScrollExtentChanged;
 
   /// Holds the visible row's offset when earlier mounted rows change height.
   @override
@@ -257,6 +263,9 @@ class RenderChatMessageSliverList extends RenderSliverList {
       }
     }
     super.performLayout();
+    if (geometry!.scrollOffsetCorrection == null) {
+      onScrollExtentChanged?.call(geometry!.scrollExtent);
+    }
     if (anchor == null ||
         anchor.parent != this ||
         geometry!.scrollOffsetCorrection != null) {

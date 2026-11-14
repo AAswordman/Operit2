@@ -48,6 +48,42 @@ fn messageTarget(index: i32) -> PluginExtensionTarget {
     }
 }
 
+/// Verifies complete index coverage, bounded previews and exact positions without hydrating message bodies.
+#[test]
+fn locator_index_covers_full_history_with_bounded_content_and_global_positions() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (manager, _) = fixture("locator-index");
+    for index in 0..200 {
+        let mut message = ChatMessage::new_with_markdown_timestamp(
+            if index % 3 == 0 { "user".into() } else { "ai".into() },
+            format!("message-{index} {} {}", "x".repeat(4096), if index >= 180 { "needle" } else { "ordinary" }),
+            1000 + index,
+        );
+        message.isFavorite = index % 7 == 0;
+        manager.addMessage("extensions-chat".into(), message).unwrap();
+    }
+    let index = manager.loadChatMessageLocatorPreviews("extensions-chat".into(), "".into()).unwrap();
+    assert_eq!(index.len(), 201);
+    assert_eq!(index[0].timestamp, 42);
+    assert_eq!(index.last().unwrap().timestamp, 1199);
+    assert_eq!(index.last().unwrap().messageIndex, Some(200));
+    assert!(index.iter().all(|entry| entry.previewContent.chars().count() <= 48));
+    assert!(index[1..].iter().all(|entry| entry.contentLength > 4096));
+    assert_eq!(index.iter().filter(|entry| entry.isFavorite).count(), 29);
+    assert!(serde_json::to_vec(&index).unwrap().len() < 201 * 512);
+    let matches = manager.loadChatMessageLocatorPreviews("extensions-chat".into(), "needle".into()).unwrap();
+    assert_eq!(matches.len(), 20);
+    assert_eq!(matches[0].messageIndex, Some(181));
+    assert_eq!(matches.last().unwrap().timestamp, 1199);
+    assert!(matches.iter().all(|entry| entry.previewContent.contains("needle")));
+    assert_eq!(manager.loadChatMessageIndexPosition("extensions-chat", 1199).unwrap(), Some(200));
+    assert_eq!(manager.loadChatMessageIndexPosition("extensions-chat", 900).unwrap(), None);
+    assert_eq!(manager.loadChatMessageDepths("extensions-chat", &[1199, 1180, 1199]).unwrap(), [0, 19, 0]);
+    assert!(manager.hasUserMessageAfter("extensions-chat", 1197).unwrap());
+    assert!(!manager.hasUserMessageAfter("extensions-chat", 1198).unwrap());
+    assert!(!manager.hasUserMessageAfter("missing-chat", 0).unwrap());
+}
+
 /// Verifies simultaneous owner updates preserve both namespaces on every real record kind.
 #[test]
 fn concurrent_owners_preserve_each_other_and_record_sync() {
@@ -172,7 +208,7 @@ fn promotion_reordering_and_projection_follow_variant_snapshots() {
         .selectMessageVariant("extensions-chat".to_string(), 42, 1)
         .unwrap();
     assert_eq!(
-        manager.loadChatMessages("extensions-chat").unwrap()[0].pluginExtensions,
+        manager.loadChatMessagesRange("extensions-chat".to_string(), "asc".to_string(), 0, 79).unwrap()[0].pluginExtensions,
         promoted
     );
     manager
@@ -201,7 +237,7 @@ fn promotion_reordering_and_projection_follow_variant_snapshots() {
         .selectMessageVariant("extensions-chat".to_string(), 42, 1)
         .unwrap();
     assert_eq!(
-        manager.loadChatMessages("extensions-chat").unwrap()[0].pluginExtensions,
+        manager.loadChatMessagesRange("extensions-chat".to_string(), "asc".to_string(), 0, 79).unwrap()[0].pluginExtensions,
         last
     );
 }
@@ -387,7 +423,7 @@ fn draft_transaction_failure_leaves_no_chat_or_opening_record() {
     assert!(database.chatDao().getChatById(&id).unwrap().is_none());
     assert!(database
         .messageDao()
-        .getMessagesForChat(&id)
+        .getMessagesForChatAsc(&id, 80)
         .unwrap()
         .is_empty());
 }

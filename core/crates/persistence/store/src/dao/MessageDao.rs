@@ -62,14 +62,6 @@ impl MessageDao {
     }
 
     /// Processes the exact persisted message record with explicit storage errors.
-    pub fn getMessagesForChat(&self, chatId: &str) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-        self.selectMessages(
-            "SELECT * FROM messages WHERE chatId = ?1 ORDER BY timestamp ASC",
-            sqliteParams![chatId],
-        )
-    }
-
-    /// Processes the exact persisted message record with explicit storage errors.
     pub fn countMessagesForChatUpToTimestamp(
         &self,
         chatId: &str,
@@ -81,186 +73,82 @@ impl MessageDao {
         )
     }
 
-    /// Reads only the ordered identity index needed to compute display depths.
-    pub fn getMessageTimestampsAfter(&self, chatId: &str, timestamp: i64) -> Result<Vec<i64>, SqliteStoreError> {
-        self.store.queryRows("SELECT timestamp FROM messages WHERE chatId = ?1 AND timestamp > ?2 ORDER BY timestamp ASC",
-            sqliteParams![chatId, timestamp])?.iter().map(|row| row.get(0)).collect()
+    /// Counts later messages without materializing their identities or content.
+    pub fn countMessagesAfterTimestamp(&self, chatId: &str, timestamp: i64) -> Result<i32, SqliteStoreError> {
+        self.store.queryScalar("SELECT COUNT(*) FROM messages WHERE chatId = ?1 AND timestamp > ?2",
+            sqliteParams![chatId, timestamp])
     }
 
-    /// Processes the exact persisted message record with explicit storage errors.
-    pub fn getLocatorPreviewsForChat(
-        &self,
-        chatId: &str,
-        previewCharCount: i32,
-    ) -> Result<Vec<ChatMessageLocatorPreview>, SqliteStoreError> {
-        self.store
-            .queryRows(
-                r#"
-                SELECT
-                    (
-                        SELECT COUNT(*)
-                        FROM messages AS earlier
-                        WHERE earlier.chatId = messages.chatId
-                            AND earlier.timestamp < messages.timestamp
-                    ) AS messageIndex,
-                    timestamp AS timestamp,
-                    sender AS sender,
-                    CASE
-                        WHEN sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER' THEN ''
-                        ELSE SUBSTR((
-                            SELECT GROUP_CONCAT(content, '')
-                            FROM (
-                                SELECT content FROM message_parts
-                                WHERE message_parts.chatId = messages.chatId
-                                    AND message_parts.messageTimestamp = messages.timestamp
-                                    AND message_parts.variantIndex = messages.selectedVariantIndex
-                                    AND message_parts.kind IN ('markdown', 'status')
-                                ORDER BY sequence ASC
-                            )
-                        ), 1, ?2)
-                    END AS previewContent,
-                    CASE
-                        WHEN sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER' THEN 0
-                        ELSE LENGTH((
-                            SELECT GROUP_CONCAT(content, '')
-                            FROM (
-                                SELECT content FROM message_parts
-                                WHERE message_parts.chatId = messages.chatId
-                                    AND message_parts.messageTimestamp = messages.timestamp
-                                    AND message_parts.variantIndex = messages.selectedVariantIndex
-                                    AND message_parts.kind IN ('markdown', 'status')
-                                ORDER BY sequence ASC
-                            )
-                        ))
-                    END AS contentLength,
-                    displayMode AS displayMode,
-                    isFavorite AS isFavorite,
-                    CASE WHEN selectedVariantIndex = 0 THEN pluginExtensions ELSE (
-                        SELECT pluginExtensions FROM message_variants
-                        WHERE message_variants.chatId = messages.chatId
-                            AND message_variants.messageTimestamp = messages.timestamp
-                            AND message_variants.variantIndex = messages.selectedVariantIndex
-                    ) END AS pluginExtensions
-                FROM messages
-                WHERE chatId = ?1
-                ORDER BY timestamp ASC
-                "#,
-                sqliteParams![chatId, previewCharCount],
-            )?
-            .into_iter()
-            .map(|row| mapLocatorPreview(&row))
-            .collect()
+    /// Checks continuation ownership using the persisted user-message index.
+    pub fn existsUserMessageAfterTimestamp(&self, chatId: &str, timestamp: i64) -> Result<bool, SqliteStoreError> {
+        self.store.queryScalar("SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = ?1 AND sender = 'user' AND timestamp > ?2)",
+            sqliteParams![chatId, timestamp])
     }
 
-    /// Processes the exact persisted message record with explicit storage errors.
-    pub fn searchLocatorPreviewsForChat(
+    /// Resolves an exact global index position without hydrating message content.
+    pub fn getMessageIndexPosition(&self, chatId: &str, timestamp: i64) -> Result<Option<i32>, SqliteStoreError> {
+        self.store.queryOne(
+            "SELECT (SELECT COUNT(*) FROM messages AS earlier WHERE earlier.chatId = messages.chatId AND earlier.timestamp < messages.timestamp) FROM messages WHERE chatId = ?1 AND timestamp = ?2",
+            sqliteParams![chatId, timestamp],
+        )?.map(|row| row.get(0)).transpose()
+    }
+
+    /// Reads every matching index entry while returning only metadata and a bounded text preview.
+    pub fn getMessageLocatorIndex(
         &self,
         chatId: &str,
         query: &str,
         previewCharCount: i32,
     ) -> Result<Vec<ChatMessageLocatorPreview>, SqliteStoreError> {
-        self.store
-            .queryRows(
-                r#"
-                SELECT
-                    (
-                        SELECT COUNT(*)
-                        FROM messages AS earlier
-                        WHERE earlier.chatId = messages.chatId
-                            AND earlier.timestamp < messages.timestamp
-                    ) AS messageIndex,
-                    timestamp AS timestamp,
-                    sender AS sender,
-                    SUBSTR(
-                        (
-                            SELECT GROUP_CONCAT(content, '')
-                            FROM (
-                                SELECT content FROM message_parts
-                                WHERE message_parts.chatId = messages.chatId
-                                    AND message_parts.messageTimestamp = messages.timestamp
-                                    AND message_parts.variantIndex = messages.selectedVariantIndex
-                                    AND message_parts.kind IN ('markdown', 'status')
-                                ORDER BY sequence ASC
-                            )
-                        ),
-                        MAX(1, INSTR(LOWER((
-                            SELECT GROUP_CONCAT(content, '')
-                            FROM (
-                                SELECT content FROM message_parts
-                                WHERE message_parts.chatId = messages.chatId
-                                    AND message_parts.messageTimestamp = messages.timestamp
-                                    AND message_parts.variantIndex = messages.selectedVariantIndex
-                                    AND message_parts.kind IN ('markdown', 'status')
-                                ORDER BY sequence ASC
-                            )
-                        )), LOWER(?2)) - (?3 / 2)),
-                        ?3
-                    ) AS previewContent,
-                    LENGTH((
-                        SELECT GROUP_CONCAT(content, '')
-                        FROM (
-                            SELECT content FROM message_parts
-                            WHERE message_parts.chatId = messages.chatId
-                                AND message_parts.messageTimestamp = messages.timestamp
-                                AND message_parts.variantIndex = messages.selectedVariantIndex
-                                AND message_parts.kind IN ('markdown', 'status')
-                            ORDER BY sequence ASC
-                        )
-                    )) AS contentLength,
-                    displayMode AS displayMode,
-                    isFavorite AS isFavorite,
+        self.store.queryRows(r#"
+            WITH identities AS (
+                SELECT timestamp, sender, displayMode, isFavorite, selectedVariantIndex,
                     CASE WHEN selectedVariantIndex = 0 THEN pluginExtensions ELSE (
                         SELECT pluginExtensions FROM message_variants
                         WHERE message_variants.chatId = messages.chatId
                             AND message_variants.messageTimestamp = messages.timestamp
                             AND message_variants.variantIndex = messages.selectedVariantIndex
-                    ) END AS pluginExtensions
-                FROM messages
-                WHERE chatId = ?1
-                    AND NOT (sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER')
-                    AND INSTR(LOWER((
-                        SELECT GROUP_CONCAT(content, '')
-                        FROM (
-                            SELECT content FROM message_parts
-                            WHERE message_parts.chatId = messages.chatId
-                                AND message_parts.messageTimestamp = messages.timestamp
-                                AND message_parts.variantIndex = messages.selectedVariantIndex
-                                AND message_parts.kind IN ('markdown', 'status')
-                            ORDER BY sequence ASC
-                        )
-                    )), LOWER(?2)) > 0
-                ORDER BY timestamp ASC
-                "#,
-                sqliteParams![chatId, query, previewCharCount],
-            )?
-            .into_iter()
-            .map(|row| mapLocatorPreview(&row))
-            .collect()
-    }
-
-    /// Processes the exact persisted message record with explicit storage errors.
-    pub fn getMessagesForChatFromTimestampAsc(
-        &self,
-        chatId: &str,
-        startTimestampInclusive: i64,
-    ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-        self.selectMessages(
-            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 ORDER BY timestamp ASC",
-            sqliteParams![chatId, startTimestampInclusive],
-        )
-    }
-
-    /// Processes the exact persisted message record with explicit storage errors.
-    pub fn getMessagesForChatWindowAsc(
-        &self,
-        chatId: &str,
-        startTimestampInclusive: i64,
-        endTimestampInclusive: i64,
-    ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-        self.selectMessages(
-            "SELECT * FROM messages WHERE chatId = ?1 AND timestamp >= ?2 AND timestamp <= ?3 ORDER BY timestamp ASC",
-            sqliteParams![chatId, startTimestampInclusive, endTimestampInclusive],
-        )
+                    ) END AS identityJson
+                FROM messages WHERE chatId = ?1
+            ), indexed AS (
+                SELECT ROW_NUMBER() OVER (ORDER BY timestamp) - 1 AS messageIndex,
+                    timestamp, sender, displayMode, isFavorite, selectedVariantIndex,
+                    CASE WHEN sender = 'ai' AND json_type(identityJson, '$."host.chat.identity".title') = 'text'
+                        THEN json_extract(identityJson, '$."host.chat.identity".title') ELSE '' END AS displayName
+                FROM identities
+            ), previews AS (
+                SELECT messageIndex, timestamp, sender, displayMode, isFavorite,
+                    CASE WHEN sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER' THEN '' ELSE (
+                    SELECT GROUP_CONCAT(CASE WHEN ?2 = '' THEN SUBSTR(content, 1, ?3) ELSE content END, '') FROM (
+                        SELECT content FROM message_parts
+                        WHERE message_parts.chatId = ?1
+                            AND message_parts.messageTimestamp = indexed.timestamp
+                            AND message_parts.variantIndex = indexed.selectedVariantIndex
+                            AND message_parts.kind IN ('markdown', 'status')
+                        ORDER BY sequence ASC
+                    )
+                    ) END AS content,
+                    CASE WHEN sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER' THEN 0 ELSE (
+                        SELECT COALESCE(SUM(LENGTH(content)), 0) FROM message_parts
+                        WHERE chatId = ?1 AND messageTimestamp = indexed.timestamp
+                            AND variantIndex = indexed.selectedVariantIndex
+                            AND kind IN ('markdown', 'status')
+                    ) END AS contentLength, displayName
+                FROM indexed
+            )
+            SELECT messageIndex, timestamp, sender,
+                CASE WHEN contentLength = 0 THEN ''
+                    ELSE SUBSTR(content, MAX(1, INSTR(LOWER(content), LOWER(?2)) - (?3 / 2)), ?3)
+                END AS previewContent,
+                contentLength, displayMode, isFavorite, displayName
+            FROM previews
+            WHERE ?2 = '' OR (
+                NOT (sender = 'user' AND displayMode = 'HIDDEN_PLACEHOLDER')
+                AND INSTR(LOWER(content), LOWER(?2)) > 0
+            )
+            ORDER BY timestamp ASC
+        "#, sqliteParams![chatId, query, previewCharCount])?
+            .into_iter().map(|row| mapLocatorPreview(&row)).collect()
     }
 
     /// Processes the exact persisted message record with explicit storage errors.
@@ -324,36 +212,6 @@ impl MessageDao {
             "SELECT * FROM messages WHERE chatId = ?1 AND timestamp > ?2 ORDER BY timestamp ASC LIMIT ?3",
             sqliteParams![chatId, afterTimestampExclusive, limit],
         )
-    }
-
-    /// Processes the exact persisted message record with explicit storage errors.
-    pub fn getMessagesForChatInRangeAsc(
-        &self,
-        chatId: &str,
-        afterTimestampExclusive: Option<i64>,
-        beforeTimestampExclusive: Option<i64>,
-        upToTimestampInclusive: Option<i64>,
-    ) -> Result<Vec<MessageEntity>, SqliteStoreError> {
-        self.store
-            .queryRows(
-                r#"
-                SELECT * FROM messages
-                WHERE chatId = ?1
-                    AND (?2 IS NULL OR timestamp > ?2)
-                    AND (?3 IS NULL OR timestamp < ?3)
-                    AND (?4 IS NULL OR timestamp <= ?4)
-                ORDER BY timestamp ASC
-                "#,
-                sqliteParams![
-                    chatId,
-                    afterTimestampExclusive,
-                    beforeTimestampExclusive,
-                    upToTimestampInclusive,
-                ],
-            )?
-            .into_iter()
-            .map(|row| mapMessageEntity(&row))
-            .collect()
     }
 
     /// Processes the exact persisted message record with explicit storage errors.
@@ -848,24 +706,12 @@ pub(crate) fn insertMessageParams(
 /// Reads the saved author from the same revision as the locator's preview text.
 fn mapLocatorPreview(row: &SqliteRow) -> Result<ChatMessageLocatorPreview, SqliteStoreError> {
     let sender: String = row.get(2)?;
-    let displayName = if sender == "ai" {
-        let extensionsJson: String = row.get(7)?;
-        let extensions = decodePluginExtensions(&extensionsJson)?;
-        extensions.get("host.chat.identity")
-            .and_then(|identity| identity.get("title"))
-            .and_then(serde_json::Value::as_str)
-            .map(str::trim)
-            .filter(|title| !title.is_empty())
-            .unwrap_or_default()
-            .to_string()
-    } else {
-        String::new()
-    };
+    let displayName: String = row.get(7)?;
     Ok(ChatMessageLocatorPreview {
         messageIndex: row.get(0)?,
         timestamp: row.get(1)?,
         sender,
-        displayName,
+        displayName: displayName.trim().to_string(),
         previewContent: row.get(3)?,
         contentLength: row.get(4)?,
         displayMode: row.get(5)?,

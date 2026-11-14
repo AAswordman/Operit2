@@ -219,7 +219,7 @@ fn chat_deletion_survives_rejoin_and_late_writes_on_three_replicas() {
     }
     for database in [&aDatabase, &bDatabase, &cDatabase] {
         assert!(database.chatDao().getChatById("deleted-chat").unwrap().is_none());
-        assert!(database.messageDao().getMessagesForChat("deleted-chat").unwrap().is_empty());
+        assert!(database.messageDao().getMessagesForChatAsc("deleted-chat", 80).unwrap().is_empty());
         assert_eq!(database.store().queryScalar::<i64>("SELECT COUNT(*) FROM message_parts WHERE chatId='deleted-chat'", Vec::new()).unwrap(), 0);
     }
     assert!(cDatabase.chatDao().getChatById("independent-branch").unwrap().is_some());
@@ -231,7 +231,7 @@ fn chat_deletion_survives_rejoin_and_late_writes_on_three_replicas() {
     mixed.payload = serde_json::to_value(mixedPayload).unwrap();
     c.applyOperation(&mixed).unwrap();
     assert!(cDatabase.chatDao().getChatById("deleted-chat").unwrap().is_none());
-    assert_eq!(cDatabase.messageDao().getMessagesForChat("chat-remote").unwrap().len(), 1);
+    assert_eq!(cDatabase.messageDao().getMessagesForChatAsc("chat-remote", 80).unwrap().len(), 1);
     assert!(c.receipt().unwrap().containsSequence(&mixed.originDeviceId, mixed.sequence));
     let draft = chat("deleted-chat").toChatHistory(Vec::new());
     assert!(c.commitChatDraft(&draft, None).is_err());
@@ -255,7 +255,7 @@ fn chat_deletion_is_atomic_and_respects_the_local_lock() {
     database.store().executeBatch("CREATE TRIGGER reject_chat_delete BEFORE INSERT ON sync_sql_operations WHEN NEW.operation='delete' BEGIN SELECT RAISE(ABORT,'injected journal failure'); END;").unwrap();
     assert!(store.deleteChat("atomic-chat").is_err());
     assert!(database.chatDao().getChatById("atomic-chat").unwrap().is_some());
-    assert_eq!(database.messageDao().getMessagesForChat("atomic-chat").unwrap().len(), 1);
+    assert_eq!(database.messageDao().getMessagesForChatAsc("atomic-chat", 80).unwrap().len(), 1);
     assert!(!store.chatIsDeleted("atomic-chat").unwrap());
     database.store().executeBatch("DROP TRIGGER reject_chat_delete; UPDATE chats SET locked=1 WHERE id='atomic-chat';").unwrap();
     assert!(!store.deleteChat("atomic-chat").unwrap());
@@ -480,7 +480,7 @@ fn chat_dao_update_chats_preserves_child_messages() {
         .expect("chat must remain");
     assert_eq!(updated.displayOrder, 42);
     assert_eq!(updated.workspaceId.as_deref(), Some("updated-workspace"));
-    let messages = database.messageDao().getMessagesForChat(chatId).unwrap();
+    let messages = database.messageDao().getMessagesForChatAsc(chatId, 80).unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(
         database
@@ -510,7 +510,7 @@ fn repeated_message_entity_insert_replaces_the_existing_row() {
     second.outputTokens = 2;
     database.messageDao().insertMessage(second).unwrap();
 
-    let messages = database.messageDao().getMessagesForChat(chatId).unwrap();
+    let messages = database.messageDao().getMessagesForChatAsc(chatId, 80).unwrap();
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].outputTokens, 2);
     AppDatabase::closeDatabase();
@@ -526,7 +526,7 @@ fn message_dao_locator_previews_match_kotlin_projection() {
 
     let previews = database
         .messageDao()
-        .getLocatorPreviewsForChat(chatId, 80)
+        .getMessageLocatorIndex(chatId, "", 80)
         .unwrap();
     assert_eq!(previews.len(), 2);
     assert_eq!(previews[0].messageIndex, Some(0));
@@ -534,7 +534,7 @@ fn message_dao_locator_previews_match_kotlin_projection() {
 
     let searchPreviews = database
         .messageDao()
-        .searchLocatorPreviewsForChat(chatId, "searchable", 80)
+        .getMessageLocatorIndex(chatId, "searchable", 80)
         .unwrap();
     assert_eq!(searchPreviews.len(), 1);
     assert_eq!(searchPreviews[0].messageIndex, Some(1));
@@ -834,7 +834,7 @@ fn migrates_version_23_message_revisions_to_canonical_visible_parts() {
     );
     let previews = database
         .messageDao()
-        .getLocatorPreviewsForChat(chatId, 48)
+        .getMessageLocatorIndex(chatId, "", 48)
         .unwrap();
     assert_eq!(previews[0].previewContent, "");
     assert_eq!(previews[0].contentLength, 0);

@@ -606,9 +606,8 @@ impl MessageCoordinationDelegate {
             if source.sender != "user" {
                 return Err("Continuation requires a real committed user-message timestamp".to_string());
             }
-            let messages = self.chatHistoryDelegate.chatHistoryManager.loadChatMessages(&chatId)
-                .map_err(|error| error.to_string())?;
-            if messages.iter().any(|message| message.sender == "user" && message.timestamp > source.timestamp) {
+            if self.chatHistoryDelegate.chatHistoryManager.hasUserMessageAfter(&chatId, source.timestamp)
+                .map_err(|error| error.to_string())? {
                 return Err("Continuation source was superseded by another committed user turn".to_string());
             }
         }
