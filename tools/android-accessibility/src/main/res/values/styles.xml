@@ -30,4 +30,14 @@
         <item name="android:textSize">12sp</item>
         <item name="android:fontFamily">sans-serif-medium</item>
     </style>
+    <!-- Plain Dialog host for the risk acknowledgment. The window background is set from
+         R.drawable.provider_dialog_background so the panel can keep the 24dp provider radius. -->
+    <style name="ProviderDialog" parent="android:style/Theme.Material.Light.Dialog.NoActionBar">
+        <item name="android:colorAccent">@color/provider_primary</item>
+        <item name="android:textColorPrimary">@color/provider_text</item>
+        <item name="android:textColorSecondary">@color/provider_secondary</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:backgroundDimAmount">0.55</item>
+    </style>
 </resources>

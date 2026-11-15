@@ -21,4 +21,11 @@
     <string name="control_title">授权，始终由你掌控</string>
     <string name="control_description">此服务可以读取屏幕内容并执行操作，仅供 Operit 调用。你可以随时在系统无障碍设置中关闭服务。</string>
     <string name="version_label">提供者 v%1$s · Operit</string>
+    <string name="consent_title">授权前，请确认风险</string>
+    <string name="consent_body">无障碍服务能够读取界面内容并执行操作。部分应用可能检测到此服务，并限制账号功能或封禁账号。请先理解这些风险，再决定是否授权。</string>
+    <string name="consent_statement_label">请逐字输入下方文字，空格和标点也必须一致</string>
+    <string name="consent_input_hint">在此输入完整确认文字</string>
+    <string name="consent_acknowledge">我已明确并知晓无障碍权限导致的其他应用封号、限制账号功能风险，并后果自己承担</string>
+    <string name="consent_continue">我已知晓，继续授权</string>
+    <string name="consent_not_now">暂不开启</string>
 </resources>

@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Rounded dialog panel. Platform Dialog themes only offer square panels, so the 24dp radius from
+     provider_card is applied to the dialog window background instead. -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android">
+    <solid android:color="@color/provider_surface" />
+    <corners android:radius="24dp" />
+</shape>

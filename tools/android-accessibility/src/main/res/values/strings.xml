@@ -21,4 +21,11 @@
     <string name="control_title">You stay in control</string>
     <string name="control_description">This service can read screen content and perform actions. It is provided for Operit. You can turn it off in system accessibility settings at any time.</string>
     <string name="version_label">Provider v%1$s · Operit</string>
+    <string name="consent_title">Understand the risks before granting access</string>
+    <string name="consent_body">Accessibility can read screen content and perform actions. Some apps may detect this service and restrict account features or ban accounts. Understand these risks before granting access.</string>
+    <string name="consent_statement_label">Type the statement below exactly, including spaces and punctuation</string>
+    <string name="consent_input_hint">Enter the complete acknowledgment</string>
+    <string name="consent_acknowledge">I understand and acknowledge the risks of account bans and restricted account functions caused by accessibility permissions, and I bear the consequences myself</string>
+    <string name="consent_continue">Acknowledge and continue</string>
+    <string name="consent_not_now">Not now</string>
 </resources>
