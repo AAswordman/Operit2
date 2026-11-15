@@ -281,6 +281,12 @@ svg { display: block; width: 100%; height: 100%; touch-action: none; user-select
     } else fit();
     viewport = next;
   }).observe(surface);
-  void window.MemoryGraphHost.load().then(window.updateMemoryGraph).catch(failure);
+  async function initialize() {
+    if (typeof window.MemoryGraphHost?.load !== "function") {
+      await new Promise((resolve) => window.addEventListener("operitComposeDslInterfacesReady", () => resolve(), { once: true }));
+    }
+    window.updateMemoryGraph(await window.MemoryGraphHost.load());
+  }
+  void initialize().catch(failure);
 })();
 </script></body></html>

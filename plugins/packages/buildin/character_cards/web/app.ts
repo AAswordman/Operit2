@@ -113,4 +113,11 @@ surface.addEventListener("pointercancel", event => { pointers.delete(event.point
 surface.addEventListener("wheel", event => { event.preventDefault(); const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? surface.clientHeight : 1); camera = zoomMemoryGraph(camera, point(event), Math.exp(-delta * 0.001)); paintCamera(); }, { passive: false });
 surface.addEventListener("keydown", event => { if (event.key !== "Enter" && event.key !== " ") return; const target = selection(event.target); if (target !== null) { event.preventDefault(); void window.MemoryGraphHost.select(target.kind, target.id).catch(failure); } });
 new ResizeObserver(() => { const next = { width: surface.clientWidth, height: surface.clientHeight }; if (viewport.width > 0 && viewport.height > 0) { camera.x += (next.width - viewport.width) / 2; camera.y += (next.height - viewport.height) / 2; paintCamera(); } else fit(); viewport = next; }).observe(surface);
-void window.MemoryGraphHost.load().then(window.updateMemoryGraph).catch(failure);
+/** Loads the graph once the host has installed its page interfaces. */
+async function initialize(): Promise<void> {
+  if (typeof window.MemoryGraphHost?.load !== "function") {
+    await new Promise<void>(resolve => window.addEventListener("operitComposeDslInterfacesReady", () => resolve(), { once: true }));
+  }
+  window.updateMemoryGraph(await window.MemoryGraphHost.load());
+}
+void initialize().catch(failure);

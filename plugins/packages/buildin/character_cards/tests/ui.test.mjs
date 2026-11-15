@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import http from "node:http";
 import { createRequire } from "node:module";
-import { mkdir } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import { createHtmlDocument } from "../scripts/build.mjs";
 import { fixture } from "./fixtures.mjs";
 const require = createRequire(import.meta.url);
@@ -38,6 +38,40 @@ for (const width of [390, 1100]) for (const dark of [false, true]) test(`read-on
   assert.deepEqual(await p.evaluate(() => Object.keys(window.MemoryGraphHost).sort()), ["load", "select"]);
   const box = await p.locator("svg").boundingBox(); assert.equal(box.width, width); assert.equal(box.height, 720);
   await p.screenshot({ path: `${output}/memory-graph-${width}-${dark ? "dark" : "light"}.png` });
+});
+
+test("graph waits for late host installation and loads once across interface refreshes", async t => {
+  const context = await browser.newContext(); t.after(() => context.close());
+  const p = await context.newPage(), errors = [];
+  p.on("pageerror", error => errors.push(error.message));
+  await p.goto(origin);
+  assert.deepEqual(errors, []);
+  assert.equal(await p.locator(".node").count(), 0);
+  assert.equal(await p.locator("#status").textContent(), "正在加载记忆图谱…");
+  const source = await readFile(new URL("../../../../../apps/flutter/app/lib/ui/features/packages/screens/ToolPkgComposeDslWebViewBridgeRuntime.dart", import.meta.url), "utf8");
+  const runtime = source.match(/return '''([\s\S]*?)''';/)[1]
+    .replaceAll("$hiddenBridgeNameJson", JSON.stringify("__ComposeDslWebViewHostBridge__"))
+    .replaceAll("$channelNameJson", JSON.stringify("__ComposeDslWebViewHostBridgeChannel__"))
+    .replaceAll("$interfacesJson", JSON.stringify({ MemoryGraphHost: ["load", "select"] }));
+  const data = fixture();
+  await p.evaluate(display => {
+    window.hostLoads = 0;
+    window.__ComposeDslWebViewHostBridgeChannel__ = {
+      /** Delivers the real bridge's asynchronous graph read response. */
+      postMessage(raw) {
+        const message = JSON.parse(raw);
+        window.hostLoads += 1;
+        queueMicrotask(() => window.__operitComposeDslWebViewHostReceive({ id: message.id, success: true, data: display }));
+      },
+    };
+  }, { data: data.graph, selected: null, selectedEdge: null, theme: data.theme });
+  await p.evaluate(runtime);
+  await p.locator(".node").first().waitFor();
+  assert.equal(await p.locator(".node").count(), 3);
+  assert.equal(await p.locator("#status").textContent(), "");
+  await p.evaluate(runtime);
+  assert.equal(await p.evaluate(() => window.hostLoads), 1);
+  assert.deepEqual(errors, []);
 });
 
 test("graph selections preserve opaque node and relationship identifiers", async t => {
