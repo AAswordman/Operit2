@@ -237,7 +237,33 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
         throw std::runtime_error("Cannot create Operit Plugin SDK process identity");
       }
       const bool existing_owner = ::GetLastError() == ERROR_ALREADY_EXISTS;
-      if (sdk_activation && existing_owner) {
+      if (existing_owner) {
+        if (sdk_activation) {
+          ::CloseHandle(sdk_owner);
+          ::CoUninitialize();
+          return EXIT_SUCCESS;
+        }
+        // A duplicate launch must not start a second Core with the same identity:
+        // a paired phone accepts one authenticated channel per peer, so two Cores
+        // evict each other in a sync retry loop. Hand off to the running instance,
+        // waiting briefly for its window while it finishes starting up.
+        const std::optional<std::string> pending_notification =
+            NotificationActivationArgument(command_line_arguments);
+        for (int attempt = 0; attempt < 100; ++attempt) {
+          if (pending_notification.has_value()) {
+            if (ForwardNotificationActivationToExistingWindow(*pending_notification)) {
+              break;
+            }
+          } else {
+            HWND window = ::FindWindowW(L"FLUTTER_RUNNER_WIN32_WINDOW", L"Operit2");
+            if (window != nullptr) {
+              ::ShowWindow(window, ::IsIconic(window) ? SW_RESTORE : SW_SHOW);
+              ::SetForegroundWindow(window);
+              break;
+            }
+          }
+          ::Sleep(100);
+        }
         ::CloseHandle(sdk_owner);
         ::CoUninitialize();
         return EXIT_SUCCESS;
