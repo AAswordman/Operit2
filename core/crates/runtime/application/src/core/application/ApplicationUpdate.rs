@@ -318,6 +318,7 @@ impl ApplicationUpdateManager {
                 totalBytes,
             }),
             FullUpdateProgressEvent::StageChanged { stage, .. } => {
+                let previous = progress.value();
                 progress.set_value(ApplicationUpdateProgress {
                     stage: match stage {
                         FullUpdateStage::SelectingSource => "selecting_source",
@@ -326,8 +327,8 @@ impl ApplicationUpdateManager {
                         FullUpdateStage::DownloadingPackage => "downloading",
                     }
                     .into(),
-                    receivedBytes: 0,
-                    totalBytes: 0,
+                    receivedBytes: previous.receivedBytes,
+                    totalBytes: previous.totalBytes,
                 })
             }
         })

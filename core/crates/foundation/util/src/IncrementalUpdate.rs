@@ -17,6 +17,9 @@ use std::sync::{Arc, Mutex};
 const BUFFER: usize = 1024 * 1024;
 const MAX_PACKAGE: u64 = 16 * 1024 * 1024 * 1024;
 
+#[path = "IncrementalUpdateChain.rs"]
+mod chain;
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateManifest {
@@ -814,7 +817,8 @@ pub struct UpdatePlan {
     release: ReleaseInfo,
     currentAsset: String,
     manifest: Option<UpdateManifest>,
-    candidates: Vec<usize>,
+    packages: Vec<chain::ChainPackage>,
+    candidates: Vec<chain::PatchRoute>,
     selected: Option<usize>,
     base: Option<Box<dyn FileSource>>,
 }
@@ -841,18 +845,17 @@ impl UpdatePlan {
         }
         let source = context.vfs()?.file(path)?;
         let identity = hashSource(&source, control)?;
-        let manifest = self
-            .manifest
-            .as_ref()
-            .ok_or("Missing authenticated update manifest")?;
-        let index = self.candidates.iter().copied().find(|index| {
-            let patch = &manifest.patches[*index];
+        let index = self.candidates.iter().position(|route| {
+            let (package, patch) = route.steps[0];
+            let patch = &self.packages[package].manifest.patches[patch];
             identity == (patch.baseSha256.clone(), patch.baseSize)
         }).ok_or("UPDATE_BASE_MISMATCH: selected installer does not match the required version, platform, architecture or original bytes")?;
         retainSource(
             &source,
             &self.currentAsset,
-            &manifest.patches[index].baseVersion,
+            self.baseVersion
+                .as_deref()
+                .ok_or("Missing original version")?,
             &self.currentAsset,
             Some(&identity),
             context,
@@ -865,7 +868,7 @@ impl UpdatePlan {
                 .file(&VisualFileSystem::runtimePath(&cached)?)?,
         ));
         self.selected = Some(index);
-        self.incrementalBytes = Some(manifest.patches[index].size);
+        self.incrementalBytes = Some(self.candidates[index].bytes);
         self.mode = UpdateMode::Incremental;
         Ok(())
     }
@@ -907,7 +910,7 @@ fn automaticBase(
     }
 }
 
-/// Calculates complete-package and applicable direct-patch availability before any package transfer.
+/// Calculates complete-package and minimum-size patch-chain availability before package transfer.
 pub async fn planUpdate(
     release: ReleaseInfo,
     currentAsset: String,
@@ -921,28 +924,21 @@ pub async fn planUpdate(
     } else {
         fetchManifest(&release, context, control.clone()).await?
     };
-    let candidates: Vec<usize> = manifest
-        .as_ref()
-        .map(|manifest| {
-            manifest
-                .patches
-                .iter()
-                .enumerate()
-                .filter(|(_, patch)| {
-                    patch.size < manifest.size
-                        && release
-                            .patchAssetNames
-                            .iter()
-                            .any(|name| name == &patch.assetName)
-                        && release.assetName.replace(
-                            &format!("-{}.", release.version),
-                            &format!("-{}.", patch.baseVersion),
-                        ) == currentAsset
-                })
-                .map(|(index, _)| index)
-                .collect()
-        })
-        .unwrap_or_default();
+    let currentVersion = chain::currentVersion(&release, &currentAsset)?;
+    let prepared = preparedPackage(&release, manifest.as_ref(), context, &control)?.is_some();
+    let packages = if prepared {
+        Vec::new()
+    } else {
+        chain::discover(
+            &release,
+            manifest.as_ref(),
+            &currentVersion,
+            context,
+            control.clone(),
+        )
+        .await?
+    };
+    let candidates = chain::routes(&packages, &currentVersion, release.fullPackageAvailable)?;
     let mut plan = UpdatePlan {
         mode: if release.fullPackageAvailable {
             UpdateMode::Full
@@ -951,24 +947,18 @@ pub async fn planUpdate(
         },
         fullAvailable: release.fullPackageAvailable,
         incrementalAvailable: !candidates.is_empty(),
-        baseVersion: candidates.first().map(|index| {
-            manifest.as_ref().unwrap().patches[*index]
-                .baseVersion
-                .clone()
-        }),
+        baseVersion: (!candidates.is_empty()).then_some(currentVersion),
         fullBytes: manifest.as_ref().map(|m| m.size),
-        incrementalBytes: candidates
-            .iter()
-            .map(|index| manifest.as_ref().unwrap().patches[*index].size)
-            .min(),
+        incrementalBytes: candidates.iter().map(|route| route.bytes).min(),
         release,
         currentAsset,
         manifest,
+        packages,
         candidates,
         selected: None,
         base: None,
     };
-    if preparedPackage(&plan.release, plan.manifest.as_ref(), context, &control)?.is_some() {
+    if prepared {
         // The complete verified target is already local, so no baseline prompt is necessary.
         plan.mode = UpdateMode::Full;
         return Ok(plan);
@@ -981,13 +971,12 @@ pub async fn planUpdate(
             return Ok(None);
         };
         let (hash, size) = hashSource(base.as_ref(), &control)?;
-        let manifest = plan.manifest.as_ref().unwrap();
         let index = plan
             .candidates
             .iter()
-            .copied()
-            .find(|index| {
-                let patch = &manifest.patches[*index];
+            .position(|route| {
+                let (package, patch) = route.steps[0];
+                let patch = &plan.packages[package].manifest.patches[patch];
                 patch.baseSha256 == hash && patch.baseSize == size
             })
             .ok_or("Installed or retained base does not match the incremental manifest")?;
@@ -997,7 +986,7 @@ pub async fn planUpdate(
         .map_err(|error| recordIncrementalFailure(&plan.release, context, &control, error))?
     {
         Some((base, index)) => {
-            plan.incrementalBytes = Some(plan.manifest.as_ref().unwrap().patches[index].size);
+            plan.incrementalBytes = Some(plan.candidates[index].bytes);
             plan.base = Some(base);
             plan.selected = Some(index);
             plan.mode = UpdateMode::Incremental;
@@ -1035,7 +1024,9 @@ where
         release,
         currentAsset,
         manifest,
-        base,
+        mut base,
+        packages,
+        candidates,
         selected,
         mode,
         ..
@@ -1058,49 +1049,80 @@ where
     let destination = format!("{directory}/{}", release.assetName);
     let events = Arc::new(onEvent);
     let reconstructed = if mode == UpdateMode::Incremental {
-        let manifest = manifest.as_ref().ok_or("Missing update manifest")?;
-        let patch = &manifest.patches[selected.ok_or("Missing patch selection")?];
-        let url = format!(
-            "{}/{}",
-            release
-                .updateManifest
-                .as_ref()
-                .ok_or("Missing authenticated manifest source")?
-                .url
-                .rsplit_once('/')
-                .ok_or("Invalid release URL")?
-                .0,
-            patch.assetName
-        );
-        validateUpdatePackageSource(&url, &patch.assetName)?;
-        let patchPath = format!("{directory}/{}", patch.assetName);
-        events(FullUpdateProgressEvent::StageChanged {
-            stage: FullUpdateStage::DownloadingPackage,
-            message: "Downloading incremental update".into(),
-        });
-        let progress = events.clone();
-        let present = downloadOptionalUpdatePackage(
-            &url,
-            &patchPath,
-            &patch.assetName,
-            context,
-            control.clone(),
-            Some(&patch.sha256),
-            move |event| progress(event),
-        )
-        .await
-        .map_err(|error| {
-            if error.starts_with("UPDATE_INTEGRITY:") {
-                recordIncrementalFailure(&release, context, &control, error)
-            } else {
-                error
+        let route = &candidates[selected.ok_or("Missing patch route selection")?];
+        let mut downloaded = 0;
+        let mut intermediate: Option<String> = None;
+        let mut complete = true;
+        for (step, &(packageIndex, patchIndex)) in route.steps.iter().enumerate() {
+            ensureDownloadActive(&control)?;
+            let package = &packages[packageIndex];
+            let patch = &package.manifest.patches[patchIndex];
+            let url = format!(
+                "{}/{}",
+                package
+                    .release
+                    .updateManifest
+                    .as_ref()
+                    .ok_or("Missing authenticated manifest source")?
+                    .url
+                    .rsplit_once('/')
+                    .ok_or("Invalid release URL")?
+                    .0,
+                patch.assetName
+            );
+            validateUpdatePackageSource(&url, &patch.assetName)?;
+            let patchPath = format!("{directory}/{}", patch.assetName);
+            let progress = events.clone();
+            let total = route.bytes;
+            let offset = downloaded;
+            let patchSize = patch.size;
+            let present = downloadOptionalUpdatePackage(
+                &url,
+                &patchPath,
+                &patch.assetName,
+                context,
+                control.clone(),
+                Some(&patch.sha256),
+                move |event| {
+                    progress(match event {
+                        FullUpdateProgressEvent::DownloadProgress {
+                            readBytes,
+                            speedBytesPerSec,
+                            ..
+                        } => FullUpdateProgressEvent::DownloadProgress {
+                            readBytes: offset + readBytes.min(patchSize),
+                            totalBytes: total,
+                            speedBytesPerSec,
+                        },
+                        other => other,
+                    })
+                },
+            )
+            .await
+            .map_err(|error| {
+                if error.starts_with("UPDATE_INTEGRITY:") {
+                    recordIncrementalFailure(&release, context, &control, error)
+                } else {
+                    error
+                }
+            })?;
+            if !present {
+                complete = false;
+                break;
             }
-        })?;
-        if present {
             events(FullUpdateProgressEvent::StageChanged {
                 stage: FullUpdateStage::ReconstructingPackage,
-                message: "Reconstructing and verifying update package".into(),
+                message: format!(
+                    "Reconstructing and verifying update package ({}/{})",
+                    step + 1,
+                    route.steps.len()
+                ),
             });
+            let output = if step + 1 == route.steps.len() {
+                destination.clone()
+            } else {
+                format!("{directory}/step-{step}/{}", package.manifest.assetName)
+            };
             let reconstruct = || -> Result<(), String> {
                 let source = context
                     .vfs()?
@@ -1108,10 +1130,10 @@ where
                 applyPatch(
                     base.as_ref().ok_or("Missing verified base")?.as_ref(),
                     &source,
-                    manifest,
+                    &package.manifest,
                     patch,
                     context,
-                    &destination,
+                    &output,
                     &control,
                 )
             };
@@ -1120,8 +1142,29 @@ where
             storage
                 .delete(&patchPath, false)
                 .map_err(|e| e.to_string())?;
+            base = None;
+            if let Some(previous) = intermediate.take() {
+                storage
+                    .delete(&previous, false)
+                    .map_err(|error| error.to_string())?;
+            }
+            downloaded += patch.size;
+            if step + 1 != route.steps.len() {
+                base = Some(Box::new(
+                    context
+                        .vfs()?
+                        .file(&VisualFileSystem::runtimePath(&output)?)?,
+                ));
+                intermediate = Some(output);
+            }
         }
-        present
+        drop(base);
+        if let Some(previous) = intermediate {
+            storage
+                .delete(&previous, false)
+                .map_err(|error| error.to_string())?;
+        }
+        complete
     } else {
         false
     };

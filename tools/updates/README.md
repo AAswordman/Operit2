@@ -11,6 +11,27 @@ compressed result. Precise matching has a 2 GiB estimated builder memory limit; 
 installers use streaming matching. Both run single-threaded for reproducible output.
 Every published patch is reconstructed and SHA-256 verified before release publication.
 
+The shared client can apply a direct patch or a chain such as `.36 → .37 → .38 → .39`.
+It follows the target manifest's published base versions into historical Releases in
+`Operit2-nightly`, authenticates each manifest against its GitHub asset digest, and matches
+intermediate installers by version, SHA-256 and byte size. Only the same platform,
+architecture and installer format can connect. Stable clients exclude preview intermediates.
+Discovery is bounded to 64 historical versions and transfers metadata only.
+
+The planner selects the smallest total patch download for the verified original. When a full
+installer exists, a chain whose total size equals or exceeds it selects the full installer.
+Without a published full installer, a complete chain remains usable. Missing intermediate
+Releases or patches cannot form a route; the existing full-package or unavailable state applies.
+No schema change or extra full installer publication is required: keep the historical patch
+Releases and their manifests available so adjacent deltas remain discoverable.
+
+Each hop downloads and validates one patch, reconstructs and validates its exact target, then
+deletes that patch and the previous intermediate. Installation is requested only for the final
+verified installer. Progress counts bytes across the whole selected chain. Failure or cancellation
+cleans the disposable job; only the final package is retained on success. Base extraction or
+merge/integrity failure records full transfer for that final target version on the next attempt;
+cancellation and network interruption do not disable incremental retry.
+
 Schema 2 retains the gzip envelope, target/base sizes and hashes, and COPY/ADD instructions.
 Opcode 3 carries an old-file range and byte residuals: `new = old + residual (mod 256)`.
 This preserves almost-matching code and relocation tables efficiently. The decoder also

@@ -5,6 +5,9 @@ use operit_util::GithubReleaseUtil::ReleaseInfo;
 use operit_util::IncrementalUpdate::*;
 use std::sync::Arc;
 
+#[path = "incremental_updates/chains.rs"]
+mod chains;
+
 /// Removes only the retained original while leaving authenticated patch metadata and bytes available.
 fn removeRetainedBase(fixture: &Fixture, release: &ReleaseInfo, current: &str) {
     let marker = format!("-{}.", release.version);
@@ -241,7 +244,7 @@ async fn planner_counts_only_published_applicable_smaller_patches() {
                 release.patchAssetNames.clear();
             }
             if case == 2 {
-                current = current.replace("preview.1", "preview.0");
+                current = current.replace("preview.1", "preview.3");
             }
             let plan = planUpdate(
                 release,
@@ -251,10 +254,13 @@ async fn planner_counts_only_published_applicable_smaller_patches() {
             )
             .await
             .unwrap();
-            assert!(!plan.incrementalAvailable);
+            let patchOnlyOversized = case == 1 && !fullAvailable;
+            assert_eq!(plan.incrementalAvailable, patchOnlyOversized);
             assert_eq!(
                 plan.mode,
-                if fullAvailable {
+                if patchOnlyOversized {
+                    UpdateMode::Incremental
+                } else if fullAvailable {
                     UpdateMode::Full
                 } else {
                     UpdateMode::Unavailable
@@ -1429,10 +1435,10 @@ async fn cancellation_does_not_disable_delta_retry() {
     let control = HttpDownloadControl::new();
     let cancel = control.clone();
     let error = prepareUpdate(release, current, &fixture.context, control, move |event| {
-        if let FullUpdateProgressEvent::StageChanged { message, .. } = event {
-            if message == "Reconstructing and verifying update package" {
-                cancel.cancel();
-            }
+        if let FullUpdateProgressEvent::StageChanged {
+            stage: operit_util::GithubReleaseUtil::FullUpdateStage::ReconstructingPackage, ..
+        } = event {
+            cancel.cancel();
         }
     })
     .await

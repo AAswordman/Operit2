@@ -1,4 +1,4 @@
-use crate::UpdateHttp::{request as requestUpdateHttp, UpdateHttpEvent};
+use crate::UpdateHttp::{request as requestUpdateHttp, requestOptional, UpdateHttpEvent};
 use operit_host_api::HostManager::{defaultHttpHost, HostManager};
 use operit_host_api::{
     ApplicationUpdatePackage, HttpDownloadControl, HttpRequestData, RuntimeStorageHost,
@@ -338,6 +338,63 @@ impl GithubReleaseUtil {
     /// Determines the update channel associated with a version string.
     pub fn fullUpdateChannelForVersion(version: &str) -> Result<FullUpdateChannel, String> {
         Ok(channelForCurrentVersion(&parseVersion(version)?))
+    }
+
+    /// Loads one exact historical patch release through the caller's cancellable HTTP Host.
+    pub(crate) async fn fetchPatchRelease(
+        version: &str,
+        assetName: &str,
+        context: &HostManager,
+        control: HttpDownloadControl,
+    ) -> Result<Option<ReleaseInfo>, String> {
+        parseVersion(version)?;
+        let url = format!("{GITHUB_API_BASE}/repos/{GITHUB_RELEASE_OWNER}/{GITHUB_PATCH_REPO}/releases/tags/v{version}");
+        let mut request = updateHttpRequest(&url, "GET");
+        request
+            .headers
+            .push(("Accept".into(), "application/vnd.github+json".into()));
+        let body = Arc::new(Mutex::new(Vec::new()));
+        let sink = body.clone();
+        let present = requestOptional(
+            context
+                .httpHost
+                .clone()
+                .ok_or("HttpHost is required for updates")?,
+            request,
+            control,
+            move |event| {
+                if let UpdateHttpEvent::Bytes(bytes) = event {
+                    let mut body = sink.lock().map_err(|error| error.to_string())?;
+                    if body.len().saturating_add(bytes.len()) > 4 * 1024 * 1024 {
+                        return Err("Historical release metadata exceeds size limit".into());
+                    }
+                    body.extend_from_slice(&bytes);
+                }
+                Ok(())
+            },
+        )
+        .await?;
+        if !present {
+            return Ok(None);
+        }
+        let release: GitHubRelease =
+            serde_json::from_slice(&body.lock().map_err(|error| error.to_string())?)
+                .map_err(|error| error.to_string())?;
+        if release.draft {
+            return Ok(None);
+        }
+        if release.tag_name != format!("v{version}") {
+            return Err("Historical release tag disagrees with requested version".into());
+        }
+        validateReleaseChannelMarker(&release, &parseVersion(version)?)?;
+        if !release
+            .assets
+            .iter()
+            .any(|asset| asset.name == format!("{assetName}.update.json"))
+        {
+            return Ok(None);
+        }
+        releaseInfo(release, assetName.to_owned()).map(Some)
     }
 }
 
@@ -792,55 +849,56 @@ fn selectLatestReleaseInfo(
         }
     }
     selected
-        .map(
-            |(_, latestRelease, assetName)| -> Result<ReleaseInfo, String> {
-                let packageAsset = latestRelease
-                    .assets
-                    .iter()
-                    .find(|asset| asset.name == assetName);
-                let manifestName = format!("{assetName}.update.json");
-                let updateManifest = latestRelease
-                    .assets
-                    .iter()
-                    .find(|asset| asset.name == manifestName)
-                    .map(|asset| ReleaseManifestAsset {
-                        name: asset.name.clone(),
-                        url: asset.browser_download_url.clone(),
-                        digest: asset.digest.clone().unwrap_or_default(),
-                    });
-                let downloadUrl = match packageAsset {
-                    Some(asset) => asset.browser_download_url.clone(),
-                    None => updateManifest
-                        .as_ref()
-                        .ok_or("Update manifest is missing")?
-                        .url
-                        .strip_suffix(".update.json")
-                        .ok_or("Invalid manifest asset download URL")?
-                        .to_owned(),
-                };
-                let patchPrefix = format!("{assetName}.from-");
-                Ok(ReleaseInfo {
-                    version: latestRelease.tag_name.trim_start_matches('v').to_string(),
-                    assetName,
-                    downloadUrl,
-                    releaseNotes: latestRelease.body.unwrap_or_default(),
-                    releasePageUrl: latestRelease.html_url,
-                    packageSha256: packageAsset.and_then(|asset| asset.digest.clone()),
-                    fullPackageAvailable: packageAsset.is_some(),
-                    patchAssetNames: latestRelease
-                        .assets
-                        .iter()
-                        .filter(|asset| {
-                            asset.name.starts_with(&patchPrefix)
-                                && asset.name.ends_with(".patch.gz")
-                        })
-                        .map(|asset| asset.name.clone())
-                        .collect(),
-                    updateManifest,
-                })
-            },
-        )
+        .map(|(_, release, assetName)| releaseInfo(release, assetName))
         .transpose()
+}
+
+/// Converts a validated release and exact platform asset into authenticated transfer metadata.
+#[allow(non_snake_case)]
+fn releaseInfo(latestRelease: GitHubRelease, assetName: String) -> Result<ReleaseInfo, String> {
+    let packageAsset = latestRelease
+        .assets
+        .iter()
+        .find(|asset| asset.name == assetName);
+    let manifestName = format!("{assetName}.update.json");
+    let updateManifest = latestRelease
+        .assets
+        .iter()
+        .find(|asset| asset.name == manifestName)
+        .map(|asset| ReleaseManifestAsset {
+            name: asset.name.clone(),
+            url: asset.browser_download_url.clone(),
+            digest: asset.digest.clone().unwrap_or_default(),
+        });
+    let downloadUrl = match packageAsset {
+        Some(asset) => asset.browser_download_url.clone(),
+        None => updateManifest
+            .as_ref()
+            .ok_or("Update manifest is missing")?
+            .url
+            .strip_suffix(".update.json")
+            .ok_or("Invalid manifest asset download URL")?
+            .to_owned(),
+    };
+    let patchPrefix = format!("{assetName}.from-");
+    Ok(ReleaseInfo {
+        version: latestRelease.tag_name.trim_start_matches('v').to_string(),
+        assetName,
+        downloadUrl,
+        releaseNotes: latestRelease.body.unwrap_or_default(),
+        releasePageUrl: latestRelease.html_url,
+        packageSha256: packageAsset.and_then(|asset| asset.digest.clone()),
+        fullPackageAvailable: packageAsset.is_some(),
+        patchAssetNames: latestRelease
+            .assets
+            .iter()
+            .filter(|asset| {
+                asset.name.starts_with(&patchPrefix) && asset.name.ends_with(".patch.gz")
+            })
+            .map(|asset| asset.name.clone())
+            .collect(),
+        updateManifest,
+    })
 }
 
 #[allow(non_snake_case)]
