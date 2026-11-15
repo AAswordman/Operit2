@@ -30,9 +30,11 @@ class DataRescueApp extends StatelessWidget {
     super.key,
     this.request,
     this.canStopNormalProcess = false,
+    this.canManageFiles = false,
   });
   final DataRescueRequest? request;
   final bool canStopNormalProcess;
+  final bool canManageFiles;
 
   /// Builds only framework widgets and a fixed theme independent of user preferences.
   @override
@@ -46,6 +48,7 @@ class DataRescueApp extends StatelessWidget {
     home: _DataRescueScreen(
       request: request ?? platformCoreProxy.dataRescue,
       canStopNormalProcess: canStopNormalProcess,
+      canManageFiles: canManageFiles,
     ),
   );
 }
@@ -55,9 +58,11 @@ class _DataRescueScreen extends StatefulWidget {
   const _DataRescueScreen({
     required this.request,
     required this.canStopNormalProcess,
+    required this.canManageFiles,
   });
   final DataRescueRequest request;
   final bool canStopNormalProcess;
+  final bool canManageFiles;
 
   /// Creates the maintenance state owned by this standalone launch.
   @override
@@ -203,6 +208,14 @@ class _DataRescueScreenState extends State<_DataRescueScreen> {
     await _run('正在请求停止正常运行进程…', () async {
       await widget.request({'operation': 'stopNormalProcess'});
       await _open();
+    });
+  }
+
+  /// Opens Host-provided file management even when automatic rescue configuration failed.
+  Future<void> _manageFiles() async {
+    await _run('正在打开应用文件…', () async {
+      await widget.request({'operation': 'manageFiles'});
+      _status = '已打开系统文件管理器，可直接管理 Operit2 应用文件。';
     });
   }
 
@@ -499,6 +512,12 @@ class _DataRescueScreenState extends State<_DataRescueScreen> {
                       icon: const Icon(Icons.fact_check_outlined),
                       label: const Text('从备份恢复'),
                     ),
+                    if (widget.canManageFiles)
+                      OutlinedButton.icon(
+                        onPressed: _busy ? null : _manageFiles,
+                        icon: const Icon(Icons.folder_open),
+                        label: const Text('管理应用文件'),
+                      ),
                     if (files != null)
                       FilledButton.icon(
                         onPressed: ready ? _restore : null,

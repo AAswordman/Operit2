@@ -33,7 +33,11 @@ class DataRescueActivity : FlutterActivity() {
                     try {
                         val command = JSONObject(encoded)
                         when (command.getString("operation")) {
-                            "launchMode" -> result.success("{\"ok\":true,\"value\":{\"rescue\":true,\"canStopNormalProcess\":true}}")
+                            "launchMode" -> result.success("{\"ok\":true,\"value\":{\"rescue\":true,\"canStopNormalProcess\":true,\"canManageFiles\":true}}")
+                            "manageFiles" -> {
+                                OperitDocumentManagement.open(this)
+                                result.success("{\"ok\":true,\"value\":null}")
+                            }
                             "stopNormalProcess" -> {
                                 stopService(Intent(applicationContext, OperitCoreService::class.java))
                                 val manager = getSystemService(ACTIVITY_SERVICE) as android.app.ActivityManager
@@ -48,6 +52,11 @@ class DataRescueActivity : FlutterActivity() {
                             else -> rescueRequests.execute {
                                 try {
                                     val response = OperitRuntimeNative.dataRescue(storageHost.defaultRuntimeRootPath(), encoded, storageHost)
+                                    val outcome = JSONObject(response)
+                                    if (command.getString("operation") == "poll" && outcome.getBoolean("ok") &&
+                                        outcome.optJSONObject("value")?.optBoolean("done") == true) {
+                                        OperitDocumentManagement.notifyRootsChanged(applicationContext)
+                                    }
                                     runOnUiThread { result.success(response) }
                                 } catch (error: Throwable) {
                                     runOnUiThread { result.error("DATA_RESCUE_ERROR", error.message, null) }

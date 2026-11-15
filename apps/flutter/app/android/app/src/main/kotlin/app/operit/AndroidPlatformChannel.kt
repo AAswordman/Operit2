@@ -44,11 +44,13 @@ class AndroidPlatformChannel(
                 } else {
                     try {
                         val command = org.json.JSONObject(request)
-                        if (command.getString("operation") == "launchMode") {
-                            val rescue = false
-                            result.success("{\"ok\":true,\"value\":{\"rescue\":$rescue}}")
-                        } else {
-                            runtimeHost.runBackground {
+                        when (command.getString("operation")) {
+                            "launchMode" -> result.success("{\"ok\":true,\"value\":{\"rescue\":false,\"canManageFiles\":true}}")
+                            "manageFiles" -> {
+                                OperitDocumentManagement.open(activity)
+                                result.success("{\"ok\":true,\"value\":null}")
+                            }
+                            else -> runtimeHost.runBackground {
                                 try {
                                     val response = OperitRuntimeNative.dataRescue(runtimeHost.defaultRuntimeRootPath(), request, runtimeHost)
                                     activity.runOnUiThread { result.success(response) }
@@ -203,6 +205,9 @@ class AndroidPlatformChannel(
                         runtimeHost.defaultRuntimeRootPath(),
                         content,
                     )
+                if (org.json.JSONObject(response).getBoolean("ok")) {
+                    OperitDocumentManagement.notifyRootsChanged(activity)
+                }
                 activity.runOnUiThread { result.success(response) }
             } catch (error: Throwable) {
                 activity.runOnUiThread {

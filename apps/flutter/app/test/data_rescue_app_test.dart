@@ -71,6 +71,65 @@ void main() {
     expect(find.text('已准备就绪，可以导出全部数据或选择备份恢复。'), findsOneWidget);
   });
 
+  /// Keeps raw file rescue available when damaged startup data prevents automatic configuration.
+  testWidgets('file management works when rescue configuration fails', (
+    tester,
+  ) async {
+    final operations = <String>[];
+    final host = _MaintenanceHost(prepareFailures: 1);
+    await tester.pumpWidget(
+      DataRescueApp(
+        canManageFiles: true,
+        request: (request) async {
+          operations.add(request['operation']! as String);
+          if (request['operation'] == 'manageFiles') return null;
+          return host.request(request);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('无法自动定位数据'), findsOneWidget);
+    await tester.ensureVisible(find.text('管理应用文件'));
+    await tester.tap(find.text('管理应用文件'));
+    await tester.pumpAndSettle();
+    expect(operations.last, 'manageFiles');
+    expect(find.textContaining('已打开系统文件管理器'), findsOneWidget);
+  });
+
+  /// Uses Host capabilities to keep platform-specific file management out of other clients.
+  testWidgets('hides file management without a host capability', (
+    tester,
+  ) async {
+    final host = _MaintenanceHost();
+    await tester.pumpWidget(DataRescueApp(request: host.request));
+    await tester.pumpAndSettle();
+    expect(find.text('管理应用文件'), findsNothing);
+  });
+
+  /// Allows manual rescue without acquiring the native maintenance session.
+  testWidgets('file management works when opening maintenance fails', (
+    tester,
+  ) async {
+    final operations = <String>[];
+    await tester.pumpWidget(
+      DataRescueApp(
+        canManageFiles: true,
+        request: (request) async {
+          final operation = request['operation']! as String;
+          operations.add(operation);
+          if (operation == 'open') throw StateError('Data is in use');
+          return null;
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.textContaining('Data is in use'), findsOneWidget);
+    await tester.ensureVisible(find.text('管理应用文件'));
+    await tester.tap(find.text('管理应用文件'));
+    await tester.pumpAndSettle();
+    expect(operations, ['open', 'manageFiles']);
+  });
+
   /// Returns the maintenance lease when the owning screen is removed without pressing its close button.
   testWidgets('disposal closes the maintenance session', (tester) async {
     final host = _MaintenanceHost();

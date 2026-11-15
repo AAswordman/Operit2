@@ -1,4 +1,7 @@
 <resources>
+    <string name="operit_documents_private">Operit2 App Data</string>
+    <string name="operit_documents_runtime">Operit2 Runtime Data</string>
+    <string name="operit_documents_workspaces">Operit2 Workspaces</string>
     <string name="data_rescue_shortcut_short">数据救援</string>
     <string name="data_rescue_shortcut_long">打开独立数据救援</string>
     <string name="operit_core_service_name">Operit Core</string>

@@ -53,6 +53,7 @@ void main(List<String> arguments) async {
             name: 'Operit Data Rescue',
             child: DataRescueApp(
               canStopNormalProcess: launch['canStopNormalProcess'] == true,
+              canManageFiles: launch['canManageFiles'] == true,
             ),
           ),
         );
