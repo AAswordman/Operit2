@@ -40,7 +40,7 @@
     var path = fn && fn.__operit_toolpkg_module_path;
     var name = fn && fn.__operit_toolpkg_export_name;
     if (typeof path !== 'string' || !path.trim() || typeof name !== 'string' || !name.trim()) {
-      throw new Error(label + ' requires an exported ToolPkg function reference');
+      throw new Error(label + ' requires an exported ToolPkg function reference; export the handler from its module (e.g. exports.onX = onX) and pass that exported function, not a local or inline one');
     }
     return { path: path.trim().replace(/\\/g, '/'), name: name };
   }

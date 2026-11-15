@@ -763,4 +763,49 @@ mod tests {
             assert_eq!(function_name, "runHello");
         }
     }
+
+    /// Verifies the unexported-handler error names the constraint and explains the fix.
+    #[test]
+    fn unexported_core_command_handler_error_guides_export() {
+        let mut context = crate::javascript_test::runtime();
+        context
+            .evaluateHostJavaScriptVoid(
+                "test",
+                r#"
+                globalThis.__operitExpose = function(name, value) {
+                    globalThis[name] = value;
+                };
+                "#,
+            )
+            .expect("runtime expose should evaluate");
+        context
+            .evaluateHostJavaScriptVoid("test", &buildToolPkgApiRuntimeScript())
+            .expect("toolpkg api runtime should evaluate");
+        context
+            .evaluateHostJavaScriptVoid("test", &buildToolPkgRegistrationBridgeScript(false))
+            .expect("runtime bridge should evaluate");
+        let error = context
+            .evaluateHostJavaScriptVoid(
+                "test",
+                r#"
+                function localHandler(event) { return { stdout: 'hi' }; }
+                globalThis.__operitGetActiveModuleExports = function() { return {}; };
+                ToolPkg.registerCoreCommand({
+                    id: 'bad',
+                    name: 'bad',
+                    function: localHandler
+                });
+                "#,
+            )
+            .expect_err("unexported handler should fail registration");
+        let message = format!("{error}");
+        assert!(
+            message.contains("exported ToolPkg function reference"),
+            "error should name the constraint: {message}"
+        );
+        assert!(
+            message.contains("export the handler"),
+            "error should explain the fix: {message}"
+        );
+    }
 }
