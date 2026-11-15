@@ -4,6 +4,12 @@
 #include <flutter/flutter_engine.h>
 #include <windows.h>
 
+/// Ends the owning message loop without invoking the window's close-to-tray policy.
+inline bool RequestOperitApplicationExit(DWORD platform_thread_id) {
+  return platform_thread_id != 0 &&
+         ::PostThreadMessage(platform_thread_id, WM_QUIT, 0, 0) != 0;
+}
+
 /// Registers the runtime channel for one Flutter engine and native window.
 void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window);
 

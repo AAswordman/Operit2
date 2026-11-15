@@ -11,6 +11,7 @@ use std::cmp::Ordering as CmpOrdering;
 
 const GITHUB_RELEASE_OWNER: &str = "AAswordman";
 const GITHUB_RELEASE_REPO: &str = "Operit2";
+const GITHUB_PATCH_REPO: &str = "Operit2-nightly";
 const GITHUB_RELEASE_PAGE_SIZE: usize = 30;
 const GITHUB_API_BASE: &str = "https://api.github.com";
 
@@ -145,14 +146,17 @@ impl GithubReleaseUtil {
     ) -> Result<FullUpdateStatus, String> {
         let current = parseVersion(currentVersion)?;
         let channel = channelForCurrentVersion(&current);
-        let Some(releaseInfo) = Self::findLatestReleaseInfo(
-            GITHUB_RELEASE_OWNER,
-            GITHUB_RELEASE_REPO,
-            target,
-            channel,
-            authorizationHeader,
-        )
-        .await?
+        let (release, patches) = tokio::try_join!(
+            Self::findLatestReleaseInfo(
+                GITHUB_RELEASE_OWNER, GITHUB_RELEASE_REPO, target.clone(), channel,
+                authorizationHeader.clone(),
+            ),
+            Self::findLatestReleaseInfo(
+                GITHUB_RELEASE_OWNER, GITHUB_PATCH_REPO, target, channel,
+                authorizationHeader,
+            ),
+        )?;
+        let Some(releaseInfo) = mergeReleaseInfo(release, patches)?
         else {
             return Ok(FullUpdateStatus::UpToDate);
         };
@@ -232,7 +236,7 @@ impl GithubReleaseUtil {
                 &bytes.lock().map_err(|error| error.to_string())?
             ).map_err(|error| error.to_string())?;
             Ok(releases)
-        }).await
+        }).await.map_err(|error| format!("{repoOwner}/{repoName}: {error}"))
     }
 
     /// Downloads into virtual runtime storage and returns its logical storage path.
@@ -327,6 +331,31 @@ impl GithubReleaseUtil {
     pub fn fullUpdateChannelForVersion(version: &str) -> Result<FullUpdateChannel, String> {
         Ok(channelForCurrentVersion(&parseVersion(version)?))
     }
+}
+
+/// Combines matching-version installers and patches while preserving newer package-only releases.
+#[allow(non_snake_case)]
+fn mergeReleaseInfo(
+    release: Option<ReleaseInfo>,
+    patches: Option<ReleaseInfo>,
+) -> Result<Option<ReleaseInfo>, String> {
+    let (mut release, patches) = match (release, patches) {
+        (Some(release), Some(patches)) => (release, patches),
+        (only, None) | (None, only) => return Ok(only),
+    };
+    match GithubReleaseUtil::compareVersions(&release.version, &patches.version)? {
+        value if value < 0 => return Ok(Some(patches)),
+        value if value > 0 => return Ok(Some(release)),
+        _ => {}
+    }
+    if release.assetName != patches.assetName {
+        return Err("Update repositories disagree on the target package".into());
+    }
+    if patches.updateManifest.is_some() {
+        release.updateManifest = patches.updateManifest;
+        release.patchAssetNames = patches.patchAssetNames;
+    }
+    Ok(Some(release))
 }
 
 #[allow(non_snake_case)]
@@ -851,11 +880,11 @@ impl Drop for DownloadAttempt {
 /// Validates the release source before creating a native file. Shared by app and CLI downloads.
 pub(crate) fn validateUpdatePackageSource(url: &str, name: &str) -> Result<(), String> {
     validatePackageFileName(name)?;
-    let prefix = format!(
-        "https://github.com/{GITHUB_RELEASE_OWNER}/{GITHUB_RELEASE_REPO}/releases/download/"
-    );
-    let path = url
-        .strip_prefix(&prefix)
+    let path = [GITHUB_RELEASE_REPO, GITHUB_PATCH_REPO]
+        .iter()
+        .find_map(|repo| url.strip_prefix(&format!(
+            "https://github.com/{GITHUB_RELEASE_OWNER}/{repo}/releases/download/"
+        )))
         .ok_or("Update URL must reference this project's HTTPS release assets")?;
     let (tag, asset) = path.split_once('/').ok_or("Missing release tag/asset")?;
     if tag.is_empty() || asset != name || !name.starts_with("operit2-") || name.contains(['?', '#'])
@@ -1102,6 +1131,14 @@ mod tests {
             name
         )
         .is_ok());
+        assert!(super::validateUpdatePackageSource(
+            &format!("https://github.com/AAswordman/Operit2-nightly/releases/download/v2.0.0/{name}.update.json"),
+            &format!("{name}.update.json")
+        ).is_ok());
+        assert!(super::validateUpdatePackageSource(
+            &format!("https://github.com/other/Operit2-nightly/releases/download/v2.0.0/{name}"),
+            name
+        ).is_err());
         assert!(super::validateUpdatePackageSource("https://evil.example/install", name).is_err());
         assert!(super::validateUpdatePackageSource(
             "https://github.com/AAswordman/Operit2/releases/download/v2/a",

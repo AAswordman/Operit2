@@ -26,6 +26,7 @@ class WindowsWindowLifetimeTests(unittest.TestCase):
                 ["cmake", "--build", str(build), "--config", "Release"],
                 [str(build / "Release/window_lifetime_test.exe")],
                 [str(build / "Release/keyboard_message_test.exe")],
+                [str(build / "Release/application_exit_test.exe")],
             ]
             environment = {**os.environ, "PATH": str(FLUTTER) + os.pathsep + os.environ["PATH"]}
             for command in commands:

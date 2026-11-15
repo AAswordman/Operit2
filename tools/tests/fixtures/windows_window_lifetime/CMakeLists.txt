@@ -24,3 +24,11 @@ target_compile_definitions(keyboard_message_test PRIVATE UNICODE _UNICODE NOMINM
 target_include_directories(keyboard_message_test PRIVATE
   "${OPERIT_REPO_ROOT}/apps/flutter/app/windows/runner")
 target_link_libraries(keyboard_message_test PRIVATE user32)
+
+add_executable(application_exit_test application_exit_test.cpp)
+target_compile_features(application_exit_test PRIVATE cxx_std_17)
+target_compile_definitions(application_exit_test PRIVATE UNICODE _UNICODE NOMINMAX)
+target_include_directories(application_exit_test PRIVATE
+  "${OPERIT_REPO_ROOT}/apps/flutter/app/windows/runner"
+  "${flutter}" "${flutter}/cpp_client_wrapper/include")
+target_link_libraries(application_exit_test PRIVATE user32)

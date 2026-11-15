@@ -21,44 +21,78 @@ fn removeRetainedBase(fixture: &Fixture, release: &ReleaseInfo, current: &str) {
         .unwrap();
 }
 
-/// Discovery recognizes a newer manifest-only target instead of silently selecting an older full release.
+/// Discovery combines both repositories and downloads patches from their authenticated source.
 #[tokio::test]
 async fn discovery_selects_patch_only_newer_release_and_authenticates_its_manifest() {
-    use operit_util::GithubReleaseUtil::{FullUpdateChannel, FullUpdateTarget, GithubReleaseUtil};
+    use operit_util::GithubReleaseUtil::{
+        FullUpdateChannel, FullUpdateStatus, FullUpdateTarget, GithubReleaseUtil,
+    };
     let mut fixture = Fixture::new();
-    let (release, _, current) = fixture.network(true, false);
+    let (release, original_http, current) = fixture.network(true, false);
     let manifest = release.updateManifest.as_ref().unwrap();
-    let metadata = serde_json::json!([
-        {"tag_name": format!("v{}", fixture.manifest.patches[0].baseVersion), "body": "old full", "html_url": "old", "draft": false, "prerelease": true,
-         "assets": [{"name": current, "browser_download_url": "unused", "digest": null}]},
-        {"tag_name": format!("v{}", release.version), "body": "patch only", "html_url": "new", "draft": false, "prerelease": true,
-         "assets": [
-             {"name": manifest.name, "browser_download_url": manifest.url, "digest": manifest.digest},
-             {"name": release.patchAssetNames[0], "browser_download_url": "unused", "digest": null}
-         ]}
-    ]);
+    let patch_url = manifest.url.replace("/Operit2/", "/Operit2-nightly/");
+    let metadata = serde_json::json!([{
+        "tag_name": format!("v{}", release.version), "body": "patch only",
+        "html_url": "patches", "draft": false, "prerelease": true,
+        "assets": [
+            {"name": manifest.name, "browser_download_url": patch_url, "digest": manifest.digest},
+            {"name": release.patchAssetNames[0], "browser_download_url": "unused", "digest": null}
+        ]
+    }]);
+    let full_metadata = serde_json::json!([{
+        "tag_name": format!("v{}", release.version), "body": "full installer",
+        "html_url": "source", "draft": false, "prerelease": true,
+        "assets": [{"name": release.assetName, "browser_download_url": release.downloadUrl,
+                    "digest": release.packageSha256}]
+    }]);
+    let mut bodies: std::collections::BTreeMap<_, _> = original_http
+        .bodies
+        .iter()
+        .map(|(url, body)| {
+            let url = if url.ends_with(".update.json") || url.ends_with(".patch.gz") {
+                url.replace("/Operit2/", "/Operit2-nightly/")
+            } else {
+                url.clone()
+            };
+            (url, body.clone())
+        })
+        .collect();
+    for (repo, data) in [("Operit2", full_metadata), ("Operit2-nightly", metadata)] {
+        bodies.insert(
+            format!("https://api.github.com/repos/AAswordman/{repo}/releases?page=1&per_page=30"),
+            serde_json::to_vec(&data).unwrap(),
+        );
+    }
     let http = Arc::new(HttpFixture {
-        bodies: std::collections::BTreeMap::from([(
-            "https://api.github.com/repos/AAswordman/Operit2/releases?page=1&per_page=30".into(),
-            serde_json::to_vec(&metadata).unwrap(),
-        )]),
+        bodies,
         requests: std::sync::Mutex::new(Vec::new()),
         failedUrl: std::sync::Mutex::new(None),
         statuses: std::sync::Mutex::new(Default::default()),
     });
-    operit_host_api::HostManager::setDefaultHttpHost(http);
-    let discovered = GithubReleaseUtil::fetchLatestReleaseInfo(
+    fixture.context = fixture.context.clone().withHttpHost(http.clone());
+    operit_host_api::HostManager::setDefaultHttpHost(http.clone());
+    let discovered = match GithubReleaseUtil::checkForFullUpdate(
+        &fixture.manifest.patches[0].baseVersion,
+        FullUpdateTarget::app("android", "arm64-v8a").unwrap(),
+    )
+    .await
+    .unwrap()
+    {
+        FullUpdateStatus::Available(info) => info,
+        FullUpdateStatus::UpToDate => panic!("patch-only update was hidden"),
+    };
+    assert_eq!(discovered.version, release.version);
+    assert!(discovered.fullPackageAvailable);
+    let patch_only = GithubReleaseUtil::fetchLatestReleaseInfo(
         "AAswordman",
-        "Operit2",
+        "Operit2-nightly",
         FullUpdateTarget::app("android", "arm64-v8a").unwrap(),
         FullUpdateChannel::Preview,
     )
     .await
     .unwrap();
-    assert_eq!(discovered.version, release.version);
-    assert!(!discovered.fullPackageAvailable);
-    assert_eq!(discovered.packageSha256, None);
-    assert_eq!(discovered.downloadUrl, release.downloadUrl);
+    assert!(!patch_only.fullPackageAvailable);
+    assert_eq!(patch_only.version, release.version);
     let plan = planUpdate(
         discovered,
         current,
@@ -68,7 +102,25 @@ async fn discovery_selects_patch_only_newer_release_and_authenticates_its_manife
     .await
     .unwrap();
     assert_eq!(plan.mode, UpdateMode::Incremental);
-    assert!(!plan.fullAvailable);
+    assert!(plan.fullAvailable);
+    let path = executeUpdate(plan, &fixture.context, HttpDownloadControl::new(), |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .context
+            .runtimeStorageHost
+            .as_ref()
+            .unwrap()
+            .readBytes(&path)
+            .unwrap(),
+        fixture.target
+    );
+    let requests = http.requests.lock().unwrap();
+    assert_eq!(requests.len(), 5);
+    assert!(requests[3..]
+        .iter()
+        .all(|url| url.contains("/Operit2-nightly/")));
 }
 
 /// Planning never transfers package bytes, and a rejected original cannot poison the next selection.

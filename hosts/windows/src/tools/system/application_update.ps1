@@ -130,6 +130,10 @@ function Invoke-OperitMsiUpdate([int]$ParentPid, [string]$Package, [string]$Exec
     $readyPublished = $false
     $metadata = $null
     try {
+        $Package = ConvertTo-OperitPath $Package
+        $Executable = ConvertTo-OperitPath $Executable
+        $Ready = ConvertTo-OperitPath $Ready
+        $Log = ConvertTo-OperitPath $Log
         $installation = Get-OperitInstallation $Executable
         $metadata = Get-OperitMsiMetadata $Package
         Assert-OperitMsiUpdate $installation $metadata $Package

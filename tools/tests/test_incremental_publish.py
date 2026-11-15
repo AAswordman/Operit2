@@ -2,6 +2,7 @@
 import hashlib
 import json
 from pathlib import Path
+import shutil
 import sys
 import tempfile
 import unittest
@@ -28,14 +29,14 @@ class IncrementalPublishTests(unittest.TestCase):
         self.package.write_bytes(b"PK\x03\x04" + b"signed-package" * 1000)
         prepare.prepare(self.dist, [])
         self.calls = []
-        self.remote = {"assets": [{"name": path.name, "digest": "sha256:" + file_sha256(path)} for path in self.dist.iterdir()]}
+        self.remote = {"assets": [{"name": self.package.name, "digest": "sha256:" + file_sha256(self.package)}]}
 
     # Emulates gh metadata while preserving the full command order for assertions.
     def gh(self, *args, **kwargs):
         self.calls.append(args)
         if args[:2] == ("release", "list"):
             return "[]"
-        if args[0] == "api" and "/releases/tags/" in args[1]:
+        if args[:2] == ("release", "view"):
             return json.dumps(self.remote)
         if args[0] == "api":
             return "true"
@@ -48,6 +49,8 @@ class IncrementalPublishTests(unittest.TestCase):
         self.assertEqual(self.calls[-1], ("release", "edit", "v" + self.version, "--repo", gh_publish.SOURCE_REPO, "--draft=false"))
         create = next(call for call in self.calls if call[:2] == ("release", "create"))
         self.assertIn("--draft", create)
+        uploads = [Path(call[3]).name for call in self.calls if call[:2] == ("release", "upload")]
+        self.assertEqual(uploads, [self.package.name])
 
     # GitHub digest disagreement leaves a hidden draft and never exposes the bad release.
     def test_digest_failure_keeps_release_hidden(self):
@@ -94,18 +97,75 @@ class IncrementalPublishTests(unittest.TestCase):
         self.remote = {"assets": [{"name": path.name, "digest": "sha256:" + file_sha256(path)}
                                   for path in self.dist.iterdir() if path.is_file() and path != self.package]}
         with patch.object(gh_publish, "gh", side_effect=self.gh):
-            gh_publish.publish(self.dist, gh_publish.SOURCE_REPO, True, source_revision="a" * 40, patch_only=True)
+            gh_publish.publish(self.dist, gh_publish.PATCH_REPO, True, source_revision="a" * 40, patch_only=True)
         uploads = [Path(call[3]).name for call in self.calls if call[:2] == ("release", "upload")]
         self.assertNotIn(self.package.name, uploads)
         self.assertEqual(set(uploads), {asset["name"] for asset in self.remote["assets"]})
         self.assertTrue(any(name.endswith(".patch.gz") for name in uploads))
         self.assertTrue(self.package.exists())
+        create = next(call for call in self.calls if call[:2] == ("release", "create"))
+        self.assertEqual(create[create.index("--repo") + 1], gh_publish.PATCH_REPO)
+        self.assertNotIn("--target", create)
+
+        self.calls.clear()
+        self.remote = {"assets": [{"name": self.package.name, "digest": "sha256:" + file_sha256(self.package)}]}
+        with patch.object(gh_publish, "gh", side_effect=self.gh):
+            gh_publish.publish(self.dist, gh_publish.SOURCE_REPO, True, source_revision="a" * 40)
+        uploads = [Path(call[3]).name for call in self.calls if call[:2] == ("release", "upload")]
+        self.assertEqual(uploads, [self.package.name])
 
     # An empty manifest cannot make a release discoverable without any transferable bytes.
     def test_patch_only_requires_an_actual_patch(self):
         with patch.object(gh_publish, "gh") as remote, self.assertRaisesRegex(ValueError, "No staged release assets"):
+            gh_publish.publish(self.dist, gh_publish.PATCH_REPO, True, source_revision="a" * 40, patch_only=True)
+        remote.assert_not_called()
+
+    # Incremental metadata must never create a version release in the source repository.
+    def test_source_repository_rejects_patch_publication_before_any_remote_call(self):
+        with patch.object(gh_publish, "gh") as remote, self.assertRaisesRegex(ValueError, "patches to Operit2-nightly"):
             gh_publish.publish(self.dist, gh_publish.SOURCE_REPO, True, source_revision="a" * 40, patch_only=True)
         remote.assert_not_called()
+
+    # Collected builds publish to separate repositories for combined, patch-only and full-only modes.
+    def test_collected_builds_route_packages_and_patches_to_their_repositories(self):
+        import archive
+        import download_action_artifacts
+        old = self.dist / "old"
+        old.mkdir()
+        (old / "operit2-app-windows-x86_64-1.0.0.zip").write_bytes(self.package.read_bytes() + b"old")
+        history = self.dist / "history"
+        archive.retain(old, history, "1.0.0")
+        for mode, expected in (({}, [(gh_publish.PATCH_REPO, True), (gh_publish.SOURCE_REPO, False)]),
+                               ({"patch_only": True}, [(gh_publish.PATCH_REPO, True)]),
+                               ({"full_only": True}, [(gh_publish.SOURCE_REPO, False)])):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as temporary:
+                dist = Path(temporary)
+                # Copies the verified platform artifact as the real collector would.
+                def collect(run_id, work, destination):
+                    shutil.copyfile(self.package, destination / self.package.name)
+                run = json.dumps({"headSha": "a" * 40, "status": "completed", "conclusion": "success"})
+                with patch.object(incremental.subprocess, "check_output", return_value="a" * 40), \
+                        patch.object(incremental, "gh", return_value=run), \
+                        patch.object(download_action_artifacts, "collect_run", side_effect=collect), \
+                        patch.object(gh_publish, "publish", return_value="release") as publish:
+                    incremental.publish_runs(["123"], dist, 3, True, local_only=True,
+                                             history_root=history, **mode)
+                self.assertEqual([(call.args[1], call.kwargs.get("patch_only", False))
+                                  for call in publish.call_args_list], expected)
+                self.assertTrue((history / self.version / self.package.name).is_file())
+
+    # The separate patch repository must never receive complete installers.
+    def test_patch_repository_rejects_full_installers_before_any_remote_call(self):
+        with patch.object(gh_publish, "gh") as remote, self.assertRaisesRegex(ValueError, "only manifests and patches"):
+            gh_publish.publish(self.dist, gh_publish.PATCH_REPO, False, source_revision="a" * 40)
+        remote.assert_not_called()
+
+    # The CLI defaults to patch-only publication in the independent repository.
+    def test_cli_defaults_to_patch_repository_without_full_installer_publication(self):
+        with patch.object(sys, "argv", ["gh_publish.py", "--dist", str(self.dist)]), patch.object(gh_publish, "publish") as publish:
+            gh_publish.main()
+        self.assertEqual(publish.call_args.args[1], gh_publish.PATCH_REPO)
+        self.assertTrue(publish.call_args.args[-1])
 
     # A patch-only manifest still authenticates every uploaded patch despite an absent full package.
     def test_patch_only_validation_rejects_corrupt_patch_bytes(self):
@@ -128,7 +188,8 @@ class IncrementalPublishTests(unittest.TestCase):
                 (dist / f"operit2-app-windows-x86_64-{version}.zip").write_bytes(b"PK\x03\x04" + b"signed" * 1000)
                 prepare.prepare(dist, [])
                 self.calls.clear()
-                self.remote = {"assets": [{"name": path.name, "digest": "sha256:" + file_sha256(path)} for path in dist.iterdir()]}
+                self.remote = {"assets": [{"name": path.name, "digest": "sha256:" + file_sha256(path)}
+                                          for path in dist.iterdir() if path.suffix == ".zip"]}
                 with patch.object(gh_publish, "gh", side_effect=self.gh):
                     gh_publish.publish(dist, gh_publish.SOURCE_REPO, False, source_revision="a" * 40)
                 create = next(call for call in self.calls if call[:2] == ("release", "create"))

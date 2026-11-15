@@ -1,15 +1,18 @@
 # Release / Preview 跨平台增量更新
 
-源码和应用更新统一使用
-[`AAswordman/Operit2`](https://github.com/AAswordman/Operit2) 的 GitHub Releases。
-公开在线更新的完整包、可选更新清单和可选增量补丁放在同一个 release 中。
+源码和开发者明确发布的完整包使用
+[`AAswordman/Operit2`](https://github.com/AAswordman/Operit2)。
+增量补丁和更新清单发布到独立的
+[`AAswordman/Operit2-nightly`](https://github.com/AAswordman/Operit2-nightly)，该仓库不接受完整安装包。
+客户端同时检查两个仓库，按版本合并同一平台格式的完整包与补丁。
+仓库名不代表新增 nightly 通道，仍只有 release 和 preview。
 完整包和补丁可以独立缺席：支持只发布完整包，也支持只发布清单和补丁。
 完全没有公开更新元数据的内测，仍由开发者直接分发安装包并使用系统安装器安装。
 
 ## 渠道和版本
 
-- 正式版检查主仓库的 stable release。
-- preview/rc/dev 继续使用现有 preview 渠道，检查主仓库的 stable 和 prerelease。
+- 正式版检查两个仓库的 stable release。
+- preview/rc/dev 继续使用现有 preview 渠道，检查两个仓库的 stable 和 prerelease。
 - 客户端按 SemVer 检查新版本；preview 可以更新到后续正式版。
 - 发布器从现有产品版本推导 GitHub prerelease 标记，不增加渠道开关或改写版本。
 
@@ -23,13 +26,17 @@ versionCode 不得降低。增量工具不修改 SemVer 或平台 build number�
 
 ## 首次可用版本
 
-当前产品源码为 `2.0.0-preview.35`。把本实现纳入该版安装包后，新更新器从 `.35`
-开始可用。旧更新器仍需通过完整安装包升级到这一版。
+新更新器首次随 `2.0.0-preview.36` 分发，从 `.36`
+开始可用。此前分发、未包含本实现的 `.35` 仍需通过完整安装包升级到这一版。
 
-- Android 单 APK 可直接读取已安装 `.35` 的 APK；发布 `.36` 时保留准确的 `.35`
-  发布包并生成对应补丁，即可在 `.35 → .36` 使用增量。
-- Windows、macOS、Linux 桌面 App 在点击新版更新后，如需旧包会询问 `.35` 的原始
-  安装包。选中且准确校验通过后，即可在 `.35 → .36` 使用增量，无需先完整下载一次。
+本轮 Windows MSI 测试使用重新构建的 Preview.36（构建号 43）→ Preview.37（构建号 44），
+包含独立补丁仓库发现、完整退出进程以及 Windows Installer 路径修复。
+按开发者要求替换此前的测试包；测试时必须使用本轮分发的原始 Preview.36 MSI。
+完整包只在本地分发，独立仓库仅公开补丁和清单。
+
+- Android 单 APK 可直接读取已安装版本的 APK，使用准确的原始 APK 制作对应补丁。
+- Windows、macOS、Linux 桌面 App 在点击新版更新后，如需旧包会询问已安装版本的原始
+  安装包。选中且准确校验通过后，即可使用增量，无需先完整下载一次。
   CLI 使用保留的原始归档；没有准确基包时，该次更新使用完整包。
 
 这些版本号描述最早发布顺序，实际使用还取决于同平台、架构和发行格式的准确基包、
@@ -55,7 +62,7 @@ versionCode 不得降低。增量工具不修改 SemVer 或平台 build number�
 
 客户端通过 GitHub API 返回的 digest 验证清单，核对清单的目标摘要与 GitHub 完整包
 摘要（发布了完整包时），再验证补丁、基包和重建结果。只发补丁时，目标摘要由经过
-GitHub digest 验证的清单提供，仍完整验证重建结果。所有下载 URL 都限于主仓库对应 release
+GitHub digest 验证的清单提供，仍完整验证重建结果。所有下载 URL 都限于上述两个仓库对应 release
 的 HTTPS 资产。平台、ABI、macOS sandbox/unsandbox、Windows ZIP/MSI 各自独立。
 
 补丁重建的是原发布安装包的原始字节，包括 APK 签名块、MSI 内容、macOS PKG
@@ -164,14 +171,17 @@ gh auth login
 # 后续发布可显式提供多个旧版本完整包目录。
 .\.venv\Scripts\python.exe tools/updates/prepare.py --base tools/release/work/old-release --base tools/release/work/old-preview
 
-# 完成所有文件、摘要及 gh 权限检查，不上传。
-.\.venv\Scripts\python.exe tools/release/publish_dist.py --check-only
+# 完成补丁文件、摘要及 gh 权限检查，不上传。
+.\.venv\Scripts\python.exe tools/release/gh_publish.py --patch-only --check-only
 
 # 只公开清单和补丁，完整包仍保留在本地；需要已有实际可用的补丁。
 .\.venv\Scripts\python.exe tools/release/gh_publish.py --patch-only --draft
 
-# 上传草稿、核对 GitHub digest 后发布。
-.\.venv\Scripts\python.exe tools/release/publish_dist.py
+# 上传补丁和清单，核对 GitHub digest 后公开；完整包留在本地。
+.\.venv\Scripts\python.exe tools/release/gh_publish.py --patch-only
+
+# 仅在开发者明确要求公开完整安装包时使用。
+.\.venv\Scripts\python.exe tools/release/gh_publish.py --full
 ```
 
 每次制作使用新的 staging 文件集。`prepare.py` 对每个生成的补丁执行独立重建，
@@ -221,13 +231,18 @@ gh workflow run "macOS Flutter Build" -f products=all
 的完整包，使用本地历史及两个渠道的在线历史基包，生成并验证补丁，保留本次完整包，创建草稿。
 `--local-bases-only` 只使用本地历史，不读取历史 Releases；`--full-only` 跳过增量制作及
 历史 Release 下载，仅发布并归档完整包；`--patch-only` 生成并保留完整包后只上传非空清单和补丁，
-没有实际补丁则拒绝发布。`--full-only` 与 `--patch-only` 互斥。只需发布现有完整包时也可直接使用 `publish_dist.py`。
+没有实际补丁则拒绝发布。`--full-only` 与 `--patch-only` 互斥。
+默认分别发布到两个仓库：完整包进入主仓库，非空清单和补丁进入独立补丁仓库。
+`--patch-only` 始终选择独立补丁仓库；`--full-only` 只选择主仓库。
+发布器拒绝交叉目的地，完整包发布模式也会排除所有增量文件。完整包只在开发者明确授权时发布。
 
 `Publish Release and Preview` workflow 提供相同入口，输入准确的 40 字符源码 SHA
-和逗号分隔的 run IDs。默认只创建草稿，可取消 draft 直接发布。使用同仓库的
-`github.token`，权限为 Actions 读取及 Contents 写入，无需新增跨仓库 token。
-签名密钥继续使用既有各平台构建工作流的配置。Tag 指向构建使用的准确源码提交。
+和逗号分隔的 run IDs。默认只创建草稿，可取消 draft 直接发布。主仓库发布使用
+`github.token`，权限为 Actions 读取及 Contents 写入。
+签名密钥继续使用既有各平台构建工作流的配置。完整包的 Tag 指向构建使用的准确源码提交，
+补丁仓库的发布说明链接到该源码提交。
 工作流的 `full_only` 选项只发布完整包，`patch_only` 只发布补丁及非空清单；两者互斥。
+包含增量的发布需要配置 `OPERIT_PATCH_TOKEN`，允许读取源码仓库构建并写入这两个仓库。
 
 发布器先上传隐藏草稿，检查上传后的每个 GitHub digest 和完整资产集合，再公开 release。
 公开后禁止覆盖资产；重建发布必须增加产品版本，保证客户端基包身份稳定。

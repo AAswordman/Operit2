@@ -15,6 +15,7 @@ class _Backend extends AppUpdateBackend {
   bool fullAvailable = true;
   bool rejectBase = false;
   bool hasUpdate = true;
+  bool failCheck = false;
   int plans = 0, downloads = 0, imports = 0;
   AppUpdateMode transfer = AppUpdateMode.needsBase;
   Completer<void>? verification;
@@ -31,13 +32,16 @@ class _Backend extends AppUpdateBackend {
 
   /// Models a newer release without initiating a package transfer.
   @override
-  Future<AppUpdateRelease?> check() async => hasUpdate
-      ? AppUpdateRelease(
-          currentVersion: '2.0.0-preview.35',
-          version: '2.0.0-preview.36',
-          releasePageUrl: Uri.parse('https://example.com/release'),
-        )
-      : null;
+  Future<AppUpdateRelease?> check() async {
+    if (failCheck) throw StateError('HTTP 403: Forbidden');
+    return hasUpdate
+        ? AppUpdateRelease(
+            currentVersion: '2.0.0-preview.35',
+            version: '2.0.0-preview.36',
+            releasePageUrl: Uri.parse('https://example.com/release'),
+          )
+        : null;
+  }
 
   /// Records the initial decision boundary.
   @override
@@ -217,6 +221,40 @@ void main() {
       expect(find.text('知道了'), findsOneWidget);
       expect(find.byType(TextButton), findsNothing);
       expect(find.byType(FilledButton), findsOneWidget);
+      await tester.pumpWidget(const SizedBox());
+      controller.dispose();
+    },
+  );
+
+  testWidgets(
+    'about exposes a failed check and retries without starting a download',
+    (tester) async {
+      PackageInfo.setMockInitialValues(
+        appName: 'Operit2',
+        packageName: 'app.operit',
+        version: '2.0.0',
+        buildNumber: '43',
+        buildSignature: '',
+      );
+      final backend = _Backend()..failCheck = true;
+      final controller = AppUpdateController(backend: backend);
+      await tester.pumpWidget(
+        _app(
+          AppUpdateScope(
+            controller: controller,
+            child: const AboutOperitScreen(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('检查更新失败，点击重试'), findsOneWidget);
+      expect(controller.error, contains('403'));
+      backend.failCheck = false;
+      await tester.tap(find.text('检查更新失败，点击重试'));
+      await tester.pumpAndSettle();
+      expect(find.text('检查更新失败，点击重试'), findsNothing);
+      expect(find.text('更新至 2.0.0-preview.36'), findsOneWidget);
+      expect(backend.downloads, 0);
       await tester.pumpWidget(const SizedBox());
       controller.dispose();
     },

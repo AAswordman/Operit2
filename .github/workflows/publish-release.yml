@@ -46,6 +46,7 @@ jobs:
       - name: Prepare and publish verified packages
         env:
           GH_TOKEN: ${{ github.token }}
+          PATCH_REPO_TOKEN: ${{ secrets.OPERIT_PATCH_TOKEN }}
           SOURCE_REVISION: ${{ inputs.source_revision }}
           RUN_IDS: ${{ inputs.run_ids }}
           KEEP_DRAFT: ${{ inputs.draft }}
@@ -55,6 +56,10 @@ jobs:
           python - <<'PY'
           import os, re, subprocess, sys
           from pathlib import Path
+          if os.environ['FULL_ONLY'] != 'true':
+              if not os.environ['PATCH_REPO_TOKEN']:
+                  raise ValueError('Patch publication requires OPERIT_PATCH_TOKEN with access to both repositories')
+              os.environ['GH_TOKEN'] = os.environ['PATCH_REPO_TOKEN']
           revision = os.environ['SOURCE_REVISION']
           if not re.fullmatch(r'[0-9a-f]{40}', revision):
               raise ValueError('Source revision must be a full commit SHA')

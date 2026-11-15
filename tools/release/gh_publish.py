@@ -13,6 +13,7 @@ sys.path.insert(0, str(ROOT / "tools/build_scripts"))
 from release_artifacts import file_sha256, release_version, validate_release_assets
 
 SOURCE_REPO = "AAswordman/Operit2"
+PATCH_REPO = "AAswordman/Operit2-nightly"
 
 
 # Runs gh with its current authenticated session and retains structured output.
@@ -31,6 +32,10 @@ def gh(*args: str, payload: dict | None = None) -> str:
 def publish(dist: Path, repo: str, draft: bool, notes: str | None = None,
             source_revision: str | None = None, check_only: bool = False, patch_only: bool = False) -> str:
     version = release_version()
+    if repo == PATCH_REPO and not patch_only:
+        raise ValueError("The patch repository accepts only manifests and patches")
+    if repo != (PATCH_REPO if patch_only else SOURCE_REPO):
+        raise ValueError("Publish full installers to Operit2 and patches to Operit2-nightly")
     assets = sorted(path for path in dist.iterdir() if path.is_file())
     if patch_only:
         manifests = [path for path in assets if path.name.endswith(".update.json")
@@ -39,6 +44,8 @@ def publish(dist: Path, repo: str, draft: bool, notes: str | None = None,
         for manifest in manifests:
             selected.update(patch["assetName"] for patch in json.loads(manifest.read_text(encoding="utf-8"))["patches"])
         assets = [path for path in assets if path.name in selected]
+    else:
+        assets = [path for path in assets if not path.name.endswith((".update.json", ".patch.gz"))]
     if not assets:
         raise ValueError("No staged release assets")
     validate_release_assets(assets)
@@ -54,7 +61,7 @@ def publish(dist: Path, repo: str, draft: bool, notes: str | None = None,
     if len(revision) != 40 or any(char not in "0123456789abcdef" for char in revision):
         raise ValueError("Source revision must be a full Git commit SHA")
     description = ("Incremental patches only. Keep the exact original installer for your installed version."
-                   if patch_only else "Full installers are available; incremental manifests are optional.")
+                   if patch_only else "Full installers. Incremental patches are published in Operit2-nightly.")
     body = (f"Operit2 {version}\n\nSource: https://github.com/{SOURCE_REPO}/tree/{revision}\n\n"
             + (notes or description))
     if check_only:
@@ -70,7 +77,7 @@ def publish(dist: Path, repo: str, draft: bool, notes: str | None = None,
             gh("release", "edit", tag, "--repo", repo, "--notes-file", str(notes_path))
         for asset in assets:
             gh("release", "upload", tag, str(asset), "--repo", repo, "--clobber")
-        remote = json.loads(gh("api", f"repos/{repo}/releases/tags/{tag}"))
+        remote = json.loads(gh("release", "view", tag, "--repo", repo, "--json", "assets"))
         published = {asset["name"]: asset for asset in remote["assets"]}
         if set(published) != {asset.name for asset in assets}:
             raise ValueError("Draft contains unexpected or missing assets; inspect the draft before retrying")
@@ -85,16 +92,21 @@ def publish(dist: Path, repo: str, draft: bool, notes: str | None = None,
 # Provides a CLI entry point that also works in GitHub Actions with GH_TOKEN.
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repo", default=SOURCE_REPO)
+    parser.add_argument("--repo")
     parser.add_argument("--dist", type=Path, default=ROOT / "tools/release/dist")
     parser.add_argument("--draft", action="store_true")
-    parser.add_argument("--patch-only", action="store_true", help="Publish only nonempty manifests and patches; retain local full packages")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument("--patch-only", dest="patch_only", action="store_true", default=True,
+                      help="Publish only nonempty manifests and patches (default)")
+    mode.add_argument("--full", dest="patch_only", action="store_false",
+                      help="Explicitly publish full installers to the source repository")
     parser.add_argument("--check-only", action="store_true")
     parser.add_argument("--notes-file", type=Path)
     parser.add_argument("--source-revision")
     args = parser.parse_args()
     notes = args.notes_file.read_text(encoding="utf-8") if args.notes_file else None
-    print(publish(args.dist, args.repo, args.draft, notes, args.source_revision, args.check_only, args.patch_only))
+    repo = args.repo or (PATCH_REPO if args.patch_only else SOURCE_REPO)
+    print(publish(args.dist, repo, args.draft, notes, args.source_revision, args.check_only, args.patch_only))
 
 
 if __name__ == "__main__":

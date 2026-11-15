@@ -8,7 +8,7 @@ import re
 import subprocess
 import sys
 
-from gh_publish import ROOT, SOURCE_REPO, gh
+from gh_publish import ROOT, SOURCE_REPO, PATCH_REPO, gh
 from build_release import parse_semver
 from release_artifacts import RELEASE_VERSION_PATTERN, file_sha256, release_asset_names, release_version
 
@@ -99,7 +99,14 @@ def publish_runs(run_ids: list[str], dist: Path, retained: int, draft: bool,
     retain(dist, history_root)
     notes = "Build runs:\n" + "\n".join(
         f"- https://github.com/{SOURCE_REPO}/actions/runs/{run_id}" for run_id in run_ids)
-    return publish(dist, SOURCE_REPO, draft, notes, revision, patch_only=patch_only)
+    if patch_only:
+        return publish(dist, PATCH_REPO, draft, notes, revision, patch_only=True)
+    results = []
+    if not full_only and any(json.loads(path.read_text(encoding="utf-8"))["patches"]
+                             for path in dist.glob("*.update.json")):
+        results.append(publish(dist, PATCH_REPO, draft, notes, revision, patch_only=True))
+    results.append(publish(dist, SOURCE_REPO, draft, notes, revision))
+    return "\n".join(results)
 
 
 # Exposes retained-base collection and publication without changing product versions.

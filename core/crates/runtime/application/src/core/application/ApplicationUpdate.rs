@@ -182,8 +182,19 @@ impl ApplicationUpdateManager {
         };
         let installTiming = target.installTiming;
         let target = FullUpdateTarget::fromApplicationTarget(target)?;
+        operit_util::AppLogger::AppLogger::i("ApplicationUpdate", &format!(
+            "Checking current={} package={}", crate::CORE_VERSION,
+            target.assetNameForVersion(crate::CORE_VERSION)?,
+        ));
         let result =
             GithubReleaseUtil::checkForFullUpdate(crate::CORE_VERSION, target.clone()).await?;
+        operit_util::AppLogger::AppLogger::i("ApplicationUpdate", &match &result {
+            FullUpdateStatus::Available(info) => format!(
+                "Available version={} full={} manifest={}", info.version,
+                info.fullPackageAvailable, info.updateManifest.is_some(),
+            ),
+            FullUpdateStatus::UpToDate => "No newer matching package found".into(),
+        });
         let mut state = self.state.lock().map_err(|e| e.to_string())?;
         state.installTiming = installTiming;
         state.target = Some(target);

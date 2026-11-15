@@ -147,8 +147,11 @@ async fn fetchManifest(
         return Ok(None);
     };
     validateUpdatePackageSource(&release.downloadUrl, &release.assetName)?;
-    let expectedUrl = format!("{}.update.json", release.downloadUrl);
-    if asset.name != format!("{}.update.json", release.assetName) || asset.url != expectedUrl {
+    validateUpdatePackageSource(&asset.url, &asset.name)?;
+    let tag = asset.url.rsplit('/').nth(1).ok_or("Missing manifest release tag")?;
+    if asset.name != format!("{}.update.json", release.assetName)
+        || tag.strip_prefix('v').unwrap_or(tag) != release.version
+    {
         return Err("Manifest source does not match selected release".into());
     }
     let expectedHash = githubHash(&asset.digest)?;
@@ -888,7 +891,10 @@ where
         let url = format!(
             "{}/{}",
             release
-                .downloadUrl
+                .updateManifest
+                .as_ref()
+                .ok_or("Missing authenticated manifest source")?
+                .url
                 .rsplit_once('/')
                 .ok_or("Invalid release URL")?
                 .0,

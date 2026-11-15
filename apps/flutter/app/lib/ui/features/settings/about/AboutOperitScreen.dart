@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../common/OperitLogoMark.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../../core/update/AppUpdateController.dart';
+import '../../../../core/update/AppUpdateModels.dart';
 import '../../update/AppUpdateBadge.dart';
 import '../../update/AppUpdateDialog.dart';
 
@@ -144,7 +145,7 @@ class _AboutHeaderState extends State<_AboutHeader> {
   }
 }
 
-/// Shows an update action only when shared release discovery has found a newer version.
+/// Shows a discovered update or an explicit retry after a discovery failure.
 class _AboutUpdateAction extends StatelessWidget {
   /// Creates the conditional About-page update entry.
   const _AboutUpdateAction();
@@ -170,7 +171,19 @@ class _AboutUpdateAction extends StatelessWidget {
                 ),
               ),
             )
-          : const SizedBox.shrink(),
+          : controller.error == null
+          ? const SizedBox.shrink()
+          : TextButton.icon(
+              onPressed: controller.phase == AppUpdatePhase.checking
+                  ? null
+                  : () => controller.check(force: true),
+              icon: const Icon(Icons.refresh),
+              label: Text(
+                controller.phase == AppUpdatePhase.checking
+                    ? '正在检查更新…'
+                    : '检查更新失败，点击重试',
+              ),
+            ),
     );
   }
 }

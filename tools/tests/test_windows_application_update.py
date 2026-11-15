@@ -154,6 +154,20 @@ foreach ($change in @(
         self.assertTrue(trace[1]["wait"])
         self.assertEqual(trace[2]["executable"], str(self.root / "installed app/operit2.exe"))
 
+    # Normalize VFS-style separators before handing paths to Windows Installer.
+    def test_forward_slash_paths_are_normalized_before_installation(self):
+        result, trace = self.run_worker(r'''
+$script:Package = $script:Package.Replace('\', '/')
+$script:Executable = $script:Executable.Replace('\', '/')
+$script:Ready = $script:Ready.Replace('\', '/')
+$script:Log = $script:Log.Replace('\', '/')
+''')
+        self.assertEqual(result["state"], "installed")
+        self.assertIn('/i "' + str(self.root / "operit2-app-windows-x86_64-2.0.0-preview.32.msi") + '"', trace[1]["arguments"])
+        self.assertIn('/l*v "' + str(self.root / "helper.log.msi.log") + '"', trace[1]["arguments"])
+        self.assertIn('INSTALLFOLDER="' + str(self.root / "installed app") + '"', trace[1]["arguments"])
+        self.assertEqual(trace[2]["executable"], str(self.root / "installed app/operit2.exe"))
+
     # A preparation failure must not publish readiness or request application exit.
     def test_invalid_package_never_becomes_ready(self):
         result, trace = self.run_worker("$script:InvalidPackage = $true", expected_code=1)

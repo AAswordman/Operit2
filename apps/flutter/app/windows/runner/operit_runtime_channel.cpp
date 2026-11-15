@@ -1124,10 +1124,9 @@ void RegisterOperitRuntimeChannel(flutter::FlutterEngine* engine, HWND window) {
           return;
         }
         if (method_call.method_name().compare("restartApplication") == 0) {
-          if (g_operit_runtime_window == nullptr ||
-              ::PostMessage(g_operit_runtime_window, WM_CLOSE, 0, 0) == 0) {
+          if (!RequestOperitApplicationExit(g_operit_runtime_platform_thread_id)) {
             result->Error("APPLICATION_TERMINATION_ERROR",
-                          "Windows application close request failed");
+                          "Windows application exit request failed");
             return;
           }
           result->Success();

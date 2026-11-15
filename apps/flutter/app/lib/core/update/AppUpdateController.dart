@@ -68,6 +68,7 @@ class AppUpdateController extends ChangeNotifier {
       phase = release == null ? AppUpdatePhase.idle : AppUpdatePhase.available;
     } catch (exception, stack) {
       // Network failure must not interrupt startup or erase an already known update.
+      error = exception.toString();
       phase = release == null ? AppUpdatePhase.idle : AppUpdatePhase.available;
       ClientLogger.w(
         'Application update check failed',
