@@ -22,7 +22,7 @@ namespace Operit.Installer
         public string InstallFolder { get; private set; }
         public SetupOperation Operation { get; private set; }
         public CleanupPlan DataCleanupPlan { get; private set; }
-        public bool DeleteData => Operation == SetupOperation.Remove && DeleteUserData.IsChecked == true;
+        public bool DeleteData { get; private set; }
 
         /// <summary>Creates the custom install, maintenance, or uninstall screen.</summary>
         public SetupWindow(string version, string folder, SetupOperation operation, bool installed, ManualResetEvent start,
@@ -89,6 +89,7 @@ namespace Operit.Installer
                 InstallFolder = Path.GetFullPath(LocationText.Text);
                 if (InstallFolder.TrimEnd('\\').Length < 4)
                     throw new ArgumentException("请选择一个应用文件夹，不要直接安装到磁盘根目录。");
+                DeleteData = Operation == SetupOperation.Remove && DeleteUserData.IsChecked == true;
                 if (DeleteData)
                 {
                     var cleanup = new UserDataCleanup(InstallFolder);
