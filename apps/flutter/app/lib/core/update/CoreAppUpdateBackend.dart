@@ -16,6 +16,17 @@ class CoreAppUpdateBackend extends AppUpdateBackend {
   }) : _clients = clients;
   final GeneratedCoreProxyClients _clients;
 
+  /// Watches the local Host's network cost and transport through Core.
+  @override
+  Stream<AppUpdateNetwork> get backgroundNetwork =>
+      _clients.application.applicationUpdateNetworkFlow().map(
+        (network) => !network.connected
+            ? AppUpdateNetwork.offline
+            : network.unmetered
+            ? AppUpdateNetwork.unmetered
+            : AppUpdateNetwork.restricted,
+      );
+
   /// Maps only explicit Core decisions to UI states.
   AppUpdatePlan _plan(ApplicationUpdatePlan value) => AppUpdatePlan(
     mode: switch (value.mode) {

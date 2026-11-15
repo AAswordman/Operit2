@@ -395,6 +395,27 @@ fn python_patch_reconstructs_signed_package_bytes_through_vfs() {
     assert_eq!(fixture.output(), fixture.target);
 }
 
+/// The independent Python generator's residual instructions round-trip through the Rust decoder.
+#[test]
+fn python_hdiff_residuals_reconstruct_signed_package_bytes_through_vfs() {
+    let mut fixture = Fixture::new();
+    let data: serde_json::Value = serde_json::from_str(include_str!("fixtures/package_delta_v2.json")).unwrap();
+    fixture.manifest = serde_json::from_value(data["manifest"].clone()).unwrap();
+    for change in data["changes"].as_array().unwrap() {
+        fixture.target[change[0].as_u64().unwrap() as usize] = change[1].as_u64().unwrap() as u8;
+    }
+    let bytes = base64::engine::general_purpose::STANDARD.decode(data["patch"].as_str().unwrap()).unwrap();
+    fixture.context.runtimeStorageHost.as_ref().unwrap()
+        .writeBytes("runtime/temp/application_updates/test/delta.patch.gz", &bytes).unwrap();
+    fixture.apply(&HttpDownloadControl::new()).unwrap();
+    assert_eq!(fixture.output(), fixture.target);
+    fixture.manifest.schema = 3;
+    fixture.apply(&HttpDownloadControl::new()).unwrap();
+    assert_eq!(fixture.output(), fixture.target);
+    fixture.manifest.schema = 1;
+    assert!(fixture.apply(&HttpDownloadControl::new()).unwrap_err().contains("header"));
+}
+
 /// A mismatched base cannot publish any output.
 #[test]
 fn rejects_wrong_base_before_publication() {

@@ -25,7 +25,7 @@ def prepare(dist: Path, bases: list[Path]) -> list[Path]:
         if len(stem) != 2:
             raise ValueError(f"Invalid package name: {package.name}")
         prefix, extension = stem
-        manifest = {"schema": 1, "version": version, "assetName": package.name,
+        manifest = {"schema": 3, "version": version, "assetName": package.name,
                     "sha256": sha256(package), "size": package.stat().st_size, "patches": []}
         seen = set()
         for directory in bases:

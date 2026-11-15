@@ -1587,11 +1587,13 @@ dependencies = [
  "operit-host-local-inference",
  "operit-host-native-common",
  "operit-host-native-plugin-sdk-ipc",
+ "operit-util",
  "portable-pty",
  "regex",
  "reqwest",
  "serde",
  "serde_json",
+ "tempfile",
  "tokio",
  "tungstenite",
  "url",
@@ -1626,6 +1628,7 @@ dependencies = [
  "base64",
  "chrono",
  "flate2",
+ "futures-util",
  "heic-rs",
  "image",
  "operit-host-api",
@@ -2390,6 +2393,19 @@ dependencies = [
  "filetime",
  "libc",
  "xattr",
+]
+
+[[package]]
+name = "tempfile"
+version = "3.27.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
+dependencies = [
+ "fastrand",
+ "getrandom 0.4.2",
+ "once_cell",
+ "rustix 1.1.6",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

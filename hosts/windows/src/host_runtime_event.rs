@@ -9,9 +9,12 @@ use std::sync::mpsc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use operit_host_api::{
-    HostError, HostResult, HostRuntimeEventHost, HostRuntimeEventRegistration, HostRuntimeEventSink,
+    logHostError, HostError, HostResult, HostRuntimeEventHost, HostRuntimeEventRegistration,
+    HostRuntimeEventSink,
 };
 use serde_json::Value;
+use windows::Networking::Connectivity::{NetworkInformation, NetworkStatusChangedEventHandler};
+use windows::Win32::System::WinRT::{RoInitialize, RoUninitialize, RO_INIT_MULTITHREADED};
 use windows_sys::core::GUID;
 use windows_sys::Win32::Devices::Bluetooth::{
     BluetoothFindDeviceClose, BluetoothFindFirstDevice, BluetoothFindFirstRadio,
@@ -23,10 +26,6 @@ use windows_sys::Win32::Devices::Bluetooth::{
 use windows_sys::Win32::Foundation::{
     CloseHandle, GetLastError, HANDLE, HINSTANCE, HWND, LPARAM, LRESULT, WPARAM,
 };
-use windows_sys::Win32::NetworkManagement::IpHelper::{
-    CancelMibChangeNotify2, NotifyIpInterfaceChange, MIB_IPINTERFACE_ROW, MIB_NOTIFICATION_TYPE,
-};
-use windows_sys::Win32::Networking::WinSock::AF_UNSPEC;
 use windows_sys::Win32::System::LibraryLoader::GetModuleHandleW;
 use windows_sys::Win32::System::Power::{
     RegisterPowerSettingNotification, UnregisterPowerSettingNotification, HPOWERNOTIFY,
@@ -172,10 +171,11 @@ struct WindowsEventState {
     bluetoothAdapterConnected: bool,
     powerNotifications: Vec<HPOWERNOTIFY>,
     deviceNotifications: Vec<*mut c_void>,
-    networkNotification: HANDLE,
+    networkNotification: Option<i64>,
 }
 
 fn run_windows_event_loop(sink: HostRuntimeEventSink, init: mpsc::Sender<Result<isize, String>>) {
+    let _apartment = NetworkApartment::new();
     unsafe {
         let instance = GetModuleHandleW(null()) as HINSTANCE;
         let wndClass = WNDCLASSW {
@@ -216,7 +216,7 @@ fn run_windows_event_loop(sink: HostRuntimeEventSink, init: mpsc::Sender<Result<
             bluetoothRadios: enumerate_bluetooth_radios(),
             powerNotifications: Vec::new(),
             deviceNotifications: Vec::new(),
-            networkNotification: null_mut(),
+            networkNotification: None,
         });
         let statePtr = Box::into_raw(state);
         SetWindowLongPtrW(hwnd, GWLP_USERDATA, statePtr as isize);
@@ -256,43 +256,87 @@ unsafe fn register_session_notification(hwnd: HWND) {
     WTSRegisterSessionNotification(hwnd, NOTIFY_FOR_THIS_SESSION);
 }
 
-unsafe fn register_network_notification(state: &mut WindowsEventState) {
-    let status = NotifyIpInterfaceChange(
-        AF_UNSPEC as u16,
-        Some(network_change_callback),
-        state as *mut WindowsEventState as *const c_void,
-        0,
-        &mut state.networkNotification,
+/// Tracks cost changes as well as route changes before publishing the initial network snapshot.
+fn register_network_notification(state: &mut WindowsEventState) {
+    let sink = state.sink.clone();
+    let registration = NetworkInformation::NetworkStatusChanged(
+        &NetworkStatusChangedEventHandler::new(move |_| {
+            emit_network_state(&sink);
+            Ok(())
+        }),
     );
-    if status != 0 {
-        state.networkNotification = null_mut();
+    match registration {
+        Ok(token) => {
+            state.networkNotification = Some(token);
+            emit_network_state(&state.sink);
+        }
+        Err(error) => {
+            logHostError(
+                "WindowsHostRuntimeEvent",
+                &format!("observe network cost failed: {error}"),
+            );
+            emit(
+                &state.sink,
+                "system.network.changed",
+                serde_json::json!({
+                    "connected": false, "networkType": "none", "metered": null,
+                }),
+            );
+        }
     }
 }
 
-unsafe extern "system" fn network_change_callback(
-    callerContext: *const c_void,
-    row: *const MIB_IPINTERFACE_ROW,
-    notificationType: MIB_NOTIFICATION_TYPE,
-) {
-    if callerContext.is_null() {
-        return;
+struct NetworkApartment(bool);
+impl NetworkApartment {
+    /// Initializes WinRT on each native network callback thread with balanced ownership.
+    fn new() -> Self {
+        Self(unsafe { RoInitialize(RO_INIT_MULTITHREADED) }.is_ok())
     }
-    let state = &*(callerContext as *const WindowsEventState);
-    let connected = if row.is_null() {
-        false
-    } else {
-        (*row).Connected != 0
+}
+impl Drop for NetworkApartment {
+    /// Releases only the apartment initialization acquired on this thread.
+    fn drop(&mut self) {
+        if self.0 {
+            unsafe { RoUninitialize() };
+        }
+    }
+}
+
+/// Reads the active route and its real cost instead of guessing from a changed interface.
+fn emit_network_state(sink: &HostRuntimeEventSink) {
+    let _apartment = NetworkApartment::new();
+    use windows::Networking::Connectivity::{
+        NetworkConnectivityLevel, NetworkCostType, NetworkInformation,
     };
-    emit(
-        &state.sink,
-        "system.network.changed",
-        serde_json::json!({
-            "connected": connected,
-            "networkType": if connected { "other" } else { "none" },
-            "metered": null,
-            "interfaceName": null,
+    let snapshot = || -> windows::core::Result<(bool, &'static str, bool)> {
+        let profile = NetworkInformation::GetInternetConnectionProfile()?;
+        let connected =
+            profile.GetNetworkConnectivityLevel()? == NetworkConnectivityLevel::InternetAccess;
+        let cost = profile.GetConnectionCost()?;
+        let unmetered = cost.NetworkCostType()? == NetworkCostType::Unrestricted
+            && !cost.Roaming()?
+            && !cost.OverDataLimit()?
+            && !cost.BackgroundDataUsageRestricted()?;
+        let transport = if !connected {
+            "none"
+        } else if profile.IsWlanConnectionProfile()? {
+            "wifi"
+        } else if profile.IsWwanConnectionProfile()? {
+            "cellular"
+        } else if profile.NetworkAdapter()?.IanaInterfaceType()? == 6 {
+            "ethernet"
+        } else {
+            "other"
+        };
+        Ok((connected, transport, !unmetered))
+    };
+    let payload = match snapshot() {
+        Ok((connected, transport, metered)) => serde_json::json!({
+            "connected": connected, "networkType": transport, "metered": metered,
         }),
-    );
+        Err(_) => serde_json::json!({"connected": false, "networkType": "none", "metered": null}),
+    };
+    emit(sink, "system.network.changed", payload);
 }
 
 unsafe fn register_bluetooth_notification(hwnd: HWND, state: &mut WindowsEventState) {
@@ -335,8 +379,8 @@ unsafe fn cleanup_windows_event_state(hwnd: HWND, statePtr: *mut WindowsEventSta
                 UnregisterDeviceNotification(notification);
             }
         }
-        if !state.networkNotification.is_null() {
-            CancelMibChangeNotify2(state.networkNotification);
+        if let Some(token) = state.networkNotification {
+            let _ = NetworkInformation::RemoveNetworkStatusChanged(token);
         }
         WTSUnRegisterSessionNotification(hwnd);
     }

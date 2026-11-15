@@ -390,7 +390,7 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
       data: [
         "connected": path.status == .satisfied,
         "networkType": networkType,
-        "metered": path.isExpensive,
+        "metered": path.isExpensive || path.isConstrained,
         "interfaceName": interfaceName ?? NSNull(),
       ]
     )

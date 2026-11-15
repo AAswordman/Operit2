@@ -1,5 +1,6 @@
 use crate::core::application::ApplicationUpdate::{
     ApplicationUpdatePlan, ApplicationUpdateInfo, ApplicationUpdateInstallResult, ApplicationUpdateProgress,
+    ApplicationUpdateNetwork,
 };
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
@@ -803,6 +804,11 @@ impl OperitApplication {
     /// Observes host download progress without exposing URLs or native file paths.
     pub fn applicationUpdateProgressFlow(&self) -> StateFlow<ApplicationUpdateProgress> {
         self.applicationUpdate.progress()
+    }
+
+    /// Observes local connectivity and network cost without platform logic in clients.
+    pub fn applicationUpdateNetworkFlow(&self) -> StateFlow<ApplicationUpdateNetwork> {
+        crate::services::RuntimeEventIngressService::RuntimeEventIngressService::updateNetworkFlow()
     }
 
     /// Downloads the selected release and returns an opaque native receipt.

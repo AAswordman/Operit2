@@ -87,6 +87,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       final selectingSource = phase == AppUpdatePhase.selectingSource;
       final downloading = phase == AppUpdatePhase.downloading;
       final reconstructing = phase == AppUpdatePhase.reconstructing;
+      final ready = phase == AppUpdatePhase.ready;
       final preparing = phase == AppUpdatePhase.preparing;
       final installing = phase == AppUpdatePhase.installing;
       final failed = phase == AppUpdatePhase.failed;
@@ -102,6 +103,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
               ? '正在下载增量补丁…'
               : '正在下载完整安装包…',
         AppUpdatePhase.reconstructing => '正在合并并校验安装包…',
+        AppUpdatePhase.ready => '更新已下载并校验完成，等待你确认安装',
         AppUpdatePhase.preparing => '正在准备安装，请稍候…',
         AppUpdatePhase.installing => '正在启动更新安装，应用即将重启…',
         AppUpdatePhase.awaitingInstall =>
@@ -153,12 +155,16 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
               ),
             if (permission)
               FilledButton(
-                onPressed: () => unawaited(controller.start()),
+                onPressed: () => unawaited(controller.confirmInstall()),
                 child: const Text('继续安装'),
               ),
             if (failed || phase == AppUpdatePhase.available)
               FilledButton(
-                onPressed: () => unawaited(controller.start()),
+                onPressed: () => unawaited(
+                  controller.packageReceipt == null
+                      ? controller.start()
+                      : controller.confirmInstall(),
+                ),
                 child: Text(
                   controller.packageReceipt == null ? '重试更新' : '重新安装',
                 ),
@@ -168,7 +174,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 onPressed: () => unawaited(
                   controller.restartRequired
                       ? controller.restartToInstall()
-                      : controller.start(),
+                      : controller.confirmInstall(),
                 ),
                 icon: Icon(
                   controller.restartRequired
@@ -176,6 +182,12 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                       : Icons.open_in_new,
                 ),
                 label: Text(controller.restartRequired ? '重启并安装' : '重新打开安装器'),
+              ),
+            if (ready)
+              FilledButton.icon(
+                onPressed: () => unawaited(controller.confirmInstall()),
+                icon: const Icon(Icons.system_update_alt),
+                label: const Text('重启并更新'),
               ),
           ],
           child: Column(
@@ -218,7 +230,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                     Icon(
                       failed
                           ? Icons.error_outline
-                          : awaiting
+                          : awaiting || ready
                           ? Icons.check_circle_outline
                           : Icons.downloading_rounded,
                       size: 20,
@@ -273,7 +285,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '下载完成后会校验安装包并准备安装。你可以关闭此窗口，稍后点击 Operit 标志查看进度。',
+                  '下载完成后会校验并保留安装包，等待你确认更新。你可以关闭此窗口，稍后点击 Operit 标志查看进度。',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
                   ),
@@ -283,6 +295,13 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 const SizedBox(height: 10),
                 Text(
                   controller.installMessage ?? '请完成系统授权，再点击继续安装。安装包已保留。',
+                  style: TextStyle(color: colors.onSurfaceVariant),
+                ),
+              ],
+              if (ready) ...[
+                const SizedBox(height: 10),
+                Text(
+                  '点击“重启并更新”后才会开始安装。系统可能要求安装授权。',
                   style: TextStyle(color: colors.onSurfaceVariant),
                 ),
               ],

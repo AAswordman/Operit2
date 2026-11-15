@@ -26,6 +26,7 @@ enum AppUpdatePhase {
   selectingSource,
   downloading,
   reconstructing,
+  ready,
   preparing,
   installing,
   awaitingPermission,
@@ -34,6 +35,9 @@ enum AppUpdatePhase {
 }
 
 enum AppUpdateMode { full, incremental, needsBase, unavailable }
+
+/// Distinguishes offline status from connections eligible for small transfers only.
+enum AppUpdateNetwork { offline, restricted, unmetered }
 
 /// Contains the availability and transfer decision calculated by Core.
 class AppUpdatePlan {
@@ -72,6 +76,9 @@ typedef AppUpdateProgress = void Function(int received, int? total);
 
 /// Always operates on this installed client, independently of selected devices.
 abstract class AppUpdateBackend {
+  /// Emits connectivity and cost from the installed client's normalized Host events.
+  Stream<AppUpdateNetwork> get backgroundNetwork => const Stream.empty();
+
   Future<AppUpdateRelease?> check();
 
   /// Calculates both routes before any installer or patch download.

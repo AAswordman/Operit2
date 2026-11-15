@@ -3343,7 +3343,24 @@ impl AppInstallTiming {
 
 pub mod UiAutomation;
 
+/// Lossless installer transforms implemented by the platform that owns the package format.
+#[derive(Clone, Debug)]
+pub enum ApplicationUpdateTransform {
+    ExpandMsiCabinets { recipe: Vec<u8> },
+    RestoreMsiCabinets,
+}
+
 pub trait SystemOperationHost: Send + Sync {
+    /// Transcodes a package into a disposable VFS target without installing or executing it.
+    fn transformApplicationUpdate(
+        &self,
+        _source: &dyn FileSource,
+        _target: &dyn FileTarget,
+        _transform: ApplicationUpdateTransform,
+        _control: &HttpDownloadControl,
+    ) -> HostResult<()> {
+        Err(HostError::new("Installer transformation is not supported by this host"))
+    }
     /// Selects the platform's package source; desktop installers use node-local retained packages.
     fn applicationUpdateBase(&self) -> HostResult<ApplicationUpdateBase> {
         Ok(ApplicationUpdateBase::RetainedPackage)

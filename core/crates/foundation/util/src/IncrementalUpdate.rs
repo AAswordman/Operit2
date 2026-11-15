@@ -91,7 +91,7 @@ pub fn hashSource(
 
 /// Binds all manifest fields and patch names to the selected GitHub release asset.
 pub fn validateManifest(manifest: &UpdateManifest, release: &ReleaseInfo) -> Result<(), String> {
-    if manifest.schema != 1
+    if !matches!(manifest.schema, 1 | 2 | 3)
         || manifest.version != release.version
         || manifest.assetName != release.assetName
         || manifest.size == 0
@@ -263,7 +263,7 @@ fn integer(reader: &mut impl Read) -> Result<u64, String> {
     Ok(u64::from_le_bytes(bytes))
 }
 
-/// Rebuilds the original signed artifact without unpacking or modifying its contents.
+/// Authenticates sources and reconstructs the original signed installer, including CAB-aware deltas.
 pub fn applyPatch(
     base: &dyn FileSource,
     patch: &dyn FileSource,
@@ -286,7 +286,9 @@ pub fn applyPatch(
     let mut decoder = flate2::read::MultiGzDecoder::new(source);
     let mut magic = [0; 9];
     decoder.read_exact(&mut magic).map_err(|e| e.to_string())?;
-    if &magic != b"O2PATCH1\0"
+    let residuals = &magic == b"O2PATCH2\0" && matches!(manifest.schema, 2 | 3);
+    let cabinets = &magic == b"O2PATCH3\0" && manifest.schema == 3;
+    if !(cabinets || residuals || (&magic == b"O2PATCH1\0" && manifest.schema == 1))
         || integer(&mut decoder)? != declaration.baseSize
         || integer(&mut decoder)? != manifest.size
     {
@@ -301,6 +303,132 @@ pub fn applyPatch(
     if encoded != format!("{}{}", declaration.baseSha256, manifest.sha256) {
         return Err("Patch header disagrees with authenticated manifest".into());
     }
+    if cabinets {
+        return applyCabinetPatch(base, &mut decoder, manifest, context, destination, control);
+    }
+    applyInstructions(
+        base,
+        &mut decoder,
+        declaration.baseSize,
+        manifest.size,
+        &manifest.sha256,
+        residuals,
+        Some(&manifest.assetName),
+        context,
+        destination,
+        control,
+    )
+}
+
+/// Reconstructs expanded payloads in a disposable job and retains only the verified original MSI.
+fn applyCabinetPatch(
+    base: &dyn FileSource,
+    decoder: &mut impl Read,
+    manifest: &UpdateManifest,
+    context: &HostManager,
+    destination: &str,
+    control: &HttpDownloadControl,
+) -> Result<(), String> {
+    use operit_host_api::ApplicationUpdateTransform::{ExpandMsiCabinets, RestoreMsiCabinets};
+    let mut length = [0; 4];
+    decoder.read_exact(&mut length).map_err(|e| e.to_string())?;
+    let length = u32::from_le_bytes(length) as usize;
+    if length > 4 * BUFFER {
+        return Err("MSI recipe exceeds limit".into());
+    }
+    let mut recipe = vec![0; length];
+    decoder.read_exact(&mut recipe).map_err(|e| e.to_string())?;
+    let oldSize = integer(decoder)?;
+    let newSize = integer(decoder)?;
+    if oldSize == 0 || newSize == 0 || oldSize > MAX_PACKAGE || newSize > MAX_PACKAGE {
+        return Err("Expanded package exceeds update limits".into());
+    }
+    let mut hashes = [0; 64];
+    decoder.read_exact(&mut hashes).map_err(|e| e.to_string())?;
+    let oldHash = hashes[..32]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let newHash = hashes[32..]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    let host = context
+        .systemOperationHost
+        .as_ref()
+        .ok_or("Installer transform unavailable")?;
+    let directory = format!(
+        "{}/{}",
+        crate::RuntimeStorageLayout::RUNTIME_APPLICATION_UPDATES_DIR_PATH,
+        uuid::Uuid::new_v4()
+    );
+    let storage = context
+        .runtimeStorageHost
+        .clone()
+        .ok_or("Runtime storage unavailable")?;
+    let _scratch = DownloadAttempt {
+        storage: storage.clone(),
+        path: directory.clone(),
+        published: false,
+    };
+    let vfs = context.vfs()?;
+    let old = vfs.file(&VisualFileSystem::runtimePath(&format!(
+        "{directory}/base"
+    ))?)?;
+    host.transformApplicationUpdate(base, &old, ExpandMsiCabinets { recipe }, control)
+        .map_err(|e| e.to_string())?;
+    if hashSource(&old, control)? != (oldHash, oldSize) {
+        return Err("Expanded base package SHA-256 mismatch".into());
+    }
+    let expandedPath = format!("{directory}/target");
+    applyInstructions(
+        &old,
+        decoder,
+        oldSize,
+        newSize,
+        &newHash,
+        true,
+        None,
+        context,
+        &expandedPath,
+        control,
+    )?;
+    storage
+        .delete(&format!("{directory}/base"), false)
+        .map_err(|e| e.to_string())?;
+    let expanded = vfs.file(&VisualFileSystem::runtimePath(&expandedPath)?)?;
+    let restored = vfs.file(&VisualFileSystem::runtimePath(&format!(
+        "{directory}/restored.msi"
+    ))?)?;
+    host.transformApplicationUpdate(&expanded, &restored, RestoreMsiCabinets, control)
+        .map_err(|e| e.to_string())?;
+    storage
+        .delete(&expandedPath, false)
+        .map_err(|e| e.to_string())?;
+    copyPackage(
+        &restored,
+        destination,
+        &manifest.assetName,
+        Some(&(manifest.sha256.clone(), manifest.size)),
+        context,
+        control,
+    )?;
+    Ok(())
+}
+
+/// Applies bounded copy, literal and residual operations to original or expanded package bytes.
+fn applyInstructions(
+    base: &dyn FileSource,
+    decoder: &mut impl Read,
+    baseSize: u64,
+    targetSize: u64,
+    targetHash: &str,
+    residuals: bool,
+    assetName: Option<&str>,
+    context: &HostManager,
+    destination: &str,
+    control: &HttpDownloadControl,
+) -> Result<(), String> {
     let writes = context
         .runtimeStorageWriteHost
         .as_ref()
@@ -323,14 +451,14 @@ pub fn applyPatch(
             break;
         }
         let (offset, length) = match opcode[0] {
-            1 => (integer(&mut decoder)?, integer(&mut decoder)?),
-            2 => (0, integer(&mut decoder)?),
+            1 => (integer(decoder)?, integer(decoder)?),
+            3 if residuals => (integer(decoder)?, integer(decoder)?),
+            2 => (0, integer(decoder)?),
             _ => return Err("Invalid patch instruction".into()),
         };
         if length == 0
-            || length > manifest.size.saturating_sub(written)
-            || (opcode[0] == 1
-                && (offset > declaration.baseSize || length > declaration.baseSize - offset))
+            || length > targetSize.saturating_sub(written)
+            || (opcode[0] != 2 && (offset > baseSize || length > baseSize - offset))
         {
             return Err("Patch instruction exceeds package bounds".into());
         }
@@ -338,12 +466,21 @@ pub fn applyPatch(
         while done < length {
             ensureDownloadActive(control)?;
             let count = (length - done).min(BUFFER as u64) as usize;
-            let bytes = if opcode[0] == 1 {
-                let bytes = base
+            let bytes = if opcode[0] != 2 {
+                let mut bytes = base
                     .readBytesRange(offset + done, count)
                     .map_err(|e| e.to_string())?;
                 if bytes.len() != count {
                     return Err("Truncated base package".into());
+                }
+                if opcode[0] == 3 {
+                    let mut residual = vec![0; count];
+                    decoder
+                        .read_exact(&mut residual)
+                        .map_err(|e| e.to_string())?;
+                    for (byte, diff) in bytes.iter_mut().zip(residual) {
+                        *byte = byte.wrapping_add(diff);
+                    }
                 }
                 bytes
             } else {
@@ -365,13 +502,15 @@ pub fn applyPatch(
     }
     let mut trailing = [0];
     if !ended
-        || written != manifest.size
+        || written != targetSize
         || decoder.read(&mut trailing).map_err(|e| e.to_string())? != 0
-        || format!("{:x}", hash.finalize()) != manifest.sha256
+        || format!("{:x}", hash.finalize()) != targetHash
     {
         return Err("Reconstructed package SHA-256 or length mismatch".into());
     }
-    validateDownloadedUpdatePackage(&prefix, &manifest.assetName)?;
+    if let Some(assetName) = assetName {
+        validateDownloadedUpdatePackage(&prefix, assetName)?;
+    }
     ensureDownloadActive(control)?;
     writer
         .0

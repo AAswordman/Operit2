@@ -1,5 +1,6 @@
 mod packages;
 mod application_update;
+mod update_msi;
 use crate::process::background_command;
 
 use std::collections::BTreeMap;
@@ -33,6 +34,18 @@ impl WindowsSystemOperationHost {
 }
 
 impl SystemOperationHost for WindowsSystemOperationHost {
+    /// Reversibly exposes embedded CAB data to the shared package delta decoder.
+    fn transformApplicationUpdate(
+        &self,
+        source: &dyn operit_host_api::FileSource,
+        target: &dyn operit_host_api::FileTarget,
+        transform: operit_host_api::ApplicationUpdateTransform,
+        control: &operit_host_api::HttpDownloadControl,
+    ) -> HostResult<()> {
+        update_msi::transform(
+            Path::new(&source.nativePath()?), Path::new(&target.nativePath()?), transform, control,
+        ).map_err(|error| HostError::new(error.to_string()))
+    }
     /// Selects MSI or ZIP from the running copy's registered installation identity.
     fn applicationUpdateTarget(
         &self,

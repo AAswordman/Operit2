@@ -134,7 +134,7 @@ void main() {
       expect(backend.downloads, 1);
       expect(backend.plans, 1);
       expect(removed, ['/original']);
-      expect(controller.phase, AppUpdatePhase.awaitingInstall);
+      expect(controller.phase, AppUpdatePhase.ready);
       controller.dispose();
     },
   );
@@ -177,7 +177,7 @@ void main() {
       expect(backend.downloads, full ? 1 : 0);
       expect(
         controller.phase,
-        full ? AppUpdatePhase.awaitingInstall : AppUpdatePhase.unavailable,
+        full ? AppUpdatePhase.ready : AppUpdatePhase.unavailable,
       );
       if (!full) {
         controller.acknowledgeUnavailable();

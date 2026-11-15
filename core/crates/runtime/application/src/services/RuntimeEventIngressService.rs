@@ -1,15 +1,19 @@
 #![allow(non_snake_case)]
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use operit_host_api::HostRuntimeEventRegistration;
 use serde_json::Value;
 
+use crate::core::application::ApplicationUpdate::ApplicationUpdateNetwork;
 use crate::core::events::RuntimeEvent::{RuntimeEvent, RuntimeEventTopic};
 use crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use crate::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
 use operit_host_api::HostManager::HostManager;
+use operit_plugin_sdk::js_sdk::toolpkg::{
+    ToolPkgBroadcastNetworkChangedData, ToolPkgBroadcastNetworkType,
+};
 use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_ACTIVITY_ON_CREATE, TOOLPKG_EVENT_ACTIVITY_ON_DESTROY,
     TOOLPKG_EVENT_ACTIVITY_ON_PAUSE, TOOLPKG_EVENT_ACTIVITY_ON_RESUME,
@@ -18,12 +22,21 @@ use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_APPLICATION_ON_LOW_MEMORY, TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
     TOOLPKG_EVENT_APPLICATION_ON_TRIM_MEMORY,
 };
+use operit_store::PreferencesDataStore::StateFlow;
 
 pub struct RuntimeEventIngressService {
     toolpkg_runtime: ToolPkgBridgeRuntime,
 }
 
 impl RuntimeEventIngressService {
+    /// Observes local connectivity and explicit unmetered Wi-Fi or Ethernet eligibility.
+    pub fn updateNetworkFlow() -> StateFlow<ApplicationUpdateNetwork> {
+        static NETWORK: OnceLock<StateFlow<ApplicationUpdateNetwork>> = OnceLock::new();
+        NETWORK
+            .get_or_init(|| StateFlow::new(ApplicationUpdateNetwork::default()))
+            .clone()
+    }
+
     /// Creates the runtime event ingress service for the supplied host context.
     pub fn getInstance(_context: &HostManager, toolpkg_runtime: ToolPkgBridgeRuntime) -> Self {
         Self { toolpkg_runtime }
@@ -73,11 +86,59 @@ impl RuntimeEventIngressService {
                 });
             }
         };
+        if event.topic == RuntimeEventTopic::SystemNetworkChanged {
+            if let Ok(network) =
+                serde_json::from_value::<ToolPkgBroadcastNetworkChangedData>(event.payload.clone())
+            {
+                Self::updateNetworkFlow().set_value(updateNetwork(&network));
+            }
+        }
         dispatchAppLifecycleEvent(&self.toolpkg_runtime, &event, payload.clone());
         ToolPkgHostEventHookBridge::dispatchHostEvent(&self.toolpkg_runtime, "broadcast", payload);
         serde_json::json!({
             "ok": true,
         })
+    }
+}
+
+/// Retains all connections while identifying those allowing large unattended transfers.
+fn updateNetwork(network: &ToolPkgBroadcastNetworkChangedData) -> ApplicationUpdateNetwork {
+    ApplicationUpdateNetwork {
+        connected: network.connected,
+        unmetered: network.connected
+            && network.metered == Some(false)
+            && matches!(
+                network.networkType,
+                ToolPkgBroadcastNetworkType::Wifi | ToolPkgBroadcastNetworkType::Ethernet
+            ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Cellular and unknown costs stay distinguishable from a disconnected network.
+    #[test]
+    fn update_network_preserves_connectivity_and_unmetered_eligibility() {
+        for transport in ["wifi", "ethernet", "cellular", "vpn", "other", "none"] {
+            for metered in [Some(false), Some(true), None] {
+                for connected in [true, false] {
+                    let network = serde_json::from_value(serde_json::json!({
+                        "connected": connected, "networkType": transport, "metered": metered,
+                    }))
+                    .unwrap();
+                    let state = updateNetwork(&network);
+                    assert_eq!(state.connected, connected);
+                    assert_eq!(
+                        state.unmetered,
+                        connected
+                            && metered == Some(false)
+                            && matches!(transport, "wifi" | "ethernet")
+                    );
+                }
+            }
+        }
     }
 }
 

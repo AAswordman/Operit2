@@ -153,12 +153,20 @@ fn run_system_dbus_event_loop(
         }
     };
     let _ = init.send(Ok(connection.clone()));
+    emit_network_state(&sink, &connection);
     while running.load(Ordering::SeqCst) {
         let Some(message) = iterator.next() else {
             break;
         };
         match message {
             Ok(message) => {
+                if message
+                    .header()
+                    .path()
+                    .is_some_and(|path| path.as_str() == "/org/freedesktop/NetworkManager")
+                {
+                    emit_network_state(&sink, &connection);
+                }
                 let path = message
                     .header()
                     .path()
@@ -386,18 +394,6 @@ fn handle_network_manager_changed(
     path: &str,
     changed: &HashMap<String, OwnedValue>,
 ) {
-    if let Some(state) = prop_u64(changed, "State") {
-        emit(
-            sink,
-            "system.network.changed",
-            serde_json::json!({
-                "connected": state >= 50,
-                "networkType": if state >= 50 { "other" } else { "none" },
-                "metered": null,
-                "interfaceName": null,
-            }),
-        );
-    }
     let wirelessEnabled = prop_bool(changed, "WirelessEnabled");
     let wwanEnabled = prop_bool(changed, "WwanEnabled");
     if let (Some(wirelessEnabled), Some(wwanEnabled)) = (wirelessEnabled, wwanEnabled) {
@@ -409,6 +405,49 @@ fn handle_network_manager_changed(
             }),
         );
     }
+}
+
+/// Resolves the active NetworkManager transport and explicit connection cost.
+fn emit_network_state(sink: &HostRuntimeEventSink, connection: &Connection) {
+    let snapshot = || -> zbus::Result<(bool, String, Option<bool>)> {
+        let manager = zbus::blocking::Proxy::new(
+            connection,
+            "org.freedesktop.NetworkManager",
+            "/org/freedesktop/NetworkManager",
+            NETWORK_MANAGER_INTERFACE,
+        )?;
+        let connected = manager.get_property::<u32>("State")? == 70;
+        if !connected {
+            return Ok((false, "none".into(), None));
+        }
+        let path = manager.get_property::<OwnedObjectPath>("PrimaryConnection")?;
+        let active = zbus::blocking::Proxy::new(
+            connection,
+            "org.freedesktop.NetworkManager",
+            path.as_str(),
+            "org.freedesktop.NetworkManager.Connection.Active",
+        )?;
+        let transport = match active.get_property::<String>("Type")?.as_str() {
+            "802-11-wireless" => "wifi",
+            "802-3-ethernet" => "ethernet",
+            "gsm" | "cdma" => "cellular",
+            "vpn" | "wireguard" => "vpn",
+            _ => "other",
+        };
+        let metered = match manager.get_property::<u32>("Metered")? {
+            1 | 4 => Some(false),
+            2 | 3 => Some(true),
+            _ => None,
+        };
+        Ok((true, transport.into(), metered))
+    };
+    let payload = match snapshot() {
+        Ok((connected, transport, metered)) => serde_json::json!({
+            "connected": connected, "networkType": transport, "metered": metered,
+        }),
+        Err(_) => serde_json::json!({"connected": false, "networkType": "none", "metered": null}),
+    };
+    emit(sink, "system.network.changed", payload);
 }
 
 fn handle_screensaver_active_changed(

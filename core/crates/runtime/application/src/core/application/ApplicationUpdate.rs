@@ -42,6 +42,12 @@ pub struct ApplicationUpdateProgress {
     pub receivedBytes: u64,
     pub totalBytes: u64,
 }
+/// Preserves connectivity separately from eligibility for unrestricted transfers.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApplicationUpdateNetwork {
+    pub connected: bool,
+    pub unmetered: bool,
+}
 /// Installer feedback only; the native package path stays inside the core.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ApplicationUpdateInstallResult {

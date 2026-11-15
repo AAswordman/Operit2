@@ -326,7 +326,7 @@ final class AppleRuntimeChannel: NSObject {
       data: [
         "connected": path.status == .satisfied,
         "networkType": networkType,
-        "metered": path.isExpensive,
+        "metered": path.isExpensive || path.isConstrained,
         "interfaceName": interfaceName ?? NSNull(),
       ]
     )

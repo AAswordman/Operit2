@@ -37,18 +37,35 @@ class Backend extends AppUpdateBackend {
   bool failCancel = false;
   AppUpdateInstallState state = AppUpdateInstallState.installerOpened;
   Completer<String>? downloadPending;
+  Stream<AppUpdateNetwork> network = const Stream.empty();
+  int restarts = 0;
+  AppUpdateMode mode = AppUpdateMode.full;
+  bool fullAvailable = true;
+  int? fullBytes = 120000000, incrementalBytes = 5451829;
+  int plans = 0;
+  Completer<void>? planning;
+  @override
+  Stream<AppUpdateNetwork> get backgroundNetwork => network;
   AppUpdateProgress? onProgress;
   @override
   Future<AppUpdateRelease?> check() async => release;
 
-  /// Models a full-only release from the shared planner.
+  /// Describes sizes for both routes without confusing the patch and final installer.
+  AppUpdatePlan _plan(AppUpdateMode mode) => AppUpdatePlan(
+    mode: mode,
+    fullAvailable: fullAvailable,
+    incrementalAvailable: mode != AppUpdateMode.full,
+    fullBytes: fullBytes,
+    incrementalBytes: incrementalBytes,
+  );
+
+  /// Models route planning independently of the current network policy.
   @override
-  Future<AppUpdatePlan> plan(AppUpdateRelease release) async =>
-      const AppUpdatePlan(
-        mode: AppUpdateMode.full,
-        fullAvailable: true,
-        incrementalAvailable: false,
-      );
+  Future<AppUpdatePlan> plan(AppUpdateRelease release) async {
+    plans++;
+    await planning?.future;
+    return _plan(mode);
+  }
 
   /// Does not accept originals for a full-only plan.
   @override
@@ -59,7 +76,8 @@ class Backend extends AppUpdateBackend {
 
   /// Confirms the full route in this fixture.
   @override
-  Future<AppUpdatePlan> chooseFull(AppUpdateRelease release) => plan(release);
+  Future<AppUpdatePlan> chooseFull(AppUpdateRelease release) async =>
+      _plan(AppUpdateMode.full);
   @override
   Future<String> download(
     AppUpdateRelease r,
@@ -96,11 +114,374 @@ class Backend extends AppUpdateBackend {
   }
 
   @override
-  Future<void> restartToInstall() async {}
+  Future<void> restartToInstall() async {
+    restarts++;
+  }
 }
 
 void main() {
   setUpAll(ClientLogger.initialize);
+  test(
+    'unmetered discovery prepares silently and installs only after confirmation',
+    () async {
+      final network = StreamController<AppUpdateNetwork>.broadcast();
+      final backend = Backend()..network = network.stream;
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      expect(backend.downloads, 0);
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.ready);
+      expect(backend.downloads, 1);
+      expect(backend.installs, 0);
+      await controller.start();
+      expect(backend.downloads, 1);
+      expect(backend.installs, 0);
+      await controller.confirmInstall();
+      expect(backend.installs, 1);
+      controller.dispose();
+      await network.close();
+    },
+  );
+  test(
+    'small patches and full packages prepare on restricted connections',
+    () async {
+      for (final mode in [AppUpdateMode.incremental, AppUpdateMode.full]) {
+        final backend = Backend()
+          ..mode = mode
+          ..fullBytes = mode == AppUpdateMode.full ? 29999999 : 123536583
+          ..network = Stream.value(AppUpdateNetwork.restricted);
+        final controller = AppUpdateController(backend: backend);
+        await controller.check();
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.phase, AppUpdatePhase.ready);
+        expect(backend.downloads, 1);
+        expect(backend.installs, 0);
+        controller.dispose();
+      }
+    },
+  );
+  test('30 MB and unknown sizes wait for unmetered networking', () async {
+    for (final mode in [AppUpdateMode.incremental, AppUpdateMode.full]) {
+      for (final size in [30000000, 30000001, null]) {
+        final network = StreamController<AppUpdateNetwork>.broadcast();
+        final backend = Backend()
+          ..mode = mode
+          ..fullBytes = size
+          ..incrementalBytes = size
+          ..network = network.stream;
+        final controller = AppUpdateController(backend: backend);
+        await controller.check();
+        network.add(AppUpdateNetwork.restricted);
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.phase, AppUpdatePhase.available);
+        expect(backend.downloads, 0);
+        network.add(AppUpdateNetwork.restricted);
+        await Future<void>.delayed(Duration.zero);
+        expect(backend.plans, 1);
+        network.add(AppUpdateNetwork.unmetered);
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.phase, AppUpdatePhase.ready);
+        expect(backend.downloads, 1);
+        controller.dispose();
+        await network.close();
+      }
+    }
+  });
+  test(
+    'missing originals apply the threshold to the selected full package',
+    () async {
+      for (final size in [29999999, 120000000]) {
+        final backend = Backend()
+          ..mode = AppUpdateMode.needsBase
+          ..fullBytes = size
+          ..network = Stream.value(AppUpdateNetwork.restricted);
+        final controller = AppUpdateController(backend: backend);
+        await controller.check();
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.plan!.mode, AppUpdateMode.full);
+        expect(backend.downloads, size < 30000000 ? 1 : 0);
+        expect(backend.installs, 0);
+        controller.dispose();
+      }
+    },
+  );
+  test(
+    'a small update still requires an original and a connected network',
+    () async {
+      for (final network in [
+        AppUpdateNetwork.offline,
+        AppUpdateNetwork.restricted,
+      ]) {
+        final backend = Backend()
+          ..mode = AppUpdateMode.needsBase
+          ..fullAvailable = false
+          ..network = Stream.value(network);
+        final controller = AppUpdateController(backend: backend);
+        await controller.check();
+        await Future<void>.delayed(Duration.zero);
+        expect(controller.phase, AppUpdatePhase.available);
+        expect(backend.downloads, 0);
+        expect(backend.plans, network == AppUpdateNetwork.offline ? 0 : 1);
+        controller.dispose();
+      }
+    },
+  );
+  test(
+    'small prefetch survives a switch to cellular but cancels offline',
+    () async {
+      final network = StreamController<AppUpdateNetwork>.broadcast();
+      final backend = Backend()
+        ..mode = AppUpdateMode.incremental
+        ..network = network.stream
+        ..downloadPending = Completer<String>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      network.add(AppUpdateNetwork.restricted);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.downloading);
+      expect(backend.downloadPending!.isCompleted, isFalse);
+      expect(backend.downloads, 1);
+      network.add(AppUpdateNetwork.offline);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.available);
+      expect(backend.downloadPending!.isCompleted, isTrue);
+      controller.dispose();
+      await network.close();
+    },
+  );
+  test(
+    'large prefetch stops on cellular and resumes on unmetered networking',
+    () async {
+      final network = StreamController<AppUpdateNetwork>.broadcast();
+      final backend = Backend()
+        ..network = network.stream
+        ..downloadPending = Completer<String>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      network.add(AppUpdateNetwork.restricted);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.available);
+      expect(backend.downloads, 1);
+      backend.downloadPending = null;
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.ready);
+      expect(backend.downloads, 2);
+      controller.dispose();
+      await network.close();
+    },
+  );
+  test('planning finishes on cellular and applies the selected size', () async {
+    for (final size in [29999999, 30000000]) {
+      final network = StreamController<AppUpdateNetwork>.broadcast();
+      final backend = Backend()
+        ..fullBytes = size
+        ..network = network.stream
+        ..planning = Completer<void>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      network.add(AppUpdateNetwork.restricted);
+      await Future<void>.delayed(Duration.zero);
+      backend.planning!.complete();
+      await Future<void>.delayed(Duration.zero);
+      expect(backend.downloads, size < 30000000 ? 1 : 0);
+      expect(backend.plans, 1);
+      controller.dispose();
+      await network.close();
+    }
+  });
+  test(
+    'planning interrupted offline retries on a new cellular connection',
+    () async {
+      final network = StreamController<AppUpdateNetwork>.broadcast();
+      final planning = Completer<void>();
+      final backend = Backend()
+        ..mode = AppUpdateMode.incremental
+        ..network = network.stream
+        ..planning = planning;
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      network.add(AppUpdateNetwork.offline);
+      network.add(AppUpdateNetwork.restricted);
+      await Future<void>.delayed(Duration.zero);
+      backend.planning = null;
+      planning.completeError(const AppUpdateCancelled());
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.ready);
+      expect(backend.plans, 2);
+      expect(backend.downloads, 1);
+      controller.dispose();
+      await network.close();
+    },
+  );
+  test('manual cancellation suppresses small automatic retries', () async {
+    final network = StreamController<AppUpdateNetwork>.broadcast();
+    final backend = Backend()
+      ..mode = AppUpdateMode.incremental
+      ..network = network.stream
+      ..downloadPending = Completer<String>();
+    final controller = AppUpdateController(backend: backend);
+    await controller.check();
+    network.add(AppUpdateNetwork.restricted);
+    await Future<void>.delayed(Duration.zero);
+    await controller.cancelDownload();
+    await Future<void>.delayed(Duration.zero);
+    network.add(AppUpdateNetwork.offline);
+    network.add(AppUpdateNetwork.unmetered);
+    await Future<void>.delayed(Duration.zero);
+    expect(controller.phase, AppUpdatePhase.available);
+    expect(backend.downloads, 1);
+    expect(backend.installs, 0);
+    controller.dispose();
+    await network.close();
+  });
+  testWidgets('a prepared update waits for the restart confirmation button', (
+    tester,
+  ) async {
+    final backend = Backend()..state = AppUpdateInstallState.restartRequired;
+    final controller = AppUpdateController(backend: backend);
+    await controller.check();
+    await controller.start();
+    await tester.pumpWidget(
+      OperitTheme(
+        initialThemePreferenceSnapshot:
+            UserPreferencesManager.defaultThemePreferenceSnapshot,
+        initialThemeIsReady: false,
+        unconfiguredChildEnabled: true,
+        hostInteractionHostsEnabled: false,
+        child: AppUpdateDialog(controller: controller),
+      ),
+    );
+    await tester.pump();
+    expect(find.text('重启并更新'), findsOneWidget);
+    expect(backend.installs, 0);
+    expect(backend.restarts, 0);
+    await tester.tap(find.text('重启并更新'));
+    await tester.pump();
+    expect(backend.installs, 1);
+    expect(backend.restarts, 1);
+    await tester.pumpWidget(const SizedBox.shrink());
+    controller.dispose();
+  });
+  testWidgets(
+    'opening updates during automatic download reuses the active task',
+    (tester) async {
+      final backend = Backend()
+        ..mode = AppUpdateMode.incremental
+        ..network = Stream.value(AppUpdateNetwork.restricted)
+        ..downloadPending = Completer<String>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      await tester.pump();
+      expect(controller.phase, AppUpdatePhase.downloading);
+      expect(backend.downloads, 1);
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: AppUpdateDialog(controller: controller),
+        ),
+      );
+      await tester.pump();
+      await controller.start();
+      await controller.confirmInstall();
+      expect(backend.plans, 1);
+      expect(backend.downloads, 1);
+      expect(backend.installs, 0);
+      expect(find.text('正在下载增量补丁…'), findsOneWidget);
+      expect(find.text('重启并更新'), findsNothing);
+      backend.onProgress!(75, 100);
+      await tester.pump();
+      expect(find.text('75%'), findsOneWidget);
+      backend.downloadPending!.complete('fixture-update-receipt');
+      await tester.pump();
+      expect(controller.phase, AppUpdatePhase.ready);
+      await tester.pump();
+      expect(find.text('重启并更新'), findsOneWidget);
+      expect(backend.installs, 0);
+      await tester.tap(find.text('重启并更新'));
+      await tester.pump();
+      expect(backend.downloads, 1);
+      expect(backend.installs, 1);
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    },
+  );
+  test(
+    'cached bases use patches, missing bases use a published full package silently',
+    () async {
+      for (final mode in [AppUpdateMode.incremental, AppUpdateMode.needsBase]) {
+        final backend = Backend()
+          ..mode = mode
+          ..network = Stream.value(AppUpdateNetwork.unmetered);
+        final controller = AppUpdateController(backend: backend);
+        await controller.check();
+        await Future<void>.delayed(Duration.zero);
+        expect(
+          controller.plan!.mode,
+          mode == AppUpdateMode.incremental ? mode : AppUpdateMode.full,
+        );
+        expect(controller.phase, AppUpdatePhase.ready);
+        expect(backend.downloads, 1);
+        expect(backend.installs, 0);
+        controller.dispose();
+      }
+    },
+  );
+  test(
+    'patch-only discovery waits for the first user-selected base without a prompt',
+    () async {
+      final backend = Backend()
+        ..mode = AppUpdateMode.needsBase
+        ..fullAvailable = false
+        ..network = Stream.value(AppUpdateNetwork.unmetered);
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.available);
+      expect(backend.downloads, 0);
+      await controller.start();
+      expect(controller.phase, AppUpdatePhase.awaitingBase);
+      controller.dispose();
+    },
+  );
+  test(
+    'leaving unmetered networking cancels prefetch and reconnecting starts a new attempt',
+    () async {
+      final network = StreamController<AppUpdateNetwork>.broadcast();
+      final backend = Backend()
+        ..network = network.stream
+        ..downloadPending = Completer<String>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      expect(backend.downloads, 1);
+      network.add(AppUpdateNetwork.offline);
+      await Future<void>.delayed(Duration.zero);
+      expect(controller.phase, AppUpdatePhase.available);
+      expect(backend.installs, 0);
+      backend.downloadPending = null;
+      network.add(AppUpdateNetwork.unmetered);
+      await Future<void>.delayed(Duration.zero);
+      expect(backend.downloads, 2);
+      expect(controller.phase, AppUpdatePhase.ready);
+      controller.dispose();
+      await network.close();
+    },
+  );
   testWidgets(
     'automatic source selection stays brief, resets switched progress, and can be cancelled',
     (tester) async {
@@ -146,6 +527,9 @@ void main() {
       final controller = AppUpdateController(backend: backend);
       await controller.check();
       await controller.start();
+      expect(controller.phase, AppUpdatePhase.ready);
+      expect(backend.installs, 0);
+      await controller.confirmInstall();
       expect(controller.phase, AppUpdatePhase.failed);
       expect(controller.packageReceipt, isNotNull);
       await controller.check();
@@ -153,11 +537,11 @@ void main() {
       backend
         ..failInstall = false
         ..state = AppUpdateInstallState.permissionRequired;
-      await controller.start();
+      await controller.confirmInstall();
       expect(controller.phase, AppUpdatePhase.awaitingPermission);
       expect(backend.downloads, 1);
       backend.state = AppUpdateInstallState.restartRequired;
-      await controller.start();
+      await controller.confirmInstall();
       expect(controller.restartRequired, isTrue);
       expect(backend.downloads, 1);
       expect(backend.installs, 3);
@@ -200,6 +584,8 @@ void main() {
       expect(backend.installs, 0);
       await controller.start();
       expect(backend.downloads, 1);
+      expect(backend.installs, 0);
+      await controller.confirmInstall();
       expect(backend.installs, 1);
       controller.dispose();
     },

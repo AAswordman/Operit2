@@ -1,6 +1,8 @@
 """Exercise real delta generation, corruption rejection and release validation."""
 import gzip
+import base64
 import json
+import os
 from pathlib import Path
 import random
 import struct
@@ -43,6 +45,38 @@ class IncrementalUpdateTests(unittest.TestCase):
         delta.build(self.base, self.target, self.patch)
         delta.build(self.base, self.target, second)
         self.assertEqual(self.patch.read_bytes(), second.read_bytes())
+
+    # Sparse edits throughout a large binary must not retransmit every content-defined chunk.
+    def test_sparse_changes_across_all_large_file_chunks_remain_small(self):
+        expected = bytearray(self.data)
+        for offset in range(64, len(expected), 257):
+            expected[offset] = (expected[offset] + 13) & 255
+        self.target.write_bytes(expected)
+        delta.build(self.base, self.target, self.patch)
+        delta.apply(self.base, self.patch, self.output)
+        self.assertEqual(self.output.read_bytes(), expected)
+        self.assertLess(self.patch.stat().st_size, len(expected) // 20)
+
+    # Real embedded LZX data must reconstruct the complete original MSI, not just its payload.
+    @unittest.skipUnless(os.name == "nt", "MSI cabinet encoding uses the Windows Host")
+    def test_msi_archive_delta_round_trip(self):
+        fixture = json.loads((ROOT / "tools/tests/fixtures/msi_cabinet_delta.json").read_text())
+        base, target = self.root / "base.msi", self.root / "target.msi"
+        base.write_bytes(base64.b64decode(fixture["base"]))
+        target.write_bytes(base64.b64decode(fixture["target"]))
+        delta.build(base, target, self.patch)
+        delta.apply(base, self.patch, self.output)
+        self.assertEqual(self.output.read_bytes(), target.read_bytes())
+        self.assertLess(self.patch.stat().st_size, target.stat().st_size // 20)
+        self.assertEqual(gzip.decompress(self.patch.read_bytes())[:9], b"O2PATCH3\0")
+        self.output.unlink()
+        stream = bytearray(gzip.decompress(self.patch.read_bytes()))
+        recipe_size, = struct.unpack_from("<I", stream, 89)
+        stream[93 + recipe_size + 16] ^= 1
+        self.patch.write_bytes(gzip.compress(stream))
+        with self.assertRaisesRegex(ValueError, "Expanded base SHA-256"):
+            delta.apply(base, self.patch, self.output)
+        self.assertFalse(self.output.exists())
 
     # No source bytes may be overwritten through an output path alias.
     def test_rejects_output_alias_and_existing_output(self):
@@ -149,7 +183,6 @@ class IncrementalUpdateTests(unittest.TestCase):
     def test_release_and_preview_generate_platform_deltas(self):
         families = (
             ("operit2-app-windows-x86_64", "zip", b"PK\x03\x04"),
-            ("operit2-app-windows-x86_64", "msi", b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"),
             ("operit2-app-android-arm64-v8a", "apk", b"PK\x03\x04"),
             ("operit2-app-macos-universal-unsandbox", "pkg", b"xar!"),
         )
