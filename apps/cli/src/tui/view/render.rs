@@ -2538,7 +2538,9 @@ fn progress_bar(percent: u64, width: usize) -> String {
 
 fn full_update_stage_label(text: super::i18n::TuiText, stage: FullUpdateStage) -> &'static str {
     match stage {
+        FullUpdateStage::SelectingSource => text.selecting_download_source(),
         FullUpdateStage::DownloadingPackage => text.downloading_full_update_package(),
+        FullUpdateStage::ReconstructingPackage => text.reconstructing_update_package(),
         FullUpdateStage::Ready => text.package_ready(),
     }
 }
@@ -2581,4 +2583,32 @@ fn thinking_indicator_line(text: &'static str) -> Line<'static> {
         spans.push(Span::styled(ch.to_string(), style));
     }
     Line::from(spans)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::i18n::TuiLanguage;
+    use super::*;
+    use std::collections::BTreeSet;
+
+    /// Every update stage resolves to a distinct non-empty label in both languages.
+    #[test]
+    fn full_update_stage_labels_cover_all_stages() {
+        let stages = [
+            FullUpdateStage::SelectingSource,
+            FullUpdateStage::DownloadingPackage,
+            FullUpdateStage::ReconstructingPackage,
+            FullUpdateStage::Ready,
+        ];
+        for language in [TuiLanguage::English, TuiLanguage::Chinese] {
+            let text = language.text();
+            let labels: Vec<&str> = stages
+                .iter()
+                .map(|stage| full_update_stage_label(text, *stage))
+                .collect();
+            assert!(labels.iter().all(|label| !label.is_empty()));
+            let unique: BTreeSet<&str> = labels.iter().copied().collect();
+            assert_eq!(unique.len(), stages.len());
+        }
+    }
 }
