@@ -82,6 +82,13 @@ struct ToolPkgExecutionEngineRegistry {
 
 type ExecutionEngineGeneration = (u64, u64);
 
+/// Holds source fingerprints prepared before entering the owning registry's publication lock.
+pub struct PreparedToolPkgRuntimeMaps {
+    containers: BTreeMap<String, ToolPkgContainerRuntime>,
+    subpackages: BTreeMap<String, ToolPkgSubpackageRuntime>,
+    revisions: BTreeMap<String, Option<u64>>,
+}
+
 /// Manages loaded ToolPkg runtimes, resources, listeners, and execution engines.
 #[derive(Clone)]
 pub struct ToolPkgManager {
@@ -301,9 +308,29 @@ impl ToolPkgManager {
         containers: BTreeMap<String, ToolPkgContainerRuntime>,
         subpackageByPackageName: BTreeMap<String, ToolPkgSubpackageRuntime>,
     ) {
+        let prepared = self.prepareRuntimeMaps(containers, subpackageByPackageName);
+        for engine in self.publishRuntimeMaps(prepared) {
+            engine.destroy();
+        }
+    }
+
+    /// Reads source revisions without retaining the runtime owner's registry lock.
+    #[allow(non_snake_case)]
+    pub fn prepareRuntimeMaps(
+        &self,
+        containers: BTreeMap<String, ToolPkgContainerRuntime>,
+        subpackages: BTreeMap<String, ToolPkgSubpackageRuntime>,
+    ) -> PreparedToolPkgRuntimeMaps {
         let revisions = containers.iter()
             .map(|(name, runtime)| (name.clone(), self.runtimeRevision(runtime)))
             .collect::<BTreeMap<_, _>>();
+        PreparedToolPkgRuntimeMaps { containers, subpackages, revisions }
+    }
+
+    /// Publishes declarations and detaches revoked engines for destruction after owner locks release.
+    #[allow(non_snake_case)]
+    pub fn publishRuntimeMaps(&mut self, prepared: PreparedToolPkgRuntimeMaps) -> Vec<Arc<dyn JsExecutionEngine>> {
+        let PreparedToolPkgRuntimeMaps { containers, subpackages, revisions } = prepared;
         let revoked = {
             let mut previous = self.runtimeRevisions.write().expect("toolpkg revision lock poisoned");
             let revoked = previous.iter().filter_map(|(name, revision)| {
@@ -315,10 +342,16 @@ impl ToolPkgManager {
             revoked
         };
         *self.containers.write().expect("toolpkg container runtime lock poisoned") = containers;
-        *self.subpackageByPackageName.write().expect("toolpkg subpackage runtime lock poisoned") = subpackageByPackageName;
-        for name in revoked {
-            self.revokeContainerExecutionContexts(&name);
-        }
+        *self.subpackageByPackageName.write().expect("toolpkg subpackage runtime lock poisoned") = subpackages;
+        self.takeExecutionEnginesMatching(
+            |entry| revoked.contains(&entry.containerPackageName),
+            |registry| {
+                for name in &revoked {
+                    registry.mainScripts.remove(name);
+                    *registry.packageGenerations.entry(name.clone()).or_insert(0) += 1;
+                }
+            },
+        )
     }
 
     /// Fingerprints source content at catalog boundaries, never on the invocation hot path.
@@ -796,6 +829,18 @@ impl ToolPkgManager {
         shouldRemove: impl Fn(&ToolPkgExecutionEngineEntry) -> bool,
         revoke: impl FnOnce(&mut ToolPkgExecutionEngineRegistry),
     ) {
+        for engine in self.takeExecutionEnginesMatching(shouldRemove, revoke) {
+            engine.destroy();
+        }
+    }
+
+    /// Detaches worker handles without running their shutdown callbacks while an owner is locked.
+    #[allow(non_snake_case)]
+    fn takeExecutionEnginesMatching(
+        &self,
+        shouldRemove: impl Fn(&ToolPkgExecutionEngineEntry) -> bool,
+        revoke: impl FnOnce(&mut ToolPkgExecutionEngineRegistry),
+    ) -> Vec<Arc<dyn JsExecutionEngine>> {
         let removed = {
             let mut engines = self
                 .toolPkgExecutionEngines
@@ -811,9 +856,7 @@ impl ToolPkgManager {
                 .map(|key| engines.entries.remove(&key).expect("selected engine must remain registered while locked"))
                 .collect::<Vec<_>>()
         };
-        for entry in removed {
-            entry.engine.destroy();
-        }
+        removed.into_iter().map(|entry| entry.engine).collect()
     }
 
     /// Shares the main source for one catalog generation and rejects publication after revocation.

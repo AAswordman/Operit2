@@ -450,13 +450,7 @@ impl OperitApplication {
         let startup = move || {
             Box::pin(async move {
                 let loadingGeneration = showPluginLoading();
-                let loadOutcome = packageManager
-                    .lock()
-                    .map_err(|error| error.to_string())
-                    .and_then(|mut manager| {
-                        manager.loadAvailablePackages();
-                        manager.packageRegistryReadiness().require_ready()
-                    });
+                let loadOutcome = RuntimePackageManager::reloadRegistry(packageManager).await;
                 if let Err(error) = loadOutcome {
                     taskReadiness.fail(error.clone());
                     completePluginLoadingSession(loadingGeneration);
@@ -571,16 +565,16 @@ impl OperitApplication {
     #[operit_route_macros::operit_plugin_sdk_expose]
     pub fn getExtensionCatalogSnapshot(
         &self,
-    ) -> Result<ExtensionCatalogSnapshot, String> {
-        super::ExtensionCatalogSupport::snapshot(self)
+    ) -> impl std::future::Future<Output = Result<ExtensionCatalogSnapshot, String>> + 'static {
+        super::ExtensionCatalogSupport::run(self.toolHandler.clone(), "operit-extension-catalog", super::ExtensionCatalogSupport::snapshot)
     }
 
     /// Checks installed marketplace entries against their latest published versions.
     #[allow(non_snake_case)]
     pub fn checkExtensionCatalogUpdates(
         &self,
-    ) -> Result<Vec<ExtensionCatalogUpdateCheck>, String> {
-        super::ExtensionCatalogSupport::check_updates(self)
+    ) -> impl std::future::Future<Output = Result<Vec<ExtensionCatalogUpdateCheck>, String>> + 'static {
+        super::ExtensionCatalogSupport::run(self.toolHandler.clone(), "operit-extension-updates", super::ExtensionCatalogSupport::check_updates)
     }
 
     /// Deletes one package-manager diagnostic after the redesigned card confirms it.
@@ -595,47 +589,7 @@ impl OperitApplication {
     /// Lists explicit installation scopes, including subpackages that inherit their container scope.
     #[allow(non_snake_case)]
     pub fn getExtensionScopes(&self, kind: String) -> Result<BTreeMap<String, String>, String> {
-        let packageOwners = match kind.as_str() {
-            "package" => {
-                let manager = self.packageManager();
-                let manager = manager.lock().map_err(|error| error.to_string())?;
-                Some(
-                    manager
-                        .getTopLevelAvailablePackages()
-                        .into_keys()
-                        .collect::<std::collections::BTreeSet<_>>(),
-                )
-            }
-            "skill" => {
-                self.skillRepository().getAvailableSkillPackages();
-                None
-            }
-            "mcp" | "a2a" => None,
-            _ => return Err(format!("Unknown extension kind: {kind}")),
-        };
-        let mut result = BTreeMap::new();
-        for record in operit_store::ExtensionStore::ExtensionStore::default().activeRecords(&kind)? {
-            // Stale owners and rejected packages must not invalidate the loaded catalog's scopes.
-            if packageOwners
-                .as_ref()
-                .is_some_and(|owners| !owners.contains(&record.id))
-            {
-                continue;
-            }
-            let scope = record.scope.clone();
-            result.insert(record.id.clone(), scope.clone());
-            if kind == "package" {
-                let members: Vec<String> =
-                    serde_json::from_value(record.settings["members"].clone())
-                        .map_err(|e| e.to_string())?;
-                for member in members {
-                    if member != record.id {
-                        result.insert(member, scope.clone());
-                    }
-                }
-            }
-        }
-        Ok(result)
+        super::ExtensionCatalogSupport::extension_scopes(&self.toolHandler, &kind)
     }
 
     /// Moves an existing extension; local MCP is rejected by the owning store before content changes.

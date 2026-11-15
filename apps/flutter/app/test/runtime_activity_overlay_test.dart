@@ -136,12 +136,15 @@ void main() {
     await tester.pump();
   }
 
-  Future<void> emitPackages(WidgetTester tester) async {
+  Future<void> emitPackages(
+    WidgetTester tester, {
+    bool forceExpanded = false,
+  }) async {
     bridge.emit(
       'pluginLoadingProgressFlow',
-      const core.PluginLoadingProgress(
+      core.PluginLoadingProgress(
         visible: true,
-        forceExpanded: false,
+        forceExpanded: forceExpanded,
         progress: 0.4,
         phase: 'loading',
         currentTask: '工具包',
@@ -246,7 +249,7 @@ void main() {
       tester,
       progress(completedRecords: 500, totalRecords: 10000),
     );
-    expect(find.text('500 / 10000 条 · 5%'), findsOneWidget);
+    expect(find.text(' 500/10000'), findsOneWidget);
     expect(
       tester
           .widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator))
@@ -269,7 +272,7 @@ void main() {
       ]);
       await tester.pump();
       await tester.pump();
-      expect(find.text('600 / 4000 条 · 15%'), findsOneWidget);
+      expect(find.text(' 600/4000'), findsOneWidget);
       expect(
         tester
             .widget<LinearProgressIndicator>(
@@ -282,7 +285,7 @@ void main() {
   );
 
   testWidgets(
-    'failed records keep their real pending count and expose the error without hovering',
+    'sync errors stay collapsed and reveal pending details only on tap',
     (tester) async {
       await mount(tester);
       await emitSync(
@@ -296,6 +299,14 @@ void main() {
           error: 'plugin_storage: Invalid or duplicate remote key',
         ),
       );
+      expect(find.text('后台任务'), findsNothing);
+      expect(find.text(' 9999/10000'), findsOneWidget);
+      expect(
+        find.text('plugin_storage: Invalid or duplicate remote key'),
+        findsNothing,
+      );
+      await tester.tap(find.text(' 9999/10000'));
+      await tester.pump();
       expect(find.text('后台任务'), findsOneWidget);
       expect(find.text('9999 / 10000 条 · 99% · 待应用 1 条'), findsOneWidget);
       expect(
@@ -336,7 +347,7 @@ void main() {
           .value,
       0.25,
     );
-    expect(find.text('1.0 MB / 4.0 MB'), findsOneWidget);
+    expect(find.text(' 1.0 MB/4.0 MB'), findsOneWidget);
   });
 
   testWidgets(
@@ -362,10 +373,19 @@ void main() {
     'packages and sync share one surface; skip only affects packages',
     (tester) async {
       await mount(tester);
-      await emitPackages(tester);
+      await emitPackages(tester, forceExpanded: true);
       expect(find.text('加载扩展'), findsOneWidget);
+      expect(find.text('后台任务'), findsNothing);
+      expect(tester.getSize(find.byType(LinearProgressIndicator)).width, lessThan(156));
+      expect(
+        tester.getSize(find.ancestor(
+          of: find.byType(LinearProgressIndicator),
+          matching: find.byType(Material),
+        ).first),
+        predicate<Size>((size) => size.width < 156 && size.height == 36),
+      );
       await emitSync(tester, progress());
-      expect(find.text('+1'), findsOneWidget);
+      expect(find.text(' +1'), findsOneWidget);
       expect(find.byType(LinearProgressIndicator), findsOneWidget);
       await tester.tap(find.text('正在同步'));
       await tester.pump();

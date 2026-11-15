@@ -85,6 +85,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
   bool _isNavigatingBack = false;
   bool _requestedInitialToolPkgNavigationRefresh = false;
   StreamSubscription<void>? _toolPkgCatalogChangeSubscription;
+  StreamSubscription<int>? _coreCatalogRevisionSubscription;
   int _backPressedTime = 0;
 
   /// Initializes navigation services and drawer data subscriptions.
@@ -115,6 +116,12 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
         unawaited(_refreshToolPkgNavigationModel());
       }
     });
+    _coreCatalogRevisionSubscription = _clients.application
+        .extensionCatalogRevisionFlow()
+        .distinct()
+        .listen((_) {
+          ToolPkgCatalogChangeBus.notifyCatalogChanged(reloadPluginCode: false);
+        });
     unawaited(_loadSidebarDockPreferences());
     unawaited(_initializeDrawerData());
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -299,6 +306,7 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
 
   @override
   void dispose() {
+    _coreCatalogRevisionSubscription?.cancel();
     unawaited(DesktopWidgets.setActionHandler(null));
     unawaited(DesktopWidgets.setSnapshotRenderer(null));
     _softwareDesignCatalog.dispose();

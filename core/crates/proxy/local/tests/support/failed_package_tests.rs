@@ -138,7 +138,7 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
     drop(manager);
     let diagnostic = app
         .getExtensionCatalogSnapshot()
-        .unwrap()
+        .await.unwrap()
         .diagnostics
         .into_iter()
         .find(|diagnostic| diagnostic.source_path == rejected_path)

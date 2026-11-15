@@ -2180,6 +2180,7 @@ mod tests {
     struct CountingPackageProvider {
         inner: operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider,
         registrations: AtomicUsize,
+        scanningOwner: Mutex<Option<std::sync::Weak<Mutex<crate::tools::packTool::RuntimePackageManager::RuntimePackageManager>>>>,
     }
 
     impl operit_plugin_sdk::javascript::JsExecutionProvider for CountingPackageProvider {
@@ -2187,6 +2188,9 @@ mod tests {
         fn create_execution_engine(&self, host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>)
             -> Result<Arc<dyn operit_plugin_sdk::javascript::JsExecutionEngine>, String> {
             self.registrations.fetch_add(1, Ordering::SeqCst);
+            if let Some(owner) = self.scanningOwner.lock().unwrap().as_ref().and_then(|owner| owner.upgrade()) {
+                assert!(owner.try_lock().is_ok(), "registration must not retain the package manager lock");
+            }
             self.inner.create_execution_engine(host)
         }
 
@@ -2216,8 +2220,8 @@ mod tests {
     }
 
     /// Exercises cold-start disablement, activation and unchanged rescans using real registration code.
-    #[test]
-    fn disabled_toolpkg_scan_skips_engines_and_reloads_only_on_activation() {
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disabled_toolpkg_scan_skips_engines_and_reloads_only_on_activation() {
         use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
         use crate::tools::PackageLoadingProgress::*;
         use std::io::Write;
@@ -2241,6 +2245,7 @@ mod tests {
         let provider = Arc::new(CountingPackageProvider {
             inner: operit_js_bridge::javascript::JsExecutionProvider::HostJsExecutionProvider::new(),
             registrations: AtomicUsize::new(0),
+            scanningOwner: Mutex::new(None),
         });
         let fixture = PipelineFixture::with_package_provider(Some(assets), provider.clone());
         fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
@@ -2248,8 +2253,10 @@ mod tests {
         operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
         operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
         let packages = fixture.handler.getOrCreatePackageManager();
+        *provider.scanningOwner.lock().unwrap() = Some(Arc::downgrade(&packages));
+        RuntimePackageManager::reloadRegistry(packages.clone()).await.unwrap();
+        *provider.scanningOwner.lock().unwrap() = None;
         let mut manager = packages.lock().unwrap();
-        manager.loadAvailablePackages();
         let startupIssues = manager.getToolPkgLoadIssues();
         let startupReady = manager.packageRegistryReadiness().require_ready();
         let startupEnabled = manager.isPackageEnabled("scan.probe");

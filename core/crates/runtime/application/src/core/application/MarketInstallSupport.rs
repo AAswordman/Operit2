@@ -80,11 +80,11 @@ fn mcp_config_marker_root(server_id: &str) -> PathBuf {
 
 /// Enumerates loaded installations without checking whether each source can be exported.
 fn installed_marker_installations(
-    app: &OperitApplication,
+    tools: &operit_tools::tools::AIToolHandler::AIToolHandler,
 ) -> Result<Vec<(&'static str, String, PathBuf)>, String> {
-    let fs = app.hostManager.vfs()?;
+    let fs = tools.getContext().vfs()?;
     let mut installations = Vec::new();
-    let packages = app.packageManager();
+    let packages = tools.getOrCreatePackageManager();
     let package_names = {
         let manager = packages.lock().map_err(|error| error.to_string())?;
         let containers = manager.getToolPkgContainerRuntimes().into_iter()
@@ -105,14 +105,13 @@ fn installed_marker_installations(
             artifact_marker_root(&package_name)?,
         ));
     }
-    for skill in app
-        .skillRepository()
+    for skill in operit_tools::tools::skill_runtime::SkillRepository::SkillRepository::getInstance(&tools.getContext(), tools.runtimeSupport())
         .getAvailableSkillPackages()
         .into_values()
     {
         installations.push(("skill", skill.name.clone(), skill.directory));
     }
-    let mcp = MCPLocalServer::getInstance(&app.hostManager);
+    let mcp = MCPLocalServer::getInstance(&tools.getContext());
     for id in mcp.getAllMCPServersChecked()?.keys() {
         installations.push(("mcp", id.clone(), mcp_config_marker_root(id)));
     }
@@ -133,12 +132,12 @@ pub(super) fn installed_versions(
     app: &OperitApplication,
 ) -> Result<BTreeMap<String, String>, String> {
     let fs = app.hostManager.vfs()?;
-    let mut versions: BTreeMap<_, _> = installed_marker_installations(app)?
+    let mut versions: BTreeMap<_, _> = installed_marker_installations(&app.toolHandler)?
         .into_iter()
         .filter_map(|(_, _, root)| read_marker(&fs, &root))
         .map(|marker| (marker.entry_id, marker.version_id))
         .collect();
-    for marker in a2a_marker_origins(app)?.into_values() {
+    for marker in a2a_marker_origins(&app.toolHandler)?.into_values() {
         versions.insert(marker.entry_id, marker.version_id);
     }
     Ok(versions)
@@ -146,21 +145,21 @@ pub(super) fn installed_versions(
 
 /// Returns market ownership markers keyed by the extension kind and local id.
 pub(super) fn installed_marker_origins(
-    app: &OperitApplication,
+    tools: &operit_tools::tools::AIToolHandler::AIToolHandler,
 ) -> Result<BTreeMap<(String, String), MarketInstallMarker>, String> {
-    let fs = app.hostManager.vfs()?;
-    let mut origins: BTreeMap<_,_> = installed_marker_installations(app)?
+    let fs = tools.getContext().vfs()?;
+    let mut origins: BTreeMap<_,_> = installed_marker_installations(tools)?
         .into_iter()
         .filter_map(|(kind, id, root)| {
             read_marker(&fs, &root).map(|marker| ((kind.to_string(), id), marker))
         })
         .collect();
-    origins.extend(a2a_marker_origins(app)?);
+    origins.extend(a2a_marker_origins(tools)?);
     Ok(origins)
 }
 
-fn a2a_marker_origins(app: &OperitApplication) -> Result<BTreeMap<(String, String), MarketInstallMarker>, String> {
-    let repository = operit_tools::tools::a2a::A2ARepository::A2ARepository::new(app.hostManager.clone())?;
+fn a2a_marker_origins(tools: &operit_tools::tools::AIToolHandler::AIToolHandler) -> Result<BTreeMap<(String, String), MarketInstallMarker>, String> {
+    let repository = operit_tools::tools::a2a::A2ARepository::A2ARepository::new(tools.getContext().clone())?;
     Ok(repository.records()?.into_iter().filter_map(|record| {
         let entry_id = record.settings["marketEntryId"].as_str()?.to_string();
         let version_id = record.settings["installedMarketVersionId"].as_str()?.to_string();

@@ -1224,6 +1224,7 @@ async fn owned_core_command_releases_application_while_registry_is_loading() {
     hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
     hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
     hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+    ui_resource_tests::configure_package_hosts(&mut hosts);
     let application = OperitApplication::newWithContext(hosts);
     let readiness = application.packageManager().lock().unwrap().packageRegistryReadiness();
     assert!(readiness.claim_initial_load().unwrap());
@@ -1240,6 +1241,12 @@ async fn owned_core_command_releases_application_while_registry_is_loading() {
     let command = tokio::time::timeout(Duration::from_secs(2), pending).await.unwrap();
     assert!(response.expect("Core command must release the application lock").result.is_ok());
     assert_eq!(command.result.unwrap_err().message, "core command startup error");
+    for method in ["getExtensionCatalogSnapshot", "checkExtensionCatalogUpdates"] {
+        let response = tokio::time::timeout(Duration::from_secs(2), CoreLinkSharedClient::call(
+            &proxy, CoreCallRequest::new(method, app_target, method, toCoreValue(json!({})).unwrap()),
+        )).await.expect("catalog I/O must complete through its detached host task");
+        assert!(response.result.is_ok(), "{method}: {response:?}");
+    }
 }
 
 /// Covers the local-proxy to annotation-route boundary used by Flutter chat pages.

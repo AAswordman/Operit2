@@ -146,8 +146,7 @@ impl Worker {
             // Compatibility upgrades must finish before scanning the installation directory.
             operit_store::ExtensionStore::ExtensionStore::new(storage).records("package")?;
             let manager = self.tools.getOrCreatePackageManager();
-            let mut manager = manager.lock().map_err(|e| e.to_string())?;
-            manager.loadAvailablePackages();
+            operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager::reloadRegistry(manager).await?;
         }
         if changes.a2a && !changes.packages {
             self.tools.getOrCreatePackageManager().lock().map_err(|e| e.to_string())?.reloadA2APackages();

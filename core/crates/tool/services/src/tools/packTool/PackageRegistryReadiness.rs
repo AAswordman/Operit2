@@ -1,6 +1,5 @@
 //! Shared package-registry readiness; waiting never loads, retries, or rescans packages.
 
-use std::sync::{Arc, Mutex};
 use tokio::sync::watch;
 
 /// Identifies the exact lifecycle of the canonical package registration snapshot.
@@ -16,73 +15,62 @@ pub enum PackageRegistryLoadState {
 /// Keeps readiness and its error shared across package-manager snapshots.
 #[derive(Clone)]
 pub struct PackageRegistryReadiness {
-    inner: Arc<PackageRegistryReadinessInner>,
-}
-
-struct PackageRegistryReadinessInner {
     state: watch::Sender<PackageRegistryLoadState>,
-    transition: Mutex<()>,
 }
 
 impl PackageRegistryReadiness {
     /// Creates an uninitialized registry lifecycle without loading any packages.
     pub(super) fn new() -> Self {
         let (state, _) = watch::channel(PackageRegistryLoadState::NotScheduled);
-        Self {
-            inner: Arc::new(PackageRegistryReadinessInner {
-                state,
-                transition: Mutex::new(()),
-            }),
-        }
+        Self { state }
     }
 
     /// Claims the initial startup task once; repeated startup notifications never schedule another scan.
     pub fn claim_initial_load(&self) -> Result<bool, String> {
-        let _guard = self
-            .inner
-            .transition
-            .lock()
-            .map_err(|error| error.to_string())?;
-        let state = self.inner.state.borrow().clone();
-        match state {
+        let mut outcome = Ok(false);
+        self.state.send_if_modified(|state| match state {
             PackageRegistryLoadState::NotScheduled => {
-                self.inner
-                    .state
-                    .send_replace(PackageRegistryLoadState::Scheduled);
-                Ok(true)
+                *state = PackageRegistryLoadState::Scheduled;
+                outcome = Ok(true);
+                true
             }
-            PackageRegistryLoadState::Scheduled
-            | PackageRegistryLoadState::Loading
-            | PackageRegistryLoadState::Ready => Ok(false),
-            PackageRegistryLoadState::Failed(error) => Err(error),
-        }
+            PackageRegistryLoadState::Failed(error) => {
+                outcome = Err(error.clone());
+                false
+            }
+            _ => false,
+        });
+        outcome
     }
 
-    /// Announces an explicitly requested source scan before its registration snapshot is changed.
+    /// Announces initial scanning while retaining a previously published catalog during refresh.
     pub fn begin_scan(&self) {
-        self.inner
-            .state
-            .send_replace(PackageRegistryLoadState::Loading);
+        self.state.send_if_modified(|state| {
+            if *state == PackageRegistryLoadState::Ready { return false; }
+            *state = PackageRegistryLoadState::Loading;
+            true
+        });
     }
 
     /// Publishes a completed catalog. Individual package issues belong to that catalog,
     /// and must not prevent commands from using its healthy packages.
     pub fn complete_scan(&self) {
-        self.inner
-            .state
+        self.state
             .send_replace(PackageRegistryLoadState::Ready);
     }
 
-    /// Publishes the original startup scheduler or loader error to every waiting command.
+    /// Publishes a startup failure without invalidating an already usable catalog.
     pub fn fail(&self, error: String) {
-        self.inner
-            .state
-            .send_replace(PackageRegistryLoadState::Failed(error));
+        self.state.send_if_modified(|state| {
+            if *state == PackageRegistryLoadState::Ready { return false; }
+            *state = PackageRegistryLoadState::Failed(error);
+            true
+        });
     }
 
     /// Reads the exact current lifecycle state without inventing a ready registry.
     pub fn state(&self) -> PackageRegistryLoadState {
-        self.inner.state.borrow().clone()
+        self.state.borrow().clone()
     }
 
     /// Requires a completed canonical snapshot before a caller clones or enumerates it.
@@ -101,7 +89,7 @@ impl PackageRegistryReadiness {
 
     /// Waits for the owning startup task without holding a manager mutex or initiating package work.
     pub async fn wait_until_ready(&self) -> Result<(), String> {
-        let mut receiver = self.inner.state.subscribe();
+        let mut receiver = self.state.subscribe();
         loop {
             let state = receiver.borrow().clone();
             match state {
@@ -124,6 +112,17 @@ impl PackageRegistryReadiness {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Readers retain the last publication while a refresh is scanning or reports a failure.
+    #[tokio::test(flavor = "current_thread")]
+    async fn refresh_keeps_published_catalog_available() {
+        let readiness = PackageRegistryReadiness::new();
+        readiness.complete_scan();
+        readiness.begin_scan();
+        assert_eq!(readiness.require_ready(), Ok(()));
+        readiness.fail("refresh failed".into());
+        assert_eq!(readiness.wait_until_ready().await, Ok(()));
+    }
 
     /// Rejects an unscheduled registry instead of pretending that an empty catalog is ready.
     #[tokio::test(flavor = "current_thread")]

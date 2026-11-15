@@ -140,15 +140,13 @@ impl PluginPackageManager {
         Arc::make_mut(&mut self.activePackageStateIds).retain(|name, _| self.availablePackages.contains_key(name));
     }
 
-    /// Replaces ToolPkg runtime maps after an external source scan.
+    /// Publishes precomputed runtime declarations without reading sources or destroying workers.
     #[allow(non_snake_case)]
-    pub fn replaceToolPkgRuntimes(
+    pub fn publishToolPkgRuntimes(
         &mut self,
-        containers: BTreeMap<String, ToolPkgContainerRuntime>,
-        subpackages: BTreeMap<String, ToolPkgSubpackageRuntime>,
-    ) {
-        self.toolPkgManager
-            .replaceRuntimeMaps(containers, subpackages);
+        prepared: crate::toolpkg::ToolPkgManager::PreparedToolPkgRuntimeMaps,
+    ) -> Vec<Arc<dyn crate::javascript::JsExecutionEngine>> {
+        self.toolPkgManager.publishRuntimeMaps(prepared)
     }
 
     /// Removes one package or an entire ToolPkg container.
