@@ -6,6 +6,8 @@ using System.Threading;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
+using System.Windows.Interop;
+using WinForms = System.Windows.Forms;
 
 namespace Operit.Installer
 {
@@ -169,13 +171,27 @@ namespace Operit.Installer
             SecondaryButton.Content = "正在完成…";
         }
 
-        /// <summary>Enables direct editing of the installation directory.</summary>
+        /// <summary>Opens the system folder picker so the install directory is chosen, not typed.</summary>
         private void EditLocation(object sender, RoutedEventArgs e)
         {
             if (Operation != SetupOperation.Install) return;
-            LocationText.IsReadOnly = false;
-            LocationText.Focus();
-            LocationText.SelectAll();
+            using (var dialog = new WinForms.FolderBrowserDialog
+            {
+                Description = "选择 Operit2 的安装文件夹",
+                SelectedPath = LocationText.Text
+            })
+            {
+                if (dialog.ShowDialog(new WindowOwner(this)) == WinForms.DialogResult.OK)
+                    LocationText.Text = dialog.SelectedPath;
+            }
+        }
+
+        /// <summary>Adapts the WPF window handle so the folder picker stays modal to it.</summary>
+        private sealed class WindowOwner : WinForms.IWin32Window
+        {
+            private readonly IntPtr handle;
+            public WindowOwner(Window window) { handle = new WindowInteropHelper(window).Handle; }
+            public IntPtr Handle => handle;
         }
 
         /// <summary>Moves the frameless window using the custom title bar.</summary>
