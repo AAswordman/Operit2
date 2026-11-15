@@ -8604,6 +8604,12 @@ abstract class AppLocalizations {
   /// **'This code belongs to a different device. Scan the code for the selected device.'**
   String get peerQrWrongDevice;
 
+  /// No description provided for @peerPairTimeoutHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection timed out: could not reach the other device. A common cause is the other device’s firewall blocking incoming connections. Try initiating the connection from the other device, or allow Operit through the other device’s firewall (especially on public networks).'**
+  String get peerPairTimeoutHint;
+
   /// No description provided for @peerQrImageInvalid.
   ///
   /// In en, this message translates to:

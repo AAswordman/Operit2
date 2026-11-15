@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'SpaceJoinWidgets.dart';
 import 'PeerQrCodeDialog.dart';
+import 'PairingErrorText.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/logging/ClientLogger.dart';
@@ -595,8 +596,8 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
               Icon(Icons.error_outline_rounded, color: colors.onErrorContainer),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  error,
+                child: PairingErrorText(
+                  error: error,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colors.onErrorContainer,
                   ),
@@ -920,8 +921,8 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
               const SizedBox(height: 10),
               Align(
                 alignment: Alignment.centerLeft,
-                child: Text(
-                  _error!,
+                child: PairingErrorText(
+                  error: _error!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),
@@ -1047,8 +1048,8 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
               const SizedBox(height: 10),
               Align(
                 alignment: Alignment.centerLeft,
-                child: Text(
-                  _error!,
+                child: PairingErrorText(
+                  error: _error!,
                   style: TextStyle(color: Theme.of(context).colorScheme.error),
                 ),
               ),

@@ -12,6 +12,7 @@ import '../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../core/runtime/PeerQrImage.dart';
 import '../../l10n/generated/app_localizations.dart';
 import 'components/OperitDialog.dart';
+import 'PairingErrorText.dart';
 
 enum PeerQrMode { scan, show }
 
@@ -483,8 +484,8 @@ class _PeerQrCodeDialogState extends State<PeerQrCodeDialog> {
                     color: colors.errorContainer,
                     borderRadius: BorderRadius.circular(12),
                   ),
-                  child: Text(
-                    _error!,
+                  child: PairingErrorText(
+                    error: _error!,
                     style: TextStyle(color: colors.onErrorContainer),
                   ),
                 ),
