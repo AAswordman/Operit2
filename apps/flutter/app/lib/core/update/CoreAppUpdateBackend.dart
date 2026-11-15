@@ -83,12 +83,17 @@ class CoreAppUpdateBackend extends AppUpdateBackend {
   Future<String> download(
     AppUpdateRelease release,
     AppUpdateProgress progress, {
+    void Function()? onSelectingSource,
     void Function()? onReconstructing,
   }) async {
     final subscription = _clients.application
         .applicationUpdateProgressFlow()
         .listen(
           (event) {
+            if (event.stage == 'selecting_source') {
+              onSelectingSource?.call();
+              return;
+            }
             if (event.stage == 'reconstructing') {
               onReconstructing?.call();
               return;

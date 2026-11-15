@@ -7,6 +7,7 @@ use operit_host_api::{
 use std::sync::{Arc, Mutex};
 
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::cmp::Ordering as CmpOrdering;
 
 const GITHUB_RELEASE_OWNER: &str = "AAswordman";
@@ -79,6 +80,7 @@ pub enum FullUpdateProgressEvent {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 /// High-level stage of full update preparation.
 pub enum FullUpdateStage {
+    SelectingSource,
     DownloadingPackage,
     ReconstructingPackage,
     Ready,
@@ -148,16 +150,21 @@ impl GithubReleaseUtil {
         let channel = channelForCurrentVersion(&current);
         let (release, patches) = tokio::try_join!(
             Self::findLatestReleaseInfo(
-                GITHUB_RELEASE_OWNER, GITHUB_RELEASE_REPO, target.clone(), channel,
+                GITHUB_RELEASE_OWNER,
+                GITHUB_RELEASE_REPO,
+                target.clone(),
+                channel,
                 authorizationHeader.clone(),
             ),
             Self::findLatestReleaseInfo(
-                GITHUB_RELEASE_OWNER, GITHUB_PATCH_REPO, target, channel,
+                GITHUB_RELEASE_OWNER,
+                GITHUB_PATCH_REPO,
+                target,
+                channel,
                 authorizationHeader,
             ),
         )?;
-        let Some(releaseInfo) = mergeReleaseInfo(release, patches)?
-        else {
+        let Some(releaseInfo) = mergeReleaseInfo(release, patches)? else {
             return Ok(FullUpdateStatus::UpToDate);
         };
         if Self::compareVersions(&releaseInfo.version, currentVersion)? > 0 {
@@ -306,6 +313,7 @@ impl GithubReleaseUtil {
             &packageFileName,
             context,
             control.clone(),
+            None,
             move |event| progress(event),
         )
         .await?;
@@ -882,9 +890,11 @@ pub(crate) fn validateUpdatePackageSource(url: &str, name: &str) -> Result<(), S
     validatePackageFileName(name)?;
     let path = [GITHUB_RELEASE_REPO, GITHUB_PATCH_REPO]
         .iter()
-        .find_map(|repo| url.strip_prefix(&format!(
-            "https://github.com/{GITHUB_RELEASE_OWNER}/{repo}/releases/download/"
-        )))
+        .find_map(|repo| {
+            url.strip_prefix(&format!(
+                "https://github.com/{GITHUB_RELEASE_OWNER}/{repo}/releases/download/"
+            ))
+        })
         .ok_or("Update URL must reference this project's HTTPS release assets")?;
     let (tag, asset) = path.split_once('/').ok_or("Missing release tag/asset")?;
     if tag.is_empty() || asset != name || !name.starts_with("operit2-") || name.contains(['?', '#'])
@@ -944,6 +954,7 @@ struct StagedUpdate {
     prefix: Vec<u8>,
     received: u64,
     total: u64,
+    hash: Sha256,
 }
 impl Drop for StagedUpdate {
     /// Explicitly discards uncommitted data on every Host, including browser storage.
@@ -961,14 +972,24 @@ pub(crate) async fn downloadUpdatePackage<F>(
     name: &str,
     context: &HostManager,
     control: HttpDownloadControl,
+    expectedHash: Option<&str>,
     onEvent: F,
 ) -> Result<(), String>
 where
     F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
 {
-    downloadPackageResource(url, out, name, context, control, false, onEvent)
-        .await
-        .map(|_| ())
+    downloadPackageResource(
+        url,
+        out,
+        name,
+        context,
+        control,
+        false,
+        expectedHash,
+        onEvent,
+    )
+    .await
+    .map(|_| ())
 }
 
 /// Downloads an optional patch while distinguishing removal from failed transfers.
@@ -978,15 +999,26 @@ pub(crate) async fn downloadOptionalUpdatePackage<F>(
     name: &str,
     context: &HostManager,
     control: HttpDownloadControl,
+    expectedHash: Option<&str>,
     onEvent: F,
 ) -> Result<bool, String>
 where
     F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
 {
-    downloadPackageResource(url, out, name, context, control, true, onEvent).await
+    downloadPackageResource(
+        url,
+        out,
+        name,
+        context,
+        control,
+        true,
+        expectedHash,
+        onEvent,
+    )
+    .await
 }
 
-/// Streams one resource transactionally and commits only a complete response.
+/// Selects the fastest measured source and discards failed attempts before trying the next one.
 async fn downloadPackageResource<F>(
     url: &str,
     out: &str,
@@ -994,6 +1026,75 @@ async fn downloadPackageResource<F>(
     context: &HostManager,
     control: HttpDownloadControl,
     optional: bool,
+    expectedHash: Option<&str>,
+    onEvent: F,
+) -> Result<bool, String>
+where
+    F: Fn(FullUpdateProgressEvent) + Send + Sync + 'static,
+{
+    let events = Arc::new(onEvent);
+    let selecting = || {
+        events(FullUpdateProgressEvent::StageChanged {
+            stage: FullUpdateStage::SelectingSource,
+            message: "Automatically selecting a download source".into(),
+        })
+    };
+    selecting();
+    let sources =
+        crate::UpdateSources::ranked(url, name, context, control.clone(), optional).await?;
+    let mut lastError = None;
+    let mut absent = sources.is_empty();
+    for source in sources {
+        ensureDownloadActive(&control)?;
+        events(FullUpdateProgressEvent::StageChanged {
+            stage: FullUpdateStage::DownloadingPackage,
+            message: "Downloading update".into(),
+        });
+        let progress = events.clone();
+        match downloadPackageFromSource(
+            &source,
+            out,
+            name,
+            context,
+            control.clone(),
+            optional,
+            expectedHash,
+            move |event| progress(event),
+        )
+        .await
+        {
+            Ok(true) => return Ok(true),
+            Ok(false) => absent = true,
+            Err(error) => {
+                ensureDownloadActive(&control)?;
+                crate::AppLogger::AppLogger::w(
+                    "ApplicationUpdate",
+                    &format!("Download source failed: {source}: {error}"),
+                );
+                lastError = Some(error);
+            }
+        }
+        selecting();
+    }
+    ensureDownloadActive(&control)?;
+    if let Some(error) = lastError {
+        return Err(error);
+    }
+    if optional && absent {
+        return Ok(false);
+    }
+    Err("No download source could provide the update".into())
+}
+
+/// Streams one resource transactionally and commits only a complete response.
+async fn downloadPackageFromSource<F>(
+    url: &str,
+    out: &str,
+    name: &str,
+    context: &HostManager,
+    control: HttpDownloadControl,
+    optional: bool,
+    expectedHash: Option<&str>,
     onEvent: F,
 ) -> Result<bool, String>
 where
@@ -1020,6 +1121,7 @@ where
         prefix: Vec::with_capacity(8),
         received: 0,
         total: 0,
+        hash: Sha256::new(),
     }));
     let sink = state.clone();
     let mut lastTime = scheduler
@@ -1057,6 +1159,7 @@ where
                     .expect("active update session")
                     .writeChunk(&bytes)
                     .map_err(|error| error.to_string())?;
+                state.hash.update(&bytes);
                 let prefixBytes = bytes.len().min(8 - state.prefix.len());
                 state.prefix.extend_from_slice(&bytes[..prefixBytes]);
                 let now = scheduler
@@ -1077,22 +1180,16 @@ where
         }
         Ok(())
     };
+    let mut request = updateHttpRequest(url, "GET");
+    request.connectTimeoutSeconds = 8;
+    request.readTimeoutSeconds = 15;
+    request
+        .headers
+        .push(("Accept-Encoding".into(), "identity".into()));
     let present = if optional {
-        crate::UpdateHttp::requestOptional(
-            http,
-            updateHttpRequest(url, "GET"),
-            control.clone(),
-            consume,
-        )
-        .await?
+        crate::UpdateHttp::requestOptional(http, request, control.clone(), consume).await?
     } else {
-        requestUpdateHttp(
-            http,
-            updateHttpRequest(url, "GET"),
-            control.clone(),
-            consume,
-        )
-        .await?;
+        requestUpdateHttp(http, request, control.clone(), consume).await?;
         true
     };
     ensureDownloadActive(&control)?;
@@ -1103,8 +1200,11 @@ where
     if state.received != state.total || state.total == 0 {
         return Err("Update package is incomplete".into());
     }
-    if !name.ends_with(".patch.gz") {
-        validateDownloadedUpdatePackage(&state.prefix, name)?;
+    validateDownloadedUpdatePackage(&state.prefix, name)?;
+    if let Some(expectedHash) = expectedHash {
+        if format!("{:x}", state.hash.clone().finalize()) != expectedHash {
+            return Err("UPDATE_INTEGRITY: downloaded update SHA-256 mismatch".into());
+        }
     }
     state
         .writer
@@ -1138,7 +1238,8 @@ mod tests {
         assert!(super::validateUpdatePackageSource(
             &format!("https://github.com/other/Operit2-nightly/releases/download/v2.0.0/{name}"),
             name
-        ).is_err());
+        )
+        .is_err());
         assert!(super::validateUpdatePackageSource("https://evil.example/install", name).is_err());
         assert!(super::validateUpdatePackageSource(
             "https://github.com/AAswordman/Operit2/releases/download/v2/a",

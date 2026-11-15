@@ -84,6 +84,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       final needsBase = phase == AppUpdatePhase.awaitingBase;
       final validatingBase = phase == AppUpdatePhase.validatingBase;
       final planning = phase == AppUpdatePhase.planning;
+      final selectingSource = phase == AppUpdatePhase.selectingSource;
       final downloading = phase == AppUpdatePhase.downloading;
       final reconstructing = phase == AppUpdatePhase.reconstructing;
       final preparing = phase == AppUpdatePhase.preparing;
@@ -92,7 +93,8 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       final awaiting = phase == AppUpdatePhase.awaitingInstall;
       final permission = phase == AppUpdatePhase.awaitingPermission;
       final status = switch (phase) {
-        AppUpdatePhase.planning => '正在检查完整包与增量更新…',
+        AppUpdatePhase.planning => '正在检查更新并自动选择下载源…',
+        AppUpdatePhase.selectingSource => '正在自动选择下载源…',
         AppUpdatePhase.awaitingBase => '需要上一次安装的原始安装包',
         AppUpdatePhase.validatingBase => '正在校验所选安装包…',
         AppUpdatePhase.downloading =>
@@ -133,9 +135,13 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
             if (!needsBase && !validatingBase && !preparing && !installing)
               TextButton(
                 onPressed: () => Navigator.of(context).pop(),
-                child: Text(downloading || reconstructing ? '后台更新' : '关闭'),
+                child: Text(
+                  selectingSource || downloading || reconstructing
+                      ? '后台更新'
+                      : '关闭',
+                ),
               ),
-            if (downloading || reconstructing)
+            if (selectingSource || downloading || reconstructing)
               TextButton(
                 onPressed: controller.cancelDownload,
                 child: const Text('取消更新'),
@@ -228,6 +234,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                   ],
                 ),
               if (planning ||
+                  selectingSource ||
                   validatingBase ||
                   downloading ||
                   reconstructing ||

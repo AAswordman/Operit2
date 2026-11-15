@@ -123,6 +123,37 @@ async fn discovery_selects_patch_only_newer_release_and_authenticates_its_manife
         .all(|url| url.contains("/Operit2-nightly/")));
 }
 
+/// Authenticated metadata, full packages, and patches remain usable when only a mirror is reachable.
+#[tokio::test]
+async fn manifest_and_both_package_routes_work_with_only_a_reachable_mirror() {
+    for retained in [false, true] {
+        let mut fixture = Fixture::new();
+        let (release, original, current) = fixture.network(retained, false);
+        let http = Arc::new(HttpFixture {
+            bodies: original
+                .bodies
+                .iter()
+                .map(|(url, bytes)| (format!("https://ghfast.top/{url}"), bytes.clone()))
+                .collect(),
+            requests: std::sync::Mutex::new(Vec::new()),
+            failedUrl: std::sync::Mutex::new(None),
+            statuses: std::sync::Mutex::new(Default::default()),
+        });
+        fixture.context = fixture.context.clone().withHttpHost(http.clone());
+        assert_eq!(
+            fixture.download(release, current).await.unwrap(),
+            fixture.target
+        );
+        let requests = http.requests.lock().unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests
+            .iter()
+            .all(|url| url.starts_with("https://ghfast.top/https://github.com/")));
+        assert!(requests[0].ends_with(".update.json"));
+        assert_eq!(requests[1].ends_with(".patch.gz"), retained);
+    }
+}
+
 /// Planning never transfers package bytes, and a rejected original cannot poison the next selection.
 #[tokio::test]
 async fn selected_base_is_verified_before_patch_download_for_patch_only_release() {
@@ -482,7 +513,14 @@ impl operit_host_api::HttpStreamHost for HttpFixture {
         bytes: operit_host_api::HttpStreamChunkCallback,
         closed: operit_host_api::HttpStreamClosedCallback,
     ) -> operit_host_api::HostResult<()> {
-        self.requests.lock().unwrap().push(request.url.clone());
+        // Probe samples are separate from actual artifact transfers asserted below.
+        if !request
+            .headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("range"))
+        {
+            self.requests.lock().unwrap().push(request.url.clone());
+        }
         if self.failedUrl.lock().unwrap().as_ref() == Some(&request.url) {
             return Err(operit_host_api::HostError::new(
                 "Simulated network interruption",
@@ -728,7 +766,7 @@ async fn manifest_integrity_and_server_errors_remain_errors() {
                 .insert(release.updateManifest.as_ref().unwrap().url.clone(), 500);
         }
         assert!(fixture.download(release, current).await.is_err());
-        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        assert_eq!(http.requests.lock().unwrap().len(), usize::from(corrupt));
     }
 }
 
@@ -1434,7 +1472,7 @@ async fn forced_full_transfer_cannot_bypass_package_digest_checks() {
     let (release, http, current) = fixture.network(true, false);
     assert_eq!(
         fixture.download(release, current).await.unwrap_err(),
-        "Full package SHA-256 mismatch"
+        "UPDATE_INTEGRITY: downloaded update SHA-256 mismatch"
     );
     assert_eq!(http.requests.lock().unwrap().len(), 1);
     fixture.target.pop();

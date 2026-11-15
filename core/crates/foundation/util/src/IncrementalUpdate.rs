@@ -148,44 +148,77 @@ async fn fetchManifest(
     };
     validateUpdatePackageSource(&release.downloadUrl, &release.assetName)?;
     validateUpdatePackageSource(&asset.url, &asset.name)?;
-    let tag = asset.url.rsplit('/').nth(1).ok_or("Missing manifest release tag")?;
+    let tag = asset
+        .url
+        .rsplit('/')
+        .nth(1)
+        .ok_or("Missing manifest release tag")?;
     if asset.name != format!("{}.update.json", release.assetName)
         || tag.strip_prefix('v').unwrap_or(tag) != release.version
     {
         return Err("Manifest source does not match selected release".into());
     }
     let expectedHash = githubHash(&asset.digest)?;
-    let body = Arc::new(Mutex::new(Vec::new()));
-    let sink = body.clone();
-    let present = requestOptional(
-        context
-            .httpHost
-            .clone()
-            .ok_or("HttpHost is required for updates")?,
-        updateHttpRequest(&asset.url, "GET"),
-        control,
-        move |event| {
-            if let UpdateHttpEvent::Bytes(bytes) = event {
-                let mut body = sink.lock().map_err(|e| e.to_string())?;
-                if body.len().saturating_add(bytes.len()) > 4 * 1024 * 1024 {
-                    return Err("Update manifest exceeds size limit".into());
-                }
-                body.extend_from_slice(&bytes);
+    let sources =
+        crate::UpdateSources::ranked(&asset.url, &asset.name, context, control.clone(), true)
+            .await?;
+    let mut lastError = None;
+    for source in sources {
+        let result: Result<Option<UpdateManifest>, String> = async {
+            let body = Arc::new(Mutex::new(Vec::new()));
+            let sink = body.clone();
+            let mut request = updateHttpRequest(&source, "GET");
+            request.connectTimeoutSeconds = 8;
+            request.readTimeoutSeconds = 15;
+            let present = requestOptional(
+                context
+                    .httpHost
+                    .clone()
+                    .ok_or("HttpHost is required for updates")?,
+                request,
+                control.clone(),
+                move |event| {
+                    if let UpdateHttpEvent::Bytes(bytes) = event {
+                        let mut body = sink.lock().map_err(|e| e.to_string())?;
+                        if body.len().saturating_add(bytes.len()) > 4 * 1024 * 1024 {
+                            return Err("Update manifest exceeds size limit".into());
+                        }
+                        body.extend_from_slice(&bytes);
+                    }
+                    Ok(())
+                },
+            )
+            .await?;
+            if !present {
+                return Ok(None);
             }
-            Ok(())
-        },
-    )
-    .await?;
-    if !present {
-        return Ok(None);
+            let bytes = body.lock().map_err(|e| e.to_string())?;
+            if format!("{:x}", Sha256::digest(&*bytes)) != expectedHash {
+                return Err("Update manifest SHA-256 mismatch".into());
+            }
+            let manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
+            validateManifest(&manifest, release)?;
+            Ok(Some(manifest))
+        }
+        .await;
+        match result {
+            Ok(Some(manifest)) => return Ok(Some(manifest)),
+            Ok(None) => {}
+            Err(error) => {
+                ensureDownloadActive(&control)?;
+                crate::AppLogger::AppLogger::w(
+                    "ApplicationUpdate",
+                    &format!("Manifest source failed: {source}: {error}"),
+                );
+                lastError = Some(error);
+            }
+        }
     }
-    let bytes = body.lock().map_err(|e| e.to_string())?;
-    if format!("{:x}", Sha256::digest(&*bytes)) != expectedHash {
-        return Err("Update manifest SHA-256 mismatch".into());
+    ensureDownloadActive(&control)?;
+    match lastError {
+        Some(error) => Err(error),
+        None => Ok(None),
     }
-    let manifest = serde_json::from_slice(&bytes).map_err(|e| e.to_string())?;
-    validateManifest(&manifest, release)?;
-    Ok(Some(manifest))
 }
 
 struct SourceReader<'a> {
@@ -913,9 +946,17 @@ where
             &patch.assetName,
             context,
             control.clone(),
+            Some(&patch.sha256),
             move |event| progress(event),
         )
-        .await?;
+        .await
+        .map_err(|error| {
+            if error.starts_with("UPDATE_INTEGRITY:") {
+                recordIncrementalFailure(&release, context, &control, error)
+            } else {
+                error
+            }
+        })?;
         if present {
             events(FullUpdateProgressEvent::StageChanged {
                 stage: FullUpdateStage::ReconstructingPackage,
@@ -954,12 +995,19 @@ where
             message: "Downloading full update package".into(),
         });
         let progress = events.clone();
+        let expectedHash = release
+            .packageSha256
+            .as_deref()
+            .map(githubHash)
+            .transpose()?
+            .or_else(|| manifest.as_ref().map(|manifest| manifest.sha256.as_str()));
         downloadUpdatePackage(
             &release.downloadUrl,
             &destination,
             &release.assetName,
             context,
             control.clone(),
+            expectedHash,
             move |event| progress(event),
         )
         .await?;

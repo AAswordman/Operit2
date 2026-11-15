@@ -321,6 +321,7 @@ impl ApplicationUpdateManager {
             FullUpdateProgressEvent::StageChanged { stage, .. } => {
                 progress.set_value(ApplicationUpdateProgress {
                     stage: match stage {
+                        FullUpdateStage::SelectingSource => "selecting_source",
                         FullUpdateStage::ReconstructingPackage => "reconstructing",
                         FullUpdateStage::Ready => "ready",
                         FullUpdateStage::DownloadingPackage => "downloading",

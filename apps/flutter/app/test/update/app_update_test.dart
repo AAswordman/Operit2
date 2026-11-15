@@ -27,6 +27,8 @@ final release = AppUpdateRelease(
 );
 
 class Backend extends AppUpdateBackend {
+  bool selectingSource = false;
+  void Function()? selectSource;
   int downloads = 0, installs = 0;
   bool failInstall = false;
   bool failCancel = false;
@@ -59,11 +61,17 @@ class Backend extends AppUpdateBackend {
   Future<String> download(
     AppUpdateRelease r,
     AppUpdateProgress progress, {
+    void Function()? onSelectingSource,
     void Function()? onReconstructing,
   }) async {
     downloads++;
     onProgress = progress;
-    progress(48 * 1024 * 1024, 120 * 1024 * 1024);
+    selectSource = onSelectingSource;
+    if (selectingSource) {
+      onSelectingSource?.call();
+    } else {
+      progress(48 * 1024 * 1024, 120 * 1024 * 1024);
+    }
     return downloadPending == null
         ? 'fixture-update-receipt'
         : downloadPending!.future;
@@ -90,6 +98,44 @@ class Backend extends AppUpdateBackend {
 
 void main() {
   setUpAll(ClientLogger.initialize);
+  testWidgets(
+    'automatic source selection stays brief, resets switched progress, and can be cancelled',
+    (tester) async {
+      final backend = Backend()
+        ..selectingSource = true
+        ..downloadPending = Completer<String>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: AppUpdateDialog(controller: controller),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('正在自动选择下载源…'), findsOneWidget);
+      expect(controller.busy, isTrue);
+      expect(find.text('取消更新'), findsOneWidget);
+      backend.onProgress!(48, 120);
+      await tester.pump();
+      expect(controller.phase, AppUpdatePhase.downloading);
+      backend.selectSource!();
+      await tester.pump();
+      expect(find.text('正在自动选择下载源…'), findsOneWidget);
+      expect(controller.receivedBytes, 0);
+      expect(controller.totalBytes, isNull);
+      await tester.tap(find.text('取消更新'));
+      await tester.pump();
+      expect(controller.phase, AppUpdatePhase.available);
+      expect(backend.installs, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    },
+  );
   test(
     'installation retry reuses package and respects native permission/restart states',
     () async {

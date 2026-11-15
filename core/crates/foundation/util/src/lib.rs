@@ -16,6 +16,7 @@ pub mod FileUtils;
 pub mod GithubReleaseUtil;
 pub mod IncrementalUpdate;
 mod UpdateHttp;
+mod UpdateSources;
 pub mod GlobalExceptionHandler;
 pub mod HtmlParserUtil;
 pub mod HttpMultiPartDownloader;

@@ -5,6 +5,9 @@ use operit_host_api::*;
 use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+#[path = "GithubReleaseSourceTests.rs"]
+mod sourceTests;
+
 #[derive(Default)]
 struct Clock(AtomicUsize);
 impl HostRuntimeTaskSchedulerHost for Clock {
@@ -49,9 +52,9 @@ impl HostRuntimeTaskSchedulerHost for Clock {
     fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
         panic!("no update polling")
     }
-    /// Rejects callback polling through delays.
+    /// Keeps probe deadlines pending while deterministic fixture responses complete immediately.
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
-        panic!("no update polling")
+        Box::pin(std::future::pending())
     }
 }
 
@@ -195,6 +198,7 @@ impl Fixture {
     fn new() -> Self {
         let storage = Arc::new(MemoryStorage::default());
         let http = Arc::new(ControlledHttpHost::default());
+        *http.probeBody.lock().unwrap() = Some(MSI.to_vec());
         let context = HostManager::new()
             .withRuntimeStorageHost(storage.clone())
             .withRuntimeStorageWriteHost(storage.clone())
@@ -291,6 +295,8 @@ async fn publishes_verified_package_after_clean_completion() {
 #[tokio::test]
 async fn rejects_truncated_html_oversized_and_failed_downloads() {
     for scenario in 0..6 {
+        // Each parallel probe batch receives a fresh executor cooperation budget.
+        tokio::task::yield_now().await;
         let fixture = Fixture::new();
         let mut future = Box::pin(GithubReleaseUtil::downloadAndPrepareFullUpdateWithProgress(
             packageUrl(),
@@ -334,6 +340,7 @@ async fn rejects_truncated_html_oversized_and_failed_downloads() {
 #[tokio::test]
 async fn cancellation_and_dropped_future_discard_only_their_attempt() {
     for scenario in 0..4 {
+        tokio::task::yield_now().await;
         let fixture = Fixture::new();
         let control = HttpDownloadControl::new();
         if scenario == 0 {

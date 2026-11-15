@@ -85,7 +85,7 @@ class UpdateBridge extends NativeSidebarBridge {
     return progress.stream;
   }
 
-  void reportProgress() {
+  void reportProgress({String stage = 'downloading'}) {
     final request = watch!;
     progress.add(
       CoreEvent.raw(
@@ -94,7 +94,7 @@ class UpdateBridge extends NativeSidebarBridge {
         propertyName: request.propertyName,
         kind: 'Snapshot',
         valueBytes: encodeCoreLink({
-          'stage': 'downloading',
+          'stage': stage,
           'receivedBytes': 48,
           'totalBytes': 120,
         }),
@@ -167,10 +167,16 @@ void main() {
       );
       final release = (await backend.check())!;
       final received = <(int, int?)>[];
+      var selections = 0;
       final pending = backend.download(
         release,
         (bytes, total) => received.add((bytes, total)),
+        onSelectingSource: () => selections++,
       );
+      bridge.reportProgress(stage: 'selecting_source');
+      await Future<void>.delayed(Duration.zero);
+      expect(selections, 1);
+      expect(received, isEmpty);
       bridge.reportProgress();
       await Future<void>.delayed(Duration.zero);
       expect(received, [(48, 120)]);

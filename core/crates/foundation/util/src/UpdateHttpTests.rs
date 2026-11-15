@@ -15,6 +15,7 @@ pub(crate) struct Callbacks {
 pub(crate) struct ControlledHttpHost {
     callbacks: Mutex<Option<Callbacks>>,
     pub closed: AtomicBool,
+    pub probeBody: Mutex<Option<Vec<u8>>>,
 }
 
 impl ControlledHttpHost {
@@ -41,11 +42,27 @@ impl HttpStreamHost for ControlledHttpHost {
     fn openHttpResponseStream(
         &self,
         _: String,
-        _: HttpRequestData,
+        request: HttpRequestData,
         head: HttpStreamResponseCallback,
         bytes: HttpStreamChunkCallback,
         closed: HttpStreamClosedCallback,
     ) -> HostResult<()> {
+        if request
+            .headers
+            .iter()
+            .any(|(key, _)| key.eq_ignore_ascii_case("range"))
+        {
+            if let Some(body) = self.probeBody.lock().unwrap().clone() {
+                if request.url.starts_with("https://github.com/") {
+                    head(self::head(body.len()));
+                    bytes(body);
+                    closed(Ok(()));
+                } else {
+                    closed(Err("unavailable fixture mirror".into()));
+                }
+                return Ok(());
+            }
+        }
         self.closed.store(false, Ordering::SeqCst);
         *self.callbacks.lock().unwrap() = Some(Callbacks {
             head,

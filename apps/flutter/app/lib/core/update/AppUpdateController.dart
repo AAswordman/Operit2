@@ -40,6 +40,7 @@ class AppUpdateController extends ChangeNotifier {
   bool get busy => switch (phase) {
     AppUpdatePhase.planning ||
     AppUpdatePhase.validatingBase ||
+    AppUpdatePhase.selectingSource ||
     AppUpdatePhase.reconstructing ||
     AppUpdatePhase.downloading ||
     AppUpdatePhase.preparing ||
@@ -197,7 +198,7 @@ class AppUpdateController extends ChangeNotifier {
     if (packageReceipt == null) {
       receivedBytes = 0;
       totalBytes = null;
-      phase = AppUpdatePhase.downloading;
+      phase = AppUpdatePhase.selectingSource;
       _emit();
       packageReceipt = await _backend.download(
         release!,
@@ -205,6 +206,12 @@ class AppUpdateController extends ChangeNotifier {
           phase = AppUpdatePhase.downloading;
           receivedBytes = received;
           totalBytes = total;
+          _emit();
+        },
+        onSelectingSource: () {
+          phase = AppUpdatePhase.selectingSource;
+          receivedBytes = 0;
+          totalBytes = null;
           _emit();
         },
         onReconstructing: () {
@@ -254,7 +261,8 @@ class AppUpdateController extends ChangeNotifier {
 
   /// Cancels active download or reconstruction through the same Core token.
   Future<void> cancelDownload() async {
-    if (phase != AppUpdatePhase.downloading &&
+    if (phase != AppUpdatePhase.selectingSource &&
+        phase != AppUpdatePhase.downloading &&
         phase != AppUpdatePhase.reconstructing) {
       return;
     }

@@ -23,6 +23,7 @@ enum AppUpdatePhase {
   awaitingBase,
   validatingBase,
   unavailable,
+  selectingSource,
   downloading,
   reconstructing,
   preparing,
@@ -84,6 +85,7 @@ abstract class AppUpdateBackend {
   Future<String> download(
     AppUpdateRelease release,
     AppUpdateProgress progress, {
+    void Function()? onSelectingSource,
     void Function()? onReconstructing,
   });
   Future<void> cancelDownload();
