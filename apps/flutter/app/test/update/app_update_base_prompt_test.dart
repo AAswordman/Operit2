@@ -5,6 +5,7 @@ import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/core/update/AppUpdateController.dart';
 import 'package:operit2/core/update/AppUpdateModels.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/common/OperitLogoMark.dart';
 import 'package:operit2/ui/features/settings/about/AboutOperitScreen.dart';
 import 'package:operit2/ui/features/update/AppUpdateBadge.dart';
 import 'package:operit2/ui/features/update/AppUpdateDialog.dart';
@@ -239,6 +240,7 @@ void main() {
       );
       final backend = _Backend()..failCheck = true;
       final controller = AppUpdateController(backend: backend);
+      await controller.check();
       await tester.pumpWidget(
         _app(
           AppUpdateScope(
@@ -251,18 +253,21 @@ void main() {
       expect(find.text('检查更新失败，点击重试'), findsOneWidget);
       expect(controller.error, contains('403'));
       backend.failCheck = false;
-      await tester.tap(find.text('检查更新失败，点击重试'));
+      await tester.tap(find.text('检查更新'));
       await tester.pumpAndSettle();
       expect(find.text('检查更新失败，点击重试'), findsNothing);
-      expect(find.text('更新至 2.0.0-preview.36'), findsOneWidget);
+      expect(find.text('发现新版本 2.0.0-preview.36'), findsWidgets);
+      expect(find.byType(AppUpdateDialog), findsOneWidget);
       expect(backend.downloads, 0);
+      Navigator.of(tester.element(find.byType(AppUpdateDialog))).pop();
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
       controller.dispose();
     },
   );
 
   testWidgets(
-    'about removes persistent import and shows newer version through logo and update action',
+    'about keeps the logo centered without an indicator and uses a settings update row',
     (tester) async {
       PackageInfo.setMockInitialValues(
         appName: 'Operit2',
@@ -284,14 +289,21 @@ void main() {
       await tester.pumpAndSettle();
       expect(find.text('从安装包更新'), findsNothing);
       expect(find.byKey(const ValueKey('app-update-logo')), findsNothing);
+      expect(find.text('检查更新'), findsOneWidget);
+      expect(find.byType(FilledButton), findsNothing);
+      final logoBefore = tester.getRect(find.byType(OperitLogoMark));
       backend.hasUpdate = true;
       await controller.check(force: true);
       await tester.pumpAndSettle();
-      expect(find.text('更新至 2.0.0-preview.36'), findsOneWidget);
-      await tester.tap(find.byKey(const ValueKey('app-update-logo')));
+      expect(tester.getRect(find.byType(OperitLogoMark)), logoBefore);
+      expect(find.byKey(const ValueKey('app-update-badge')), findsNothing);
+      expect(find.text('发现新版本 2.0.0-preview.36'), findsOneWidget);
+      await tester.tap(find.text('检查更新'));
       await tester.pumpAndSettle();
       expect(find.byType(AppUpdateDialog), findsOneWidget);
       expect(controller.phase, AppUpdatePhase.awaitingBase);
+      Navigator.of(tester.element(find.byType(AppUpdateDialog))).pop();
+      await tester.pumpAndSettle();
       await tester.pumpWidget(const SizedBox());
       controller.dispose();
     },

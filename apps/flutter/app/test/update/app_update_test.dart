@@ -9,9 +9,12 @@ import 'package:operit2/core/update/AppUpdateController.dart';
 import 'package:operit2/core/update/AppUpdateModels.dart';
 import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/features/update/AppUpdateBadge.dart';
 import 'package:operit2/ui/features/update/AppUpdateDialog.dart';
+import 'package:operit2/ui/common/OperitLogoMark.dart';
+import 'package:operit2/ui/main/components/CollapsedDrawerContent.dart';
 import 'package:operit2/ui/main/components/DrawerContent.dart';
 import 'package:operit2/ui/main/components/NavigationDrawerAppearance.dart';
 import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
@@ -267,6 +270,36 @@ void main() {
                     body: Row(
                       children: [
                         SizedBox(
+                          width: 72,
+                          child: CollapsedDrawerContent(
+                            navigationEntries:
+                                ScreenRouteRegistry.mainSidebarEntries(
+                                  AppLocalizations.of(context)!,
+                                ),
+                            pluginEntries: const [],
+                            selectedRouteId: ScreenRouteRegistry.routeIdOf(
+                              ScreenRouteRegistry.aiChat,
+                            ),
+                            appearance: const NavigationDrawerAppearance(
+                              containerColor: Colors.white,
+                              titleColor: Colors.black,
+                              statusAvailableColor: Colors.blue,
+                              itemColor: Colors.black87,
+                              buttonContainerColor: Colors.white70,
+                              selectedContainerColor: Colors.blue,
+                              selectedContentColor: Colors.white,
+                              dividerColor: Colors.black12,
+                              transparentSurfaceEnabled: false,
+                            ),
+                            histories: const [],
+                            currentChatId: null,
+                            bridge: NativeSidebarBridge(),
+                            onNavigationEntrySelected: (_) {},
+                            onConversationNavigationPressed: () {},
+                            onConversationActivated: () {},
+                          ),
+                        ),
+                        SizedBox(
                           width: 296,
                           child: DrawerContent(
                             conversationsOnly: true,
@@ -341,6 +374,19 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
       expect(find.byKey(const ValueKey('app-update-badge')), findsOneWidget);
+      final sidebar = find.byType(CollapsedDrawerContent);
+      final logo = find.descendant(
+        of: sidebar,
+        matching: find.byType(OperitLogoMark),
+      );
+      expect(tester.getCenter(logo).dx, tester.getCenter(sidebar).dx);
+      expect(
+        find.descendant(
+          of: sidebar,
+          matching: find.byKey(const ValueKey('app-update-badge')),
+        ),
+        findsNothing,
+      );
       expect(backend.downloads, 0);
       Future<void> capture(String name) async {
         if (output.isEmpty) return;

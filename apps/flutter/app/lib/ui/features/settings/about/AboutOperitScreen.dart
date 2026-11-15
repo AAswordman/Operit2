@@ -39,6 +39,8 @@ class AboutOperitScreen extends StatelessWidget {
                 children: <Widget>[
                   _AboutHeader(),
                   SizedBox(height: 24),
+                  _AboutSection(title: '版本更新', child: _AboutUpdateAction()),
+                  SizedBox(height: 12),
                   _AboutSection(
                     title: 'Operit2',
                     child: Text(
@@ -96,16 +98,14 @@ class _AboutHeaderState extends State<_AboutHeader> {
     final colorScheme = Theme.of(context).colorScheme;
     return Column(
       children: <Widget>[
-        AppUpdateBadge(
-          child: DecoratedBox(
-            decoration: BoxDecoration(
-              color: colorScheme.primaryContainer,
-              shape: BoxShape.circle,
-            ),
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: OperitLogoMark(size: 76, color: colorScheme.primary),
-            ),
+        DecoratedBox(
+          decoration: BoxDecoration(
+            color: colorScheme.primaryContainer,
+            shape: BoxShape.circle,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: OperitLogoMark(size: 76, color: colorScheme.primary),
           ),
         ),
         const SizedBox(height: 14),
@@ -139,16 +139,31 @@ class _AboutHeaderState extends State<_AboutHeader> {
             );
           },
         ),
-        const _AboutUpdateAction(),
       ],
     );
   }
 }
 
-/// Shows a discovered update or an explicit retry after a discovery failure.
+/// Presents update discovery and progress as an ordinary settings row.
 class _AboutUpdateAction extends StatelessWidget {
-  /// Creates the conditional About-page update entry.
+  /// Creates the About-page update entry.
   const _AboutUpdateAction();
+
+  /// Checks explicitly when needed and opens the shared update flow.
+  Future<void> _openUpdates(
+    BuildContext context,
+    AppUpdateController controller,
+  ) async {
+    if (!controller.visible) await controller.check(force: true);
+    if (!context.mounted) return;
+    if (controller.visible) {
+      await showAppUpdateDialog(context, controller: controller);
+    } else if (controller.error == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前已是最新版本')));
+    }
+  }
 
   /// Uses the same controller and dialog as the sidebar logo.
   @override
@@ -157,33 +172,32 @@ class _AboutUpdateAction extends StatelessWidget {
         AppUpdateScope.maybeOf(context) ?? AppUpdateController.instance;
     return ListenableBuilder(
       listenable: controller,
-      builder: (context, _) => controller.visible
-          ? Padding(
-              padding: const EdgeInsets.only(top: 12),
-              child: FilledButton.tonalIcon(
-                onPressed: () =>
-                    showAppUpdateDialog(context, controller: controller),
-                icon: const Icon(Icons.system_update_alt),
-                label: Text(
-                  controller.busy
-                      ? '查看更新进度'
-                      : '更新至 ${controller.release!.version}',
-                ),
-              ),
-            )
-          : controller.error == null
-          ? const SizedBox.shrink()
-          : TextButton.icon(
-              onPressed: controller.phase == AppUpdatePhase.checking
-                  ? null
-                  : () => controller.check(force: true),
-              icon: const Icon(Icons.refresh),
-              label: Text(
-                controller.phase == AppUpdatePhase.checking
-                    ? '正在检查更新…'
-                    : '检查更新失败，点击重试',
-              ),
-            ),
+      builder: (context, _) {
+        final colors = Theme.of(context).colorScheme;
+        final checking = controller.phase == AppUpdatePhase.checking;
+        final subtitle = checking
+            ? '正在检查更新…'
+            : controller.visible
+            ? controller.busy
+                  ? '正在更新至 ${controller.release!.version}，点击查看进度'
+                  : '发现新版本 ${controller.release!.version}'
+            : controller.error != null
+            ? '检查更新失败，点击重试'
+            : '点击检查最新版本';
+        return ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(Icons.system_update_alt, color: colors.primary),
+          title: const Text('检查更新'),
+          subtitle: Text(subtitle),
+          trailing: checking
+              ? const SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                )
+              : Icon(Icons.chevron_right, color: colors.onSurfaceVariant),
+          onTap: checking ? null : () => _openUpdates(context, controller),
+        );
+      },
     );
   }
 }

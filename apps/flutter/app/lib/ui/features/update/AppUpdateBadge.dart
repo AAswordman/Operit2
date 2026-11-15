@@ -24,9 +24,15 @@ class AppUpdateScope extends InheritedWidget {
 
 /// Keeps the version entry attached to the brand in both sidebar layouts.
 class AppUpdateBadge extends StatefulWidget {
-  const AppUpdateBadge({super.key, required this.child, this.controller});
+  const AppUpdateBadge({
+    super.key,
+    required this.child,
+    this.controller,
+    this.showIndicator = true,
+  });
   final Widget child;
   final AppUpdateController? controller;
+  final bool showIndicator;
 
   @override
   State<AppUpdateBadge> createState() => _AppUpdateBadgeState();
@@ -67,6 +73,14 @@ class _AppUpdateBadgeState extends State<AppUpdateBadge> {
     child: widget.child,
     builder: (context, child) {
       if (!_controller.visible) return child!;
+      final updateEntry = InkWell(
+        key: const ValueKey('app-update-logo'),
+        borderRadius: BorderRadius.circular(16),
+        onTap: () =>
+            unawaited(showAppUpdateDialog(context, controller: _controller)),
+        child: child,
+      );
+      if (!widget.showIndicator) return updateEntry;
       final colors = Theme.of(context).colorScheme;
       final busy = _controller.busy;
       final failed = _controller.phase == AppUpdatePhase.failed;
@@ -75,14 +89,7 @@ class _AppUpdateBadgeState extends State<AppUpdateBadge> {
         children: [
           Padding(
             padding: const EdgeInsets.only(top: 2, right: 22),
-            child: InkWell(
-              key: const ValueKey('app-update-logo'),
-              borderRadius: BorderRadius.circular(16),
-              onTap: () => unawaited(
-                showAppUpdateDialog(context, controller: _controller),
-              ),
-              child: child,
-            ),
+            child: updateEntry,
           ),
           Positioned(
             top: 0,

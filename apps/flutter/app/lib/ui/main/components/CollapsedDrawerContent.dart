@@ -120,6 +120,7 @@ class CollapsedDrawerContent extends StatelessWidget {
                   padding: EdgeInsets.only(top: topPadding),
                   child: Center(
                     child: AppUpdateBadge(
+                      showIndicator: false,
                       child: OperitLogoMark(
                         size: 34,
                         color: appearance.statusAvailableColor,
