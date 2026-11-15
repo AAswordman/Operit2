@@ -1,7 +1,7 @@
 //! Application facade for shared updates; package receipts retain VFS paths.
 use operit_host_api::HostManager::{defaultHostRuntimeTaskSchedulerHost, HostManager};
 use operit_host_api::HttpDownloadControl;
-use operit_host_api::{AppInstallTiming, AppOperationData, SystemOperationHost};
+use operit_host_api::{AppInstallTiming, AppOperationData};
 use operit_store::PreferencesDataStore::StateFlow;
 use operit_util::GithubReleaseUtil::{
     FullUpdateProgressEvent, FullUpdateStage, FullUpdateStatus, FullUpdateTarget,
@@ -11,22 +11,6 @@ use operit_util::IncrementalUpdate::{executeUpdate, planUpdate, UpdatePlan};
 use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
-
-/// Removes obsolete updater files once, before runtime initialization is exposed.
-pub(crate) fn cleanupCache(context: &HostManager) -> Result<(), String> {
-    let Some(host) = &context.systemOperationHost else {
-        return Ok(());
-    };
-    let Some(target) = host.applicationUpdateTarget().map_err(|e| e.to_string())? else {
-        return Ok(());
-    };
-    let target = FullUpdateTarget::fromApplicationTarget(target)?;
-    operit_util::IncrementalUpdate::cleanupUpdateCache(
-        crate::CORE_VERSION,
-        &target.assetNameForVersion(crate::CORE_VERSION)?,
-        context,
-    )
-}
 
 /// Presentation metadata only; the native download URL/path is never sent to the UI.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,7 +145,7 @@ impl ApplicationUpdateManager {
     /// Checks shared release rules against the installation identity reported by the Host.
     pub(super) async fn check(
         &self,
-        host: Option<Arc<dyn SystemOperationHost>>,
+        context: HostManager,
     ) -> Result<Option<ApplicationUpdateInfo>, String> {
         let scheduler = {
             let state = self.state.lock().map_err(|e| e.to_string())?;
@@ -179,7 +163,10 @@ impl ApplicationUpdateManager {
             scheduler
         };
         let _busy = self.begin()?;
-        let host = host.ok_or("SystemOperationHost is not registered for application updates")?;
+        let host = context
+            .systemOperationHost
+            .as_ref()
+            .ok_or("SystemOperationHost is not registered for application updates")?;
         let Some(target) = host
             .applicationUpdateTarget()
             .map_err(|error| error.to_string())?
@@ -188,6 +175,12 @@ impl ApplicationUpdateManager {
         };
         let installTiming = target.installTiming;
         let target = FullUpdateTarget::fromApplicationTarget(target)?;
+        // Owner interactions require the Core connection that issued this update check.
+        operit_util::IncrementalUpdate::cleanupUpdateCache(
+            crate::CORE_VERSION,
+            &target.assetNameForVersion(crate::CORE_VERSION)?,
+            &context,
+        )?;
         operit_util::AppLogger::AppLogger::i("ApplicationUpdate", &format!(
             "Checking current={} package={}", crate::CORE_VERSION,
             target.assetNameForVersion(crate::CORE_VERSION)?,
@@ -461,7 +454,7 @@ mod tests {
                 installation: None,
             });
         }
-        let info = manager.check(None).await.unwrap().unwrap();
+        let info = manager.check(HostManager::new()).await.unwrap().unwrap();
         assert_eq!(info.version, "2.0.0");
         let json = serde_json::to_string(&info).unwrap();
         assert!(!json.contains("private-native-url"));

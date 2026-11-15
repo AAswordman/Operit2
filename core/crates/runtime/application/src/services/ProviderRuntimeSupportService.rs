@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde_json::Value;
 
 use operit_model::FunctionType::FunctionType;
-use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
+use operit_model::ModelConfigData::{ModelCapabilities, ProviderProfile, ResolvedModelConfig};
 use operit_plugin_sdk::toolpkg::ToolPkgHooks::{ToolPkgAiProviderRegistration, decodeToolPkgHookResult};
 use operit_providers::runtime_support::{
     ChatConfigurationDisplayResult, ChatConfigurationPurpose, ChatConfigurationRequest, ChatConfigurationResult,
@@ -593,6 +593,17 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
     ) -> Result<ResolvedModelConfig, String> {
         ModelConfigManager::default()
             .getResolvedModelConfig(providerId, modelId)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Describes existing auxiliary models without making missing bindings fatal to ordinary chat.
+    fn modelCapabilitiesForFunction(
+        &self,
+        functionType: FunctionType,
+    ) -> Result<Option<ModelCapabilities>, String> {
+        let binding = self.modelBindingForFunction(functionType)?;
+        ModelConfigManager::default()
+            .configuredModelCapabilities(&binding.providerId, &binding.modelId)
             .map_err(|error| error.to_string())
     }
 

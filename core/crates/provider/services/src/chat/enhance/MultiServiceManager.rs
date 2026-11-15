@@ -33,7 +33,7 @@ use crate::chat::llmprovider::RequestConcurrencyRegistry::RequestConcurrencyRegi
 use crate::chat::llmprovider::ToolPkgJsAiProviderService::ToolPkgJsAiProviderService;
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::FunctionType::FunctionType;
-use operit_model::ModelConfigData::{ApiProviderType, ResolvedModelConfig};
+use operit_model::ModelConfigData::{ApiProviderType, ModelCapabilities, ResolvedModelConfig};
 use operit_model::ModelParameter::ModelParameter;
 
 /// Shared, asynchronously locked handle around a concrete model provider service.
@@ -1019,21 +1019,38 @@ impl MultiServiceManager {
         format!("{providerId}:{modelId}")
     }
 
+    /// Queries capability availability without constructing an auxiliary model service.
+    fn modelCapabilitiesForFunction(
+        &self,
+        functionType: FunctionType,
+    ) -> Result<Option<ModelCapabilities>, AiServiceError> {
+        let context = self
+            .inner
+            .lock()
+            .expect("MultiServiceManager mutex poisoned")
+            .runtime_context
+            .clone();
+        context
+            .support()
+            .modelCapabilitiesForFunction(functionType)
+            .map_err(AiServiceError::RequestFailed)
+    }
+
     /// Reports whether the image-recognition function binding supports image input.
     pub fn hasImageRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
-        let config = self.getModelConfigForFunction(FunctionType::IMAGE_RECOGNITION)?;
-        Ok(config.capabilities.directImage)
+        let capabilities = self.modelCapabilitiesForFunction(FunctionType::IMAGE_RECOGNITION)?;
+        Ok(capabilities.is_some_and(|value| value.directImage))
     }
 
     /// Reports whether the audio-recognition function binding supports audio input.
     pub fn hasAudioRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
-        let config = self.getModelConfigForFunction(FunctionType::AUDIO_RECOGNITION)?;
-        Ok(config.capabilities.directAudio)
+        let capabilities = self.modelCapabilitiesForFunction(FunctionType::AUDIO_RECOGNITION)?;
+        Ok(capabilities.is_some_and(|value| value.directAudio))
     }
 
     /// Reports whether the video-recognition function binding supports video input.
     pub fn hasVideoRecognitionConfigured(&mut self) -> Result<bool, AiServiceError> {
-        let config = self.getModelConfigForFunction(FunctionType::VIDEO_RECOGNITION)?;
-        Ok(config.capabilities.directVideo)
+        let capabilities = self.modelCapabilitiesForFunction(FunctionType::VIDEO_RECOGNITION)?;
+        Ok(capabilities.is_some_and(|value| value.directVideo))
     }
 }

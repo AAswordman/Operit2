@@ -21,7 +21,7 @@ pub enum SpaceSyncStage {
 /// Local execution progress, independent of membership and replication receipts.
 /// `exchangedRecords` counts confirmed exchanges, not materialized chat messages;
 /// `completedRecords` counts unique applied operations against the export inventory;
-/// `transferredBytes` includes retransmissions. File bytes describe the current file.
+/// `transferredBytes` includes retransmissions. File bytes describe the current transfer group.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpaceSyncProgress {
     pub spaceId: String,

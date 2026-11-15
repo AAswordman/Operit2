@@ -232,6 +232,25 @@ impl ModelConfigManager {
         self.hydrateLocalProviderModels(provider)
     }
 
+    /// Reports capabilities only for an existing model, independently of request-time validation.
+    pub(crate) fn configuredModelCapabilities(
+        &self,
+        providerId: &str,
+        modelId: &str,
+    ) -> Result<Option<ModelCapabilities>, ModelConfigError> {
+        let preferences = self.modelConfigDataStore.data()?;
+        let Some(value) = preferences.get(&self.providerKey(providerId)) else {
+            return Ok(None);
+        };
+        let provider = self.hydrateLocalProviderModels(serde_json::from_value(value.clone())?)?;
+        let Some(model) = provider.models.iter().find(|model| model.id == modelId) else {
+            return Ok(None);
+        };
+        Ok(Some(
+            ModelSpecResolver::new(&provider)?.resolve(model).capabilities,
+        ))
+    }
+
     /// Builds summary rows for every configured provider model.
     pub fn getAllModelSummaries(&self) -> Result<Vec<ProviderModelSummary>, ModelConfigError> {
         let providers = self.getProviderProfiles()?;

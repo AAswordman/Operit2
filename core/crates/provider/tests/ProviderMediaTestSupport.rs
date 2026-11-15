@@ -144,6 +144,14 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
         Err("test runtime does not expose model configuration".to_string())
     }
 
+    /// Reports that no auxiliary recognition model is configured in this fixture.
+    fn modelCapabilitiesForFunction(
+        &self,
+        _functionType: FunctionType,
+    ) -> Result<Option<operit_model::ModelConfigData::ModelCapabilities>, String> {
+        Ok(None)
+    }
+
     /// Returns no provider profile in the isolated test runtime.
     fn providerProfile(
         &self,

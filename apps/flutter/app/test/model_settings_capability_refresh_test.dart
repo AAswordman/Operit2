@@ -13,11 +13,53 @@ import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/settings/model/ModelSettingsPanel.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart';
+import 'package:operit2/ui/features/chat/components/style/input/agent/AgentModelSelectorPopup.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/features/settings/model/ProviderLogo.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
+  for (final missingProvider in [true, false]) {
+    testWidgets(
+      'model selector repairs a missing ${missingProvider ? 'provider' : 'model'} binding',
+      (tester) async {
+        final bridge = _ModelSettingsBridge()
+          ..chatBinding = core.FunctionModelBinding(
+            providerId: missingProvider ? 'removed-provider' : 'test-provider',
+            modelId: 'removed-model',
+            followsChat: false,
+          );
+        var dismissed = false;
+        String? selectedModel;
+        await tester.pumpWidget(
+          _themed(
+            Center(
+              child: AgentModelSelectorPopup(
+                viewModel: ChatViewModel(bridge: bridge),
+                onDismiss: () => dismissed = true,
+                onModelChanged: (modelId, {providerTypeId, providerName}) =>
+                    selectedModel = modelId,
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        expect(bridge.thinkingCalls, 0);
+        expect(find.byType(AgentThinkingLevelRow), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text('Test Provider').first);
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('test-model').last);
+        await tester.pumpAndSettle();
+        expect(selectedModel, 'test-model');
+        expect(bridge.chatBinding.providerId, 'test-provider');
+        expect(bridge.chatBinding.modelId, 'test-model');
+        expect(dismissed, isTrue);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
   setUp(ClientLogger.initialize);
   testWidgets(
     'provider editor persists the pool and imported identities through Core',
@@ -437,6 +479,7 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   String modelId = binding.modelId;
   String? resolutionError;
   int resolutionCalls = 0;
+  int thinkingCalls = 0;
   int? catalogUpdatedAt;
   int catalogRefreshCalls = 0;
   bool connectionTestSucceeds = true;
@@ -580,6 +623,14 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
         ).toJson();
       case 'getModelBindingForFunction':
         result = chatBinding.toJson();
+      case 'setModelForFunction':
+        final args = request.args as Map;
+        chatBinding = core.FunctionModelBinding(
+          providerId: args['providerId'] as String,
+          modelId: args['modelId'] as String,
+          followsChat: false,
+        );
+        result = null;
       case 'getProviderProfiles':
         result = [provider.toJson()];
       case 'getAllModelSummaries':
@@ -602,6 +653,18 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
           ).toJson(),
         ];
       case 'getThinkingSettingsForModel':
+        thinkingCalls++;
+        final args = request.args as Map;
+        if (args['providerId'] != provider.id || args['modelId'] != modelId) {
+          return encodeCoreLink([
+            1,
+            'COMMAND_ERROR',
+            'model not found',
+            null,
+            null,
+            null,
+          ]);
+        }
         result = const core.ModelThinkingSettings(
           spec: core.ModelThinkingSpec(
             supported: false,

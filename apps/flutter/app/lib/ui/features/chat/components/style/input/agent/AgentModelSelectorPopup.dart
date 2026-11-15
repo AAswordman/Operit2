@@ -165,10 +165,11 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: <Widget>[
-                    AgentThinkingLevelRow(
-                      settings: _thinking ?? data.thinkingSettings,
-                      onChanged: (level) => _setThinkingLevel(data, level),
-                    ),
+                    if (_thinking ?? data.thinkingSettings case final settings?)
+                      AgentThinkingLevelRow(
+                        settings: settings,
+                        onChanged: (level) => _setThinkingLevel(data, level),
+                      ),
                     _ModelSelectorItem(
                       popupContainerColor: popupContainerColor,
                       providers: data.providers,
@@ -395,10 +396,13 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
                           showInfoButton: false,
                         ),
                         const SizedBox(height: 2),
-                        AgentThinkingLevelRow(
-                          settings: _thinking ?? data.thinkingSettings,
-                          onChanged: (level) => _setThinkingLevel(data, level),
-                        ),
+                        if (_thinking ?? data.thinkingSettings
+                            case final settings?)
+                          AgentThinkingLevelRow(
+                            settings: settings,
+                            onChanged: (level) =>
+                                _setThinkingLevel(data, level),
+                          ),
                       ],
                     ),
                   ),
@@ -829,7 +833,7 @@ class _AgentModelSelectorData {
   final core_proxy.FunctionModelBinding currentBinding;
 
   /// The chat model's thinking levels and the level it uses.
-  final core_proxy.ModelThinkingSettings thinkingSettings;
+  final core_proxy.ModelThinkingSettings? thinkingSettings;
 }
 
 /// The chat model's thinking control: its levels on a slider, a note when there is
@@ -1743,21 +1747,30 @@ class _InfoIconButton extends StatelessWidget {
   }
 }
 
+/// Loads selectable models even when the current binding no longer exists.
 Future<_AgentModelSelectorData> _loadAgentModelSelectorData(
   GeneratedCoreProxyClients clients,
 ) async {
   final binding = await clients.preferencesFunctionalConfigManager
       .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
-  final thinkingSettings = await clients.preferencesModelConfigManager
-      .getThinkingSettingsForModel(
-        providerId: binding.providerId,
-        modelId: binding.modelId,
-      );
+  final providers = await clients.preferencesModelConfigManager
+      .getProviderProfiles();
+  final summaries = await clients.preferencesModelConfigManager
+      .getAllModelSummaries();
+  final currentModelExists = providers.any(
+    (provider) =>
+        provider.id == binding.providerId &&
+        provider.models.any((model) => model.id == binding.modelId),
+  );
+  final thinkingSettings = currentModelExists
+      ? await clients.preferencesModelConfigManager.getThinkingSettingsForModel(
+          providerId: binding.providerId,
+          modelId: binding.modelId,
+        )
+      : null;
   return _AgentModelSelectorData(
-    providers: await clients.preferencesModelConfigManager
-        .getProviderProfiles(),
-    summaries: await clients.preferencesModelConfigManager
-        .getAllModelSummaries(),
+    providers: providers,
+    summaries: summaries,
     currentBinding: binding,
     thinkingSettings: thinkingSettings,
   );

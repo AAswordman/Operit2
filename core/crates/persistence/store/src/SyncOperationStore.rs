@@ -2069,13 +2069,6 @@ impl SyncOperationStore {
 
     pub fn receipt(&self) -> Result<SyncReceipt, SyncOperationStoreError> { self.withJournal(|journal| journal.receipt()) }
 
-    pub fn operationIdsSince<K: SyncOperationKnowledge>(&self, clock: &K, domains: &[String]) -> Result<BTreeSet<String>,SyncOperationStoreError> {
-        let mut ids = BTreeSet::new();
-        self.readJournalWithInventory(clock, JournalQuery { domains,projection: JournalProjection::All,
-            export_floors: true,limit: 0,max_bytes: 0,retain: None },Some(&mut ids))?;
-        Ok(ids)
-    }
-
     fn readJournalWithInventory<K: SyncOperationKnowledge>(&self, clock: &K, query: JournalQuery<'_>, mut inventory: Option<&mut BTreeSet<String>>) -> Result<Vec<SyncOperation>, SyncOperationStoreError> {
         if query.limit == 0 && inventory.is_none() { return Ok(Vec::new()); }
         let floors = if query.export_floors {

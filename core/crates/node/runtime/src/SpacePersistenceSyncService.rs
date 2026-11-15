@@ -2,6 +2,7 @@
 mod consistency;
 
 use crate::PeerSync::{PeerSyncMethod, SyncRequest, NODE_SYNC_TARGET};
+use futures_util::{stream, StreamExt};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::TimeUtils::currentTimeMillis;
 use operit_link::{fromCoreValue, toCoreValue, CoreCallRequest, CorePushRequest, CoreValue};
@@ -17,7 +18,7 @@ use operit_store::PreferencesDataStore::StateFlow;
 use crate::SpaceSyncProgress::{SpaceSyncProgress, SyncProgressTracker};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use crate::CoreNodeRouter::{CoreNodeLocalRuntime, CoreNodeRouter};
@@ -31,6 +32,8 @@ const SYNC_DOMAINS: [&str; 6] = [
     "plugin_storage",
 ];
 const SYNC_BLOB_CHUNK_BYTES: i64 = 64 * 1024;
+/// Bounds active file streams to eight chunks (512 KiB of raw payload).
+const SYNC_BLOB_TRANSFER_CONCURRENCY: usize = 8;
 /// Wire reservation for the Link request envelope, AEAD tag and frame prefix.
 /// One operation above this reservation cannot travel in any single message.
 const SYNC_PAGE_ENVELOPE_BYTES: usize = 4 * 1024;
@@ -1165,7 +1168,7 @@ impl SpacePersistenceSyncService {
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
 
-    /// Transfers independent content hashes without withholding durable receipt of another operation.
+    /// Overlaps independent blob transfers on the existing multiplexed channel with bounded buffers.
     async fn synchronizeBlobReferences(
         &self,
         targetNodeId: &str,
@@ -1178,18 +1181,25 @@ impl SpacePersistenceSyncService {
         let (remote,local) = tokio::join!(biased;
             self.blobPresence(targetNodeId,&references,false), self.blobPresence(targetNodeId,&references,true));
         let mut errors = Vec::new();
+        let mut pending = Vec::new();
         for ((reference,local),remote) in references.iter().zip(local?).zip(remote?) {
-            let result = async {
-                self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(),targetNodeId)
-                    .map_err(|e|e.to_string())?;
-                match (local?,remote?) {
-                    (true,true) => Ok(()),
-                    (true,false) => self.transferBlob(targetNodeId,reference,true).await,
-                    (false,true) => self.transferBlob(targetNodeId,reference,false).await,
-                    (false,false) => Err(format!("blob {} is missing from both direct peers",reference.contentHash)),
-                }
-            }.await;
-            if let Err(error) = result { errors.push(error); }
+            match local.and_then(|local| remote.map(|remote| (local, remote))) {
+                Ok((true,true)) => {},
+                Ok((false,false)) => errors.push(format!("blob {} is missing from both direct peers",reference.contentHash)),
+                Ok((local,_)) => pending.push((reference,local)),
+                Err(error) => errors.push(error),
+            }
+        }
+        if !pending.is_empty() {
+            let size = pending.iter().try_fold(0i64, |size, (reference,_)|
+                size.checked_add(reference.size).ok_or("Synchronization blob batch size overflow"))?;
+            let sent = AtomicI64::new(0);
+            self.state.progress.beginFile(targetNodeId, size);
+            errors.extend(stream::iter(pending)
+                .map(|(reference,source)| self.transferBlob(targetNodeId,reference,source,&sent))
+                .buffer_unordered(SYNC_BLOB_TRANSFER_CONCURRENCY)
+                .filter_map(|result| async move { result.err() }).collect::<Vec<_>>().await);
+            self.state.progress.fileOffset(targetNodeId, sent.load(Ordering::Relaxed), true);
         }
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
@@ -1209,45 +1219,49 @@ impl SpacePersistenceSyncService {
         targetNodeId: &str,
         reference: &RuntimeFileSyncReference,
         localSource: bool,
+        sent: &AtomicI64,
     ) -> Result<(), String> {
-        self.state.progress.beginFile(targetNodeId, reference.size);
-        let mut request = blobPushRequest(&self.state.nodeRouter, reference)?;
+        self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
+            .map_err(|error| error.to_string())?;
+        let target = if localSource { NODE_SYNC_TARGET } else {
+            self.state.nodeRouter.targetForSchema("services.syncBlobTransferManager")
+                .ok_or("unknown Core schema key: services.syncBlobTransferManager")?
+        };
+        let request = CorePushRequest::new(operit_link::nextCoreRouteRequestId("space-persistence-blob"), target, "syncReceiveBlob")
+            .withArgs(toCoreValue(reference).map_err(|error| error.to_string())?);
         let mut push = if localSource {
-            request.target = NODE_SYNC_TARGET.into();
             self.state.nodeRouter.openPushNode(targetNodeId.to_string(), request).await
                 .map_err(syncLinkError)?
         } else {
             self.state.localRuntime.openPush(request).map_err(|error| error.to_string())?
         };
         let mut offset = 0;
-        let result = async {
-            while offset < reference.size {
-                self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
-                    .map_err(|error| error.to_string())?;
-                let args = json!({ "contentHash": reference.contentHash, "offset": offset, "length": SYNC_BLOB_CHUNK_BYTES });
-                let chunk = if localSource {
-                    self.callLocal::<Vec<u8>>("syncReadBlobChunk", args).await?
-                } else {
-                    callRemote::<Vec<u8>>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncReadBlobChunk, args).await?
-                };
-                self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
-                    .map_err(|error| error.to_string())?;
-                offset = sendBlobChunk(&mut push, reference, offset, chunk).await?;
-                self.state.progress.fileOffset(targetNodeId, offset, false);
-            }
+        while offset < reference.size {
             self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
                 .map_err(|error| error.to_string())?;
-            push.close().await.map_err(syncLinkError)?;
-            let persisted = self.blobPresence(targetNodeId,std::slice::from_ref(reference),!localSource).await?
-                .pop().ok_or("Blob presence response missing")??;
-            if !persisted {
-                return Err(format!("CoreNode did not persist synchronization blob {}", reference.contentHash));
+            let args = json!({ "contentHash": reference.contentHash, "offset": offset, "length": SYNC_BLOB_CHUNK_BYTES });
+            let chunk = if localSource {
+                self.callLocal::<Vec<u8>>("syncReadBlobChunk", args).await?
+            } else {
+                callRemote::<Vec<u8>>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncReadBlobChunk, args).await?
+            };
+            self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
+                .map_err(|error| error.to_string())?;
+            let length = i64::try_from(chunk.len()).map_err(|error| error.to_string())?;
+            if length == 0 || length > reference.size - offset {
+                return Err(format!("Invalid synchronization blob chunk: hash={} offset={offset} length={length} size={}", reference.contentHash, reference.size));
             }
-            Ok(())
-        }.await;
-        // Preserve the exact sent offset even if a later chunk or verification fails.
-        self.state.progress.fileOffset(targetNodeId, offset, true);
-        result
+            push.send(toCoreValue(chunk).map_err(|error| error.to_string())?).await.map_err(syncLinkError)?;
+            offset += length;
+            self.state.progress.fileOffset(targetNodeId, sent.fetch_add(length, Ordering::Relaxed) + length, false);
+        }
+        self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
+            .map_err(|error| error.to_string())?;
+        push.close().await.map_err(syncLinkError)?;
+        let persisted = self.blobPresence(targetNodeId,std::slice::from_ref(reference),!localSource).await?
+            .pop().ok_or("Blob presence response missing")??;
+        if !persisted { return Err(format!("CoreNode did not persist synchronization blob {}", reference.contentHash)); }
+        Ok(())
     }
 
     /// Coalesces join, storage and connectivity changes into the existing worker.
@@ -1355,60 +1369,6 @@ impl SpacePersistenceSyncService {
             format!("local {methodName}: {error}")
         })?)
     }
-}
-
-/// Builds one service reverse-stream request for a complete synchronization blob.
-#[allow(non_snake_case)]
-fn blobPushRequest(
-    nodeRouter: &CoreNodeRouter,
-    reference: &RuntimeFileSyncReference,
-) -> Result<CorePushRequest, String> {
-    let target = nodeRouter
-        .targetForSchema("services.syncBlobTransferManager")
-        .ok_or_else(|| "unknown Core schema key: services.syncBlobTransferManager".to_string())?;
-    Ok(CorePushRequest::new(
-        operit_link::nextCoreRouteRequestId("space-persistence-blob"),
-        target,
-        "syncReceiveBlob",
-    )
-    .withArgs(
-        toCoreValue(json!({
-            "contentHash": reference.contentHash,
-            "size": reference.size,
-        }))
-        .map_err(|error| error.to_string())?,
-    ))
-}
-
-/// Sends one non-empty blob chunk and returns the next absolute offset.
-#[allow(non_snake_case)]
-async fn sendBlobChunk(
-    push: &mut Box<dyn operit_link::CoreLinkPushSession>,
-    reference: &RuntimeFileSyncReference,
-    offset: i64,
-    chunk: Vec<u8>,
-) -> Result<i64, String> {
-    if chunk.is_empty() {
-        return Err(format!(
-            "synchronization blob {} ended before its declared size",
-            reference.contentHash
-        ));
-    }
-    let chunkLength = i64::try_from(chunk.len())
-        .map_err(|_| "synchronization blob chunk length does not fit i64".to_string())?;
-    let nextOffset = offset
-        .checked_add(chunkLength)
-        .ok_or_else(|| "synchronization blob offset overflow".to_string())?;
-    if nextOffset > reference.size {
-        return Err(format!(
-            "synchronization blob {} exceeded its declared size",
-            reference.contentHash
-        ));
-    }
-    push.send(toCoreValue(chunk).map_err(|error| error.to_string())?)
-        .await
-        .map_err(syncLinkError)?;
-    Ok(nextOffset)
 }
 
 /// Weak registration shares one worker across facades without extending its lifetime.

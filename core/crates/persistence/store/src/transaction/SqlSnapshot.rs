@@ -14,6 +14,20 @@ impl RuntimeSqliteHost for StagingHost {
     fn openSqliteDatabase(&self, path: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> { self.0.openTransactionDatabase(path) }
 }
 
+/// Retains one encoded row within the synchronization decoder budget.
+struct RowBuffer(Vec<u8>);
+impl std::io::Write for RowBuffer {
+    /// Rejects oversized JSON before extending the row buffer.
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if bytes.len() > (8*1024*1024usize).saturating_sub(self.0.len()) {
+            return Err(std::io::Error::other("SQL record exceeds the bounded synchronization decoder budget"));
+        }
+        std::io::Write::write(&mut self.0, bytes)
+    }
+    /// Row bytes are already retained in memory.
+    fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+}
+
 pub struct SqlSnapshot {
     store: Option<SqliteStore>,
     pub(crate) storage: Arc<dyn RuntimeStorageHost>,
@@ -66,8 +80,9 @@ impl SqlSnapshot {
                 if columns.is_empty() { continue; }
                 tx.visitRows(&format!("SELECT {} FROM {}", columns.iter().map(|v|sql_identifier(v)).collect::<Vec<_>>().join(","),sql_identifier(name)), vec![], &mut |row| {
                     let cells=row.values.into_iter().map(Cell::from).collect::<Vec<_>>();
-                    if super::serialized_digest(&cells).map_err(host_error)?.1>8*1024*1024 { return Err(host_error("SQL record exceeds the bounded synchronization decoder budget")); }
-                    let value = serde_json::to_string(&cells).map_err(host_error)?;
+                    let mut value = RowBuffer(Vec::new());
+                    serde_json::to_writer(&mut value, &cells).map_err(host_error)?;
+                    let value = String::from_utf8(value.0).map_err(host_error)?;
                     stage.execute("INSERT INTO rows(name,value) VALUES(?1,?2)",vec![SqliteValue::Text(name.clone()),SqliteValue::Text(value)]).map_err(host_error)?;
                     Ok(())
                 })?;

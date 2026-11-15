@@ -295,27 +295,23 @@ impl<'a> Registry<'a> {
         Ok((receipt, errors))
     }
 
-    pub fn export(&self, receipt: &SyncReceipt, domains: &[String], limit: usize) -> Result<(Vec<SyncOperation>, Vec<String>), String> {
+    /// Plans the journal page and optional inventory together without decoding unselected payloads.
+    pub fn export(&self, receipt: &SyncReceipt, domains: &[String], limit: usize, mut inventory: Option<&mut (BTreeSet<String>, Vec<String>)>) -> Result<(Vec<SyncOperation>, Vec<String>), String> {
         let budget = crate::SyncOperationStore::DEFAULT_SYNC_PAGE_BYTES;
-        let mut operations = self.journal.operationsSinceWithBudget(receipt, domains, limit, budget, |_| true).map_err(|e| e.to_string())?;
+        let mut operations = self.journal.operationsSinceWithInventory(receipt, domains, limit, budget,
+            inventory.as_deref_mut().map(|(ids,_)| ids), None).map_err(|e| e.to_string())?;
         let mut errors = self.prepare();
         for source in &self.sources {
             match (source.export)(receipt, domains, limit, budget) { Ok((page, failures)) => { operations.extend(page); errors.extend(failures); }, Err(error) => errors.push(error) }
+            if let Some((ids,failures)) = inventory.as_deref_mut() {
+                match (source.inventory)(receipt,domains) {
+                    Ok((more,errors)) => { ids.extend(more); failures.extend(errors); },
+                    Err(error) => failures.push(error),
+                }
+            }
         }
         let operations = super::ordered(operations, |op| &op.opId, Revision::fromOperation)?;
         Ok((crate::SyncOperationStore::boundSyncOperationPage(operations.into_iter().take(limit).collect(), budget), errors))
-    }
-
-    pub fn inventory(&self, receipt: &SyncReceipt, domains: &[String]) -> Result<(BTreeSet<String>,Vec<String>),String> {
-        let mut ids = self.journal.operationIdsSince(receipt,domains).map_err(|e|e.to_string())?;
-        let mut errors = Vec::new();
-        for source in &self.sources {
-            match (source.inventory)(receipt,domains) {
-                Ok((more,failures)) => { ids.extend(more); errors.extend(failures); },
-                Err(error) => errors.push(error),
-            }
-        }
-        Ok((ids,errors))
     }
 
     pub fn snapshots(&self) -> Result<(Vec<Snapshot>, BTreeSet<String>, Vec<String>), String> {

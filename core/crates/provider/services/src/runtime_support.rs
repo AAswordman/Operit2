@@ -10,7 +10,7 @@ use serde_json::Value;
 pub type JsonObject = serde_json::Map<String, Value>;
 
 use operit_model::FunctionType::FunctionType;
-use operit_model::ModelConfigData::{ProviderProfile, ResolvedModelConfig};
+use operit_model::ModelConfigData::{ModelCapabilities, ProviderProfile, ResolvedModelConfig};
 use operit_model::PromptFunctionType::PromptFunctionType;
 
 /// Future returned by provider runtime continuation boundaries.
@@ -323,6 +323,12 @@ pub trait ProviderRuntimeSupport: Send + Sync {
         providerId: &str,
         modelId: &str,
     ) -> Result<ResolvedModelConfig, String>;
+
+    /// Reports optional function capabilities without requiring that auxiliary model for a chat request.
+    fn modelCapabilitiesForFunction(
+        &self,
+        functionType: FunctionType,
+    ) -> Result<Option<ModelCapabilities>, String>;
 
     /// Returns the saved ChatGPT Codex session.
     fn loadCodexTokens(

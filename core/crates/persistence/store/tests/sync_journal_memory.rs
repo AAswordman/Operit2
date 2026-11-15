@@ -180,7 +180,7 @@ fn production_sync_memory_budget() {
         journal.appendOperations(&[op]).unwrap();
     }
     let registry = new_registry(journal.clone());
-    let (page, export_peak) = measured("registry_export_32MiB", || registry.export(&SyncReceipt::default(), &[], 512).unwrap().0);
+    let (page, export_peak) = measured("registry_export_32MiB", || registry.export(&SyncReceipt::default(), &[], 512, None).unwrap().0);
     println!("SYNC_MEMORY registry_export returned_records={}", page.len());
     drop(page);
     drop(registry);
