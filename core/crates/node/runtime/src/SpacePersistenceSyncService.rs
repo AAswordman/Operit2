@@ -131,7 +131,8 @@ async fn classifySync<T>(operation: impl std::future::Future<Output = Result<T, 
 /// Retains transport provenance before the existing application API formats the error.
 fn syncLinkError(error: operit_link::CoreLinkError) -> String {
     if matches!(error.code.as_str(), "CORE_NODE_UNREACHABLE" | "PEER_LINK_CLOSED" | "PEER_RESPONSE_CLOSED"
-        | "PEER_SEND_FAILED" | "PEER_CONNECTION_CLOSED" | "PEER_CONNECT_TIMEOUT" | "PEER_HEARTBEAT_TIMEOUT" | "PEER_SYNC_NETWORK_FAILED") {
+        | "PEER_SEND_FAILED" | "PEER_CONNECTION_CLOSED" | "PEER_CONNECT_TIMEOUT" | "PEER_HEARTBEAT_TIMEOUT"
+        | "PEER_SYNC_NETWORK_FAILED" | "PEER_SECURITY") {
         let _ = SYNC_NETWORK_FAILURE.try_with(|failure| failure.set(true));
     }
     error.to_string()
@@ -1620,7 +1621,7 @@ mod page_budget_tests {
     #[tokio::test]
     async fn retry_classification_uses_transport_codes() {
         for (code, expected) in [("PEER_SEND_FAILED",true), ("PEER_RESPONSE_CLOSED",true),
-            ("PEER_SYNC_NETWORK_FAILED",true), ("INTERNAL_ERROR",false), ("PEER_SYNC_CORRECTION_FAILED",false)] {
+            ("PEER_SYNC_NETWORK_FAILED",true), ("PEER_SECURITY",true), ("INTERNAL_ERROR",false), ("PEER_SYNC_CORRECTION_FAILED",false)] {
             let (_, network) = classifySync(async {
                 Err::<(),_>(syncLinkError(operit_link::CoreLinkError::new(code,"database is corrupt")))
             }).await;
