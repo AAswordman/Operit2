@@ -654,6 +654,8 @@
   "settingsModelApiEndpoint": "API endpoint",
   "settingsModelModelNames": "Model names",
   "settingsModelApiKey": "API key",
+  "settingsModelShowApiKey": "Show API key",
+  "settingsModelHideApiKey": "Hide API key",
   "settingsModelCodexLogin": "ChatGPT login",
   "settingsModelCodexLoginTitle": "Sign in to ChatGPT Codex",
   "settingsModelCodexLoginDescription": "OpenAI Codex uses a ChatGPT subscription sign-in instead of an API key.",

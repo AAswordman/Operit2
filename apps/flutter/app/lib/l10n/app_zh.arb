@@ -647,6 +647,8 @@
   "settingsModelApiEndpoint": "API 地址",
   "settingsModelModelNames": "模型名称",
   "settingsModelApiKey": "API Key",
+  "settingsModelShowApiKey": "显示 API Key",
+  "settingsModelHideApiKey": "隐藏 API Key",
   "settingsModelCodexLogin": "ChatGPT 登录",
   "settingsModelCodexLoginTitle": "登录 ChatGPT Codex",
   "settingsModelCodexLoginDescription": "OpenAI Codex 使用 ChatGPT 订阅登录，不使用 API Key。",

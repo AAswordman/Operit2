@@ -193,7 +193,13 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
                 _field(_nameController, '供应商名称', requiredField: true),
                 if (!localModel) ...<Widget>[
                   _field(_endpointController, 'Endpoint', requiredField: true),
-                  _field(_apiKeyController, 'API Key', obscureText: true),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: ApiKeyTextField(
+                      controller: _apiKeyController,
+                      labelText: 'API Key',
+                    ),
+                  ),
                 ],
                 _buildModelField(localModel),
                 if (!localModel)
@@ -346,7 +352,6 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
   Widget _field(
     TextEditingController controller,
     String label, {
-    bool obscureText = false,
     bool requiredField = false,
     int minLines = 1,
     String? helperText,
@@ -361,9 +366,8 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
           helperText: helperText,
           suffixIcon: suffixIcon,
         ),
-        obscureText: obscureText,
         minLines: minLines,
-        maxLines: obscureText ? 1 : (minLines == 1 ? 1 : 8),
+        maxLines: minLines == 1 ? 1 : 8,
         validator: (value) {
           if (requiredField && (value?.trim().isEmpty ?? true)) {
             return '$label不能为空';

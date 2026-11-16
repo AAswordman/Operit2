@@ -1315,6 +1315,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsModelApiKey => 'API Key';
 
   @override
+  String get settingsModelShowApiKey => '显示 API Key';
+
+  @override
+  String get settingsModelHideApiKey => '隐藏 API Key';
+
+  @override
   String get settingsModelCodexLogin => 'ChatGPT 登录';
 
   @override

@@ -16,6 +16,7 @@ import '../../../common/ThinkingLevelText.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
+import '../components/ApiKeyTextField.dart';
 import '../components/SettingsControlStyles.dart';
 import 'CodexLoginDialog.dart';
 import 'ApiKeyPoolEditor.dart';
@@ -1035,10 +1036,13 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                     onLogin: _openCodexLogin,
                   )
                 else if (!_useKeyPool || _isLocalProvider)
-                  _DialogTextField(
-                    controller: _apiKeyController,
-                    label: l10n.settingsModelApiKey,
-                    obscureText: true,
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 12),
+                    child: ApiKeyTextField(
+                      key: ValueKey<String?>(_selectedProviderTypeId),
+                      controller: _apiKeyController,
+                      labelText: l10n.settingsModelApiKey,
+                    ),
                   ),
                 if (!_isCodexProvider && !_isLocalProvider)
                   ApiKeyPoolEditor(

@@ -12,6 +12,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../chat/tts/TtsPlaybackController.dart';
+import '../components/ApiKeyTextField.dart';
 import '../components/SettingsControlStyles.dart';
 
 part 'TtsProviderWidgets.dart';
