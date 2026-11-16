@@ -444,7 +444,7 @@ class ExtensionCatalogController extends ChangeNotifier {
     });
   }
 
-  /// Imports a package file chosen by the user into [scope].
+  /// Imports a package file, keeping ToolPkg ownership selected by Core.
   Future<void> importPackageFile(
     String path, {
     required String scope,
@@ -457,11 +457,13 @@ class ExtensionCatalogController extends ChangeNotifier {
       if (requireToolPkg && !result.packageFormat.contains('toolpkg')) {
         throw StateError('所选文件不是 ToolPkg：$path');
       }
-      await clients.application.setExtensionScope(
-        kind: 'package',
-        id: result.packageName,
-        scope: scope,
-      );
+      if (result.packageFormat != 'toolpkg') {
+        await clients.application.setExtensionScope(
+          kind: 'package',
+          id: result.packageName,
+          scope: scope,
+        );
+      }
     });
   }
 

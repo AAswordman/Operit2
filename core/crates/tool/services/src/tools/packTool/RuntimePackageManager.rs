@@ -27,6 +27,7 @@ use crate::tools::packTool::ToolPkgDesktopWidgetService::ToolPkgDesktopWidgetSna
 use operit_store::ExtensionStore::{ExtensionRecord, ExtensionStore};
 use operit_store::PreferencesDataStore::CoreNodeStateStore;
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
+use operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
@@ -72,7 +73,7 @@ use operit_plugin_sdk::toolpkg::ToolPkgPackageService::{
     ToolPkgPackageHost, ToolPkgPackageService,
 };
 use operit_plugin_sdk::toolpkg::ToolPkgParser::{
-    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult,
+    ToolPkgArchiveParser, ToolPkgContainerRuntime, ToolPkgLoadResult, ToolPkgManifestPreview,
     ToolPkgMarketOrigin, ToolPkgResourceRuntime, ToolPkgSourceType,
     ToolPkgSubpackageRuntime,
 };
@@ -82,6 +83,7 @@ use operit_plugin_sdk::PackageManager::{PackageStateResolver, PluginPackageManag
 use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStoreError};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use operit_util::AppLogger::AppLogger;
+use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -231,6 +233,22 @@ pub struct ExternalPackageImportResult {
     pub packageFormat: String,
     pub storedPath: String,
     pub sourceNotice: Option<String>,
+}
+
+/// Keeps marketplace artifacts out of the local archive replacement path.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PackageFileImportSource {
+    Local,
+    MarketArtifact,
+}
+
+/// Captures the exact installation whose archive a local import may replace.
+#[derive(Clone, Debug)]
+struct LocalToolPkgUpdateTarget {
+    record: ExtensionRecord,
+    runtime: ToolPkgContainerRuntime,
+    scope: ToolPkgConfigScope,
+    archive: PathBuf,
 }
 
 /// Describes one package load or import failure shown by the package manager UI.
@@ -2547,6 +2565,11 @@ impl RuntimePackageManager {
     #[allow(non_snake_case)]
     /// Scans package sources while preserving execution engines leased by active owners.
     pub fn loadAvailablePackages(&mut self) {
+        let _ = self.loadAvailablePackagesInternal(true);
+    }
+
+    /// Local archive transactions defer runtime notifications until their publication is verified.
+    fn loadAvailablePackagesInternal(&mut self, notify: bool) -> Result<(), String> {
         self.registryScanGeneration += 1;
         self.packageRegistryReadiness.begin_scan();
         match self.registryScanner().scan() {
@@ -2557,10 +2580,14 @@ impl RuntimePackageManager {
                     .scheduleHostRuntimeTask("operit-package-retire", Box::new(move || {
                         for engine in retired { engine.destroy(); }
                     })).expect("Retired package workers must be destroyed outside the manager lock");
-                self.notifyToolPkgRuntimeChangeListeners();
+                if notify { self.notifyToolPkgRuntimeChangeListeners(); }
                 self.packageRegistryReadiness.complete_scan();
+                Ok(())
             }
-            Err(error) => self.packageRegistryReadiness.fail(error),
+            Err(error) => {
+                self.packageRegistryReadiness.fail(error.clone());
+                Err(error)
+            }
         }
     }
 
@@ -3241,7 +3268,9 @@ impl RuntimePackageManager {
         &mut self,
         filePath: &str,
     ) -> Result<ExternalPackageImportResult, String> {
-        let result = self.addPackageFileFromExternalStorageResultInternal(filePath);
+        let result = self.addPackageFileFromExternalStorageResultInternal(
+            filePath, PackageFileImportSource::Local,
+        );
         match &result {
             Ok(_importResult) => self.clearManualToolPkgLoadIssues(filePath, None),
             Err(error) => {
@@ -3256,6 +3285,7 @@ impl RuntimePackageManager {
     fn addPackageFileFromExternalStorageResultInternal(
         &mut self,
         filePath: &str,
+        importSource: PackageFileImportSource,
     ) -> Result<ExternalPackageImportResult, String> {
         let source = self.resolveImportFile(filePath)?;
         let filePath = source.to_str().ok_or("Package path is not UTF-8")?;
@@ -3282,6 +3312,12 @@ impl RuntimePackageManager {
                 .filesystem
                 .readFileBytes(&vfsPathString(&file))
                 .map_err(|error| error.to_string())?;
+            if importSource == PackageFileImportSource::Local {
+                let preview = Self::readToolPkgImportManifest(&bytes)?;
+                if let Some(target) = self.localToolPkgUpdateTarget(&preview)? {
+                    return self.replaceLocalToolPkgFile(&bytes, target);
+                }
+            }
             let scope = self.importedToolPkgScope(&bytes)?;
             let (loadResult, loadIssues) = self
                 .loadToolPkgFileWithIssues(&file, scope, ToolPkgSourceType::EXTERNAL)
@@ -3452,6 +3488,356 @@ impl RuntimePackageManager {
                 record.id == packageName
                     && (record.settings["builtin"] == true || record.settings["customized"] == true)
             }))
+    }
+
+    /// Reads import identity without creating a registration engine.
+    fn readToolPkgImportManifest(bytes: &[u8]) -> Result<ToolPkgManifestPreview, String> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+            .map_err(|error| error.to_string())?;
+        let index = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+        ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &index)
+            .ok_or_else(|| "ToolPkg manifest is missing or invalid".to_string())
+    }
+
+    /// Selects only an ordinary local installation; existing customization keeps its own path.
+    fn localToolPkgUpdateTarget(
+        &self,
+        preview: &ToolPkgManifestPreview,
+    ) -> Result<Option<LocalToolPkgUpdateTarget>, String> {
+        let id = preview.manifest.toolpkgId.as_str();
+        let store = ExtensionStore::default();
+        let records = store.records("package")?;
+        let matching: Vec<_> = records.iter().filter(|record| record.id == id).collect();
+        let Some(record) = matching.first().copied() else {
+            if self.availablePackages().contains_key(id)
+                || self.toolPkgManager().isToolPkgContainer(id)
+                || self.toolPkgManager().hasSubpackage(id)
+            {
+                return Err(format!("A package with name '{id}' already exists in available packages"));
+            }
+            return Ok(None);
+        };
+        if record.settings["builtin"] == true || record.settings["customized"] == true {
+            return Ok(None);
+        }
+        if matching.len() != 1 {
+            return Err(format!("Extension ownership conflict: package:{id}"));
+        }
+        let record = store.record("package", id)?;
+        if record.settings["builtin"] == true || record.settings["customized"] == true {
+            return Ok(None);
+        }
+        let runtime = self.getToolPkgContainerRuntime(id)
+            .ok_or_else(|| format!("Installed ToolPkg container is unavailable: {id}"))?;
+        if id.is_empty() || id != id.trim() || runtime.packageName != id
+            || runtime.sourceType != ToolPkgSourceType::EXTERNAL
+            || !self.availablePackages().get(id).is_some_and(|package| !package.is_built_in)
+        {
+            return Err(format!("ToolPkg cannot be replaced by a local import: {id}"));
+        }
+        let scope: ToolPkgConfigScope = serde_json::from_value(serde_json::Value::String(record.scope.clone()))
+            .map_err(|error| error.to_string())?;
+        if preview.manifest.installationScope.is_some_and(|required| required != scope) {
+            return Err(format!("ToolPkg {id} cannot be updated in {} scope", scope.as_str()));
+        }
+        let root = ExtensionStore::root("package", &record.scope)?;
+        let archive = self.storePaths.runtime_storage_path(&root).join(&record.sourceName);
+        if record.sourceName.is_empty() || !hasToolPkgExtension(&record.sourceName)
+            || self.storePaths.runtime_storage_key(Path::new(&runtime.sourcePath))?
+                != format!("{root}/{}", record.sourceName)
+            || records.iter().any(|other| other.id != id && other.scope == record.scope
+                && other.sourceName == record.sourceName)
+        {
+            return Err(format!("ToolPkg source does not match its installation: {id}"));
+        }
+        let exists = self.filesystem.fileExists(&vfsPathString(&archive))?;
+        if !exists.exists || exists.isDirectory {
+            return Err(format!("Installed ToolPkg archive is missing: {id}"));
+        }
+        let previous = self.filesystem.readFileBytes(&vfsPathString(&archive))?;
+        if ToolPkgProtection::isMarketArchive(&previous) || self.isInstalledMarketToolPkg(&archive)? {
+            return Err(format!("Marketplace ToolPkg cannot be replaced by a local import: {id}"));
+        }
+        let support = self.toolHandler.runtimeSupport();
+        for asset in support.bundledExternalPluginAssets().iter().chain(support.builtinPluginAssets()) {
+            if hasToolPkgExtension(asset.name) && packageSourceFileName(asset.name) == record.sourceName
+                && Self::readToolPkgImportManifest(asset.bytes)?.manifest.toolpkgId == id
+            {
+                return Err(format!("Bundled ToolPkg cannot be replaced by a local import: {id}"));
+            }
+        }
+        Ok(Some(LocalToolPkgUpdateTarget {
+            record, runtime, scope, archive,
+        }))
+    }
+
+    /// Freezes retained child preferences and leaves every newly added child disabled.
+    fn mergeLocalToolPkgUpdateSettings(
+        record: &ExtensionRecord,
+        oldRuntime: &ToolPkgContainerRuntime,
+        newRuntime: &ToolPkgContainerRuntime,
+    ) -> Result<serde_json::Value, String> {
+        if record.id != oldRuntime.packageName || record.id != newRuntime.packageName {
+            return Err("ToolPkg update must preserve its installation identity".into());
+        }
+        let mut oldMembers: BTreeSet<String> = serde_json::from_value(record.settings["members"].clone())
+            .map_err(|error| error.to_string())?;
+        oldMembers.retain(|name| name == &record.id
+            || oldRuntime.subpackages.iter().any(|child| &child.packageName == name));
+        oldMembers.insert(record.id.clone());
+        let mut members = vec![record.id.clone()];
+        let mut memberSet = BTreeSet::from([record.id.clone()]);
+        for child in &newRuntime.subpackages {
+            if child.packageName.is_empty() || child.packageName != child.packageName.trim()
+                || child.packageName.chars().any(char::is_control)
+                || child.containerPackageName != record.id
+                || !memberSet.insert(child.packageName.clone())
+            {
+                return Err("ToolPkg update has inconsistent or duplicate members".into());
+            }
+            members.push(child.packageName.clone());
+        }
+        let oldStates: BTreeMap<String, bool> =
+            serde_json::from_value(record.settings["subpackageStates"].clone())
+                .map_err(|error| error.to_string())?;
+        let retainedStates: BTreeMap<_, _> = oldRuntime.subpackages.iter().map(|child| {
+            (child.packageName.clone(), oldStates.get(&child.packageName)
+                .copied().unwrap_or(child.enabledByDefault))
+        }).collect();
+        let states: BTreeMap<_, _> = newRuntime.subpackages.iter().map(|child| {
+            (child.packageName.clone(), retainedStates.get(&child.packageName).copied().unwrap_or(false))
+        }).collect();
+        let mut settings = record.settings.clone();
+        for field in ["enabledNames", "disabledNames"] {
+            let names: Vec<String> = serde_json::from_value(settings[field].clone())
+                .map_err(|error| error.to_string())?;
+            settings[field] = serde_json::json!(names.into_iter()
+                .filter(|name| oldMembers.contains(name) && memberSet.contains(name))
+                .collect::<Vec<_>>());
+        }
+        settings["members"] = serde_json::json!(members);
+        settings["subpackageStates"] = serde_json::json!(states);
+        let fields = settings.as_object_mut().ok_or("Package settings must be an object")?;
+        match Self::requiredInstallationScope(newRuntime)? {
+            Some(scope) => { fields.insert("installationScope".into(), serde_json::json!(scope)); }
+            None => { fields.remove("installationScope"); }
+        }
+        Ok(settings)
+    }
+
+    /// Loads the complete candidate while the old owner remains registered for conflict checks.
+    fn loadLocalToolPkgUpdate(
+        &self,
+        file: &Path,
+        bytes: &[u8],
+        target: &LocalToolPkgUpdateTarget,
+    ) -> Result<ToolPkgLoadResult, String> {
+        if self.filesystem.readFileBytes(&vfsPathString(file))? != bytes {
+            return Err("ToolPkg archive changed during its update".into());
+        }
+        let (loaded, issues) = self.loadToolPkgFileWithIssues(file, target.scope, ToolPkgSourceType::EXTERNAL)?;
+        if !issues.is_empty() {
+            return Err(issues.into_iter().map(|issue| issue.message).collect::<Vec<_>>().join("; "));
+        }
+        if !self.toolPkgManager().canRegisterToolPkgReplacing(
+            &target.record.id, &loaded, self.availablePackages(),
+        ) {
+            return Err(format!("ToolPkg update has a naming conflict: {}", target.record.id));
+        }
+        Ok(loaded)
+    }
+
+    /// Writes the archive through its existing scope, including shared file synchronization.
+    fn writeLocalToolPkgArchive(
+        &self,
+        target: &LocalToolPkgUpdateTarget,
+        bytes: &[u8],
+    ) -> Result<(), String> {
+        if target.scope == ToolPkgConfigScope::Space {
+            RuntimeFileSyncStore::new(defaultRuntimeStorageHost(), RUNTIME_SYNC_DIR_PATH)
+                .writeBytes(&self.storePaths.runtime_storage_key(&target.archive)?, bytes)
+        } else {
+            self.filesystem.writeFileBytes(&vfsPathString(&target.archive), bytes)
+        }
+    }
+
+    /// Revokes old declarations and cached resources before rebuilding the canonical catalog.
+    fn reloadLocalToolPkgUpdate(&mut self, target: &LocalToolPkgUpdateTarget) -> Result<(), String> {
+        self.toolPkgManagerMut().removeToolPkgContainer(&target.record.id);
+        Arc::make_mut(&mut self.externalPackageScanCache).remove(&vfsPathString(&target.archive));
+        self.resourceReader().deleteToolPkgCacheDirChecked(&target.record.id)?;
+        self.loadAvailablePackagesInternal(false)
+    }
+
+    /// Requires a fresh registration, rather than trusting readiness retained from a failed refresh.
+    fn validateLocalToolPkgReload(
+        &self,
+        expected: &ToolPkgContainerRuntime,
+        record: &ExtensionRecord,
+        archive: &[u8],
+    ) -> Result<(), String> {
+        let actual = self.getToolPkgContainerRuntime(&record.id)
+            .ok_or_else(|| format!("Failed to reload ToolPkg '{}'", record.id))?;
+        let childNames = |runtime: &ToolPkgContainerRuntime| runtime.subpackages.iter()
+            .map(|child| (child.packageName.clone(), child.containerPackageName.clone(),
+                child.entryPath.clone(), child.enabledByDefault))
+            .collect::<BTreeSet<_>>();
+        let resources = |runtime: &ToolPkgContainerRuntime| runtime.resources.iter()
+            .map(|resource| (resource.key.clone(), resource.path.clone(), resource.mime.clone()))
+            .collect::<BTreeSet<_>>();
+        if actual.packageName != expected.packageName || actual.sourceType != expected.sourceType
+            || actual.sourcePath != expected.sourcePath || actual.version != expected.version
+            || actual.apiVersion != expected.apiVersion || actual.mainEntry != expected.mainEntry
+            || resources(&actual) != resources(expected)
+            || childNames(&actual) != childNames(expected)
+            || ExtensionStore::default().record("package", &record.id)? != *record
+            || self.filesystem.readFileBytes(&expected.sourcePath)? != archive
+        {
+            return Err(format!("Reloaded ToolPkg does not match its update: {}", record.id));
+        }
+        let mut members = BTreeSet::from([record.id.clone()]);
+        members.extend(expected.subpackages.iter().map(|child| child.packageName.clone()));
+        if members.iter().any(|name| !self.availablePackages().contains_key(name))
+            || self.toolPkgLoadIssues.iter().any(|issue| issue.sourcePath == expected.sourcePath
+                || issue.packageName.as_ref().is_some_and(|name| members.contains(name)))
+        {
+            return Err(format!("ToolPkg registration failed after replacement: {}", record.id));
+        }
+        Ok(())
+    }
+
+    /// Restores raw metadata too, because a failed record write may no longer be parseable.
+    fn rollbackLocalToolPkgUpdate(
+        &mut self,
+        target: &LocalToolPkgUpdateTarget,
+        archive: &[u8],
+        descriptorKey: &str,
+        descriptor: &[u8],
+    ) -> Result<(), String> {
+        let mut errors = Vec::new();
+        if let Err(error) = self.writeLocalToolPkgArchive(target, archive) {
+            errors.push(format!("restoring archive failed: {error}"));
+        }
+        let storage = defaultRuntimeStorageHost();
+        let restored = if target.scope == ToolPkgConfigScope::Space {
+            RuntimeFileSyncStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH)
+                .writeBytes(descriptorKey, descriptor)
+        } else {
+            storage.writeBytes(descriptorKey, descriptor).map_err(|error| error.to_string())
+        };
+        if let Err(error) = restored { errors.push(format!("restoring installation record failed: {error}")); }
+        match storage.readBytes(descriptorKey) {
+            Ok(bytes) if bytes == descriptor => {}
+            Ok(_) => errors.push("restored installation record differs from its backup".into()),
+            Err(error) => errors.push(format!("reading restored installation record failed: {error}")),
+        }
+        if let Err(error) = self.writeScopeSettings(&target.record.id, target.record.settings.clone()) {
+            errors.push(format!("restoring settings failed: {error}"));
+        }
+        if let Err(error) = self.reloadLocalToolPkgUpdate(target) {
+            errors.push(format!("reloading previous ToolPkg failed: {error}"));
+        }
+        if let Err(error) = self.validateLocalToolPkgReload(&target.runtime, &target.record, archive) {
+            errors.push(error);
+        }
+        if errors.is_empty() {
+            self.notifyToolPkgRuntimeChangeListeners();
+            Ok(())
+        } else { Err(errors.join("; ")) }
+    }
+
+    /// Deletes only transaction files; recovery backups survive an unsuccessful rollback.
+    fn cleanLocalToolPkgUpdateFiles(&self, files: &[&Path]) -> Result<(), String> {
+        let mut errors = Vec::new();
+        for file in files {
+            let path = vfsPathString(file);
+            let result = self.filesystem.fileExists(&path).and_then(|entry| {
+                if entry.exists { self.filesystem.deleteFile(&path, false) } else { Ok(()) }
+            });
+            if let Err(error) = result { errors.push(format!("{path}: {error}")); }
+        }
+        if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
+    }
+
+    /// Replaces one local archive without uninstalling its owner or relocating configuration.
+    fn replaceLocalToolPkgFile(
+        &mut self,
+        bytes: &[u8],
+        target: LocalToolPkgUpdateTarget,
+    ) -> Result<ExternalPackageImportResult, String> {
+        let storage = defaultRuntimeStorageHost();
+        let descriptorKey = operit_store::ExtensionStore::recordPath(
+            "package", &target.record.id, &target.record.scope,
+        )?;
+        let descriptor = storage.readBytes(&descriptorKey).map_err(|error| error.to_string())?;
+        let previous = self.filesystem.readFileBytes(&vfsPathString(&target.archive))?;
+        let directory = target.archive.parent().ok_or("ToolPkg archive has no parent directory")?;
+        let nonce = uuid::Uuid::new_v4();
+        let staging = directory.join(format!(".local-toolpkg-update-{nonce}.staging"));
+        let backup = directory.join(format!(".local-toolpkg-update-{nonce}.backup"));
+        let recordBackup = directory.join(format!(".local-toolpkg-update-{nonce}.record-backup"));
+        let mut mutationStarted = false;
+        let outcome = (|| -> Result<(), String> {
+            self.filesystem.writeFileBytes(&vfsPathString(&staging), bytes)?;
+            self.loadLocalToolPkgUpdate(&staging, bytes, &target)?;
+            self.filesystem.writeFileBytes(&vfsPathString(&backup), &previous)?;
+            self.filesystem.writeFileBytes(&vfsPathString(&recordBackup), &descriptor)?;
+            if self.filesystem.readFileBytes(&vfsPathString(&backup))? != previous
+                || self.filesystem.readFileBytes(&vfsPathString(&recordBackup))? != descriptor
+                || storage.readBytes(&descriptorKey).map_err(|error| error.to_string())? != descriptor
+                || self.filesystem.readFileBytes(&vfsPathString(&target.archive))? != previous
+                || ExtensionStore::default().record("package", &target.record.id)? != target.record
+            {
+                return Err("ToolPkg installation changed during update validation".into());
+            }
+            mutationStarted = true;
+            if target.scope == ToolPkgConfigScope::Space {
+                self.writeLocalToolPkgArchive(&target, bytes)?;
+            } else {
+                self.filesystem.deleteFile(&vfsPathString(&target.archive), false)?;
+                self.filesystem.moveFile(&vfsPathString(&staging), &vfsPathString(&target.archive))?;
+            }
+            let loaded = self.loadLocalToolPkgUpdate(&target.archive, bytes, &target)?;
+            if ExtensionStore::default().record("package", &target.record.id)? != target.record {
+                return Err("ToolPkg installation ownership changed during replacement".into());
+            }
+            let settings = Self::mergeLocalToolPkgUpdateSettings(
+                &target.record, &target.runtime, &loaded.containerRuntime,
+            )?;
+            // The scan notifies listeners; new children must already have explicit false states.
+            self.writeScopeSettings(&target.record.id, settings.clone())?;
+            self.reloadLocalToolPkgUpdate(&target)?;
+            let mut expectedRecord = target.record.clone();
+            expectedRecord.settings = settings;
+            self.validateLocalToolPkgReload(&loaded.containerRuntime, &expectedRecord, bytes)?;
+            self.notifyToolPkgRuntimeChangeListeners();
+            Ok(())
+        })();
+        match outcome {
+            Ok(()) => {
+                let sourceNotice = self.cleanLocalToolPkgUpdateFiles(&[&staging, &backup, &recordBackup])
+                    .err().map(|error| format!("ToolPkg update succeeded; temporary file cleanup failed: {error}"));
+                Ok(ExternalPackageImportResult {
+                    packageName: target.record.id, packageFormat: "toolpkg".into(),
+                    storedPath: vfsPathString(&target.archive), sourceNotice,
+                })
+            }
+            Err(error) => {
+                let rollback = if mutationStarted {
+                    self.rollbackLocalToolPkgUpdate(&target, &previous, &descriptorKey, &descriptor)
+                } else { Ok(()) };
+                let cleanup = if rollback.is_ok() {
+                    self.cleanLocalToolPkgUpdateFiles(&[&staging, &backup, &recordBackup])
+                } else { self.cleanLocalToolPkgUpdateFiles(&[&staging]) };
+                let mut message = format!("ToolPkg update failed: {error}");
+                if let Err(restore) = rollback {
+                    message.push_str(&format!("; rollback failed: {restore}; recovery backups: {}, {}",
+                        vfsPathString(&backup), vfsPathString(&recordBackup)));
+                }
+                if let Err(cleanup) = cleanup { message.push_str(&format!("; temporary file cleanup failed: {cleanup}")); }
+                Err(message)
+            }
+        }
     }
 
     /// Resolves an archive's installation scope before executing registration code.
@@ -3714,7 +4100,9 @@ impl RuntimePackageManager {
         let result = self.updateMarketScriptFile(&filePath)
             .and_then(|updated| match updated {
                 Some(result) => Ok(result),
-                None => self.addPackageFileFromExternalStorageResultInternal(&filePath),
+                None => self.addPackageFileFromExternalStorageResultInternal(
+                    &filePath, PackageFileImportSource::MarketArtifact,
+                ),
             });
         match result {
             Ok(importResult) => {
@@ -5384,6 +5772,10 @@ mod public_api_selection_tests {
         );
     }
 }
+
+#[cfg(all(test, not(target_arch = "wasm32")))]
+#[path = "tests/LocalToolPkgUpdateTests.rs"]
+mod local_toolpkg_update_tests;
 
 #[cfg(test)]
 mod package_registration_tests {

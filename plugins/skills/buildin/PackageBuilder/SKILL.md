@@ -58,7 +58,7 @@ PackageBuilder/
 4. 使用 TypeScript 编写源码并输出 CommonJS JavaScript，保留 `.ts`、`tsconfig.json` 和最终产物。项目按 `../types` 引用声明；在 `src/` 内直接引用声明时使用 `../../types/index.d.ts`。
 5. 通过统一文件、网络与终端 host API 开发和打包，确认工具与路径可用。ToolPkg 归档根目录包含 manifest，成品放在源码目录之外，并包含二次开发源码。
 6. 调用 operit_editor 包的 `operit_editor` 工具，通过 `args` 字符串数组实际执行 `package import/enable/list/show/exec` 与 `log package`；`args: []` 读取命令帮助。该工具接入 `Tools.SoftwareSettings.exec(args)`，原样返回实际执行结果与错误，不接受自然语言 `query` 或任意脚本片段。变更前取得用户确认，逐项核验导入结果、真实启用状态及工具或界面测试结果。
-7. 同 ID 更新采用明确授权的删除、重新导入、按记录恢复启用状态和重新测试流程；`package import` 不覆盖已注册包。遇到错误停止并定位，不改 id、不宣称成功。
+7. 同 ID 的普通本地 `.toolpkg` 更新先构建并核验新归档，取得更新授权后直接 `package import`，不先卸载；安装位置、配置和既有成员启用状态保留，新增子包默认关闭。内置、市场及随应用包沿用各自既有流程，其他重名及跨 scope 更新仍拒绝。核验新版本和回滚结果，并重新测试；遇到错误停止，不改 id、不自动删除重装、不宣称成功。
 8. 交付源码、成品、安装与测试结果。市场发布是用户确认后的独立操作，不能把本地测试等同于发布成功。
 
 包管理创作入口只准备 Skill 和包，并把需求填入聊天草稿；用户发送后才开始开发。它不自动生成、构建、安装或发布插件。

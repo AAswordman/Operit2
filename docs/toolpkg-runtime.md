@@ -104,6 +104,22 @@ committed. Runtime execution resolves container/subpackage ownership from
 Host. Named directories stay inside the owner's `namespaces` directory. Invalid
 scope, owner mismatch and filesystem failures are errors.
 
+Local imports can replace an existing ordinary external `.toolpkg` with the same
+ID. The update keeps its record's scope and source filename, validates a sibling
+staging archive, and restores the previous archive and installation settings on
+failure. Existing configuration is not deleted or relocated. Installation order,
+identity and existing member activation states are retained; new subpackages are
+explicitly disabled, including those that declare an enabled default.
+
+The import UI keeps the scope selected by Core. Conflicting installation-scope
+declarations and names owned by other packages are rejected. This path does not
+replace built-in, marketplace or bundled installations; their existing update
+and customization paths remain in use. Updates do not move plugin databases or
+call uninstallation. Explicit uninstallation keeps its existing configuration
+deletion rules. Archive and settings rollback does not undo side effects performed
+by the plugin's registration code. If restoration itself fails, the error is
+reported and the backup is retained for recovery.
+
 ## Compose page resources
 
 Before rendering, the package manager snapshots UTF-8 resources from the

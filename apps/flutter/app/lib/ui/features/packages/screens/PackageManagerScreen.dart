@@ -373,7 +373,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     }
   }
 
-  /// Imports dropped package files into this device; other files are named back.
+  /// Imports dropped files while ToolPkg updates keep their installation scope.
   Future<void> _importDropped(List<String> paths) async {
     final rejected = <String>[];
     var imported = false;
@@ -444,7 +444,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     }
   }
 
-  /// Imports a picked package into this device; its detail page can move it later.
+  /// Imports a picked package using Core's ToolPkg installation scope.
   Future<void> _importFile(
     XTypeGroup typeGroup, {
     required bool requireToolPkg,
@@ -740,7 +740,7 @@ class _DropOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                '松手导入到这台设备',
+                '松手导入扩展',
                 style: theme.textTheme.titleSmall?.copyWith(
                   color: colorScheme.primary,
                   fontWeight: FontWeight.w600,
@@ -813,7 +813,8 @@ class _AddExtensionSheet extends StatelessWidget {
             ),
             const SizedBox(height: 4),
             Text(
-              '导入的扩展先装在这台设备上，之后可以在扩展详情里共享到设备空间。'
+              '新扩展默认装在本机，ToolPkg 的固定安装范围遵从插件声明。'
+              '同 ID 的本地 ToolPkg 更新保留现有安装位置和配置。'
               '桌面端也可以直接把文件拖进来。',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,

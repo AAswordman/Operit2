@@ -12,6 +12,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/features/packages/components/StoreVisuals.dart';
 import 'package:operit2/ui/features/packages/components/StoreCards.dart';
+import 'package:operit2/ui/features/packages/model/ExtensionCatalogController.dart';
 import 'package:operit2/ui/features/packages/screens/StoreBrowseScreen.dart';
 import 'package:operit2/ui/features/packages/screens/MarketPane.dart';
 import 'package:operit2/ui/features/packages/screens/OfficialExtensionsScreen.dart';
@@ -27,6 +28,181 @@ import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 void main() {
+  group('local package import scope', () {
+    for (final installedScope in <String>['device', 'space']) {
+      for (final requireToolPkg in <bool>[false, true]) {
+        test(
+          'same ID ToolPkg update keeps $installedScope scope '
+          '(requireToolPkg: $requireToolPkg)',
+          () async {
+            const id = 'local.plugin';
+            const path = '/operitapp/data/downloads/updated.toolpkg';
+            final bridge = _CatalogBridge()
+              ..fileInstalledEntry = _entry(
+                id: id,
+                kind: 'toolpkg',
+                source: 'manual',
+                scope: installedScope,
+                enabled: true,
+              )
+              ..fileImportedEntry = _entry(
+                id: id,
+                kind: 'toolpkg',
+                source: 'manual',
+                scope: installedScope,
+                enabled: true,
+                version: '2.0.0',
+              )
+              ..fileImportResult = _fileImportResult(
+                id: id,
+                format: 'toolpkg',
+                scope: installedScope,
+              )
+              ..rejectScopeChanges = true;
+            final controller = ExtensionCatalogController.of(
+              GeneratedCoreProxyClients(bridge),
+            );
+            addTearDown(controller.dispose);
+
+            await controller.importPackageFile(
+              path,
+              scope: defaultExtensionInstallScope,
+              requireToolPkg: requireToolPkg,
+            );
+
+            expect(bridge.packageFileImports, <String>[path]);
+            expect(bridge.scopeMoveRequests, isEmpty);
+            expect(bridge.scopeMoves, isEmpty);
+            final entry = controller.findEntry('toolpkg', id)!;
+            expect(entry.scope, installedScope);
+            expect(entry.version, '2.0.0');
+            expect(entry.activationState, 'enabled');
+            expect(bridge.snapshotReads, 1);
+            expect(controller.isBusy('import:$path'), isFalse);
+          },
+        );
+      }
+    }
+
+    for (final coreScope in <String>['device', 'space']) {
+      test('new ToolPkg keeps Core-selected $coreScope scope', () async {
+        const id = 'new.plugin';
+        const path = '/operitapp/data/downloads/new.toolpkg';
+        final bridge = _CatalogBridge()
+          ..fileImportedEntry = _entry(
+            id: id,
+            kind: 'toolpkg',
+            source: 'manual',
+            scope: coreScope,
+          )
+          ..fileImportResult = _fileImportResult(
+            id: id,
+            format: 'toolpkg',
+            scope: coreScope,
+          )
+          ..rejectScopeChanges = true;
+        final controller = ExtensionCatalogController.of(
+          GeneratedCoreProxyClients(bridge),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.importPackageFile(
+          path,
+          scope: defaultExtensionInstallScope,
+          requireToolPkg: true,
+        );
+
+        expect(bridge.packageFileImports, <String>[path]);
+        expect(bridge.scopeMoveRequests, isEmpty);
+        expect(controller.findEntry('toolpkg', id)!.scope, coreScope);
+        expect(controller.findEntry('toolpkg', id)!.activationState, 'disabled');
+      });
+    }
+
+    test('failed Core import refreshes the old owner without moving it', () async {
+      const id = 'local.plugin';
+      const path = '/operitapp/data/downloads/broken.toolpkg';
+      final bridge = _CatalogBridge()
+        ..fileInstalledEntry = _entry(
+          id: id,
+          kind: 'toolpkg',
+          source: 'manual',
+          scope: 'space',
+        )
+        ..fileImportFailure = StateError('Core import failed');
+      final controller = ExtensionCatalogController.of(
+        GeneratedCoreProxyClients(bridge),
+      );
+      addTearDown(controller.dispose);
+      final changes = <ToolPkgCatalogChange>[];
+      final subscription = ToolPkgCatalogChangeBus.listenChanges(changes.add);
+      addTearDown(subscription.cancel);
+
+      await expectLater(
+        controller.importPackageFile(
+          path,
+          scope: defaultExtensionInstallScope,
+          requireToolPkg: true,
+        ),
+        throwsA(
+          predicate<Object>(
+            (error) => error.toString().contains('Core import failed'),
+          ),
+        ),
+      );
+
+      expect(bridge.packageFileImports, <String>[path]);
+      expect(bridge.scopeMoveRequests, isEmpty);
+      expect(bridge.snapshotReads, 1);
+      expect(controller.findEntry('toolpkg', id)!.scope, 'space');
+      expect(controller.findEntry('toolpkg', id)!.version, '1.0.0');
+      expect(controller.isBusy('import:$path'), isFalse);
+      expect(changes, isEmpty);
+    });
+
+    for (final (format, extension) in <(String, String)>[
+      ('javascript', 'js'),
+      ('typescript', 'ts'),
+      ('hjson', 'hjson'),
+    ]) {
+      test('$format import still applies the requested scope', () async {
+        const id = 'local.script';
+        final path = '/operitapp/data/downloads/source.$extension';
+        final bridge = _CatalogBridge()
+          ..fileImportedEntry = _entry(
+            id: id,
+            kind: 'script',
+            source: 'manual',
+          )
+          ..fileImportResult = _fileImportResult(
+            id: id,
+            format: format,
+            scope: 'device',
+          );
+        final controller = ExtensionCatalogController.of(
+          GeneratedCoreProxyClients(bridge),
+        );
+        addTearDown(controller.dispose);
+
+        await controller.importPackageFile(
+          path,
+          scope: 'space',
+          requireToolPkg: false,
+        );
+
+        expect(bridge.packageFileImports, <String>[path]);
+        expect(bridge.scopeMoves, <String>[id]);
+        expect(
+          bridge.scopeMoveRequests,
+          <({String kind, String id, String scope})>[
+            (kind: 'package', id: id, scope: 'space'),
+          ],
+        );
+        expect(controller.findEntry('script', id)!.scope, 'space');
+      });
+    }
+  });
+
   for (final kind in <String>['skill', 'toolpkg']) {
     testWidgets('removing a $kind returns to the searchable package list', (
       tester,
@@ -521,6 +697,7 @@ core_proxy.ExtensionCatalogEntry _entry({
   required String source,
   bool enabled = false,
   String scope = 'device',
+  String version = '1.0.0',
 }) {
   return core_proxy.ExtensionCatalogEntry(
     id: id,
@@ -528,7 +705,7 @@ core_proxy.ExtensionCatalogEntry _entry({
     source: source,
     displayName: 'Demo $id',
     description: 'Demo description',
-    version: '1.0.0',
+    version: version,
     authors: const <String>['Operit'],
     category: kind,
     scope: scope,
@@ -549,6 +726,24 @@ core_proxy.ExtensionCatalogEntry _entry({
   );
 }
 
+Map<String, Object?> _fileImportResult({
+  required String id,
+  required String format,
+  required String scope,
+}) {
+  final extension = switch (format) {
+    'javascript' => 'js',
+    'typescript' => 'ts',
+    _ => format,
+  };
+  return <String, Object?>{
+    'packageName': id,
+    'packageFormat': format,
+    'storedPath': '/operitapp/data/extensions/$scope/packages/$id.$extension',
+    'sourceNotice': null,
+  };
+}
+
 class _CatalogBridge extends OperitRuntimeBridge {
   bool skillDeleted = false;
   bool externalToolpkg = false;
@@ -562,6 +757,13 @@ class _CatalogBridge extends OperitRuntimeBridge {
   bool enabled = false;
   final imports = <String>[];
   final scopeMoves = <String>[];
+  final scopeMoveRequests = <({String kind, String id, String scope})>[];
+  final packageFileImports = <String>[];
+  Map<String, Object?>? fileImportResult;
+  core_proxy.ExtensionCatalogEntry? fileInstalledEntry;
+  core_proxy.ExtensionCatalogEntry? fileImportedEntry;
+  Object? fileImportFailure;
+  bool rejectScopeChanges = false;
   final diagnostics = <core_proxy.ExtensionCatalogDiagnostic>[];
   final deletedDiagnostics = <String>[];
   void Function(bool enabled)? onEnabledChanged;
@@ -628,6 +830,14 @@ class _CatalogBridge extends OperitRuntimeBridge {
       case 'getExtensionCatalogSnapshot':
         snapshotReads += 1;
         return _snapshot().toJson();
+      case 'addPackageFileFromExternalStorageResult':
+        packageFileImports.add((request.args as Map)['filePath'] as String);
+        final failure = fileImportFailure;
+        if (failure != null) throw failure;
+        final result = fileImportResult;
+        if (result == null) throw StateError('Package import result is missing');
+        fileInstalledEntry = fileImportedEntry ?? fileInstalledEntry;
+        return result;
       case 'deleteExtensionCatalogDiagnostic':
         final diagnostic = (request.args as Map)['diagnostic'] as Map;
         final path = diagnostic['sourcePath'] as String;
@@ -674,7 +884,29 @@ class _CatalogBridge extends OperitRuntimeBridge {
         imports.add((request.args as Map)['containerPackageName'] as String);
         return 'Imported';
       case 'setExtensionScope':
-        scopeMoves.add((request.args as Map)['id'] as String);
+        final scopeArgs = request.args as Map;
+        final id = scopeArgs['id'] as String;
+        final scope = scopeArgs['scope'] as String;
+        scopeMoves.add(id);
+        scopeMoveRequests.add((
+          kind: scopeArgs['kind'] as String,
+          id: id,
+          scope: scope,
+        ));
+        final current = fileInstalledEntry;
+        if (current != null && current.id == id) {
+          if (rejectScopeChanges && current.scope != scope) {
+            throw StateError('Plugin database scope moves are not supported');
+          }
+          fileInstalledEntry = _entry(
+            id: current.id,
+            kind: current.kind,
+            source: current.source,
+            scope: scope,
+            enabled: current.activationState == 'enabled',
+            version: current.version,
+          );
+        }
         return null;
     }
     throw StateError('Unexpected catalog call: ${request.methodName}');
@@ -721,6 +953,7 @@ class _CatalogBridge extends OperitRuntimeBridge {
       revision: 1,
       installed: <core_proxy.ExtensionCatalogEntry>[
         if (!toolpkgDeleted) toolpkg,
+        if (fileInstalledEntry != null) fileInstalledEntry!,
         if (!skillDeleted)
           _entry(
             id: 'skill',
