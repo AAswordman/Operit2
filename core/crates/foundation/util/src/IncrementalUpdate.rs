@@ -748,8 +748,11 @@ fn policyPath(release: &ReleaseInfo) -> Result<String, String> {
     ))
 }
 
-/// Applies a previous incremental failure only to its exact target version and package.
+/// Applies a previous incremental failure only when its exact target has a full package.
 fn requiresFullTransfer(release: &ReleaseInfo, context: &HostManager) -> Result<bool, String> {
+    if !release.fullPackageAvailable {
+        return Ok(false);
+    }
     let storage = context
         .runtimeStorageHost
         .as_ref()
@@ -775,6 +778,9 @@ fn recordIncrementalFailure(
 ) -> String {
     if control.isCancelled() {
         return "UPDATE_CANCELLED".into();
+    }
+    if !release.fullPackageAvailable {
+        return error;
     }
     let save = || -> Result<(), String> {
         let bytes = serde_json::to_vec(&FullTransferPolicy {
@@ -999,9 +1005,8 @@ pub async fn planUpdate(
                 let (package, patch) = route.steps[0];
                 let patch = &plan.packages[package].manifest.patches[patch];
                 patch.baseSha256 == hash && patch.baseSize == size
-            })
-            .ok_or("Installed or retained base does not match the incremental manifest")?;
-        Ok(Some((base, index)))
+            });
+        Ok(index.map(|index| (base, index)))
     };
     match select()
         .map_err(|error| recordIncrementalFailure(&plan.release, context, &control, error))?

@@ -208,6 +208,132 @@ async fn selected_base_is_verified_before_patch_download_for_patch_only_release(
     assert!(requests.last().unwrap().ends_with(".patch.gz"));
 }
 
+/// A different cached build of the same version must request the authenticated original.
+#[tokio::test]
+async fn mismatched_cached_build_requests_original_without_disabling_incremental() {
+    for fullAvailable in [false, true] {
+        let mut fixture = Fixture::new();
+        let (mut release, http, current) = fixture.network(true, false);
+        release.fullPackageAvailable = fullAvailable;
+        let storage = fixture.context.runtimeStorageHost.as_ref().unwrap();
+        let family = release
+            .assetName
+            .split_once(&format!("-{}.", release.version))
+            .unwrap()
+            .0;
+        storage
+            .writeBytes(
+                &format!("runtime/application_update_bases/{family}.apk/{current}"),
+                b"PK\x03\x04earlier build with the same preview number",
+            )
+            .unwrap();
+        let control = HttpDownloadControl::new();
+        let mut plan = planUpdate(
+            release.clone(),
+            current.clone(),
+            &fixture.context,
+            control.clone(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(plan.mode, UpdateMode::NeedsBase);
+        assert!(plan.incrementalAvailable);
+        assert_eq!(http.requests.lock().unwrap().len(), 1);
+        assert!(!storage
+            .exists(&format!(
+                "runtime/application_update_state/{family}.apk.json"
+            ))
+            .unwrap());
+        let selected = fixture.selected("original.apk", &fixture.base.readBytes().unwrap());
+        plan.supplyBase(&selected, &fixture.context, &control)
+            .unwrap();
+        let path = executeUpdate(plan, &fixture.context, control, |_| {})
+            .await
+            .unwrap();
+        assert_eq!(storage.readBytes(&path).unwrap(), fixture.target);
+        assert_eq!(http.requests.lock().unwrap().len(), 2);
+    }
+}
+
+/// Old full-only state cannot hide a patch-only release or its original-installer picker.
+#[tokio::test]
+async fn patch_only_release_ignores_persisted_full_only_policy() {
+    let mut fixture = Fixture::new();
+    let (mut release, http, current) = fixture.network(true, false);
+    release.fullPackageAvailable = false;
+    removeRetainedBase(&fixture, &release, &current);
+    let family = release
+        .assetName
+        .split_once(&format!("-{}.", release.version))
+        .unwrap()
+        .0;
+    fixture
+        .context
+        .runtimeStorageHost
+        .as_ref()
+        .unwrap()
+        .writeBytes(
+            &format!("runtime/application_update_state/{family}.apk.json"),
+            &serde_json::to_vec(&serde_json::json!({
+                "version": release.version, "assetName": release.assetName,
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+    fixture.restart();
+    fixture.context = fixture
+        .context
+        .clone()
+        .withHttpHost(http.clone())
+        .withHostRuntimeTaskSchedulerHost(Arc::new(
+            operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
+        ));
+    let mut plan = planUpdate(
+        release,
+        current,
+        &fixture.context,
+        HttpDownloadControl::new(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(plan.mode, UpdateMode::NeedsBase);
+    assert!(plan.incrementalAvailable);
+    let selected = fixture.selected("original.apk", &fixture.base.readBytes().unwrap());
+    plan.supplyBase(&selected, &fixture.context, &HttpDownloadControl::new())
+        .unwrap();
+    let path = executeUpdate(plan, &fixture.context, HttpDownloadControl::new(), |_| {})
+        .await
+        .unwrap();
+    assert_eq!(
+        fixture
+            .context
+            .runtimeStorageHost
+            .as_ref()
+            .unwrap()
+            .readBytes(&path)
+            .unwrap(),
+        fixture.target
+    );
+}
+
+/// A real patch failure is reported without choosing a nonexistent full package on retry.
+#[tokio::test]
+async fn patch_only_failure_does_not_persist_an_unavailable_full_route() {
+    let mut fixture = Fixture::new();
+    let (mut release, _, current) = fixture.network(true, true);
+    release.fullPackageAvailable = false;
+    assert!(fixture.download(release, current).await.is_err());
+    fixture.restart();
+    let (mut release, http, current) = fixture.network(true, false);
+    release.fullPackageAvailable = false;
+    assert_eq!(
+        fixture.download(release, current).await.unwrap(),
+        fixture.target
+    );
+    assert_eq!(http.requests.lock().unwrap().len(), 2);
+    assert!(http.requests.lock().unwrap()[1].ends_with(".patch.gz"));
+}
+
 /// Declining the original downloads a full asset only when the same plan confirms one exists.
 #[tokio::test]
 async fn no_original_choice_uses_full_or_stops_without_requesting_a_nonexistent_full_asset() {
