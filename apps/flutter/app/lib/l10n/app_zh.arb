@@ -2247,7 +2247,7 @@
   "deviceSpaceAddDevice": "添加设备",
   "deviceSpaceDevices": "设备",
   "deviceSpaceMemberNotPaired": "空间成员 · 未直连",
-  "deviceSpaceMemberPaired": "空间成员 · 已直连",
+  "deviceSpaceMemberPaired": "空间成员 · 已配对",
   "deviceSpacePairedOnly": "已配对",
   "deviceSpaceDirectLink": "直连",
   "deviceSpaceRelayHops": "经中继 {hops} 跳",

@@ -584,7 +584,7 @@ void main() {
     // The synchronized Space profile name wins over the pairing-time record.
     expect(find.text('android-tablet'), findsOneWidget);
     expect(find.text('android-elish'), findsNothing);
-    expect(find.textContaining('空间成员 · 已直连'), findsOneWidget);
+    expect(find.textContaining('空间成员 · 已配对'), findsOneWidget);
     final menus = find.byIcon(Icons.more_vert_outlined);
     expect(menus, findsWidgets);
     await tester.tap(menus.first);
