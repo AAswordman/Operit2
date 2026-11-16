@@ -62,16 +62,7 @@ internal class AndroidPackageOperations(private val context: Activity) {
                 "请允许 Operit 安装应用，然后返回点击继续安装。安装包已保留，无需重新下载。")
                 .put("installState", "permission_required")
         }
-        if (info.packageName == context.packageName && file.canonicalFile.parentFile?.parentFile ==
-            File(context.filesDir, "runtime/application_update_bases").canonicalFile) {
-            val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.openfiles", file)
-            context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive").apply {
-                clipData = android.content.ClipData.newRawUri("Operit update", uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            })
-        } else {
-            AndroidFileOpener(context).open(file, null, null)
-        }
+        AndroidFileOpener(context).open(file, null, null)
         return result("install_app", info.packageName, "安装器已打开，请在系统窗口确认安装。")
             .put("installState", "installer_opened")
     }

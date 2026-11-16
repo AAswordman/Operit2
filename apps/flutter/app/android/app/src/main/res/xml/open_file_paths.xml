@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<paths xmlns:android="http://schemas.android.com/apk/res/android">
-    <!-- Only explicit, staged files can be granted to another application. -->
-    <cache-path name="open_files" path="open_files/" />
-    <!-- The updater grants one APK URI; the system installer reads its existing bytes. -->
-    <files-path name="application_updates" path="runtime/application_update_bases/" />
-</paths>

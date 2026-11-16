@@ -27,8 +27,7 @@ String _redactFileCapabilities(String text) => text
         multiLine: true,
       ),
       (match) => '${match[1]}[path]',
-    )
-    .replaceAll(RegExp(r'\b[0-9a-fA-F]{32}\b'), '[file token]');
+    );
 
 /// Awaits one file-open action and presents failures beside its initiating UI.
 class WorkspaceExternalOpenAction extends StatefulWidget {
@@ -83,16 +82,12 @@ class _WorkspaceExternalOpenActionState
       final safeStackTrace = StackTrace.fromString(
         _redactFileCapabilities(stackTrace.toString()),
       );
-      if (ClientLogger.isInitialized) {
-        ClientLogger.e(
-          'External workspace file open failed',
-          tag: 'WorkspaceFileOpen',
-          error: diagnostic,
-          stackTrace: safeStackTrace,
-        );
-      } else {
-        debugPrint('WorkspaceFileOpen: $diagnostic\n$safeStackTrace');
-      }
+      ClientLogger.e(
+        'External workspace file open failed',
+        tag: 'WorkspaceFileOpen',
+        error: diagnostic,
+        stackTrace: safeStackTrace,
+      );
       if (mounted && generation == _generation) {
         final l10n = AppLocalizations.of(context)!;
         final timedOut =

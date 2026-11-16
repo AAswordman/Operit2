@@ -31,6 +31,8 @@ const _timeout = CoreLinkError(
 );
 const _timeoutNotice = 'Opening the file timed out. Please try again.';
 
+final _diagnostics = StringBuffer();
+
 final _png = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAANSURBVBhXY2Bg+P8fAAMCAf/Jsq3uAAAAAElFTkSuQmCC',
 );
@@ -38,14 +40,9 @@ final _png = base64Decode(
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUpAll(ClientLogger.initialize);
-  setUp(() async {
-    AppToastController.instance.reset();
-    await ClientLogger.clear();
-  });
-  tearDown(AppToastController.instance.reset);
 
   for (final entry in _Entry.values) {
-    testWidgets('${entry.name} awaits the result and suppresses duplicate opens', (
+    fileTest('${entry.name} awaits the result and suppresses duplicate opens', (
       tester,
     ) async {
       final pending = Completer<void>();
@@ -75,14 +72,14 @@ void main() {
       );
       expect(tester.takeException(), isNull);
       _expectReady(tester, entry);
-      final log = await ClientLogger.readText();
+      final log = _diagnostics.toString();
       expect(log, contains('Details:'));
       expect(log, contains('workspace-open-test-1'));
       expect(log, contains('test native backtrace'));
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('${entry.name} becomes available after a successful host result', (
+    fileTest('${entry.name} becomes available after a successful host result', (
       tester,
     ) async {
       final pending = Completer<void>();
@@ -109,7 +106,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     });
 
-    testWidgets('${entry.name} consumes a late failure after disposal', (
+    fileTest('${entry.name} consumes a late failure after disposal', (
       tester,
     ) async {
       final pending = Completer<void>();
@@ -126,7 +123,7 @@ void main() {
       expect(tester.takeException(), isNull);
     });
 
-    testWidgets('${entry.name} ignores the old result after its file changes', (
+    fileTest('${entry.name} ignores the old result after its file changes', (
       tester,
     ) async {
       final previous = Completer<void>();
@@ -170,7 +167,7 @@ void main() {
     });
   }
 
-  testWidgets('only the COMMAND_ERROR timeout contract uses the timeout notice', (
+  fileTest('only the COMMAND_ERROR timeout contract uses the timeout notice', (
     tester,
   ) async {
     const cases = <(CoreLinkError, String)>[
@@ -205,11 +202,7 @@ void main() {
     ];
     for (final (error, expected) in cases) {
       AppToastController.instance.reset();
-      await _pumpEntry(
-        tester,
-        _Entry.binary,
-        (_) => Future<void>.error(error),
-      );
+      await _pumpEntry(tester, _Entry.binary, (_) => Future<void>.error(error));
       _openCallback(tester, _Entry.binary)();
       await tester.pumpAndSettle();
       expect(AppToastController.instance.notices.value.single.text, expected);
@@ -218,29 +211,32 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('file capabilities are removed from local feedback and diagnostics', (
+  fileTest('file capabilities are removed from local feedback and diagnostics', (
     tester,
   ) async {
-    const token = '0123456789abcdef0123456789abcdef';
-    const uri = 'content://app.operit.workspaceopenfiles/$token';
+    const uri =
+        'content://app.operit.openfiles/1:2/%2Fprivate%2Fworkspace%2Farchive.zip';
     const path = '/private/workspace/Project/archive.zip';
     const error = CoreLinkError(
       code: 'COMMAND_ERROR',
       message: 'Viewer refused $uri for $path',
       details: <String, Object?>{
         'errorType': 'String',
-        'fields': <String, Object?>{'token': token, 'uri': uri, 'path': path},
+        'fields': <String, Object?>{'uri': uri, 'path': path},
       },
       backtrace: 'viewer_failure correlation-test-id at $path',
     );
-    await _pumpEntry(tester, _Entry.binary, (_) => Future<void>.error(
-      error, StackTrace.fromString('openFile at $path'),
-    ));
+    await _pumpEntry(
+      tester,
+      _Entry.binary,
+      (_) =>
+          Future<void>.error(error, StackTrace.fromString('openFile at $path')),
+    );
     _openCallback(tester, _Entry.binary)();
     await tester.pumpAndSettle();
-    final diagnostic = await ClientLogger.readText();
+    final diagnostic = _diagnostics.toString();
     final notice = AppToastController.instance.notices.value.single.text;
-    for (final sensitive in <String>[token, uri, path]) {
+    for (final sensitive in <String>[uri, path]) {
       expect(diagnostic, isNot(contains(sensitive)));
       expect(notice, isNot(contains(sensitive)));
     }
@@ -251,7 +247,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('a ZIP uses binary preview without reading workspace bytes', (
+  fileTest('a ZIP uses binary preview without reading workspace bytes', (
     tester,
   ) async {
     final pending = Completer<void>();
@@ -285,7 +281,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('the loaded preview toolbar preserves the external-open Future', (
+  fileTest('the loaded preview toolbar preserves the external-open Future', (
     tester,
   ) async {
     final pending = Completer<void>();
@@ -320,13 +316,16 @@ void main() {
     expect(opens, 1);
     pending.completeError(_timeout);
     await tester.pumpAndSettle();
-    expect(AppToastController.instance.notices.value.single.text, _timeoutNotice);
+    expect(
+      AppToastController.instance.notices.value.single.text,
+      _timeoutNotice,
+    );
     expect(reads, 1);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('download location failures use the same awaited local feedback', (
+  fileTest('download location failures use the same awaited local feedback', (
     tester,
   ) async {
     final store = _DownloadStore('downloads/archive.zip');
@@ -337,10 +336,14 @@ void main() {
       opened.add(path);
       return pending.future;
     }, store: store);
-    await tester.tap(find.byIcon(Icons.more_vert));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('Open location'));
-    await tester.pump(const Duration(milliseconds: 300));
+    final dynamic menu = tester.widget(_downloadMenu());
+    final List<PopupMenuEntry<dynamic>> actions = menu.itemBuilder(
+      tester.element(_downloadMenu()),
+    );
+    menu.onSelected(
+      actions.whereType<PopupMenuItem<dynamic>>().elementAt(1).value,
+    );
+    await tester.pump();
     expect(opened, <String>['downloads']);
     _expectBusy(tester, _Entry.download);
     pending.completeError(StateError('Cannot open a directory as a file'));
@@ -351,6 +354,25 @@ void main() {
     );
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
+  });
+}
+
+/// Captures emitted diagnostics and removes toast timers before widget invariant checks.
+void fileTest(String description, WidgetTesterCallback callback) {
+  testWidgets(description, (tester) async {
+    AppToastController.instance.reset();
+    _diagnostics.clear();
+    try {
+      await runZoned(
+        () => callback(tester),
+        zoneSpecification: ZoneSpecification(
+          print: (_, _, _, line) => _diagnostics.writeln(line),
+        ),
+      );
+    } finally {
+      AppToastController.instance.reset();
+      await tester.pump();
+    }
   });
 }
 
@@ -382,7 +404,8 @@ Widget _preview(
   ),
   onReadWorkspaceFileBytes:
       read ??
-      ((_) => throw StateError('The binary ZIP preview must not read its bytes')),
+      ((_) =>
+          throw StateError('The binary ZIP preview must not read its bytes')),
   onWriteWorkspaceFileBytes: (_, _) async {},
   onOpenWorkspaceFile: open,
   onOpenBrowser: ({url, localFilePath, workspaceHtmlPath}) {},
@@ -442,7 +465,7 @@ VoidCallback _openCallback(WidgetTester tester, _Entry entry) {
           .itemBuilder(tester.element(_downloadMenu()))
           .whereType<PopupMenuItem<dynamic>>()
           .first;
-      return () => menu.onSelected!(open.value);
+      return () => (menu as dynamic).onSelected(open.value);
   }
 }
 
@@ -497,16 +520,17 @@ class _DownloadStore extends WorkspaceBrowserDownloadStore {
   String _path;
 
   @override
-  List<WorkspaceBrowserDownloadItem> get items => <WorkspaceBrowserDownloadItem>[
-    WorkspaceBrowserDownloadItem(
-      url: 'https://example.test/archive.zip',
-      fileName: _path.split('/').last,
-      state: WorkspaceBrowserDownloadState.completed,
-      createdAt: DateTime.fromMillisecondsSinceEpoch(0),
-      progress: 100,
-      savedPath: _path,
-    ),
-  ];
+  List<WorkspaceBrowserDownloadItem> get items =>
+      <WorkspaceBrowserDownloadItem>[
+        WorkspaceBrowserDownloadItem(
+          url: 'https://example.test/archive.zip',
+          fileName: _path.split('/').last,
+          state: WorkspaceBrowserDownloadState.completed,
+          createdAt: DateTime.fromMillisecondsSinceEpoch(0),
+          progress: 100,
+          savedPath: _path,
+        ),
+      ];
 
   void replacePath(String path) {
     _path = path;

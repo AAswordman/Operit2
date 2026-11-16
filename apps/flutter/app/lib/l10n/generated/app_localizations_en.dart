@@ -808,6 +808,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get openFile => 'Open file';
 
   @override
+  String get workspaceFileOpening => 'Opening file…';
+
+  @override
+  String get workspaceFileOpenTimedOut =>
+      'Opening the file timed out. Please try again.';
+
+  @override
   String get openLocation => 'Open location';
 
   @override

@@ -782,6 +782,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get openFile => '打开文件';
 
   @override
+  String get workspaceFileOpening => '正在打开文件…';
+
+  @override
+  String get workspaceFileOpenTimedOut => '打开文件超时，请重试。';
+
+  @override
   String get openLocation => '打开位置';
 
   @override

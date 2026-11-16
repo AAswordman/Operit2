@@ -1538,6 +1538,18 @@ abstract class AppLocalizations {
   /// **'Open file'**
   String get openFile;
 
+  /// No description provided for @workspaceFileOpening.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening file…'**
+  String get workspaceFileOpening;
+
+  /// No description provided for @workspaceFileOpenTimedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Opening the file timed out. Please try again.'**
+  String get workspaceFileOpenTimedOut;
+
   /// No description provided for @openLocation.
   ///
   /// In en, this message translates to:

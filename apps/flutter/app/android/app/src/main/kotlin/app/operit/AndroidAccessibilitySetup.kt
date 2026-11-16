@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.provider.Settings
 import android.view.accessibility.AccessibilityManager
-import androidx.core.content.FileProvider
 import java.io.File
 
 /** Owns the embedded companion's installation and Android accessibility authorization. */
@@ -72,7 +71,7 @@ internal class AndroidAccessibilitySetup(private val activity: Activity) : Acces
         activity.assets.open("companions/operit-accessibility.apk").use { input ->
             apk.outputStream().use { input.copyTo(it) }
         }
-        val uri = FileProvider.getUriForFile(activity, "${activity.packageName}.openfiles", apk)
+        val uri = OperitOpenFileProvider.uriForFile(activity, apk)
         activity.startActivityForResult(Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             clipData = ClipData.newRawUri("Operit2 Accessibility", uri)

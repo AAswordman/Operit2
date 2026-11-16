@@ -12,20 +12,21 @@ test('Android open_file reaches the JNI owner for native paths and document capa
   assert.match(open, /"operation": "openFile"/);
   assert.doesNotMatch(open, /requires the Flutter/);
   const backend = source(android + 'kotlin/app/operit/AndroidDocumentFileSystem.kt');
-  assert.match(backend, /"openFile" ->/);
+  assert.match(backend, /"openFile", "shareFile" ->/);
   assert.match(backend, /target\.input\(\)\.use/);
-  assert.match(backend, /opener\(target\.file, target\.tree,.*target\.documentId\(\)/);
+  assert.match(backend, /opener\(target\.file, target\.tree, id\)/);
 });
 
-test('Android shares only a staged file or the granted SAF document, never file://', () => {
+test('Android presents original files or granted SAF documents through read-only URIs', () => {
   const owner = source(android + 'kotlin/app/operit/AndroidFileOpener.kt');
-  for (const api of ['FileProvider.getUriForFile', 'buildDocumentUriUsingTree', 'FLAG_GRANT_READ_URI_PERMISSION', 'ClipData.newRawUri', 'Intent.ACTION_VIEW', 'contentResolver.getType', 'context.startActivity(intent)'])
+  for (const api of ['OperitOpenFileProvider.uriForFile', 'buildDocumentUriUsingTree', 'FLAG_GRANT_READ_URI_PERMISSION', 'ClipData.newRawUri', 'Intent.ACTION_VIEW', 'contentResolver.getType', 'context.startActivity(launch)'])
     assert.ok(owner.includes(api), api);
-  assert.match(owner, /class OperitOpenFileProvider : FileProvider\(\)/);
-  assert.doesNotMatch(owner, /Uri\.fromFile|FLAG_GRANT_WRITE_URI_PERMISSION|resolveActivity/);
-  const paths = source(android + 'res/xml/open_file_paths.xml');
-  assert.match(paths, /cache-path.*path="open_files\/"/);
-  assert.doesNotMatch(paths, /root-path|external-path|path="\."/);
+  assert.doesNotMatch(owner, /Uri\.fromFile|FLAG_GRANT_WRITE_URI_PERMISSION|resolveActivity|copyTo|cacheDir/);
+  const provider = source(android + 'kotlin/app/operit/OperitOpenFileProvider.kt');
+  assert.match(provider, /class OperitOpenFileProvider : ContentProvider\(\)/);
+  assert.match(provider, /checkUriPermission/);
+  assert.match(provider, /ParcelFileDescriptor\.MODE_READ_ONLY/);
+  assert.match(provider, /Os\.fstat/);
   const manifest = source(android + 'AndroidManifest.xml');
   assert.match(manifest, /OperitOpenFileProvider"[\s\S]*?android:exported="false"[\s\S]*?grantUriPermissions="true"/);
 });

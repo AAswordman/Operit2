@@ -7,7 +7,6 @@ import android.content.ContextWrapper
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.Process
 import android.os.SystemClock
@@ -49,16 +48,16 @@ import org.junit.runner.RunWith
  * The default STORED ZIP is 1 MiB; use instrumentation argument workspaceZipMiB=64/512/2048/4096
  * to create real, fully written large archives (2 GiB and above explicitly use ZIP64).
  * SAF checks require safTreeUri/safDocumentId arguments and a pre-existing app read grant.
- * A reconstructed store proves persisted metadata; process death and external ZIP viewers
- * still need the manual lifecycle/regression matrix. The sparse fixture only tests FD offsets.
+ * Android owns grant lifetime; external viewers and process death still require device checks.
+ * The sparse fixture only tests descriptor offsets, not handoff performance.
  */
 @RunWith(AndroidJUnit4::class)
-class WorkspaceOpenFileProviderTest {
+class OperitOpenFileProviderTest {
     private lateinit var context: Context
     private lateinit var fixtures: File
     private val grants = mutableSetOf<Uri>()
-    private val legacyDirectories = mutableSetOf<File>()
 
+    /** Creates isolated provider fixtures. */
     @Before
     fun setUp() {
         context = InstrumentationRegistry.getInstrumentation().targetContext
@@ -67,16 +66,16 @@ class WorkspaceOpenFileProviderTest {
         }
     }
 
+    /** Revokes fixture grants and removes test files. */
     @After
     fun tearDown() {
         for (uri in grants) {
             runCatching { context.revokeUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) }
-            runCatching { WorkspaceOpenFileProvider.revoke(context, uri) }
         }
-        for (directory in legacyDirectories) directory.deleteRecursively()
         fixtures.deleteRecursively()
     }
 
+    /** Verifies realFileDescriptorsAreReadOnlyIndependentlySeekableAndKeepLongSizes. */
     @Test
     fun realFileDescriptorsAreReadOnlyIndependentlySeekableAndKeepLongSizes() {
         // Sparse, non-ZIP data tests 64-bit descriptor offsets; it is not a performance fixture.
@@ -120,6 +119,7 @@ class WorkspaceOpenFileProviderTest {
         }
     }
 
+    /** Verifies exactUriReadGrantIsEnforcedForTheDifferentShellUid. */
     @Test
     fun exactUriReadGrantIsEnforcedForTheDifferentShellUid() {
         val firstBytes = "workspace-grant-first\n".toByteArray()
@@ -144,68 +144,65 @@ class WorkspaceOpenFileProviderTest {
         assertArrayEquals(secondBytes, File(fixtures, "second.txt").readBytes())
     }
 
+    /** Verifies rejectsDirectoriesMalformedUrisAndAllMutationApis. */
     @Test
     fun rejectsDirectoriesMalformedUrisAndAllMutationApis() {
-        failure { WorkspaceOpenFileProvider.register(context, fixtures, "application/octet-stream") }
+        failure { OperitOpenFileProvider.uriForFile(context, fixtures) }
         val file = File(fixtures, "single.bin").apply { writeBytes(byteArrayOf(1, 2, 3)) }
         val uri = register(file)
-        val token = checkNotNull(uri.lastPathSegment)
-        val prefix = "content://${WorkspaceOpenFileProvider.authority(context)}"
-        val uppercaseToken = "F".repeat(32)
+        val prefix = "content://${context.packageName}.openfiles"
         for (bad in listOf(
-            prefix, "$prefix/", "$prefix/..", "$prefix/$uppercaseToken",
-            "$prefix/${token}a", "$prefix/${token}/other", "$prefix/%2e%2e/$token",
-            "$prefix/%${token.take(2)}/${token.drop(2)}", "$prefix/$token?path=other", "$prefix/$token#other",
+            prefix, "$prefix/", "$prefix/..", "$prefix/0:0",
+            uri.buildUpon().appendPath("other").build().toString(),
+            uri.buildUpon().appendQueryParameter("path", "other").build().toString(),
+            uri.buildUpon().fragment("other").build().toString(),
+            Uri.Builder().scheme("content").authority(uri.authority)
+                .appendPath("0:0").appendPath(file.canonicalPath).build().toString(),
         )) {
             failure { context.contentResolver.openFileDescriptor(Uri.parse(bad), "r")?.use { } }
         }
         failure { context.contentResolver.insert(uri, ContentValues().apply { put("path", file.path) }) }
         failure { context.contentResolver.update(uri, ContentValues(), null, null) }
         failure { context.contentResolver.delete(uri, null, null) }
-        failure { context.contentResolver.call(uri, "register", file.path, Bundle()) }
         assertArrayEquals(byteArrayOf(1, 2, 3), file.readBytes())
     }
 
+    /** Repeated opens and more than 128 files need no application-owned grant storage. */
     @Test
-    fun persistentSameNamedGrantsStaySeparateAndExpiryOnlyRemovesMetadata() {
-        val firstFile = File(File(fixtures, "one").apply { mkdir() }, "同名.zip").apply { writeText("first") }
-        val secondFile = File(File(fixtures, "two").apply { mkdir() }, "同名.zip").apply { writeText("second") }
-        val first = register(firstFile)
-        val second = register(secondFile)
-        val firstToken = checkNotNull(first.lastPathSegment)
-        val secondToken = checkNotNull(second.lastPathSegment)
-        val directory = File(context.noBackupFilesDir, "workspace_open_grants")
-        val loaded = WorkspaceOpenFileGrantStore(directory)
-        assertEquals(firstFile.canonicalPath, checkNotNull(loaded.find(firstToken)).canonicalPath)
-        assertEquals(secondFile.canonicalPath, checkNotNull(loaded.find(secondToken)).canonicalPath)
-        assertNotEquals(firstToken, secondToken)
-        open(first).use { assertArrayEquals("first".toByteArray(), readExactly(it, 5)) }
-        open(second).use { assertArrayEquals("second".toByteArray(), readExactly(it, 6)) }
-        open(first).use { alreadyOpen ->
-            val metadata = File(directory, "$firstToken.json")
-            val now = System.currentTimeMillis()
-            val expired = JSONObject(metadata.readText())
-                .put("issuedAt", now - WorkspaceOpenFileGrantStore.TTL_MILLIS - 1)
-                .put("expiresAt", now - 1)
-            metadata.writeText(expired.toString())
-            failure { context.contentResolver.openFileDescriptor(first, "r")?.use { } }
-            assertFalse(metadata.exists())
-            assertArrayEquals("first".toByteArray(), readExactly(alreadyOpen, 5))
+    fun stableUrisHaveNoRegistrationLimitAndSurviveProviderRecreation() {
+        val store = File(context.noBackupFilesDir, "workspace_open_grants")
+        val before = store.list()?.toSet()
+        val files = (0 until 256).map { index ->
+            File(File(fixtures, index.toString()).apply { mkdir() }, "same.txt")
+                .apply { writeText(index.toString()) }
         }
-        assertTrue(firstFile.exists())
-        assertTrue(secondFile.exists())
+        val uris = files.map { register(it) }
+        assertEquals(files.size, uris.toSet().size)
+        val recreated = OperitOpenFileProvider().apply {
+            attachInfo(context, android.content.pm.ProviderInfo().apply {
+                authority = "${this@OperitOpenFileProviderTest.context.packageName}.openfiles"
+                exported = false
+                grantUriPermissions = true
+            })
+        }
+        files.zip(uris).forEach { (file, uri) ->
+            assertEquals(uri, OperitOpenFileProvider.uriForFile(context, file))
+            recreated.openFile(uri, "r").use {
+                assertArrayEquals(file.readBytes(), readExactly(it, file.length().toInt()))
+            }
+        }
+        assertEquals(before, store.list()?.toSet())
     }
 
+    /** Verifies replacingPathRejectsNewOpensWithoutRecallingDeliveredFd. */
     @Test
-    fun replacingPathOrRevokingTokenRejectsNewOpensWithoutRecallingDeliveredFd() {
+    fun replacingPathRejectsNewOpensWithoutRecallingDeliveredFd() {
         val file = File(fixtures, "replace.bin").apply { writeText("original") }
         val uri = register(file)
         open(uri).use { delivered ->
             val retainedInode = File(fixtures, "original-inode.bin")
             assertTrue(file.renameTo(retainedInode))
             file.writeText("replacement")
-            failure { context.contentResolver.openFileDescriptor(uri, "r")?.use { } }
-            WorkspaceOpenFileProvider.revoke(context, uri)
             failure { context.contentResolver.openFileDescriptor(uri, "r")?.use { } }
             assertArrayEquals("original".toByteArray(), readExactly(delivered, 8))
             assertEquals("replacement", file.readText())
@@ -220,25 +217,26 @@ class WorkspaceOpenFileProviderTest {
         assertEquals("ungranted", ungranted.readText())
     }
 
+    /** Verifies failedLaunchLeavesOriginalFileAndRedactsIntentAndPhysicalPath. */
     @Test
-    fun failedWorkspaceLaunchRevokesUndeliveredGrantAndRedactsIntentAndPhysicalPath() {
+    fun failedLaunchLeavesOriginalFileAndRedactsIntentAndPhysicalPath() {
         val source = File(fixtures, "failure.zip").apply { writeText("test data") }
         val capture = CapturingContext(context, failLaunch = true)
-        val error = failure { AndroidFileOpener(capture).openWorkspaceFile(source, null, null) }
+        val error = failure { AndroidFileOpener(capture).open(source, null, null) }
         val firstUri = checkNotNull(capture.lastIntent?.data).also { grants.add(it) }
         assertNoCapability(error.toString(), firstUri, source)
         assertNull(error.cause)
-        failure { context.contentResolver.openFileDescriptor(firstUri, "r")?.use { } }
+        open(firstUri).use { assertEquals(source.length(), it.statSize) }
         val filesystem = AndroidDocumentFileSystem(
             ContentResolverDocumentTreeAccess(context),
-            fileOpener = AndroidFileOpener(capture)::openWorkspaceFile,
+            fileOpener = AndroidFileOpener(capture)::open,
         )
         val result = JSONObject(filesystem.execute(JSONObject()
             .put("operation", "openFile").put("path", source.absolutePath).toString()))
         assertFalse(result.getBoolean("ok"))
         val secondUri = checkNotNull(capture.lastIntent?.data).also { grants.add(it) }
         assertNoCapability(result.getString("error"), secondUri, source)
-        failure { context.contentResolver.openFileDescriptor(secondUri, "r")?.use { } }
+        assertEquals(firstUri, secondUri)
         val missing = File(fixtures, "missing-sensitive-path.zip")
         val missingResult = JSONObject(filesystem.execute(JSONObject()
             .put("operation", "openFile").put("path", missing.absolutePath).toString()))
@@ -246,24 +244,25 @@ class WorkspaceOpenFileProviderTest {
         assertEquals("test data", source.readText())
     }
 
+    /** Verifies validStoredZipHandoffDoesNotStageBytesAndTheGrantedFdOpensItsDirectory. */
     @Test
     fun validStoredZipHandoffDoesNotStageBytesAndTheGrantedFdOpensItsDirectory() {
         val argument = InstrumentationRegistry.getArguments().getString("workspaceZipMiB")
         val sizeMiB = if (argument == null) 1L else requireNotNull(argument.toLongOrNull()) { "Invalid workspaceZipMiB" }
         require(sizeMiB in setOf(1L, 64L, 512L, 2048L, 4096L)) { "Unsupported workspaceZipMiB" }
         val payloadBytes = sizeMiB * 1024 * 1024
-        assumeTrue("Large fixtures require enough device storage for source and baseline staging",
-            fixtures.usableSpace > payloadBytes * 2 + 64L * 1024 * 1024)
+        assumeTrue("Large fixtures require enough device storage for the original archive",
+            fixtures.usableSpace > payloadBytes + 64L * 1024 * 1024)
         val zip = File(fixtures, "stored-$sizeMiB.zip")
         val fixture = storedZip(zip, payloadBytes)
         val stagedBefore = openFilesSnapshot()
         val capture = CapturingContext(context)
         val start = SystemClock.elapsedRealtime()
-        AndroidFileOpener(capture).openWorkspaceFile(zip, null, null)
+        AndroidFileOpener(capture).open(zip, null, null)
         val handoffMs = SystemClock.elapsedRealtime() - start
         val intent = checkNotNull(capture.lastIntent)
         val uri = checkNotNull(intent.data).also { grants.add(it) }
-        assertEquals(WorkspaceOpenFileProvider.authority(context), uri.authority)
+        assertEquals("${context.packageName}.openfiles", uri.authority)
         assertEquals(Intent.ACTION_VIEW, intent.action)
         assertEquals("application/zip", intent.type)
         assertEquals(uri, checkNotNull(intent.clipData).getItemAt(0).uri)
@@ -290,19 +289,19 @@ class WorkspaceOpenFileProviderTest {
                 assertEquals(fixture.first, entry.crc)
             }
         }
-        Log.i("WorkspaceOpenFileProviderTest", "fixtureBytes=${zip.length()} payloadBytes=$payloadBytes " +
+        Log.i("OperitOpenFileProviderTest", "fixtureBytes=${zip.length()} payloadBytes=$payloadBytes " +
             "crc=${fixture.first} sha256=${fixture.second} handoffMs=$handoffMs")
     }
 
+    /** Verifies openAndShareUseTheSameOriginalFileUri. */
     @Test
-    fun legacyOpenAndShareRetainTheConfiguredOpenfilesAuthority() {
+    fun openAndShareUseTheSameOriginalFileUri() {
         val file = File(fixtures, "legacy.zip").apply { writeText("legacy snapshot") }
         val capture = CapturingContext(context)
         val opener = AndroidFileOpener(capture)
         opener.open(file, null, null)
         val openIntent = checkNotNull(capture.lastIntent)
         val openUri = checkNotNull(openIntent.data)
-        trackLegacy(openUri)
         assertEquals("${context.packageName}.openfiles", openUri.authority)
         context.contentResolver.openInputStream(openUri).use {
             assertArrayEquals(file.readBytes(), checkNotNull(it).readBytes())
@@ -314,7 +313,7 @@ class WorkspaceOpenFileProviderTest {
         val shareIntent = checkNotNull(chooser.getParcelableExtra<Intent>(Intent.EXTRA_INTENT))
         @Suppress("DEPRECATION")
         val sharedUri = checkNotNull(shareIntent.getParcelableExtra<Uri>(Intent.EXTRA_STREAM))
-        trackLegacy(sharedUri)
+        assertEquals(openUri, sharedUri)
         assertEquals(Intent.ACTION_SEND, shareIntent.action)
         assertEquals("${context.packageName}.openfiles", sharedUri.authority)
         assertEquals(sharedUri, checkNotNull(shareIntent.clipData).getItemAt(0).uri)
@@ -323,6 +322,7 @@ class WorkspaceOpenFileProviderTest {
         }
     }
 
+    /** Verifies safDocumentUriIsPreservedWhenAnExistingCapabilityIsProvided. */
     @Test
     fun safDocumentUriIsPreservedWhenAnExistingCapabilityIsProvided() {
         val arguments = InstrumentationRegistry.getArguments()
@@ -332,7 +332,7 @@ class WorkspaceOpenFileProviderTest {
             tree != null && document != null)
         val expected = DocumentsContract.buildDocumentUriUsingTree(Uri.parse(checkNotNull(tree)), checkNotNull(document))
         val capture = CapturingContext(context)
-        AndroidFileOpener(capture).openWorkspaceFile(null, tree, document)
+        AndroidFileOpener(capture).open(null, tree, document)
         val intent = checkNotNull(capture.lastIntent)
         assertEquals(expected, intent.data)
         assertEquals(expected, checkNotNull(intent.clipData).getItemAt(0).uri)
@@ -340,12 +340,15 @@ class WorkspaceOpenFileProviderTest {
         assertEquals(0, intent.flags and (Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_PREFIX_URI_PERMISSION))
     }
 
+    /** Builds a locator and tracks grants for cleanup. */
     private fun register(file: File): Uri =
-        WorkspaceOpenFileProvider.register(context, file, "application/octet-stream").also { grants.add(it) }
+        OperitOpenFileProvider.uriForFile(context, file).also { grants.add(it) }
 
+    /** Opens the original descriptor through ContentResolver. */
     private fun open(uri: Uri): ParcelFileDescriptor =
         checkNotNull(context.contentResolver.openFileDescriptor(uri, "r"))
 
+    /** Reads the requested bytes from the current descriptor offset. */
     private fun readExactly(descriptor: ParcelFileDescriptor, length: Int): ByteArray {
         val result = ByteArray(length)
         var offset = 0
@@ -357,12 +360,14 @@ class WorkspaceOpenFileProviderTest {
         return result
     }
 
+    /** Exercises real cross-UID access through the Android content command. */
     private fun shellRead(uri: Uri): ByteArray {
         val pipe = InstrumentationRegistry.getInstrumentation().uiAutomation
             .executeShellCommand("content read --uri $uri")
         return ParcelFileDescriptor.AutoCloseInputStream(pipe).use { it.readBytes() }
     }
 
+    /** Requires an operation to fail. */
     private fun failure(action: () -> Unit): Exception {
         try {
             action()
@@ -372,25 +377,22 @@ class WorkspaceOpenFileProviderTest {
         throw AssertionError("Operation unexpectedly succeeded")
     }
 
+    /** Checks that diagnostics omit file locators. */
     private fun assertNoCapability(message: String, uri: Uri, source: File) {
         assertFalse(message.contains(uri.toString()))
         assertFalse(message.contains(checkNotNull(uri.lastPathSegment)))
         assertFalse(message.contains(source.canonicalPath))
     }
 
+    /** Records staging directories to detect accidental copies. */
     private fun openFilesSnapshot(): Set<String> =
         File(context.cacheDir, "open_files").list()?.toSet() ?: emptySet()
 
-    private fun trackLegacy(uri: Uri) {
-        val segments = uri.pathSegments
-        check(segments.size == 3 && segments[0] == "open_files")
-        UUID.fromString(segments[1])
-        legacyDirectories.add(File(File(context.cacheDir, "open_files"), segments[1]))
-    }
-
     private class CapturingContext(base: Context, private val failLaunch: Boolean = false) : ContextWrapper(base) {
         var lastIntent: Intent? = null
+        /** Keeps launches inside the capture context. */
         override fun getApplicationContext(): Context = this
+        /** Captures or rejects a system presentation launch. */
         override fun startActivity(intent: Intent) {
             lastIntent = intent
             if (failLaunch) throw ActivityNotFoundException("No Activity found to handle $intent")
@@ -432,9 +434,13 @@ class WorkspaceOpenFileProviderTest {
     /** Explicit ZIP64 STORED fixture; 2 GiB is below the automatic ZIP64 threshold of Java's writer. */
     private fun writeZip64(output: OutputStream, bytes: Long, block: ByteArray, crc: Long) {
         val name = "payload.bin".toByteArray(Charsets.UTF_8)
+        /** Verifies short. */
         fun short(value: Int) { repeat(2) { output.write(value ushr (it * 8) and 0xff) } }
+        /** Writes a little-endian 32-bit ZIP field. */
         fun int(value: Long) { repeat(4) { output.write((value ushr (it * 8)).toInt() and 0xff) } }
+        /** Writes a little-endian 64-bit ZIP field. */
         fun long(value: Long) { repeat(8) { output.write((value ushr (it * 8)).toInt() and 0xff) } }
+        /** Writes the ZIP64 size extension. */
         fun sizes() { short(1); short(16); long(bytes); long(bytes) }
         int(0x04034b50L); short(45); short(0); short(0); short(0); short(0)
         int(crc); int(0xffff_ffffL); int(0xffff_ffffL); short(name.size); short(20)
@@ -452,6 +458,7 @@ class WorkspaceOpenFileProviderTest {
         int(0xffff_ffffL); int(0xffff_ffffL); short(0)
     }
 
+    /** Verifies writePayload. */
     private fun writePayload(output: OutputStream, bytes: Long, block: ByteArray) {
         var remaining = bytes
         while (remaining > 0) {

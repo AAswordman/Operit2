@@ -11,8 +11,11 @@ test('Android file presentation is routed to the owner and retains URI read gran
   const documents = source(android + 'AndroidDocumentFileSystem.kt');
   const opener = source(android + 'AndroidFileOpener.kt');
   assert.match(runtime, /AndroidFileSystemHost::withPresentation/);
-  assert.match(runtime, /"android_file_presentation"/);
-  assert.match(channel, /"android_file_presentation"[\s\S]*fileSystemResourceOperation/);
+  assert.match(runtime, /"openFile" => ownerFileOpen\(path\)/);
+  assert.match(runtime, /"shareFile" => ownerFileShare\(path, title\)/);
+  assert.match(channel, /"ownerFileOpen" -> ownerFilePresentation/);
+  assert.match(channel, /"ownerFileShare" -> ownerFilePresentation/);
+  assert.match(channel, /fileSystemResourceOperation\(request\.toString\(\)\)/);
   assert.match(documents, /"openFile", "shareFile"/);
   assert.match(documents, /target\.input\(\)\.use/);
   assert.match(opener, /Intent\.ACTION_SEND/);
@@ -23,7 +26,7 @@ test('Android file presentation is routed to the owner and retains URI read gran
 test('privileged Android runtime forwards local inference to its owner', () => {
   const runtime = source('apps/flutter/native/operit-flutter-bridge/src/platform_runtime/android.rs');
   const channel = source(android + 'OwnerSystemCapabilityChannel.kt');
-  assert.match(runtime, /if module\.is_some\(\)[\s\S]*withLocalInferenceHost\(Arc::new\(FlutterLocalInferenceHost\)\)/);
+  assert.match(runtime, /if module\.is_some\(\)[\s\S]*withLocalInferenceHost\(Arc::new\([\s\S]*?withSpeech\(Arc::new\(FlutterLocalInferenceHost\)\)\)\)/);
   for (const method of ['ownerLocalInference', 'transcribeLocalSpeech', 'synthesizeLocalSpeech']) {
     assert.ok(channel.includes(`"${method}"`));
   }

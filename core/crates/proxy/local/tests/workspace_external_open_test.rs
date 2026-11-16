@@ -23,9 +23,9 @@ use operit_link::{
 use operit_proxy_local::LocalCoreProxy;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::services::RuntimeHostInteractionService::{
-    requestOwnerSystemOperation, RuntimeHostInteractionRequest,
-    RuntimeHostInteractionResponse, RuntimeHostInteractionSystemOperationPayload,
-    RuntimeHostInteractionSystemOperationResponse,
+    requestOwnerFileOpen, RuntimeHostInteractionRequest,
+    RuntimeHostInteractionResponse, RuntimeHostInteractionFileOpenPayload,
+    RuntimeHostInteractionFileOperationResponse,
 };
 use operit_runtime::services::WorkspaceService::{WorkspaceFileEntry, WorkspaceService};
 use serde_json::{json, Value};
@@ -100,15 +100,19 @@ impl FileSystemHost for OwnerOpenFileSystem {
         self.workerNames.lock().unwrap().push(
             std::thread::current().name().unwrap_or("unnamed").to_string(),
         );
-        let result = requestOwnerSystemOperation(
-            RuntimeHostInteractionSystemOperationPayload {
-                operation: "android_file_presentation".to_string(),
-                paramsJson: json!({"operation": "openFile", "path": path}).to_string(),
+        let result = requestOwnerFileOpen(
+            RuntimeHostInteractionFileOpenPayload {
+                path: path.to_string(),
             },
             Duration::from_millis(self.timeoutMillis.load(Ordering::SeqCst)),
         );
         self.completedCalls.fetch_add(1, Ordering::SeqCst);
-        result.map(|_| ()).map_err(HostError::new)
+        let response = result.map_err(HostError::new)?;
+        if response.success {
+            Ok(())
+        } else {
+            Err(HostError::new(response.error.expect("failed open must include an error")))
+        }
     }
 
     delegate_filesystem! {
@@ -212,14 +216,12 @@ async fn next_owner_request(events: &mut CoreEventStream) -> RuntimeHostInteract
 }
 
 async fn respond_owner(proxy: &LocalCoreProxy, requestId: &str, error: Option<&str>) {
-    let response = match error {
-        Some(error) => json!({"error": error}),
-        None => serde_json::to_value(RuntimeHostInteractionResponse::systemOperation(
-            RuntimeHostInteractionSystemOperationResponse {
-                resultJson: json!({"ok": true, "value": null}).to_string(),
-            },
-        )).unwrap(),
-    };
+    let response = serde_json::to_value(RuntimeHostInteractionResponse::fileOpen(
+        RuntimeHostInteractionFileOperationResponse {
+            success: error.is_none(),
+            error: error.map(str::to_string),
+        },
+    )).unwrap();
     let result = CoreLinkSharedClient::call(
         proxy,
         CoreCallRequest::new(
@@ -254,12 +256,30 @@ async fn bound_chat(proxy: &LocalCoreProxy) -> String {
 
 /// A current-thread caller cannot poll owner events if generated dispatch blocks inline.
 /// This exercises the real capture dispatcher, owner broker and its String error mapping.
-#[tokio::test(flavor = "current_thread")]
-async fn generated_workspace_open_releases_service_and_preserves_real_outcomes() {
+#[test]
+fn generated_workspace_open_releases_service_and_preserves_real_outcomes() {
     let root: PathBuf = std::env::temp_dir().join(format!(
         "operit-workspace-open-{}-{}", std::process::id(),
         SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos(),
     ));
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", "workspace_open_worker", "--ignored", "--nocapture"])
+        .env("OPERIT_WORKSPACE_OPEN_TEST_ROOT", &root)
+        .output().unwrap();
+    assert!(output.status.success(), "workspace worker failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout), String::from_utf8_lossy(&output.stderr));
+    // The worker owns application singletons; exit releases their database handles on Windows.
+    let resolved = root.canonicalize().unwrap();
+    assert_eq!(resolved.parent(), Some(std::env::temp_dir().canonicalize().unwrap().as_path()));
+    std::fs::remove_dir_all(resolved).unwrap();
+}
+
+/// Runs the real application broker in a process whose database lifetime the parent owns.
+#[tokio::test(flavor = "current_thread")]
+#[ignore = "Executed by the parent with an isolated storage directory"]
+async fn workspace_open_worker() {
+    let root = PathBuf::from(std::env::var_os("OPERIT_WORKSPACE_OPEN_TEST_ROOT")
+        .expect("workspace worker requires its parent-owned storage directory"));
     let runtimeRoot = root.join("runtime");
     let workspaceRoot = root.join("workspaces");
     let project = workspaceRoot.join("project");
@@ -288,7 +308,7 @@ async fn generated_workspace_open_releases_service_and_preserves_real_outcomes()
                 "workspace-owner-events",
                 LocalCoreProxy::generatedTargetForSchema("services.runtimeHostInteractionService").unwrap(),
                 "ownerHostInteractionEvents",
-                toCoreValue(json!({"kinds": ["system_operation"]})).unwrap(),
+                toCoreValue(json!({"kinds": ["file_open"]})).unwrap(),
             ),
         ).await.unwrap();
 
@@ -302,10 +322,8 @@ async fn generated_workspace_open_releases_service_and_preserves_real_outcomes()
         assert_eq!(filesystem.openCalls.load(Ordering::SeqCst), 1);
         assert_eq!(filesystem.completedCalls.load(Ordering::SeqCst), 0);
         assert!(filesystem.workerNames.lock().unwrap()[0].starts_with("operit-blk-"));
-        let payload = owner.systemOperation.as_ref().unwrap();
-        assert_eq!(payload.operation, "android_file_presentation");
-        let params: Value = serde_json::from_str(&payload.paramsJson).unwrap();
-        assert_eq!(params["path"].as_str(), sample.to_str());
+        let payload = owner.fileOpen.as_ref().unwrap();
+        assert_eq!(Path::new(&payload.path), sample.as_path());
 
         let listing = tokio::time::timeout(
             Duration::from_secs(1),
@@ -388,5 +406,4 @@ async fn generated_workspace_open_releases_service_and_preserves_real_outcomes()
         assert_eq!(filesystem.openCalls.load(Ordering::SeqCst), 3,
             "failed scheduling must not enter the file opener");
     }).await;
-    std::fs::remove_dir_all(root).unwrap();
 }

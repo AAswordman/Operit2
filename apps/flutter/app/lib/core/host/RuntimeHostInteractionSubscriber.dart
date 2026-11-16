@@ -173,36 +173,13 @@ class RuntimeHostInteractionSubscriber {
     RuntimeHostInteractionRequest request,
   ) async {
     final eventStopwatch = Stopwatch()..start();
-    final isFilePresentation =
-        request.kind == RuntimeHostInteractionKind.systemOperation &&
-        request.systemOperation?.operation == 'android_file_presentation';
-    if (isFilePresentation) {
-      ClientLogger.i(
-        'requestId=${request.requestId} phase=received',
-        tag: 'WorkspaceFileOpen',
-      );
-    }
     var dispatchCompleted = false;
     try {
       final response = await _dispatch(request);
       dispatchCompleted = true;
       final respondStopwatch = Stopwatch()..start();
-      if (isFilePresentation) {
-        ClientLogger.i(
-          'requestId=${request.requestId} phase=responding '
-          'elapsedUs=${eventStopwatch.elapsedMicroseconds}',
-          tag: 'WorkspaceFileOpen',
-        );
-      }
       await _respondOwnerHostInteraction(request.requestId, response);
       respondStopwatch.stop();
-      if (isFilePresentation) {
-        ClientLogger.i(
-          'requestId=${request.requestId} phase=responded '
-          'elapsedUs=${eventStopwatch.elapsedMicroseconds}',
-          tag: 'WorkspaceFileOpen',
-        );
-      }
       _recordBrowserInteractHostResponseTiming(
         request.requestId,
         respondElapsedUs: respondStopwatch.elapsedMicroseconds,
@@ -210,13 +187,6 @@ class RuntimeHostInteractionSubscriber {
         failed: false,
       );
     } catch (error, stackTrace) {
-      if (isFilePresentation) {
-        ClientLogger.w(
-          'requestId=${request.requestId} phase=response_failed '
-          'elapsedUs=${eventStopwatch.elapsedMicroseconds} failureType=${error.runtimeType}',
-          tag: 'WorkspaceFileOpen',
-        );
-      }
       if (!dispatchCompleted) {
         final response = _errorResponse(error);
         try {
@@ -310,7 +280,6 @@ class RuntimeHostInteractionSubscriber {
         ),
       RuntimeHostInteractionKind.systemOperation => _handleSystemOperation(
         _requirePayload(request.systemOperation, request.kind),
-        request.requestId,
       ),
       RuntimeHostInteractionKind.fileOpen => _handleFileOpen(
         _requirePayload(request.fileOpen, request.kind),
@@ -574,7 +543,6 @@ class RuntimeHostInteractionSubscriber {
   /// Handles a generic system-operation request through the owner MethodChannel.
   static Future<RuntimeHostInteractionResponse> _handleSystemOperation(
     RuntimeHostInteractionSystemOperationPayload payload,
-    String requestId,
   ) async {
     if (payload.operation == 'floating_window') {
       final result = await RuntimeFloatingWindowController.command(
@@ -595,53 +563,14 @@ class RuntimeHostInteractionSubscriber {
     if (payload.operation == 'get_device_location_foreground') {
       return _handleForegroundLocationOperation(payload);
     }
-    final isFilePresentation = payload.operation == 'android_file_presentation';
-    var isWorkspaceOpen = false;
-    if (isFilePresentation) {
-      try {
-        final params = jsonDecode(payload.paramsJson);
-        isWorkspaceOpen = params is Map && params['operation'] == 'openFile';
-      } on FormatException {
-        // Keep malformed requests and legacy sharing on their existing native error path.
-      }
-    }
-    final arguments = payload.toJson();
-    final stopwatch = Stopwatch()..start();
-    if (isFilePresentation) {
-      arguments['requestId'] = requestId;
-      ClientLogger.i(
-        'requestId=$requestId phase=method_channel_called',
-        tag: 'WorkspaceFileOpen',
-      );
-    }
-    try {
-      final rawResponse = await _channel.invokeMethod<Object?>(
-        'ownerSystemOperation',
-        arguments,
-      );
-      final response = RuntimeHostInteractionSystemOperationResponse.fromJson(
-        _requireMethodResponseMap(rawResponse, 'ownerSystemOperation'),
-      );
-      if (isFilePresentation) {
-        ClientLogger.i(
-          'requestId=$requestId phase=method_channel_completed '
-          'elapsedUs=${stopwatch.elapsedMicroseconds}',
-          tag: 'WorkspaceFileOpen',
-        );
-      }
-      return _response(systemOperation: response);
-    } on PlatformException catch (error, stackTrace) {
-      if (!isWorkspaceOpen) rethrow;
-      ClientLogger.w(
-        'requestId=$requestId phase=method_channel_failed '
-        'elapsedUs=${stopwatch.elapsedMicroseconds} code=${error.code}',
-        tag: 'WorkspaceFileOpen',
-        stackTrace: stackTrace,
-      );
-      // Expected file-open failures go back to the requesting UI action once. Throwing here
-      // would additionally invoke the subscriber's global FlutterError reporter.
-      return _errorResponse(error);
-    }
+    final rawResponse = await _channel.invokeMethod<Object?>(
+      'ownerSystemOperation',
+      payload.toJson(),
+    );
+    final response = RuntimeHostInteractionSystemOperationResponse.fromJson(
+      _requireMethodResponseMap(rawResponse, 'ownerSystemOperation'),
+    );
+    return _response(systemOperation: response);
   }
 
   /// Reads one foreground location through the Flutter geolocation plugin.

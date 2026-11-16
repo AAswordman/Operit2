@@ -20,7 +20,7 @@ class AndroidDocumentFileSystem(
     private val fileOpener: ((File?, String?, String?) -> Unit)? = null,
 ) {
     constructor(context: Context) : this(
-        ContentResolverDocumentTreeAccess(context), AndroidFileOpener(context)::share, AndroidFileOpener(context)::openWorkspaceFile,
+        ContentResolverDocumentTreeAccess(context), AndroidFileOpener(context)::share, AndroidFileOpener(context)::open,
     )
     private val prefix = "operit-resource:"
     private class Missing(message: String) : FileNotFoundException(message)
@@ -126,8 +126,8 @@ class AndroidDocumentFileSystem(
         }
         JSONObject().put("ok", true).put("value", value ?: JSONObject.NULL).toString()
     } catch (error: Exception) {
-        val workspaceOpen = runCatching { JSONObject(encoded).optString("operation") == "openFile" }.getOrDefault(false)
-        val message = if (workspaceOpen) AndroidFileOpener.safeOpenFailureMessage(error) else error.message
+        val presentation = runCatching { JSONObject(encoded).optString("operation") in setOf("openFile", "shareFile") }.getOrDefault(false)
+        val message = if (presentation) AndroidFileOpener.safeFailureMessage(error) else error.message
         JSONObject().put("ok", false).put("error", "${error.javaClass.simpleName}: $message").toString()
     }
 
