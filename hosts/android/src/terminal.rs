@@ -1617,6 +1617,7 @@ struct AndroidPtyCommand {
     envp: Vec<CString>,
     cwd: CString,
     shizuku: bool,
+    dropRootToShell: bool,
     workingDir: Option<String>,
     startupInput: Option<String>,
 }
@@ -1688,6 +1689,7 @@ fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand>
         envp,
         cwd: cstringPath(&internalRoot)?,
         shizuku: false,
+        dropRootToShell: false,
         workingDir: None,
         startupInput: None,
     })
@@ -1824,6 +1826,7 @@ fn buildAndroidSystemShellCommand(
             cstringPath(&internalRoot)?
         },
         shizuku: transport == ShellTransport::Shizuku,
+        dropRootToShell: false,
         workingDir: Some(workDir),
         startupInput: Some(include_str!("system_shell_init.sh").to_string()),
     })
@@ -1992,6 +1995,62 @@ fn resizeAndroidPtyProcess(
     }
 }
 
+/// A root-started Shizuku (e.g. KernelSU) leaks uid 0 into its UserService
+/// children; the terminal promises shell identity, so drop before exec or die.
+/// Mirrors Operit1's shell_identity_launcher: groups → gid → uid → setcon.
+#[cfg(target_os = "android")]
+unsafe fn dropRootToShellIdentity() {
+    const SHELL_UID: libc::uid_t = 2000;
+    const SHELL_GID: libc::gid_t = 2000;
+    const SHELL_GROUPS: [libc::gid_t; 12] = [
+        2000, // shell
+        1004, // input
+        1007, // log
+        1011, // adb
+        1015, // sdcard_rw
+        1028, // sdcard_r
+        3001, // net_bt_admin
+        3002, // net_bt
+        3003, // inet
+        3006, // net_bw_stats
+        3009, // readproc
+        3011, // uhid
+    ];
+    let fail = |message: &[u8]| -> ! {
+        libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
+        libc::_exit(126);
+    };
+    if libc::setgroups(SHELL_GROUPS.len(), SHELL_GROUPS.as_ptr()) != 0 {
+        fail(b"setgroups(shell) failed\n");
+    }
+    if libc::setgid(SHELL_GID) != 0 {
+        fail(b"setgid(2000) failed\n");
+    }
+    if libc::setuid(SHELL_UID) != 0 {
+        fail(b"setuid(2000) failed\n");
+    }
+    // Best effort: some su domains cannot dyntransition to u:r:shell:s0, and
+    // uid 2000 already removes root DAC powers. Drop uid first because the
+    // shell domain would deny setuid/setgid.
+    let context = b"u:r:shell:s0\0";
+    let fd = libc::open(
+        b"/proc/self/attr/current\0".as_ptr().cast(),
+        libc::O_WRONLY | libc::O_CLOEXEC,
+    );
+    let switched = fd >= 0 && {
+        let written = libc::write(fd, context.as_ptr().cast(), context.len());
+        libc::close(fd);
+        written == context.len() as libc::ssize_t
+    };
+    if !switched {
+        let message = b"setcon(u:r:shell:s0) failed; continuing as uid 2000\n";
+        libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
+    }
+    if libc::getuid() != SHELL_UID || libc::getgid() != SHELL_GID {
+        fail(b"shell identity verification failed\n");
+    }
+}
+
 /// Forks the PTY child in the current process's Android security context.
 fn forkPtyExecve(
     command: &AndroidPtyCommand,
@@ -2024,6 +2083,9 @@ fn forkPtyExecve(
         }
         if pid == 0 {
             unsafe {
+                if command.dropRootToShell && libc::geteuid() == 0 {
+                    dropRootToShellIdentity();
+                }
                 if libc::chdir(command.cwd.as_ptr()) != 0 {
                     libc::write(
                         libc::STDERR_FILENO,
@@ -2269,6 +2331,7 @@ pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
                 envp: strings("env")?,
                 cwd: cstring(cwd)?,
                 shizuku: false,
+                dropRootToShell: true,
                 workingDir: None,
                 startupInput: None,
             };
