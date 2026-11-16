@@ -4241,7 +4241,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get deviceSpaceMemberNotPaired => '空间成员 · 未直连';
 
   @override
-  String get deviceSpaceMemberPaired => '空间成员 · 已直连';
+  String get deviceSpaceMemberPaired => '空间成员 · 已配对';
 
   @override
   String get deviceSpacePairedOnly => '已配对';
