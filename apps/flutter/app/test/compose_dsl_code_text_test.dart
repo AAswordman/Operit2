@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/syntax/WorkspaceSyntaxPalette.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/syntax/WorkspaceSyntaxToken.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxToken.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 
@@ -98,15 +98,15 @@ void main() {
         expect(tester.takeException(), isNull);
         expect(find.byType(SelectionArea), findsOneWidget);
         final span = sourceSpan(tester, source);
-        final palette = WorkspaceSyntaxPalette(brightness);
+        final palette = CodeSyntaxPalette(brightness);
         expect(span.toPlainText(), source);
         expect(
           sourceStyle(span, source.indexOf('header')).color,
-          palette.color(WorkspaceSyntaxTokenKind.comment),
+          palette.color(CodeSyntaxTokenKind.comment),
         );
         expect(
           sourceStyle(span, source.indexOf('continued')).color,
-          palette.color(WorkspaceSyntaxTokenKind.comment),
+          palette.color(CodeSyntaxTokenKind.comment),
         );
         for (final offset in [
           source.indexOf('const'),
@@ -114,13 +114,13 @@ void main() {
         ]) {
           expect(
             sourceStyle(span, offset).color,
-            palette.color(WorkspaceSyntaxTokenKind.keyword),
+            palette.color(CodeSyntaxTokenKind.keyword),
           );
         }
         final emphasized = sourceStyle(span, number);
         expect(
           emphasized.color,
-          palette.color(WorkspaceSyntaxTokenKind.number),
+          palette.color(CodeSyntaxTokenKind.number),
         );
         expect(emphasized.backgroundColor, const Color(0xFFFF0000));
         expect(emphasized.fontWeight, FontWeight.w700);
@@ -137,23 +137,23 @@ void main() {
         );
         expect(tester.takeException(), isNull);
         final span = sourceSpan(tester, source);
-        final palette = WorkspaceSyntaxPalette(brightness);
+        final palette = CodeSyntaxPalette(brightness);
         expect(span.toPlainText(), source);
         expect(
           sourceStyle(span, source.indexOf('continued')).color,
-          palette.color(WorkspaceSyntaxTokenKind.comment),
+          palette.color(CodeSyntaxTokenKind.comment),
         );
         expect(
           sourceStyle(span, source.indexOf('<html')).color,
-          palette.color(WorkspaceSyntaxTokenKind.tag),
+          palette.color(CodeSyntaxTokenKind.tag),
         );
         expect(
           sourceStyle(span, source.indexOf('lang')).color,
-          palette.color(WorkspaceSyntaxTokenKind.property),
+          palette.color(CodeSyntaxTokenKind.property),
         );
         expect(
           sourceStyle(span, source.indexOf('zh-CN')).color,
-          palette.color(WorkspaceSyntaxTokenKind.string),
+          palette.color(CodeSyntaxTokenKind.string),
         );
       },
     );

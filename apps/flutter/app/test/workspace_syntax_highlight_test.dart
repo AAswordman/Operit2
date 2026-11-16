@@ -2,64 +2,64 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceTextLayout.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceVirtualTextEditor.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceZoomScrollController.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/syntax/WorkspaceSyntaxLanguage.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/syntax/WorkspaceSyntaxLexer.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/syntax/WorkspaceSyntaxPalette.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/syntax/WorkspaceSyntaxToken.dart';
+import 'package:operit2/ui/common/code_editor/CodeTextLayout.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorInput.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorScrollController.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLexer.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxToken.dart';
 
-const _samples = <WorkspaceSyntaxLanguage, String>{
-  WorkspaceSyntaxLanguage.dart: 'final String text = "中文 👩‍💻"; // comment',
-  WorkspaceSyntaxLanguage.rust:
+const _samples = <CodeSyntaxLanguage, String>{
+  CodeSyntaxLanguage.dart: 'final String text = "中文 👩‍💻"; // comment',
+  CodeSyntaxLanguage.rust:
       'pub fn main() { let value: u32 = 42; } // comment',
-  WorkspaceSyntaxLanguage.javascript: 'const value = `hello`; // comment',
-  WorkspaceSyntaxLanguage.typescript:
+  CodeSyntaxLanguage.javascript: 'const value = `hello`; // comment',
+  CodeSyntaxLanguage.typescript:
       'interface Item { name: string; } // comment',
-  WorkspaceSyntaxLanguage.python: 'def greet(): return "hello" # comment',
-  WorkspaceSyntaxLanguage.java:
+  CodeSyntaxLanguage.python: 'def greet(): return "hello" # comment',
+  CodeSyntaxLanguage.java:
       'public class Main { int value = 42; } // comment',
-  WorkspaceSyntaxLanguage.kotlin:
+  CodeSyntaxLanguage.kotlin:
       'fun main() { val name = "hello" } // comment',
-  WorkspaceSyntaxLanguage.swift:
+  CodeSyntaxLanguage.swift:
       'func greet() { let value: Int = 42 } // comment',
-  WorkspaceSyntaxLanguage.c: 'const int value = 42; /* comment */',
-  WorkspaceSyntaxLanguage.cpp:
+  CodeSyntaxLanguage.c: 'const int value = 42; /* comment */',
+  CodeSyntaxLanguage.cpp:
       'class Main { public: int value = 42; }; // comment',
-  WorkspaceSyntaxLanguage.csharp:
+  CodeSyntaxLanguage.csharp:
       'public class Main { string value = "hello"; }',
-  WorkspaceSyntaxLanguage.go: 'func main() { var value = 42 } // comment',
-  WorkspaceSyntaxLanguage.php:
+  CodeSyntaxLanguage.go: 'func main() { var value = 42 } // comment',
+  CodeSyntaxLanguage.php:
       r'<?php function greet() { return $value; } // comment',
-  WorkspaceSyntaxLanguage.ruby: 'def greet; return "hello"; end # comment',
-  WorkspaceSyntaxLanguage.lua: 'local value = "hello" -- comment',
-  WorkspaceSyntaxLanguage.shell: r'if true; then echo "$HOME"; fi # comment',
-  WorkspaceSyntaxLanguage.powershell:
+  CodeSyntaxLanguage.ruby: 'def greet; return "hello"; end # comment',
+  CodeSyntaxLanguage.lua: 'local value = "hello" -- comment',
+  CodeSyntaxLanguage.shell: r'if true; then echo "$HOME"; fi # comment',
+  CodeSyntaxLanguage.powershell:
       r'function Get-Value { return $value } # comment',
-  WorkspaceSyntaxLanguage.sql:
+  CodeSyntaxLanguage.sql:
       "SELECT id FROM users WHERE name = 'hello'; -- comment",
-  WorkspaceSyntaxLanguage.json:
+  CodeSyntaxLanguage.json:
       '{"name": "hello", "enabled": true, "count": 42}',
-  WorkspaceSyntaxLanguage.jsonc: '{"name": "hello", "count": 42} // comment',
-  WorkspaceSyntaxLanguage.yaml: 'name: "hello" # comment',
-  WorkspaceSyntaxLanguage.toml: 'name = "hello" # comment',
-  WorkspaceSyntaxLanguage.ini: 'name = "hello" ; comment',
-  WorkspaceSyntaxLanguage.html:
+  CodeSyntaxLanguage.jsonc: '{"name": "hello", "count": 42} // comment',
+  CodeSyntaxLanguage.yaml: 'name: "hello" # comment',
+  CodeSyntaxLanguage.toml: 'name = "hello" # comment',
+  CodeSyntaxLanguage.ini: 'name = "hello" ; comment',
+  CodeSyntaxLanguage.html:
       '<div class="hello">world</div> <!-- comment -->',
-  WorkspaceSyntaxLanguage.xml: '<item name="hello" /> <!-- comment -->',
-  WorkspaceSyntaxLanguage.css:
+  CodeSyntaxLanguage.xml: '<item name="hello" /> <!-- comment -->',
+  CodeSyntaxLanguage.css:
       '.item { color: #ffffff; width: 12px; } /* comment */',
-  WorkspaceSyntaxLanguage.scss:
+  CodeSyntaxLanguage.scss:
       r'$size: 12px; .item { width: $size; } // comment',
-  WorkspaceSyntaxLanguage.less:
+  CodeSyntaxLanguage.less:
       '@size: 12px; .item { width: @size; } // comment',
-  WorkspaceSyntaxLanguage.markdown:
+  CodeSyntaxLanguage.markdown:
       '# Heading with `code` and [link](https://example.test)',
-  WorkspaceSyntaxLanguage.dockerfile: 'FROM alpine:3.20 # comment',
-  WorkspaceSyntaxLanguage.makefile: 'include config.mk # comment',
-  WorkspaceSyntaxLanguage.cmake: 'project(example) # comment',
-  WorkspaceSyntaxLanguage.diff: '+ inserted line',
+  CodeSyntaxLanguage.dockerfile: 'FROM alpine:3.20 # comment',
+  CodeSyntaxLanguage.makefile: 'include config.mk # comment',
+  CodeSyntaxLanguage.cmake: 'project(example) # comment',
+  CodeSyntaxLanguage.diff: '+ inserted line',
 };
 
 /// Verifies language grammars, incremental states, color-only layout, and input.
@@ -68,34 +68,34 @@ void main() {
   test(
     'filename and extension registry selects explicit host-neutral languages',
     () {
-      const paths = <String, WorkspaceSyntaxLanguage>{
-        r'C:\src\main.DART': WorkspaceSyntaxLanguage.dart,
-        '/a.py.dir/main.rs': WorkspaceSyntaxLanguage.rust,
-        '/src/ui.tsx': WorkspaceSyntaxLanguage.typescript,
-        '/src/ui.jsx': WorkspaceSyntaxLanguage.javascript,
-        'Dockerfile': WorkspaceSyntaxLanguage.dockerfile,
-        'Dockerfile.release': WorkspaceSyntaxLanguage.dockerfile,
-        'Containerfile': WorkspaceSyntaxLanguage.dockerfile,
-        'Makefile': WorkspaceSyntaxLanguage.makefile,
-        'CMakeLists.txt': WorkspaceSyntaxLanguage.cmake,
-        '.bashrc': WorkspaceSyntaxLanguage.shell,
-        '.env.local': WorkspaceSyntaxLanguage.ini,
-        'Gemfile': WorkspaceSyntaxLanguage.ruby,
-        'app.yaml': WorkspaceSyntaxLanguage.yaml,
-        'app.jsonc': WorkspaceSyntaxLanguage.jsonc,
-        'image.svg': WorkspaceSyntaxLanguage.xml,
-        'component.vue': WorkspaceSyntaxLanguage.html,
-        'plain.txt': WorkspaceSyntaxLanguage.plainText,
-        'config.py/README': WorkspaceSyntaxLanguage.plainText,
+      const paths = <String, CodeSyntaxLanguage>{
+        r'C:\src\main.DART': CodeSyntaxLanguage.dart,
+        '/a.py.dir/main.rs': CodeSyntaxLanguage.rust,
+        '/src/ui.tsx': CodeSyntaxLanguage.typescript,
+        '/src/ui.jsx': CodeSyntaxLanguage.javascript,
+        'Dockerfile': CodeSyntaxLanguage.dockerfile,
+        'Dockerfile.release': CodeSyntaxLanguage.dockerfile,
+        'Containerfile': CodeSyntaxLanguage.dockerfile,
+        'Makefile': CodeSyntaxLanguage.makefile,
+        'CMakeLists.txt': CodeSyntaxLanguage.cmake,
+        '.bashrc': CodeSyntaxLanguage.shell,
+        '.env.local': CodeSyntaxLanguage.ini,
+        'Gemfile': CodeSyntaxLanguage.ruby,
+        'app.yaml': CodeSyntaxLanguage.yaml,
+        'app.jsonc': CodeSyntaxLanguage.jsonc,
+        'image.svg': CodeSyntaxLanguage.xml,
+        'component.vue': CodeSyntaxLanguage.html,
+        'plain.txt': CodeSyntaxLanguage.plainText,
+        'config.py/README': CodeSyntaxLanguage.plainText,
       };
       for (final entry in paths.entries) {
         expect(
-          WorkspaceSyntaxLanguage.forPath(entry.key),
+          CodeSyntaxLanguage.forPath(entry.key),
           entry.value,
           reason: entry.key,
         );
       }
-      expect(_samples.length, WorkspaceSyntaxLanguage.values.length - 1);
+      expect(_samples.length, CodeSyntaxLanguage.values.length - 1);
     },
   );
 
@@ -103,18 +103,18 @@ void main() {
     test(
       '${entry.key.name} produces ordered source-preserving lexical tokens',
       () {
-        final lexer = WorkspaceSyntaxLexer(entry.key);
-        final result = lexer.scan(entry.value, WorkspaceSyntaxState.empty);
+        final lexer = CodeSyntaxLexer(entry.key);
+        final result = lexer.scan(entry.value, CodeSyntaxState.empty);
         final indexed = lexer.scan(
           entry.value,
-          WorkspaceSyntaxState.empty,
+          CodeSyntaxState.empty,
           tokens: false,
         );
         expect(indexed.state, result.state);
         expect(indexed.tokens, isEmpty);
         expect(result.tokens, isNotEmpty);
         _verifyIntervals(entry.value, result.tokens);
-        final layout = WorkspaceTextLayout(entry.value, language: entry.key);
+        final layout = CodeTextLayout(entry.value, language: entry.key);
         addTearDown(layout.dispose);
         _configure(layout);
         expect(layout.paragraph(0).text!.toPlainText(), entry.value);
@@ -123,66 +123,66 @@ void main() {
   }
 
   test('keywords and comments inside strings are never separately colored', () {
-    final layout = WorkspaceTextLayout(
+    final layout = CodeTextLayout(
       'const value = "return /* not a comment */"; // return 42',
-      language: WorkspaceSyntaxLanguage.javascript,
+      language: CodeSyntaxLanguage.javascript,
     );
     addTearDown(layout.dispose);
-    expect(_kindAt(layout, 0, 'const'), WorkspaceSyntaxTokenKind.keyword);
-    expect(_kindAt(layout, 0, 'return'), WorkspaceSyntaxTokenKind.string);
-    expect(_kindAt(layout, 0, '/*'), WorkspaceSyntaxTokenKind.string);
-    expect(_kindAt(layout, 0, '//'), WorkspaceSyntaxTokenKind.comment);
-    expect(_kindAt(layout, 0, '42'), WorkspaceSyntaxTokenKind.comment);
+    expect(_kindAt(layout, 0, 'const'), CodeSyntaxTokenKind.keyword);
+    expect(_kindAt(layout, 0, 'return'), CodeSyntaxTokenKind.string);
+    expect(_kindAt(layout, 0, '/*'), CodeSyntaxTokenKind.string);
+    expect(_kindAt(layout, 0, '//'), CodeSyntaxTokenKind.comment);
+    expect(_kindAt(layout, 0, '42'), CodeSyntaxTokenKind.comment);
   });
 
   test(
     'raw and doubled quotes obey their language-specific closing grammar',
     () {
-      final samples = <WorkspaceSyntaxLanguage, String>{
-        WorkspaceSyntaxLanguage.python: r'value = r"\""; return 42',
-        WorkspaceSyntaxLanguage.dart: r'final value = r"\"; return 42;',
-        WorkspaceSyntaxLanguage.csharp:
+      final samples = <CodeSyntaxLanguage, String>{
+        CodeSyntaxLanguage.python: r'value = r"\""; return 42',
+        CodeSyntaxLanguage.dart: r'final value = r"\"; return 42;',
+        CodeSyntaxLanguage.csharp:
             r'var value = @"first ""quoted"" last"; return 42;',
-        WorkspaceSyntaxLanguage.sql: "SELECT 'can''t'; SELECT 42;",
+        CodeSyntaxLanguage.sql: "SELECT 'can''t'; SELECT 42;",
       };
       for (final entry in samples.entries) {
-        final layout = WorkspaceTextLayout(entry.value, language: entry.key);
+        final layout = CodeTextLayout(entry.value, language: entry.key);
         addTearDown(layout.dispose);
-        expect(_kindAt(layout, 0, '42'), WorkspaceSyntaxTokenKind.number);
-        expect(layout.lines[0].syntaxEnd, WorkspaceSyntaxState.empty);
+        expect(_kindAt(layout, 0, '42'), CodeSyntaxTokenKind.number);
+        expect(layout.lines[0].syntaxEnd, CodeSyntaxState.empty);
       }
     },
   );
 
   test('operators adjacent to region openers cannot swallow lexer state', () {
-    final code = WorkspaceTextLayout(
+    final code = CodeTextLayout(
       'let value = 1+/* first\nlast */2;',
-      language: WorkspaceSyntaxLanguage.javascript,
+      language: CodeSyntaxLanguage.javascript,
     );
     addTearDown(code.dispose);
-    expect(_kindAt(code, 0, 'first'), WorkspaceSyntaxTokenKind.comment);
-    expect(_kindAt(code, 1, 'last'), WorkspaceSyntaxTokenKind.comment);
-    expect(_kindAt(code, 1, '2'), WorkspaceSyntaxTokenKind.number);
-    final yaml = WorkspaceTextLayout(
+    expect(_kindAt(code, 0, 'first'), CodeSyntaxTokenKind.comment);
+    expect(_kindAt(code, 1, 'last'), CodeSyntaxTokenKind.comment);
+    expect(_kindAt(code, 1, '2'), CodeSyntaxTokenKind.number);
+    final yaml = CodeTextLayout(
       'key:|\n  literal\nnext: 42',
-      language: WorkspaceSyntaxLanguage.yaml,
+      language: CodeSyntaxLanguage.yaml,
     );
     addTearDown(yaml.dispose);
-    expect(_kindAt(yaml, 1, 'literal'), WorkspaceSyntaxTokenKind.string);
-    expect(_kindAt(yaml, 2, '42'), WorkspaceSyntaxTokenKind.number);
+    expect(_kindAt(yaml, 1, 'literal'), CodeSyntaxTokenKind.string);
+    expect(_kindAt(yaml, 2, '42'), CodeSyntaxTokenKind.number);
   });
 
   test('JSON keys, values, literals and Unicode source keep exact offsets', () {
     const text = '{"中文👩‍💻": "e\u0301", "flag": true, "count": 42}';
-    final layout = WorkspaceTextLayout(
+    final layout = CodeTextLayout(
       text,
-      language: WorkspaceSyntaxLanguage.json,
+      language: CodeSyntaxLanguage.json,
     );
     addTearDown(layout.dispose);
-    expect(_kindAt(layout, 0, '中文'), WorkspaceSyntaxTokenKind.property);
-    expect(_kindAt(layout, 0, 'e\u0301'), WorkspaceSyntaxTokenKind.string);
-    expect(_kindAt(layout, 0, 'true'), WorkspaceSyntaxTokenKind.literal);
-    expect(_kindAt(layout, 0, '42'), WorkspaceSyntaxTokenKind.number);
+    expect(_kindAt(layout, 0, '中文'), CodeSyntaxTokenKind.property);
+    expect(_kindAt(layout, 0, 'e\u0301'), CodeSyntaxTokenKind.string);
+    expect(_kindAt(layout, 0, 'true'), CodeSyntaxTokenKind.literal);
+    expect(_kindAt(layout, 0, '42'), CodeSyntaxTokenKind.number);
     _configure(layout);
     expect(layout.paragraph(0).text!.toPlainText(), text);
   });
@@ -190,21 +190,21 @@ void main() {
   test(
     'Rust raw strings, lifetimes and nested comments retain multiline state',
     () {
-      final layout = WorkspaceTextLayout(
+      final layout = CodeTextLayout(
         '/* outer\n/* inner */ still outer\n*/ let text = r##"first\n"# is not the end\nlast"##;\nfn borrow<\'a>(value: &\'a str) {}',
-        language: WorkspaceSyntaxLanguage.rust,
+        language: CodeSyntaxLanguage.rust,
       );
       addTearDown(layout.dispose);
       expect(
         _kindAt(layout, 1, 'still outer'),
-        WorkspaceSyntaxTokenKind.comment,
+        CodeSyntaxTokenKind.comment,
       );
-      expect(_kindAt(layout, 2, 'let'), WorkspaceSyntaxTokenKind.keyword);
-      expect(_kindAt(layout, 3, 'not'), WorkspaceSyntaxTokenKind.string);
-      expect(_kindAt(layout, 4, 'last'), WorkspaceSyntaxTokenKind.string);
-      expect(_kindAt(layout, 5, 'fn'), WorkspaceSyntaxTokenKind.keyword);
-      expect(_kindAt(layout, 5, "'a"), WorkspaceSyntaxTokenKind.meta);
-      expect(layout.lines.last.syntaxEnd, WorkspaceSyntaxState.empty);
+      expect(_kindAt(layout, 2, 'let'), CodeSyntaxTokenKind.keyword);
+      expect(_kindAt(layout, 3, 'not'), CodeSyntaxTokenKind.string);
+      expect(_kindAt(layout, 4, 'last'), CodeSyntaxTokenKind.string);
+      expect(_kindAt(layout, 5, 'fn'), CodeSyntaxTokenKind.keyword);
+      expect(_kindAt(layout, 5, "'a"), CodeSyntaxTokenKind.meta);
+      expect(layout.lines.last.syntaxEnd, CodeSyntaxState.empty);
     },
   );
 
@@ -212,73 +212,73 @@ void main() {
     'Python and TOML triple quoted strings cross logical line boundaries',
     () {
       for (final language in [
-        WorkspaceSyntaxLanguage.python,
-        WorkspaceSyntaxLanguage.toml,
+        CodeSyntaxLanguage.python,
+        CodeSyntaxLanguage.toml,
       ]) {
-        final layout = WorkspaceTextLayout(
+        final layout = CodeTextLayout(
           'name = """start\nreturn 42 # not a comment\nend"""\nvalue = 7',
           language: language,
         );
         addTearDown(layout.dispose);
-        expect(_kindAt(layout, 1, 'return'), WorkspaceSyntaxTokenKind.string);
-        expect(_kindAt(layout, 1, '#'), WorkspaceSyntaxTokenKind.string);
-        expect(_kindAt(layout, 3, '7'), WorkspaceSyntaxTokenKind.number);
+        expect(_kindAt(layout, 1, 'return'), CodeSyntaxTokenKind.string);
+        expect(_kindAt(layout, 1, '#'), CodeSyntaxTokenKind.string);
+        expect(_kindAt(layout, 3, '7'), CodeSyntaxTokenKind.number);
       }
     },
   );
 
   test('Lua brackets, C++ raw delimiters and SQL dollar quotes close exactly', () {
-    final samples = <WorkspaceSyntaxLanguage, String>{
-      WorkspaceSyntaxLanguage.lua:
+    final samples = <CodeSyntaxLanguage, String>{
+      CodeSyntaxLanguage.lua:
           'local text = [=[first\nreturn ]] still string\nend]=]\nreturn 42',
-      WorkspaceSyntaxLanguage.cpp:
+      CodeSyntaxLanguage.cpp:
           'auto text = R"tag(first\nreturn )" still string\nend)tag";\nreturn 42;',
-      WorkspaceSyntaxLanguage.sql:
+      CodeSyntaxLanguage.sql:
           'SELECT \$body\$first\nSELECT \$other\$ still string\nend\$body\$;\nSELECT 42;',
     };
     for (final entry in samples.entries) {
-      final layout = WorkspaceTextLayout(entry.value, language: entry.key);
+      final layout = CodeTextLayout(entry.value, language: entry.key);
       addTearDown(layout.dispose);
-      expect(_kindAt(layout, 1, 'still'), WorkspaceSyntaxTokenKind.string);
-      expect(_kindAt(layout, 3, '42'), WorkspaceSyntaxTokenKind.number);
-      expect(layout.lines.last.syntaxEnd, WorkspaceSyntaxState.empty);
+      expect(_kindAt(layout, 1, 'still'), CodeSyntaxTokenKind.string);
+      expect(_kindAt(layout, 3, '42'), CodeSyntaxTokenKind.number);
+      expect(layout.lines.last.syntaxEnd, CodeSyntaxState.empty);
     }
   });
 
   test('markup attributes span lines without coloring quotes in body text', () {
-    final layout = WorkspaceTextLayout(
+    final layout = CodeTextLayout(
       '<node\n name="first\nlast">hello "world"</node>\n<!-- first\nlast -->',
-      language: WorkspaceSyntaxLanguage.xml,
+      language: CodeSyntaxLanguage.xml,
     );
     addTearDown(layout.dispose);
-    expect(_kindAt(layout, 0, '<node'), WorkspaceSyntaxTokenKind.tag);
-    expect(_kindAt(layout, 1, 'name'), WorkspaceSyntaxTokenKind.property);
-    expect(_kindAt(layout, 2, 'last'), WorkspaceSyntaxTokenKind.string);
+    expect(_kindAt(layout, 0, '<node'), CodeSyntaxTokenKind.tag);
+    expect(_kindAt(layout, 1, 'name'), CodeSyntaxTokenKind.property);
+    expect(_kindAt(layout, 2, 'last'), CodeSyntaxTokenKind.string);
     expect(_kindAt(layout, 2, 'world'), isNull);
-    expect(_kindAt(layout, 4, 'last'), WorkspaceSyntaxTokenKind.comment);
-    expect(layout.lines.last.syntaxEnd, WorkspaceSyntaxState.empty);
+    expect(_kindAt(layout, 4, 'last'), CodeSyntaxTokenKind.comment);
+    expect(layout.lines.last.syntaxEnd, CodeSyntaxState.empty);
   });
 
   test(
     'YAML block scalars stop at dedent and Markdown fences close by length',
     () {
-      final yaml = WorkspaceTextLayout(
+      final yaml = CodeTextLayout(
         'message: |\n  return true # literal\n\nnext: 42',
-        language: WorkspaceSyntaxLanguage.yaml,
+        language: CodeSyntaxLanguage.yaml,
       );
       addTearDown(yaml.dispose);
-      expect(_kindAt(yaml, 1, '#'), WorkspaceSyntaxTokenKind.string);
-      expect(_kindAt(yaml, 3, 'next'), WorkspaceSyntaxTokenKind.property);
-      expect(_kindAt(yaml, 3, '42'), WorkspaceSyntaxTokenKind.number);
-      final markdown = WorkspaceTextLayout(
+      expect(_kindAt(yaml, 1, '#'), CodeSyntaxTokenKind.string);
+      expect(_kindAt(yaml, 3, 'next'), CodeSyntaxTokenKind.property);
+      expect(_kindAt(yaml, 3, '42'), CodeSyntaxTokenKind.number);
+      final markdown = CodeTextLayout(
         '````dart\n# not a heading\n```\n````\n# Heading',
-        language: WorkspaceSyntaxLanguage.markdown,
+        language: CodeSyntaxLanguage.markdown,
       );
       addTearDown(markdown.dispose);
-      expect(_kindAt(markdown, 1, '#'), WorkspaceSyntaxTokenKind.string);
-      expect(_kindAt(markdown, 2, '```'), WorkspaceSyntaxTokenKind.string);
-      expect(_kindAt(markdown, 4, '#'), WorkspaceSyntaxTokenKind.heading);
-      expect(markdown.lines.last.syntaxEnd, WorkspaceSyntaxState.empty);
+      expect(_kindAt(markdown, 1, '#'), CodeSyntaxTokenKind.string);
+      expect(_kindAt(markdown, 2, '```'), CodeSyntaxTokenKind.string);
+      expect(_kindAt(markdown, 4, '#'), CodeSyntaxTokenKind.heading);
+      expect(markdown.lines.last.syntaxEnd, CodeSyntaxState.empty);
     },
   );
 
@@ -286,9 +286,9 @@ void main() {
     'local edits retain tokens and paragraphs after lexical state converges',
     () {
       final source = List.generate(2000, (i) => 'let value$i = $i;').join('\n');
-      final layout = WorkspaceTextLayout(
+      final layout = CodeTextLayout(
         source,
-        language: WorkspaceSyntaxLanguage.rust,
+        language: CodeSyntaxLanguage.rust,
       );
       addTearDown(layout.dispose);
       _configure(layout);
@@ -302,9 +302,9 @@ void main() {
         identical(layout.syntax.tokens(layout.lines.last), lastTokens),
         isTrue,
       );
-      final comments = WorkspaceTextLayout(
+      final comments = CodeTextLayout(
         'let a = 1;\nlet b = 2;\n/* existing */\nlet c = 3;',
-        language: WorkspaceSyntaxLanguage.rust,
+        language: CodeSyntaxLanguage.rust,
       );
       addTearDown(comments.dispose);
       _configure(comments);
@@ -313,9 +313,9 @@ void main() {
       comments.updateText(
         '/* let a = 1;\nlet b = 2;\n/* existing */\n*/ let c = 3;',
       );
-      expect(_kindAt(comments, 1, 'let'), WorkspaceSyntaxTokenKind.comment);
+      expect(_kindAt(comments, 1, 'let'), CodeSyntaxTokenKind.comment);
       expect(identical(comments.paragraph(1), middle), isFalse);
-      expect(_kindAt(comments, 3, 'let'), WorkspaceSyntaxTokenKind.keyword);
+      expect(_kindAt(comments, 3, 'let'), CodeSyntaxTokenKind.keyword);
       expect(identical(comments.paragraph(3), tail), isFalse);
     },
   );
@@ -323,10 +323,10 @@ void main() {
   test('color-only highlighting preserves wrapping and caret geometry', () {
     const source =
         'final String 中文 = "e\u0301 👩‍💻 text"; // comment ${42}\n${42}';
-    final plain = WorkspaceTextLayout(source);
-    final colored = WorkspaceTextLayout(
+    final plain = CodeTextLayout(source);
+    final colored = CodeTextLayout(
       source,
-      language: WorkspaceSyntaxLanguage.dart,
+      language: CodeSyntaxLanguage.dart,
     );
     addTearDown(plain.dispose);
     addTearDown(colored.dispose);
@@ -352,8 +352,8 @@ void main() {
     }
     final tokenScans = colored.syntax.debugTokenScans;
     colored.configureSyntax(
-      WorkspaceSyntaxLanguage.dart,
-      const WorkspaceSyntaxPalette(Brightness.dark),
+      CodeSyntaxLanguage.dart,
+      const CodeSyntaxPalette(Brightness.dark),
     );
     expect(colored.paragraph(0).text!.toPlainText(), plain.lines[0].content);
     expect(colored.syntax.debugTokenScans, tokenScans);
@@ -361,12 +361,12 @@ void main() {
   });
 
   test('ten thousand source lines cache only requested colored paragraphs', () {
-    final layout = WorkspaceTextLayout(
+    final layout = CodeTextLayout(
       List.generate(
         10000,
         (i) => 'let value$i = "中文 👩‍💻"; // comment',
       ).join('\n'),
-      language: WorkspaceSyntaxLanguage.rust,
+      language: CodeSyntaxLanguage.rust,
     );
     addTearDown(layout.dispose);
     _configure(layout);
@@ -374,7 +374,7 @@ void main() {
     expect(layout.syntax.debugTokenScans, 0);
     for (var page = 0; page < 150; page++) {
       final first = page * 60;
-      final retained = <WorkspaceTextLine>{};
+      final retained = <CodeTextLine>{};
       for (var i = first; i < first + 40; i++) {
         layout.paragraph(i);
         retained.add(layout.lines[i]);
@@ -392,19 +392,19 @@ void main() {
   });
 
   for (final language in [
-    WorkspaceSyntaxLanguage.rust,
-    WorkspaceSyntaxLanguage.python,
-    WorkspaceSyntaxLanguage.yaml,
-    WorkspaceSyntaxLanguage.xml,
-    WorkspaceSyntaxLanguage.javascript,
-    WorkspaceSyntaxLanguage.shell,
+    CodeSyntaxLanguage.rust,
+    CodeSyntaxLanguage.python,
+    CodeSyntaxLanguage.yaml,
+    CodeSyntaxLanguage.xml,
+    CodeSyntaxLanguage.javascript,
+    CodeSyntaxLanguage.shell,
   ]) {
     test(
       '${language.name} incremental states match full indexing during unfinished edits',
       () {
         var text =
             '${_samples[language]}\n/* first\nlast */\n"""first\nlast"""\n# comment';
-        final layout = WorkspaceTextLayout(text, language: language);
+        final layout = CodeTextLayout(text, language: language);
         addTearDown(layout.dispose);
         final random = Random(194 + language.index);
         const insertions = [
@@ -435,7 +435,7 @@ void main() {
             insertions[random.nextInt(insertions.length)],
           );
           layout.updateText(text);
-          final fresh = WorkspaceTextLayout(text, language: language);
+          final fresh = CodeTextLayout(text, language: language);
           for (var i = 0; i < layout.lines.length; i++) {
             expect(
               layout.lines[i].syntaxStart,
@@ -447,7 +447,7 @@ void main() {
               fresh.lines[i].syntaxEnd,
               reason: 'edit=$edit line=$i source=$text',
             );
-            final lexer = WorkspaceSyntaxLexer(language);
+            final lexer = CodeSyntaxLexer(language);
             final indexed = lexer.scan(
               layout.lines[i].content,
               layout.lines[i].syntaxStart!,
@@ -487,12 +487,12 @@ void main() {
             10000,
             (i) => 'let value$i = "中文 👩‍💻"; // comment',
           ).join('\n'),
-          language: WorkspaceSyntaxLanguage.rust,
+          language: CodeSyntaxLanguage.rust,
         ),
       );
       await tester.pumpAndSettle();
-      final state = tester.state<WorkspaceVirtualTextEditorState>(
-        find.byType(WorkspaceVirtualTextEditor),
+      final state = tester.state<CodeEditorInputState>(
+        find.byType(CodeEditorInput),
       );
       final render = state.renderEditable;
       final syntax = render.textLayout.syntax;
@@ -527,11 +527,11 @@ void main() {
       const initial = 'final value = "中文";\n// comment';
       await tester.pumpWidget(const _SyntaxEditor(text: initial));
       await tester.pumpAndSettle();
-      final state = tester.state<WorkspaceVirtualTextEditorState>(
-        find.byType(WorkspaceVirtualTextEditor),
+      final state = tester.state<CodeEditorInputState>(
+        find.byType(CodeEditorInput),
       );
       final layout = state.renderEditable.textLayout;
-      expect(layout.syntax.language, WorkspaceSyntaxLanguage.dart);
+      expect(layout.syntax.language, CodeSyntaxLanguage.dart);
       final painter = layout.paragraph(0);
       state.requestKeyboard();
       await tester.pump();
@@ -554,12 +554,12 @@ void main() {
       await tester.pumpWidget(
         const _SyntaxEditor(
           text: initial,
-          language: WorkspaceSyntaxLanguage.plainText,
+          language: CodeSyntaxLanguage.plainText,
           brightness: Brightness.dark,
         ),
       );
       await tester.pump();
-      expect(layout.syntax.language, WorkspaceSyntaxLanguage.plainText);
+      expect(layout.syntax.language, CodeSyntaxLanguage.plainText);
       expect(state.textEditingValue, value);
       expect(tester.takeException(), isNull);
     },
@@ -567,7 +567,7 @@ void main() {
 }
 
 /// Configures deterministic paragraph metrics independently from token colors.
-void _configure(WorkspaceTextLayout layout, {double width = 160}) =>
+void _configure(CodeTextLayout layout, {double width = 160}) =>
     layout.configure(
       width,
       const TextStyle(fontSize: 14, height: 1.45),
@@ -576,7 +576,7 @@ void _configure(WorkspaceTextLayout layout, {double width = 160}) =>
     );
 
 /// Ensures all lexical ranges remain ordered, nonempty UTF-16 source intervals.
-void _verifyIntervals(String text, List<WorkspaceSyntaxToken> tokens) {
+void _verifyIntervals(String text, List<CodeSyntaxToken> tokens) {
   var end = 0;
   for (final token in tokens) {
     expect(token.start, greaterThanOrEqualTo(end));
@@ -587,8 +587,8 @@ void _verifyIntervals(String text, List<WorkspaceSyntaxToken> tokens) {
 }
 
 /// Reads the lexical category covering an exact source substring in a line.
-WorkspaceSyntaxTokenKind? _kindAt(
-  WorkspaceTextLayout layout,
+CodeSyntaxTokenKind? _kindAt(
+  CodeTextLayout layout,
   int line,
   String text,
 ) {
@@ -606,12 +606,12 @@ class _SyntaxEditor extends StatefulWidget {
   /// Creates a common-platform editor harness without host-specific branches.
   const _SyntaxEditor({
     required this.text,
-    this.language = WorkspaceSyntaxLanguage.dart,
+    this.language = CodeSyntaxLanguage.dart,
     this.brightness = Brightness.light,
   });
 
   final String text;
-  final WorkspaceSyntaxLanguage language;
+  final CodeSyntaxLanguage language;
   final Brightness brightness;
 
   /// Creates persistent native editing resources for the syntax regression test.
@@ -623,7 +623,7 @@ class _SyntaxEditorState extends State<_SyntaxEditor> {
   late final TextEditingController controller;
   final focus = FocusNode();
   final history = UndoHistoryController();
-  final scroll = WorkspaceZoomScrollController();
+  final scroll = CodeEditorScrollController();
 
   /// Installs the full document once, independently from render configuration.
   @override
@@ -637,7 +637,7 @@ class _SyntaxEditorState extends State<_SyntaxEditor> {
   Widget build(BuildContext context) => MaterialApp(
     theme: ThemeData(brightness: widget.brightness),
     home: Scaffold(
-      body: WorkspaceVirtualTextEditor(
+      body: CodeEditorInput(
         controller: controller,
         focusNode: focus,
         undoController: history,

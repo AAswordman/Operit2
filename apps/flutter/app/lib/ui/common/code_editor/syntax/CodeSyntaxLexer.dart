@@ -1,12 +1,12 @@
 // ignore_for_file: file_names
 
-import 'WorkspaceSyntaxLanguage.dart';
-import 'WorkspaceSyntaxToken.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxToken.dart';
 
 /// Describes an immutable multiline comment, string, fence, or indented scalar.
-class WorkspaceSyntaxRegion {
+class CodeSyntaxRegion {
   /// Records the actual closing delimiter, including raw-string delimiter tags.
-  WorkspaceSyntaxRegion({
+  CodeSyntaxRegion({
     required this.start,
     required this.end,
     required this.kind,
@@ -21,7 +21,7 @@ class WorkspaceSyntaxRegion {
 
   final String start;
   final String end;
-  final WorkspaceSyntaxTokenKind kind;
+  final CodeSyntaxTokenKind kind;
   final bool multiline;
   final bool escape;
   final String escapeCharacter;
@@ -34,7 +34,7 @@ class WorkspaceSyntaxRegion {
   /// Compares lexical state by value so edit propagation stops at convergence.
   @override
   bool operator ==(Object other) =>
-      other is WorkspaceSyntaxRegion &&
+      other is CodeSyntaxRegion &&
       other.start == start &&
       other.end == end &&
       other.kind == kind &&
@@ -63,22 +63,19 @@ class WorkspaceSyntaxRegion {
 }
 
 /// Keeps only lightweight incoming and outgoing lexical context for each line.
-class WorkspaceSyntaxState {
+class CodeSyntaxState {
   /// Represents a lexical boundary without storing any colored text or spans.
-  const WorkspaceSyntaxState({this.region, this.depth = 0, this.inTag = false});
+  const CodeSyntaxState({this.region, this.depth = 0, this.inTag = false});
 
-  static const empty = WorkspaceSyntaxState();
-  final WorkspaceSyntaxRegion? region;
+  static const empty = CodeSyntaxState();
+  final CodeSyntaxRegion? region;
   final int depth;
   final bool inTag;
 
   /// Enters or exits a region while retaining an enclosing markup tag context.
-  WorkspaceSyntaxState withRegion(
-    WorkspaceSyntaxRegion? next, [
-    int nesting = 1,
-  ]) {
+  CodeSyntaxState withRegion(CodeSyntaxRegion? next, [int nesting = 1]) {
     if (next == null && !inTag) return empty;
-    return WorkspaceSyntaxState(
+    return CodeSyntaxState(
       region: next,
       depth: next == null ? 0 : nesting,
       inTag: inTag,
@@ -88,7 +85,7 @@ class WorkspaceSyntaxState {
   /// Compares lexical context independently from paragraph geometry and colors.
   @override
   bool operator ==(Object other) =>
-      other is WorkspaceSyntaxState &&
+      other is CodeSyntaxState &&
       other.region == region &&
       other.depth == depth &&
       other.inTag == inTag;
@@ -99,22 +96,22 @@ class WorkspaceSyntaxState {
 }
 
 /// Returns lexical context plus optional viewport-only token intervals.
-class WorkspaceSyntaxResult {
+class CodeSyntaxResult {
   /// Shares the same lexer for state indexing and visible token generation.
-  const WorkspaceSyntaxResult(this.state, this.tokens);
+  const CodeSyntaxResult(this.state, this.tokens);
 
-  final WorkspaceSyntaxState state;
-  final List<WorkspaceSyntaxToken> tokens;
+  final CodeSyntaxState state;
+  final List<CodeSyntaxToken> tokens;
 }
 
 /// Tokenizes logical lines without ever copying or changing their source text.
-class WorkspaceSyntaxLexer {
+class CodeSyntaxLexer {
   /// Compiles one language's rules once, shared across all editor documents.
-  WorkspaceSyntaxLexer(this.language)
+  CodeSyntaxLexer(this.language)
     : definition = workspaceSyntaxDefinition(language);
 
-  final WorkspaceSyntaxLanguage language;
-  final WorkspaceSyntaxDefinition definition;
+  final CodeSyntaxLanguage language;
+  final CodeSyntaxDefinition definition;
   late final _statePattern = _pattern(false, false);
   late final _tokenPattern = _pattern(true, false);
   late final _tagStatePattern = _pattern(false, true);
@@ -126,25 +123,25 @@ class WorkspaceSyntaxLexer {
   static final _fence = RegExp(r'[`~]+');
   static const _numbers =
       r'\b(?:0[xX][\da-fA-F_]+|0[bB][01_]+|\d[\d_]*(?:\.[\d_]*)?(?:[eE][+-]?[\d_]+)?(?:[A-Za-z][\w]*)?)\b';
-  static const _groups = <String, WorkspaceSyntaxTokenKind>{
-    'number': WorkspaceSyntaxTokenKind.number,
-    'specialNumber': WorkspaceSyntaxTokenKind.number,
-    'character': WorkspaceSyntaxTokenKind.string,
-    'variable': WorkspaceSyntaxTokenKind.variable,
-    'specialVariable': WorkspaceSyntaxTokenKind.variable,
-    'meta': WorkspaceSyntaxTokenKind.meta,
-    'property': WorkspaceSyntaxTokenKind.property,
-    'tag': WorkspaceSyntaxTokenKind.tag,
-    'heading': WorkspaceSyntaxTokenKind.heading,
-    'link': WorkspaceSyntaxTokenKind.link,
-    'operator': WorkspaceSyntaxTokenKind.operator,
-    'punctuation': WorkspaceSyntaxTokenKind.punctuation,
-    'tagEnd': WorkspaceSyntaxTokenKind.punctuation,
+  static const _groups = <String, CodeSyntaxTokenKind>{
+    'number': CodeSyntaxTokenKind.number,
+    'specialNumber': CodeSyntaxTokenKind.number,
+    'character': CodeSyntaxTokenKind.string,
+    'variable': CodeSyntaxTokenKind.variable,
+    'specialVariable': CodeSyntaxTokenKind.variable,
+    'meta': CodeSyntaxTokenKind.meta,
+    'property': CodeSyntaxTokenKind.property,
+    'tag': CodeSyntaxTokenKind.tag,
+    'heading': CodeSyntaxTokenKind.heading,
+    'link': CodeSyntaxTokenKind.link,
+    'operator': CodeSyntaxTokenKind.operator,
+    'punctuation': CodeSyntaxTokenKind.punctuation,
+    'tagEnd': CodeSyntaxTokenKind.punctuation,
   };
 
   /// Builds state-only rules without allocating offscreen word or number tokens.
   ({RegExp expression, Set<String> groups}) _pattern(bool tokens, bool inTag) {
-    final markup = definition.family == WorkspaceSyntaxFamily.markup;
+    final markup = definition.family == CodeSyntaxFamily.markup;
     final parts = <String>[
       for (var i = 0; i < definition.delimiters.length; i++)
         if (!markup || inTag || !definition.delimiters[i].insideTagOnly)
@@ -159,9 +156,9 @@ class WorkspaceSyntaxLexer {
         r'(?<variable>\$(?:\{[^}]*\}|\([^)]*\)|[\w:]+|[?@#*!\d]))',
       if (tokens &&
           (!markup || inTag) &&
-          definition.family != WorkspaceSyntaxFamily.markdown) ...[
+          definition.family != CodeSyntaxFamily.markdown) ...[
         '(?<number>$_numbers)',
-        definition.family == WorkspaceSyntaxFamily.stylesheet ||
+        definition.family == CodeSyntaxFamily.stylesheet ||
                 definition.assignmentProperties
             ? r'(?<identifier>[$A-Za-z_][$\w-]*)'
             : r'(?<identifier>[$A-Za-z_][$\w]*)',
@@ -183,31 +180,28 @@ class WorkspaceSyntaxLexer {
   }
 
   /// Scans one line; offscreen passes retain states but allocate no token lists.
-  WorkspaceSyntaxResult scan(
+  CodeSyntaxResult scan(
     String text,
-    WorkspaceSyntaxState incoming, {
+    CodeSyntaxState incoming, {
     bool tokens = true,
   }) {
-    if (definition.family == WorkspaceSyntaxFamily.plain) {
-      return const WorkspaceSyntaxResult(WorkspaceSyntaxState.empty, []);
+    if (definition.family == CodeSyntaxFamily.plain) {
+      return const CodeSyntaxResult(CodeSyntaxState.empty, []);
     }
-    if (definition.family == WorkspaceSyntaxFamily.diff) {
-      final output = tokens ? <WorkspaceSyntaxToken>[] : null;
+    if (definition.family == CodeSyntaxFamily.diff) {
+      final output = tokens ? <CodeSyntaxToken>[] : null;
       if (tokens && text.isNotEmpty) {
         final kind = switch (text.codeUnitAt(0)) {
-          43 => WorkspaceSyntaxTokenKind.inserted,
-          45 => WorkspaceSyntaxTokenKind.deleted,
-          64 => WorkspaceSyntaxTokenKind.meta,
+          43 => CodeSyntaxTokenKind.inserted,
+          45 => CodeSyntaxTokenKind.deleted,
+          64 => CodeSyntaxTokenKind.meta,
           _ => null,
         };
         if (kind != null) _emit(output, 0, text.length, kind);
       }
-      return WorkspaceSyntaxResult(
-        WorkspaceSyntaxState.empty,
-        output ?? const [],
-      );
+      return CodeSyntaxResult(CodeSyntaxState.empty, output ?? const []);
     }
-    final output = tokens ? <WorkspaceSyntaxToken>[] : null;
+    final output = tokens ? <CodeSyntaxToken>[] : null;
     var state = incoming;
     var cursor = 0;
     Iterator<RegExpMatch>? matches;
@@ -237,15 +231,10 @@ class WorkspaceSyntaxLexer {
       cursor = match.end;
       if (pattern.groups.contains('comment') &&
           match.namedGroup('comment') != null) {
-        _emit(
-          output,
-          match.start,
-          text.length,
-          WorkspaceSyntaxTokenKind.comment,
-        );
+        _emit(output, match.start, text.length, CodeSyntaxTokenKind.comment);
         break;
       }
-      WorkspaceSyntaxDelimiter? delimiter;
+      CodeSyntaxDelimiter? delimiter;
       for (var i = 0; i < definition.delimiters.length; i++) {
         if (pattern.groups.contains('region$i') &&
             match.namedGroup('region$i') != null) {
@@ -270,32 +259,27 @@ class WorkspaceSyntaxLexer {
       }
       if (pattern.groups.contains('yamlBlock') &&
           match.namedGroup('yamlBlock') != null) {
-        final region = WorkspaceSyntaxRegion(
+        final region = CodeSyntaxRegion(
           start: match[0]!,
           end: '',
-          kind: WorkspaceSyntaxTokenKind.string,
+          kind: CodeSyntaxTokenKind.string,
           indent: _indent.firstMatch(text)!.end,
         );
         state = state.withRegion(region);
-        _emit(
-          output,
-          match.start,
-          text.length,
-          WorkspaceSyntaxTokenKind.string,
-        );
+        _emit(output, match.start, text.length, CodeSyntaxTokenKind.string);
         break;
       }
-      if (definition.family == WorkspaceSyntaxFamily.markup) {
+      if (definition.family == CodeSyntaxFamily.markup) {
         if (match.namedGroup('tag') != null) {
-          state = const WorkspaceSyntaxState(inTag: true);
+          state = const CodeSyntaxState(inTag: true);
           matches = null;
         } else if (state.inTag && match.namedGroup('tagEnd') != null) {
-          state = WorkspaceSyntaxState.empty;
+          state = CodeSyntaxState.empty;
           matches = null;
         }
       }
       if (tokens) {
-        WorkspaceSyntaxTokenKind? kind;
+        CodeSyntaxTokenKind? kind;
         for (final entry in _groups.entries) {
           if (pattern.groups.contains(entry.key) &&
               match.namedGroup(entry.key) != null) {
@@ -310,14 +294,11 @@ class WorkspaceSyntaxLexer {
         if (kind != null) _emit(output, match.start, match.end, kind);
       }
     }
-    return WorkspaceSyntaxResult(state, output ?? const []);
+    return CodeSyntaxResult(state, output ?? const []);
   }
 
   /// Resolves dynamic raw delimiters using the language's declared opener syntax.
-  WorkspaceSyntaxRegion _region(
-    WorkspaceSyntaxDelimiter delimiter,
-    String opener,
-  ) {
+  CodeSyntaxRegion _region(CodeSyntaxDelimiter delimiter, String opener) {
     var end = delimiter.end;
     var escape = delimiter.escape;
     var closeLinePattern = '';
@@ -344,7 +325,7 @@ class WorkspaceSyntaxLexer {
         closeLinePattern =
             '^ {0,3}${RegExp.escape(end[0])}{${end.length},}[ \\t]*\$';
     }
-    return WorkspaceSyntaxRegion(
+    return CodeSyntaxRegion(
       start: opener,
       end: end,
       kind: delimiter.kind,
@@ -358,10 +339,10 @@ class WorkspaceSyntaxLexer {
   }
 
   /// Finds the exact region end without tokenizing its comment or string body.
-  ({int cursor, WorkspaceSyntaxState state, bool closed}) _consume(
+  ({int cursor, CodeSyntaxState state, bool closed}) _consume(
     String text,
     int cursor,
-    WorkspaceSyntaxState state,
+    CodeSyntaxState state,
   ) {
     final region = state.region!;
     if (region.indent != null) {
@@ -421,66 +402,58 @@ class WorkspaceSyntaxLexer {
   }
 
   /// Distinguishes quoted mapping keys using their grammatical colon suffix.
-  WorkspaceSyntaxTokenKind _stringKind(
+  CodeSyntaxTokenKind _stringKind(
     String text,
     int end,
-    WorkspaceSyntaxTokenKind kind,
+    CodeSyntaxTokenKind kind,
     bool closed,
   ) {
-    if (kind == WorkspaceSyntaxTokenKind.string &&
+    if (kind == CodeSyntaxTokenKind.string &&
         closed &&
-        definition.family == WorkspaceSyntaxFamily.data &&
+        definition.family == CodeSyntaxFamily.data &&
         _colon.matchAsPrefix(text, end) != null) {
-      return WorkspaceSyntaxTokenKind.property;
+      return CodeSyntaxTokenKind.property;
     }
     return kind;
   }
 
   /// Classifies exact words, mapping keys, tag attributes, and callable names.
-  WorkspaceSyntaxTokenKind? _identifier(
-    String text,
-    RegExpMatch match,
-    bool inTag,
-  ) {
-    if (inTag) return WorkspaceSyntaxTokenKind.property;
+  CodeSyntaxTokenKind? _identifier(String text, RegExpMatch match, bool inTag) {
+    if (inTag) return CodeSyntaxTokenKind.property;
     final raw = match[0]!;
     final word = definition.caseSensitive ? raw : raw.toLowerCase();
     if (definition.keywords.contains(word)) {
-      return WorkspaceSyntaxTokenKind.keyword;
+      return CodeSyntaxTokenKind.keyword;
     }
-    if (definition.types.contains(word)) return WorkspaceSyntaxTokenKind.type;
+    if (definition.types.contains(word)) return CodeSyntaxTokenKind.type;
     if (definition.literals.contains(word)) {
-      return WorkspaceSyntaxTokenKind.literal;
+      return CodeSyntaxTokenKind.literal;
     }
     if (_colon.matchAsPrefix(text, match.end) != null ||
         (definition.assignmentProperties &&
             _assignment.matchAsPrefix(text, match.end) != null)) {
-      return WorkspaceSyntaxTokenKind.property;
+      return CodeSyntaxTokenKind.property;
     }
     if (_call.matchAsPrefix(text, match.end) != null) {
-      return WorkspaceSyntaxTokenKind.function;
+      return CodeSyntaxTokenKind.function;
     }
     return null;
   }
 
   /// Coalesces adjacent equal categories only when visible tokens are requested.
   static void _emit(
-    List<WorkspaceSyntaxToken>? output,
+    List<CodeSyntaxToken>? output,
     int start,
     int end,
-    WorkspaceSyntaxTokenKind kind,
+    CodeSyntaxTokenKind kind,
   ) {
     if (output == null || start == end) return;
     if (output.isNotEmpty &&
         output.last.end == start &&
         output.last.kind == kind) {
-      output[output.length - 1] = WorkspaceSyntaxToken(
-        output.last.start,
-        end,
-        kind,
-      );
+      output[output.length - 1] = CodeSyntaxToken(output.last.start, end, kind);
     } else {
-      output.add(WorkspaceSyntaxToken(start, end, kind));
+      output.add(CodeSyntaxToken(start, end, kind));
     }
   }
 }

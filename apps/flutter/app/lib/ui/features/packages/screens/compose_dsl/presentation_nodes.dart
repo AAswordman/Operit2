@@ -40,6 +40,41 @@ extension _ComposePresentationNodes on _ComposeProgramExecutorState {
           waitDuration: Duration(milliseconds: _int(props['waitMillis']) ?? 0),
           child: _decoratorChild(),
         );
+      case 'CodeEditor':
+        return CodeEditor(
+          identity: props['key'] ?? props['filePath'],
+          text: _string(props['text']),
+          filePath: _string(props['filePath']),
+          readOnly: true,
+          wrapToViewport:
+              props['wrapToViewport'] == null || _bool(props['wrapToViewport']),
+          showLineNumbers:
+              props['showLineNumbers'] == null ||
+              _bool(props['showLineNumbers']),
+          style: _inlineTextStyle(context, props).copyWith(
+            fontFamilyFallback: const ['Cascadia Mono', 'monospace'],
+            fontFamily: _string(props['fontFamily']).isEmpty
+                ? 'monospace'
+                : _string(props['fontFamily']),
+          ),
+          scale: _number(props['scale']),
+          minScale: _number(props['minScale']) ?? 0.6,
+          maxScale: _number(props['maxScale']) ?? 2.5,
+          panEnabled: props['panEnabled'] == null || _bool(props['panEnabled']),
+          contentWidth: _number(props['contentWidth']),
+          contentColumns: [
+            for (final raw in props['contentColumns'] as List? ?? const [])
+              CodeEditorColumn(
+                text: _string((raw as Map)['text']),
+                fraction: _number(raw['fraction']) ?? 1,
+                horizontalPadding: _number(raw['horizontalPadding']) ?? 0,
+              ),
+          ],
+          contentBuilder:
+              node.children.isEmpty && (node.slots['content']?.isEmpty ?? true)
+              ? null
+              : (context) => _decoratorChild(),
+        );
       case 'ScrollArea':
         return _ComposeScrollArea(
           axis: _string(props['axis']) == 'horizontal'
@@ -118,46 +153,8 @@ extension _ComposePresentationNodes on _ComposeProgramExecutorState {
   Widget _codeText(BuildContext context) {
     final text = _string(props['text']);
     if (text.isEmpty) return const SizedBox();
-    final language = WorkspaceSyntaxLanguage.forPath(
-      _string(props['filePath']),
-    );
-    final tokens = <WorkspaceSyntaxToken>[];
-    if (language != WorkspaceSyntaxLanguage.plainText &&
-        language != WorkspaceSyntaxLanguage.diff) {
-      final lexer = WorkspaceSyntaxLexer(language);
-      var state = WorkspaceSyntaxState.empty;
-      var offset = 0;
-      for (final line in text.split('\n')) {
-        final result = lexer.scan(line, state, tokens: true);
-        for (final token in result.tokens) {
-          tokens.add(
-            WorkspaceSyntaxToken(
-              offset + token.start,
-              offset + token.end,
-              token.kind,
-            ),
-          );
-        }
-        state = result.state;
-        offset += line.length + 1;
-      }
-    }
-    final palette = WorkspaceSyntaxPalette(Theme.of(context).brightness);
-    // Source intervals are ordered; walk them once for whole-file previews.
-    var tokenIndex = 0;
-    Color? syntaxColor(int start, int end) {
-      while (tokenIndex < tokens.length && tokens[tokenIndex].end <= start) {
-        tokenIndex++;
-      }
-      if (tokenIndex == tokens.length) return null;
-      final token = tokens[tokenIndex];
-      return token.start <= start && token.end >= end
-          ? palette.color(token.kind)
-          : null;
-    }
-
     final emphasis = props['emphasis'];
-    final ranges = <({int start, int end, Map<String, dynamic> style})>[];
+    final ranges = <CodeTextHighlight>[];
     if (emphasis is List) {
       for (final raw in emphasis) {
         if (raw is! Map)
@@ -174,54 +171,31 @@ extension _ComposePresentationNodes on _ComposeProgramExecutorState {
             'CodeText emphasis is outside the source text',
           );
         }
-        ranges.add((start: start, end: end, style: range));
+        ranges.add(
+          CodeTextHighlight(
+            start,
+            end,
+            TextStyle(
+              backgroundColor: _color(context, range['color']),
+              fontWeight: _fontWeight(_string(range['fontWeight'])),
+            ),
+          ),
+        );
       }
     }
-    final cuts = <int>{
-      0,
-      text.length,
-      for (final token in tokens) ...[token.start, token.end],
-      for (final range in ranges) ...[range.start, range.end],
-    }.toList()..sort();
     final baseStyle = _inlineTextStyle(
       context,
       props,
     ).copyWith(fontFamilyFallback: const ['Cascadia Mono', 'monospace']);
     return Align(
       alignment: Alignment.centerLeft,
-      child: Text.rich(
-        TextSpan(
-          style: baseStyle,
-          children: [
-            for (var index = 0; index < cuts.length - 1; index++)
-              if (cuts[index] < cuts[index + 1])
-                TextSpan(
-                  text: text.substring(cuts[index], cuts[index + 1]),
-                  style: baseStyle.copyWith(
-                    color: syntaxColor(cuts[index], cuts[index + 1]),
-                    backgroundColor: ranges
-                        .where(
-                          (range) =>
-                              range.start <= cuts[index] &&
-                              range.end >= cuts[index + 1],
-                        )
-                        .map((range) => _color(context, range.style['color']))
-                        .firstOrNull,
-                    fontWeight: ranges
-                        .where(
-                          (range) =>
-                              range.start <= cuts[index] &&
-                              range.end >= cuts[index + 1],
-                        )
-                        .map(
-                          (range) =>
-                              _fontWeight(_string(range.style['fontWeight'])),
-                        )
-                        .firstOrNull,
-                  ),
-                ),
-          ],
-        ),
+      widthFactor: 1,
+      heightFactor: 1,
+      child: CodeEditorText(
+        text: text,
+        filePath: _string(props['filePath']),
+        style: baseStyle,
+        highlights: ranges,
         maxLines: _int(props['maxLines']),
         softWrap: props['softWrap'] as bool?,
       ),

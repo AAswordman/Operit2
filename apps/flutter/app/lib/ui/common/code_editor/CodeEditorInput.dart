@@ -6,15 +6,16 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import 'WorkspaceVirtualTextSurface.dart';
-import 'WorkspaceZoomScrollController.dart';
-import 'syntax/WorkspaceSyntaxLanguage.dart';
-import 'syntax/WorkspaceSyntaxPalette.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorSurface.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorZoomTransform.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorScrollController.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
 
 /// Edits one complete document while rendering only its viewport working set.
-class WorkspaceVirtualTextEditor extends StatefulWidget {
+class CodeEditorInput extends StatefulWidget {
   /// Connects persistent text, history, scrolling, and the native input method.
-  const WorkspaceVirtualTextEditor({
+  const CodeEditorInput({
     super.key,
     required this.controller,
     required this.focusNode,
@@ -22,31 +23,32 @@ class WorkspaceVirtualTextEditor extends StatefulWidget {
     required this.scrollController,
     required this.groupId,
     required this.style,
-    this.language = WorkspaceSyntaxLanguage.plainText,
+    this.language = CodeSyntaxLanguage.plainText,
     required this.onChanged,
     required this.scrollPhysics,
     required this.active,
+    this.readOnly = false,
   });
 
   final TextEditingController controller;
   final FocusNode focusNode;
   final UndoHistoryController undoController;
-  final WorkspaceZoomScrollController scrollController;
+  final CodeEditorScrollController scrollController;
   final Object groupId;
   final TextStyle style;
-  final WorkspaceSyntaxLanguage language;
+  final CodeSyntaxLanguage language;
   final ValueChanged<String> onChanged;
   final ScrollPhysics? scrollPhysics;
   final bool active;
+  final bool readOnly;
 
   /// Creates the full-document input connection and viewport state.
   @override
-  WorkspaceVirtualTextEditorState createState() =>
-      WorkspaceVirtualTextEditorState();
+  CodeEditorInputState createState() => CodeEditorInputState();
 }
 
 /// Implements Flutter input and selection protocols without a hidden TextField.
-class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
+class CodeEditorInputState extends State<CodeEditorInput>
     with TextInputClient, TextSelectionDelegate {
   final GlobalKey _surfaceKey = GlobalKey();
   final LayerLink _startLink = LayerLink();
@@ -80,9 +82,8 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
   double? _verticalCaretX;
 
   /// Exposes native-compatible geometry to zooming, gutters, and regression tests.
-  RenderWorkspaceVirtualText get renderEditable =>
-      _surfaceKey.currentContext!.findRenderObject()!
-          as RenderWorkspaceVirtualText;
+  RenderCodeEditorText get renderEditable =>
+      _surfaceKey.currentContext!.findRenderObject()! as RenderCodeEditorText;
 
   /// Returns the full UTF-16 document state supplied to the input method.
   @override
@@ -113,7 +114,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
 
   /// Stops inactive input and updates listeners when document ownership changes.
   @override
-  void didUpdateWidget(WorkspaceVirtualTextEditor oldWidget) {
+  void didUpdateWidget(CodeEditorInput oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_controllerChanged);
@@ -125,7 +126,10 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
       widget.focusNode.addListener(_focusChanged);
       WidgetsBinding.instance.addPostFrameCallback(_initializeFocus);
     }
-    if (oldWidget.active != widget.active) _focusChanged();
+    if (oldWidget.active != widget.active ||
+        oldWidget.readOnly != widget.readOnly) {
+      _focusChanged();
+    }
   }
 
   /// Releases native input, overlays, listeners, and cursor animation resources.
@@ -162,7 +166,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
   /// Opens input only for an active focused editor, retaining history otherwise.
   void _focusChanged() {
     _cursorTimer?.cancel();
-    if (widget.active && widget.focusNode.hasFocus) {
+    if (widget.active && widget.focusNode.hasFocus && !widget.readOnly) {
       requestKeyboard();
       _cursorTimer = Timer.periodic(const Duration(milliseconds: 500), _blink);
     } else {
@@ -186,6 +190,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
   void requestKeyboard() {
     if (!widget.active) return;
     widget.focusNode.requestFocus();
+    if (widget.readOnly) return;
     if (_connection?.attached != true) {
       _connection = TextInput.attach(
         this,
@@ -228,6 +233,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
     TextEditingValue value,
     SelectionChangedCause cause,
   ) {
+    if (widget.readOnly && value.text != widget.controller.text) return;
     assert(value.selection.isValid && value.selection.end <= value.text.length);
     widget.controller.value = value;
     if (cause == SelectionChangedCause.keyboard ||
@@ -287,7 +293,11 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
 
   /// Enables cutting nonempty global selections through the native toolbar.
   @override
-  bool get cutEnabled => !textEditingValue.selection.isCollapsed;
+  bool get cutEnabled =>
+      !widget.readOnly && !textEditingValue.selection.isCollapsed;
+
+  @override
+  bool get pasteEnabled => !widget.readOnly;
 
   /// Enables copying nonempty global selections through the native toolbar.
   @override
@@ -306,6 +316,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
   /// Copies and removes a selection as one undoable full-document edit.
   @override
   void cutSelection(SelectionChangedCause cause) {
+    if (!cutEnabled) return;
     copySelection(cause);
     _replaceSelection('');
     hideToolbar();
@@ -314,6 +325,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
   /// Applies clipboard text to the selection that is current when reading completes.
   @override
   Future<void> pasteText(SelectionChangedCause cause) async {
+    if (!pasteEnabled) return;
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     if (!mounted || data?.text == null) return;
     _replaceSelection(data!.text!);
@@ -331,6 +343,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
 
   /// Replaces a global selection and atomically updates the resulting caret.
   void _replaceSelection(String text) {
+    if (widget.readOnly) return;
     final value = textEditingValue;
     userUpdateTextEditingValue(
       TextEditingValue(
@@ -408,10 +421,11 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
               type: ContextMenuButtonType.copy,
               onPressed: () => copySelection(SelectionChangedCause.toolbar),
             ),
-          ContextMenuButtonItem(
-            type: ContextMenuButtonType.paste,
-            onPressed: () => pasteText(SelectionChangedCause.toolbar),
-          ),
+          if (pasteEnabled)
+            ContextMenuButtonItem(
+              type: ContextMenuButtonType.paste,
+              onPressed: () => pasteText(SelectionChangedCause.toolbar),
+            ),
           ContextMenuButtonItem(
             type: ContextMenuButtonType.selectAll,
             onPressed: () => selectAll(SelectionChangedCause.toolbar),
@@ -1026,6 +1040,7 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final pan = CodeEditorViewportScope.maybeOf(context)?.panEnabled ?? false;
     return DefaultTextEditingShortcuts(
       child: Actions(
         actions: _editingActions,
@@ -1061,36 +1076,38 @@ class WorkspaceVirtualTextEditorState extends State<WorkspaceVirtualTextEditor>
                       onSingleLongTapEnd: _longPressEnd,
                       onSingleLongTapCancel: _endDrag,
                       onSecondaryTap: _secondaryTap,
-                      onDragSelectionStart: _panStart,
-                      onDragSelectionUpdate: _panUpdate,
-                      onDragSelectionEnd: _panEnd,
+                      onDragSelectionStart: pan ? null : _panStart,
+                      onDragSelectionUpdate: pan ? null : _panUpdate,
+                      onDragSelectionEnd: pan ? null : _panEnd,
                       child: Scrollable(
                         controller: widget.scrollController,
-                        physics: widget.scrollPhysics,
-                        viewportBuilder: (context, offset) =>
-                            WorkspaceVirtualTextSurface(
-                              key: _surfaceKey,
-                              value: textEditingValue,
-                              style: widget.style,
-                              language: widget.language,
-                              palette: WorkspaceSyntaxPalette(
-                                Theme.of(context).brightness,
-                              ),
-                              offset: offset,
-                              delegate: this,
-                              onGeometryChanged: _scheduleGeometry,
-                              requestKeyboard: requestKeyboard,
-                              scrollController: widget.scrollController,
-                              hasFocus: widget.focusNode.hasFocus,
-                              showCursor: _cursorVisible,
-                              cursorColor: colors.primary,
-                              selectionColor: colors.primary.withValues(
-                                alpha: 0.25,
-                              ),
-                              startHandleLayerLink: _startLink,
-                              endHandleLayerLink: _endLink,
-                              toolbarLayerLink: _toolbarLink,
-                            ),
+                        physics:
+                            CodeEditorViewportScope.maybeOf(context)?.physics ??
+                            widget.scrollPhysics,
+                        viewportBuilder: (context, offset) => CodeEditorSurface(
+                          key: _surfaceKey,
+                          value: textEditingValue,
+                          style: widget.style,
+                          language: widget.language,
+                          palette: CodeSyntaxPalette(
+                            Theme.of(context).brightness,
+                          ),
+                          offset: offset,
+                          delegate: this,
+                          onGeometryChanged: _scheduleGeometry,
+                          requestKeyboard: requestKeyboard,
+                          scrollController: widget.scrollController,
+                          hasFocus: widget.focusNode.hasFocus,
+                          readOnly: widget.readOnly,
+                          showCursor: _cursorVisible && !widget.readOnly,
+                          cursorColor: colors.primary,
+                          selectionColor: colors.primary.withValues(
+                            alpha: 0.25,
+                          ),
+                          startHandleLayerLink: _startLink,
+                          endHandleLayerLink: _endLink,
+                          toolbarLayerLink: _toolbarLink,
+                        ),
                       ),
                     ),
                   ),

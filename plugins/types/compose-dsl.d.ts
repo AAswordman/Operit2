@@ -3128,6 +3128,74 @@ export interface ScrollAreaProps extends ComposeCommonProps {
 }
 
 /**
+ * Intrinsic source extent and gutter space in one custom editor column.
+ */
+export interface ComposeCodeEditorColumn {
+  text: string;
+  /**
+   * Proportion of available body width, between zero and one.
+   */
+  fraction?: number;
+  /**
+   * Reserved horizontal space for gutter, padding and column separators.
+   */
+  horizontalPadding?: number;
+}
+
+/**
+ * The shared native code editor in read-only or custom-body presentation mode.
+ */
+export interface CodeEditorProps extends ComposeCommonProps {
+  /**
+   * Source document. Omit when supplying a custom body.
+   */
+  text?: string;
+  /**
+   * Material typography role and optional source font overrides.
+   */
+  style?: ComposeTextStyle;
+  fontSize?: number;
+  fontFamily?: string;
+  fontWeight?: string;
+  color?: ComposeColor;
+  lineHeight?: number;
+  /**
+   * Filename used to choose the editor's syntax grammar.
+   */
+  filePath?: string;
+  /**
+   * Optional unscaled document width for custom source rows.
+   */
+  contentWidth?: number;
+  /**
+   * Source columns measured by the native editor for unwrapped custom bodies.
+   */
+  contentColumns?: ComposeCodeEditorColumn[];
+  /**
+   * Reflows text to the viewport as it zooms. Defaults to true.
+   */
+  wrapToViewport?: boolean;
+  /**
+   * Shows the editor's logical line-number gutter for ordinary source text.
+   */
+  showLineNumbers?: boolean;
+  /**
+   * Enables diagonal panning; defaults to true for read-only code views.
+   */
+  panEnabled?: boolean;
+  /**
+   * Controlled zoom factor and allowed zoom interval.
+   */
+  scale?: number;
+  minScale?: number;
+  maxScale?: number;
+  /**
+   * Optional decorated body containing one vertical scrollable. Omit for text.
+   */
+  content?: ComposeChildren;
+}
+
+/**
  * A native popup whose anchor and menu items are supplied by the plugin.
  */
 export interface MenuAnchorProps extends ComposeCommonProps {
@@ -4397,6 +4465,10 @@ export interface ComposeUiFactoryRegistry {
    * Creates one independently controlled native scroll viewport.
    */
   ScrollArea: ComposeNodeFactory<ScrollAreaProps>;
+  /**
+   * Presents source text or custom diff rows through the shared native editor.
+   */
+  CodeEditor: ComposeNodeFactory<CodeEditorProps>;
   /**
    * Opens a native popup with plugin-composed anchor and entries.
    */

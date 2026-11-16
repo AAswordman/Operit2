@@ -147,12 +147,12 @@ test('ten thousand diff lines materialize only a bounded variable-height JS wind
   const file = { ...review, diffContent: '@@ -0,0 +1,10000 @@\n' + Array.from({ length: 10000 }, (_, index) => `+line-${index}`).join('\n') };
   const page = await screen('../src/ui/workspace.ui.ts', { input: { files: [file] } });
   await page.settle();
-  assert.ok(page.nodes().filter(node => node.type === 'CodeText').length < 50);
+  assert.ok(page.nodes().filter(node => node.type === 'CodeText' && node.props.filePath !== '').length < 50);
   const list = page.nodes().find(node => node.type === 'LazyColumn' && node.props.viewport);
   const viewport = list.props.viewport;
   assert.equal(viewport.variableExtent, true);
   await page.context.__operit_dispatch_compose_dsl_action({ actionId: viewport.onRangeChanged.__actionId, payload: { firstIndex: 5000, lastIndex: 5040 } });
-  assert.equal(page.nodes().filter(node => node.type === 'CodeText').length, 40);
+  assert.equal(page.nodes().filter(node => node.type === 'CodeText' && node.props.filePath !== '').length, 40);
   assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.text === 'line-4999'));
 });
 
@@ -246,6 +246,21 @@ test('sidebar can shrink, clamps to the viewport and starts the next drag at its
   assert.deepEqual(page.errors, []);
 });
 
+test('sidebar header constraints stay valid through zero-width layout and recovery', async () => {
+  const page = await screen('../src/ui/workspace.ui.ts', { input: { files: [review] } });
+  for (const width of [0, 160, 161, 170, 176, 177, 400, 800]) {
+    await page.update({ size: { width, height: 600 } }); await page.settle();
+    const constraints = page.nodes().flatMap(node => node.props.modifier?.__modifierOps ?? [])
+      .filter(op => op.name === 'widthIn');
+    assert.equal(constraints.length, 1);
+    const sidebarWidth = Math.min(220, Math.max(0, width - 161));
+    assert.equal(constraints[0].args[0], Math.max(0, sidebarWidth - 16), `Header at viewport width ${width}`);
+  }
+  await drag(page, 'sidebar-splitter', -20);
+  assert.ok(page.nodes().some(node => node.type === 'Column' && node.props.width === 200));
+  assert.deepEqual(page.errors, []);
+});
+
 test('rapid sidebar pointer updates accumulate before the next host render', async () => {
   const page = await screen('../src/ui/workspace.ui.ts', { input: { files: [review] } });
   const gesture = splitter(page, 'sidebar-splitter');
@@ -258,23 +273,23 @@ test('rapid sidebar pointer updates accumulate before the next host render', asy
   assert.deepEqual(page.errors, []);
 });
 
-test('split comparison widths follow dragging, retain both sides and preserve the ratio on resize', async () => {
+test('split comparison uses proportional columns and the measured editor width for dragging', async () => {
   const page = await screen('../src/ui/workspace.ui.ts', { input: { files: [review] }, split: true, wrap: true });
-  /** Reads the paired row without mistaking toolbar rows for code panes. */
-  function pair() {
-    return page.nodes().find(node => node.type === 'Row' && node.props.width && node.children.length === 3 && node.children[1].props.width === 1);
+  function fractions() {
+    return page.nodes().find(node => node.type === 'CodeEditor').props.contentColumns.map(column => column.fraction);
   }
-  assert.equal(pair().children[0].props.modifier.__modifierOps.find(part => part.name === 'width').args[0], 289);
+  assert.deepEqual(fractions(), [0.5, 0.5]);
+  const body = page.nodes().find(node => node.props.key === 'diff-body');
+  const sizeAction = body.props.modifier.__modifierOps.find(op => op.name === 'onSizeChanged').args[0];
+  await page.context.__operit_dispatch_compose_dsl_action({ actionId: sizeAction.__actionId, payload: { width: 401, height: 600 } });
   await drag(page, 'diff-splitter', 80);
-  const widths = pair().children.filter((_, index) => index !== 1).map(node => node.props.modifier.__modifierOps.find(part => part.name === 'width').args[0]);
-  assert.deepEqual(widths, [369, 209]);
+  assert.deepEqual(fractions(), [0.7, 0.30000000000000004]);
   assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.text === 'old'));
   assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.text === 'new'));
   await page.update({ size: { width: 1100, height: 600 } }); await page.settle();
-  const resized = pair().children[0].props.modifier.__modifierOps.find(part => part.name === 'width').args[0];
-  assert.ok(Math.abs(resized / 878 - 369 / 578) < 0.000001);
+  assert.deepEqual(fractions(), [0.7, 0.30000000000000004]);
   await drag(page, 'diff-splitter', -10000);
-  assert.equal(pair().children[0].props.modifier.__modifierOps.find(part => part.name === 'width').args[0], 96);
+  assert.deepEqual(fractions(), [0.15, 0.85]);
   assert.deepEqual(page.errors, []);
 });
 
@@ -293,7 +308,7 @@ test('tree directories are cached and ordinary previews stay plugin-owned', asyn
   }
   assert.equal(listings.filter(path => path === '/workspace/src').length, 1);
   await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === '/workspace/src/a.ts')); await page.settle();
-  assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.filePath === '/workspace/src/a.ts' && node.props.text === 'first\nsecond\nnew\nlast\n'));
+  assert.ok(page.nodes().some(node => node.type === 'CodeEditor' && node.props.filePath === '/workspace/src/a.ts' && node.props.text === 'first\nsecond\nnew\nlast\n'));
   assert.deepEqual(page.errors, []);
 });
 
@@ -310,10 +325,10 @@ test('tree previews use selectable syntax text with the selected file grammar', 
   for (const [name, content] of [['index.html', html], ['main.ts', script]]) {
     await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === `/workspace/${name}`));
     await page.settle();
-    const selection = page.nodes().find(node => node.type === 'SelectionContainer');
-    assert.equal(selection?.children[0].type, 'CodeText');
-    assert.equal(selection.children[0].props.filePath, `/workspace/${name}`);
-    assert.equal(selection.children[0].props.text, content);
+    const selection = page.nodes().find(node => node.type === 'CodeEditor');
+    assert.ok(selection, 'Source preview uses the shared native editor');
+    assert.equal(selection.props.filePath, `/workspace/${name}`);
+    assert.equal(selection.props.text, content);
   }
   await page.click(control(page, '切换至变更文件列表')); await page.settle();
   await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === review.path));
@@ -343,4 +358,28 @@ test('late previews cannot reopen over a newly selected diff, and read errors re
   await page.click(page.nodes().find(node => node.type === 'InkWell' && node.props.key === '/workspace/denied.ts')); await page.settle();
   assert.ok(page.nodes().some(node => node.type === 'Text' && node.props.text.includes('preview read denied')));
   assert.deepEqual(page.errors, []);
+});
+
+test('every diff layout uses one zoomable viewport around its bounded lazy list', async () => {
+  for (const split of [false, true]) {
+    for (const wrap of [false, true]) {
+      const page = await screen('../src/ui/workspace.ui.ts', {
+        split, wrap, input: { files: [{ ...review, diffContent: '@@ -1 +1 @@\n-old\n+' + 'long source '.repeat(80) }] },
+      });
+      const viewport = page.nodes().find(node => node.type === 'CodeEditor');
+      assert.ok(viewport, `Missing code viewport for split=${split}, wrap=${wrap}`);
+      assert.equal(viewport.props.wrapToViewport, wrap);
+      assert.equal(viewport.props.contentWidth, undefined);
+      assert.equal(viewport.props.contentColumns.length, split ? 2 : 1);
+      assert.ok(viewport.props.contentColumns.some(column => column.text.includes('long source')));
+      for (const node of page.nodes().filter(node => node.type === 'CodeText')) {
+        assert.equal(node.props.softWrap, node.props.filePath === '' ? false : wrap);
+      }
+      assert.equal(viewport.props.fillMaxSize, true);
+      const list = page.nodes().find(node => node.type === 'LazyColumn' && node.props.viewport);
+      assert.equal(list.props.fillMaxSize, true);
+      assert.equal(list.props.height, undefined, 'Zoom owns the logical viewport height');
+      assert.equal(list.props.viewport.variableExtent, true);
+    }
+  }
 });

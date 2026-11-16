@@ -51,6 +51,7 @@ class _ComposeDslRenderResult {
 const _composeNodeTypes = <String, String>{
   'richtext': 'RichText',
   'codetext': 'CodeText',
+  'codeeditor': 'CodeEditor',
   'selectabletext': 'SelectableText',
   'menuanchor': 'MenuAnchor',
   'tooltip': 'Tooltip',

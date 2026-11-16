@@ -2,9 +2,7 @@
 
 import 'dart:convert';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../../../l10n/generated/app_localizations.dart';
@@ -14,12 +12,8 @@ import '../../../../../common/markdown/MarkdownLink.dart';
 import '../../../../../theme/OperitGlassSurface.dart';
 import '../WorkspaceTabModels.dart';
 import 'WorkspaceTextDocument.dart';
-import 'WorkspaceVirtualTextEditor.dart';
-import 'WorkspaceVirtualTextSurface.dart';
-import 'WorkspaceTextLineNumbers.dart';
-import 'WorkspaceTextZoomViewport.dart';
-import 'WorkspaceZoomScrollController.dart';
-import 'syntax/WorkspaceSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorInput.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditor.dart';
 
 /// Edits workspace text through the shared file API without browser chrome.
 class WorkspaceTextPreview extends StatefulWidget {
@@ -50,32 +44,19 @@ class WorkspaceTextPreview extends StatefulWidget {
 
 class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
   late TextEditingController _controller;
-  late WorkspaceSyntaxLanguage _syntaxLanguage;
+  late CodeSyntaxLanguage _syntaxLanguage;
   final ValueNotifier<int> _viewportChanges = ValueNotifier<int>(0);
   final ValueNotifier<int> _chromeChanges = ValueNotifier<int>(0);
   late ({bool dirty, bool saving, Object? error}) _chromeState;
-  RenderBox? _zoomTarget;
   final FocusNode _editorFocus = FocusNode();
   late UndoHistoryController _undoController;
   final Object _editorTapGroup = Object();
-  final WorkspaceZoomScrollController _editorScroll =
-      WorkspaceZoomScrollController();
-  final WorkspaceZoomScrollController _previewScroll =
-      WorkspaceZoomScrollController();
-  GlobalKey _editorKey = GlobalKey();
+  final CodeEditorScrollController _editorScroll = CodeEditorScrollController();
+  final CodeEditorScrollController _previewScroll =
+      CodeEditorScrollController();
+  GlobalKey<CodeEditorState> _editorKey = GlobalKey<CodeEditorState>();
   final GlobalKey _previewKey = GlobalKey();
-  final GlobalKey _viewportKey = GlobalKey();
-  final Map<int, Offset> _touches = <int, Offset>{};
-  Offset? _zoomSceneAnchor;
-  TextPosition? _zoomTextAnchor;
-  double _zoomLineFraction = 0;
-  Offset? _zoomLocalFocalPoint;
-  double _zoomRenderOriginY = 0;
-  double _horizontalOffset = 0;
-  bool _trackpadPinching = false;
-  double _startScale = 1;
-  double _panZoomScale = 1;
-  double? _startDistance;
+  final _viewportKey = GlobalKey<CodeEditorState>();
   bool _showMarkdown = false;
 
   /// Returns the draft owned by this workspace tab.
@@ -85,7 +66,7 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
   @override
   void initState() {
     super.initState();
-    _syntaxLanguage = WorkspaceSyntaxLanguage.forPath(widget.tab.filePath!);
+    _syntaxLanguage = CodeSyntaxLanguage.forPath(widget.tab.filePath!);
     _controller = TextEditingController.fromValue(
       TextEditingValue(
         text: _document.text,
@@ -102,13 +83,13 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
   void didUpdateWidget(covariant WorkspaceTextPreview oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.tab.filePath != widget.tab.filePath) {
-      _syntaxLanguage = WorkspaceSyntaxLanguage.forPath(widget.tab.filePath!);
+      _syntaxLanguage = CodeSyntaxLanguage.forPath(widget.tab.filePath!);
     }
     if (oldWidget.tab.textDocument == _document) return;
     oldWidget.tab.textDocument!.removeListener(_documentChanged);
     _controller.dispose();
     _undoController.dispose();
-    _editorKey = GlobalKey();
+    _editorKey = GlobalKey<CodeEditorState>();
     _controller = TextEditingController.fromValue(
       TextEditingValue(
         text: _document.text,
@@ -119,16 +100,6 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
     _chromeState = _readChromeState();
     _document.addListener(_documentChanged);
     _showMarkdown = false;
-    _touches.clear();
-    _startDistance = null;
-    _zoomTarget = null;
-    _zoomSceneAnchor = null;
-    _zoomTextAnchor = null;
-    _zoomLocalFocalPoint = null;
-    _horizontalOffset = 0;
-    _editorScroll.cancelZoomAnchor();
-    _previewScroll.cancelZoomAnchor();
-    _trackpadPinching = false;
   }
 
   /// Releases input resources without discarding the tab's draft.
@@ -176,210 +147,19 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
     ),
   );
 
-  /// Records touch pointers without competing with text scrolling gestures.
-  void _pointerDown(PointerDownEvent event) {
-    if (event.kind != PointerDeviceKind.touch) return;
-    final wasPinching = _touches.length == 2;
-    _touches[event.pointer] = event.position;
-    _resetPinchBaseline();
-    if (wasPinching != (_touches.length == 2)) setState(() {});
-  }
-
-  /// Starts a new two-finger zoom baseline after the touch count changes.
-  void _resetPinchBaseline() {
-    _startScale = _document.scale;
-    _startDistance = _touches.length == 2 ? _touchDistance : null;
-    if (_touches.length == 2) {
-      final points = _touches.values.toList(growable: false);
-      _captureZoomAnchor((points[0] + points[1]) / 2);
-    }
-  }
-
-  /// Returns the scroll controller for the currently displayed presentation.
-  WorkspaceZoomScrollController get _zoomScroll =>
-      _showMarkdown ? _previewScroll : _editorScroll;
-
-  /// Returns the outer viewport whose coordinates remain independent of zoom.
-  RenderBox get _viewport =>
-      _viewportKey.currentContext!.findRenderObject()! as RenderBox;
-
-  /// Finds the exact scroll render box without inspecting character positions.
-  RenderBox get _zoomRender {
-    final matches = <RenderBox>[];
-    final key = _showMarkdown ? _previewKey : _editorKey;
-    _collectZoomRenders(key.currentContext!.findRenderObject()!, matches);
-    return matches.single;
-  }
-
-  /// Collects this presentation's viewport by its Flutter render contract.
-  void _collectZoomRenders(RenderObject render, List<RenderBox> matches) {
-    if ((_showMarkdown && render is RenderAbstractViewport) ||
-        (!_showMarkdown && render is RenderEditable)) {
-      matches.add(render as RenderBox);
-      return;
-    }
-    render.visitChildren((child) => _collectZoomRenders(child, matches));
-  }
-
-  /// Locks wrapped text to the left edge and bounds preview translation.
-  double _boundHorizontalOffset(double offset, double scale) {
-    if (!_showMarkdown) return 0;
-    final extent = _viewport.size.width * (1 - scale);
-    return offset.clamp(extent < 0 ? extent : 0.0, 0.0);
-  }
-
-  /// Reads unsnapped line geometry without consulting unfinished ancestors.
-  double _anchorLineTop(RenderEditable render) =>
-      render
-          .getEndpointsForSelection(
-            TextSelection.fromPosition(_zoomTextAnchor!),
-          )
-          .single
-          .point
-          .dy -
-      render.preferredLineHeight;
-
-  /// Captures one text position per gesture, retaining its within-line fraction.
-  void _captureZoomAnchor(Offset focalPoint) {
-    _zoomScroll.jumpTo(_zoomScroll.offset);
-    _horizontalOffset = _boundHorizontalOffset(
-      _horizontalOffset,
-      _document.scale,
-    );
-    final localFocalPoint = _viewport.globalToLocal(focalPoint);
-    final render = _zoomRender;
-    _zoomTarget = render;
-    final renderFocalY = render.globalToLocal(focalPoint).dy;
-    _zoomLocalFocalPoint = localFocalPoint;
-    _zoomRenderOriginY = localFocalPoint.dy - renderFocalY * _document.scale;
-    if (!_showMarkdown) {
-      final editable = render as RenderEditable;
-      _zoomTextAnchor = editable.getPositionForPoint(focalPoint);
-      _zoomLineFraction =
-          (renderFocalY - _anchorLineTop(editable)) /
-          editable.preferredLineHeight;
-    }
-    _zoomSceneAnchor = Offset(
-      (localFocalPoint.dx - _horizontalOffset) / _document.scale,
-      _zoomScroll.offset + renderFocalY,
-    );
-  }
-
-  /// Resolves the exact unscaled scroll offset during the next layout pass.
-  double _resolveZoomOffset() {
-    // Use the new paragraph geometry and captured viewport coordinates only.
-    // Global transforms are unsafe while ancestors are still laying out.
-    final double sceneY;
-    if (_showMarkdown) {
-      sceneY = _zoomSceneAnchor!.dy;
-    } else {
-      final render = _zoomTarget! as RenderWorkspaceVirtualText;
-      sceneY =
-          _anchorLineTop(render) +
-          _zoomScroll.offset +
-          _zoomLineFraction * render.preferredLineHeight;
-    }
-    return sceneY -
-        (_zoomLocalFocalPoint!.dy - _zoomRenderOriginY) / _document.scale;
-  }
-
-  /// Commits scaling and focal scrolling together before the next paint pass.
-  void _zoomAroundFocalPoint(double scale, Offset focalPoint) {
-    final next = scale.clamp(0.6, 2.5);
-    final localFocalPoint = _viewport.globalToLocal(focalPoint);
-    final scaleChanged = next != _document.scale;
-    if (!scaleChanged && _zoomLocalFocalPoint == localFocalPoint) return;
-    _zoomLocalFocalPoint = localFocalPoint;
-    _horizontalOffset = _boundHorizontalOffset(
-      _zoomLocalFocalPoint!.dx - _zoomSceneAnchor!.dx * next,
-      next,
-    );
-    _zoomScroll.anchorNextLayout(_resolveZoomOffset);
-    // A center-only pan also needs a layout transaction, even at equal scale.
-    if (!_showMarkdown) {
-      (_zoomTarget! as RenderWorkspaceVirtualText).prepareAnchor(
-        _zoomTextAnchor!,
-      );
-    }
-    _zoomTarget!.markNeedsLayout();
-    _document.updateScale(next);
-    // Scale notifications already dirty the viewport once; only a center-only
-    // pan needs an explicit rebuild to update its horizontal translation.
-    if (!scaleChanged) _viewportChanges.value++;
-  }
-
-  /// Anchors keyboard zoom at the center of the visible viewport.
-  void _zoomTo(double scale) {
-    final center = _viewport.localToGlobal(_viewport.size.center(Offset.zero));
-    _captureZoomAnchor(center);
-    _zoomAroundFocalPoint(scale, center);
-  }
-
-  /// Measures the distance between the two active touch pointers.
-  double get _touchDistance {
-    final points = _touches.values.toList(growable: false);
-    return (points[0] - points[1]).distance;
-  }
-
-  /// Resizes the text only while exactly two touch pointers are active.
-  void _pointerMove(PointerMoveEvent event) {
-    if (!_touches.containsKey(event.pointer)) return;
-    _touches[event.pointer] = event.position;
-    final distance = _startDistance;
-    if (_touches.length != 2 || distance == null || distance < 1) return;
-    final points = _touches.values.toList(growable: false);
-    _zoomAroundFocalPoint(
-      _startScale * _touchDistance / distance,
-      (points[0] + points[1]) / 2,
-    );
-  }
-
-  /// Ends the released pointer and resets the remaining zoom baseline.
-  void _pointerUp(PointerEvent event) {
-    final wasPinching = _touches.length == 2;
-    if (_touches.remove(event.pointer) == null) return;
-    _resetPinchBaseline();
-    if (wasPinching != (_touches.length == 2)) setState(() {});
-  }
-
-  /// Captures the current zoom before a trackpad pinch starts.
-  void _panZoomStart(PointerPanZoomStartEvent event) {
-    _panZoomScale = _document.scale;
-    _trackpadPinching = true;
-    _captureZoomAnchor(event.position);
-    setState(() {});
-  }
-
-  /// Applies trackpad pinch zoom through Flutter's unified pointer events.
-  void _panZoomUpdate(PointerPanZoomUpdateEvent event) {
-    _zoomAroundFocalPoint(
-      _panZoomScale * event.scale,
-      event.position + event.pan,
-    );
-  }
-
-  /// Restores ordinary scrolling when the trackpad gesture ends.
-  void _panZoomEnd(PointerPanZoomEndEvent event) {
-    _trackpadPinching = false;
-    setState(() {});
-  }
+  /// Uses the same viewport zoom action as read-only code review.
+  void _zoomTo(double scale) =>
+      (_showMarkdown ? _viewportKey : _editorKey).currentState!.zoomTo(scale);
 
   /// Switches Markdown presentation without carrying an old zoom anchor.
   void _toggleMarkdown() {
     setState(() {
       _showMarkdown = !_showMarkdown;
-      _zoomTarget = null;
-      _zoomSceneAnchor = null;
-      _zoomTextAnchor = null;
-      _zoomLocalFocalPoint = null;
-      _editorScroll.cancelZoomAnchor();
-      _previewScroll.cancelZoomAnchor();
     });
   }
 
   /// Finds the full-document native input client retained by this editor.
-  WorkspaceVirtualTextEditorState get _editableState =>
-      _editorKey.currentState! as WorkspaceVirtualTextEditorState;
+  CodeEditorInputState get _editableState => _editorKey.currentState!.input;
 
   /// Inserts exactly one shortcut token and lets Flutter update IME and history.
   void _insertSymbol(String symbol) {
@@ -614,100 +394,78 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
               child: RepaintBoundary(
                 child: ListenableBuilder(
                   listenable: _viewportChanges,
-                  child: WorkspaceVirtualTextEditor(
-                    key: _editorKey,
-                    groupId: _editorTapGroup,
-                    controller: _controller,
-                    undoController: _undoController,
-                    focusNode: _editorFocus,
-                    scrollController: _editorScroll,
-                    scrollPhysics: _touches.length == 2 || _trackpadPinching
-                        ? const NeverScrollableScrollPhysics()
-                        : null,
-                    onChanged: _document.updateText,
-                    style: style,
-                    language: _syntaxLanguage,
-                    active: !_showMarkdown,
-                  ),
-                  builder: (context, child) => WorkspaceTextLineNumbers(
-                    enabled: !_showMarkdown,
-                    scale: _document.scale,
-                    text: _controller.text,
-                    scrollController: _editorScroll,
-                    color: theme.colorScheme.onSurfaceVariant,
-                    dividerColor: theme.colorScheme.outlineVariant,
-                    child: Listener(
-                      key: _viewportKey,
-                      behavior: HitTestBehavior.opaque,
-                      onPointerDown: _pointerDown,
-                      onPointerMove: _pointerMove,
-                      onPointerUp: _pointerUp,
-                      onPointerCancel: _pointerUp,
-                      onPointerPanZoomStart: _panZoomStart,
-                      onPointerPanZoomUpdate: _panZoomUpdate,
-                      onPointerPanZoomEnd: _panZoomEnd,
-                      child: ClipRect(
-                        child: WorkspaceTextZoomViewport(
+                  builder: (context, child) => IndexedStack(
+                    index: _showMarkdown ? 1 : 0,
+                    children: [
+                      RetainedPage(
+                        active: !_showMarkdown,
+                        child: CodeEditor(
+                          key: _editorKey,
+                          identity: _document,
+                          groupId: _editorTapGroup,
+                          controller: _controller,
+                          undoController: _undoController,
+                          focusNode: _editorFocus,
+                          scrollController: _editorScroll,
+                          onChanged: _document.updateText,
+                          style: style,
+                          language: _syntaxLanguage,
+                          active: !_showMarkdown,
                           scale: _document.scale,
-                          horizontalOffset: _horizontalOffset,
-                          wrapToViewport: !_showMarkdown,
-                          child: IndexedStack(
-                            index: _showMarkdown ? 1 : 0,
-                            children: <Widget>[
-                              RetainedPage(
-                                active: !_showMarkdown,
-                                child: Padding(
-                                  padding: EdgeInsets.all(12 / _document.scale),
-                                  child: child,
-                                ),
-                              ),
-                              if (_showMarkdown)
-                                SingleChildScrollView(
-                                  key: _previewKey,
-                                  controller: _previewScroll,
-                                  physics:
-                                      _touches.length == 2 || _trackpadPinching
-                                      ? const NeverScrollableScrollPhysics()
-                                      : null,
-                                  padding: const EdgeInsets.all(12),
-                                  child: StreamMarkdownRenderer(
-                                    content: _document.text,
-                                    isStreaming: false,
-                                    textColor: theme.colorScheme.onSurface,
-                                    backgroundColor: Colors.transparent,
-                                    onLinkClick: (url) {
-                                      final path = markdownFileLinkPath(url);
-                                      if (path == null) {
-                                        widget.onOpenBrowser(url: url);
-                                        return;
-                                      }
-                                      final file =
-                                          widget.tab.absolutePath ??
-                                          widget.tab.filePath!;
-                                      final separator = file.lastIndexOf('/');
-                                      final base = separator < 0
-                                          ? null
-                                          : file.substring(0, separator + 1);
-                                      openMarkdownFileLink(
-                                        url,
-                                        null,
-                                        basePath: base,
-                                        onOpenFile: MarkdownLinkScope.maybeOf(
-                                          context,
-                                        )?.onOpenFile,
-                                      );
-                                    },
-                                    splitMarkdownContent:
-                                        widget.splitMarkdownContent,
-                                  ),
-                                )
-                              else
-                                const SizedBox.shrink(),
-                            ],
-                          ),
+                          onScaleChanged: _document.updateScale,
                         ),
                       ),
-                    ),
+                      if (_showMarkdown)
+                        CodeEditor(
+                          key: _viewportKey,
+                          identity: _document,
+                          scrollController: _previewScroll,
+                          scale: _document.scale,
+                          onScaleChanged: _document.updateScale,
+                          readOnly: true,
+                          panEnabled: false,
+                          wrapToViewport: false,
+                          contentBuilder: (context) => SingleChildScrollView(
+                            key: _previewKey,
+                            controller: _previewScroll,
+                            physics: CodeEditorViewportScope.maybeOf(
+                              context,
+                            )?.physics,
+                            padding: const EdgeInsets.all(12),
+                            child: StreamMarkdownRenderer(
+                              content: _document.text,
+                              isStreaming: false,
+                              textColor: theme.colorScheme.onSurface,
+                              backgroundColor: Colors.transparent,
+                              onLinkClick: (url) {
+                                final path = markdownFileLinkPath(url);
+                                if (path == null) {
+                                  widget.onOpenBrowser(url: url);
+                                  return;
+                                }
+                                final file =
+                                    widget.tab.absolutePath ??
+                                    widget.tab.filePath!;
+                                final separator = file.lastIndexOf('/');
+                                final base = separator < 0
+                                    ? null
+                                    : file.substring(0, separator + 1);
+                                openMarkdownFileLink(
+                                  url,
+                                  null,
+                                  basePath: base,
+                                  onOpenFile: MarkdownLinkScope.maybeOf(
+                                    context,
+                                  )?.onOpenFile,
+                                );
+                              },
+                              splitMarkdownContent: widget.splitMarkdownContent,
+                            ),
+                          ),
+                        )
+                      else
+                        const SizedBox.shrink(),
+                    ],
                   ),
                 ),
               ),

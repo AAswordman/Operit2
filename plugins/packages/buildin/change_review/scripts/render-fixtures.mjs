@@ -20,7 +20,12 @@ const workspaceFixtures = {};
 const basicDiff = '@@ -1,3 +1,3 @@\n const value = 1;\n-old value\n+new value\n tail';
 const longDiff = '@@ -1,3 +1,4 @@\n const value = 1;\n-' + 'old_value '.repeat(18) + '\n+' + 'new_value '.repeat(24) + '\n+second\n tail';
 const gapDiff = '@@ -5,2 +5,2 @@\n-old\n+new\n context\n@@ -35,2 +35,2 @@\n second\n-before\n+after';
+const chineseDiff = '@@ -0,0 +1,10 @@\n+# 随手记\n+\n+- 这是一个测试文件\n+- 创建时间：2026-11-16\n+- 用途：验证文件写入与修改\n+\n+## 待办\n+\n+- [ ] 想清楚要拿这个工作区做什么，then_keep_this_very_long_identifier_without_spaces_' + '值'.repeat(32) + '\n+';
 const samples = [
+  ...[false, true].flatMap(split => [false, true].map(wrap => ({
+    name: `chinese-${split ? 'split' : 'unified'}-${wrap ? 'wrap' : 'nowrap'}`,
+    diff: chineseDiff, path: 'note.md', split, wrap, pane: 'closed',
+  }))),
   { name: 'unified', diff: basicDiff },
   { name: 'split', diff: longDiff, split: true },
   { name: 'wrap', diff: longDiff, wrap: true },
@@ -44,7 +49,7 @@ for (const brightness of ['light', 'dark']) {
     locale: sample.locale ?? 'zh', size: { width: sample.width ?? 800, height: 600 }, split: sample.split ?? false, wrap: sample.wrap ?? false,
     pane: sample.pane ?? 'changes', ...(sample.preview ? { preview: sample.preview } : {}),
     ...(sample.pane || sample.full || sample.fullOff ? { workspacePath: '/operitapp/workspaces/test' } : {}), input: { files: sample.empty ? [] : [
-      { path: 'src/a.ts', diffContent: sample.diff, additions: sample.diff === longDiff ? 2 : sample.diff === gapDiff ? 2 : 1, deletions: sample.diff === gapDiff ? 2 : 1 },
+      { path: sample.path ?? 'src/a.ts', diffContent: sample.diff, additions: sample.diff === longDiff ? 2 : sample.diff === gapDiff ? 2 : 1, deletions: sample.diff === gapDiff ? 2 : 1 },
     ] },
   }, { theme: { brightness, colors: {} }, tools: { Files: { list: async () => ({ entries: [
     { name: 'readme.txt', isDirectory: false, size: 14, lastModified: '' },

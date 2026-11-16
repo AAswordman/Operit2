@@ -4,10 +4,10 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-import 'file_preview/syntax/WorkspaceSyntaxLanguage.dart';
-import 'file_preview/syntax/WorkspaceSyntaxLexer.dart';
-import 'file_preview/syntax/WorkspaceSyntaxPalette.dart';
-import 'file_preview/syntax/WorkspaceSyntaxToken.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLexer.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxToken.dart';
 
 enum InlineDiffKind { context, add, remove }
 
@@ -369,7 +369,7 @@ class _WorkspaceInlineDiffState extends State<WorkspaceInlineDiff> {
     widget.diff,
     allowImplicitHunks: widget.allowImplicitHunks,
   );
-  late WorkspaceSyntaxLexer? _lexer = _resolveLexer(widget.filePath);
+  late CodeSyntaxLexer? _lexer = _resolveLexer(widget.filePath);
   final ScrollController _embeddedScrollController = ScrollController();
 
   @override
@@ -382,14 +382,14 @@ class _WorkspaceInlineDiffState extends State<WorkspaceInlineDiff> {
   /// the choice survives a rebuild.
   final Set<int> _expandedGaps = <int>{};
 
-  static WorkspaceSyntaxLexer? _resolveLexer(String? filePath) {
+  static CodeSyntaxLexer? _resolveLexer(String? filePath) {
     if (filePath == null || filePath.isEmpty) return null;
-    final language = WorkspaceSyntaxLanguage.forPath(filePath);
-    if (language == WorkspaceSyntaxLanguage.plainText ||
-        language == WorkspaceSyntaxLanguage.diff) {
+    final language = CodeSyntaxLanguage.forPath(filePath);
+    if (language == CodeSyntaxLanguage.plainText ||
+        language == CodeSyntaxLanguage.diff) {
       return null;
     }
-    return WorkspaceSyntaxLexer(language);
+    return CodeSyntaxLexer(language);
   }
 
   @override
@@ -415,7 +415,7 @@ class _WorkspaceInlineDiffState extends State<WorkspaceInlineDiff> {
         compact: widget.embedded,
       );
     }
-    final palette = WorkspaceSyntaxPalette(Theme.of(context).brightness);
+    final palette = CodeSyntaxPalette(Theme.of(context).brightness);
     final items = _unifiedItems(
       _document,
       fileLines: widget.fileLines,
@@ -503,18 +503,18 @@ class _WorkspaceSplitDiffState extends State<WorkspaceSplitDiff> {
   late WorkspaceDiffDocument _document = WorkspaceDiffDocument.parse(
     widget.diff,
   );
-  late WorkspaceSyntaxLexer? _lexer = _resolveLexer(widget.filePath);
+  late CodeSyntaxLexer? _lexer = _resolveLexer(widget.filePath);
 
   final Set<int> _expandedGaps = <int>{};
 
-  static WorkspaceSyntaxLexer? _resolveLexer(String? filePath) {
+  static CodeSyntaxLexer? _resolveLexer(String? filePath) {
     if (filePath == null || filePath.isEmpty) return null;
-    final language = WorkspaceSyntaxLanguage.forPath(filePath);
-    if (language == WorkspaceSyntaxLanguage.plainText ||
-        language == WorkspaceSyntaxLanguage.diff) {
+    final language = CodeSyntaxLanguage.forPath(filePath);
+    if (language == CodeSyntaxLanguage.plainText ||
+        language == CodeSyntaxLanguage.diff) {
       return null;
     }
-    return WorkspaceSyntaxLexer(language);
+    return CodeSyntaxLexer(language);
   }
 
   @override
@@ -534,7 +534,7 @@ class _WorkspaceSplitDiffState extends State<WorkspaceSplitDiff> {
     if (_document.hunks.isEmpty) {
       return const WorkspaceDiffEmptyState(message: '没有可显示的行级变更');
     }
-    final palette = WorkspaceSyntaxPalette(Theme.of(context).brightness);
+    final palette = CodeSyntaxPalette(Theme.of(context).brightness);
     final items = _splitItems(
       _document,
       fileLines: widget.fileLines,
@@ -929,8 +929,8 @@ class _UnifiedDiffLine extends StatelessWidget {
   });
 
   final InlineDiffRow row;
-  final WorkspaceSyntaxLexer? lexer;
-  final WorkspaceSyntaxPalette? palette;
+  final CodeSyntaxLexer? lexer;
+  final CodeSyntaxPalette? palette;
   final bool wrapLines;
   final bool embedded;
 
@@ -1036,8 +1036,8 @@ class _SplitDiffRow extends StatelessWidget {
 
   final InlineDiffRow? left;
   final InlineDiffRow? right;
-  final WorkspaceSyntaxLexer? lexer;
-  final WorkspaceSyntaxPalette? palette;
+  final CodeSyntaxLexer? lexer;
+  final CodeSyntaxPalette? palette;
   final bool wrapLines;
 
   @override
@@ -1119,8 +1119,8 @@ class _SplitDiffCell extends StatelessWidget {
 
   final InlineDiffRow? row;
   final bool added;
-  final WorkspaceSyntaxLexer? lexer;
-  final WorkspaceSyntaxPalette? palette;
+  final CodeSyntaxLexer? lexer;
+  final CodeSyntaxPalette? palette;
   final bool wrapLines;
 
   @override
@@ -1237,8 +1237,8 @@ class _DiffLineText extends StatelessWidget {
 
   final InlineDiffRow row;
   final _DiffColorSet colors;
-  final WorkspaceSyntaxLexer? lexer;
-  final WorkspaceSyntaxPalette? palette;
+  final CodeSyntaxLexer? lexer;
+  final CodeSyntaxPalette? palette;
   final bool wrapLines;
 
   @override
@@ -1257,8 +1257,8 @@ class _DiffLineText extends StatelessWidget {
 
     final segments = row.segments;
     final tokens =
-        lexer?.scan(text, WorkspaceSyntaxState.empty, tokens: true).tokens ??
-        const <WorkspaceSyntaxToken>[];
+        lexer?.scan(text, CodeSyntaxState.empty, tokens: true).tokens ??
+        const <CodeSyntaxToken>[];
 
     if (tokens.isEmpty && segments.isEmpty) {
       return Align(
@@ -1294,7 +1294,7 @@ class _DiffLineText extends StatelessWidget {
         tokenIndex++;
       }
 
-      WorkspaceSyntaxTokenKind? tokenKind;
+      CodeSyntaxTokenKind? tokenKind;
       if (tokenIndex < tokens.length) {
         final tok = tokens[tokenIndex];
         if (tok.start <= start && end <= tok.end) {

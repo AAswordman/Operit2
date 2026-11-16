@@ -68,6 +68,7 @@ class ComposeDslLazyListView extends ListView {
     required super.shrinkWrap,
     required super.childrenDelegate,
     super.itemExtent,
+    super.physics,
     super.cacheExtent,
     EdgeInsetsGeometry padding = EdgeInsets.zero,
     this.onLayoutItems,

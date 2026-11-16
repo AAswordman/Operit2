@@ -4,10 +4,10 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceTextLayout.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceVirtualTextEditor.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceVirtualTextSurface.dart';
-import 'package:operit2/ui/features/chat/components/workspace/file_preview/WorkspaceZoomScrollController.dart';
+import 'package:operit2/ui/common/code_editor/CodeTextLayout.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorInput.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorSurface.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorScrollController.dart';
 
 /// Exercises viewport-bounded paragraphs, incremental indexing, and native input.
 void main() {
@@ -15,7 +15,7 @@ void main() {
     'incremental source index preserves mixed separators through local edits',
     () {
       var text = '零👩‍💻e\u0301\r\n\r\nsecond\rthird\nlast';
-      final layout = WorkspaceTextLayout(text);
+      final layout = CodeTextLayout(text);
       addTearDown(layout.dispose);
       final random = Random(714);
       const insertions = ['', '\n', '\r', '\r\n', '中', 'a\nb', '👩‍💻'];
@@ -50,7 +50,7 @@ void main() {
   test(
     'editing one line retains unaffected shaped paragraphs and exact heights',
     () {
-      final layout = WorkspaceTextLayout(
+      final layout = CodeTextLayout(
         'first\r\n${'wrapped 中文 ' * 20}\r\nlast',
       );
       addTearDown(layout.dispose);
@@ -84,7 +84,7 @@ void main() {
   test(
     'font invalidation retains geometry state until the next wrapping epoch',
     () {
-      final layout = WorkspaceTextLayout('first\n${'wrapped content ' * 30}');
+      final layout = CodeTextLayout('first\n${'wrapped content ' * 30}');
       addTearDown(layout.dispose);
       const style = TextStyle(fontSize: 14, height: 1.45);
       layout.configure(160, style, TextScaler.noScaling, TextDirection.ltr);
@@ -105,7 +105,7 @@ void main() {
     () {
       final source = List.filled(200, 'short');
       source[0] = 'long content ' * 60;
-      final layout = WorkspaceTextLayout(source.join('\n'));
+      final layout = CodeTextLayout(source.join('\n'));
       addTearDown(layout.dispose);
       layout.configure(
         160,
@@ -126,7 +126,7 @@ void main() {
   test(
     'unvisited heights use measured wrapping without shaping the remaining document',
     () {
-      final layout = WorkspaceTextLayout(
+      final layout = CodeTextLayout(
         List.filled(10000, 'wrapped content ' * 30).join('\n'),
       );
       addTearDown(layout.dispose);
@@ -156,8 +156,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    final state = tester.state<WorkspaceVirtualTextEditorState>(
-      find.byType(WorkspaceVirtualTextEditor),
+    final state = tester.state<CodeEditorInputState>(
+      find.byType(CodeEditorInput),
     );
     final render = state.renderEditable;
     expect(render.debugParagraphLayouts, lessThan(100));
@@ -199,8 +199,8 @@ void main() {
       ).join('\r\n');
       await tester.pumpWidget(_Harness(text: original));
       await tester.pumpAndSettle();
-      final state = tester.state<WorkspaceVirtualTextEditorState>(
-        find.byType(WorkspaceVirtualTextEditor),
+      final state = tester.state<CodeEditorInputState>(
+        find.byType(CodeEditorInput),
       );
       state.requestKeyboard();
       await tester.pump();
@@ -245,8 +245,8 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const _Harness(text: 'A👩‍💻e\u0301\r\n中文'));
-    final state = tester.state<WorkspaceVirtualTextEditorState>(
-      find.byType(WorkspaceVirtualTextEditor),
+    final state = tester.state<CodeEditorInputState>(
+      find.byType(CodeEditorInput),
     );
     state.requestKeyboard();
     state.widget.controller.selection = const TextSelection.collapsed(
@@ -271,8 +271,8 @@ void main() {
     'native keyboard remains ordinary multiline input across refocus',
     (tester) async {
       await tester.pumpWidget(const _Harness(text: 'first\r\n'));
-      final state = tester.state<WorkspaceVirtualTextEditorState>(
-        find.byType(WorkspaceVirtualTextEditor),
+      final state = tester.state<CodeEditorInputState>(
+        find.byType(CodeEditorInput),
       );
       state.requestKeyboard();
       await tester.pump();
@@ -305,8 +305,8 @@ void main() {
     tester,
   ) async {
     await tester.pumpWidget(const _Harness(text: 'first'));
-    final state = tester.state<WorkspaceVirtualTextEditorState>(
-      find.byType(WorkspaceVirtualTextEditor),
+    final state = tester.state<CodeEditorInputState>(
+      find.byType(CodeEditorInput),
     );
     state.requestKeyboard();
     await tester.pump();
@@ -324,8 +324,8 @@ void main() {
         const _Harness(text: 'first word\r\nsecond word\r\nthird word'),
       );
       await tester.pumpAndSettle();
-      final state = tester.state<WorkspaceVirtualTextEditorState>(
-        find.byType(WorkspaceVirtualTextEditor),
+      final state = tester.state<CodeEditorInputState>(
+        find.byType(CodeEditorInput),
       );
       final render = state.renderEditable;
       final start = render.localToGlobal(
@@ -359,8 +359,8 @@ void main() {
     'Flutter native selectors and multi-event input keep global source indices current',
     (tester) async {
       await tester.pumpWidget(const _Harness(text: 'old'));
-      final state = tester.state<WorkspaceVirtualTextEditorState>(
-        find.byType(WorkspaceVirtualTextEditor),
+      final state = tester.state<CodeEditorInputState>(
+        find.byType(CodeEditorInput),
       );
       state.requestKeyboard();
       await tester.pump();
@@ -405,14 +405,14 @@ void main() {
       final text = List.generate(500, (i) => 'line $i').join('\n');
       await tester.pumpWidget(_Harness(text: text));
       await tester.pumpAndSettle();
-      final state = tester.state<WorkspaceVirtualTextEditorState>(
-        find.byType(WorkspaceVirtualTextEditor),
+      final state = tester.state<CodeEditorInputState>(
+        find.byType(CodeEditorInput),
       );
       final semantics = tester.ensureSemantics();
 
       expect(
         tester
-            .getSemantics(find.byType(WorkspaceVirtualTextSurface))
+            .getSemantics(find.byType(CodeEditorSurface))
             .getSemanticsData()
             .value,
         text,
@@ -462,7 +462,7 @@ class _HarnessState extends State<_Harness> {
   late final TextEditingController _controller;
   final FocusNode _focus = FocusNode();
   final UndoHistoryController _undo = UndoHistoryController();
-  final WorkspaceZoomScrollController _scroll = WorkspaceZoomScrollController();
+  final CodeEditorScrollController _scroll = CodeEditorScrollController();
 
   /// Seeds valid UTF-16 input state before building the editor.
   @override
@@ -497,7 +497,7 @@ class _HarnessState extends State<_Harness> {
         child: SizedBox(
           width: 360,
           height: 500,
-          child: WorkspaceVirtualTextEditor(
+          child: CodeEditorInput(
             controller: _controller,
             focusNode: _focus,
             undoController: _undo,

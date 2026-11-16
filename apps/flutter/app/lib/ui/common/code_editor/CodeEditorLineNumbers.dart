@@ -6,12 +6,12 @@ import 'dart:math' as math;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
-import 'WorkspaceVirtualTextSurface.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorSurface.dart';
 
 /// Reserves a zoom-scaled gutter for logical lines, not soft-wrapped rows.
-class WorkspaceTextLineNumbers extends SingleChildRenderObjectWidget {
+class CodeEditorLineNumbers extends SingleChildRenderObjectWidget {
   /// Creates line numbers synchronized with the actual editable text layout.
-  const WorkspaceTextLineNumbers({
+  const CodeEditorLineNumbers({
     super.key,
     required this.enabled,
     required this.scale,
@@ -31,8 +31,8 @@ class WorkspaceTextLineNumbers extends SingleChildRenderObjectWidget {
 
   /// Creates the gutter renderer and its document line index.
   @override
-  RenderWorkspaceTextLineNumbers createRenderObject(BuildContext context) =>
-      RenderWorkspaceTextLineNumbers(
+  RenderCodeEditorLineNumbers createRenderObject(BuildContext context) =>
+      RenderCodeEditorLineNumbers(
         enabled: enabled,
         scale: scale,
         text: text,
@@ -45,7 +45,7 @@ class WorkspaceTextLineNumbers extends SingleChildRenderObjectWidget {
   @override
   void updateRenderObject(
     BuildContext context,
-    RenderWorkspaceTextLineNumbers renderObject,
+    RenderCodeEditorLineNumbers renderObject,
   ) => renderObject.update(
     enabled: enabled,
     scale: scale,
@@ -57,9 +57,9 @@ class WorkspaceTextLineNumbers extends SingleChildRenderObjectWidget {
 }
 
 /// Paints visible logical line numbers using the editor's own line geometry.
-class RenderWorkspaceTextLineNumbers extends RenderShiftedBox {
+class RenderCodeEditorLineNumbers extends RenderShiftedBox {
   /// Indexes the document once and observes ordinary scrolling for repainting.
-  RenderWorkspaceTextLineNumbers({
+  RenderCodeEditorLineNumbers({
     required bool enabled,
     required double scale,
     required String text,
@@ -234,9 +234,9 @@ class RenderWorkspaceTextLineNumbers extends RenderShiftedBox {
   /// Locates the single editor by render type rather than by widget internals.
   void _collectEditable(
     RenderObject object,
-    List<RenderWorkspaceVirtualText> matches,
+    List<RenderCodeEditorText> matches,
   ) {
-    if (object is RenderWorkspaceVirtualText) {
+    if (object is RenderCodeEditorText) {
       matches.add(object);
       return;
     }
@@ -248,7 +248,7 @@ class RenderWorkspaceTextLineNumbers extends RenderShiftedBox {
     if (!_enabled) return [];
     // Retained children may replace their render tree in an isolated build scope.
     // Resolve the live editor after layout rather than caching an old render box.
-    final matches = <RenderWorkspaceVirtualText>[];
+    final matches = <RenderCodeEditorText>[];
     _collectEditable(child!, matches);
     final editable = matches.single;
     final transform = editable.getTransformTo(this);

@@ -3,9 +3,9 @@
 import 'package:flutter/widgets.dart';
 
 /// Applies zoom anchoring during scroll layout, before any text can be painted.
-class WorkspaceZoomScrollController extends ScrollController {
+class CodeEditorScrollController extends ScrollController {
   /// Creates a scroll controller with a one-layout zoom correction request.
-  WorkspaceZoomScrollController();
+  CodeEditorScrollController();
 
   double Function()? _resolveZoomOffset;
   bool _virtualLayout = false;
@@ -58,7 +58,7 @@ class _WorkspaceZoomScrollPosition extends ScrollPositionWithSingleContext {
     required super.keepScrollOffset,
   });
 
-  final WorkspaceZoomScrollController controller;
+  final CodeEditorScrollController controller;
   bool _correctingZoom = false;
 
   /// Commits a focal-point correction as soon as new viewport metrics exist.

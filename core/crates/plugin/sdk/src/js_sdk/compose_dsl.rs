@@ -2530,6 +2530,48 @@ pub struct ScrollAreaProps {
     pub content: Option<ComposeChildren>,
 }
 
+/// Intrinsic source extent and gutter space in one custom editor column.
+pub struct ComposeCodeEditorColumn {
+    pub text: String,
+    /// Proportion of available body width, between zero and one.
+    pub fraction: Option<f64>,
+    /// Reserved horizontal space for gutter, padding and column separators.
+    pub horizontalPadding: Option<f64>,
+}
+
+/// The shared native code editor in read-only or custom-body presentation mode.
+pub struct CodeEditorProps {
+    /// Shared layout properties.
+    pub base_compose_common_props: ComposeCommonProps,
+    /// Source document. Omit when supplying a custom body.
+    pub text: Option<String>,
+    /// Material typography role and optional source font overrides.
+    pub style: Option<ComposeTextStyle>,
+    pub fontSize: Option<f64>,
+    pub fontFamily: Option<String>,
+    pub fontWeight: Option<String>,
+    pub color: Option<ComposeColor>,
+    pub lineHeight: Option<f64>,
+    /// Filename used to choose the editor's syntax grammar.
+    pub filePath: Option<String>,
+    /// Optional unscaled document width for custom source rows.
+    pub contentWidth: Option<f64>,
+    /// Source columns measured by the native editor for unwrapped custom bodies.
+    pub contentColumns: Option<Vec<ComposeCodeEditorColumn>>,
+    /// Reflows text to the viewport as it zooms. Defaults to true.
+    pub wrapToViewport: Option<bool>,
+    /// Shows the editor's logical line-number gutter for ordinary source text.
+    pub showLineNumbers: Option<bool>,
+    /// Enables diagonal panning; defaults to true for read-only code views.
+    pub panEnabled: Option<bool>,
+    /// Controlled zoom factor and allowed zoom interval.
+    pub scale: Option<f64>,
+    pub minScale: Option<f64>,
+    pub maxScale: Option<f64>,
+    /// Optional decorated body containing one vertical scrollable. Omit for text.
+    pub content: Option<ComposeChildren>,
+}
+
 /// A native popup whose anchor and menu items are supplied by the plugin.
 pub struct MenuAnchorProps {
     /// Shared node layout, identity and lifecycle.
@@ -3331,6 +3373,8 @@ pub struct ComposeUiFactoryRegistry {
     pub Tooltip: ComposeNodeFactory<TooltipProps>,
     /// Creates one independently controlled native scroll viewport.
     pub ScrollArea: ComposeNodeFactory<ScrollAreaProps>,
+    /// Presents source text or custom diff rows through the shared native editor.
+    pub CodeEditor: ComposeNodeFactory<CodeEditorProps>,
     /// Opens a native popup with plugin-composed anchor and entries.
     pub MenuAnchor: ComposeNodeFactory<MenuAnchorProps>,
     /// Adds a native Material ink response without imposing button geometry.

@@ -7,19 +7,17 @@ import 'dart:ui' show Brightness;
 
 import 'package:flutter/rendering.dart';
 
-import 'syntax/WorkspaceSyntaxHighlighter.dart';
-import 'syntax/WorkspaceSyntaxLanguage.dart';
-import 'syntax/WorkspaceSyntaxPalette.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxHighlighter.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
 
 /// Stores source offsets independently from cached, viewport-sized paragraphs.
-class WorkspaceTextLayout {
+class CodeTextLayout {
   /// Indexes the complete source without shaping any of its paragraphs.
-  WorkspaceTextLayout(
+  CodeTextLayout(
     String text, {
-    WorkspaceSyntaxLanguage language = WorkspaceSyntaxLanguage.plainText,
-    WorkspaceSyntaxPalette palette = const WorkspaceSyntaxPalette(
-      Brightness.light,
-    ),
+    CodeSyntaxLanguage language = CodeSyntaxLanguage.plainText,
+    CodeSyntaxPalette palette = const CodeSyntaxPalette(Brightness.light),
   }) : _text = text,
        lines = _split(text),
        _syntaxPalette = palette {
@@ -27,11 +25,11 @@ class WorkspaceTextLayout {
   }
 
   String _text;
-  List<WorkspaceTextLine> lines;
-  final WorkspaceSyntaxHighlighter syntax = WorkspaceSyntaxHighlighter();
-  WorkspaceSyntaxPalette _syntaxPalette;
-  final LinkedHashMap<WorkspaceTextLine, TextPainter> _paragraphs =
-      LinkedHashMap<WorkspaceTextLine, TextPainter>();
+  List<CodeTextLine> lines;
+  final CodeSyntaxHighlighter syntax = CodeSyntaxHighlighter();
+  CodeSyntaxPalette _syntaxPalette;
+  final LinkedHashMap<CodeTextLine, TextPainter> _paragraphs =
+      LinkedHashMap<CodeTextLine, TextPainter>();
   Float64List _measuredHeights = Float64List(0);
   Uint32List _measuredCounts = Uint32List(0);
   double _measuredTotal = 0;
@@ -48,16 +46,39 @@ class WorkspaceTextLayout {
   int debugParagraphLayouts = 0;
   int cacheCapacity = 128;
 
+  /// Measures horizontal source extent with the same font metrics as editing.
+  /// Used only for unwrapped custom bodies, cached by their owning editor.
+  static double measureUnwrappedWidth(
+    String text,
+    TextStyle style,
+    TextScaler scaler,
+    TextDirection direction, {
+    Locale? locale,
+  }) {
+    final layout = CodeTextLayout(text);
+    layout.configure(double.infinity, style, scaler, direction, locale: locale);
+    var width = 0.0;
+    for (var i = 0; i < layout.lines.length; i++) {
+      width = math.max(
+        width,
+        layout.paragraph(i, updateHeight: false).maxIntrinsicWidth,
+      );
+      if (i % 128 == 0) layout.trimCache({});
+    }
+    layout.dispose();
+    return width.ceilToDouble();
+  }
+
   /// Returns the number of native paragraphs retained by the viewport cache.
   int get cachedParagraphs => _paragraphs.length;
 
   /// Splits logical lines while preserving CRLF and UTF-16 document offsets.
-  static List<WorkspaceTextLine> _split(String text) {
-    final result = <WorkspaceTextLine>[];
+  static List<CodeTextLine> _split(String text) {
+    final result = <CodeTextLine>[];
     var start = 0;
     for (final match in RegExp(r'\r\n|\r|\n').allMatches(text)) {
       result.add(
-        WorkspaceTextLine(
+        CodeTextLine(
           start,
           text.substring(start, match.start),
           text.substring(match.start, match.end),
@@ -65,7 +86,7 @@ class WorkspaceTextLayout {
       );
       start = match.end;
     }
-    result.add(WorkspaceTextLine(start, text.substring(start), ''));
+    result.add(CodeTextLine(start, text.substring(start), ''));
     return result;
   }
 
@@ -142,17 +163,14 @@ class WorkspaceTextLayout {
   }
 
   /// Releases a cached paragraph whose multiline lexical context has changed.
-  void _invalidateSyntaxLine(WorkspaceSyntaxLine source) {
-    final line = source as WorkspaceTextLine;
+  void _invalidateSyntaxLine(CodeSyntaxLine source) {
+    final line = source as CodeTextLine;
     _paragraphs.remove(line)?.dispose();
     line.layoutWidth = -1;
   }
 
   /// Updates grammar or token colors without reshaping the complete document.
-  bool configureSyntax(
-    WorkspaceSyntaxLanguage language,
-    WorkspaceSyntaxPalette palette,
-  ) {
+  bool configureSyntax(CodeSyntaxLanguage language, CodeSyntaxPalette palette) {
     final changed = syntax.configure(language, lines);
     if (!changed && _syntaxPalette == palette) return false;
     _syntaxPalette = palette;
@@ -237,7 +255,7 @@ class WorkspaceTextLayout {
   }
 
   /// Releases paragraphs outside the bounded viewport working set.
-  void trimCache(Set<WorkspaceTextLine> retained) {
+  void trimCache(Set<CodeTextLine> retained) {
     final capacity = math.max(cacheCapacity, retained.length);
     final victims = _paragraphs.keys
         .where((line) => !retained.contains(line))
@@ -354,10 +372,9 @@ class WorkspaceTextLayout {
 }
 
 /// Identifies one logical line across local edits and cache eviction.
-class WorkspaceTextLine extends WorkspaceSyntaxLine {
+class CodeTextLine extends CodeSyntaxLine {
   /// Records the source offset, content, and exact original line separator.
-  WorkspaceTextLine(this.start, String content, this.separator)
-    : super(content);
+  CodeTextLine(this.start, String content, this.separator) : super(content);
 
   int start;
   final String separator;
@@ -368,6 +385,6 @@ class WorkspaceTextLine extends WorkspaceSyntaxLine {
   double indexedHeight = 0;
 
   /// Compares source content without using viewport or source-offset identity.
-  bool sameContent(WorkspaceTextLine other) =>
+  bool sameContent(CodeTextLine other) =>
       content == other.content && separator == other.separator;
 }

@@ -1,14 +1,14 @@
-# Workspace syntax highlighting
+# Shared code editor syntax highlighting
 
-This module belongs to the viewport-based workspace text editor. It does not use a hidden full-document text field, source truncation, platform-specific renderers, or automatic content-based language guessing.
+This module is shared by the native code editor and plugin source rows. It does not use a hidden full-document text field, source truncation, platform-specific renderers, or automatic content-based language guessing.
 
 ## Files
 
-- `WorkspaceSyntaxLanguage.dart`: explicit filename/extension registry and immutable lexical grammar definitions.
-- `WorkspaceSyntaxLexer.dart`: shared line lexer for state-only indexing and visible token generation, including multiline region context.
-- `WorkspaceSyntaxHighlighter.dart`: incremental context propagation, bounded token cache, and exact-source span construction.
-- `WorkspaceSyntaxPalette.dart`: light/dark color-only styles. Font size, weight, family, strut, and letter spacing always come from the editor.
-- `WorkspaceSyntaxToken.dart`: UTF-16 token intervals and lexical categories.
+- `CodeSyntaxLanguage.dart`: explicit filename/extension registry and immutable lexical grammar definitions.
+- `CodeSyntaxLexer.dart`: shared line lexer for state-only indexing and visible token generation, including multiline region context.
+- `CodeSyntaxHighlighter.dart`: incremental context propagation, bounded token cache, and exact-source span construction.
+- `CodeSyntaxPalette.dart`: light/dark color-only styles. Font size, weight, family, strut, and letter spacing always come from the editor.
+- `CodeSyntaxToken.dart`: UTF-16 token intervals and lexical categories.
 
 ## Registered languages and formats
 
@@ -30,7 +30,7 @@ Embedded JavaScript/CSS inside HTML/Vue/Svelte, language-specific code inside Ma
 
 ## Extending the registry
 
-1. Add a `WorkspaceSyntaxLanguage` entry and exact filename/extension mappings.
-2. Register a `WorkspaceSyntaxDefinition` with keyword/type/literal sets, comment/string delimiters, and optional named lexical token rules.
+1. Add a `CodeSyntaxLanguage` entry and exact filename/extension mappings.
+2. Register a `CodeSyntaxDefinition` with keyword/type/literal sets, comment/string delimiters, and optional named lexical token rules.
 3. Introduce new state only for syntax that genuinely crosses logical lines. State-only and token-producing scans must end with identical context, including unfinished drafts.
 4. Add language samples and multiline/edit cases to `test/workspace_syntax_highlight_test.dart`. Run the existing editor zoom, wrapping, input, and history tests as well.

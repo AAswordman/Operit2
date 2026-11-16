@@ -127,7 +127,9 @@ class _ComposeLazyList extends StatefulWidget {
 }
 
 class _ComposeLazyListState extends State<_ComposeLazyList> {
-  final ScrollController _controller = ScrollController();
+  final ScrollController _ownedController = ScrollController();
+  ScrollController? _viewportController;
+  ScrollController get _controller => _viewportController ?? _ownedController;
   bool _layoutScheduled = false;
   bool _rangeInFlight = false;
   ({int firstIndex, int lastIndex})? _lastRequested;
@@ -138,6 +140,19 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
   @override
   void initState() {
     super.initState();
+    _controller.addListener(_scheduleLayout);
+  }
+
+  /// Shares vertical scrolling with a code viewport so diagonal gestures stay unified.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final controller = widget.axis == Axis.vertical
+        ? CodeEditorViewportScope.maybeOf(context)?.controller
+        : null;
+    if (controller == _viewportController) return;
+    _controller.removeListener(_scheduleLayout);
+    _viewportController = controller;
     _controller.addListener(_scheduleLayout);
   }
 
@@ -234,7 +249,8 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
   /// Releases the scroll listener and controller with the owning list.
   @override
   void dispose() {
-    _controller.dispose();
+    _controller.removeListener(_scheduleLayout);
+    _ownedController.dispose();
     super.dispose();
   }
 
@@ -313,6 +329,7 @@ class _ComposeLazyListState extends State<_ComposeLazyList> {
           },
           child: ComposeDslLazyListView(
             controller: _controller,
+            physics: CodeEditorViewportScope.maybeOf(context)?.physics,
             scrollDirection: widget.axis,
             reverse: widget.reverse,
             shrinkWrap: !bounded,

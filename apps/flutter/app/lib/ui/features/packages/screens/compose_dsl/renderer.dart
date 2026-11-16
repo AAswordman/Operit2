@@ -528,6 +528,7 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
       case 'RichText':
       case 'CodeText':
       case 'Tooltip':
+      case 'CodeEditor':
       case 'ScrollArea':
       case 'MenuAnchor':
       case 'InkWell':

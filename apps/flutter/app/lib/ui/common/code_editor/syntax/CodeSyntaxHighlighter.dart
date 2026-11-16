@@ -5,48 +5,45 @@ import 'dart:math' as math;
 
 import 'package:flutter/painting.dart';
 
-import 'WorkspaceSyntaxLanguage.dart';
-import 'WorkspaceSyntaxLexer.dart';
-import 'WorkspaceSyntaxPalette.dart';
-import 'WorkspaceSyntaxToken.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLexer.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxToken.dart';
 
 /// Attaches lightweight lexical state to a persistent source-line identity.
-class WorkspaceSyntaxLine {
+class CodeSyntaxLine {
   /// Preserves source text independently from evictable visible token intervals.
-  WorkspaceSyntaxLine(this.content);
+  CodeSyntaxLine(this.content);
 
   final String content;
-  WorkspaceSyntaxState? syntaxStart;
-  WorkspaceSyntaxState? syntaxEnd;
+  CodeSyntaxState? syntaxStart;
+  CodeSyntaxState? syntaxEnd;
 }
 
 /// Indexes multiline context while caching colored tokens only for viewed lines.
-class WorkspaceSyntaxHighlighter {
+class CodeSyntaxHighlighter {
   /// Starts in the explicit plain-text format without doing source-wide lexing.
-  WorkspaceSyntaxHighlighter();
+  CodeSyntaxHighlighter();
 
-  WorkspaceSyntaxLanguage _language = WorkspaceSyntaxLanguage.plainText;
-  final LinkedHashMap<WorkspaceSyntaxLine, List<WorkspaceSyntaxToken>> _tokens =
+  CodeSyntaxLanguage _language = CodeSyntaxLanguage.plainText;
+  final LinkedHashMap<CodeSyntaxLine, List<CodeSyntaxToken>> _tokens =
       LinkedHashMap();
-  static final Map<WorkspaceSyntaxLanguage, WorkspaceSyntaxLexer> _lexers = {};
+  static final Map<CodeSyntaxLanguage, CodeSyntaxLexer> _lexers = {};
   int debugStateScans = 0;
   int debugTokenScans = 0;
 
   /// Exposes the selected grammar to render inspection and regression tests.
-  WorkspaceSyntaxLanguage get language => _language;
+  CodeSyntaxLanguage get language => _language;
 
   /// Reports only retained tokenized lines, never total indexed source lines.
   int get cachedLines => _tokens.length;
 
   /// Resolves one shared compiled lexer for the explicitly selected grammar.
-  WorkspaceSyntaxLexer get _lexer =>
-      _lexers.putIfAbsent(_language, () => WorkspaceSyntaxLexer(_language));
+  CodeSyntaxLexer get _lexer =>
+      _lexers.putIfAbsent(_language, () => CodeSyntaxLexer(_language));
 
   /// Reindexes lexical boundaries when a file's declared language changes.
-  bool configure(
-    WorkspaceSyntaxLanguage language,
-    List<WorkspaceSyntaxLine> lines,
-  ) {
+  bool configure(CodeSyntaxLanguage language, List<CodeSyntaxLine> lines) {
     if (_language == language) return false;
     _language = language;
     _tokens.clear();
@@ -60,17 +57,16 @@ class WorkspaceSyntaxHighlighter {
 
   /// Propagates edited lexical state only until the unchanged suffix converges.
   void synchronize(
-    List<WorkspaceSyntaxLine> lines, {
+    List<CodeSyntaxLine> lines, {
     int first = 0,
     required int through,
-    void Function(WorkspaceSyntaxLine line)? onInvalidated,
+    void Function(CodeSyntaxLine line)? onInvalidated,
   }) {
-    if (_language == WorkspaceSyntaxLanguage.plainText ||
-        first >= lines.length) {
+    if (_language == CodeSyntaxLanguage.plainText || first >= lines.length) {
       return;
     }
     var state = first == 0
-        ? WorkspaceSyntaxState.empty
+        ? CodeSyntaxState.empty
         : lines[first - 1].syntaxEnd!;
     for (var i = first; i < lines.length; i++) {
       final line = lines[i];
@@ -90,11 +86,11 @@ class WorkspaceSyntaxHighlighter {
   }
 
   /// Removes a deleted line's tokens without discarding unrelated cached lines.
-  void evict(WorkspaceSyntaxLine line) => _tokens.remove(line);
+  void evict(CodeSyntaxLine line) => _tokens.remove(line);
 
   /// Generates tokens only when their paragraph is requested for rendering.
-  List<WorkspaceSyntaxToken> tokens(WorkspaceSyntaxLine line) {
-    if (_language == WorkspaceSyntaxLanguage.plainText) return const [];
+  List<CodeSyntaxToken> tokens(CodeSyntaxLine line) {
+    if (_language == CodeSyntaxLanguage.plainText) return const [];
     final cached = _tokens.remove(line);
     if (cached != null) {
       _tokens[line] = cached;
@@ -113,38 +109,47 @@ class WorkspaceSyntaxHighlighter {
     return result.tokens;
   }
 
-  /// Builds color-only spans, retaining every original UTF-16 code unit exactly.
+  /// Applies syntax and optional caller-owned emphasis without changing source.
   TextSpan span(
-    WorkspaceSyntaxLine line,
+    CodeSyntaxLine line,
     TextStyle? style,
-    WorkspaceSyntaxPalette palette,
-  ) {
+    CodeSyntaxPalette palette, {
+    List<CodeTextHighlight> highlights = const [],
+  }) {
     final intervals = tokens(line);
-    if (intervals.isEmpty) return TextSpan(text: line.content, style: style);
+    final cuts = <int>{
+      0,
+      line.content.length,
+      for (final token in intervals) ...[token.start, token.end],
+      for (final highlight in highlights) ...[highlight.start, highlight.end],
+    }.toList()..sort();
+    var tokenIndex = 0;
     final children = <InlineSpan>[];
-    var cursor = 0;
-    for (final token in intervals) {
-      if (cursor < token.start) {
-        children.add(
-          TextSpan(text: line.content.substring(cursor, token.start)),
-        );
+    for (var i = 0; i < cuts.length - 1; i++) {
+      final start = cuts[i], end = cuts[i + 1];
+      if (start == end) continue;
+      while (tokenIndex < intervals.length &&
+          intervals[tokenIndex].end <= start) {
+        tokenIndex++;
+      }
+      TextStyle? paint =
+          tokenIndex < intervals.length && intervals[tokenIndex].start <= start
+          ? palette.style(intervals[tokenIndex].kind)
+          : null;
+      for (final highlight in highlights) {
+        if (highlight.start <= start && highlight.end >= end) {
+          paint = (paint ?? const TextStyle()).merge(highlight.style);
+        }
       }
       children.add(
-        TextSpan(
-          text: line.content.substring(token.start, token.end),
-          style: palette.style(token.kind),
-        ),
+        TextSpan(text: line.content.substring(start, end), style: paint),
       );
-      cursor = token.end;
-    }
-    if (cursor < line.content.length) {
-      children.add(TextSpan(text: line.content.substring(cursor)));
     }
     return TextSpan(style: style, children: children);
   }
 
   /// Caps visible token storage independently from lightweight multiline states.
-  void trimCache(Set<WorkspaceSyntaxLine> retained, int capacity) {
+  void trimCache(Set<CodeSyntaxLine> retained, int capacity) {
     final limit = math.max(capacity, retained.length);
     final victims = _tokens.keys
         .where((line) => !retained.contains(line))
@@ -157,4 +162,13 @@ class WorkspaceSyntaxHighlighter {
 
   /// Releases all colored intervals when the owning document is disposed.
   void dispose() => _tokens.clear();
+}
+
+/// A UTF-16 interval layered over the editor's syntax colors.
+class CodeTextHighlight {
+  const CodeTextHighlight(this.start, this.end, this.style)
+    : assert(start >= 0 && end >= start);
+  final int start;
+  final int end;
+  final TextStyle style;
 }

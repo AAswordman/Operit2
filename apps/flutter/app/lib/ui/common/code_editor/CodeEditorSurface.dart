@@ -6,15 +6,15 @@ import 'dart:ui' as ui;
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
-import 'WorkspaceTextLayout.dart';
-import 'WorkspaceZoomScrollController.dart';
-import 'syntax/WorkspaceSyntaxLanguage.dart';
-import 'syntax/WorkspaceSyntaxPalette.dart';
+import 'package:operit2/ui/common/code_editor/CodeTextLayout.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorScrollController.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
+import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
 
 /// Uses Flutter's editable geometry contract with viewport-only paragraphs.
-class WorkspaceVirtualTextSurface extends LeafRenderObjectWidget {
+class CodeEditorSurface extends LeafRenderObjectWidget {
   /// Connects the virtual renderer to the full-document editing delegate.
-  const WorkspaceVirtualTextSurface({
+  const CodeEditorSurface({
     super.key,
     required this.value,
     required this.style,
@@ -26,6 +26,7 @@ class WorkspaceVirtualTextSurface extends LeafRenderObjectWidget {
     required this.requestKeyboard,
     required this.scrollController,
     required this.hasFocus,
+    this.readOnly = false,
     required this.showCursor,
     required this.cursorColor,
     required this.selectionColor,
@@ -36,14 +37,15 @@ class WorkspaceVirtualTextSurface extends LeafRenderObjectWidget {
 
   final TextEditingValue value;
   final TextStyle style;
-  final WorkspaceSyntaxLanguage language;
-  final WorkspaceSyntaxPalette palette;
+  final CodeSyntaxLanguage language;
+  final CodeSyntaxPalette palette;
   final ViewportOffset offset;
   final TextSelectionDelegate delegate;
   final VoidCallback onGeometryChanged;
   final VoidCallback requestKeyboard;
-  final WorkspaceZoomScrollController scrollController;
+  final CodeEditorScrollController scrollController;
   final bool hasFocus;
+  final bool readOnly;
   final bool showCursor;
   final Color cursorColor;
   final Color selectionColor;
@@ -53,8 +55,8 @@ class WorkspaceVirtualTextSurface extends LeafRenderObjectWidget {
 
   /// Creates a renderer whose paragraph count follows the viewport, not the file.
   @override
-  RenderWorkspaceVirtualText createRenderObject(BuildContext context) =>
-      RenderWorkspaceVirtualText(
+  RenderCodeEditorText createRenderObject(BuildContext context) =>
+      RenderCodeEditorText(
         value: value,
         style: style,
         language: language,
@@ -64,6 +66,7 @@ class WorkspaceVirtualTextSurface extends LeafRenderObjectWidget {
         onGeometryChanged: onGeometryChanged,
         requestKeyboard: requestKeyboard,
         scrollController: scrollController,
+        readOnly: readOnly,
         hasFocus: hasFocus,
         cursorVisible: showCursor,
         cursorColor: cursorColor,
@@ -80,13 +83,14 @@ class WorkspaceVirtualTextSurface extends LeafRenderObjectWidget {
   @override
   void updateRenderObject(
     BuildContext context,
-    RenderWorkspaceVirtualText renderObject,
+    RenderCodeEditorText renderObject,
   ) => renderObject.update(
     value: value,
     style: style,
     language: language,
     palette: palette,
     offset: offset,
+    readOnly: readOnly,
     hasFocus: hasFocus,
     cursorVisible: showCursor,
     cursorColor: cursorColor,
@@ -98,18 +102,19 @@ class WorkspaceVirtualTextSurface extends LeafRenderObjectWidget {
 }
 
 /// Paints only intersecting logical-line paragraphs and keeps global offsets.
-class RenderWorkspaceVirtualText extends RenderEditable {
+class RenderCodeEditorText extends RenderEditable {
   /// Keeps the native editing contract while replacing whole-document layout.
-  RenderWorkspaceVirtualText({
+  RenderCodeEditorText({
     required TextEditingValue value,
     required TextStyle style,
-    required WorkspaceSyntaxLanguage language,
-    required WorkspaceSyntaxPalette palette,
+    required CodeSyntaxLanguage language,
+    required CodeSyntaxPalette palette,
     required super.offset,
     required TextSelectionDelegate delegate,
     required this.onGeometryChanged,
     required this.requestKeyboard,
     required this.scrollController,
+    super.readOnly,
     required super.hasFocus,
     required bool cursorVisible,
     required super.cursorColor,
@@ -123,7 +128,7 @@ class RenderWorkspaceVirtualText extends RenderEditable {
   }) : _value = value,
        _style = style,
        _cursorVisible = cursorVisible,
-       textLayout = WorkspaceTextLayout(
+       textLayout = CodeTextLayout(
          value.text,
          language: language,
          palette: palette,
@@ -139,10 +144,10 @@ class RenderWorkspaceVirtualText extends RenderEditable {
   TextEditingValue _value;
   TextStyle _style;
   bool _cursorVisible;
-  final WorkspaceTextLayout textLayout;
+  final CodeTextLayout textLayout;
   final VoidCallback onGeometryChanged;
   final VoidCallback requestKeyboard;
-  final WorkspaceZoomScrollController scrollController;
+  final CodeEditorScrollController scrollController;
   final LayerLink toolbarLayerLink;
   final List<int> _visible = [];
   TextPosition? _nextAnchor;
@@ -210,9 +215,10 @@ class RenderWorkspaceVirtualText extends RenderEditable {
   void update({
     required TextEditingValue value,
     required TextStyle style,
-    required WorkspaceSyntaxLanguage language,
-    required WorkspaceSyntaxPalette palette,
+    required CodeSyntaxLanguage language,
+    required CodeSyntaxPalette palette,
     required ViewportOffset offset,
+    required bool readOnly,
     required bool hasFocus,
     required bool cursorVisible,
     required Color cursorColor,
@@ -221,6 +227,7 @@ class RenderWorkspaceVirtualText extends RenderEditable {
     required TextDirection textDirection,
     required Locale? locale,
   }) {
+    this.readOnly = readOnly;
     if (this.offset != offset) {
       if (attached) this.offset.removeListener(markNeedsLayout);
       this.offset = offset;
@@ -297,7 +304,7 @@ class RenderWorkspaceVirtualText extends RenderEditable {
   /// Measures one backward and one forward overscan page around a stable source origin.
   void _layoutVisible() {
     _visible.clear();
-    final retained = <WorkspaceTextLine>{};
+    final retained = <CodeTextLine>{};
     final working = <int>[];
     final first = textLayout.lineAtY(offset.pixels);
     final oldTop = textLayout.topOf(first);

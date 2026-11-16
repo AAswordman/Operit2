@@ -55,6 +55,7 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
   const [collapsedChanges, setCollapsedChanges] = ctx.useState<string[]>('collapsed-changes', []);
   const [splitRatio, setSplitRatio] = ctx.useState('split-ratio', 0.5);
   const splitDrag = ctx.useRef('split-drag-ratio', splitRatio);
+  const diffSize = ctx.useRef('diff-size', { width: 578, height: 0 });
   const [size, setSize] = ctx.useState('size', { width: 800, height: 600 });
   const [catalog, setCatalog] = ctx.useState<GitFile[]>('catalog', []);
   const [loading, setLoading] = ctx.useState('loading', false);
@@ -195,7 +196,7 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
   function sidebarHeader(): ComposeNode {
     const sourceAnchor = UI.Box({ modifier: M.height(24).background(c.surface.copy({ alpha: 0.8 }), { cornerRadius: 5 }).border(1, c.outlineVariant.copy({ alpha: 0.3 }), { cornerRadius: 5 }).padding(8, 1), contentAlignment: 'center' },
       UI.Row({ verticalAlignment: 'center' }, [text({ text: sourceNames[sources.indexOf(source)], style: 'labelSmall', fontSize: 11.5, letterSpacing: 0.5, fontWeight: '600' }), UI.Spacer({ width: 2 }), UI.Icon({ name: 'arrow_drop_down', size: 15, tint: c.onSurfaceVariant })]));
-    return UI.Box({ height: 32, modifier: M.padding(8, 0), contentAlignment: 'start' }, UI.ScrollArea({ axis: 'horizontal', height: 32 }, UI.Row({ modifier: M.widthIn(sidebarWidth - 16), verticalAlignment: 'center', horizontalArrangement: 'spaceBetween' }, [UI.Row({ verticalAlignment: 'center' }, [
+    return UI.Box({ height: 32, modifier: M.padding(8, 0), contentAlignment: 'start' }, UI.ScrollArea({ axis: 'horizontal', height: 32 }, UI.Row({ modifier: M.widthIn(Math.max(0, sidebarWidth - 16)), verticalAlignment: 'center', horizontalArrangement: 'spaceBetween' }, [UI.Row({ verticalAlignment: 'center' }, [
       UI.Tooltip({ message: pane === 'tree' ? '切换至变更文件列表' : '切换至项目工作树' }, UI.InkWell({ shape: { cornerRadius: 5 }, onClick: () => setPane(pane === 'tree' ? 'changes' : 'tree') },
         UI.Box({ modifier: M.width(25).height(25).background(pane === 'tree' ? c.primary.copy({ alpha: 0.18 }) : c.surface.copy({ alpha: 0.8 }), { cornerRadius: 5 }).border(1, pane === 'tree' ? c.primary.copy({ alpha: 0.5 }) : c.outlineVariant.copy({ alpha: 0.3 }), { cornerRadius: 5 }).padding(5.5) }, UI.Svg({ source: svgTreeHierarchy, tint: pane === 'tree' ? c.primary : c.onSurfaceVariant })))), UI.Spacer({ width: 6 }),
       menu(sourceAnchor, sourceNames, sources.indexOf(source), index => setSource(sources[index]), '切换变更对比源')]), UI.Spacer({ width: 6 }), UI.Row({ verticalAlignment: 'center' }, [stat(totals.additions, true), UI.Spacer({ width: 5 }), stat(totals.deletions, false)])
@@ -340,27 +341,23 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
     const accent = row.kind === 'add' ? dark ? '#FF3FB950' : '#FF1A7F37' : dark ? '#FFF85149' : '#FFCF222E';
     return UI.CodeText({ text: row.text, filePath: current?.path ?? '',
       emphasis: row.segments.map(segment => ({ ...segment, color: { value: accent, alpha: dark ? 0.4 : 0.32 }, fontWeight: '700' })),
-      fontSize: 12, fontFamily: 'Consolas', lineHeight: 1, softWrap: wrap, maxLines: wrap ? undefined : 1,
+      fontSize: 12, fontFamily: 'monospace', lineHeight: 1, softWrap: wrap, maxLines: wrap ? undefined : 1,
       color: row.kind === 'context' ? c.onSurface.copy({ alpha: 0.82 }) : c.onSurface });
   }
 
-  /** Mirrors native wrapped and fixed rows, including split-side coordinates and missing cells. */
-  function diffLine(row: DiffLine | null, width: number, added?: boolean): ComposeNode {
-    if (row === null) return UI.Box({ width, height: wrap ? undefined : 22, modifier: M.heightIn(22).background({ ...c.surfaceContainerHighest.copy({ alpha: dark ? 0.2 : 0.12 }), over: c.surface }) });
+  /** Row widths come from the editor's live constraints at every zoom level. */
+  function diffLine(row: DiffLine | null, added?: boolean, weight?: number): ComposeNode {
+    if (row === null) return UI.Box({ weight, fillMaxWidth: weight === undefined, modifier: M.heightIn(22).background({ ...c.surfaceContainerHighest.copy({ alpha: dark ? 0.2 : 0.12 }), over: c.surface }) });
     const kind = row.kind, changed = kind !== 'context';
     const accent: ComposeColor = kind === 'add' ? dark ? '#FF3FB950' : '#FF1A7F37' : kind === 'remove' ? dark ? '#FFF85149' : '#FFCF222E' : 'transparent';
     const background: ComposeColor = { value: accent as string, alpha: dark ? 0.20 : 0.12, over: c.surface };
     const number = added === false ? row.oldLineNumber : added === true ? row.newLineNumber : kind === 'remove' ? row.oldLineNumber : row.newLineNumber;
-    const gutter = UI.Box({ contentAlignment: 'end', modifier: (wrap ? M.width(42) : M.width(42).height(22)).background(changed ? { value: accent as string, alpha: dark ? 0.10 : 0.07, over: c.surface } : { ...c.onSurface.copy({ alpha: dark ? 0.055 : 0.045 }), over: c.surface }).padding(0, 0, 8, 0) },
-      text({ textAlign: 'right', text: String(number ?? ''), fontSize: 11, lineHeight: 1, fontFamily: 'Consolas', fontFamilyFallback: ['Cascadia Mono', 'monospace'], color: changed ? { value: accent, alpha: dark ? 0.85 : 0.90 } : c.outline.copy({ alpha: 0.65 }) }));
-    const content = UI.Row({ verticalAlignment: wrap ? 'topStart' : 'center', fillMaxWidth: true }, [
-      ...(!wrap ? [UI.Box({ width: 3, height: 22, modifier: M.background(accent) })] : []), gutter,
-      UI.Spacer({ width: added === undefined ? 8 : 6 }), UI.Box({ weight: 1, modifier: wrap ? M.padding(0, 3) : undefined }, lineText(row)),
-    ]);
-    if (wrap) return UI.Box({ modifier: M.width(width).heightIn(22).background(changed ? background : 'transparent').borderSides({ start: { width: 3, color: accent } }).padding(3, 0, 0, 0) }, content);
-    return UI.Box({ width, height: 22 }, [
-      ...(changed ? [UI.Canvas({ width, height: 22, commands: [{ type: 'Rect', x: 0, y: 0, width, height: 23, color: background }] })] : []), content,
-    ]);
+    return UI.Box({ weight, fillMaxWidth: weight === undefined, modifier: M.heightIn(22).background(changed ? background : 'transparent').borderSides({ start: { width: 3, color: accent } }).padding(3, 3, 0, 3) },
+      UI.Row({ verticalAlignment: 'topStart', fillMaxWidth: true }, [
+        UI.Box({ contentAlignment: 'end', modifier: M.width(42).padding(0, 0, 8, 0) },
+          UI.CodeText({ text: String(number ?? ''), filePath: '', fontSize: 11, lineHeight: 1, fontFamily: 'monospace', softWrap: false, maxLines: 1, color: changed ? { value: accent, alpha: dark ? 0.85 : 0.90 } : c.outline.copy({ alpha: 0.65 }) })),
+        UI.Spacer({ width: added === undefined ? 8 : 6 }), UI.Box({ weight: 1 }, lineText(row)),
+      ]));
   }
 
   /** Expands only a region already covered by the caller-supplied full-file text. */
@@ -371,19 +368,20 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
     const document = ctx.useMemo('document', () => parseDiff(file.diffContent, source === 'lastTurn'), [file.diffContent, source]);
     const items = ctx.useMemo('items', () => diffItems(document, split, fileLines, full ? null : new Set(gaps)), [document, split, fileLines, full, gaps]);
     if (items.length === 0) return empty('没有可显示的行级变更');
-    const textWidth = document.maxLineLength * 7.8 + 48;
-    const width = wrap ? mainWidth : Math.max(mainWidth, split ? 2 * (51 + textWidth) : 53 + textWidth);
-    const usableWidth = width - 1, minimumRatio = Math.min(96 / usableWidth, 0.5);
-    const ratio = Math.min(1 - minimumRatio, Math.max(minimumRatio, splitRatio));
-    const leftWidth = usableWidth * ratio, rightWidth = usableWidth - leftWidth;
+    const ratio = Math.min(0.85, Math.max(0.15, splitRatio));
+    const columnText = ctx.useMemo('column-text', () => split ? [
+      items.flatMap(entry => entry.type === 'pair' && entry.left ? [entry.left.text] : []).join('\n'),
+      items.flatMap(entry => entry.type === 'pair' && entry.right ? [entry.right.text] : []).join('\n'),
+    ] : [items.flatMap(entry => entry.type === 'line' ? [entry.row.text] : []).join('\n')], [items, split]);
+    const columns = columnText.map((text, index) => ({ text, fraction: split ? index === 0 ? ratio : 1 - ratio : 1, horizontalPadding: split ? 51 : 53 }));
     /** Generates only the current host viewport from the plugin's immutable diff model. */
     function item(index: number): ComposeNode {
       const entry = items[index];
-      if (entry.type === 'line') return diffLine(entry.row, width);
-      if (entry.type === 'pair') return UI.Row({ width, verticalAlignment: wrap ? 'topStart' : 'center' }, [diffLine(entry.left, leftWidth, false), UI.Box({ width: 1, height: wrap ? 0 : 22, modifier: M.background(c.outlineVariant.copy({ alpha: 0.32 })) }), diffLine(entry.right, rightWidth, true)]);
-      if (entry.type === 'hunk') return UI.Box({ modifier: M.width(width).height(22).background({ ...c.onSurface.copy({ alpha: dark ? 0.055 : 0.045 }), over: c.surface }).padding(53, 0, 0, 0), contentAlignment: 'start' },
+      if (entry.type === 'line') return diffLine(entry.row);
+      if (entry.type === 'pair') return UI.Row({ fillMaxWidth: true, verticalAlignment: 'topStart' }, [diffLine(entry.left, false, ratio), UI.Box({ width: 1, height: 22, modifier: M.background(c.outlineVariant.copy({ alpha: 0.32 })) }), diffLine(entry.right, true, 1 - ratio)]);
+      if (entry.type === 'hunk') return UI.Box({ modifier: M.fillMaxWidth().height(22).background({ ...c.onSurface.copy({ alpha: dark ? 0.055 : 0.045 }), over: c.surface }).padding(53, 0, 0, 0), contentAlignment: 'start' },
         text({ text: entry.header, fontSize: 11, lineHeight: 1, color: c.outline.copy({ alpha: 0.9 }), fontFamily: 'Consolas', fontFamilyFallback: ['Cascadia Mono', 'monospace'], maxLines: 1 }));
-      return UI.InkWell({ onClick: entry.expandable ? () => expandGap(entry.newStartLine) : undefined }, UI.Row({ width, modifier: M.padding(0, 6), verticalAlignment: 'center' }, [
+      return UI.InkWell({ onClick: entry.expandable ? () => expandGap(entry.newStartLine) : undefined }, UI.Row({ fillMaxWidth: true, modifier: M.padding(0, 6), verticalAlignment: 'center' }, [
         UI.Box({ weight: 1 }, line(c.outlineVariant.copy({ alpha: 0.4 }))), UI.Spacer({ width: 10 }),
         UI.Box({ modifier: M.background(c.surfaceContainerHighest.copy({ alpha: 0.7 }), { cornerRadius: 20 }).border(1, c.outlineVariant.copy({ alpha: 0.4 }), { cornerRadius: 20 }).padding(11, 4) },
           UI.Row({ verticalAlignment: 'center' }, [UI.Icon({ name: entry.expandable ? 'unfold_more' : 'unfold_less', size: 12, tint: entry.expandable ? c.primary : c.outline }), UI.Spacer({ width: 5 }), text({ text: `${entry.count} 行未更改`, fontSize: 10.5, color: entry.expandable ? c.primary : c.outline })])),
@@ -391,14 +389,16 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
       ]));
     }
     const lazy = ctx.lazyItems({ key: `diff:${source}:${file.path}:${split}:${wrap}`, itemCount: items.length, itemExtent: 22, initialItemCount: 48, variableExtent: true }, item);
-    const list = UI.LazyColumn({ width, height: Math.max(1, size.height - 64), contentPadding: { top: 4, bottom: 24 }, ...lazy });
-    const content = split ? UI.Box({ width, height: Math.max(1, size.height - 64), contentAlignment: 'topStart' }, [list,
-      UI.Box({ key: 'diff-splitter', width: 12, fillMaxHeight: true, modifier: M.offset(leftWidth - 5.5, 0).cursor('resizeColumn').dragGestures({
-        onDragStart: () => { splitDrag.current = ratio; },
-        onDrag: event => { splitDrag.current = Math.min(1 - minimumRatio, Math.max(minimumRatio, splitDrag.current + event.deltaX / usableWidth)); setSplitRatio(splitDrag.current); },
-      }) }),
+    const list = UI.LazyColumn({ fillMaxSize: true, contentPadding: { top: 4, bottom: 24 }, ...lazy });
+    const content = split ? UI.Box({ key: 'diff-body', fillMaxSize: true, contentAlignment: 'topStart', modifier: M.onSizeChanged(event => { diffSize.current = event; }) }, [list,
+      UI.Box({ fillMaxHeight: true, contentAlignment: 'topEnd', modifier: M.fillMaxWidth(ratio) },
+        UI.Box({ key: 'diff-splitter', width: 12, fillMaxHeight: true, modifier: M.cursor('resizeColumn').dragGestures({
+          onDragStart: () => { splitDrag.current = ratio; },
+          onDrag: event => { splitDrag.current = Math.min(0.85, Math.max(0.15, splitDrag.current + event.deltaX / Math.max(1, diffSize.current.width - 1))); setSplitRatio(splitDrag.current); },
+        }) })),
     ]) : list;
-    return width > mainWidth ? UI.ScrollArea({ axis: 'horizontal', thumbVisibility: true, trackVisibility: true }, content) : content;
+    return UI.CodeEditor({ key: `diff-viewport:${source}:${file.path}`, fillMaxSize: true, wrapToViewport: wrap,
+      fontSize: 12, fontFamily: 'monospace', lineHeight: 1, contentColumns: columns }, content);
   }
 
   /** Keeps the native file preview header, selectable body and local loading/error states. */
@@ -411,7 +411,7 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
         UI.Spacer({ height: 2 }), text({ text: relative, style: 'bodySmall', color: c.outline, maxLines: 1, overflow: 'ellipsis' }),
       ]), line(), UI.Box({ weight: 1, fillMaxWidth: true }, previewLoading ? UI.Box({ fillMaxSize: true, contentAlignment: 'center' }, UI.CircularProgressIndicator({ width: 18, height: 18, strokeWidth: 2 }))
         : previewError !== '' ? UI.Box({ modifier: M.padding(12) }, text({ text: previewError }))
-        : UI.ScrollArea({}, UI.Box({ modifier: M.padding(12) }, UI.SelectionContainer({}, UI.CodeText({ text: preview.content, filePath: preview.path, style: 'bodySmall', fontFamily: 'monospace' }))))),
+        : UI.CodeEditor({ fillMaxSize: true, text: preview.content, filePath: preview.path, fontSize: 12, fontFamily: 'monospace' })),
     ]);
   }
 
