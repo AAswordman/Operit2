@@ -457,6 +457,7 @@ class OwnerSystemCapabilityChannel(
         requirePrivilegedCommandAuthorization(target)
         val result =
             AndroidPrivilegedCommandExecutor.execute(
+                context = activity,
                 target = target,
                 command = params.getString("command"),
                 timeoutMillis = params.getLong("timeoutMillis"),
@@ -2144,6 +2145,7 @@ class OwnerSystemCapabilityChannel(
     private fun captureScreenshotWithRoot(file: File) {
         val result =
             AndroidPrivilegedCommandExecutor.execute(
+                context = activity,
                 target = AndroidPrivilegedCommandTarget.RootAuto,
                 command = "/system/bin/screencap -p ${shellQuote(file.absolutePath)}",
                 rootSettings = AndroidPrivilegeAuthorization.rootExecutionSettings(activity),
@@ -2159,6 +2161,7 @@ class OwnerSystemCapabilityChannel(
     private fun captureScreenshotWithShizuku(file: File) {
         val result =
             AndroidPrivilegedCommandExecutor.execute(
+                context = activity,
                 target = AndroidPrivilegedCommandTarget.Shizuku,
                 command = "/system/bin/screencap -p",
             )
