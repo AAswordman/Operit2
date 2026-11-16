@@ -517,7 +517,10 @@ class _DrawerContentState extends State<DrawerContent> {
     if (workspaceId == null || _groupMutationPending) return;
     final confirmed = await showDialog<bool>(
       context: context,
-      builder: (context) => DeleteWorkspaceDialog(name: section.label),
+      builder: (context) => DeleteWorkspaceDialog(
+        name: section.label,
+        recordMissing: !section.canCreate,
+      ),
     );
     if (!mounted || confirmed != true) return;
     await _runGroupMutation(() async {
@@ -1227,7 +1230,7 @@ class _DrawerContentState extends State<DrawerContent> {
                   expanded: !_collapsedWorkspaces.contains(section.key),
                   appearance: widget.appearance,
                   canCreate: section.canCreate,
-                  onDelete: section.workspaceId != null && section.canCreate
+                  onDelete: section.workspaceId != null
                       ? () => unawaited(_deleteWorkspace(section))
                       : null,
                   onToggleExpanded: () => _toggleWorkspace(section.key),

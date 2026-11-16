@@ -198,8 +198,7 @@ extension _DesktopWorkspaceContent on _DrawerContentState {
                               SidebarDirectory.workspace(section.workspaceId),
                             ),
                           ),
-                          onDelete:
-                              section.workspaceId != null && section.canCreate
+                          onDelete: section.workspaceId != null
                               ? () => unawaited(_deleteWorkspace(section))
                               : null,
                         ),

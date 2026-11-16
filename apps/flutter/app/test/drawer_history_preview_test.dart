@@ -1281,51 +1281,94 @@ void main() {
     },
   );
 
-  testWidgets(
-    'workspace deletion confirms before deleting the whole workspace',
-    (tester) async {
-      final bridge = _DrawerBridge();
-      await _pumpDrawer(tester, bridge, [_history('A', 0), _history('A', 1)]);
-      final header = find.byKey(const ValueKey('workspace-header:workspace:A'));
-      final l10n = AppLocalizations.of(
-        tester.element(find.byType(DrawerContent)),
-      )!;
-      Future<void> openDelete() async {
-        await tester.tap(
-          find.descendant(of: header, matching: find.byTooltip('项目操作')),
-        );
-        await _pumpSidebar(tester);
-        await tester.tap(find.text('删除工作区'));
-        await _pumpSidebar(tester);
-      }
+  for (final desktop in [false, true]) {
+    for (final missing in [false, true]) {
+      testWidgets(
+        'workspace deletion confirms and clears pins / desktop:$desktop / missing:$missing',
+        (tester) async {
+          final bridge = _DrawerBridge();
+          const directory = SidebarDirectory.workspace('A');
+          bridge.directoryPreferences[directory.preferenceKey] = true;
+          final histories = [
+            for (var index = 0; index < 2; index++)
+              core.ChatHistoryListItem.fromJson({
+                ..._history('A', index).toJson(),
+                if (missing) 'workspaceName': null,
+              }),
+          ];
+          await _pumpDrawer(
+            tester,
+            bridge,
+            histories,
+            conversationsOnly: desktop,
+          );
+          final header = find.byKey(
+            const ValueKey('workspace-header:workspace:A'),
+          );
+          final l10n = AppLocalizations.of(
+            tester.element(find.byType(DrawerContent)),
+          )!;
+          Future<void> openDelete() async {
+            await tester.tap(
+              find.descendant(of: header, matching: find.byTooltip('项目操作')),
+            );
+            await _pumpSidebar(tester);
+            await tester.tap(find.text('删除工作区'));
+            await _pumpSidebar(tester);
+          }
 
-      await openDelete();
-      expect(find.textContaining('共享默认区域及其中的文件将被删除'), findsOneWidget);
-      expect(
-        bridge.calls.where((call) => call.methodName == 'deleteWorkspace'),
-        isEmpty,
+          await openDelete();
+          expect(
+            find.textContaining(missing ? '会话和文件会保留' : '共享默认区域及其中的文件将被删除'),
+            findsOneWidget,
+          );
+          expect(
+            bridge.calls.where((call) => call.methodName == 'deleteWorkspace'),
+            isEmpty,
+          );
+          await tester.tap(find.widgetWithText(TextButton, l10n.cancel));
+          await _pumpSidebar(tester);
+          expect(
+            bridge.calls.where((call) => call.methodName == 'deleteWorkspace'),
+            isEmpty,
+          );
+          expect(bridge.directoryPreferences[directory.preferenceKey], isTrue);
+          await openDelete();
+          await tester.tap(find.widgetWithText(TextButton, l10n.delete));
+          await _pumpSidebar(tester);
+          final calls = bridge.calls.where(
+            (call) => call.methodName == 'deleteWorkspace',
+          );
+          expect(calls, hasLength(1));
+          expect((calls.single.args as Map)['workspaceId'], 'A');
+          expect(
+            bridge.calls.where(
+              (call) => call.methodName == 'deleteChatHistory',
+            ),
+            isEmpty,
+          );
+          expect(
+            bridge.directoryPreferences.containsKey(directory.preferenceKey),
+            isFalse,
+          );
+          if (missing) {
+            await _pumpDrawer(tester, bridge, [
+              for (final history in histories)
+                core.ChatHistoryListItem.fromJson({
+                  ...history.toJson(),
+                  'workspaceId': null,
+                }),
+            ], conversationsOnly: desktop);
+            expect(header, findsNothing);
+            expect(find.text('项目记录缺失'), findsNothing);
+            expect(find.text('未关联项目'), findsOneWidget);
+            expect(_workspaceIds(tester), ['A-0', 'A-1']);
+          }
+          expect(tester.takeException(), isNull);
+        },
       );
-      await tester.tap(find.widgetWithText(TextButton, l10n.cancel));
-      await _pumpSidebar(tester);
-      expect(
-        bridge.calls.where((call) => call.methodName == 'deleteWorkspace'),
-        isEmpty,
-      );
-      await openDelete();
-      await tester.tap(find.widgetWithText(TextButton, l10n.delete));
-      await _pumpSidebar(tester);
-      final calls = bridge.calls.where(
-        (call) => call.methodName == 'deleteWorkspace',
-      );
-      expect(calls, hasLength(1));
-      expect((calls.single.args as Map)['workspaceId'], 'A');
-      expect(
-        bridge.calls.where((call) => call.methodName == 'deleteChatHistory'),
-        isEmpty,
-      );
-      expect(tester.takeException(), isNull);
-    },
-  );
+    }
+  }
 
   testWidgets(
     'workspace cleanup errors keep the workspace available for retry',

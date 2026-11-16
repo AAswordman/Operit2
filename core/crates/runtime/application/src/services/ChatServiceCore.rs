@@ -1797,21 +1797,25 @@ impl ChatServiceCore {
         let manager = &self.chatHistoryDelegate.chatHistoryManager;
         let workspace = manager
             .getWorkspace(&workspaceId)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("workspace does not exist: {workspaceId}"))?;
-        let others = manager
-            .listWorkspaces()
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .filter(|other| other.id != workspaceId)
-            .collect::<Vec<_>>();
+            .map_err(|error| error.to_string())?;
         let chats = manager
             .loadChatHistories()
             .map_err(|error| error.to_string())?
             .into_iter()
             .filter(|chat| chat.workspaceId.as_deref() == Some(workspaceId.as_str()))
             .collect::<Vec<_>>();
-        WorkspaceUtils::deleteWorkspaceFiles(&workspace, &others)?;
+        if let Some(workspace) = workspace {
+            let others = manager
+                .listWorkspaces()
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .filter(|other| other.id != workspaceId)
+                .collect::<Vec<_>>();
+            WorkspaceUtils::deleteWorkspaceFiles(&workspace, &others)?;
+        } else if chats.is_empty() {
+            return Err(format!("workspace does not exist: {workspaceId}"));
+        }
+        // Missing records still leave chat bindings to clear, but no known folder ownership.
         for chat in chats {
             manager
                 .updateChatWorkspaceId(chat.id.clone(), None)

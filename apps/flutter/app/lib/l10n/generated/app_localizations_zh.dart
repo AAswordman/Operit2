@@ -4674,7 +4674,8 @@ class AppLocalizationsZh extends AppLocalizations {
   String get peerQrWrongDevice => '此连接码属于其他设备，请扫描当前所选设备的连接码。';
 
   @override
-  String get peerPairTimeoutHint => '连接超时：未能与对方设备建立连接。常见原因是对方设备的防火墙拦截了入站连接。可改由对方设备发起连接，或在对方设备的防火墙中放行 Operit（公用网络尤其需要）。';
+  String get peerPairTimeoutHint =>
+      '连接超时：未能与对方设备建立连接。常见原因是对方设备的防火墙拦截了入站连接。可改由对方设备发起连接，或在对方设备的防火墙中放行 Operit（公用网络尤其需要）。';
 
   @override
   String get peerQrImageInvalid => '未能从图片中识别二维码。请选择清晰的二维码图片（不超过 16 MB）。';

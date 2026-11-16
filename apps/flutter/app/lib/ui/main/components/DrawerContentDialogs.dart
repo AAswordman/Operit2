@@ -98,9 +98,14 @@ class DeleteConversationDialog extends StatelessWidget {
 }
 
 class DeleteWorkspaceDialog extends StatelessWidget {
-  const DeleteWorkspaceDialog({super.key, required this.name});
+  const DeleteWorkspaceDialog({
+    super.key,
+    required this.name,
+    this.recordMissing = false,
+  });
 
   final String name;
+  final bool recordMissing;
 
   @override
   Widget build(BuildContext context) {
@@ -108,7 +113,9 @@ class DeleteWorkspaceDialog extends StatelessWidget {
     return AlertDialog(
       title: const Text('删除工作区'),
       content: Text(
-        '确定删除工作区“$name”？\n\n共享默认区域及其中的文件将被删除，所有会话与该工作区的绑定及目录挂载将解除。会话和挂载目录中的原始文件会保留。',
+        recordMissing
+            ? '该工作区的项目记录已缺失。确定解除所有会话与该工作区的绑定，并从侧边栏移除？\n\n会话和文件会保留。'
+            : '确定删除工作区“$name”？\n\n共享默认区域及其中的文件将被删除，所有会话与该工作区的绑定及目录挂载将解除。会话和挂载目录中的原始文件会保留。',
       ),
       actions: <Widget>[
         TextButton(
