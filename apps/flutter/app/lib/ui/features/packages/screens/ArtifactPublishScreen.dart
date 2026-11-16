@@ -591,7 +591,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                   const SizedBox(height: 12),
                   OperitFormStyles.dropdownButtonFormField<String>(
                     context,
-                    key: ValueKey<String?>(_selectedGitHubReleaseTag),
+                    key: ValueKey(('github-release', _selectedGitHubReleaseTag)),
                     initialValue: _selectedGitHubReleaseTag,
                     isExpanded: true,
                     style: OperitFormStyles.dropdownTextStyle(context),
@@ -626,7 +626,11 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                   const SizedBox(height: 12),
                   OperitFormStyles.dropdownButtonFormField<String>(
                     context,
-                    key: ValueKey<String?>(_selectedGitHubReleaseAssetName),
+                    key: ValueKey((
+                      'github-release-asset',
+                      _selectedGitHubReleaseTag,
+                      _selectedGitHubReleaseAssetName,
+                    )),
                     initialValue: _selectedGitHubReleaseAssetName,
                     isExpanded: true,
                     style: OperitFormStyles.dropdownTextStyle(context),

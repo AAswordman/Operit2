@@ -544,13 +544,13 @@ class _PublishFixture {
     if (request.method == 'POST' &&
         uri.host == 'api.github.com' &&
         uri.path == '/repos/publisher/OperitForge/releases') {
-      expect((jsonDecode(request.body) as Map)['tag_name'], directTag);
+      expectSync((jsonDecode(request.body) as Map)['tag_name'], directTag);
       return _json(_release(direct: true), 201);
     }
     if (request.method == 'POST' &&
         uri.host == 'uploads.github.com' &&
         uri.path == '/repos/publisher/OperitForge/releases/401/assets') {
-      expect(uri.queryParameters['name'], directAssetName);
+      expectSync(uri.queryParameters['name'], directAssetName);
       return _json(_asset(direct: true), 201);
     }
     throw StateError('Unexpected fixture HTTP: ${request.method} $uri');
@@ -607,7 +607,7 @@ class _PublishBridge extends OperitRuntimeBridge {
       case 'getCurrentAccessToken':
         result = 'fixture-token';
       case 'executeTool':
-        expect((request.args as Map)['tool'], {
+        expectSync((request.args as Map)['tool'], {
           'name': 'read_file_binary',
           'parameters': [
             {'name': 'path', 'value': fixture.source.sourcePath},
