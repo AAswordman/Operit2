@@ -39,7 +39,6 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
   final ThemeAssetResolver? _resolver;
   final Uint8List? _sourceBytes;
   final FvpCreateCancellation _creationCancellation = FvpCreateCancellation();
-  final Completer<void> _cancelSignal = Completer<void>();
   final StackTrace _requestStack = StackTrace.current;
   VideoPlayerController? _controller;
   Future<VideoPlayerController>? _initialization;
@@ -47,17 +46,14 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
   ThemeAssetFailure? _asynchronousFailure;
   ThemeAssetStage _stage = ThemeAssetStage.read;
   int? _byteLength;
-  bool _cancelledByOwner = false;
   bool _disposed = false;
   bool _observingLifecycle = false;
   bool _foreground = true;
-  bool _autoplay = false;
   bool _resumePlayback = false;
   int _lifecyclePending = 0;
   Future<void> _lifecycleUpdate = Future<void>.value();
 
   VideoPlayerController? get controller => _controller;
-  bool get isCancelled => _cancelledByOwner;
 
   /// Initializes, verifies dimensions, then configures before any playback.
   Future<VideoPlayerController> initialize({
@@ -106,7 +102,8 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
       _checkCurrent();
       _checkReady();
       await _configure(muted: muted, loop: loop, autoplay: autoplay);
-      _checkCurrent();
+      validateReady();
+      controller.addListener(_handlePlayerValue);
       return controller;
     } catch (error, stack) {
       final failure = _asynchronousFailure ??
@@ -139,7 +136,6 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
     required bool autoplay,
   }) async {
     _stage = ThemeAssetStage.playback;
-    _autoplay = autoplay;
     _resumePlayback = autoplay;
     try {
       _checkCurrent();
@@ -148,7 +144,7 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
       _checkCurrent();
       await _bounded(controller.setVolume(muted ? 0 : 1));
       _checkCurrent();
-      await _bounded(_foreground && _autoplay ? controller.play() : controller.pause());
+      await _bounded(_foreground && autoplay ? controller.play() : controller.pause());
       _checkCurrent();
       _checkReady();
     } catch (error, stack) {
@@ -207,15 +203,8 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
         _checkReady();
       });
     } catch (error, stack) {
-      if (_disposed || _cancelledByOwner) return;
-      final failure = _failure(error, stack);
-      _asynchronousFailure ??= failure;
-      _cancelNativePreparation();
-      onPlaybackFailure?.call(failure);
-      if (onPlaybackFailure == null) {
-        diagnostics?.report(failure, owner: this);
-        await dispose();
-      }
+      if (_disposed || error is FvpCreateCancelledException) return;
+      _handlePlaybackFailure(_failure(error, stack));
     } finally {
       _lifecyclePending--;
     }
@@ -240,7 +229,7 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
       },
       (Object error, StackTrace stack) {
         if (error is FvpCreateCancelledException &&
-            (_cancelledByOwner || _disposed)) {
+            (_creationCancellation.isCancelled || _disposed)) {
           return;
         }
         final failure = _failure(error, stack);
@@ -248,26 +237,43 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
           _logCleanupFailure(failure);
           return;
         }
-        _asynchronousFailure ??= failure;
-        _cancelNativePreparation();
         if (!result.isCompleted) {
+          _asynchronousFailure ??= failure;
+          _creationCancellation.cancel();
           result.completeError(failure, stack);
         } else {
-          if (onPlaybackFailure != null) {
-            onPlaybackFailure!(failure);
-          } else {
-            diagnostics?.report(failure, owner: this);
-            unawaited(dispose());
-          }
+          _handlePlaybackFailure(failure);
         }
       },
     );
     return result.future;
   }
 
+  void _handlePlayerValue() {
+    final value = _controller!.value;
+    if (!value.hasError || _asynchronousFailure != null) return;
+    _handlePlaybackFailure(_failure(
+      StateError('Video player reported: ${value.errorDescription}'),
+      StackTrace.empty,
+      stage: ThemeAssetStage.playback,
+    ));
+  }
+
+  void _handlePlaybackFailure(ThemeAssetFailure failure) {
+    if (_disposed) return;
+    _asynchronousFailure ??= failure;
+    _creationCancellation.cancel();
+    if (onPlaybackFailure != null) {
+      onPlaybackFailure!(failure);
+    } else {
+      diagnostics?.report(failure, owner: this);
+      unawaited(dispose());
+    }
+  }
+
   Future<T> _bounded<T>(Future<T> operation) => Future.any<T>([
     operation,
-    _cancelSignal.future.then<T>((_) => throw FvpCreateCancelledException()),
+    _creationCancellation.whenCancelled.then<T>((_) => throw (_asynchronousFailure ?? FvpCreateCancelledException())),
   ]).timeout(
     timeout,
     onTimeout: () {
@@ -279,18 +285,12 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
   void _checkCurrent() {
     final failure = _asynchronousFailure;
     if (failure != null) throw failure;
-    if (_cancelledByOwner || _disposed) throw FvpCreateCancelledException();
-  }
-
-  void _cancelNativePreparation() {
-    _creationCancellation.cancel();
-    if (!_cancelSignal.isCompleted) _cancelSignal.complete();
+    if (_creationCancellation.isCancelled || _disposed) throw FvpCreateCancelledException();
   }
 
   /// Invalidates a request without calling it a damaged or unsupported file.
   void cancel() {
-    _cancelledByOwner = true;
-    _cancelNativePreparation();
+    _creationCancellation.cancel();
   }
 
   /// Cancels before waiting for native disposal. Cleanup failures are logged
@@ -312,6 +312,7 @@ class ThemeVideoAssetLoader with WidgetsBindingObserver {
   Future<ThemeAssetFailure?> _disposeController() async {
     final controller = _controller;
     if (controller == null) return null;
+    controller.removeListener(_handlePlayerValue);
     try {
       // timeout observes the still-running teardown future, including a late
       // error; it does not claim that native resources were already released.

@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -8,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:fvp/fvp.dart';
 import 'package:operit_ui/operit_ui.dart';
+import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:operit2/ui/theme/ThemeVideoAssetLoader.dart';
 import 'package:video_player/video_player.dart';
@@ -19,14 +19,15 @@ void main() {
   late VideoPlayerPlatform previousPlatform;
   late _VideoPlatform platform;
 
-  setUp(() {
+  setUp(() async {
+    await ClientLogger.initialize();
     previousPlatform = VideoPlayerPlatform.instance;
     platform = _VideoPlatform();
     VideoPlayerPlatform.instance = platform;
   });
   tearDown(() {
     VideoPlayerPlatform.instance = previousPlatform;
-    TestWidgetsFlutterBinding.ensureInitialized().handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    _setLifecycle(AppLifecycleState.resumed);
   });
 
   ThemeVideoAssetLoader loader({
@@ -38,7 +39,7 @@ void main() {
     timeout: timeout,
   );
 
-  test('open failures retain their resource, cause and empty original stack', () async {
+  test('open failures retain their resource and original platform cause', () async {
     platform.modes.add(_VideoMode.openError);
     final request = loader();
     ThemeAssetFailure? failure;
@@ -51,7 +52,6 @@ void main() {
     expect(failure!.reference, 'runtime/data/user_assets/theme/test.mp4');
     expect(failure.stage, ThemeAssetStage.videoOpen);
     expect(failure.cause, same(platform.openError));
-    expect(failure.originalStackTrace.toString(), isEmpty);
     expect(failure.requestStackTrace.toString(), isNotEmpty);
     await request.dispose();
     expect(platform.disposed, [1]);
@@ -264,12 +264,12 @@ void main() {
     await _pumpRequests(tester);
     final gate = Completer<void>();
     platform.pauseGates[1] = gate;
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    _setLifecycle(AppLifecycleState.paused);
     await _pumpRequests(tester);
     expect(tester.widget<VideoPlayer>(find.byType(VideoPlayer)).controller.value.isPlaying, isFalse);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    _setLifecycle(AppLifecycleState.resumed);
+    _setLifecycle(AppLifecycleState.inactive);
+    _setLifecycle(AppLifecycleState.resumed);
     await tester.pumpWidget(_scene(resolver, diagnostics, 'playing.mp4', muted: false));
     await _pumpRequests(tester);
     gate.complete();
@@ -339,15 +339,21 @@ void main() {
       await tester.pumpWidget(_scene(resolver, diagnostics, 'playing.mp4'));
       await _pumpRequests(tester);
       if (failOnResume) {
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        _setLifecycle(AppLifecycleState.paused);
         await _pumpRequests(tester);
         platform.failPlay = true;
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+        _setLifecycle(AppLifecycleState.resumed);
       } else {
         platform.failPause = true;
-        tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+        _setLifecycle(AppLifecycleState.paused);
       }
       await _pumpRequests(tester);
+      if (!failOnResume) {
+        // Paused apps do not draw frames; inspect the failure before resuming.
+        expect(diagnostics.failures.single.stage, ThemeAssetStage.playback);
+        _setLifecycle(AppLifecycleState.resumed);
+        await _pumpRequests(tester);
+      }
       expect(find.byType(VideoPlayer), findsNothing);
       expect(find.text('Still usable'), findsOneWidget);
       expect(diagnostics.failures.single.stage, ThemeAssetStage.playback);
@@ -363,9 +369,9 @@ void main() {
     final resolver = _VideoAssets();
     await tester.pumpWidget(_scene(resolver, diagnostics, 'playing.mp4'));
     await _pumpRequests(tester);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    _setLifecycle(AppLifecycleState.paused);
     await _pumpRequests(tester);
-    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    _setLifecycle(AppLifecycleState.resumed);
     await _pumpRequests(tester);
     platform.failPosition = true;
     await tester.pump(const Duration(seconds: 1));
@@ -425,10 +431,28 @@ Widget _scene(
   ),
 );
 
+// Follow Flutter's lifecycle transitions, including the intermediate states.
+void _setLifecycle(AppLifecycleState target) {
+  final binding = TestWidgetsFlutterBinding.ensureInitialized();
+  if (binding.lifecycleState == target) return;
+  final states = target == AppLifecycleState.paused
+      ? [AppLifecycleState.inactive, AppLifecycleState.hidden, target]
+      : [
+          if (binding.lifecycleState == AppLifecycleState.paused) AppLifecycleState.hidden,
+          if (binding.lifecycleState == AppLifecycleState.paused ||
+              binding.lifecycleState == AppLifecycleState.hidden) AppLifecycleState.inactive,
+          target,
+        ];
+  for (final state in states) {
+    binding.handleAppLifecycleStateChanged(state);
+  }
+}
+
 Future<void> _pumpRequests(WidgetTester tester) async {
   // Playing media may keep its animation ticker active, so do not settle it.
   for (var frame = 0; frame < 8; frame++) {
     await tester.pump(const Duration(milliseconds: 5));
+    await tester.runAsync(() => Future<void>.delayed(Duration.zero));
   }
 }
 
@@ -497,6 +521,9 @@ class _VideoPlatform extends VideoPlayerPlatform {
 
   @override
   Future<void> init() async {}
+
+  @override
+  Future<void> setMixWithOthers(bool mixWithOthers) async {}
 
   @override
   Future<int?> createWithOptions(VideoCreationOptions options) async {

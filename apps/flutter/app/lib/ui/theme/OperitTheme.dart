@@ -7,6 +7,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:operit_ui/operit_ui.dart';
+import 'package:fvp/fvp.dart' show FvpCreateCancelledException;
 import 'package:video_player/video_player.dart';
 
 import '../../core/errors/UnhandledErrorReporter.dart';
@@ -527,6 +528,7 @@ class _ThemeAssetNoticeHostState extends State<ThemeAssetNoticeHost> {
       final l10n = AppLocalizations.of(context) ?? lookupAppLocalizations(const Locale('en'));
       final failures = widget.diagnostics.failures;
       final current = failures.map(_noticeKey).toSet();
+      _shown.retainAll(current);
       for (final key in _notices.keys.toList()) {
         if (!current.contains(key)) {
           AppToastController.instance.dismiss(_notices.remove(key)!);
@@ -1481,12 +1483,8 @@ class _VideoThemeBackgroundState extends State<_VideoThemeBackground> {
   ThemeAssetDiagnostics? _boundDiagnostics;
   ThemeAssetFailure? _lastFailure;
   String? _boundReference;
-  String? _loadedReference;
-  StackTrace? _loadedRequestStack;
-  VoidCallback? _playerListener;
   Future<void> _settingsUpdate = Future<void>.value();
   int _retryEpoch = -1;
-  int _loadToken = 0;
 
   /// Starts loading the runtime video asset when the widget mounts.
   @override
@@ -1540,7 +1538,6 @@ class _VideoThemeBackgroundState extends State<_VideoThemeBackground> {
     _retryEpoch = epoch;
     widget.diagnostics?.release(this);
     _lastFailure = null;
-    final token = ++_loadToken;
     final previousRequest = _pendingLoader;
     previousRequest?.cancel();
     if (previousRequest != null) unawaited(previousRequest.dispose());
@@ -1549,24 +1546,23 @@ class _VideoThemeBackgroundState extends State<_VideoThemeBackground> {
       resolver: widget.resolver,
       reference: widget.mediaPath,
       diagnostics: widget.diagnostics,
-      onPlaybackFailure: (failure) => _handleAsynchronousFailure(loader, failure),
+      onPlaybackFailure: (failure) => _handlePlaybackFailure(loader, failure),
     );
     _pendingLoader = loader;
-    unawaited(_loadController(loader, token));
+    unawaited(_loadController(loader));
   }
 
-  bool _current(ThemeVideoAssetLoader loader, int token) =>
-      mounted && token == _loadToken && identical(_pendingLoader, loader);
+  bool _current(ThemeVideoAssetLoader loader) =>
+      mounted && identical(_pendingLoader, loader);
 
   /// Keeps the active video until the candidate is completely ready.
-  Future<void> _loadController(ThemeVideoAssetLoader loader, int token) async {
-    final requestStack = StackTrace.current;
+  Future<void> _loadController(ThemeVideoAssetLoader loader) async {
     try {
-      final controller = await loader.initialize(
+      await loader.initialize(
         muted: widget.muted,
         loop: widget.loop,
       );
-      if (!_current(loader, token)) {
+      if (!_current(loader)) {
         await loader.dispose();
         return;
       }
@@ -1574,7 +1570,7 @@ class _VideoThemeBackgroundState extends State<_VideoThemeBackground> {
         final muted = widget.muted;
         final loop = widget.loop;
         await loader.configure(muted: muted, loop: loop, autoplay: true);
-        if (!_current(loader, token)) {
+        if (!_current(loader)) {
           await loader.dispose();
           return;
         }
@@ -1584,14 +1580,9 @@ class _VideoThemeBackgroundState extends State<_VideoThemeBackground> {
       // never dispose the previous successful video.
       loader.validateReady();
       final previous = _activeLoader;
-      _detachPlayerListener();
       _pendingLoader = null;
       _activeLoader = loader;
       _lastFailure = null;
-      _loadedReference = loader.reference;
-      _loadedRequestStack = requestStack;
-      _playerListener = () => _handlePlayerValue(loader);
-      controller.addListener(_playerListener!);
       setState(() {});
       widget.diagnostics?.resolve(
         loader.reference,
@@ -1599,107 +1590,49 @@ class _VideoThemeBackgroundState extends State<_VideoThemeBackground> {
         owner: this,
       );
       if (previous != null) unawaited(previous.dispose());
-      _handlePlayerValue(loader);
-    } catch (error, stack) {
-      await loader.dispose();
-      if (!_current(loader, token)) return;
+    } on ThemeAssetFailure catch (failure) {
+      if (!_current(loader)) return;
       _pendingLoader = null;
-      if (loader.isCancelled && error is! ThemeAssetFailure) return;
-      final failure = ThemeAssetFailure.capture(
-        reference: loader.reference,
-        purpose: ThemeAssetPurpose.background,
-        stage: ThemeAssetStage.videoOpen,
-        kind: ThemeAssetFailureKind.media,
-        cause: error,
-        originalStackTrace: stack,
-        requestStackTrace: requestStack,
-        retainedPrevious: _activeLoader?.controller?.value.isInitialized == true,
-      );
-      _lastFailure = failure;
-      widget.diagnostics?.report(failure, owner: this);
-      if (mounted) setState(() {});
+      _reportFailure(failure.withContext(retainedPrevious: _activeLoader != null));
+    } on FvpCreateCancelledException {
+      // Superseded requests are cancellation, not a damaged resource.
+    } finally {
+      if (!identical(_activeLoader, loader)) unawaited(loader.dispose());
     }
   }
 
   Future<void> _updatePlaybackSettings() async {
     final loader = _activeLoader;
     if (!mounted || loader == null) return;
-    final requestStack = StackTrace.current;
     try {
       await loader.configure(muted: widget.muted, loop: widget.loop);
-    } catch (error, stack) {
-      if (!mounted || !identical(_activeLoader, loader)) return;
-      if (loader.isCancelled && error is! ThemeAssetFailure) return;
-      _failActiveVideo(
-        loader,
-        ThemeAssetFailure.capture(
-          reference: loader.reference,
-          purpose: ThemeAssetPurpose.background,
-          stage: ThemeAssetStage.playback,
-          kind: ThemeAssetFailureKind.media,
-          cause: error,
-          originalStackTrace: stack,
-          requestStackTrace: requestStack,
-        ),
-      );
+    } on ThemeAssetFailure catch (failure) {
+      _handlePlaybackFailure(loader, failure);
+    } on FvpCreateCancelledException {
+      // The widget may have been replaced while updating native settings.
     }
   }
 
-  void _handleAsynchronousFailure(
+  void _handlePlaybackFailure(
     ThemeVideoAssetLoader loader,
     ThemeAssetFailure failure,
   ) {
-    if (!mounted) return;
-    if (identical(_pendingLoader, loader)) {
-      // The pending initialize/configure future reports the same primary error.
-      loader.cancel();
-      return;
-    }
-    if (identical(_activeLoader, loader)) _failActiveVideo(loader, failure);
-  }
-
-  void _handlePlayerValue(ThemeVideoAssetLoader loader) {
     if (!mounted || !identical(_activeLoader, loader)) return;
-    final value = loader.controller!.value;
-    if (!value.hasError) return;
-    _failActiveVideo(
-      loader,
-      ThemeAssetFailure.capture(
-        reference: _loadedReference ?? loader.reference,
-        purpose: ThemeAssetPurpose.background,
-        stage: ThemeAssetStage.playback,
-        kind: ThemeAssetFailureKind.media,
-        // video_player keeps only the description for errors after initialize.
-        cause: StateError('Video player reported: ${value.errorDescription}'),
-        originalStackTrace: StackTrace.empty,
-        requestStackTrace: _loadedRequestStack ?? StackTrace.current,
-      ),
-    );
-  }
-
-  void _failActiveVideo(ThemeVideoAssetLoader loader, ThemeAssetFailure failure) {
-    if (!mounted || !identical(_activeLoader, loader)) return;
-    _detachPlayerListener();
     _activeLoader = null;
-    _loadedReference = null;
-    _lastFailure = failure;
-    setState(() {});
-    widget.diagnostics?.report(failure, owner: this);
+    _reportFailure(failure);
     unawaited(loader.dispose());
   }
 
-  void _detachPlayerListener() {
-    final listener = _playerListener;
-    if (listener != null) _activeLoader?.controller?.removeListener(listener);
-    _playerListener = null;
+  void _reportFailure(ThemeAssetFailure failure) {
+    _lastFailure = failure;
+    widget.diagnostics?.report(failure, owner: this);
+    setState(() {});
   }
 
   /// Releases the active video controller.
   @override
   void dispose() {
-    _loadToken++;
     _boundDiagnostics?.release(this);
-    _detachPlayerListener();
     final pending = _pendingLoader;
     final active = _activeLoader;
     _pendingLoader = null;

@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -80,7 +79,7 @@ void main() {
           await Future<void>.delayed(const Duration(milliseconds: 50));
         });
         await tester.pumpAndSettle();
-        final backgroundState = tester.state(find.byType(ResolvedThemeImage));
+        final backgroundState = tester.state(_backgroundImages());
         await _expectBackground(tester, boundary, 'before navigation');
         navigator.currentState!.push<void>(
           MaterialPageRoute<void>(
@@ -127,7 +126,7 @@ void main() {
         }
         await tester.pumpAndSettle();
         expect(
-          tester.state(find.byType(ResolvedThemeImage)),
+          tester.state(_backgroundImages()),
           same(backgroundState),
         );
         expect(resolver.reads, 1);
@@ -185,7 +184,7 @@ void main() {
     await _expectFailureSurface(tester, boundary);
     await tester.enterText(find.byType(TextField), 'Preserve this draft');
     final inputState = tester.state(find.byType(EditableText));
-    final backgroundState = tester.state(find.byType(ResolvedThemeImage));
+    final backgroundState = tester.state(_backgroundImages());
     final navigatorState = navigator.currentState;
     navigator.currentState!.push<void>(
       MaterialPageRoute<void>(
@@ -204,7 +203,7 @@ void main() {
     expect(diagnostics.failures, isEmpty);
     expect(navigator.currentState, same(navigatorState));
     expect(find.text('Theme editor after failure'), findsOneWidget);
-    expect(tester.state(find.byType(ResolvedThemeImage)), same(backgroundState));
+    expect(tester.state(_backgroundImages()), same(backgroundState));
     navigator.currentState!.pop();
     await tester.pumpAndSettle();
     expect(tester.state(find.byType(EditableText)), same(inputState));
@@ -239,14 +238,14 @@ void main() {
     );
     await tester.pumpWidget(scene(false));
     await _finishLifecycleImageWork(tester);
-    final state = tester.state(find.byType(ResolvedThemeImage));
+    final state = tester.state(_backgroundImages());
     expect(diagnostics.failures, hasLength(1));
 
     await tester.pumpWidget(scene(true));
     await tester.pumpAndSettle();
     await tester.pumpWidget(scene(false));
     await tester.pumpAndSettle();
-    expect(tester.state(find.byType(ResolvedThemeImage)), same(state));
+    expect(tester.state(_backgroundImages()), same(state));
     expect(diagnostics.failures, hasLength(1));
     expect(resolver.reads['later-background.svg'], 1);
     expect(resolver.reads['bubble.svg'], 1);
@@ -453,3 +452,7 @@ Future<Object?> _backGesture(
       );
   return codec.decodeEnvelope(reply!);
 }
+
+Finder _backgroundImages() => find.byWidgetPredicate(
+  (widget) => widget is ResolvedThemeImage && widget.purpose == ThemeAssetPurpose.background,
+);

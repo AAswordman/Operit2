@@ -69,6 +69,31 @@ void main() {
     });
   }
 
+  testWidgets('background and bubble share one in-flight read', (tester) async {
+    final diagnostics = ThemeAssetDiagnostics();
+    final resolver = _MutableAssets(<String, Uint8List>{});
+    final pending = Completer<Uint8List>();
+    final boundary = GlobalKey();
+    resolver.pending['shared.svg'] = pending;
+    addTearDown(diagnostics.dispose);
+    await tester.pumpWidget(_composition(
+      resolver,
+      diagnostics,
+      background: 'shared.svg',
+      bubble: 'shared.svg',
+      bubbleBoundary: boundary,
+    ));
+    expect(resolver.reads['shared.svg'], 1);
+    pending.complete(_svg(_goodColor));
+    await _finishImageWork(tester);
+    await _expectPixel(tester, boundary, _goodColor);
+    expect(resolver.reads['shared.svg'], 1);
+    expect(tester.widget<RawImage>(find.byType(RawImage)).image, isNotNull);
+    expect(diagnostics.failures, isEmpty);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('a failed background keeps a valid bubble and the input draft', (
     tester,
   ) async {
@@ -189,7 +214,7 @@ void main() {
     );
     await _finishImageWork(tester);
     await _expectPixel(tester, boundary, _goodColor);
-    final imageState = tester.state(find.byType(ResolvedThemeImage));
+    final imageState = tester.state(_backgroundImages());
 
     await tester.pumpWidget(
       _imageScene(resolver, diagnostics, 'replacement.svg', boundary),
@@ -199,7 +224,7 @@ void main() {
     await _finishImageWork(tester);
 
     await _expectPixel(tester, boundary, _goodColor);
-    expect(tester.state(find.byType(ResolvedThemeImage)), same(imageState));
+    expect(tester.state(_backgroundImages()), same(imageState));
     expect(diagnostics.failures.single.retainedPrevious, isTrue);
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
@@ -412,7 +437,7 @@ void main() {
                       imageStyle: BubbleImageStyle(imagePath: 'transient.svg'),
                       child: Align(
                         alignment: Alignment.bottomRight,
-                        child: Text('Visible message'),
+                        child: Text('Visible message', style: TextStyle(fontSize: 12)),
                       ),
                     ),
                   ),
@@ -457,7 +482,7 @@ void main() {
     );
     await _finishImageWork(tester);
     expect(diagnostics.failures.single.reference, 'later.svg');
-    final backgroundState = tester.state(find.byType(ResolvedThemeImage));
+    final backgroundState = tester.state(_backgroundImages());
 
     resolver.bytes['later.svg'] = _svg(_otherColor);
     diagnostics.retry('later.svg');
@@ -466,7 +491,7 @@ void main() {
     expect(diagnostics.failures, isEmpty);
     expect(resolver.reads['background.svg'], 1);
     expect(resolver.reads['later.svg'], 2);
-    expect(tester.state(find.byType(ResolvedThemeImage)), same(backgroundState));
+    expect(tester.state(_backgroundImages()), same(backgroundState));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -519,6 +544,30 @@ void main() {
     expect(diagnostics.failures, isEmpty);
     diagnostics.report(failure);
     expect(diagnostics.failures, hasLength(1));
+  });
+
+  test('diagnostics retain a shared failure until every owner recovers', () {
+    final diagnostics = ThemeAssetDiagnostics();
+    addTearDown(diagnostics.dispose);
+    final first = Object();
+    final second = Object();
+    final failure = ThemeAssetFailure.capture(
+      reference: 'shared.svg',
+      purpose: ThemeAssetPurpose.bubble,
+      stage: ThemeAssetStage.read,
+      kind: ThemeAssetFailureKind.missing,
+      cause: StateError('Missing bytes'),
+      originalStackTrace: StackTrace.empty,
+      requestStackTrace: StackTrace.empty,
+      retainedPrevious: true,
+    );
+    diagnostics.report(failure, owner: first);
+    diagnostics.report(failure.withContext(retainedPrevious: false), owner: second);
+    expect(diagnostics.failures.single.retainedPrevious, isFalse);
+    diagnostics.resolve('shared.svg', purpose: ThemeAssetPurpose.bubble, owner: second);
+    expect(diagnostics.failures.single.retainedPrevious, isTrue);
+    diagnostics.release(first);
+    expect(diagnostics.failures, isEmpty);
   });
 
   testWidgets('missing ThemeAssetScope remains a programming error', (
@@ -648,7 +697,7 @@ Widget _bubbleScene(
             imageStyle: style,
             child: const Align(
               alignment: Alignment.bottomRight,
-              child: Text('Visible message'),
+              child: Text('Visible message', style: TextStyle(fontSize: 12)),
             ),
           ),
         ),
@@ -705,7 +754,7 @@ Widget _composition(
                   transparentSurface: transparent,
                   child: const Align(
                     alignment: Alignment.bottomRight,
-                    child: Text('Visible message'),
+                    child: Text('Visible message', style: TextStyle(fontSize: 12)),
                   ),
                 ),
               ),
@@ -780,3 +829,7 @@ void _expectDisposed(ui.Image image) {
     unexpectedClone?.dispose();
   }
 }
+
+Finder _backgroundImages() => find.byWidgetPredicate(
+  (widget) => widget is ResolvedThemeImage && widget.purpose == ThemeAssetPurpose.background,
+);

@@ -135,8 +135,7 @@ class ThemeAssetFailure implements Exception {
 
 /// Owns transient failures and retry epochs, never appearance preferences.
 class ThemeAssetDiagnostics extends ChangeNotifier {
-  final Map<String, ThemeAssetFailure> _failures = {};
-  final Map<Object?, Map<String, ThemeAssetFailure>> _ownedFailures = {};
+  final Map<(Object?, String), ThemeAssetFailure> _failures = {};
   final Map<String, int> _retryEpochs = {};
   int _themeRevision = 0;
   String? _themeId;
@@ -146,7 +145,15 @@ class ThemeAssetDiagnostics extends ChangeNotifier {
 
   int get themeRevision => _themeRevision;
   String? get themeId => _themeId;
-  List<ThemeAssetFailure> get failures => List.unmodifiable(_failures.values);
+  List<ThemeAssetFailure> get failures {
+    final unique = <String, ThemeAssetFailure>{};
+    for (final failure in _failures.values) {
+      if (!failure.retainedPrevious || !unique.containsKey(failure.key)) {
+        unique[failure.key] = failure;
+      }
+    }
+    return List.unmodifiable(unique.values);
+  }
   int retryEpoch(String reference) => _retryEpochs[reference] ?? 0;
 
   /// Clears only failures for resources no longer used by this appearance.
@@ -160,14 +167,7 @@ class ThemeAssetDiagnostics extends ChangeNotifier {
     _themeId = themeId;
     _activeReferences = activeReferences == null ? null : Set.unmodifiable(activeReferences);
     if (activeReferences != null) {
-      var changed = false;
-      _ownedFailures.removeWhere((_, failures) {
-        final before = failures.length;
-        failures.removeWhere((_, f) => !activeReferences.contains(f.reference));
-        changed = changed || failures.length != before;
-        return failures.isEmpty;
-      });
-      if (changed) _rebuildFailures();
+      _removeWhere((_, failure) => !activeReferences.contains(failure.reference));
     }
   }
 
@@ -179,10 +179,10 @@ class ThemeAssetDiagnostics extends ChangeNotifier {
       themeRevision: _themeRevision,
       themeId: _themeId,
     );
-    final failures = _ownedFailures.putIfAbsent(owner, () => {});
-    if (failures.containsKey(contextual.key)) return;
-    failures[contextual.key] = contextual;
-    _rebuildFailures();
+    final key = (owner, contextual.key);
+    if (_failures.containsKey(key)) return;
+    _failures[key] = contextual;
+    _notify();
   }
 
   void resolve(
@@ -191,34 +191,18 @@ class ThemeAssetDiagnostics extends ChangeNotifier {
     Object? owner,
   }) {
     if (_disposed) return;
-    final failures = _ownedFailures[owner];
-    if (failures == null) return;
-    final before = failures.length;
-    failures.removeWhere(
-      (_, f) => f.reference == reference && f.purpose == purpose,
-    );
-    if (failures.isEmpty) _ownedFailures.remove(owner);
-    if (failures.length != before) _rebuildFailures();
+    _removeWhere((key, failure) =>
+      key.$1 == owner && failure.reference == reference && failure.purpose == purpose);
   }
 
   /// Unmounting one consumer cannot clear a different consumer's failure.
-  void release(Object owner) {
-    if (!_disposed && _ownedFailures.remove(owner) != null) _rebuildFailures();
-  }
+  void release(Object owner) => _removeWhere((key, _) => key.$1 == owner);
 
-  void _rebuildFailures() {
-    _failures.clear();
-    for (final failures in _ownedFailures.values) {
-      for (final entry in failures.entries) {
-        final previous = _failures[entry.key];
-        if (previous == null) {
-          _failures[entry.key] = entry.value;
-        } else if (previous.retainedPrevious && !entry.value.retainedPrevious) {
-          _failures[entry.key] = previous.withContext(retainedPrevious: false);
-        }
-      }
-    }
-    _notify();
+  void _removeWhere(bool Function((Object?, String), ThemeAssetFailure) matches) {
+    if (_disposed) return;
+    final before = _failures.length;
+    _failures.removeWhere(matches);
+    if (_failures.length != before) _notify();
   }
 
   /// A new epoch bypasses a failed image-cache entry for the same logical path.
@@ -227,11 +211,7 @@ class ThemeAssetDiagnostics extends ChangeNotifier {
       return;
     }
     _retryEpochs[reference] = retryEpoch(reference) + 1;
-    _ownedFailures.removeWhere((_, failures) {
-      failures.removeWhere((_, f) => f.reference == reference);
-      return failures.isEmpty;
-    });
-    _rebuildFailures();
+    _removeWhere((_, failure) => failure.reference == reference);
   }
 
   void _notify() {
@@ -252,7 +232,6 @@ class ThemeAssetDiagnostics extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
-    _ownedFailures.clear();
     _failures.clear();
     _retryEpochs.clear();
     super.dispose();
@@ -307,13 +286,20 @@ class ThemeAssetScope extends InheritedNotifier<ThemeAssetDiagnostics> {
       !identical(resolver, oldWidget.resolver) || super.updateShouldNotify(oldWidget);
 }
 
+/// Builds from an owned image clone. [isCurrent] is false while retaining an
+/// older image, so callers can retain the rendering parameters that belong to it.
+typedef ThemeImageWidgetBuilder = Widget Function(
+  BuildContext context, ui.Image? image, bool isCurrent,
+);
+
 /// An explicit resolver is required; this widget never fetches a URI or a file.
 class ResolvedThemeImage extends StatefulWidget {
   const ResolvedThemeImage({
     super.key,
     required this.resolver,
     required this.reference,
-    required this.fit,
+    this.fit = BoxFit.cover,
+    this.builder,
     this.purpose = ThemeAssetPurpose.background,
     this.diagnostics,
   });
@@ -321,6 +307,7 @@ class ResolvedThemeImage extends StatefulWidget {
   final ThemeAssetResolver resolver;
   final String reference;
   final BoxFit fit;
+  final ThemeImageWidgetBuilder? builder;
   final ThemeAssetPurpose purpose;
   final ThemeAssetDiagnostics? diagnostics;
 
@@ -339,6 +326,8 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
   int _epoch = -1;
   int _loadToken = 0;
   bool _streamComplete = true;
+  bool _imageIsCurrent = false;
+  ThemeAssetFailure? _lastFailure;
 
   @override
   void didChangeDependencies() {
@@ -360,6 +349,9 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
     _diagnostics?.release(this);
     _diagnostics = diagnostics;
     _diagnostics?.addListener(_handleRetry);
+    _epoch = _diagnostics?.retryEpoch(widget.reference) ?? 0;
+    final failure = _lastFailure;
+    if (failure != null) _diagnostics?.report(failure, owner: this);
   }
 
   void _handleRetry() {
@@ -373,8 +365,12 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
     final epoch = _diagnostics?.retryEpoch(widget.reference) ?? 0;
     if (identical(_boundResolver, widget.resolver) &&
         _boundReference == widget.reference &&
-        _epoch == epoch) return;
+        _epoch == epoch) {
+      return;
+    }
     final token = ++_loadToken;
+    _imageIsCurrent = false;
+    _lastFailure = null;
     _detach();
     if (_boundReference == widget.reference && _epoch != epoch && _provider != null) {
       PaintingBinding.instance.imageCache.evict(_provider!);
@@ -423,6 +419,8 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
 
   void _replace(ui.Image image, {required bool synchronous}) {
     final previous = _image;
+    _imageIsCurrent = true;
+    _lastFailure = null;
     if (synchronous) {
       _image = image;
     } else {
@@ -433,7 +431,7 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
   }
 
   void _report(Object error, StackTrace stack, StackTrace requestStack, String reference) {
-    _diagnostics?.report(ThemeAssetFailure.capture(
+    final failure = ThemeAssetFailure.capture(
       reference: reference,
       stage: ThemeAssetStage.decode,
       kind: ThemeAssetFailureKind.decode,
@@ -442,7 +440,9 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
       requestStackTrace: requestStack,
       purpose: widget.purpose,
       retainedPrevious: _image != null,
-    ), owner: this);
+    );
+    _lastFailure = failure;
+    _diagnostics?.report(failure, owner: this);
   }
 
   void _detach() {
@@ -484,6 +484,8 @@ class _ResolvedThemeImageState extends State<ResolvedThemeImage> {
   @override
   Widget build(BuildContext context) {
     final image = _image;
+    final builder = widget.builder;
+    if (builder != null) return builder(context, image, _imageIsCurrent);
     if (image == null) return const SizedBox.expand();
     return SizedBox.expand(
       child: RawImage(
