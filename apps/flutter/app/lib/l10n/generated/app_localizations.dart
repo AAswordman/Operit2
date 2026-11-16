@@ -2528,6 +2528,18 @@ abstract class AppLocalizations {
   /// **'API key'**
   String get settingsModelApiKey;
 
+  /// No description provided for @settingsModelShowApiKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Show API key'**
+  String get settingsModelShowApiKey;
+
+  /// No description provided for @settingsModelHideApiKey.
+  ///
+  /// In en, this message translates to:
+  /// **'Hide API key'**
+  String get settingsModelHideApiKey;
+
   /// No description provided for @settingsModelCodexLogin.
   ///
   /// In en, this message translates to:

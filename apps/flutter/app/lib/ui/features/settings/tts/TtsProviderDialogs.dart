@@ -165,7 +165,13 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
                 _field(_nameController, '供应商名称', requiredField: true),
                 if (!isSystemTts && !isLocalModelTts) ...[
                   _field(_endpointController, 'Endpoint', requiredField: true),
-                  _field(_apiKeyController, 'API Key', obscureText: true),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: ApiKeyTextField(
+                      controller: _apiKeyController,
+                      labelText: 'API Key',
+                    ),
+                  ),
                 ],
                 if (isHttpTts) ...[
                   _field(_httpMethodController, 'HTTP 方法', requiredField: true),
@@ -220,7 +226,6 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
   Widget _field(
     TextEditingController controller,
     String label, {
-    bool obscureText = false,
     bool requiredField = false,
     int minLines = 1,
   }) {
@@ -229,9 +234,8 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
       child: TextFormField(
         controller: controller,
         decoration: InputDecoration(labelText: label),
-        obscureText: obscureText,
         minLines: minLines,
-        maxLines: obscureText ? 1 : (minLines == 1 ? 1 : 8),
+        maxLines: minLines == 1 ? 1 : 8,
         validator: (value) {
           final text = value?.trim() ?? '';
           if (requiredField && text.isEmpty) {
@@ -923,7 +927,13 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
                   _field(_voiceController, 'Speaker ID', requiredField: true),
                 ] else if (!isSystemTts) ...[
                   _field(_endpointController, 'Endpoint', requiredField: true),
-                  _field(_apiKeyController, 'API Key', obscureText: true),
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: ApiKeyTextField(
+                      controller: _apiKeyController,
+                      labelText: 'API Key',
+                    ),
+                  ),
                   _field(
                     _modelController,
                     '模型 / Locale',
@@ -979,7 +989,6 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
   Widget _field(
     TextEditingController controller,
     String label, {
-    bool obscureText = false,
     bool requiredField = false,
     bool numberField = false,
     int minLines = 1,
@@ -990,9 +999,8 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
       child: TextFormField(
         controller: controller,
         decoration: InputDecoration(labelText: label),
-        obscureText: obscureText,
         minLines: minLines,
-        maxLines: obscureText ? 1 : (minLines == 1 ? 1 : 8),
+        maxLines: minLines == 1 ? 1 : 8,
         onChanged: onChanged,
         validator: (value) {
           final text = value?.trim() ?? '';

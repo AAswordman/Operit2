@@ -1369,6 +1369,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsModelApiKey => 'API key';
 
   @override
+  String get settingsModelShowApiKey => 'Show API key';
+
+  @override
+  String get settingsModelHideApiKey => 'Hide API key';
+
+  @override
   String get settingsModelCodexLogin => 'ChatGPT login';
 
   @override
