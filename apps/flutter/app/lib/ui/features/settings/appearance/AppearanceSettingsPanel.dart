@@ -145,6 +145,7 @@ class _AppearanceThemeEditor extends StatelessWidget {
         snapshot.customFontPath != null &&
         snapshot.customFontPath!.isNotEmpty;
     return _ResponsivePreviewSplitTabView(
+      storageId: 'theme',
       previewCard: _ChatAppearanceLivePreviewCard(
         snapshot: snapshot,
         showInputPreview: true,
@@ -356,6 +357,7 @@ class _AppearanceThemeEditor extends StatelessWidget {
     final isVideo =
         snapshot.backgroundMediaType == UserPreferencesManager.MEDIA_TYPE_VIDEO;
     return _ResponsivePreviewSplitTabView(
+      storageId: 'background',
       previewCard: _ChatAppearanceLivePreviewCard(
         snapshot: snapshot,
         showInputPreview: true,
@@ -539,6 +541,7 @@ class _AppearanceThemeEditor extends StatelessWidget {
         snapshot.bubbleAiImageUri!.isNotEmpty;
 
     return _ResponsivePreviewSplitTabView(
+      storageId: 'bubbles',
       previewCard: _ChatAppearanceLivePreviewCard(
         snapshot: snapshot,
         showInputPreview: true,
@@ -874,6 +877,7 @@ class _AppearanceThemeEditor extends StatelessWidget {
     ThemePreferenceSnapshot snapshot,
   ) {
     return _ResponsivePreviewSplitTabView(
+      storageId: 'interaction',
       previewCard: _ChatAppearanceLivePreviewCard(
         snapshot: snapshot,
         showInputPreview: true,
@@ -1142,10 +1146,13 @@ class _AppearanceHeaderBar extends StatelessWidget {
 class _ResponsivePreviewSplitTabView extends StatefulWidget {
   const _ResponsivePreviewSplitTabView({
     super.key,
+    required this.storageId,
     required this.previewCard,
     required this.children,
   });
 
+  /// Identifies this category's list scroll state across layout changes.
+  final String storageId;
   final _ChatAppearanceLivePreviewCard previewCard;
   final List<Widget> children;
 
@@ -1156,7 +1163,8 @@ class _ResponsivePreviewSplitTabView extends StatefulWidget {
 
 class _ResponsivePreviewSplitTabViewState
     extends State<_ResponsivePreviewSplitTabView> {
-  bool _mobilePreviewExpanded = true;
+  /// Null keeps the mobile preview auto-expanded by available height.
+  bool? _mobilePreviewExpanded;
 
   @override
   Widget build(BuildContext context) {
@@ -1176,6 +1184,9 @@ class _ResponsivePreviewSplitTabViewState
                 children: <Widget>[
                   Expanded(
                     child: ListView(
+                      key: PageStorageKey<String>(
+                        'appearance-settings-list:${widget.storageId}',
+                      ),
                       padding: const EdgeInsets.fromLTRB(16, 12, 8, 24),
                       children: widget.children,
                     ),
@@ -1183,6 +1194,7 @@ class _ResponsivePreviewSplitTabViewState
                   SizedBox(
                     width: previewWidth,
                     child: SingleChildScrollView(
+                      primary: false,
                       padding: const EdgeInsets.fromLTRB(8, 12, 16, 24),
                       child: widget.previewCard,
                     ),
@@ -1195,80 +1207,94 @@ class _ResponsivePreviewSplitTabViewState
 
         final l10n = AppLocalizations.of(context)!;
         final colorScheme = Theme.of(context).colorScheme;
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 20),
+        // Keeps the preview on screen while the settings list scrolls below.
+        final previewExpanded =
+            _mobilePreviewExpanded ?? (constraints.maxHeight >= 440);
+        final Widget pinnedPreviewArea;
+        if (previewExpanded) {
+          pinnedPreviewArea = ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: (constraints.maxHeight * 0.42).clamp(0.0, 360.0),
+            ),
+            child: SingleChildScrollView(
+              primary: false,
+              child: _ChatAppearanceLivePreviewCard(
+                snapshot: widget.previewCard.snapshot,
+                showInputPreview: widget.previewCard.showInputPreview,
+                onCollapse: () =>
+                    setState(() => _mobilePreviewExpanded = false),
+              ),
+            ),
+          );
+        } else {
+          pinnedPreviewArea = Material(
+            color: colorScheme.surfaceContainerHighest.withValues(
+              alpha: 0.35,
+            ),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: BorderSide(
+                color: colorScheme.outlineVariant.withValues(alpha: 0.22),
+              ),
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () {
+                setState(() {
+                  _mobilePreviewExpanded = true;
+                });
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      Icons.visibility_outlined,
+                      size: 18,
+                      color: colorScheme.primary,
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        l10n.settingsAppearanceLivePreviewTitle,
+                        style: Theme.of(context).textTheme.titleSmall
+                            ?.copyWith(fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                    SettingsInfoBadge(
+                      label: l10n.settingsAppearancePreviewExpand,
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      Icons.keyboard_arrow_down,
+                      size: 18,
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        }
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            if (!_mobilePreviewExpanded)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Material(
-                  color: colorScheme.surfaceContainerHighest.withValues(
-                    alpha: 0.35,
-                  ),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    side: BorderSide(
-                      color: colorScheme.outlineVariant.withValues(alpha: 0.22),
-                    ),
-                  ),
-                  child: InkWell(
-                    borderRadius: BorderRadius.circular(12),
-                    onTap: () {
-                      setState(() {
-                        _mobilePreviewExpanded = !_mobilePreviewExpanded;
-                      });
-                    },
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: <Widget>[
-                          Icon(
-                            Icons.visibility_outlined,
-                            size: 18,
-                            color: colorScheme.primary,
-                          ),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              l10n.settingsAppearanceLivePreviewTitle,
-                              style: Theme.of(context).textTheme.titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.w600),
-                            ),
-                          ),
-                          SettingsInfoBadge(
-                            label: _mobilePreviewExpanded
-                                ? l10n.settingsAppearancePreviewCollapse
-                                : l10n.settingsAppearancePreviewExpand,
-                          ),
-                          const SizedBox(width: 4),
-                          Icon(
-                            _mobilePreviewExpanded
-                                ? Icons.keyboard_arrow_up
-                                : Icons.keyboard_arrow_down,
-                            size: 18,
-                            color: colorScheme.onSurfaceVariant,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 8),
+              child: pinnedPreviewArea,
+            ),
+            Expanded(
+              child: ListView(
+                key: PageStorageKey<String>(
+                  'appearance-settings-list:${widget.storageId}',
                 ),
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 20),
+                children: widget.children,
               ),
-            if (_mobilePreviewExpanded) ...<Widget>[
-              Padding(
-                padding: const EdgeInsets.only(bottom: 12),
-                child: _ChatAppearanceLivePreviewCard(
-                  snapshot: widget.previewCard.snapshot,
-                  showInputPreview: widget.previewCard.showInputPreview,
-                  onCollapse: () =>
-                      setState(() => _mobilePreviewExpanded = false),
-                ),
-              ),
-            ],
-            ...widget.children,
+            ),
           ],
         );
       },
