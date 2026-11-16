@@ -4429,6 +4429,38 @@ class AppLocalizationsZh extends AppLocalizations {
       '已保存的外观没有被替换。修复资源后可以重试，也可以主动重置外观。重置会保留头像和已保存的配置，并切换到自定义外观。';
 
   @override
+  String settingsAppearanceAssetBackgroundFailed(String reference) {
+    return '背景图片无法加载，已使用默认背景（$reference）。';
+  }
+
+  @override
+  String settingsAppearanceAssetVideoFailed(String reference) {
+    return '背景视频无法播放，已使用默认背景（$reference）。';
+  }
+
+  @override
+  String settingsAppearanceAssetBubbleFailed(String reference) {
+    return '气泡图片无法加载，已使用默认气泡颜色（$reference）。';
+  }
+
+  @override
+  String settingsAppearanceAssetPreviousRetained(String reference) {
+    return '此主题资源无法加载，暂用上一张图片或媒体（$reference），其他主题设置仍有效。';
+  }
+
+  @override
+  String get settingsAppearanceAssetRetry => '重试';
+
+  @override
+  String get settingsAppearanceAssetReimportHint =>
+      '重试后仍无法加载时，请重新选择并导入可读取的图片或可播放的视频。';
+
+  @override
+  String settingsAppearanceAssetImportFailed(String reason) {
+    return '背景资源没有生效：$reason。请选择可读取的图片或可播放的视频。';
+  }
+
+  @override
   String get settingsAppearanceRetry => '重试';
 
   @override

@@ -1,3 +1,5 @@
+import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -155,6 +157,104 @@ void main() {
     expect(tester.state(find.byType(_MediaProbe)), same(state));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('missing background and retry retain the navigator and draft', (
+    tester,
+  ) async {
+    final boundary = GlobalKey();
+    final navigator = GlobalKey<NavigatorState>();
+    final diagnostics = ThemeAssetDiagnostics();
+    final resolver = _LifecycleAssets(<String, Uint8List>{
+      'bubble.svg': _lifecycleSvg('#339966'),
+    });
+    final text = TextEditingController();
+    addTearDown(diagnostics.dispose);
+    addTearDown(text.dispose);
+    await tester.pumpWidget(
+      _failureScene(
+        resolver,
+        diagnostics,
+        boundary: boundary,
+        navigator: navigator,
+        text: text,
+      ),
+    );
+    await _finishLifecycleImageWork(tester);
+    expect(diagnostics.failures, hasLength(1));
+    expect(diagnostics.failures.single.reference, 'later-background.svg');
+    await _expectFailureSurface(tester, boundary);
+    await tester.enterText(find.byType(TextField), 'Preserve this draft');
+    final inputState = tester.state(find.byType(EditableText));
+    final backgroundState = tester.state(find.byType(ResolvedThemeImage));
+    final navigatorState = navigator.currentState;
+    navigator.currentState!.push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => const Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Text('Theme editor after failure'),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    resolver.bytes['later-background.svg'] = _lifecycleSvg('#339966');
+    diagnostics.retry('later-background.svg');
+    await _finishLifecycleImageWork(tester);
+    await _expectBackground(tester, boundary, 'retry while route is open');
+    expect(diagnostics.failures, isEmpty);
+    expect(navigator.currentState, same(navigatorState));
+    expect(find.text('Theme editor after failure'), findsOneWidget);
+    expect(tester.state(find.byType(ResolvedThemeImage)), same(backgroundState));
+    navigator.currentState!.pop();
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(EditableText)), same(inputState));
+    expect(text.text, 'Preserve this draft');
+    expect(find.text('Valid bubble'), findsOneWidget);
+    expect(resolver.reads['bubble.svg'], 1);
+    expect(resolver.reads['later-background.svg'], 2);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    PaintingBinding.instance.imageCache.clear();
+  });
+
+  testWidgets('effect edits do not restart or duplicate a failed resource', (
+    tester,
+  ) async {
+    final diagnostics = ThemeAssetDiagnostics();
+    final resolver = _LifecycleAssets(<String, Uint8List>{
+      'bubble.svg': _lifecycleSvg('#339966'),
+    });
+    final boundary = GlobalKey();
+    final navigator = GlobalKey<NavigatorState>();
+    final text = TextEditingController();
+    addTearDown(diagnostics.dispose);
+    addTearDown(text.dispose);
+    Widget scene(bool blur) => _failureScene(
+      resolver,
+      diagnostics,
+      boundary: boundary,
+      navigator: navigator,
+      text: text,
+      blur: blur,
+    );
+    await tester.pumpWidget(scene(false));
+    await _finishLifecycleImageWork(tester);
+    final state = tester.state(find.byType(ResolvedThemeImage));
+    expect(diagnostics.failures, hasLength(1));
+
+    await tester.pumpWidget(scene(true));
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(scene(false));
+    await tester.pumpAndSettle();
+    expect(tester.state(find.byType(ResolvedThemeImage)), same(state));
+    expect(diagnostics.failures, hasLength(1));
+    expect(resolver.reads['later-background.svg'], 1);
+    expect(resolver.reads['bubble.svg'], 1);
+    await _expectFailureSurface(tester, boundary);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+    PaintingBinding.instance.imageCache.clear();
+  });
 }
 
 /// Mounts the same asset reference as a newly entered background preview.
@@ -179,6 +279,120 @@ class _CountingAssets implements ThemeAssetResolver {
           .codeUnits,
     );
   }
+}
+
+const _failureSurface = Color(0xFF223344);
+
+/// Keeps real application surfaces mounted while their bytes become available.
+Widget _failureScene(
+  ThemeAssetResolver resolver,
+  ThemeAssetDiagnostics diagnostics, {
+  required GlobalKey boundary,
+  required GlobalKey<NavigatorState> navigator,
+  required TextEditingController text,
+  bool blur = false,
+}) {
+  final snapshot = ThemePreferenceSnapshot.fromJson(<String, Object?>{
+    ...ThemePreferenceDefaults.snapshot.toJson(),
+    'useBackgroundImage': true,
+    'backgroundImageUri': 'later-background.svg',
+  });
+  return ThemeAssetScope(
+    resolver: resolver,
+    diagnostics: diagnostics,
+    child: RepaintBoundary(
+      key: boundary,
+      child: MaterialApp(
+        navigatorKey: navigator,
+        theme: ThemeData(
+          colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue).copyWith(
+            surface: _failureSurface,
+          ),
+        ),
+        builder: (context, child) => ThemeBackground(
+          themePreferenceSnapshot: snapshot,
+          media: ThemeBackgroundMedia(
+            opacity: 1,
+            blurEnabled: blur,
+            blurRadius: 12,
+            child: ResolvedThemeImage(
+              resolver: resolver,
+              reference: 'later-background.svg',
+              fit: BoxFit.cover,
+            ),
+          ),
+          child: child!,
+        ),
+        home: Scaffold(
+          backgroundColor: Colors.transparent,
+          body: Column(
+            children: <Widget>[
+              const BubbleSurface(
+                color: Colors.blue,
+                borderRadius: BorderRadius.zero,
+                imageStyle: BubbleImageStyle(imagePath: 'bubble.svg'),
+                child: SizedBox(
+                  width: 180,
+                  height: 80,
+                  child: Text('Valid bubble'),
+                ),
+              ),
+              TextField(controller: text),
+            ],
+          ),
+        ),
+      ),
+    ),
+  );
+}
+
+class _LifecycleAssets implements ThemeAssetResolver {
+  _LifecycleAssets(this.bytes);
+
+  final Map<String, Uint8List> bytes;
+  final Map<String, int> reads = <String, int>{};
+
+  @override
+  Future<Uint8List> readBytes(String reference) async {
+    reads.update(reference, (count) => count + 1, ifAbsent: () => 1);
+    final content = bytes[reference];
+    if (content == null) throw StateError('Theme asset is missing: $reference');
+    return content;
+  }
+}
+
+Uint8List _lifecycleSvg(String color) => Uint8List.fromList(
+  utf8.encode(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8" '
+    'viewBox="0 0 8 8"><rect width="8" height="8" fill="$color"/></svg>',
+  ),
+);
+
+Future<void> _finishLifecycleImageWork(WidgetTester tester) async {
+  await tester.runAsync(() async {
+    await Future<void>.delayed(const Duration(milliseconds: 50));
+  });
+  await tester.pumpAndSettle();
+}
+
+/// The fallback is the theme surface, not a missing/replaced application tree.
+Future<void> _expectFailureSurface(
+  WidgetTester tester,
+  GlobalKey boundary,
+) async {
+  final render =
+      boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+  final pixels = await tester.runAsync(() async {
+    final image = await render.toImage(pixelRatio: 1);
+    try {
+      final data = (await image.toByteData(format: ui.ImageByteFormat.rawRgba))!;
+      final offset = ((image.height - 20) * image.width + image.width ~/ 2) * 4;
+      return data.buffer.asUint8List(data.offsetInBytes + offset, 4).toList();
+    } finally {
+      image.dispose();
+    }
+  });
+  expect(pixels, <int>[0x22, 0x33, 0x44, 0xFF]);
 }
 
 class _MediaProbe extends StatefulWidget {

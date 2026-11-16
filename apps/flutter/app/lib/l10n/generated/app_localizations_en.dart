@@ -4616,6 +4616,38 @@ class AppLocalizationsEn extends AppLocalizations {
       'Your saved appearance has not been replaced. Retry after repairing its resources, or reset appearance explicitly. Reset keeps your avatar and saved configurations and selects custom appearance.';
 
   @override
+  String settingsAppearanceAssetBackgroundFailed(String reference) {
+    return 'The background image could not be loaded. Using the default background ($reference).';
+  }
+
+  @override
+  String settingsAppearanceAssetVideoFailed(String reference) {
+    return 'The background video could not be played. Using the default background ($reference).';
+  }
+
+  @override
+  String settingsAppearanceAssetBubbleFailed(String reference) {
+    return 'The bubble image could not be loaded. Using the default bubble color ($reference).';
+  }
+
+  @override
+  String settingsAppearanceAssetPreviousRetained(String reference) {
+    return 'This theme resource could not be loaded. Keeping the previous image or media ($reference); your other theme settings still apply.';
+  }
+
+  @override
+  String get settingsAppearanceAssetRetry => 'Retry';
+
+  @override
+  String get settingsAppearanceAssetReimportHint =>
+      'If retrying does not help, choose and import a readable image or playable video again.';
+
+  @override
+  String settingsAppearanceAssetImportFailed(String reason) {
+    return 'The background resource was not applied: $reason. Please choose a readable image or playable video.';
+  }
+
+  @override
   String get settingsAppearanceRetry => 'Retry';
 
   @override

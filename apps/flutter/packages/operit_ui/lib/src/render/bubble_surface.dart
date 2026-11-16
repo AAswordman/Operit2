@@ -64,20 +64,19 @@ class BubbleSurface extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final useImage = imageStyle != null;
-    final surfaceColor = (transparentSurface || useImage)
-        ? Colors.transparent
-        : color;
+    final surfaceColor = transparentSurface ? Colors.transparent : color;
     final decoration = BoxDecoration(
       color: surfaceColor,
       borderRadius: borderRadius,
     );
     final content = Stack(
       children: <Widget>[
-        Positioned.fill(child: DecoratedBox(decoration: decoration)),
         if (useImage)
           Positioned.fill(
-            child: BubbleImageBackgroundSurface(imageStyle: imageStyle!),
-          ),
+            child: BubbleImageBackgroundSurface(imageStyle: imageStyle!, fallbackColor: color),
+          )
+        else
+          Positioned.fill(child: DecoratedBox(decoration: decoration)),
         child,
         if (useImage && imageStyle!.showSliceGuides)
           Positioned.fill(
@@ -103,15 +102,21 @@ class BubbleSurface extends StatelessWidget {
 
 class BubbleImageBackgroundSurface extends StatelessWidget {
   /// Creates a painted bubble image background from an imported theme asset.
-  const BubbleImageBackgroundSurface({super.key, required this.imageStyle});
+  const BubbleImageBackgroundSurface({
+    super.key,
+    required this.imageStyle,
+    this.fallbackColor,
+  });
 
   final BubbleImageStyle imageStyle;
+  final Color? fallbackColor;
 
   @override
   Widget build(BuildContext context) {
     return _ResolvedBubbleImageSurface(
       resolver: ThemeAssetScope.of(context),
       imageStyle: imageStyle,
+      fallbackColor: fallbackColor,
     );
   }
 }
@@ -156,11 +161,13 @@ class _ResolvedBubbleImageSurface extends StatefulWidget {
     required this.resolver,
     required this.imageStyle,
     this.view = _BubbleImageView.background,
+    this.fallbackColor,
   });
 
   final ThemeAssetResolver resolver;
   final BubbleImageStyle imageStyle;
   final _BubbleImageView view;
+  final Color? fallbackColor;
 
   @override
   State<_ResolvedBubbleImageSurface> createState() =>
@@ -170,68 +177,139 @@ class _ResolvedBubbleImageSurface extends StatefulWidget {
 class _BubbleImageBackgroundSurfaceState
     extends State<_ResolvedBubbleImageSurface> {
   ui.Image? _image;
+  BubbleImageStyle? _loadedStyle;
+  ThemeAssetResolver? _boundResolver;
+  String? _boundReference;
+  ThemeAssetDiagnostics? _diagnostics;
+  int _epoch = -1;
   int _loadToken = 0;
-  Object? _loadError;
-  StackTrace? _loadStack;
+  bool _loading = false;
+  bool _failed = false;
 
   @override
-  void initState() {
-    super.initState();
-    _bind();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final diagnostics = ThemeAssetScope.diagnosticsOf(context);
+    if (!identical(_diagnostics, diagnostics)) _diagnostics?.release(this);
+    _diagnostics = diagnostics;
+    _syncBinding();
   }
 
   /// Reloads the image when the referenced runtime asset or resolver changes.
   @override
   void didUpdateWidget(covariant _ResolvedBubbleImageSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.imageStyle.imagePath != widget.imageStyle.imagePath ||
-        !identical(oldWidget.resolver, widget.resolver)) {
-      _bind();
-    }
+    _syncBinding();
   }
 
-  void _bind() {
+  void _syncBinding() {
+    final reference = widget.imageStyle.imagePath;
+    final epoch = _diagnostics?.retryEpoch(reference) ?? 0;
+    if (identical(_boundResolver, widget.resolver) &&
+        _boundReference == reference && _epoch == epoch) {
+      if (!_loading && !_failed && _image != null) _loadedStyle = widget.imageStyle;
+      return;
+    }
     final token = ++_loadToken;
-    _loadError = null;
-    _loadStack = null;
-    _image?.dispose();
-    _image = null;
+    _boundResolver = widget.resolver;
+    _boundReference = reference;
+    _epoch = epoch;
+    _diagnostics?.release(this);
+    _loading = true;
+    _failed = false;
     final resolver = widget.resolver;
+    final style = widget.imageStyle;
+    final requestStack = StackTrace.current;
     if (resolver is ThemeDecodedImageResolver) {
-      _image = resolver.tryCloneImage(widget.imageStyle.imagePath);
+      try {
+        final image = resolver.tryCloneImage(reference);
+        if (image == null) throw StateError('Decoded theme asset is missing: $reference');
+        _replace(image, style, synchronous: true);
+      } catch (error, stack) {
+        _report(error, stack, requestStack, reference);
+      }
     } else {
-      unawaited(_loadImage(resolver, token));
+      unawaited(_loadImage(resolver, token, style, requestStack));
     }
   }
 
-  /// Decodes bytes supplied by the resolver; errors remain visible as errors.
-  Future<void> _loadImage(ThemeAssetResolver resolver, int token) async {
+  /// Keeps the successful source and its slicing parameters until replacement.
+  Future<void> _loadImage(
+    ThemeAssetResolver resolver,
+    int token,
+    BubbleImageStyle style,
+    StackTrace requestStack,
+  ) async {
+    final reference = style.imagePath;
+    var stage = ThemeAssetStage.read;
+    var kind = ThemeAssetFailureKind.read;
+    int? byteLength;
     try {
-      final bytes = await resolver.readBytes(widget.imageStyle.imagePath);
-      final image = await decodeThemeImageBytes(
-        widget.imageStyle.imagePath,
-        bytes,
-      );
+      final bytes = await resolver.readBytes(reference);
+      byteLength = bytes.length;
+      if (bytes.isEmpty) {
+        kind = ThemeAssetFailureKind.empty;
+        throw StateError('Theme asset is empty: $reference');
+      }
+      stage = ThemeAssetStage.decode;
+      kind = ThemeAssetFailureKind.decode;
+      final image = await decodeThemeImageBytes(reference, bytes);
       if (!mounted || token != _loadToken) {
         image.dispose();
         return;
       }
-      setState(() {
-        _image = image;
-      });
+      _replace(image, widget.imageStyle, synchronous: false);
     } catch (error, stack) {
       if (!mounted || token != _loadToken) return;
-      setState(() {
-        _loadError = error;
-        _loadStack = stack;
-      });
+      _report(ThemeAssetFailure.capture(
+        reference: reference,
+        stage: stage,
+        kind: kind,
+        cause: error,
+        originalStackTrace: stack,
+        requestStackTrace: requestStack,
+        byteLength: byteLength,
+      ), stack, requestStack, reference);
     }
+  }
+
+  void _replace(ui.Image image, BubbleImageStyle style, {required bool synchronous}) {
+    final previous = _image;
+    void publish() {
+      _image = image;
+      _loadedStyle = style;
+      _loading = false;
+      _failed = false;
+    }
+    if (synchronous) {
+      publish();
+    } else {
+      setState(publish);
+    }
+    previous?.dispose();
+    _diagnostics?.resolve(style.imagePath, purpose: ThemeAssetPurpose.bubble, owner: this);
+  }
+
+  void _report(Object error, StackTrace stack, StackTrace requestStack, String reference) {
+    _loading = false;
+    _failed = true;
+    _diagnostics?.report(ThemeAssetFailure.capture(
+      reference: reference,
+      stage: ThemeAssetStage.decode,
+      kind: ThemeAssetFailureKind.decode,
+      cause: error,
+      originalStackTrace: stack,
+      requestStackTrace: requestStack,
+      purpose: ThemeAssetPurpose.bubble,
+      retainedPrevious: _image != null,
+    ), owner: this);
   }
 
   /// Releases the decoded UI image.
   @override
   void dispose() {
     _loadToken++;
+    _diagnostics?.release(this);
     _image?.dispose();
     super.dispose();
   }
@@ -239,26 +317,27 @@ class _BubbleImageBackgroundSurfaceState
   /// Builds the custom-painted bubble image.
   @override
   Widget build(BuildContext context) {
-    if (_loadError != null) {
-      Error.throwWithStackTrace(_loadError!, _loadStack!);
-    }
     final image = _image;
     if (image == null) {
+      if (widget.view == _BubbleImageView.background) {
+        final color = widget.fallbackColor ?? Theme.of(context).colorScheme.surfaceContainerHighest;
+        return ColoredBox(color: color.withValues(alpha: 1));
+      }
       return const SizedBox.expand();
     }
     return CustomPaint(
       painter: switch (widget.view) {
         _BubbleImageView.background => _BubbleImagePainter(
           image: image,
-          style: widget.imageStyle,
+          style: _loadedStyle!,
         ),
         _BubbleImageView.destinationGuides => _BubbleDestinationGuidePainter(
           image: image,
-          style: widget.imageStyle,
+          style: _loadedStyle!,
         ),
         _BubbleImageView.sourceGuide => _BubbleSourceGuidePainter(
           image: image,
-          style: widget.imageStyle,
+          style: _loadedStyle!,
         ),
       },
       child: widget.view == _BubbleImageView.background
