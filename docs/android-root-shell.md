@@ -60,6 +60,14 @@ Linux/proot 的 bash 启动链路保持不变。
 - Shizuku：Root 当前不可用且已有 Shizuku 授权时，绑定专用 UserService。
   特权进程持有真实 PTY，双向普通管道通过 Binder 传给应用，避免跨身份直接访问
   devpts；调整窗口、查询退出码和结束子进程仍由特权服务处理。
+  Shizuku 服务本身以 root 启动时（如 KernelSU 授权启动，Shizuku 不降级为
+  shell），UserService 在 fork PTY 子进程后、exec 前检测 euid=0 并按 Operit1
+  `shell_identity_launcher` 的顺序降权：setgroups(shell 补充组) →
+  setgid(2000) → setuid(2000) → 尽力 setcon(`u:r:shell:s0`)。
+  setgroups/setgid/setuid 失败或最终 uid/gid 不是 2000 时以 126 退出拒绝启动，
+  绝不静默以 root 运行终端；setcon 失败仅记录日志（部分 su 域禁止
+  dyntransition），此时仍为 uid 2000。降权只作用于 Shizuku PTY，Root 传输和
+  root 模块 Core 是用户显式授权的 root，不受影响。
 - 普通 sh：两项授权均不可用时，以应用自身 UID 启动 `/system/bin/sh`。
 
 终端创建不会主动发起新的授权申请。身份在会话创建时确定，后续命令不重新路由，
@@ -93,4 +101,6 @@ JAVA_HOME=/path/to/java KOTLINC=/path/to/kotlinc \
 
 还需要在 Magisk / KernelSU / APatch 真机上验证 Root 管理器授权弹窗、拒绝后重试、
 权限撤销、截图和长时间命令超时，以及 Shizuku 的多会话、窗口调整、Ctrl-C 和服务断连；
-JVM 测试不能替代设备级兼容性验证。
+JVM 测试不能替代设备级兼容性验证。root 启动的 Shizuku（KernelSU 直接授权）还需
+真机确认终端 `id` 输出 uid=2000、`/proc/self/attr/current` 为 shell 域，以及
+降权失败时终端拒绝启动而非以 root 运行。
