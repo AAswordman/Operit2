@@ -104,7 +104,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onAttachLocation,
     required this.onAttachPackage,
     required this.onRemoveAttachment,
-    required this.onInsertAttachment,
+    required this.onPreviewAttachment,
     required this.toastMessageListenable,
     required this.onDismissToast,
     required this.isMultiSelectMode,
@@ -193,7 +193,7 @@ class ChatScreenContent extends StatelessWidget {
   final VoidCallback? onAttachLocation;
   final ValueChanged<String> onAttachPackage;
   final ValueChanged<String> onRemoveAttachment;
-  final ValueChanged<AttachmentInfo> onInsertAttachment;
+  final ValueChanged<AttachmentInfo> onPreviewAttachment;
   final ValueListenable<String?> toastMessageListenable;
   final VoidCallback onDismissToast;
   final bool isMultiSelectMode;
@@ -432,7 +432,7 @@ class ChatScreenContent extends StatelessWidget {
         onAttachLocation: onAttachLocation,
         onAttachPackage: onAttachPackage,
         onRemoveAttachment: onRemoveAttachment,
-        onInsertAttachment: onInsertAttachment,
+        onPreviewAttachment: onPreviewAttachment,
         isSpeechRecording: isSpeechRecording,
         isSpeechTranscribing: isSpeechTranscribing,
         onSpeechInput: onSpeechInput,
@@ -471,7 +471,7 @@ class ChatScreenContent extends StatelessWidget {
         onAttachLocation: onAttachLocation,
         onAttachPackage: onAttachPackage,
         onRemoveAttachment: onRemoveAttachment,
-        onInsertAttachment: onInsertAttachment,
+        onPreviewAttachment: onPreviewAttachment,
         isSpeechRecording: isSpeechRecording,
         isSpeechTranscribing: isSpeechTranscribing,
         onSpeechInput: onSpeechInput,

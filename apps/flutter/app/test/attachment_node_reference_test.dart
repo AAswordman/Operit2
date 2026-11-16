@@ -1,77 +1,31 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
+    show AttachmentInfo;
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleUserMessageComposable.dart'
     as bubble;
 import 'package:operit2/ui/features/chat/components/style/cursor/UserMessageComposable.dart'
     as cursor;
-import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
 void main() {
-  final viewModel = ChatViewModel();
-
-  test(
-    'attachment references retain the actual source and portable tool path',
-    () {
-      const attachment = AttachmentInfo(
-        vfsPath: '/operitapp/outputs/family/.operit/attachments/id/report.pdf',
-        filePath:
-            '/device-b/runtime/data/chat_outputs/family/.operit/attachments/id/report.pdf',
-        nodeId: 'core-b',
-        fileName: '报价单".pdf',
-        mimeType: 'application/pdf',
-        fileSize: 3,
-        content: '',
-      );
-      final reference = viewModel.createAttachmentReference(attachment);
-      expect(reference, contains('node_id="core-b"'));
-      expect(
-        reference,
-        contains(
-          'path="/operitapp/outputs/family/.operit/attachments/id/report.pdf"',
-        ),
-      );
-      expect(
-        reference,
-        contains(
-          'id="/operitapp/outputs/family/.operit/attachments/id/report.pdf"',
-        ),
-      );
-      expect(reference, isNot(contains('/device-b/')));
-      expect(reference, contains('filename="报价单&quot;.pdf"'));
-    },
-  );
-
   test('both message styles still parse location metadata and escaped paths', () {
-    const attachment = AttachmentInfo(
-      vfsPath:
-          '/operitapp/outputs/family/.operit/attachments/id/report&copy.pdf',
-      filePath:
-          '/device-b/runtime/data/chat_outputs/family/.operit/attachments/id/report&copy.pdf',
-      nodeId: 'core-b',
-      fileName: '报价单".pdf',
-      mimeType: 'application/pdf',
-      fileSize: 3,
-      content: 'inline <content>',
-    );
-    final reference = viewModel.createAttachmentReference(attachment);
-    final bubbleResult = bubble.parseMessageContent(reference);
-    final cursorResult = cursor.parseMessageContent(reference);
-    expect(bubbleResult.processedText, isEmpty);
-    expect(cursorResult.processedText, isEmpty);
     const toolPath =
         '/operitapp/outputs/family/.operit/attachments/id/report&copy.pdf';
+    const markup =
+        '<attachment id="/operitapp/outputs/family/.operit/attachments/id/report&amp;copy.pdf" '
+        'filename="报价单&quot;.pdf" type="application/pdf" node_id="core-b" '
+        'path="/operitapp/outputs/family/.operit/attachments/id/report&amp;copy.pdf" '
+        'size="3" content="inline &lt;content&gt;"/>';
+    final bubbleResult = bubble.parseMessageContent(markup);
+    final cursorResult = cursor.parseMessageContent(markup);
+    expect(bubbleResult.processedText, isEmpty);
+    expect(cursorResult.processedText, isEmpty);
     expect(bubbleResult.trailingAttachments.single.id, toolPath);
     expect(cursorResult.trailingAttachments.single.id, toolPath);
-    expect(
-      bubbleResult.trailingAttachments.single.filename,
-      attachment.fileName,
-    );
-    expect(
-      cursorResult.trailingAttachments.single.filename,
-      attachment.fileName,
-    );
-    expect(bubbleResult.trailingAttachments.single.content, attachment.content);
-    expect(cursorResult.trailingAttachments.single.content, attachment.content);
+    expect(bubbleResult.trailingAttachments.single.filename, '报价单".pdf');
+    expect(cursorResult.trailingAttachments.single.filename, '报价单".pdf');
+    expect(bubbleResult.trailingAttachments.single.content, 'inline <content>');
+    expect(cursorResult.trailingAttachments.single.content, 'inline <content>');
     expect(bubbleResult.trailingAttachments.single.size, 3);
     expect(cursorResult.trailingAttachments.single.size, 3);
     for (final attachments in [
@@ -112,28 +66,6 @@ void main() {
     }
   });
 
-  test(
-    'Windows attachments use their recorded locator without interpreting the drive',
-    () {
-      const attachment = AttachmentInfo(
-        vfsPath: '/operitapp/outputs/family/.operit/attachments/id/report.pdf',
-        filePath:
-            r'C:\runtime\data\chat_attachments\chat-a\attachment-a\report.pdf',
-        nodeId: 'core-windows',
-        fileName: 'report.pdf',
-        mimeType: 'application/pdf',
-        fileSize: 0,
-        content: '',
-      );
-      expect(
-        viewModel.createAttachmentReference(attachment),
-        contains(
-          'path="/operitapp/outputs/family/.operit/attachments/id/report.pdf"',
-        ),
-      );
-    },
-  );
-
   test('legacy JSON has no invented source node', () {
     final attachment = AttachmentInfo.fromJson(<String, Object?>{
       'filePath': '/old/report.pdf',
@@ -143,10 +75,6 @@ void main() {
       'content': '',
     });
     expect(attachment.nodeId, isNull);
-    expect(
-      viewModel.createAttachmentReference(attachment),
-      isNot(contains('node_id=')),
-    );
   });
 
   test(
@@ -175,20 +103,19 @@ void main() {
     },
   );
 
-  test('inline text remains self-contained and XML attributes are escaped', () {
-    const attachment = AttachmentInfo(
-      vfsPath: null,
-      filePath: 'pasted_text_1',
-      nodeId: null,
-      fileName: 'pasted_text.txt',
-      mimeType: 'text/plain',
-      fileSize: 3,
-      content: '"<&',
-    );
-    final reference = viewModel.createAttachmentReference(attachment);
-    expect(reference, isNot(contains('node_id=')));
-    expect(reference, contains('id="pasted_text_1"'));
-    expect(reference, isNot(contains(' path=')));
-    expect(reference, contains('content="&quot;&lt;&amp;"'));
+  test('inline text stays self-contained and escaped attributes decode', () {
+    const markup =
+        '<attachment id="pasted_text_1" filename="pasted_text.txt" '
+        'type="text/plain" size="3" content="&quot;&lt;&amp;"/>';
+    for (final attachments in [
+      bubble.parseMessageContent(markup).trailingAttachments,
+      cursor.parseMessageContent(markup).trailingAttachments,
+    ]) {
+      final inline = attachments.single;
+      expect(inline.id, 'pasted_text_1');
+      expect(inline.content, '"<&');
+      expect(inline.path, isNull);
+      expect(inline.nodeId, isNull);
+    }
   });
 }

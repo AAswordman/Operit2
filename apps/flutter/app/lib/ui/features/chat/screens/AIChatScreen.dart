@@ -34,6 +34,7 @@ import '../components/ChatScrollNavigator.dart'
 import '../components/ChatMessageLocatorHost.dart';
 import '../components/ChatRuntimeScope.dart';
 import '../components/MessageEditorDialog.dart';
+import '../components/attachments/AttachmentViewerDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
 import '../components/ChatMessageSlotHost.dart';
@@ -1576,23 +1577,24 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     await _refreshAttachments();
   }
 
-  void _insertAttachmentReference(AttachmentInfo attachment) {
-    final reference = _viewModel.createAttachmentReference(attachment);
-    final value = _messageController.value;
-    final text = value.text;
-    final selection = value.selection;
-    final range = selection.isValid
-        ? selection
-        : TextSelection.collapsed(offset: text.length);
-    final nextText = text.replaceRange(range.start, range.end, reference);
-    _messageController.value = TextEditingValue(
-      text: nextText,
-      selection: TextSelection.collapsed(
-        offset: range.start + reference.length,
+  void _previewAttachment(AttachmentInfo attachment) {
+    showDialog<void>(
+      context: context,
+      barrierColor: Colors.transparent,
+      builder: (dialogContext) => AttachmentViewerDialog(
+        visible: true,
+        attachment: ChatAttachment(
+          id: attachment.filePath,
+          filename: attachment.fileName,
+          mimeType: attachment.mimeType,
+          size: attachment.fileSize,
+          content: attachment.content,
+          path: attachment.vfsPath ?? attachment.filePath,
+          nodeId: attachment.nodeId,
+        ),
+        onDismiss: () => Navigator.of(dialogContext).pop(),
       ),
-      composing: TextRange.empty,
     );
-    _inputFocusNode.requestFocus();
   }
 
   void _watchToastEvent() {
@@ -2942,7 +2944,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
               return null;
             });
           },
-          onInsertAttachment: _insertAttachmentReference,
+          onPreviewAttachment: _previewAttachment,
           toastMessageListenable: _toastMessageNotifier,
           onDismissToast: _dismissToast,
         );
