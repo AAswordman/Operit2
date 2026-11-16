@@ -867,7 +867,7 @@ impl RuntimePackageManager {
 
     /// Invalidates the shared resources for one package.
     fn deleteToolPkgCacheDir(&self, packageName: &str) {
-        self.resourceReader().deleteToolPkgCacheDir(packageName);
+        let _ = self.resourceReader().deleteToolPkgCacheDir(packageName);
     }
 
     /// Ensures resources exist for synchronous package installation operations.
@@ -3021,6 +3021,7 @@ impl RuntimePackageManager {
         Ok(())
     }
 
+    /// Registers scanned declarations after applying the canonical ownership checks.
     #[allow(non_snake_case)]
     fn registerToolPkgInto(
         loadResult: ToolPkgLoadResult,
@@ -3028,17 +3029,13 @@ impl RuntimePackageManager {
         toolPkgContainersTarget: &mut BTreeMap<String, ToolPkgContainerRuntime>,
         toolPkgSubpackageByPackageNameTarget: &mut BTreeMap<String, ToolPkgSubpackageRuntime>,
     ) -> bool {
+        if !ToolPkgManager::canRegisterToolPkgInRegistry(
+            &loadResult, availablePackagesTarget, toolPkgContainersTarget,
+            toolPkgSubpackageByPackageNameTarget, None,
+        ) {
+            return false;
+        }
         let containerName = loadResult.containerPackage.name.clone();
-        if availablePackagesTarget.contains_key(&containerName) {
-            return false;
-        }
-        if loadResult
-            .subpackagePackages
-            .iter()
-            .any(|subpackage| availablePackagesTarget.contains_key(&subpackage.name))
-        {
-            return false;
-        }
         availablePackagesTarget.insert(containerName.clone(), loadResult.containerPackage);
         toolPkgContainersTarget.insert(containerName, loadResult.containerRuntime.clone());
         for subpackage in loadResult.subpackagePackages {
@@ -3523,10 +3520,7 @@ impl RuntimePackageManager {
         if matching.len() != 1 {
             return Err(format!("Extension ownership conflict: package:{id}"));
         }
-        let record = store.record("package", id)?;
-        if record.settings["builtin"] == true || record.settings["customized"] == true {
-            return Ok(None);
-        }
+        let record = record.clone();
         let runtime = self.getToolPkgContainerRuntime(id)
             .ok_or_else(|| format!("Installed ToolPkg container is unavailable: {id}"))?;
         if id.is_empty() || id != id.trim() || runtime.packageName != id
@@ -3661,11 +3655,10 @@ impl RuntimePackageManager {
         }
     }
 
-    /// Revokes old declarations and cached resources before rebuilding the canonical catalog.
-    fn reloadLocalToolPkgUpdate(&mut self, target: &LocalToolPkgUpdateTarget) -> Result<(), String> {
-        self.toolPkgManagerMut().removeToolPkgContainer(&target.record.id);
-        Arc::make_mut(&mut self.externalPackageScanCache).remove(&vfsPathString(&target.archive));
-        self.resourceReader().deleteToolPkgCacheDirChecked(&target.record.id)?;
+    /// Refreshes imported code through canonical registry publication and engine retirement.
+    fn reloadImportedToolPkg(&mut self, packageName: &str, sourcePath: &str) -> Result<(), String> {
+        Arc::make_mut(&mut self.externalPackageScanCache).remove(sourcePath);
+        self.resourceReader().deleteToolPkgCacheDir(packageName)?;
         self.loadAvailablePackagesInternal(false)
     }
 
@@ -3731,10 +3724,7 @@ impl RuntimePackageManager {
             Ok(_) => errors.push("restored installation record differs from its backup".into()),
             Err(error) => errors.push(format!("reading restored installation record failed: {error}")),
         }
-        if let Err(error) = self.writeScopeSettings(&target.record.id, target.record.settings.clone()) {
-            errors.push(format!("restoring settings failed: {error}"));
-        }
-        if let Err(error) = self.reloadLocalToolPkgUpdate(target) {
+        if let Err(error) = self.reloadImportedToolPkg(&target.record.id, &vfsPathString(&target.archive)) {
             errors.push(format!("reloading previous ToolPkg failed: {error}"));
         }
         if let Err(error) = self.validateLocalToolPkgReload(&target.runtime, &target.record, archive) {
@@ -3779,7 +3769,8 @@ impl RuntimePackageManager {
         let mut mutationStarted = false;
         let outcome = (|| -> Result<(), String> {
             self.filesystem.writeFileBytes(&vfsPathString(&staging), bytes)?;
-            self.loadLocalToolPkgUpdate(&staging, bytes, &target)?;
+            let mut loaded = self.loadLocalToolPkgUpdate(&staging, bytes, &target)?;
+            loaded.containerRuntime.sourcePath = vfsPathString(&target.archive);
             self.filesystem.writeFileBytes(&vfsPathString(&backup), &previous)?;
             self.filesystem.writeFileBytes(&vfsPathString(&recordBackup), &descriptor)?;
             if self.filesystem.readFileBytes(&vfsPathString(&backup))? != previous
@@ -3797,16 +3788,15 @@ impl RuntimePackageManager {
                 self.filesystem.deleteFile(&vfsPathString(&target.archive), false)?;
                 self.filesystem.moveFile(&vfsPathString(&staging), &vfsPathString(&target.archive))?;
             }
-            let loaded = self.loadLocalToolPkgUpdate(&target.archive, bytes, &target)?;
             if ExtensionStore::default().record("package", &target.record.id)? != target.record {
                 return Err("ToolPkg installation ownership changed during replacement".into());
             }
             let settings = Self::mergeLocalToolPkgUpdateSettings(
                 &target.record, &target.runtime, &loaded.containerRuntime,
             )?;
-            // The scan notifies listeners; new children must already have explicit false states.
+            // Persist member states before scanning, then notify only after validation succeeds.
             self.writeScopeSettings(&target.record.id, settings.clone())?;
-            self.reloadLocalToolPkgUpdate(&target)?;
+            self.reloadImportedToolPkg(&target.record.id, &vfsPathString(&target.archive))?;
             let mut expectedRecord = target.record.clone();
             expectedRecord.settings = settings;
             self.validateLocalToolPkgReload(&loaded.containerRuntime, &expectedRecord, bytes)?;
@@ -3842,11 +3832,7 @@ impl RuntimePackageManager {
 
     /// Resolves an archive's installation scope before executing registration code.
     fn importedToolPkgScope(&self, bytes: &[u8]) -> Result<ToolPkgConfigScope, String> {
-        let mut archive =
-            zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|error| error.to_string())?;
-        let index = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
-        let preview = ToolPkgArchiveParser::readToolPkgManifestPreview(&mut archive, &index)
-            .ok_or("ToolPkg manifest is missing or invalid")?;
+        let preview = Self::readToolPkgImportManifest(bytes)?;
         if let Some(runtime) = self.getToolPkgContainerRuntime(&preview.manifest.toolpkgId) {
             if matches!(runtime.sourceType, ToolPkgSourceType::MARKET | ToolPkgSourceType::EXTERNAL) {
                 return self.installedPackageConfigScope(Path::new(&runtime.sourcePath));
@@ -3885,7 +3871,7 @@ impl RuntimePackageManager {
         Ok(Some(existing))
     }
 
-    /// Checks package names with the replaced built-in container removed from the candidate registry.
+    /// Applies canonical ownership checks to fresh imports and authorized replacements.
     fn canImportToolPkg(&self, loadResult: &ToolPkgLoadResult) -> Result<bool, String> {
         let marketUpdate = self.marketToolPkgUpdateRuntime(loadResult)?.is_some();
         if !marketUpdate && self
@@ -3896,25 +3882,12 @@ impl RuntimePackageManager {
                 .toolPkgManager()
                 .canRegisterToolPkg(loadResult, self.availablePackages()));
         }
-        Ok(Self::canReplaceToolPkgRegistration(
-            loadResult, self.availablePackages().clone(),
-            self.toolPkgManager().getToolPkgContainerRuntimeMap(),
-            self.toolPkgManager().getToolPkgSubpackageRuntimeMap(),
+        Ok(ToolPkgManager::canRegisterToolPkgInRegistry(
+            loadResult, self.availablePackages(),
+            &self.toolPkgManager().getToolPkgContainerRuntimeMap(),
+            &self.toolPkgManager().getToolPkgSubpackageRuntimeMap(),
+            Some(&loadResult.containerPackage.name),
         ))
-    }
-
-    /// Validate a replacement on snapshots so unrelated conflicts never remove live packages.
-    fn canReplaceToolPkgRegistration(
-        loadResult: &ToolPkgLoadResult,
-        mut packages: BTreeMap<String, ToolPackage>,
-        mut containers: BTreeMap<String, ToolPkgContainerRuntime>,
-        mut subpackages: BTreeMap<String, ToolPkgSubpackageRuntime>,
-    ) -> bool {
-        Self::removeToolPkgContainerFromTargets(
-            &loadResult.containerPackage.name, &mut packages, &mut containers, &mut subpackages,
-        );
-        packages.remove(&loadResult.containerPackage.name);
-        Self::registerToolPkgInto(loadResult.clone(), &mut packages, &mut containers, &mut subpackages)
     }
 
     /// Registers an imported archive or switches its built-in owner to the custom source.
@@ -3924,8 +3897,8 @@ impl RuntimePackageManager {
             // Market updates replace the owned archive in place. Keep the scope,
             // configuration, enabled state and record's source filename intact.
             let path = loadResult.containerRuntime.sourcePath.clone();
-            Arc::make_mut(&mut self.externalPackageScanCache).remove(&path);
-            self.loadAvailablePackages();
+            self.reloadImportedToolPkg(&name, &path)?;
+            self.notifyToolPkgRuntimeChangeListeners();
             return Ok(self.getToolPkgContainerRuntime(&name).is_some_and(|runtime|
                 runtime.sourcePath == path && runtime.version == loadResult.containerRuntime.version
                     && runtime.marketOrigin == loadResult.containerRuntime.marketOrigin));
@@ -3949,8 +3922,8 @@ impl RuntimePackageManager {
         self.saveEnabledPackageNames(&enabledNames)
             .map_err(|error| error.to_string())?;
         ExtensionStore::default().customizePackage(&name, &source, members)?;
-        Arc::make_mut(&mut self.externalPackageScanCache).remove(&path);
-        self.loadAvailablePackages();
+        self.reloadImportedToolPkg(&name, &path)?;
+        self.notifyToolPkgRuntimeChangeListeners();
         Ok(self
             .getToolPkgContainerRuntime(&name)
             .is_some_and(|runtime| runtime.sourcePath == path))
@@ -5901,11 +5874,15 @@ mod package_registration_tests {
         let mut children = BTreeMap::new();
         assert!(RuntimePackageManager::registerToolPkgInto(old, &mut packages, &mut containers, &mut children));
         assert!(!RuntimePackageManager::registerToolPkgInto(mut_update.clone(), &mut packages, &mut containers, &mut children));
-        assert!(RuntimePackageManager::canReplaceToolPkgRegistration(&mut_update, packages.clone(), containers.clone(), children.clone()));
+        assert!(ToolPkgManager::canRegisterToolPkgInRegistry(
+            &mut_update, &packages, &containers, &children, Some("dev.test.plugin"),
+        ));
         packages.insert("other".into(), ToolPackage { name: "other".into(), ..Default::default() });
         let mut collision = mut_update;
         collision.subpackagePackages.push(ToolPackage { name: "other".into(), ..Default::default() });
-        assert!(!RuntimePackageManager::canReplaceToolPkgRegistration(&collision, packages.clone(), containers.clone(), children));
+        assert!(!ToolPkgManager::canRegisterToolPkgInRegistry(
+            &collision, &packages, &containers, &children, Some("dev.test.plugin"),
+        ));
         assert_eq!(containers["dev.test.plugin"].version, "1");
         assert!(packages.contains_key("other"));
     }

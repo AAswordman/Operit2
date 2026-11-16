@@ -225,7 +225,6 @@ impl ToolPkgManager {
         loadResult: &ToolPkgLoadResult,
         availablePackages: &BTreeMap<String, ToolPackage>,
     ) -> bool {
-        let containerName = loadResult.containerPackage.name.trim();
         let containers = self
             .containers
             .read()
@@ -234,26 +233,10 @@ impl ToolPkgManager {
             .subpackageByPackageName
             .read()
             .expect("toolpkg subpackage runtime lock poisoned");
-        if containerName.is_empty()
-            || containers.contains_key(containerName)
-            || availablePackages.contains_key(containerName)
-        {
-            return false;
-        }
-        for subpackage in &loadResult.subpackagePackages {
-            let packageName = subpackage.name.trim();
-            if packageName.is_empty()
-                || containers.contains_key(packageName)
-                || availablePackages.contains_key(packageName)
-                || subpackages.contains_key(packageName)
-            {
-                return false;
-            }
-        }
-        true
+        Self::canRegisterToolPkgInRegistry(loadResult, availablePackages, &containers, &subpackages, None)
     }
 
-    /// Validates a replacement without changing the live registry or first-install rules.
+    /// Validates an existing container replacement without changing the live registry.
     #[allow(non_snake_case)]
     pub fn canRegisterToolPkgReplacing(
         &self,
@@ -261,19 +244,37 @@ impl ToolPkgManager {
         loadResult: &ToolPkgLoadResult,
         availablePackages: &BTreeMap<String, ToolPackage>,
     ) -> bool {
+        let containers = self.containers.read().expect("toolpkg container runtime lock poisoned");
+        let subpackages = self.subpackageByPackageName
+            .read().expect("toolpkg subpackage runtime lock poisoned");
+        containers.contains_key(oldContainerName) && Self::canRegisterToolPkgInRegistry(
+            loadResult, availablePackages, &containers, &subpackages, Some(oldContainerName),
+        )
+    }
+
+    /// Checks installs, replacements and scans against the same immutable ownership rules.
+    #[allow(non_snake_case)]
+    pub fn canRegisterToolPkgInRegistry(
+        loadResult: &ToolPkgLoadResult,
+        availablePackages: &BTreeMap<String, ToolPackage>,
+        containers: &BTreeMap<String, ToolPkgContainerRuntime>,
+        subpackages: &BTreeMap<String, ToolPkgSubpackageRuntime>,
+        replacing: Option<&str>,
+    ) -> bool {
         let canonicalName = |name: &str| {
             !name.is_empty() && name == name.trim() && !name.chars().any(char::is_control)
         };
-        if !canonicalName(oldContainerName)
-            || loadResult.containerPackage.name != oldContainerName
-            || loadResult.containerRuntime.packageName != oldContainerName
+        let containerName = loadResult.containerPackage.name.as_str();
+        if !canonicalName(containerName)
+            || loadResult.containerRuntime.packageName != containerName
+            || replacing.is_some_and(|name| name != containerName)
         {
             return false;
         }
         let mut packageNames = BTreeSet::new();
         for package in &loadResult.subpackagePackages {
             let name = package.name.as_str();
-            if !canonicalName(name) || name == oldContainerName || !packageNames.insert(name) {
+            if !canonicalName(name) || name == containerName || !packageNames.insert(name) {
                 return false;
             }
         }
@@ -281,7 +282,7 @@ impl ToolPkgManager {
         for runtime in &loadResult.containerRuntime.subpackages {
             let name = runtime.packageName.as_str();
             if !canonicalName(name)
-                || runtime.containerPackageName != oldContainerName
+                || runtime.containerPackageName != containerName
                 || !runtimeNames.insert(name)
             {
                 return false;
@@ -290,40 +291,30 @@ impl ToolPkgManager {
         if packageNames != runtimeNames {
             return false;
         }
-        let containers = self.containers.read().expect("toolpkg container runtime lock poisoned");
-        let subpackages = self.subpackageByPackageName
-            .read().expect("toolpkg subpackage runtime lock poisoned");
-        let Some(oldContainer) = containers.get(oldContainerName) else {
-            return false;
-        };
-        if oldContainer.packageName != oldContainerName
-            || subpackages.contains_key(oldContainerName)
-            || availablePackages.get(oldContainerName)
-                .is_some_and(|package| package.name != oldContainerName)
+        if subpackages.contains_key(containerName)
+            || (replacing.is_none() && (containers.contains_key(containerName)
+                || availablePackages.contains_key(containerName)))
+            || availablePackages.get(containerName)
+                .is_some_and(|package| package.name != containerName)
         {
             return false;
         }
-        // Removal visits every old declaration, including children absent from the replacement.
-        if oldContainer.subpackages.iter().any(|child| {
-            !canonicalName(&child.packageName)
-                || child.containerPackageName != oldContainerName
-                || !subpackages.get(&child.packageName).is_some_and(|mapped| {
-                    mapped.packageName == child.packageName
-                        && mapped.containerPackageName == oldContainerName
-                })
-        }) {
+        let oldContainer = replacing.and_then(|name| containers.get(name));
+        // Removed children must still belong to the installation being replaced.
+        if oldContainer.is_some_and(|old| old.packageName != containerName || old.subpackages.iter().any(|child| {
+            !canonicalName(&child.packageName) || child.containerPackageName != containerName
+                || !subpackages.get(&child.packageName).is_some_and(|mapped|
+                    mapped.packageName == child.packageName && mapped.containerPackageName == containerName)
+                || containers.contains_key(&child.packageName)
+                || availablePackages.get(&child.packageName).is_some_and(|package| package.name != child.packageName)
+        })) {
             return false;
         }
-        let oldChildNames: BTreeSet<_> = oldContainer.subpackages.iter()
-            .filter(|child| child.containerPackageName == oldContainerName)
+        let oldChildNames: BTreeSet<_> = oldContainer.into_iter().flat_map(|old| &old.subpackages)
             .map(|child| child.packageName.as_str())
             .collect();
         for name in packageNames {
-            // Both declarations and the reverse map must prove the old owner.
-            let ownsPreviousChild = oldChildNames.contains(name)
-                && subpackages.get(name).is_some_and(|child| {
-                    child.packageName == name && child.containerPackageName == oldContainerName
-                });
+            let ownsPreviousChild = oldChildNames.contains(name);
             if containers.contains_key(name)
                 || (subpackages.contains_key(name) && !ownsPreviousChild)
                 || (availablePackages.contains_key(name) && !ownsPreviousChild)

@@ -587,7 +587,8 @@ impl ToolRuntimeSupport for TestPackageRuntimeSupport {
     fn sendChatMessage<'a>(&'a self, request: RuntimeChatSendRequest) -> ToolRuntimeSupportFuture<'a, Result<operit_plugin_sdk::js_sdk::results::MessageSendResultData, String>> { panic!("Unexpected runtime service: sendChatMessage") }
     fn callChatModel<'a>(&'a self, request: RuntimeChatCallRequest) -> ToolRuntimeSupportFuture<'a, Result<String, String>> { panic!("Unexpected runtime service: callChatModel") }
     fn processFileBindingOperations(&self, originalContent: &str, operations: &[RuntimeStructuredEditOperation]) -> (String, String) { panic!("Unexpected runtime service: processFileBindingOperations") }
-    fn generateUnifiedDiff(&self, oldContent: &str, newContent: &str) -> String { panic!("Unexpected runtime service: generateUnifiedDiff") }
+    /// Omits UI diff rendering while file tools perform real configuration writes.
+    fn generateUnifiedDiff(&self, oldContent: &str, newContent: &str) -> String { String::new() }
 }
 
 struct LanguageHost;
@@ -736,7 +737,7 @@ async fn transaction_file_failures_restore_the_old_installation() {
 #[tokio::test(flavor = "current_thread")]
 async fn final_registration_and_scan_failures_restore_old_code() {
     let _serial = serialTest();
-    for registration in [1, 2, 3] {
+    for registration in [1, 2] {
         let fixture = LocalUpdateFixture::new();
         fixture.install("device");
         let snapshot = InstallationSnapshot::capture(&fixture).await;

@@ -67,34 +67,24 @@ impl ToolPkgResourceReader {
 
     /// Invalidates text snapshots and removes extracted resources.
     #[allow(non_snake_case)]
-    pub(super) fn deleteToolPkgCacheDir(&self, packageName: &str) {
+    pub(super) fn deleteToolPkgCacheDir(&self, packageName: &str) -> Result<(), String> {
         self.toolPkgTextResourceCache.invalidate(packageName);
         let _guard = self
             .toolPkgCacheLock
             .lock()
-            .expect("toolpkg cache mutex poisoned");
-        self.deleteToolPkgCacheDirLocked(packageName);
-    }
-
-    /// Requires extracted-resource invalidation to succeed before committing an update.
-    #[allow(non_snake_case)]
-    pub(super) fn deleteToolPkgCacheDirChecked(&self, packageName: &str) -> Result<(), String> {
-        self.toolPkgTextResourceCache.invalidate(packageName);
-        let _guard = self.toolPkgCacheLock.lock().map_err(|error| error.to_string())?;
-        let directory = self.storePaths.toolpkg_cache_dir()
-            .join(Self::toolPkgCacheDirName(packageName));
-        let path = vfsPathString(&directory);
-        if self.filesystem.fileExists(&path)?.exists {
-            self.filesystem.deleteFile(&path, true)?;
-        }
-        Ok(())
+            .map_err(|error| error.to_string())?;
+        self.deleteToolPkgCacheDirLocked(packageName)
     }
 
     /// Removes extracted resources while the cache lock is held.
     #[allow(non_snake_case)]
-    fn deleteToolPkgCacheDirLocked(&self, packageName: &str) {
-        let dir = self.toolPkgCacheDir(packageName);
-        let _ = self.filesystem.deleteFile(&vfsPathString(&dir), true);
+    fn deleteToolPkgCacheDirLocked(&self, packageName: &str) -> Result<(), String> {
+        let path = vfsPathString(&self.storePaths.toolpkg_cache_dir()
+            .join(Self::toolPkgCacheDirName(packageName)));
+        if self.filesystem.fileExists(&path)?.exists {
+            self.filesystem.deleteFile(&path, true)?;
+        }
+        Ok(())
     }
 
     /// Validates or extracts a package revision under the shared cache lock.
@@ -140,7 +130,7 @@ impl ToolPkgResourceReader {
             return Some(cacheDir);
         }
 
-        self.deleteToolPkgCacheDirLocked(packageName);
+        self.deleteToolPkgCacheDirLocked(packageName).ok()?;
         if self
             .filesystem
             .makeDirectory(&vfsPathString(&cacheDir), true)
@@ -149,7 +139,7 @@ impl ToolPkgResourceReader {
             return None;
         }
         if !extractArchive(&cacheDir) {
-            self.deleteToolPkgCacheDirLocked(packageName);
+            let _ = self.deleteToolPkgCacheDirLocked(packageName);
             return None;
         }
         if self
@@ -157,7 +147,7 @@ impl ToolPkgResourceReader {
             .writeFile(&vfsPathString(&signatureFile), signature, false)
             .is_err()
         {
-            self.deleteToolPkgCacheDirLocked(packageName);
+            let _ = self.deleteToolPkgCacheDirLocked(packageName);
             return None;
         }
         Some(cacheDir)
