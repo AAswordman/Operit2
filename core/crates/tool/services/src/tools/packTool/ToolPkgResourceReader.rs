@@ -76,6 +76,20 @@ impl ToolPkgResourceReader {
         self.deleteToolPkgCacheDirLocked(packageName);
     }
 
+    /// Requires extracted-resource invalidation to succeed before committing an update.
+    #[allow(non_snake_case)]
+    pub(super) fn deleteToolPkgCacheDirChecked(&self, packageName: &str) -> Result<(), String> {
+        self.toolPkgTextResourceCache.invalidate(packageName);
+        let _guard = self.toolPkgCacheLock.lock().map_err(|error| error.to_string())?;
+        let directory = self.storePaths.toolpkg_cache_dir()
+            .join(Self::toolPkgCacheDirName(packageName));
+        let path = vfsPathString(&directory);
+        if self.filesystem.fileExists(&path)?.exists {
+            self.filesystem.deleteFile(&path, true)?;
+        }
+        Ok(())
+    }
+
     /// Removes extracted resources while the cache lock is held.
     #[allow(non_snake_case)]
     fn deleteToolPkgCacheDirLocked(&self, packageName: &str) {

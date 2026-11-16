@@ -253,6 +253,88 @@ impl ToolPkgManager {
         true
     }
 
+    /// Validates a replacement without changing the live registry or first-install rules.
+    #[allow(non_snake_case)]
+    pub fn canRegisterToolPkgReplacing(
+        &self,
+        oldContainerName: &str,
+        loadResult: &ToolPkgLoadResult,
+        availablePackages: &BTreeMap<String, ToolPackage>,
+    ) -> bool {
+        let canonicalName = |name: &str| {
+            !name.is_empty() && name == name.trim() && !name.chars().any(char::is_control)
+        };
+        if !canonicalName(oldContainerName)
+            || loadResult.containerPackage.name != oldContainerName
+            || loadResult.containerRuntime.packageName != oldContainerName
+        {
+            return false;
+        }
+        let mut packageNames = BTreeSet::new();
+        for package in &loadResult.subpackagePackages {
+            let name = package.name.as_str();
+            if !canonicalName(name) || name == oldContainerName || !packageNames.insert(name) {
+                return false;
+            }
+        }
+        let mut runtimeNames = BTreeSet::new();
+        for runtime in &loadResult.containerRuntime.subpackages {
+            let name = runtime.packageName.as_str();
+            if !canonicalName(name)
+                || runtime.containerPackageName != oldContainerName
+                || !runtimeNames.insert(name)
+            {
+                return false;
+            }
+        }
+        if packageNames != runtimeNames {
+            return false;
+        }
+        let containers = self.containers.read().expect("toolpkg container runtime lock poisoned");
+        let subpackages = self.subpackageByPackageName
+            .read().expect("toolpkg subpackage runtime lock poisoned");
+        let Some(oldContainer) = containers.get(oldContainerName) else {
+            return false;
+        };
+        if oldContainer.packageName != oldContainerName
+            || subpackages.contains_key(oldContainerName)
+            || availablePackages.get(oldContainerName)
+                .is_some_and(|package| package.name != oldContainerName)
+        {
+            return false;
+        }
+        // Removal visits every old declaration, including children absent from the replacement.
+        if oldContainer.subpackages.iter().any(|child| {
+            !canonicalName(&child.packageName)
+                || child.containerPackageName != oldContainerName
+                || !subpackages.get(&child.packageName).is_some_and(|mapped| {
+                    mapped.packageName == child.packageName
+                        && mapped.containerPackageName == oldContainerName
+                })
+        }) {
+            return false;
+        }
+        let oldChildNames: BTreeSet<_> = oldContainer.subpackages.iter()
+            .filter(|child| child.containerPackageName == oldContainerName)
+            .map(|child| child.packageName.as_str())
+            .collect();
+        for name in packageNames {
+            // Both declarations and the reverse map must prove the old owner.
+            let ownsPreviousChild = oldChildNames.contains(name)
+                && subpackages.get(name).is_some_and(|child| {
+                    child.packageName == name && child.containerPackageName == oldContainerName
+                });
+            if containers.contains_key(name)
+                || (subpackages.contains_key(name) && !ownsPreviousChild)
+                || (availablePackages.contains_key(name) && !ownsPreviousChild)
+                || availablePackages.get(name).is_some_and(|package| package.name != name)
+            {
+                return false;
+            }
+        }
+        true
+    }
+
     /// Registers a loaded ToolPkg and returns its executable subpackages.
     #[allow(non_snake_case)]
     pub fn registerToolPkg(&mut self, loadResult: ToolPkgLoadResult) -> Vec<ToolPackage> {
@@ -1568,6 +1650,170 @@ mod tests {
             });
         }
         (manager, factory)
+    }
+
+    fn replacement_load_result(container_name: &str, child_names: &[&str]) -> ToolPkgLoadResult {
+        ToolPkgLoadResult {
+            containerPackage: ToolPackage { name: container_name.into(), ..Default::default() },
+            subpackagePackages: child_names.iter().map(|name| ToolPackage {
+                name: (*name).into(), ..Default::default()
+            }).collect(),
+            containerRuntime: ToolPkgContainerRuntime {
+                packageName: container_name.into(),
+                mainEntry: "dist/main.js".into(),
+                subpackages: child_names.iter().map(|name| ToolPkgSubpackageRuntime {
+                    packageName: (*name).into(),
+                    containerPackageName: container_name.into(),
+                    subpackageId: (*name).into(),
+                    ..Default::default()
+                }).collect(),
+                ..Default::default()
+            },
+            ..Default::default()
+        }
+    }
+
+    fn replacement_validation_fixture() -> (ToolPkgManager, BTreeMap<String, ToolPackage>) {
+        let (mut manager, _) = recordingManager();
+        let mut packages = BTreeMap::new();
+        for loaded in [
+            replacement_load_result("package_a", &["own_child", "removed_child"]),
+            replacement_load_result("package_b", &["foreign_child"]),
+        ] {
+            packages.insert(loaded.containerPackage.name.clone(), loaded.containerPackage.clone());
+            for child in &loaded.subpackagePackages {
+                packages.insert(child.name.clone(), child.clone());
+            }
+            manager.registerToolPkg(loaded);
+        }
+        packages.insert("standalone".into(), ToolPackage {
+            name: "standalone".into(), ..Default::default()
+        });
+        (manager, packages)
+    }
+
+    fn replacement_registry_snapshot(manager: &ToolPkgManager) -> Value {
+        serde_json::json!({
+            "containers": manager.getToolPkgContainerRuntimeMap(),
+            "subpackages": manager.getToolPkgSubpackageRuntimeMap(),
+            "revisions": manager.runtimeRevisions.read().unwrap().clone(),
+        })
+    }
+
+    #[test]
+    fn replace_validation_allows_only_its_own_container_and_children() {
+        let (manager, packages) = replacement_validation_fixture();
+        let before = replacement_registry_snapshot(&manager);
+        for children in [&["own_child", "new_child"][..], &[][..]] {
+            let replacement = replacement_load_result("package_a", children);
+            assert!(manager.canRegisterToolPkgReplacing("package_a", &replacement, &packages));
+            assert!(!manager.canRegisterToolPkg(&replacement, &packages));
+        }
+        assert_eq!(replacement_registry_snapshot(&manager), before);
+    }
+
+    #[test]
+    fn replace_validation_rejects_other_containers_standalone_and_children() {
+        let (manager, packages) = replacement_validation_fixture();
+        let before = replacement_registry_snapshot(&manager);
+        for name in ["package_b", "standalone", "foreign_child"] {
+            let replacement = replacement_load_result("package_a", &["own_child", name]);
+            let mut available = packages.clone();
+            if name != "standalone" {
+                // Runtime ownership must reject these names even without an available entry.
+                available.remove(name);
+            }
+            assert!(!manager.canRegisterToolPkgReplacing("package_a", &replacement, &available));
+        }
+        let replacement = replacement_load_result("package_b", &[]);
+        assert!(!manager.canRegisterToolPkgReplacing("package_a", &replacement, &packages));
+        assert!(!manager.canRegisterToolPkgReplacing(
+            "missing", &replacement_load_result("missing", &[]), &packages,
+        ));
+        assert_eq!(replacement_registry_snapshot(&manager), before);
+
+        manager.subpackageByPackageName.write().unwrap()
+            .get_mut("own_child").unwrap().containerPackageName = "package_b".into();
+        let before = replacement_registry_snapshot(&manager);
+        let replacement = replacement_load_result("package_a", &["own_child"]);
+        assert!(!manager.canRegisterToolPkgReplacing("package_a", &replacement, &packages));
+        assert_eq!(replacement_registry_snapshot(&manager), before);
+    }
+
+    #[test]
+    fn replace_validation_checks_ownership_of_removed_children() {
+        for missing in [false, true] {
+            let (manager, packages) = replacement_validation_fixture();
+            {
+                let mut children = manager.subpackageByPackageName.write().unwrap();
+                if missing {
+                    children.remove("removed_child");
+                } else {
+                    children.get_mut("removed_child").unwrap().containerPackageName = "package_b".into();
+                }
+            }
+            let before = replacement_registry_snapshot(&manager);
+            for children in [&["own_child"][..], &[][..]] {
+                let replacement = replacement_load_result("package_a", children);
+                assert!(!manager.canRegisterToolPkgReplacing("package_a", &replacement, &packages));
+                assert_eq!(replacement_registry_snapshot(&manager), before);
+            }
+        }
+    }
+
+    #[test]
+    fn replace_validation_rejects_invalid_or_duplicate_member_names() {
+        let (manager, packages) = replacement_validation_fixture();
+        let before = replacement_registry_snapshot(&manager);
+        for name in ["", " ", " child", "child ", "child\nname", "package_a"] {
+            let replacement = replacement_load_result("package_a", &[name]);
+            assert!(!manager.canRegisterToolPkgReplacing("package_a", &replacement, &packages));
+        }
+        let duplicate = replacement_load_result("package_a", &["own_child", "own_child"]);
+        assert!(!manager.canRegisterToolPkgReplacing("package_a", &duplicate, &packages));
+
+        let valid = replacement_load_result("package_a", &["own_child"]);
+        let mut missing_runtime = valid.clone();
+        missing_runtime.containerRuntime.subpackages.clear();
+        let mut duplicate_runtime = valid.clone();
+        duplicate_runtime.containerRuntime.subpackages.push(valid.containerRuntime.subpackages[0].clone());
+        let mut foreign_owner = valid.clone();
+        foreign_owner.containerRuntime.subpackages[0].containerPackageName = "package_b".into();
+        let mut different_runtime_name = valid.clone();
+        different_runtime_name.containerRuntime.subpackages[0].packageName = "another_child".into();
+        let mut different_container = valid.clone();
+        different_container.containerRuntime.packageName = "package_b".into();
+        for invalid in [missing_runtime, duplicate_runtime, foreign_owner, different_runtime_name, different_container] {
+            assert!(!manager.canRegisterToolPkgReplacing("package_a", &invalid, &packages));
+        }
+        assert!(!manager.canRegisterToolPkgReplacing(" package_a", &valid, &packages));
+        assert_eq!(replacement_registry_snapshot(&manager), before);
+    }
+
+    #[test]
+    fn explicit_container_removal_revokes_active_contexts() {
+        let (mut manager, factory) = recordingManager();
+        let (_, main_lease) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+        let (_, page_lease) = manager.leaseToolPkgExecutionEngine("sidebar", "package_a").unwrap();
+        let (other, other_lease) = manager.leaseToolPkgMainExecutionEngine("package_b").unwrap();
+        let old_runtime = manager.removeToolPkgContainer("package_a").unwrap();
+        assert!(factory.engines.lock().unwrap()[0].destroyed.load(Ordering::Acquire));
+        assert!(factory.engines.lock().unwrap()[1].destroyed.load(Ordering::Acquire));
+        assert!(manager.findToolPkgExecutionEngine("toolpkg_main:package_a", "package_a").is_none());
+        assert!(Arc::ptr_eq(&other, &manager.findToolPkgExecutionEngine("toolpkg_main:package_b", "package_b").unwrap()));
+        manager.registerToolPkg(ToolPkgLoadResult {
+            containerPackage: ToolPackage { name: "package_a".into(), ..Default::default() },
+            containerRuntime: old_runtime,
+            ..Default::default()
+        });
+        let (replacement, replacement_lease) = manager.leaseToolPkgMainExecutionEngine("package_a").unwrap();
+        drop(main_lease);
+        drop(page_lease);
+        assert!(Arc::ptr_eq(&replacement, &manager.findToolPkgExecutionEngine("toolpkg_main:package_a", "package_a").unwrap()));
+        assert!(!factory.engines.lock().unwrap()[3].destroyed.load(Ordering::Acquire));
+        assert!(!factory.engines.lock().unwrap()[2].destroyed.load(Ordering::Acquire));
+        drop(replacement_lease);
+        drop(other_lease);
     }
 
     /// Creates a registered dependency graph without requiring archive files.
