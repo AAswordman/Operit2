@@ -3369,6 +3369,8 @@ pub mod UiAutomation;
 pub enum ApplicationUpdateTransform {
     ExpandMsiCabinets { recipe: Vec<u8> },
     RestoreMsiCabinets,
+    ExpandApkEntries { recipe: Vec<u8> },
+    RestoreApkEntries,
 }
 
 pub trait SystemOperationHost: Send + Sync {

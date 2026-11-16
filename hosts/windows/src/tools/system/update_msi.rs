@@ -342,6 +342,7 @@ pub(super) fn transform(
         ApplicationUpdateTransform::RestoreMsiCabinets => {
             encode(source, output.as_file_mut(), work.path(), control)?
         }
+        _ => return Err(io::Error::new(io::ErrorKind::Unsupported, "Unsupported Windows installer transform")),
     }
     active(control)?;
     output.as_file_mut().flush()?;

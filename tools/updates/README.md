@@ -11,6 +11,16 @@ compressed result. Precise matching has a 2 GiB estimated builder memory limit; 
 installers use streaming matching. Both run single-threaded for reproducible output.
 Every published patch is reconstructed and SHA-256 verified before release publication.
 
+APK releases use schema 4 and the `O2PATCH4\0` envelope. The generator expands changed
+DEFLATE entries before matching native libraries and DEX bytes. Unchanged compressed
+entries, APK signatures, local headers, padding and the central directory remain in the
+original shell. The Android Host restores the exact raw DEFLATE streams using standard
+zlib level 6. Both expanded and original package sizes and SHA-256 digests are checked;
+unsupported compression is rejected. APK generation never uses whole-archive binary
+matching. Preview.38 includes this decoder so subsequent releases can publish APK-aware
+patches. The one-time Preview.37 → Preview.38 transition still requires the older format
+understood by Preview.37; its temporary generator is removed after that release is prepared.
+
 The shared client can apply a direct patch or a chain such as `.36 → .37 → .38 → .39`.
 It follows the target manifest's published base versions into historical Releases in
 `Operit2-nightly`, authenticates each manifest against its GitHub asset digest, and matches
@@ -53,7 +63,8 @@ original LZX streams. It restores original sectors, installer metadata and signe
 All tools run invisibly with literal arguments. Cancellation kills and reaps the cabinet
 process. Cabinet layout and final installer SHA-256 must match; no alternative package is
 substituted. Current support covers non-spanning, unreserved LZX cabinets (15–21 bit
-windows), as produced by our WiX configuration. Other platforms retain residual deltas.
+windows), as produced by our WiX configuration. APK uses the entry-aware format described
+above; other archive formats retain residual deltas.
 
 For the original Preview.36 → .37 MSI pair (target 123,536,583 bytes):
 

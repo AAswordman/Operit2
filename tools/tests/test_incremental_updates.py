@@ -9,6 +9,7 @@ import struct
 import sys
 import tempfile
 import unittest
+import zipfile
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -20,6 +21,35 @@ import release_artifacts
 
 
 class IncrementalUpdateTests(unittest.TestCase):
+    # APK changes must be matched as raw payloads and restore the original compressed/signature bytes.
+    def test_apk_payload_delta_reconstructs_exact_signed_container(self):
+        base, target = self.root / "old.apk", self.root / "new.apk"
+        raw = self.data[:4096] * 64
+        changed = bytearray(raw)
+        for offset in range(1200, len(changed), 8191):
+            changed[offset] ^= 11
+        for path, content in ((base, raw), (target, changed)):
+            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+                archive.writestr("lib/arm64/libfixture.so", content)
+                archive.writestr("assets/unchanged", b"keep original compressed bytes" * 100)
+            with path.open("ab") as shell:
+                shell.write(b"unaltered signing/alignment trailer")
+        info = delta.build(base, target, self.patch)
+        self.assertEqual(gzip.decompress(self.patch.read_bytes())[:9], b"O2PATCH4\0")
+        delta.apply(base, self.patch, self.output)
+        self.assertEqual(self.output.read_bytes(), target.read_bytes())
+        self.assertLess(info["size"], info["targetSize"] // 3)
+
+    # Invalid APK input must fail explicitly instead of invoking whole-archive binary matching.
+    def test_invalid_apk_never_uses_the_old_binary_generator(self):
+        base, target = self.root / "old.apk", self.root / "new.apk"
+        base.write_bytes(b"invalid APK")
+        target.write_bytes(b"invalid APK target")
+        with patch.object(delta, "build_binary") as binary:
+            with self.assertRaises(zipfile.BadZipFile):
+                delta.build(base, target, self.patch)
+            binary.assert_not_called()
+
     # Gives every scenario private input and output paths.
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -191,8 +221,13 @@ class IncrementalUpdateTests(unittest.TestCase):
                 dist, old = Path(temporary) / "dist", Path(temporary) / "base"
                 dist.mkdir(); old.mkdir()
                 for family, extension, header in families:
-                    (old / f"{family}-{base_version}.{extension}").write_bytes(header + self.data)
-                    (dist / f"{family}-{version}.{extension}").write_bytes(header + self.data + b"signed target")
+                    for directory, selected_version, content in ((old, base_version, self.data), (dist, version, self.data + b"signed target")):
+                        path = directory / f"{family}-{selected_version}.{extension}"
+                        if extension == "apk":
+                            with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6) as archive:
+                                archive.writestr("classes.dex", content)
+                        else:
+                            path.write_bytes(header + content)
                 prepare.prepare(dist, [old])
                 release_artifacts.validate_release_assets(list(dist.iterdir()))
                 for family, extension, _ in families:

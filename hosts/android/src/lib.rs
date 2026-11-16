@@ -167,3 +167,4 @@ fn createBaseRuntimeHostManager(
     .withHostJavaScriptRuntimeHost(Arc::new(AndroidHostJavaScriptRuntimeHost::new()))
     .withHostRuntimeTaskSchedulerHost(Arc::new(AndroidHostRuntimeTaskSchedulerHost::new()))
 }
+mod update_apk;

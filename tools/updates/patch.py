@@ -14,6 +14,7 @@ import shutil
 
 from hdiff import executable
 import msi
+import apk
 
 MAGIC = b"O2PATCH2\0"
 BUFFER = 1024 * 1024
@@ -108,27 +109,30 @@ def build_binary(base: Path, target: Path, output: Path) -> dict:
             "targetSha256": target_hash, "targetSize": target.stat().st_size}
 
 
-# Matches uncompressed MSI payloads and retains the exact original installer identities.
+# Matches expanded APK or MSI payloads while preserving exact signed installer identities.
 def build(base: Path, target: Path, output: Path) -> dict:
-    if target.suffix != ".msi":
+    if target.suffix not in (".msi", ".apk"):
         return build_binary(base, target, output)
     if output.exists() or output.resolve() in (base.resolve(), target.resolve()):
         raise ValueError("Patch output must be a new file")
-    with tempfile.TemporaryDirectory(prefix="operit-msi-") as temporary:
+    codec = apk if target.suffix == ".apk" else msi
+    metadata = apk.recipes(base, target) if codec is apk else (None, None)
+    with tempfile.TemporaryDirectory(prefix="operit-package-") as temporary:
         old, new, delta = [Path(temporary) / name for name in ("old", "new", "delta")]
-        msi.decode(base, old)
-        msi.decode(target, new)
+        codec.decode(base, old, metadata[0])
+        codec.decode(target, new, metadata[1])
         build_binary(old, new, delta)
         output.parent.mkdir(parents=True, exist_ok=True)
         with gzip.open(delta, "rb") as instructions, output.open("xb") as destination, \
                 gzip.GzipFile(filename="", fileobj=destination, mode="wb", mtime=0) as patch:
             if exact(instructions, 9) != MAGIC:
                 raise ValueError("Invalid nested patch")
-            patch.write(b"O2PATCH3\0" + struct.pack("<QQ", base.stat().st_size, target.stat().st_size))
+            patch.write((b"O2PATCH4\0" if codec is apk else b"O2PATCH3\0")
+                        + struct.pack("<QQ", base.stat().st_size, target.stat().st_size))
             patch.write(bytes.fromhex(sha256(base)) + bytes.fromhex(sha256(target)))
             with old.open("rb") as expanded:
-                if exact(expanded, 8) != msi.MAGIC:
-                    raise ValueError("Invalid expanded MSI")
+                if exact(expanded, 8) != codec.MAGIC:
+                    raise ValueError("Invalid expanded package")
                 length = exact(expanded, 4)
                 patch.write(length + exact(expanded, struct.unpack("<I", length)[0]))
             shutil.copyfileobj(instructions, patch, BUFFER)
@@ -153,23 +157,24 @@ def apply(base: Path, patch: Path, output: Path) -> None:
     try:
         with gzip.open(patch, "rb") as source, base.open("rb") as old:
             magic = exact(source, 9)
-            if magic not in (b"O2PATCH1\0", MAGIC, b"O2PATCH3\0"):
+            if magic not in (b"O2PATCH1\0", MAGIC, b"O2PATCH3\0", b"O2PATCH4\0"):
                 raise ValueError("Unsupported patch format")
             old_size, new_size = struct.unpack("<QQ", exact(source, 16))
             old_hash, new_hash = exact(source, 32).hex(), exact(source, 32).hex()
             if base.stat().st_size != old_size or sha256(base) != old_hash:
                 raise ValueError("Base package does not match patch")
-            if magic == b"O2PATCH3\0":
+            if magic in (b"O2PATCH3\0", b"O2PATCH4\0"):
+                codec = apk if magic == b"O2PATCH4\0" else msi
                 length, = struct.unpack("<I", exact(source, 4))
                 if length > 4 * BUFFER:
-                    raise ValueError("MSI recipe exceeds limit")
+                    raise ValueError("Package recipe exceeds limit")
                 metadata = exact(source, length)
                 with tempfile.TemporaryDirectory(prefix="operit-msi-") as temporary:
                     old, new, restored = [Path(temporary) / name for name in ("old", "new", "restored")]
-                    msi.decode(base, old, metadata)
+                    codec.decode(base, old, metadata)
                     with old.open("rb") as expanded:
                         apply_stream(expanded, source, new, True)
-                    msi.encode(new, restored)
+                    codec.encode(new, restored)
                     with output.open("xb") as destination, restored.open("rb") as installer:
                         created = True
                         shutil.copyfileobj(installer, destination, BUFFER)

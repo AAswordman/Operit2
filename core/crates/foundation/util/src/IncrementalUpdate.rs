@@ -94,7 +94,7 @@ pub fn hashSource(
 
 /// Binds all manifest fields and patch names to the selected GitHub release asset.
 pub fn validateManifest(manifest: &UpdateManifest, release: &ReleaseInfo) -> Result<(), String> {
-    if !matches!(manifest.schema, 1 | 2 | 3)
+    if !matches!(manifest.schema, 1 | 2 | 3 | 4)
         || manifest.version != release.version
         || manifest.assetName != release.assetName
         || manifest.size == 0
@@ -291,7 +291,9 @@ pub fn applyPatch(
     decoder.read_exact(&mut magic).map_err(|e| e.to_string())?;
     let residuals = &magic == b"O2PATCH2\0" && matches!(manifest.schema, 2 | 3);
     let cabinets = &magic == b"O2PATCH3\0" && manifest.schema == 3;
-    if !(cabinets || residuals || (&magic == b"O2PATCH1\0" && manifest.schema == 1))
+    let apk =
+        &magic == b"O2PATCH4\0" && manifest.schema == 4 && manifest.assetName.ends_with(".apk");
+    if !(apk || cabinets || residuals || (&magic == b"O2PATCH1\0" && manifest.schema == 1))
         || integer(&mut decoder)? != declaration.baseSize
         || integer(&mut decoder)? != manifest.size
     {
@@ -306,8 +308,16 @@ pub fn applyPatch(
     if encoded != format!("{}{}", declaration.baseSha256, manifest.sha256) {
         return Err("Patch header disagrees with authenticated manifest".into());
     }
-    if cabinets {
-        return applyCabinetPatch(base, &mut decoder, manifest, context, destination, control);
+    if cabinets || apk {
+        return applyContainerPatch(
+            base,
+            &mut decoder,
+            manifest,
+            context,
+            destination,
+            control,
+            apk,
+        );
     }
     applyInstructions(
         base,
@@ -323,21 +333,22 @@ pub fn applyPatch(
     )
 }
 
-/// Reconstructs expanded payloads in a disposable job and retains only the verified original MSI.
-fn applyCabinetPatch(
+/// Reconstructs expanded payloads through the owning Host and retains the exact signed installer.
+fn applyContainerPatch(
     base: &dyn FileSource,
     decoder: &mut impl Read,
     manifest: &UpdateManifest,
     context: &HostManager,
     destination: &str,
     control: &HttpDownloadControl,
+    apk: bool,
 ) -> Result<(), String> {
-    use operit_host_api::ApplicationUpdateTransform::{ExpandMsiCabinets, RestoreMsiCabinets};
+    use operit_host_api::ApplicationUpdateTransform::*;
     let mut length = [0; 4];
     decoder.read_exact(&mut length).map_err(|e| e.to_string())?;
     let length = u32::from_le_bytes(length) as usize;
     if length > 4 * BUFFER {
-        return Err("MSI recipe exceeds limit".into());
+        return Err("Package recipe exceeds limit".into());
     }
     let mut recipe = vec![0; length];
     decoder.read_exact(&mut recipe).map_err(|e| e.to_string())?;
@@ -378,7 +389,12 @@ fn applyCabinetPatch(
     let old = vfs.file(&VisualFileSystem::runtimePath(&format!(
         "{directory}/base"
     ))?)?;
-    host.transformApplicationUpdate(base, &old, ExpandMsiCabinets { recipe }, control)
+    let expand = if apk {
+        ExpandApkEntries { recipe }
+    } else {
+        ExpandMsiCabinets { recipe }
+    };
+    host.transformApplicationUpdate(base, &old, expand, control)
         .map_err(|e| e.to_string())?;
     if hashSource(&old, control)? != (oldHash, oldSize) {
         return Err("Expanded base package SHA-256 mismatch".into());
@@ -401,9 +417,14 @@ fn applyCabinetPatch(
         .map_err(|e| e.to_string())?;
     let expanded = vfs.file(&VisualFileSystem::runtimePath(&expandedPath)?)?;
     let restored = vfs.file(&VisualFileSystem::runtimePath(&format!(
-        "{directory}/restored.msi"
+        "{directory}/restored"
     ))?)?;
-    host.transformApplicationUpdate(&expanded, &restored, RestoreMsiCabinets, control)
+    let restore = if apk {
+        RestoreApkEntries
+    } else {
+        RestoreMsiCabinets
+    };
+    host.transformApplicationUpdate(&expanded, &restored, restore, control)
         .map_err(|e| e.to_string())?;
     storage
         .delete(&expandedPath, false)

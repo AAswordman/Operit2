@@ -8,6 +8,11 @@ use std::sync::Arc;
 #[path = "incremental_updates/chains.rs"]
 mod chains;
 
+#[path = "../../../../../hosts/android/src/update_apk.rs"]
+mod apk_host;
+#[path = "incremental_updates/apk.rs"]
+mod apk;
+
 /// Removes only the retained original while leaving authenticated patch metadata and bytes available.
 fn removeRetainedBase(fixture: &Fixture, release: &ReleaseInfo, current: &str) {
     let marker = format!("-{}.", release.version);

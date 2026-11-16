@@ -101,7 +101,7 @@ def validate_release_assets(assets: list[Path]) -> None:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         if set(manifest) != {"schema", "version", "assetName", "sha256", "size", "patches"}:
             raise RuntimeError(f"Invalid update manifest fields: {manifest_name}")
-        if (manifest["schema"] not in (1, 2, 3) or manifest["version"] != release_version()
+        if (manifest["schema"] not in (1, 2, 3, 4) or manifest["version"] != release_version()
                 or manifest["assetName"] != package_name
                 or not isinstance(manifest["size"], int) or not 0 < manifest["size"] <= 16 * 1024 ** 3
                 or not isinstance(manifest["sha256"], str)
