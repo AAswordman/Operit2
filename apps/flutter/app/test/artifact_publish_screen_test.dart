@@ -229,6 +229,65 @@ void main() {
     }
   }
 
+  for (final readmeExists in [false, true]) {
+    testWidgets(
+      'Direct continuation initializes a zero-size repository (README exists: $readmeExists)',
+      (tester) async {
+        final fixture = _PublishFixture(isToolPkg: true)
+          ..forgeRepoSize = 0
+          ..readmeStatus = readmeExists ? 200 : 404;
+        await _mount(tester, fixture, continuation: true);
+        await _publish(tester, fixture, continuation: true);
+
+        expect(find.text('发布完成'), findsOneWidget);
+        expect(fixture.readmeRequests.map((request) => request.method), [
+          'GET',
+          'PUT',
+        ]);
+        final body = jsonDecode(fixture.readmeRequests.last.body) as Map;
+        if (readmeExists) {
+          expect(body['sha'], _readmeSha);
+        } else {
+          expect(body.containsKey('sha'), isFalse);
+        }
+        expect(
+          utf8.decode(base64Decode(body['content'] as String)),
+          '# OperitForge\n\nThis repository stores release assets published from Operit.\n',
+        );
+        expect(fixture.uploads, hasLength(1));
+        _expectAssetRegistration(
+          fixture.registrations.single,
+          fixture,
+          bytes: fixture.processedBytes,
+          downloadUrl: fixture.directDownloadUrl,
+          direct: true,
+          continuation: true,
+        );
+        expect(tester.takeException(), isNull);
+      },
+    );
+  }
+
+  for (final status in [403, 500]) {
+    testWidgets('README HTTP $status stops publishing before writing', (
+      tester,
+    ) async {
+      final fixture = _PublishFixture(isToolPkg: true)
+        ..forgeRepoSize = 0
+        ..readmeStatus = status;
+      await _mount(tester, fixture, continuation: true);
+      await _publish(tester, fixture, continuation: true);
+
+      expect(find.textContaining('HTTP $status'), findsOneWidget);
+      expect(fixture.readmeRequests.map((request) => request.method), ['GET']);
+      expect(fixture.httpRequests, hasLength(2));
+      expect(fixture.protectionCalls, isEmpty);
+      expect(fixture.uploads, isEmpty);
+      expect(fixture.registrations, isEmpty);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets('Direct registration retry does not protect or upload again', (
     tester,
   ) async {
@@ -259,6 +318,7 @@ void main() {
 
 const _version = '1.2.3';
 const _releaseTag = 'v1.2.3';
+const _readmeSha = '0123456789abcdef0123456789abcdef01234567';
 
 class _FailureCase {
   const _FailureCase(
@@ -435,6 +495,8 @@ class _PublishFixture {
   int downloadStatus = 200;
   bool assetRemovedOnReload = false;
   int registrationFailures = 0;
+  int forgeRepoSize = 1;
+  int readmeStatus = 200;
 
   String get extension => isToolPkg ? 'toolpkg' : 'js';
   String get assetName => 'fixture.$extension';
@@ -488,6 +550,15 @@ class _PublishFixture {
       .where((request) => request.url.host == 'uploads.github.com')
       .toList();
 
+  /// Returns README reads and writes in the order sent to GitHub.
+  List<http.Request> get readmeRequests => httpRequests
+      .where(
+        (request) =>
+            request.url.path ==
+            '/repos/publisher/OperitForge/contents/README.md',
+      )
+      .toList();
+
   Map<String, Object?> _asset({bool direct = false}) => {
         'id': 402,
         'name': direct ? directAssetName : assetName,
@@ -531,10 +602,28 @@ class _PublishFixture {
         uri.host == 'api.github.com' &&
         uri.path == '/repos/publisher/OperitForge') {
       return _json({
-        'size': 1,
+        'size': forgeRepoSize,
         'name': 'OperitForge',
         'html_url': 'https://github.com/publisher/OperitForge',
       });
+    }
+    if (uri.host == 'api.github.com' &&
+        uri.path == '/repos/publisher/OperitForge/contents/README.md') {
+      if (request.method == 'GET') {
+        return readmeStatus == 200
+            ? _json({'sha': _readmeSha})
+            : _json({'message': 'Fixture README unavailable'}, readmeStatus);
+      }
+      if (request.method == 'PUT') {
+        final body = jsonDecode(request.body) as Map;
+        if (readmeStatus == 200 && body['sha'] != _readmeSha) {
+          return _json({'message': 'Invalid request: sha is required'}, 422);
+        }
+        if (readmeStatus == 404 && body.containsKey('sha')) {
+          return _json({'message': 'File does not exist'}, 422);
+        }
+        return _json({}, readmeStatus == 200 ? 200 : 201);
+      }
     }
     if (request.method == 'GET' &&
         uri.host == 'api.github.com' &&

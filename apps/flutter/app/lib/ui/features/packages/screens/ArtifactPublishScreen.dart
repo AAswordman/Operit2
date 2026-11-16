@@ -1467,17 +1467,41 @@ Future<_ForgeRepoInfo> _ensureForgeRepository({
   );
 }
 
+/// Initializes the README using its current SHA when the file already exists.
 Future<void> _createReadme({
   required GeneratedCoreProxyClients clients,
   required String owner,
   required String repo,
 }) async {
+  final uri = Uri.https(
+    'api.github.com',
+    '/repos/$owner/$repo/contents/README.md',
+  );
+  // Repository size can still be zero after initialization; read the file
+  // before writing so GitHub receives the SHA required for an existing README.
+  final existingResponse = await _githubHttpRequest(
+    clients: clients,
+    method: 'GET',
+    uri: uri,
+  );
+  final String? existingSha;
+  if (_isSuccess(existingResponse.statusCode)) {
+    final existing = jsonDecode(existingResponse.body) as Map<String, Object?>;
+    existingSha = existing['sha'] as String;
+  } else if (existingResponse.statusCode == 404) {
+    existingSha = null;
+  } else {
+    throw StateError(
+      'HTTP ${existingResponse.statusCode}: ${_summarizeHttpBody(existingResponse.body)}',
+    );
+  }
   await _githubJsonRequest(
     clients: clients,
     method: 'PUT',
-    uri: Uri.https('api.github.com', '/repos/$owner/$repo/contents/README.md'),
+    uri: uri,
     body: <String, Object?>{
       'message': 'Initialize OperitForge repository',
+      'sha': ?existingSha,
       'content': base64Encode(
         utf8.encode(
           '# OperitForge\n\nThis repository stores release assets published from Operit.\n',
