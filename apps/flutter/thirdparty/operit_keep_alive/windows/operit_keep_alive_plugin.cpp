@@ -22,6 +22,8 @@ constexpr UINT kTrayId = 1;
 constexpr UINT kOpen = 1;
 constexpr UINT kExit = 2;
 constexpr UINT kWorkBase = 100;
+constexpr UINT kMaxTrayRetries = 3;
+constexpr UINT kTrayRetryDelaysMs[] = {250, 750, 1500};
 
 /// Retains action identity independently of live updates while a native menu is open.
 struct WorkItem {
@@ -31,6 +33,20 @@ struct WorkItem {
   bool can_stop;
   int64_t started;
   std::optional<int64_t> ended;
+};
+
+/// Keeps nested window callbacks from starting another native tray operation.
+struct TrayOperationGuard {
+  explicit TrayOperationGuard(bool& state)
+      : in_progress(state), previous(state) {
+    in_progress = true;
+  }
+  ~TrayOperationGuard() { in_progress = previous; }
+  TrayOperationGuard(const TrayOperationGuard&) = delete;
+  TrayOperationGuard& operator=(const TrayOperationGuard&) = delete;
+
+  bool& in_progress;
+  const bool previous;
 };
 
 /// Decodes an explicit UTF-8 protocol string without substituting application text.
@@ -85,6 +101,9 @@ class KeepAlivePlugin final : public flutter::Plugin {
 
   /// Releases native resources during plugin registrar destruction.
   ~KeepAlivePlugin() override {
+    initialized_ = false;
+    trayRecoveryActive_ = false;
+    CancelTrayRetry();
     // Flutter has already detached the engine from its messenger at this point.
     // The registrar owns the messenger and releases its handlers after plugins.
     registrar_->UnregisterTopLevelWindowProcDelegate(delegate_);
@@ -106,6 +125,82 @@ class KeepAlivePlugin final : public flutter::Plugin {
     channel_->InvokeMethod("protectionChanged", std::make_unique<Value>(Report(error)));
   }
 
+  /// Invalidates queued timer messages before removing this window's timer.
+  void CancelTrayRetry() {
+    const auto timer = trayRetryTimerId_;
+    trayRetryTimerId_ = 0;
+    trayRetryDueAt_ = 0;
+    if (timer != 0 && window_ != nullptr) KillTimer(window_, timer);
+  }
+
+  /// Resets recovery only after registration succeeds or Dart rebinds the host.
+  void ResetTrayRecovery() {
+    trayRecoveryActive_ = false;
+    CancelTrayRetry();
+    trayRetryCount_ = 0;
+    trayFailureReported_ = false;
+    // The active operation's guard owns trayRetryInProgress_, including reentry.
+  }
+
+  /// Reports one continuous outage and restores access to the retained window.
+  void ReportTrayFailureOnce(const std::string& error) {
+    if (!initialized_ || closing_ || tray_added_ || trayFailureReported_) return;
+    trayFailureReported_ = true;
+    Open();
+    // Open can dispatch nested messages that exit, destroy, or reinitialize us.
+    if (initialized_ && !closing_ && !tray_added_ && trayFailureReported_) {
+      ReportFailure(error);
+    }
+  }
+
+  /// Arms one window timer; each delivered retry consumes one bounded attempt.
+  void ScheduleTrayRetry() {
+    if (!initialized_ || closing_ || window_ == nullptr || tray_added_ ||
+        !trayRecoveryActive_ || trayRetryTimerId_ != 0) return;
+    if (trayRetryCount_ >= kMaxTrayRetries) {
+      trayRecoveryActive_ = false;
+      OutputDebugStringA("Operit keep_alive: tray recovery exhausted after 4 attempts.\n");
+      return;
+    }
+    const auto window = window_;
+    const UINT delay = kTrayRetryDelaysMs[trayRetryCount_];
+    const auto timer = reinterpret_cast<UINT_PTR>(this);
+    trayRetryDueAt_ = GetTickCount64() + delay;
+    if (SetTimer(window_, reinterpret_cast<UINT_PTR>(this), delay, nullptr) == 0) {
+      trayRetryDueAt_ = 0;
+      trayRecoveryActive_ = false;
+      OutputDebugStringA("Operit keep_alive: unable to schedule tray retry; recovery stopped.\n");
+      return;
+    }
+    if (!initialized_ || closing_ || window_ != window || !trayRecoveryActive_) {
+      KillTimer(window, timer);
+      trayRetryDueAt_ = 0;
+      return;
+    }
+    trayRetryTimerId_ = timer;
+  }
+
+  /// Restores the shell icon without a modal message loop or parallel attempts.
+  void TryRestoreTray() {
+    if (!initialized_ || closing_ || window_ == nullptr || tray_added_ ||
+        !trayRecoveryActive_ || trayRetryInProgress_) return;
+    TrayOperationGuard operation(trayRetryInProgress_);
+    try {
+      AddTray();
+    } catch (const std::exception& error) {
+      const auto diagnostic = std::string("Operit keep_alive: tray registration attempt ") +
+          std::to_string(trayRetryCount_ + 1) + "/" + std::to_string(kMaxTrayRetries + 1) +
+          " failed: " + error.what() + "\n";
+      OutputDebugStringA(diagnostic.c_str());
+      ScheduleTrayRetry();
+      ReportTrayFailureOnce(error.what());
+      return;
+    }
+    if (initialized_ && !closing_ && tray_added_) {
+      channel_->InvokeMethod("protectionChanged", std::make_unique<Value>(Report()));
+    }
+  }
+
   /// Registers the main window's own icon and uses the current shell notification protocol.
   void AddTray() {
     if (!Shell_NotifyIconW(NIM_ADD, &tray_)) throw std::runtime_error("Unable to register the system tray icon");
@@ -115,6 +210,7 @@ class KeepAlivePlugin final : public flutter::Plugin {
       throw std::runtime_error("Unable to configure the system tray protocol");
     }
     tray_added_ = true;
+    ResetTrayRecovery();
   }
 
   /// Binds each Dart lifetime to the retained engine window and its single tray icon.
@@ -141,7 +237,10 @@ class KeepAlivePlugin final : public flutter::Plugin {
       throw std::invalid_argument("Application tray title is too long");
     }
     wcscpy_s(tray.szTip, title.c_str());
-    if (initialized_) {
+    TrayOperationGuard operation(trayRetryInProgress_);
+    ResetTrayRecovery();
+    const bool modify_tray = initialized_ && tray_added_;
+    if (modify_tray) {
       if (!Shell_NotifyIconW(NIM_MODIFY, &tray)) throw std::runtime_error("Unable to update the system tray icon");
       tray.uVersion = NOTIFYICON_VERSION_4;
       tray_added_ = true;
@@ -152,7 +251,10 @@ class KeepAlivePlugin final : public flutter::Plugin {
     exit_ = exit;
     taskbar_created_ = taskbar_created;
     tray_ = tray;
-    if (!initialized_) AddTray();
+    if (!modify_tray) {
+      tray_added_ = false;
+      AddTray();
+    }
 
     // Hot restart replaces Dart without destroying this plugin or releasing its leases.
     leases_.clear();
@@ -173,6 +275,8 @@ class KeepAlivePlugin final : public flutter::Plugin {
   void Exit() {
     if (!PostMessageW(window_, WM_CLOSE, 0, 0)) throw std::runtime_error("Unable to request application shutdown");
     closing_ = true;
+    trayRecoveryActive_ = false;
+    CancelTrayRetry();
   }
 
   /// Replaces the complete work revision and updates the tray's compact description.
@@ -259,18 +363,43 @@ class KeepAlivePlugin final : public flutter::Plugin {
   }
 
   /// Handles close and shell lifecycle messages exclusively for the main owner window.
-  std::optional<LRESULT> WindowMessage(HWND window, UINT message, WPARAM, LPARAM lparam) {
-    if (!initialized_ || window != window_) return std::nullopt;
+  std::optional<LRESULT> WindowMessage(HWND window, UINT message, WPARAM wparam, LPARAM lparam) {
+    if (window != window_) return std::nullopt;
+    if (message == WM_DESTROY || message == WM_NCDESTROY) {
+      initialized_ = false;
+      trayRecoveryActive_ = false;
+      CancelTrayRetry();
+      return std::nullopt;
+    }
+    if (!initialized_) return std::nullopt;
     try {
       if (message == WM_CLOSE && !closing_) {
         if (!tray_added_) throw std::runtime_error("Tray icon is unavailable; the Core window must remain open");
         ShowWindow(window_, SW_HIDE);
         return 0;
       }
+      if (message == WM_TIMER) {
+        if (wparam != reinterpret_cast<UINT_PTR>(this)) return std::nullopt;
+        if (closing_ || trayRetryTimerId_ == 0 || wparam != trayRetryTimerId_ ||
+            !trayRecoveryActive_) return 0;
+        // KillTimer leaves queued WM_TIMER messages; do not let them retry early.
+        // Reentry leaves the timer armed so a later message can perform the retry.
+        if (trayRetryInProgress_ || GetTickCount64() < trayRetryDueAt_) return 0;
+        CancelTrayRetry();
+        if (trayRetryCount_ >= kMaxTrayRetries) {
+          trayRecoveryActive_ = false;
+          return 0;
+        }
+        ++trayRetryCount_;
+        TryRestoreTray();
+        return 0;
+      }
       if (message == taskbar_created_) {
+        if (closing_ || trayRecoveryActive_ || trayRetryInProgress_) return 0;
         tray_added_ = false;
-        AddTray();
-        channel_->InvokeMethod("protectionChanged", std::make_unique<Value>(Report()));
+        trayRetryCount_ = 0;
+        trayRecoveryActive_ = true;
+        TryRestoreTray();
         return 0;
       }
       if (message == kTrayMessage) {
@@ -280,9 +409,20 @@ class KeepAlivePlugin final : public flutter::Plugin {
         return 0;
       }
     } catch (const std::exception& error) {
-      Open();
-      ReportFailure(error.what());
-      MessageBoxW(window_, Wide(error.what()).c_str(), title_.c_str(), MB_OK | MB_ICONERROR);
+      OutputDebugStringA("Operit keep_alive: window message failed: ");
+      OutputDebugStringA(error.what());
+      OutputDebugStringA("\n");
+      const bool tray_failure = !tray_added_ &&
+          (message == WM_CLOSE || message == taskbar_created_ ||
+           (message == WM_TIMER && wparam == reinterpret_cast<UINT_PTR>(this)));
+      if (tray_failure) {
+        const bool already_reported = trayFailureReported_;
+        ReportTrayFailureOnce(error.what());
+        if (message == WM_CLOSE && already_reported && initialized_ && !closing_) Open();
+      } else {
+        Open();
+        if (initialized_ && !closing_) ReportFailure(error.what());
+      }
       return 0;
     }
     return std::nullopt;
@@ -335,6 +475,12 @@ class KeepAlivePlugin final : public flutter::Plugin {
   bool tray_added_ = false;
   bool initialized_ = false;
   bool closing_ = false;
+  UINT_PTR trayRetryTimerId_ = 0;
+  UINT trayRetryCount_ = 0;
+  ULONGLONG trayRetryDueAt_ = 0;
+  bool trayRecoveryActive_ = false;
+  bool trayRetryInProgress_ = false;
+  bool trayFailureReported_ = false;
   std::wstring title_, open_, exit_;
   std::set<std::string> leases_;
   int64_t work_revision_ = -1;
