@@ -506,6 +506,8 @@ exports.onInputMenuToggle = onInputMenuToggle;
 | `ToolPkg.registerInputMenuTogglePlugin` | `id` | 是 | 输入菜单开关插件唯一标识 |
 | `ToolPkg.registerInputMenuTogglePlugin` | `function` | 是 | 函数引用（支持箭头函数） |
 
+> **函数引用必须来自模块导出**：上表的 `function`（以及 `registerCoreCommand` 等注册的 `function`）必须传一个**已导出的函数**——可以是当前入口模块的导出（先 `exports.onX = onX`，再传 `onX`），也可以是 `require(...)` 引入模块的导出。直接传未导出的局部函数或内联箭头函数会报 `requires an exported ToolPkg function reference`。箭头函数本身可用，但同样要先导出再传入。
+
 `ToolPkg.registerAppLifecycleHook` 支持的 `event`：
 
 - `application_on_create`
@@ -1345,6 +1347,16 @@ my_toolpkg/
 - 确认 `runtime` 类型正确
 - 确认 `screen` 传的是已导入的模块函数（例如 `const ui = require(...).default`）
 - 验证 UI 脚本语法正确
+
+**问题 5：注册命令/钩子报 `requires an exported ToolPkg function reference`**
+- 原因：传给 `function` 的处理函数没有从模块导出（传了未导出的局部函数或内联箭头函数）。
+- 修复：先把处理函数导出，再传入该导出引用：
+  ```javascript
+  function onHello(event) { return { stdout: "hi" }; }
+  exports.onHello = onHello;
+  ToolPkg.registerCoreCommand({ id: "hello", name: "hello", function: onHello });
+  ```
+- 箭头函数同样要先导出（`exports.onHello = (event) => { ... }`）再传入。
 
 ### 10.2 调试技巧
 
