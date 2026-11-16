@@ -20,7 +20,7 @@ class AndroidTerminalUserService(context: Context) : Binder() {
     private var owner: IBinder? = null
     private val sessions = mutableMapOf<Int, Session>()
     private data class Session(
-        val descriptor: ParcelFileDescriptor,
+        val descriptor: ParcelFileDescriptor?,
         val streams: List<Closeable>,
         var exitCode: Int? = null,
     )
@@ -49,8 +49,9 @@ class AndroidTerminalUserService(context: Context) : Binder() {
             check(owner == token) { "Terminal owner changed" }
             val operation = request.getString("operation")
             response = when (operation) {
-                "start" -> {
-                    val (result, pipes) = startSession(request)
+                "start", "exec" -> {
+                    val (result, pipes) =
+                        if (operation == "start") startSession(request) else startExecSession(request)
                     descriptors = pipes
                     startedPid = result.getInt("pid")
                     result
@@ -66,7 +67,9 @@ class AndroidTerminalUserService(context: Context) : Binder() {
                             }
                             JSONObject().put("exitCode", session.exitCode ?: JSONObject.NULL)
                         }
-                        "resize" -> nativeOperation(request.put("fd", session.descriptor.fd))
+                        "resize" -> nativeOperation(
+                            request.put("fd", checkNotNull(session.descriptor) { "Shizuku exec session has no PTY" }.fd),
+                        )
                         else -> { sessions.remove(pid); closeSession(pid, session); JSONObject() }
                     }
                 }
@@ -122,6 +125,24 @@ class AndroidTerminalUserService(context: Context) : Binder() {
         }
     }
 
+    /** Hands the app two ordinary pipes; the child keeps its own stdin (/dev/null). */
+    private fun startExecSession(request: JSONObject): Pair<JSONObject, List<ParcelFileDescriptor>> {
+        val result = nativeOperation(request)
+        val pid = result.getInt("pid")
+        val stdout = ParcelFileDescriptor.adoptFd(result.getInt("stdoutFd"))
+        val stderr = try {
+            ParcelFileDescriptor.adoptFd(result.getInt("stderrFd"))
+        } catch (error: Exception) {
+            runCatching { stdout.close() }
+            runCatching { nativeOperation(JSONObject().put("operation", "close").put("pid", pid)) }
+            throw error
+        }
+        sessions[pid] = Session(null, emptyList())
+        result.remove("stdoutFd")
+        result.remove("stderrFd")
+        return result to listOf(stdout, stderr)
+    }
+
     /** Ends a relay on pipe EOF or the PTY's normal EIO after its slave exits. */
     private fun relay(input: java.io.InputStream, output: java.io.OutputStream) {
         try { input.use { source -> output.use { destination -> source.copyTo(destination) } } }
@@ -140,7 +161,7 @@ class AndroidTerminalUserService(context: Context) : Binder() {
         try {
             if (session.exitCode == null) nativeOperation(JSONObject().put("operation", "close").put("pid", pid))
         } finally {
-            (session.streams + session.descriptor).forEach { runCatching { it.close() } }
+            (session.streams + listOfNotNull(session.descriptor)).forEach { runCatching { it.close() } }
         }
     }
 
