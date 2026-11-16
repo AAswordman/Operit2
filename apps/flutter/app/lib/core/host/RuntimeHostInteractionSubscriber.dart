@@ -51,6 +51,9 @@ class _BrowserInteractHostStats {
   String? slowestSessionId;
 }
 
+/// How the broker expects one delivered event to be completed.
+enum _EventCompletion { respond, acknowledge }
+
 class RuntimeHostInteractionSubscriber {
   RuntimeHostInteractionSubscriber._();
 
@@ -102,10 +105,11 @@ class RuntimeHostInteractionSubscriber {
     if (_subscription != null) {
       return;
     }
-    late final StreamSubscription<RuntimeHostInteractionRequest> subscription;
-    subscription = _clients.servicesRuntimeHostInteractionService
-        .ownerHostInteractionEvents(kinds: _ownerKinds)
-        .listen(
+    try {
+      late final StreamSubscription<RuntimeHostInteractionRequest> subscription;
+      subscription = _clients.servicesRuntimeHostInteractionService
+          .ownerHostInteractionEvents(kinds: _ownerKinds)
+          .listen(
           (event) => unawaited(_handleEvent(event)),
           onError: (Object error, StackTrace stackTrace) {
             _releaseSubscription(subscription);
@@ -132,7 +136,21 @@ class RuntimeHostInteractionSubscriber {
           },
           cancelOnError: false,
         );
-    _subscription = subscription;
+      _subscription = subscription;
+    } catch (error, stackTrace) {
+      // A synchronous failure while re-subscribing must not break the
+      // reconnect chain, or pending interactions would wait for their full
+      // timeout with no consumer.
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'runtime host interaction subscriber',
+          context: ErrorDescription('installing owner host interaction stream'),
+        ),
+      );
+      _scheduleReconnect();
+    }
   }
 
   /// Schedules a reconnect if the host subscriber was not deliberately uninstalled.
@@ -168,17 +186,33 @@ class RuntimeHostInteractionSubscriber {
     }
   }
 
+  /// Completion attempts and spacing that span the owner stream reconnect
+  /// window (500 ms re-subscribe delay plus transport rebuild), so a response
+  /// is not silently dropped when the FFI transport closes mid-flight.
+  static const int _completionRetryLimit = 4;
+  static const Duration _completionRetryDelay = Duration(milliseconds: 800);
+
+  /// Resolves how one request must be completed from its notification flag.
+  static _EventCompletion _completionFor(
+    RuntimeHostInteractionRequest request,
+  ) {
+    return request.notification == true
+        ? _EventCompletion.acknowledge
+        : _EventCompletion.respond;
+  }
+
   /// Handles one owner-host interaction request.
   static Future<void> _handleEvent(
     RuntimeHostInteractionRequest request,
   ) async {
     final eventStopwatch = Stopwatch()..start();
+    final completion = _completionFor(request);
     var dispatchCompleted = false;
     try {
       final response = await _dispatch(request);
       dispatchCompleted = true;
       final respondStopwatch = Stopwatch()..start();
-      await _respondOwnerHostInteraction(request.requestId, response);
+      await _completeWithRetry(request.requestId, response, completion);
       respondStopwatch.stop();
       _recordBrowserInteractHostResponseTiming(
         request.requestId,
@@ -188,9 +222,16 @@ class RuntimeHostInteractionSubscriber {
       );
     } catch (error, stackTrace) {
       if (!dispatchCompleted) {
-        final response = _errorResponse(error);
         try {
-          await _respondOwnerHostInteraction(request.requestId, response);
+          // Fire-and-forget events have no response channel to answer on;
+          // consumption is acknowledged even when their execution failed.
+          await _completeWithRetry(
+            request.requestId,
+            completion == _EventCompletion.acknowledge
+                ? null
+                : _errorResponse(error),
+            completion,
+          );
         } catch (respondError, respondStackTrace) {
           FlutterError.reportError(
             FlutterErrorDetails(
@@ -231,13 +272,40 @@ class RuntimeHostInteractionSubscriber {
     }
   }
 
-  /// Sends one owner host interaction response through the runtime service.
-  static Future<void> _respondOwnerHostInteraction(
+  /// Completes one delivered event, acknowledging notifications and answering
+  /// request-response interactions with their response.
+  static Future<void> _completeOwnerHostInteraction(
     String requestId,
-    RuntimeHostInteractionResponse response,
+    RuntimeHostInteractionResponse? response,
+    _EventCompletion completion,
   ) {
+    if (completion == _EventCompletion.acknowledge) {
+      return _clients.servicesRuntimeHostInteractionService
+          .acknowledgeOwnerHostInteraction(requestId: requestId);
+    }
     return _clients.servicesRuntimeHostInteractionService
-        .respondOwnerHostInteraction(requestId: requestId, response: response);
+        .respondOwnerHostInteraction(requestId: requestId, response: response!);
+  }
+
+  /// Retries completion across the transport reconnect window before giving up.
+  static Future<void> _completeWithRetry(
+    String requestId,
+    RuntimeHostInteractionResponse? response,
+    _EventCompletion completion,
+  ) async {
+    var attempt = 0;
+    while (true) {
+      try {
+        await _completeOwnerHostInteraction(requestId, response, completion);
+        return;
+      } catch (error) {
+        attempt += 1;
+        if (attempt >= _completionRetryLimit) {
+          rethrow;
+        }
+        await Future<void>.delayed(_completionRetryDelay);
+      }
+    }
   }
 
   /// Builds a typed error response for one failed owner interaction.
