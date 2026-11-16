@@ -1527,11 +1527,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   ) async {
     _removeTerminalTabsForSession(session.sessionId);
     await _closeManualTerminalSession(session.sessionId);
-    final updatedSessions = await _terminalSessions.listSessions();
-    if (!mounted) {
-      return;
-    }
-    _updateTerminalSessionEntries(updatedSessions);
+    await _refreshTerminalSessionEntries();
   }
 
   Future<void> _handleCloseBrowserSession(String sessionId) async {
@@ -1545,13 +1541,17 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     await _browserSessions.close(sessionId);
   }
 
-  /// Updates terminal session entries from the runtime snapshot.
+  /// Retains the last snapshot when a background refresh cannot reach the host.
   Future<void> _refreshTerminalSessionEntries() async {
-    final sessions = await _terminalSessions.listSessions();
-    if (!mounted) {
-      return;
+    try {
+      final sessions = await _terminalSessions.listSessions();
+      if (!mounted) {
+        return;
+      }
+      _updateTerminalSessionEntries(sessions);
+    } catch (error, stackTrace) {
+      debugPrint('Failed to refresh terminal sessions: $error\n$stackTrace');
     }
-    _updateTerminalSessionEntries(sessions);
   }
 
   /// Updates the browser session counter from the owner registry.

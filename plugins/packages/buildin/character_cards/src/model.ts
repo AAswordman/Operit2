@@ -207,18 +207,8 @@ export interface MemoryGraphResult { graph: MemoryGraph; items: Memory[] }
 export interface UserDocument { ownerKey: string; content: string }
 export interface MemoryOwner { kind: "CHARACTER" | "SHARED"; id: string }
 
-/** Matches the complete owner-scoped serde record in operit_model::MemorySettings. */
-export interface MemorySettings {
-  autoSaveIntervalMinutes: number;
-  nextAutoSaveRunAtMs: number;
-  memoryExtractionCustomRules: string;
-  profileAutoUpdateEnabled: boolean;
-  profileAutoUpdateLocked: boolean;
-  cloudEmbeddingEnabled: boolean;
-  cloudEmbeddingEndpoint: string;
-  cloudEmbeddingApiKey: string;
-  cloudEmbeddingModel: string;
-}
+/** Stores settings for one character or shared memory library. */
+export type MemorySettings = import("./api").MemorySettingsRecord;
 export interface MemorySearchConfig {
   scoreMode: "BALANCED" | "KEYWORD_FIRST" | "SEMANTIC_FIRST";
   keywordWeight: number;

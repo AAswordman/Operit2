@@ -2,7 +2,7 @@ import type { StorageRecordGuard } from "../../../../../types/storage.generated"
 import type { Storage } from "../../../../../types/storage";
 import type { DocumentChunk, Memory, MemoryAutoSaveStatus, MemoryGraph, MemoryImportResult, MemoryJobState, MemoryLink, MemoryLinkUpdate, MemoryLinkValues, MemoryRebuildProgress, MemorySearchConfig, MemorySearchDebug, MemorySearchOptions, MemorySettings, MemorySpace, MemoryValues } from "../model";
 import { uuid } from "../identity";
-import { assertMemory, assertMemoryValues, assertMemorySettings, assertNumber, assertSearchConfig, assertSearchOptions, assertString, normalizeNames, requireId, requireName } from "../validation";
+import { assertMemory, assertMemoryValues, assertObject, assertMemorySettings, normalizeMemorySettings, assertNumber, assertSearchConfig, assertSearchOptions, assertString, normalizeNames, requireId, requireName } from "../validation";
 import { assertMemorySpace, createMemorySpace } from "./state";
 import { clone, equal, storedValue } from "./records";
 import { CharacterMemoryDatabase } from "./memory";
@@ -43,8 +43,10 @@ export class DatabaseMemoryRepository {
   constructor(protected readonly memoryDatabase: CharacterMemoryDatabase) {}
 
   /** Keeps nullable reads separate from versioned writes to an existing library. */
-  private findOwner(ownerKey: string): Promise<Storage.Entry<Owner> | null> {
-    return this.memoryDatabase.get<Owner>("owners", requireId(ownerKey, "memory owner"));
+  private async findOwner(ownerKey: string): Promise<Storage.Entry<Owner> | null> {
+    const entry = await this.memoryDatabase.get<Owner>("owners", requireId(ownerKey, "memory owner"));
+    if (entry !== null) entry.value.settings = normalizeMemorySettings(entry.value.settings);
+    return entry;
   }
 
   async hasMemoryOwner(ownerKey: string): Promise<boolean> { return (await this.findOwner(ownerKey)) !== null; }
@@ -482,6 +484,8 @@ export class DatabaseMemoryRepository {
 
   /** Imports complete document-aware records, relationships, settings and USER text in this operation. */
   async importMemorySpace(ownerKey: string, imported: MemorySpace, strategy: "SKIP" | "UPDATE" | "CREATE_NEW"): Promise<MemoryImportResult> {
+    assertObject(imported, "memory space");
+    imported = { ...imported, settings: normalizeMemorySettings(imported.settings) };
     assertMemorySpace(imported);
     const space = await this.readMemorySpace(ownerKey), result = { newMemories: 0, updatedMemories: 0, skippedMemories: 0, newLinks: 0 };
     const idMapping = new Map<string, string>();

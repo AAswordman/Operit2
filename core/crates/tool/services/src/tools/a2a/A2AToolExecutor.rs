@@ -55,13 +55,9 @@ impl AsyncToolExecutor for A2AToolExecutor {
         }
     }
     fn accessSpec(&self, tool: &AITool) -> Result<ToolAccessSpec, String> {
-        let (_, operation, _) = target(tool)?;
+        target(tool)?;
         Ok(ToolAccessSpec {
-            effect: if operation == "get_task" {
-                ToolEffect::READ
-            } else {
-                ToolEffect::WRITE
-            },
+            effect: ToolEffect::WRITE,
             boundary: ToolBoundary::None,
         })
     }

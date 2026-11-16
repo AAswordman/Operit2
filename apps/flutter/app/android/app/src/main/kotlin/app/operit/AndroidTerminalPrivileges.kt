@@ -4,6 +4,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.ServiceConnection
 import android.os.Binder
+import android.os.DeadObjectException
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -84,7 +85,8 @@ class AndroidTerminalPrivileges(private val context: Context) {
 
     /** Transfers ordinary pipes while keeping the PTY and child owned by Shizuku. */
     private fun remoteOperation(request: JSONObject): JSONObject {
-        val starting = request.getString("operation") == "start"
+        val operation = request.getString("operation")
+        val starting = operation == "start"
         if (starting) check(AndroidPrivilegeAuthorization.isShizukuAuthorized()) { "Shizuku authorization is not granted" }
         val handle = if (starting) nextSession.getAndIncrement() else request.getInt("pid")
         check(handle > 0) { "Shizuku terminal handle exhausted" }
@@ -112,8 +114,16 @@ class AndroidTerminalPrivileges(private val context: Context) {
                 }
             }
             return response
+        } catch (error: DeadObjectException) {
+            if (service === binder) service = null
+            // The owning process is gone. Never send this session's PID to a replacement service.
+            return when (operation) {
+                "poll" -> JSONObject().put("exitCode", -1)
+                "close" -> JSONObject()
+                else -> throw error
+            }
         } finally {
-            if (request.getString("operation") == "close") sessions.remove(handle)
+            if (operation == "close") sessions.remove(handle)
             reply.recycle()
             data.recycle()
         }

@@ -179,6 +179,7 @@ export interface MemorySettingsRecord {
   autoSaveIntervalMinutes: number; nextAutoSaveRunAtMs: number; memoryExtractionCustomRules: string;
   profileAutoUpdateEnabled: boolean; profileAutoUpdateLocked: boolean; cloudEmbeddingEnabled: boolean;
   cloudEmbeddingEndpoint: string; cloudEmbeddingApiKey: string; cloudEmbeddingModel: string;
+  cloudEmbeddingBatchSize: number; rebuildWindowMessageCount: number;
 }
 /** Defines the repository's search scoring configuration. */
 export interface MemorySearchConfigRecord { scoreMode: "BALANCED" | "KEYWORD_FIRST" | "SEMANTIC_FIRST"; keywordWeight: number; tagWeight: number; vectorWeight: number; edgeWeight: number }

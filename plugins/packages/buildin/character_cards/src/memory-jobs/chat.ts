@@ -3,7 +3,7 @@ import type { Card, MemoryChat, MemoryChatListing, MemoryChatMessage, MemoryJobW
 import { requireChatSelection } from "../chat-bindings";
 import type { ChatResourceRoute } from "../api";
 import { readMessageAuthor } from "../chat-storage";
-import { assertBoolean, assertInteger, assertMemoryChatMessage, assertObject, assertString, requireId } from "../validation";
+import { MEMORY_REBUILD_WINDOW_RANGE, assertBoolean, assertInteger, assertMemoryChatMessage, assertObject, assertString, requireId } from "../validation";
 
 /** Requires exact generic chat-summary fields without inventing unavailable history metadata. */
 function assertChat(value: unknown): asserts value is MemoryChat {
@@ -191,7 +191,7 @@ export async function readMessages(chatId: string): Promise<MemoryChatMessage[]>
 
 /** Ports bounded windows with carried user context, retaining each source reply exactly once. */
 export function planWindows(chat: MemoryChat, messages: MemoryChatMessage[], options: MemoryRebuild): MemoryJobWindow[] {
-  const size = Math.max(8, Math.min(48, options.windowMessageCount)), windows: MemoryJobWindow[] = [];
+  const size = Math.max(MEMORY_REBUILD_WINDOW_RANGE.min, Math.min(MEMORY_REBUILD_WINDOW_RANGE.max, options.windowMessageCount)), windows: MemoryJobWindow[] = [];
   let source: MemoryChatMessage[] = [], context: MemoryChatMessage[] = [], user: MemoryChatMessage | null = null;
   /** Emits a real source window without counting carried context twice. */
   function emit(): void {

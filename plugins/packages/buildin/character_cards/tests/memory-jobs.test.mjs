@@ -644,3 +644,19 @@ test("controlled Chat/AI: legacy history without author metadata rebuilds throug
   assert.equal(harness.modelCalls.length, modelCalls);
   assert.equal(await harness.readStateText(), before);
 });
+
+/** Reopens persisted preferences before planning a real task from the saved window size. */
+test("history rebuild uses a saved 16-message window after runtime restart", async t => {
+  const harness = await createMemoryJobsHarness(t), first = harness.openRuntime();
+  await first.initialize(); await first.bind();
+  const settings = await first.api("memory.settings.read", owner);
+  await first.api("memory.settings.write", { ...owner, settings: { ...settings, rebuildWindowMessageCount: 16 } });
+  const restarted = harness.openRuntime(); await restarted.initialize();
+  const saved = await restarted.api("memory.settings.read", owner);
+  assert.equal(saved.rebuildWindowMessageCount, 16);
+  await restarted.api("memory.rebuild.start", { ...owner, rebuild: {
+    chatIds: [CONTROLLED_CHAT_ID], windowMessageCount: saved.rebuildWindowMessageCount, fromInclusive: null, toInclusive: null,
+  } });
+  const space = await readOwner(harness);
+  assert.deepEqual(space.rebuildTask.windows.map(window => window.sourceMessageCount), [16, 16]);
+});

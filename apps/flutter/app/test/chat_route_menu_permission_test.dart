@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -99,6 +100,54 @@ void main() {
     }
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  for (final action in <({String section, String control, String method})>[
+    (section: '工具', control: '只读', method: 'saveChatInputMenuSettings'),
+    (section: '行为', control: '流式输出', method: 'saveChatInputMenuSettings'),
+    (section: '插件', control: '测试插件', method: 'triggerChatInputMenuToggle'),
+  ]) {
+    testWidgets(
+      '${action.control} completion after popup disposal is ignored',
+      (tester) async {
+        final bridge = _MenuBridge()..pendingMutation = Completer<void>();
+        await tester.pumpWidget(
+          _app(
+            AgentInputMenuPopup(
+              viewModel: ChatViewModel(bridge: bridge),
+              currentChatId: 'computer-chat',
+              onDismiss: () {},
+              isChatContextCurrent: () => true,
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.text(action.section));
+        await tester.pumpAndSettle();
+        await tester.ensureVisible(find.text(action.control));
+        await tester.tap(find.text(action.control));
+        await tester.pump();
+        expect(
+          bridge.calls.where((call) => call.methodName == action.method),
+          hasLength(1),
+        );
+        final settingsReads = bridge.calls
+            .where((call) => call.methodName == 'chatInputMenuSettings')
+            .length;
+
+        await tester.pumpWidget(const SizedBox.shrink());
+        bridge.pendingMutation!.complete();
+        await tester.pump();
+
+        expect(tester.takeException(), isNull);
+        expect(
+          bridge.calls.where(
+            (call) => call.methodName == 'chatInputMenuSettings',
+          ),
+          hasLength(settingsReads),
+        );
+      },
+    );
+  }
 
   testWidgets('menu polls changes from owner and rebinds on chat switch', (
     tester,
@@ -230,6 +279,7 @@ void main() {
 class _MenuBridge extends OperitRuntimeBridge {
   final calls = <CoreCallRequest>[];
   bool disableStream = true;
+  Completer<void>? pendingMutation;
 
   /// Records exact owning-chat calls and the actual empty plugin registry.
   @override
@@ -241,6 +291,18 @@ class _MenuBridge extends OperitRuntimeBridge {
         value = <String, Object?>{
           ..._settings.toJson(),
           'disableStreamOutput': disableStream,
+          if (pendingMutation != null)
+            'pluginToggles': <Object?>[
+              const InputMenuToggleDefinitionSnapshot(
+                id: 'test-plugin',
+                title: '测试插件',
+                description: null,
+                icon: null,
+                isChecked: false,
+                isEnabled: true,
+                slot: null,
+              ).toJson(),
+            ],
         };
       case 'chatInputMenuSummary':
         value = const ChatInputMenuSummary(
@@ -256,6 +318,11 @@ class _MenuBridge extends OperitRuntimeBridge {
       case 'getToolPkgNavigationEntries':
         value = const <Object?>[];
       case 'saveChatInputMenuSettings':
+        await pendingMutation?.future;
+        value = null;
+      case 'triggerChatInputMenuToggle':
+        await pendingMutation?.future;
+        value = true;
       case 'respondChatToolPermission':
         value = null;
       default:

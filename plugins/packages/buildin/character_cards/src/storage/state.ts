@@ -3,7 +3,7 @@ import { uuid } from "../identity";
 import { operitDefaultContent } from "../default-character";
 import { createCharacterDraft } from "../drafts";
 import { assertEmbedding } from "../memory-jobs/embeddings";
-import { assertBoolean, assertInteger, assertMemory, assertMemoryChatMessage, assertMemorySettings, assertNumber, assertObject, assertSearchConfig, assertString, requireId } from "../validation";
+import { assertBoolean, assertInteger, assertMemory, assertMemoryChatMessage, assertMemorySettings, MEMORY_SETTINGS_DEFAULTS, assertNumber, assertObject, assertSearchConfig, assertString, requireId } from "../validation";
 
 /** Creates an ordinary installation card with its own UUID and editable template content. */
 export function createInstalledCharacter(now: number): Card {
@@ -15,7 +15,7 @@ export function userDocumentPath(ownerKey: string): string { return "owners/" + 
 export function createMemorySpace(ownerKey: string): MemorySpace {
   return {
     ownerKey, memories: [], links: [], chunks: [], candidates: [], userDocumentPath: userDocumentPath(ownerKey),
-    settings: { autoSaveIntervalMinutes: 5, nextAutoSaveRunAtMs: 0, memoryExtractionCustomRules: "", profileAutoUpdateEnabled: true, profileAutoUpdateLocked: false, cloudEmbeddingEnabled: false, cloudEmbeddingEndpoint: "", cloudEmbeddingApiKey: "", cloudEmbeddingModel: "" },
+    settings: { ...MEMORY_SETTINGS_DEFAULTS, autoSaveIntervalMinutes: 5, nextAutoSaveRunAtMs: 0, memoryExtractionCustomRules: "", profileAutoUpdateEnabled: true, profileAutoUpdateLocked: false, cloudEmbeddingEnabled: false, cloudEmbeddingEndpoint: "", cloudEmbeddingApiKey: "", cloudEmbeddingModel: "" },
     searchConfig: { scoreMode: "BALANCED", keywordWeight: 10, tagWeight: 0, vectorWeight: 0, edgeWeight: 0.4 },
     rebuildTask: null, embeddings: [],
     rebuildProgress: { status: "idle", totalChats: 0, completedChats: 0, totalWindows: 0, completedWindows: 0, totalSourceMessages: 0, processedSourceMessages: 0, failedWindows: 0, currentChatTitle: "", lastError: "" },

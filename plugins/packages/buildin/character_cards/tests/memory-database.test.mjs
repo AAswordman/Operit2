@@ -119,9 +119,49 @@ test("explicit rebuild uses concurrent indexed batches and query never builds hi
   env.provider(async texts => { active += 1; peak = Math.max(peak, active); await new Promise(resolve => setTimeout(resolve, 10)); active -= 1; return texts.map(() => [1, 0]); });
   env.requests.length = 0;
   assert.equal(await env.repository.run(session => session.rebuildMemoryEmbeddings(ownerKey)), 130);
-  assert.deepEqual(env.requests.map(request => request.input.length), [64, 64, 2]); assert.equal(peak, 3);
+  assert.deepEqual(env.requests.map(request => request.input.length), [20, 20, 20, 20, 20, 20, 10]); assert.equal(peak, 4);
   assert.equal(env.records().filter(row => row.value.embedding !== null).length, 130);
   env.requests.length = 0; await env.repository.run(session => session.searchMemories(options())); assert.equal(env.requests.length, 1);
+});
+
+/** Reproduces a 20-input provider limit and preserves source identity across batches and restart. */
+test("30 memories rebuild under a 20-input provider limit and honor saved batch sizes after restart", async t => {
+  const env = await environment(t);
+  for (let index = 0; index < 30; index += 1) await env.repository.run(session => session.createMemory(ownerKey, values("M" + index)));
+  await env.enable();
+  env.provider(async texts => {
+    assert.ok(texts.length <= 20, "provider rejects more than 20 inputs");
+    return texts.map(text => [Number(text.slice(1)) + 1, 1]);
+  });
+  assert.equal(await env.repository.run(session => session.rebuildMemoryEmbeddings(ownerKey)), 30);
+  assert.deepEqual(env.requests.map(request => request.input.length), [20, 10]);
+  for (const row of env.records()) {
+    const component = Number(row.value.record.content.slice(1)) + 1, norm = Math.hypot(component, 1);
+    assert.ok(Math.abs(row.value.embedding.vector[0] - component / norm) < 1e-12);
+    assert.ok(Math.abs(row.value.embedding.vector[1] - 1 / norm) < 1e-12);
+  }
+  await env.repository.run(async session => session.writeMemorySettings(ownerKey, {
+    ...await session.readMemorySettings(ownerKey), cloudEmbeddingBatchSize: 12, rebuildWindowMessageCount: 16,
+  }));
+  const reopened = await env.reopen(), settings = await reopened.readMemorySettings(ownerKey);
+  assert.equal(settings.cloudEmbeddingBatchSize, 12); assert.equal(settings.rebuildWindowMessageCount, 16);
+  env.requests.length = 0;
+  assert.equal(await reopened.run(session => session.rebuildMemoryEmbeddings(ownerKey)), 30);
+  assert.deepEqual(env.requests.map(request => request.input.length), [12, 12, 6]);
+});
+
+/** Covers both direct metadata and job/session reads of released settings without upgrade writes. */
+test("released memory settings gain defaults on read and reject invalid saved values", async t => {
+  const env = await environment(t);
+  env.disk.storage.inspect(sql => sql.prepare("UPDATE records SET value=json_remove(value,'$.settings.cloudEmbeddingBatchSize','$.settings.rebuildWindowMessageCount') WHERE collection='owners'").run());
+  env.disk.clearCalls();
+  const direct = await env.repository.readMemorySettings(ownerKey), session = await env.repository.run(repository => repository.readMemorySettings(ownerKey));
+  assert.deepEqual(plain(direct), plain(session));
+  assert.equal(direct.cloudEmbeddingBatchSize, 20); assert.equal(direct.rebuildWindowMessageCount, 32);
+  assert.equal(env.disk.calls.some(call => call.method === "storage.commit"), false);
+  for (const changes of [{ cloudEmbeddingBatchSize: 0 }, { cloudEmbeddingBatchSize: 1.5 }, { rebuildWindowMessageCount: 7 }, { rebuildWindowMessageCount: 49 }]) {
+    await assert.rejects(env.repository.run(repository => repository.writeMemorySettings(ownerKey, { ...direct, ...changes })), /Embedding 每批条数|窗口消息数/u);
+  }
 });
 
 /** Proves dimension drift is an explicit index error without query-time index mutation. */

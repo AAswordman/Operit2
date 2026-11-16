@@ -65,11 +65,11 @@ impl AsyncToolExecutor for PackageToolExecutor {
         }
     }
 
-    /// Declares the access boundary for package tools.
+    /// Treats every outer package invocation as a write operation requiring approval in restricted modes.
     #[allow(non_snake_case)]
     fn accessSpec(&self, _tool: &AITool) -> Result<ToolAccessSpec, String> {
         Ok(ToolAccessSpec {
-            effect: ToolEffect::READ,
+            effect: ToolEffect::WRITE,
             boundary: ToolBoundary::None,
         })
     }

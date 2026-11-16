@@ -2,7 +2,7 @@ import type { Storage } from "../../../../../types/storage";
 import type { CharacterState } from "../model";
 
 import { readCharacter } from "../drafts";
-import { assertObject, requireId } from "../validation";
+import { assertObject, normalizeMemorySettings, requireId } from "../validation";
 import { normalizeMemoryRecallSettings } from "./state";
 
 export const collections = [
@@ -169,6 +169,7 @@ export function decodeStateFromRecords(
         assertObject(row.value, "memory owner metadata");
         const owner: Record<string, Storage.Value> = {
           ...row.value,
+          settings: storedValue(normalizeMemorySettings(row.value.settings)),
           memories: [],
           links: [],
           chunks: [],

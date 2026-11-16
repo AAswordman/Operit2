@@ -138,6 +138,7 @@ const settings = shape({
   autoSaveIntervalMinutes: required(nonnegative), nextAutoSaveRunAtMs: required(integer), memoryExtractionCustomRules: required(text),
   profileAutoUpdateEnabled: required(boolean), profileAutoUpdateLocked: required(boolean), cloudEmbeddingEnabled: required(boolean),
   cloudEmbeddingEndpoint: required(text), cloudEmbeddingApiKey: required(text), cloudEmbeddingModel: required(text),
+  cloudEmbeddingBatchSize: required(integer), rebuildWindowMessageCount: required(integer),
 });
 const searchConfig = shape({ scoreMode: required(enumeration("BALANCED", "KEYWORD_FIRST", "SEMANTIC_FIRST")), keywordWeight: required(nonnegative), tagWeight: required(nonnegative), vectorWeight: required(nonnegative), edgeWeight: required(nonnegative) });
 const empty = shape({});

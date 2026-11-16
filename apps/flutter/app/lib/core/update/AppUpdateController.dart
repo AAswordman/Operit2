@@ -33,6 +33,7 @@ class AppUpdateController extends ChangeNotifier {
   int? totalBytes;
   bool restartRequired = false;
   String? installMessage;
+  final Set<String> _promptedVersions = <String>{};
   bool _disposed = false;
   bool _cancelRequested = false;
   StreamSubscription<AppUpdateNetwork>? _networkSubscription;
@@ -41,6 +42,16 @@ class AppUpdateController extends ChangeNotifier {
   String? _backgroundAttempt;
 
   bool get visible => release != null;
+
+  /// Shares reminder state across sidebar rebuilds for this application session.
+  bool get hasUnpromptedUpdate =>
+      release != null && !_promptedVersions.contains(release!.version);
+
+  void markUpdatePrompted() {
+    final selected = release;
+    if (selected != null) _promptedVersions.add(selected.version);
+  }
+
   bool get busy => switch (phase) {
     AppUpdatePhase.planning ||
     AppUpdatePhase.validatingBase ||

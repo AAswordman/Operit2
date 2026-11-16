@@ -40,12 +40,14 @@ export async function embedTexts(texts: readonly string[], settings: MemorySetti
   const result: SourceEmbedding[] = new Array(texts.length);
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (settings.cloudEmbeddingApiKey !== "") headers.Authorization = "Bearer " + settings.cloudEmbeddingApiKey;
+  const batchSize = settings.cloudEmbeddingBatchSize;
+  assertInteger(batchSize, "Embedding 每批条数", 1);
   let next = 0;
   /** Computes disjoint batches without holding any repository or SQLite transaction. */
   async function worker(): Promise<void> {
     while (next < texts.length) {
-      const start = next; next += 64;
-      const batch = texts.slice(start, start + 64);
+      const start = next; next += batchSize;
+      const batch = texts.slice(start, start + batchSize);
       const response = await Tools.Net.http({
         url: endpoint.endsWith("/embeddings") ? endpoint : endpoint + "/embeddings",
         method: "POST", headers, body: JSON.stringify({ input: batch, model, encoding_format: "float" }),
@@ -64,7 +66,7 @@ export async function embedTexts(texts: readonly string[], settings: MemorySetti
       }
     }
   }
-  const workers = await Promise.allSettled(Array.from({ length: Math.min(4, Math.ceil(texts.length / 64)) }, worker));
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(4, Math.ceil(texts.length / batchSize)) }, worker));
   for (const worker of workers) if (worker.status === "rejected") throw worker.reason;
   const dimensions = result[0]?.vector.length;
   for (const embedding of result) if (embedding.vector.length !== dimensions) throw new Error("Embedding batch dimensions do not match");

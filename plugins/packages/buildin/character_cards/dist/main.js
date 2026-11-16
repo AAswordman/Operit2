@@ -388,11 +388,26 @@ function assertSearchOptions(value) {
   for (const field of ["createdAtStartMs", "createdAtEndMs"]) if (value[field] !== null) assertInteger(value[field], field, 0);
   if (typeof value.createdAtStartMs === "number" && typeof value.createdAtEndMs === "number" && value.createdAtStartMs > value.createdAtEndMs) throw new Error("\u641C\u7D22\u8D77\u59CB\u65F6\u95F4\u4E0D\u80FD\u665A\u4E8E\u7ED3\u675F\u65F6\u95F4");
 }
+var MEMORY_SETTINGS_DEFAULTS = { cloudEmbeddingBatchSize: 20, rebuildWindowMessageCount: 32 };
+var MEMORY_REBUILD_WINDOW_RANGE = { min: 8, max: 48 };
+function normalizeMemorySettings(value) {
+  assertObject(value, "\u8BB0\u5FC6\u8BBE\u7F6E");
+  const settings2 = {
+    ...value,
+    cloudEmbeddingBatchSize: value.cloudEmbeddingBatchSize === void 0 ? MEMORY_SETTINGS_DEFAULTS.cloudEmbeddingBatchSize : value.cloudEmbeddingBatchSize,
+    rebuildWindowMessageCount: value.rebuildWindowMessageCount === void 0 ? MEMORY_SETTINGS_DEFAULTS.rebuildWindowMessageCount : value.rebuildWindowMessageCount
+  };
+  assertMemorySettings(settings2);
+  return settings2;
+}
 function assertMemorySettings(value) {
   assertObject(value, "\u8BB0\u5FC6\u8BBE\u7F6E");
   assertInteger(value.autoSaveIntervalMinutes, "\u81EA\u52A8\u4FDD\u5B58\u95F4\u9694", 1);
   if (value.autoSaveIntervalMinutes > 30) throw new Error("\u81EA\u52A8\u4FDD\u5B58\u95F4\u9694\u5FC5\u987B\u5728 1 \u5230 30 \u5206\u949F\u4E4B\u95F4");
   assertInteger(value.nextAutoSaveRunAtMs, "\u4E0B\u6B21\u81EA\u52A8\u4FDD\u5B58\u65F6\u95F4", 0);
+  assertInteger(value.cloudEmbeddingBatchSize, "Embedding \u6BCF\u6279\u6761\u6570", 1);
+  assertInteger(value.rebuildWindowMessageCount, "\u7A97\u53E3\u6D88\u606F\u6570", MEMORY_REBUILD_WINDOW_RANGE.min);
+  if (value.rebuildWindowMessageCount > MEMORY_REBUILD_WINDOW_RANGE.max) throw new Error("\u7A97\u53E3\u6D88\u606F\u6570\u5FC5\u987B\u5728 8 \u5230 48 \u4E4B\u95F4");
   for (const field of ["memoryExtractionCustomRules", "cloudEmbeddingEndpoint", "cloudEmbeddingApiKey", "cloudEmbeddingModel"]) assertString(value[field], field);
   for (const field of ["profileAutoUpdateEnabled", "profileAutoUpdateLocked", "cloudEmbeddingEnabled"]) assertBoolean(value[field], field);
 }
@@ -859,7 +874,9 @@ var settings = shape({
   cloudEmbeddingEnabled: required(boolean),
   cloudEmbeddingEndpoint: required(text),
   cloudEmbeddingApiKey: required(text),
-  cloudEmbeddingModel: required(text)
+  cloudEmbeddingModel: required(text),
+  cloudEmbeddingBatchSize: required(integer),
+  rebuildWindowMessageCount: required(integer)
 });
 var searchConfig = shape({ scoreMode: required(enumeration("BALANCED", "KEYWORD_FIRST", "SEMANTIC_FIRST")), keywordWeight: required(nonnegative), tagWeight: required(nonnegative), vectorWeight: required(nonnegative), edgeWeight: required(nonnegative) });
 var empty = shape({});
@@ -1229,12 +1246,14 @@ async function embedTexts(texts, settings2) {
   const result2 = new Array(texts.length);
   const headers = { "Content-Type": "application/json" };
   if (settings2.cloudEmbeddingApiKey !== "") headers.Authorization = "Bearer " + settings2.cloudEmbeddingApiKey;
+  const batchSize = settings2.cloudEmbeddingBatchSize;
+  assertInteger(batchSize, "Embedding \u6BCF\u6279\u6761\u6570", 1);
   let next = 0;
   async function worker() {
     while (next < texts.length) {
       const start = next;
-      next += 64;
-      const batch = texts.slice(start, start + 64);
+      next += batchSize;
+      const batch = texts.slice(start, start + batchSize);
       const response = await Tools.Net.http({
         url: endpoint.endsWith("/embeddings") ? endpoint : endpoint + "/embeddings",
         method: "POST",
@@ -1262,7 +1281,7 @@ async function embedTexts(texts, settings2) {
       }
     }
   }
-  const workers = await Promise.allSettled(Array.from({ length: Math.min(4, Math.ceil(texts.length / 64)) }, worker));
+  const workers = await Promise.allSettled(Array.from({ length: Math.min(4, Math.ceil(texts.length / batchSize)) }, worker));
   for (const worker2 of workers) if (worker2.status === "rejected") throw worker2.reason;
   const dimensions = result2[0]?.vector.length;
   for (const embedding of result2) if (embedding.vector.length !== dimensions) throw new Error("Embedding batch dimensions do not match");
@@ -2464,7 +2483,7 @@ function createMemorySpace(ownerKey) {
     chunks: [],
     candidates: [],
     userDocumentPath: userDocumentPath(ownerKey),
-    settings: { autoSaveIntervalMinutes: 5, nextAutoSaveRunAtMs: 0, memoryExtractionCustomRules: "", profileAutoUpdateEnabled: true, profileAutoUpdateLocked: false, cloudEmbeddingEnabled: false, cloudEmbeddingEndpoint: "", cloudEmbeddingApiKey: "", cloudEmbeddingModel: "" },
+    settings: { ...MEMORY_SETTINGS_DEFAULTS, autoSaveIntervalMinutes: 5, nextAutoSaveRunAtMs: 0, memoryExtractionCustomRules: "", profileAutoUpdateEnabled: true, profileAutoUpdateLocked: false, cloudEmbeddingEnabled: false, cloudEmbeddingEndpoint: "", cloudEmbeddingApiKey: "", cloudEmbeddingModel: "" },
     searchConfig: { scoreMode: "BALANCED", keywordWeight: 10, tagWeight: 0, vectorWeight: 0, edgeWeight: 0.4 },
     rebuildTask: null,
     embeddings: [],
@@ -2724,6 +2743,7 @@ function decodeStateFromRecords(metadata, rows) {
         assertObject(row.value, "memory owner metadata");
         const owner2 = {
           ...row.value,
+          settings: storedValue(normalizeMemorySettings(row.value.settings)),
           memories: [],
           links: [],
           chunks: [],
@@ -3301,8 +3321,10 @@ var DatabaseMemoryRepository = class {
     this.snapshots = /* @__PURE__ */ new WeakMap();
   }
   /** Keeps nullable reads separate from versioned writes to an existing library. */
-  findOwner(ownerKey) {
-    return this.memoryDatabase.get("owners", requireId(ownerKey, "memory owner"));
+  async findOwner(ownerKey) {
+    const entry = await this.memoryDatabase.get("owners", requireId(ownerKey, "memory owner"));
+    if (entry !== null) entry.value.settings = normalizeMemorySettings(entry.value.settings);
+    return entry;
   }
   async hasMemoryOwner(ownerKey) {
     return await this.findOwner(ownerKey) !== null;
@@ -3864,6 +3886,8 @@ var DatabaseMemoryRepository = class {
   }
   /** Imports complete document-aware records, relationships, settings and USER text in this operation. */
   async importMemorySpace(ownerKey, imported, strategy) {
+    assertObject(imported, "memory space");
+    imported = { ...imported, settings: normalizeMemorySettings(imported.settings) };
     assertMemorySpace(imported);
     const space = await this.readMemorySpace(ownerKey), result2 = { newMemories: 0, updatedMemories: 0, skippedMemories: 0, newLinks: 0 };
     const idMapping = /* @__PURE__ */ new Map();
@@ -4445,7 +4469,7 @@ function assertPlan(value) {
     throw new Error("Invalid character initialization card");
   assertObject(value.memory, "initial memory space");
   const owner2 = plannedOwner(value);
-  assertMemorySpace(owner2);
+  assertMemorySpace({ ...owner2, settings: normalizeMemorySettings(owner2.settings) });
   for (const name of ["memories", "links", "chunks", "candidates", "embeddings"])
     if (owner2[name].length !== 0) throw new Error("Character initialization plan contains memory records");
   if (owner2.rebuildTask !== null) throw new Error("Character initialization plan contains a memory job");
@@ -4745,11 +4769,7 @@ var DatabaseCharacterRepository = class _DatabaseCharacterRepository {
   }
   /** Reads memory settings without loading bodies, vectors or job objects. */
   readMemorySettings(ownerKey) {
-    return this.readOwnerMetadata(ownerKey, (row) => {
-      const settings2 = row.settings;
-      assertMemorySettings(settings2);
-      return settings2;
-    });
+    return this.readOwnerMetadata(ownerKey, (row) => normalizeMemorySettings(row.settings));
   }
   /** Reads only the selected owner's search weights and mode. */
   readMemorySearchConfig(ownerKey) {
@@ -5126,7 +5146,7 @@ async function readMessages(chatId) {
   );
 }
 function planWindows(chat, messages, options) {
-  const size = Math.max(8, Math.min(48, options.windowMessageCount)), windows = [];
+  const size = Math.max(MEMORY_REBUILD_WINDOW_RANGE.min, Math.min(MEMORY_REBUILD_WINDOW_RANGE.max, options.windowMessageCount)), windows = [];
   let source = [], context = [], user = null;
   function emit() {
     if (source.length === 0) return;

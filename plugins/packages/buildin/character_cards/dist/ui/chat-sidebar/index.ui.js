@@ -218,7 +218,9 @@ var settings = shape({
   cloudEmbeddingEnabled: required(boolean),
   cloudEmbeddingEndpoint: required(text),
   cloudEmbeddingApiKey: required(text),
-  cloudEmbeddingModel: required(text)
+  cloudEmbeddingModel: required(text),
+  cloudEmbeddingBatchSize: required(integer),
+  rebuildWindowMessageCount: required(integer)
 });
 var searchConfig = shape({ scoreMode: required(enumeration("BALANCED", "KEYWORD_FIRST", "SEMANTIC_FIRST")), keywordWeight: required(nonnegative), tagWeight: required(nonnegative), vectorWeight: required(nonnegative), edgeWeight: required(nonnegative) });
 var empty = shape({});

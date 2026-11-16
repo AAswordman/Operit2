@@ -2,7 +2,7 @@ import schema from "./meta-schema.json";
 import type { Storage } from "../../../../../types/storage";
 import type { Card, GlobalMemoryPreferences, MemoryRecallSettings, MemorySpace } from "../model";
 import { readCharacter } from "../drafts";
-import { assertBoolean, assertObject, requireId } from "../validation";
+import { assertBoolean, assertObject, normalizeMemorySettings, requireId } from "../validation";
 import { CharacterStorage, configurationNames, recordPrefix } from "./preferences";
 import { equal, storedValue } from "./records";
 import { assertMemorySpace, createInitialState, normalizeMemoryRecallSettings, userDocumentPath } from "./state";
@@ -117,7 +117,7 @@ function assertPlan(value: unknown): asserts value is InitializationPlan {
     throw new Error("Invalid character initialization card");
   assertObject(value.memory, "initial memory space");
   const owner = plannedOwner(value as unknown as InitializationPlan);
-  assertMemorySpace(owner);
+  assertMemorySpace({ ...owner, settings: normalizeMemorySettings(owner.settings) });
   for (const name of ["memories", "links", "chunks", "candidates", "embeddings"] as const)
     if (owner[name].length !== 0) throw new Error("Character initialization plan contains memory records");
   if (owner.rebuildTask !== null) throw new Error("Character initialization plan contains a memory job");

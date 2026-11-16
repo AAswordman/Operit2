@@ -226,12 +226,30 @@ export function assertSearchOptions(value: unknown): asserts value is MemorySear
   if (typeof value.createdAtStartMs === "number" && typeof value.createdAtEndMs === "number" && value.createdAtStartMs > value.createdAtEndMs) throw new Error("搜索起始时间不能晚于结束时间");
 }
 
+export const MEMORY_SETTINGS_DEFAULTS = { cloudEmbeddingBatchSize: 20, rebuildWindowMessageCount: 32 } as const;
+export const MEMORY_REBUILD_WINDOW_RANGE = { min: 8, max: 48 } as const;
+
+/** Supplies only fields absent from settings written before batching and window preferences. */
+export function normalizeMemorySettings(value: unknown): MemorySettings {
+  assertObject(value, "记忆设置");
+  const settings = {
+    ...value,
+    cloudEmbeddingBatchSize: value.cloudEmbeddingBatchSize === undefined ? MEMORY_SETTINGS_DEFAULTS.cloudEmbeddingBatchSize : value.cloudEmbeddingBatchSize,
+    rebuildWindowMessageCount: value.rebuildWindowMessageCount === undefined ? MEMORY_SETTINGS_DEFAULTS.rebuildWindowMessageCount : value.rebuildWindowMessageCount,
+  };
+  assertMemorySettings(settings);
+  return settings;
+}
+
 /** Validates all owner-scoped settings without replacing scheduler or embedding values. */
 export function assertMemorySettings(value: unknown): asserts value is MemorySettings {
   assertObject(value, "记忆设置");
   assertInteger(value.autoSaveIntervalMinutes, "自动保存间隔", 1);
   if (value.autoSaveIntervalMinutes > 30) throw new Error("自动保存间隔必须在 1 到 30 分钟之间");
   assertInteger(value.nextAutoSaveRunAtMs, "下次自动保存时间", 0);
+  assertInteger(value.cloudEmbeddingBatchSize, "Embedding 每批条数", 1);
+  assertInteger(value.rebuildWindowMessageCount, "窗口消息数", MEMORY_REBUILD_WINDOW_RANGE.min);
+  if (value.rebuildWindowMessageCount > MEMORY_REBUILD_WINDOW_RANGE.max) throw new Error("窗口消息数必须在 8 到 48 之间");
   for (const field of ["memoryExtractionCustomRules", "cloudEmbeddingEndpoint", "cloudEmbeddingApiKey", "cloudEmbeddingModel"] as const) assertString(value[field], field);
   for (const field of ["profileAutoUpdateEnabled", "profileAutoUpdateLocked", "cloudEmbeddingEnabled"] as const) assertBoolean(value[field], field);
 }

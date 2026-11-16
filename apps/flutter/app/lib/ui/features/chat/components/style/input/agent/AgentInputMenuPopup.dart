@@ -138,7 +138,9 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     disableUserPreferenceDescription: null,
   );
 
+  /// Skips refreshes when a pending menu action completes after dismissal.
   void _reloadSettings() {
+    if (!mounted) return;
     setState(() {
       _settingsFuture = _loadSettings();
     });

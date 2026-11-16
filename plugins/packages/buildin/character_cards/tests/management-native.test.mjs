@@ -110,6 +110,29 @@ test("settings load authoritative values, validate numeric drafts and persist on
   await action(ui, "memory-settings-back"); await more(ui, "memory-settings-open"); await action(ui, "memory-settings-root", "onLoad"); assert.equal(keyedNode(ui.render().tree, "memory-interval").props.value, "7"); await action(ui, "memory-settings-back");
 });
 
+test("memory settings restore saved embedding batch and history window values when reopened", async t => {
+  const plugin = await environment(t), ownerKey = "character:default", ui = await memory(t, plugin);
+  await more(ui, "memory-settings-open"); await action(ui, "memory-settings-root", "onLoad");
+  await action(ui, "memory-settings-tabs:rebuild");
+  assert.equal(keyedNode(ui.render().tree, "memory-rebuild-window").props.value, "32");
+  await action(ui, "memory-rebuild-window", "onValueChange", "16");
+  await action(ui, "memory-settings-tabs:search");
+  await action(ui, "memory-embedding", "onCheckedChange", true);
+  await action(ui, "memory-embedding-endpoint", "onValueChange", "https://provider.test");
+  await action(ui, "memory-embedding-model", "onValueChange", "test-model");
+  assert.equal(keyedNode(ui.render().tree, "memory-embedding-batch").props.value, "20");
+  await action(ui, "memory-embedding-batch", "onValueChange", "12");
+  await action(ui, "memory-settings-save"); await action(ui, "memory-settings-back");
+  await more(ui, "memory-settings-open"); await action(ui, "memory-settings-root", "onLoad");
+  await action(ui, "memory-settings-tabs:rebuild");
+  assert.equal(keyedNode(ui.render().tree, "memory-rebuild-window").props.value, "16");
+  await action(ui, "memory-settings-tabs:search");
+  assert.equal(keyedNode(ui.render().tree, "memory-embedding-batch").props.value, "12");
+  const saved = await plugin.web({ action: "readMemorySettings", ownerKey });
+  assert.equal(saved.cloudEmbeddingBatchSize, 12); assert.equal(saved.rebuildWindowMessageCount, 16);
+  await action(ui, "memory-settings-back");
+});
+
 test("attachment owner/folder selection uses exact persisted records and emits the existing result", async t => {
   const plugin = await environment(t), ownerKey = "character:default"; await seed(plugin, ownerKey, "根目录"); await seed(plugin, ownerKey, "工作记忆", "工作"); await seed(plugin, ownerKey, "子目录记忆", "工作/子目录");
   const ui = mountRegisteredComposeRoute(plugin, { requestId: "attachment-native", input: { mode: "memory-attachment", ownerKey: null, folderPath: null } }, "memory-attachment"); await ui.load(); nativeOnly(ui);

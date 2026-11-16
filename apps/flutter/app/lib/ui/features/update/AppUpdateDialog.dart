@@ -14,15 +14,21 @@ bool _dialogOpen = false;
 Future<void> showAppUpdateDialog(
   BuildContext context, {
   AppUpdateController? controller,
+  bool automatic = false,
 }) async {
-  if (_dialogOpen) return;
+  final selectedController = controller ?? AppUpdateController.instance;
+  if (_dialogOpen || (automatic && !selectedController.hasUnpromptedUpdate)) {
+    return;
+  }
+  selectedController.markUpdatePrompted();
   _dialogOpen = true;
   try {
     await showDialog<void>(
       context: context,
       barrierDismissible: false,
       builder: (_) => AppUpdateDialog(
-        controller: controller ?? AppUpdateController.instance,
+        controller: selectedController,
+        requireConfirmation: automatic,
       ),
     );
   } finally {
@@ -31,18 +37,27 @@ Future<void> showAppUpdateDialog(
 }
 
 class AppUpdateDialog extends StatefulWidget {
-  const AppUpdateDialog({super.key, required this.controller});
+  const AppUpdateDialog({
+    super.key,
+    required this.controller,
+    this.requireConfirmation = false,
+  });
   final AppUpdateController controller;
+  final bool requireConfirmation;
 
   @override
   State<AppUpdateDialog> createState() => _AppUpdateDialogState();
 }
 
 class _AppUpdateDialogState extends State<AppUpdateDialog> {
+  late bool _awaitingConfirmation;
+
   /// Start after a visible dialog frame, so a tap always gets immediate feedback.
   @override
   void initState() {
     super.initState();
+    _awaitingConfirmation = widget.requireConfirmation;
+    if (_awaitingConfirmation) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted && widget.controller.phase == AppUpdatePhase.available) {
         unawaited(widget.controller.start());
@@ -57,6 +72,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       final controller = widget.controller;
       final release = controller.release;
       if (release == null) return const SizedBox.shrink();
+      if (_awaitingConfirmation) return _buildUpdatePrompt(context, release);
       final colors = Theme.of(context).colorScheme;
       final phase = controller.phase;
       if (phase == AppUpdatePhase.unavailable) {
@@ -347,6 +363,145 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       );
     },
   );
+
+  Widget _buildUpdatePrompt(BuildContext context, AppUpdateRelease release) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final ready = widget.controller.phase == AppUpdatePhase.ready;
+    final notes = release.releaseNotes.trim();
+    return OperitDialogScaffold(
+      title: '发现新版本',
+      icon: Container(
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          color: colors.primaryContainer,
+          borderRadius: BorderRadius.circular(14),
+        ),
+        child: Icon(
+          Icons.system_update_alt_rounded,
+          color: colors.onPrimaryContainer,
+        ),
+      ),
+      maxWidth: 480,
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton.icon(
+          onPressed: () {
+            setState(() => _awaitingConfirmation = false);
+            final controller = widget.controller;
+            if (controller.phase == AppUpdatePhase.ready) {
+              unawaited(controller.confirmInstall());
+            } else if (controller.phase == AppUpdatePhase.available ||
+                controller.phase == AppUpdatePhase.failed) {
+              unawaited(controller.start());
+            }
+          },
+          icon: Icon(
+            ready ? Icons.restart_alt : Icons.system_update_alt_rounded,
+          ),
+          label: Text(ready ? '重启并更新' : '立即更新'),
+        ),
+      ],
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            'Operit 有新版本可用了',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            ready ? '更新已准备就绪，确认后将重启应用并安装。' : '更新到最新版本，体验最新功能与改进。',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 20),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Wrap(
+              spacing: 16,
+              runSpacing: 12,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _versionLabel(context, '当前版本', release.currentVersion),
+                Icon(
+                  Icons.arrow_forward_rounded,
+                  color: colors.onSurfaceVariant,
+                  size: 20,
+                ),
+                _versionLabel(context, '最新版本', release.version, latest: true),
+              ],
+            ),
+          ),
+          if (notes.isNotEmpty) ...[
+            const SizedBox(height: 20),
+            Text(
+              '本次更新内容',
+              style: theme.textTheme.labelLarge?.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 10),
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 180),
+              child: SingleChildScrollView(
+                primary: false,
+                child: SelectableText(notes, style: theme.textTheme.bodyMedium),
+              ),
+            ),
+          ],
+          const SizedBox(height: 20),
+          Text(
+            '也可以稍后点击侧栏的 Operit 标志继续更新。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _versionLabel(
+    BuildContext context,
+    String label,
+    String version, {
+    bool latest = false,
+  }) {
+    final theme = Theme.of(context);
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          version,
+          style: theme.textTheme.titleMedium?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: latest ? theme.colorScheme.primary : null,
+          ),
+        ),
+      ],
+    );
+  }
 
   Future<void> _openReleasePage() async {
     try {

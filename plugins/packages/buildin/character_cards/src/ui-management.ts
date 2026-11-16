@@ -2,13 +2,13 @@ import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-d
 import type { BindableChat, Card, Snapshot, StoreValues } from "./model";
 import { renderManagedEntityScreen, type ManagedEntityRequest, type NativeEntityInput } from "./ui-entity-native";
 import { initializationRecoveryUi } from "./ui-initialization-recovery";
-import { nativeUi, uiRequest, uiState } from "./ui-controls";
+import { nativeUi, readUiJson, uiRequest, uiState } from "./ui-controls";
 import { renderMemoryWorkspace, type MemoryTarget } from "./ui-memory-workspace";
 
 interface BindingDraft { cardId: string; query: string; unbound: boolean; chats: BindableChat[]; selected: string[]; failures: Record<string, string>; completed: number; total: number }
 type ManagementPanel = { type: "store"; store: StoreValues; create: boolean }
   | { type: "delete-store"; id: string; name: string }
-  | { type: "import"; entity: "card" | "group"; format: "operit" | "tavern"; content: string }
+  | { type: "import"; entity: "card" | "group"; format: "operit" | "tavern" }
   | { type: "binding"; draft: BindingDraft };
 interface ManagementState { snapshot: Snapshot | null; busy: boolean; error: string; notice: string; panel: ManagementPanel | null; memory: MemoryTarget | null; navigation: number; defaultAvatar: string | null }
 
@@ -101,8 +101,8 @@ export function renderManagement(ctx: ComposeDslContext, view: "characters" | "m
       case "store": return [ui.field("store-name", "名称", panel.store.name, name => update({ panel: { ...panel, store: { ...panel.store, name } } })), ui.primary("store-save", "保存", () => act(async () => { const current = live.current.panel; if (current?.type !== "store") return; update({ snapshot: await uiRequest({ action: "saveStore", store: current.store, create: current.create }), panel: null }); }))];
       case "delete-store": return [ui.text("删除共享记忆库「" + panel.name + "」？此操作会影响关联角色。"), ui.primary("store-delete-confirm", "确认删除", () => act(async () => update({ snapshot: await uiRequest({ action: "deleteStore", id: panel.id }), panel: null })))];
       case "import": return [...(panel.entity === "card" ? [ui.choose("import-format", "角色格式", panel.format, [{ id: "operit", label: "Operit JSON" }, { id: "tavern", label: "Tavern JSON" }], format => update({ panel: { ...panel, format: format as "operit" | "tavern" } }))] : []),
-        ui.field("import-content", panel.entity === "card" && panel.format === "tavern" ? "粘贴 Tavern JSON" : "粘贴 Operit JSON", panel.content, content => update({ panel: { ...panel, content } }), 18), ui.text("角色卡支持 Operit 和 Tavern JSON；群组使用 Operit JSON。"),
-        ui.primary("import-submit", "导入", () => act(async () => { const current = live.current.panel; if (current?.type !== "import") return; update({ snapshot: await uiRequest(current.entity === "card" ? { action: "importCharacter", format: current.format, content: current.content } : { action: "importGroup", content: current.content }), panel: null, notice: "导入完成" }); }))];
+        ui.text(panel.entity === "card" ? "选择角色卡 JSON 文件，支持 Operit 和 Tavern 格式。" : "选择群组导出的 Operit JSON 文件。"),
+        ui.primary("import-submit", "选择 JSON 文件并导入", () => act(async () => { const current = live.current.panel; if (current?.type !== "import") return; const content = await readUiJson(ctx); if (content === null) return; update({ snapshot: await uiRequest(current.entity === "card" ? { action: "importCharacter", format: current.format, content } : { action: "importGroup", content }), panel: null, notice: "导入完成" }); }))];
       case "binding": {
         const draft = panel.draft, snapshot = state.snapshot!;
         const query = draft.query.trim().toLocaleLowerCase();
@@ -136,12 +136,12 @@ export function renderManagement(ctx: ComposeDslContext, view: "characters" | "m
           active ? ui.activePill() : ui.sectionAction("card-activate:" + card.id, "使用", "", () => act(async () => update({ snapshot: await uiRequest({ action: "activate", type: "card", id: card.id }) }))),
         ], active, () => entity({ mode: "edit", entity: "card", id: card.id }), card.avatarUri ?? state.defaultAvatar);
       });
-      children.push(ui.section("character-section", "角色卡", "BadgeOutlined", [ui.sectionAction("bind-chats", "绑定对话", "ChatBubbleOutline", () => bindings(""), snapshot.cards.length > 0), ui.menu("add-card", "添加", "Add", [{ key: "create-card", label: "新建角色卡", name: "Add", action: () => entity({ mode: "create", entity: "card", id: "" }) }, { key: "import-card", label: "导入角色卡", name: "Upload", action: () => update({ panel: { type: "import", entity: "card", format: "operit", content: "" } }) }])], cards.length === 0 ? [ui.text("还没有角色卡，点击创建添加角色。")] : cards));
+      children.push(ui.section("character-section", "角色卡", "BadgeOutlined", [ui.sectionAction("bind-chats", "绑定对话", "ChatBubbleOutline", () => bindings(""), snapshot.cards.length > 0), ui.menu("add-card", "添加", "Add", [{ key: "create-card", label: "新建角色卡", name: "Add", action: () => entity({ mode: "create", entity: "card", id: "" }) }, { key: "import-card", label: "导入角色卡", name: "Upload", action: () => update({ panel: { type: "import", entity: "card", format: "operit" } }) }])], cards.length === 0 ? [ui.text("还没有角色卡，点击创建添加角色。")] : cards));
       const groups = snapshot.groups.map(group => {
         const active = "CharacterGroup" in snapshot.active && snapshot.active.CharacterGroup.id === group.id;
         return ui.tile("group:" + group.id, group.name, group.members.map(member => snapshot.cards.find(card => card.id === member.characterCardId)?.name ?? "已删除角色").join("、"), [`${group.members.length} 个角色`], [active ? ui.activePill() : ui.sectionAction("group-activate:" + group.id, "使用", "", () => act(async () => update({ snapshot: await uiRequest({ action: "activate", type: "group", id: group.id }) })))], active, () => entity({ mode: "edit", entity: "group", id: group.id }), null, "GroupsOutlined");
       });
-      children.push(ui.section("group-section", "群组", "GroupsOutlined", [ui.sectionAction("import-group", "导入 JSON", "Upload", () => update({ panel: { type: "import", entity: "group", format: "operit", content: "" } })), ui.sectionAction("create-group", "创建", "Add", () => entity({ mode: "create", entity: "group", id: "" }))], groups.length === 0 ? [ui.text("还没有群组，创建后可编排多个角色参与对话。")] : groups));
+      children.push(ui.section("group-section", "群组", "GroupsOutlined", [ui.sectionAction("import-group", "导入 JSON", "Upload", () => update({ panel: { type: "import", entity: "group", format: "operit" } })), ui.sectionAction("create-group", "创建", "Add", () => entity({ mode: "create", entity: "group", id: "" }))], groups.length === 0 ? [ui.text("还没有群组，创建后可编排多个角色参与对话。")] : groups));
     } else {
       const global: ComposeNode[] = [];
       for (const [key, label, description] of [["userDescriptionEnabled", "向模型提供用户资料", "聊天执行时提供用户资料；关闭不会删除 USER.md 或改写历史记录。"], ["autoUpdateEnabled", "自动更新记忆库", "允许自动候选入队和定时提取；关闭不会取消手动历史重建。"]] as const) global.push(ctx.UI.Row({ fillMaxWidth: true, spacing: 16, paddingVertical: 10, verticalAlignment: "center" }, [ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: label, fontSize: 14 }), ctx.UI.Text({ text: description, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })]), ctx.UI.Switch({ key: "memory-preference:" + key, checked: snapshot.memoryPreferences[key], enabled: !state.busy, onCheckedChange: value => act(async () => { const memoryPreferences = await uiRequest({ action: "writeGlobalMemoryPreference", key, value }); update({ snapshot: { ...live.current.snapshot!, memoryPreferences } }); }) })]));

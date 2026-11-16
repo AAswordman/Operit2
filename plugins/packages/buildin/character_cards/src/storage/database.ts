@@ -43,7 +43,7 @@ import {
   assertObject,
   assertString,
   assertTag,
-  assertMemorySettings,
+  normalizeMemorySettings,
   assertSearchConfig,
   requireId,
 } from "../validation";
@@ -300,11 +300,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
 
   /** Reads memory settings without loading bodies, vectors or job objects. */
   readMemorySettings(ownerKey: string): Promise<MemorySettings> {
-    return this.readOwnerMetadata(ownerKey, (row) => {
-      const settings = row.settings;
-      assertMemorySettings(settings);
-      return settings;
-    });
+    return this.readOwnerMetadata(ownerKey, row => normalizeMemorySettings(row.settings));
   }
 
   /** Reads only the selected owner's search weights and mode. */

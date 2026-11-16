@@ -1,7 +1,7 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
 import type { MemorySettings, MemorySearchConfig, MemoryChatListing, MemoryAutoSaveStatus, MemoryRebuildProgress, MemorySearchDebug } from "./model";
 import type { MemoryTarget } from "./ui-memory-workspace";
-import { assertMemorySettings, assertSearchConfig } from "./validation";
+import { assertMemorySettings, assertSearchConfig, MEMORY_REBUILD_WINDOW_RANGE } from "./validation";
 import { nativeUi, uiDate, uiNumber, uiRequest, uiState } from "./ui-controls";
 
 interface SettingsState {
@@ -9,12 +9,12 @@ interface SettingsState {
   queue: MemoryAutoSaveStatus | null; progress: MemoryRebuildProgress | null;
   tab: string; busy: boolean; error: string; statusError: string; notice: string;
   numbers: Record<string, string>; query: string; threshold: string; result: MemorySearchDebug | null;
-  selected: string[]; window: string; from: string; to: string; clearFailed: boolean;
+  selected: string[]; from: string; to: string; clearFailed: boolean;
 }
 
 /** Edits owner-scoped settings and controls durable jobs without a browser form. */
 export function renderMemorySettings(ctx: ComposeDslContext, target: MemoryTarget, close: () => void, key: string): ComposeNode {
-  const { state, live, update } = uiState<SettingsState>(ctx, key, { settings: null, config: null, listing: null, queue: null, progress: null, tab: "automatic", busy: false, error: "", statusError: "", notice: "", numbers: {}, query: "", threshold: "0", result: null, selected: [], window: "32", from: "", to: "", clearFailed: false });
+  const { state, live, update } = uiState<SettingsState>(ctx, key, { settings: null, config: null, listing: null, queue: null, progress: null, tab: "automatic", busy: false, error: "", statusError: "", notice: "", numbers: {}, query: "", threshold: "0", result: null, selected: [], from: "", to: "", clearFailed: false });
   const ui = nativeUi(ctx, !state.busy), ownerKey = target.ownerKey;
   const alive = ctx.useRef(key + ":alive", true);
   /** Reads status without replacing active settings drafts or stealing field focus. */
@@ -37,7 +37,10 @@ export function renderMemorySettings(ctx: ComposeDslContext, target: MemoryTarge
       ]);
       assertMemorySettings(settings); assertSearchConfig(config);
       if (!alive.current) return;
-      update({ settings, config, listing, queue, progress, numbers: { interval: String(settings.autoSaveIntervalMinutes), keywordWeight: String(config.keywordWeight), tagWeight: String(config.tagWeight), vectorWeight: String(config.vectorWeight), edgeWeight: String(config.edgeWeight) } });
+      update({ settings, config, listing, queue, progress, numbers: {
+        interval: String(settings.autoSaveIntervalMinutes), embeddingBatch: String(settings.cloudEmbeddingBatchSize), rebuildWindow: String(settings.rebuildWindowMessageCount),
+        keywordWeight: String(config.keywordWeight), tagWeight: String(config.tagWeight), vectorWeight: String(config.vectorWeight), edgeWeight: String(config.edgeWeight),
+      } });
     });
   }
   ctx.useEffect(key + ":poll", () => {
@@ -63,11 +66,20 @@ export function renderMemorySettings(ctx: ComposeDslContext, target: MemoryTarge
     for (const name of ["keywordWeight", "tagWeight", "vectorWeight", "edgeWeight"] as const) draft[name] = uiNumber(live.current.numbers[name], name, 0);
     assertSearchConfig(draft); return draft;
   }
+  /** Uses the same validated window value for settings saves and rebuild submissions. */
+  function rebuildWindow(): number {
+    return uiNumber(live.current.numbers.rebuildWindow, "窗口消息数", MEMORY_REBUILD_WINDOW_RANGE.min, MEMORY_REBUILD_WINDOW_RANGE.max, true);
+  }
   /** Saves settings and search configuration through the existing atomic owner operation. */
   async function save(): Promise<void> {
     await act(async () => {
       if (live.current.settings === null) throw new Error("记忆设置尚未读取成功");
-      const settings = { ...live.current.settings, autoSaveIntervalMinutes: uiNumber(live.current.numbers.interval, "检查间隔", 1, 30, true) }, config = configDraft();
+      const settings = {
+        ...live.current.settings,
+        autoSaveIntervalMinutes: uiNumber(live.current.numbers.interval, "检查间隔", 1, 30, true),
+        cloudEmbeddingBatchSize: uiNumber(live.current.numbers.embeddingBatch, "Embedding 每批条数", 1, Number.MAX_SAFE_INTEGER, true),
+        rebuildWindowMessageCount: rebuildWindow(),
+      }, config = configDraft();
       assertMemorySettings(settings);
       const result = await uiRequest({ action: "writeMemoryOwnerSettings", ownerKey, settings, config });
       if (alive.current) update({ settings: result.settings, config: result.config, notice: "设置已保存" });
@@ -99,15 +111,25 @@ export function renderMemorySettings(ctx: ComposeDslContext, target: MemoryTarge
 
       for (const [name, label] of [["keywordWeight", "关键词权重"], ["tagWeight", "标签权重"], ["vectorWeight", "向量权重"], ["edgeWeight", "关系权重"]] as const) children.push(ui.field("memory-" + name, label, state.numbers[name], value => numberChange(name, value)));
       children.push(ui.toggle("memory-embedding", "云端 Embedding", settings.cloudEmbeddingEnabled, cloudEmbeddingEnabled => settingsChange({ cloudEmbeddingEnabled })));
-      if (settings.cloudEmbeddingEnabled) children.push(ui.text("搜索文本与记忆文本会发送至指定服务。修改服务地址、模型或密钥后，请先保存再重建。"), ui.field("memory-embedding-endpoint", "Embedding 完整请求地址", settings.cloudEmbeddingEndpoint, cloudEmbeddingEndpoint => settingsChange({ cloudEmbeddingEndpoint })), ui.field("memory-embedding-model", "Embedding 模型", settings.cloudEmbeddingModel, cloudEmbeddingModel => settingsChange({ cloudEmbeddingModel })), ctx.UI.TextField({ key: "memory-embedding-key", label: "API Key", value: settings.cloudEmbeddingApiKey, enabled: !state.busy, isPassword: true, fillMaxWidth: true, onValueChange: cloudEmbeddingApiKey => settingsChange({ cloudEmbeddingApiKey }) }), ui.button("memory-embedding-rebuild", "使用已保存设置重建 Embedding", () => act(async () => { const count = await uiRequest({ action: "rebuildMemoryEmbeddings", ownerKey }); if (alive.current) update({ notice: `已重建 ${count} 条记忆的 Embedding` }); })));
+      if (settings.cloudEmbeddingEnabled) children.push(
+        ui.text("搜索文本与记忆文本会发送至指定服务。修改服务地址、模型、密钥或每批条数后，请先保存再重建。每批条数应不超过服务商的单次上限。"),
+        ui.field("memory-embedding-endpoint", "Embedding 完整请求地址", settings.cloudEmbeddingEndpoint, cloudEmbeddingEndpoint => settingsChange({ cloudEmbeddingEndpoint })),
+        ui.field("memory-embedding-model", "Embedding 模型", settings.cloudEmbeddingModel, cloudEmbeddingModel => settingsChange({ cloudEmbeddingModel })),
+        ui.field("memory-embedding-batch", "Embedding 每批条数", state.numbers.embeddingBatch, value => numberChange("embeddingBatch", value)),
+        ctx.UI.TextField({ key: "memory-embedding-key", label: "API Key", value: settings.cloudEmbeddingApiKey, enabled: !state.busy, isPassword: true, fillMaxWidth: true, onValueChange: cloudEmbeddingApiKey => settingsChange({ cloudEmbeddingApiKey }) }),
+        ui.button("memory-embedding-rebuild", "使用已保存设置重建 Embedding", () => act(async () => {
+          const count = await uiRequest({ action: "rebuildMemoryEmbeddings", ownerKey });
+          if (alive.current) update({ notice: `已重建 ${count} 条记忆的 Embedding` });
+        })),
+      );
       children.push(ui.text("检索调试", true), ui.field("memory-debug-query", "查询", state.query, query => update({ query })), ui.field("memory-debug-threshold", "相关性阈值（0–1）", state.threshold, threshold => update({ threshold })), ui.text("使用当前权重执行真实检索，不保存权重；向量检索使用已保存的服务配置。"), ui.button("memory-debug-search", "使用当前权重检索", () => act(async () => { const result = await uiRequest({ action: "searchMemoryDebug", ownerKey, query: live.current.query, config: configDraft(), relevanceThreshold: uiNumber(live.current.threshold, "相关性阈值", 0, 1) }); if (alive.current) update({ result }); })));
       if (state.result !== null) { children.push(ui.text(`范围 ${state.result.memoriesInScopeCount} 条 · 命中 ${state.result.candidates.filter(hit => hit.passedThreshold).length} 条`)); for (const hit of state.result.candidates) children.push(ui.card("memory-hit:" + hit.memory.uuid, hit.memory.title, `总分 ${hit.score.toFixed(4)} · ${hit.passedThreshold ? "命中" : "未过阈值"}\n关键词 ${hit.keywordScore.toFixed(4)} · 标签 ${hit.tagScore.toFixed(4)} · 向量 ${hit.vectorScore.toFixed(4)} · 关系 ${hit.edgeScore.toFixed(4)}`, [])); }
     } else {
       const progress = state.progress, running = progress !== null && (progress.status === "preparing" || progress.status === "running");
-      children.push(ui.text("从聊天历史重建记忆：追加或更新，保留现有记忆。关闭此页不会终止后台任务。"), ui.field("memory-rebuild-window", "窗口消息数", state.window, window => update({ window })), ui.field("memory-rebuild-from", "开始日期（YYYY-MM-DD，可留空）", state.from, from => update({ from })), ui.field("memory-rebuild-to", "结束日期（YYYY-MM-DD，可留空）", state.to, to => update({ to })));
+      children.push(ui.text("从聊天历史重建记忆：追加或更新，保留现有记忆。关闭此页不会终止后台任务。"), ui.field("memory-rebuild-window", "窗口消息数（8–48）", state.numbers.rebuildWindow, value => numberChange("rebuildWindow", value)), ui.field("memory-rebuild-from", "开始日期（YYYY-MM-DD，可留空）", state.from, from => update({ from })), ui.field("memory-rebuild-to", "结束日期（YYYY-MM-DD，可留空）", state.to, to => update({ to })));
       for (const chat of state.listing.chats) children.push(ctx.UI.Row({ key: "memory-rebuild-chat:" + chat.id, fillMaxWidth: true, spacing: 8, verticalAlignment: "center" }, [ctx.UI.Checkbox({ key: "memory-rebuild-check:" + chat.id, checked: state.selected.includes(chat.id), enabled: !state.busy && !running, onCheckedChange: checked => update({ selected: checked ? [...new Set([...live.current.selected, chat.id])] : live.current.selected.filter(id => id !== chat.id) }) }), ctx.UI.Column({ weight: 1, spacing: 4 }, [ui.text(chat.title), ui.text(`${chat.messageCount} 条消息`)])]));
       if (state.listing.chats.length === 0) children.push(ui.text("此记忆库暂无绑定聊天"));
-      children.push(ui.actions([ui.button("memory-rebuild-start", "开始重建", () => act(async () => { const value = live.current, fromInclusive = uiDate(value.from, false), toInclusive = uiDate(value.to, true); if (fromInclusive !== null && toInclusive !== null && fromInclusive > toInclusive) throw new Error("开始日期不能晚于结束日期"); const result = await uiRequest({ action: "startMemoryRebuild", ownerKey, rebuild: { chatIds: [...value.selected], windowMessageCount: uiNumber(value.window, "窗口消息数", 1, Infinity, true), fromInclusive, toInclusive } }); if (alive.current) update({ progress: result, notice: "后台重建任务已提交" }); }), !running && state.selected.length > 0), ui.button("memory-rebuild-cancel", "取消重建", () => act(async () => { const progress = await uiRequest({ action: "cancelMemoryRebuild", ownerKey }); if (alive.current) update({ progress }); }), running), ui.button("memory-status-refresh", "刷新状态", () => act(status))]));
+      children.push(ui.actions([ui.button("memory-rebuild-start", "开始重建", () => act(async () => { const value = live.current, fromInclusive = uiDate(value.from, false), toInclusive = uiDate(value.to, true); if (fromInclusive !== null && toInclusive !== null && fromInclusive > toInclusive) throw new Error("开始日期不能晚于结束日期"); const result = await uiRequest({ action: "startMemoryRebuild", ownerKey, rebuild: { chatIds: [...value.selected], windowMessageCount: rebuildWindow(), fromInclusive, toInclusive } }); if (alive.current) update({ progress: result, notice: "后台重建任务已提交" }); }), !running && state.selected.length > 0), ui.button("memory-rebuild-cancel", "取消重建", () => act(async () => { const progress = await uiRequest({ action: "cancelMemoryRebuild", ownerKey }); if (alive.current) update({ progress }); }), running), ui.button("memory-status-refresh", "刷新状态", () => act(status))]));
       if (progress !== null) { const labels: Record<string, string> = { idle: "未开始", preparing: "准备中", running: "重建中", completed: "已完成", cancelled: "已取消", failed: "失败" }; children.push(ui.text(`${labels[progress.status] ?? progress.status} · 聊天 ${progress.completedChats}/${progress.totalChats} · 窗口 ${progress.completedWindows}/${progress.totalWindows} · 失败 ${progress.failedWindows}`), ui.text(`已处理源消息 ${progress.processedSourceMessages}/${progress.totalSourceMessages} · ${progress.currentChatTitle}`)); if (progress.lastError !== "") children.push(ui.text(progress.lastError)); }
     }
 

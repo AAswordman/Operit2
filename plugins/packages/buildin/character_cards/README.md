@@ -376,7 +376,8 @@ vectors. Source text and its vector occupy one synchronized, versioned row; quer
 vectors are ephemeral. SQL applies owner/folder/time scope, scoring, graph expansion,
 snapshot exclusions and result limits before returning records. There is no retained
 TypeScript corpus or query-time construction of historical vectors. HTTP batches
-contain at most 64 inputs and use at most four concurrent workers. Failed jobs stay
+use the owner's saved input batch size (20 by default) and at most four concurrent workers.
+The history rebuild window size is also saved per owner (32 by default, range 8–48). Failed jobs stay
 terminal without automatic retry. Merge removes source
 chunks and internal links that would become self-links under this domain's invariant.
 

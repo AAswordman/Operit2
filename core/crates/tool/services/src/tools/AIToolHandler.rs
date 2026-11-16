@@ -2608,9 +2608,9 @@ mod tests {
         }
     }
 
-    /// Package discovery must work without interactive approval in both restricted AI modes.
+    /// Discovery stays read-only, but executing any package tool requires approval in restricted AI modes.
     #[tokio::test(flavor = "current_thread")]
-    async fn package_activation_does_not_require_write_approval() {
+    async fn package_activation_is_read_only_but_package_execution_requires_write_approval() {
         static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset {
             name: "clock_probe.js", sha256: "", bytes: br#"/* METADATA
             {"name":"clock_probe","description":"Clock query tools","enabledByDefault":true,
@@ -2657,6 +2657,36 @@ mod tests {
             assert!(fixture.handler.hasToolExecutor("clock_probe:get_current_date"));
             assert_eq!(fixture.handler.toolDisplayDeclaration("clock_probe:get_current_date").unwrap().label["fr"], "Horloge");
             assert_eq!(fixture.handler.getToolVisibility("clock_probe:get_current_date"), Some(ToolRegistrationVisibility::PUBLIC));
+
+            let mut requests = vec![ToolCall {
+                name: "clock_probe:get_current_date".into(),
+                parameters: BTreeMap::new(),
+            }];
+            for operation in ["send_message", "get_task", "cancel_task"] {
+                let name = format!("a2a.permission_probe:{operation}");
+                fixture.handler.registerAsyncTool(
+                    name.clone(),
+                    Box::new(crate::tools::a2a::A2AToolExecutor::A2AToolExecutor::new(
+                        fixture.handler.getContext(),
+                    )),
+                );
+                requests.push(ToolCall {
+                    name,
+                    parameters: BTreeMap::from_iter([
+                        ("message".into(), serde_json::json!("Probe")),
+                        ("task_id".into(), serde_json::json!("task-1")),
+                    ]),
+                });
+            }
+            for (index, request) in requests.iter().enumerate() {
+                let result = fixture.handler.executeToolInvocation(
+                    request,
+                    ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL },
+                ).await.unwrap();
+                assert!(!result[0].success, "{}", request.name);
+                assert_eq!(result[0].error.as_deref(), Some("User cancelled the tool execution."));
+                assert_eq!(approvals.load(Ordering::SeqCst), index + 1, "{}", request.name);
+            }
         }
     }
 
