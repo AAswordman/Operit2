@@ -4863,6 +4863,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'This code belongs to a different device. Scan the code for the selected device.';
 
   @override
+  String get peerPairTimeoutHint =>
+      'Connection timed out: could not reach the other device. A common cause is the other device’s firewall blocking incoming connections. Try initiating the connection from the other device, or allow Operit through the other device’s firewall (especially on public networks).';
+
+  @override
   String get peerQrImageInvalid =>
       'No QR code could be read. Choose a clear QR image smaller than 16 MB.';
 
