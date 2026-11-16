@@ -8184,6 +8184,48 @@ abstract class AppLocalizations {
   /// **'Your saved appearance has not been replaced. Retry after repairing its resources, or reset appearance explicitly. Reset keeps your avatar and saved configurations and selects custom appearance.'**
   String get settingsAppearanceRepairHint;
 
+  /// No description provided for @settingsAppearanceAssetBackgroundFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The background image could not be loaded. Using the default background ({reference}).'**
+  String settingsAppearanceAssetBackgroundFailed(String reference);
+
+  /// No description provided for @settingsAppearanceAssetVideoFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The background video could not be played. Using the default background ({reference}).'**
+  String settingsAppearanceAssetVideoFailed(String reference);
+
+  /// No description provided for @settingsAppearanceAssetBubbleFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The bubble image could not be loaded. Using the default bubble color ({reference}).'**
+  String settingsAppearanceAssetBubbleFailed(String reference);
+
+  /// No description provided for @settingsAppearanceAssetPreviousRetained.
+  ///
+  /// In en, this message translates to:
+  /// **'This theme resource could not be loaded. Keeping the previous image or media ({reference}); your other theme settings still apply.'**
+  String settingsAppearanceAssetPreviousRetained(String reference);
+
+  /// No description provided for @settingsAppearanceAssetRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry'**
+  String get settingsAppearanceAssetRetry;
+
+  /// No description provided for @settingsAppearanceAssetReimportHint.
+  ///
+  /// In en, this message translates to:
+  /// **'If retrying does not help, choose and import a readable image or playable video again.'**
+  String get settingsAppearanceAssetReimportHint;
+
+  /// No description provided for @settingsAppearanceAssetImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The background resource was not applied: {reason}. Please choose a readable image or playable video.'**
+  String settingsAppearanceAssetImportFailed(String reason);
+
   /// No description provided for @settingsAppearanceRetry.
   ///
   /// In en, this message translates to:

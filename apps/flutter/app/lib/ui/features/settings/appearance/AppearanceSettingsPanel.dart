@@ -6,14 +6,21 @@ import 'dart:ui' as ui;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
+import 'package:fvp/fvp.dart' show FvpCreateCancelledException;
 import 'package:operit_ui/operit_ui.dart'
     show
+        ThemeAssetFailure,
+        ThemeAssetFailureKind,
+        ThemeAssetPurpose,
+        ThemeAssetStage,
         ThemeGlassSurfaceGroup,
         themeImageFittedSize,
         themeImageMaxDimension,
         themeImageMaxPixels;
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/host/AppToastController.dart';
+import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
@@ -23,6 +30,7 @@ import '../../../common/layout/ApplicationZoom.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
 import '../../../theme/OperitThemeAssets.dart';
+import '../../../theme/ThemeVideoAssetLoader.dart';
 import '../components/SettingsAssetTile.dart';
 import '../components/SettingsControlStyles.dart';
 import 'BubbleImageAdjustEditor.dart';
@@ -391,7 +399,7 @@ class _AppearanceThemeEditor extends StatelessWidget {
                 FilledButton.tonalIcon(
                   style: SettingsControlStyles.sectionTextButton(),
                   onPressed: () {
-                    unawaited(_pickBackgroundVideo(themeController));
+                    unawaited(_pickBackgroundVideo(context, themeController));
                   },
                   icon: const Icon(Icons.movie_creation_outlined, size: 16),
                   label: Text(l10n.settingsAppearanceBackgroundChooseVideo),
@@ -1324,38 +1332,126 @@ Future<void> _pickBackgroundImage(
   OperitThemeController themeController,
 ) async {
   final screenSize = MediaQuery.sizeOf(context);
-  final imported = await _pickCroppedThemeImage(
-    context,
-    aspectRatio: screenSize.width / screenSize.height,
-    outputRole: 'background',
-  );
-  if (imported == null) {
-    return;
+  final requestStackTrace = StackTrace.current;
+  try {
+    final imported = await _pickCroppedThemeImage(
+      context,
+      aspectRatio: screenSize.width / screenSize.height,
+      outputRole: 'background',
+    );
+    if (imported == null || !context.mounted) return;
+    await themeController.saveThemeSettings(
+      useBackgroundImage: true,
+      backgroundImageUri: imported.storagePath,
+      backgroundMediaType: UserPreferencesManager.MEDIA_TYPE_IMAGE,
+    );
+  } catch (error, stackTrace) {
+    _reportBackgroundImportFailure(
+      context,
+      ThemeAssetFailure.capture(
+        reference: 'background-image-selection',
+        purpose: ThemeAssetPurpose.background,
+        stage: ThemeAssetStage.importAsset,
+        kind: ThemeAssetFailureKind.unknown,
+        cause: error,
+        originalStackTrace: stackTrace,
+        requestStackTrace: requestStackTrace,
+      ),
+    );
   }
-  await themeController.saveThemeSettings(
-    useBackgroundImage: true,
-    backgroundImageUri: imported.storagePath,
-    backgroundMediaType: UserPreferencesManager.MEDIA_TYPE_IMAGE,
-  );
 }
 
-/// Imports and saves a selected video as the active background asset.
-Future<void> _pickBackgroundVideo(OperitThemeController themeController) async {
+/// Activates selected video bytes only after a successful, cleaned-up probe.
+Future<void> _pickBackgroundVideo(
+  BuildContext context,
+  OperitThemeController themeController,
+) async {
   const videoGroup = XTypeGroup(
     label: 'video',
     extensions: <String>['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi'],
   );
-  final file = await openFile(acceptedTypeGroups: <XTypeGroup>[videoGroup]);
-  if (file == null) {
+  final requestStackTrace = StackTrace.current;
+  var reference = 'background-video-selection';
+  var stage = ThemeAssetStage.read;
+  int? byteLength;
+  try {
+    final file = await openFile(acceptedTypeGroups: <XTypeGroup>[videoGroup]);
+    // Null can mean either cancellation or an unsuccessful provider copy.
+    if (file == null || !context.mounted) return;
+    reference = file.name;
+    final bytes = await file.readAsBytes();
+    byteLength = bytes.length;
+    if (!context.mounted) return;
+
+    stage = ThemeAssetStage.videoOpen;
+    final probe = ThemeVideoAssetLoader.fromBytes(
+      bytes: bytes,
+      reference: reference,
+    );
+    var initialized = false;
+    try {
+      await probe.initialize(autoplay: false);
+      initialized = true;
+    } finally {
+      // An initialization error stays primary. Cleanup errors on a successful
+      // probe must prevent import and activation too.
+      await probe.dispose(throwOnFailure: initialized);
+    }
+    if (!context.mounted) return;
+
+    stage = ThemeAssetStage.importAsset;
+    final imported = await ThemeAssetStore().importBytes(
+      bytes: bytes,
+      fileName: reference,
+    );
+    if (!context.mounted) return;
+    await themeController.saveThemeSettings(
+      useBackgroundImage: true,
+      backgroundImageUri: imported.storagePath,
+      backgroundMediaType: UserPreferencesManager.MEDIA_TYPE_VIDEO,
+      videoBackgroundMuted: true,
+      videoBackgroundLoop: true,
+    );
+  } on FvpCreateCancelledException {
+    // A replaced or cancelled request is not evidence of a broken video.
     return;
+  } catch (error, stackTrace) {
+    _reportBackgroundImportFailure(
+      context,
+      ThemeAssetFailure.capture(
+        reference: reference,
+        purpose: ThemeAssetPurpose.background,
+        stage: stage,
+        kind: stage == ThemeAssetStage.read
+            ? ThemeAssetFailureKind.read
+            : ThemeAssetFailureKind.unknown,
+        cause: error,
+        originalStackTrace: stackTrace,
+        requestStackTrace: requestStackTrace,
+        byteLength: byteLength,
+      ),
+    );
   }
-  final imported = await ThemeAssetStore().importFile(file);
-  await themeController.saveThemeSettings(
-    useBackgroundImage: true,
-    backgroundImageUri: imported.storagePath,
-    backgroundMediaType: UserPreferencesManager.MEDIA_TYPE_VIDEO,
-    videoBackgroundMuted: true,
-    videoBackgroundLoop: true,
+}
+
+/// Logs technical context separately from the concise import notice.
+void _reportBackgroundImportFailure(
+  BuildContext context,
+  ThemeAssetFailure failure,
+) {
+  ClientLogger.w(failure.details, tag: 'ThemeAppearance');
+  if (!context.mounted) return;
+  final l10n = AppLocalizations.of(context)!;
+  final reference = ThemeAssetFailure.safeReference(failure.reference);
+  final name = reference.replaceAll('\\', '/').split('/').last.trim();
+  final readableReference = reference.contains('<data URI>') ||
+          name.isEmpty ||
+          name == 'background-image-selection' ||
+          name == 'background-video-selection'
+      ? l10n.settingsAppearanceBackgroundSection
+      : name;
+  AppToastController.instance.show(
+    l10n.settingsAppearanceAssetImportFailed(readableReference),
   );
 }
 
@@ -1369,24 +1465,45 @@ Future<ThemeAssetImport?> _pickCroppedThemeImage(
     label: 'image',
     extensions: <String>['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'],
   );
-  final file = await openFile(acceptedTypeGroups: <XTypeGroup>[imageGroup]);
-  if (file == null) {
-    return null;
+  final requestStackTrace = StackTrace.current;
+  var reference = 'background-image-selection';
+  var stage = ThemeAssetStage.read;
+  int? byteLength;
+  try {
+    final file = await openFile(acceptedTypeGroups: <XTypeGroup>[imageGroup]);
+    if (file == null || !context.mounted) return null;
+    reference = file.name;
+    final bytes = await file.readAsBytes();
+    byteLength = bytes.length;
+    if (!context.mounted) return null;
+    stage = ThemeAssetStage.decode;
+    final croppedBytes = await _showThemeImageCropDialog(
+      context,
+      bytes: bytes,
+      aspectRatio: aspectRatio,
+    );
+    if (croppedBytes == null || !context.mounted) return null;
+    stage = ThemeAssetStage.importAsset;
+    return await ThemeAssetStore().importBytes(
+      bytes: croppedBytes,
+      fileName: _croppedThemeImageFileName(file.name, outputRole),
+    );
+  } catch (error, stackTrace) {
+    throw ThemeAssetFailure.capture(
+      reference: reference,
+      purpose: ThemeAssetPurpose.background,
+      stage: stage,
+      kind: stage == ThemeAssetStage.read
+          ? ThemeAssetFailureKind.read
+          : stage == ThemeAssetStage.decode
+          ? ThemeAssetFailureKind.decode
+          : ThemeAssetFailureKind.unknown,
+      cause: error,
+      originalStackTrace: stackTrace,
+      requestStackTrace: requestStackTrace,
+      byteLength: byteLength,
+    );
   }
-  final bytes = await file.readAsBytes();
-  final croppedBytes = await _showThemeImageCropDialog(
-    // ignore: use_build_context_synchronously
-    context,
-    bytes: bytes,
-    aspectRatio: aspectRatio,
-  );
-  if (croppedBytes == null) {
-    return null;
-  }
-  return ThemeAssetStore().importBytes(
-    bytes: croppedBytes,
-    fileName: _croppedThemeImageFileName(file.name, outputRole),
-  );
 }
 
 /// Builds a PNG file name for a cropped theme image.
@@ -1409,8 +1526,11 @@ Future<Uint8List?> _showThemeImageCropDialog(
   required double aspectRatio,
 }) async {
   final sourceImage = await _decodeThemeImage(bytes);
+  if (!context.mounted) {
+    sourceImage.dispose();
+    return null;
+  }
   return showDialog<Uint8List>(
-    // ignore: use_build_context_synchronously
     context: context,
     builder: (dialogContext) {
       return _ThemeImageCropDialog(
@@ -1424,8 +1544,12 @@ Future<Uint8List?> _showThemeImageCropDialog(
 /// Decodes selected image bytes for the crop editor.
 Future<ui.Image> _decodeThemeImage(Uint8List bytes) async {
   final codec = await ui.instantiateImageCodec(bytes);
-  final frame = await codec.getNextFrame();
-  return frame.image;
+  try {
+    final frame = await codec.getNextFrame();
+    return frame.image;
+  } finally {
+    codec.dispose();
+  }
 }
 
 class _ThemeImageCropSettings {
@@ -1561,15 +1685,29 @@ class _ThemeImageCropDialogState extends State<_ThemeImageCropDialog> {
     BuildContext context,
     _ThemeImageCropSettings settings,
   ) async {
-    final bytes = await _encodeCroppedThemeImage(
-      widget.sourceImage,
-      aspectRatio: widget.aspectRatio,
-      settings: settings,
-    );
-    if (!context.mounted) {
-      return;
+    final requestStackTrace = StackTrace.current;
+    try {
+      final bytes = await _encodeCroppedThemeImage(
+        widget.sourceImage,
+        aspectRatio: widget.aspectRatio,
+        settings: settings,
+      );
+      if (!context.mounted) return;
+      Navigator.of(context).pop(bytes);
+    } catch (error, stackTrace) {
+      _reportBackgroundImportFailure(
+        context,
+        ThemeAssetFailure.capture(
+          reference: 'background-image-selection',
+          purpose: ThemeAssetPurpose.background,
+          stage: ThemeAssetStage.decode,
+          kind: ThemeAssetFailureKind.decode,
+          cause: error,
+          originalStackTrace: stackTrace,
+          requestStackTrace: requestStackTrace,
+        ),
+      );
     }
-    Navigator.of(context).pop(bytes);
   }
 }
 

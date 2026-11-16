@@ -2354,6 +2354,48 @@
   "settingsAppearanceThemeConfigSourceHint": "模板来自已安装的插件。新建后可独立编辑，并沿用外观配置同步。",
   "settingsAppearanceLoadFailed": "无法加载外观设置",
   "settingsAppearanceRepairHint": "已保存的外观没有被替换。修复资源后可以重试，也可以主动重置外观。重置会保留头像和已保存的配置，并切换到自定义外观。",
+  "settingsAppearanceAssetBackgroundFailed": "背景图片无法加载，已使用默认背景（{reference}）。",
+  "@settingsAppearanceAssetBackgroundFailed": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetVideoFailed": "背景视频无法播放，已使用默认背景（{reference}）。",
+  "@settingsAppearanceAssetVideoFailed": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetBubbleFailed": "气泡图片无法加载，已使用默认气泡颜色（{reference}）。",
+  "@settingsAppearanceAssetBubbleFailed": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetPreviousRetained": "此主题资源无法加载，暂用上一张图片或媒体（{reference}），其他主题设置仍有效。",
+  "@settingsAppearanceAssetPreviousRetained": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetRetry": "重试",
+  "settingsAppearanceAssetReimportHint": "重试后仍无法加载时，请重新选择并导入可读取的图片或可播放的视频。",
+  "settingsAppearanceAssetImportFailed": "背景资源没有生效：{reason}。请选择可读取的图片或可播放的视频。",
+  "@settingsAppearanceAssetImportFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceRetry": "重试",
   "settingsAppearanceResetAfterError": "重置外观",
   "backgroundWorkIdle": "当前没有正在运行的工作",

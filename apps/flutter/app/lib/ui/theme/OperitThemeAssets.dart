@@ -116,9 +116,21 @@ class ThemeAssetStore implements ThemeAssetResolver {
 
   /// Imports one selected file into the runtime theme asset pool.
   Future<ThemeAssetImport> importFile(XFile file) async {
-    final bytes = await file.readAsBytes();
-    final fileName = _themeAssetFileName(file);
-    return importBytes(bytes: bytes, fileName: fileName);
+    final requestStack = StackTrace.current;
+    try {
+      final bytes = await file.readAsBytes();
+      final fileName = _themeAssetFileName(file);
+      return await importBytes(bytes: bytes, fileName: fileName);
+    } catch (error, stack) {
+      throw ThemeAssetFailure.capture(
+        reference: file.name,
+        stage: ThemeAssetStage.importAsset,
+        kind: ThemeAssetFailureKind.read,
+        cause: error,
+        originalStackTrace: stack,
+        requestStackTrace: requestStack,
+      );
+    }
   }
 
   /// Imports prepared bytes into the runtime theme asset pool.
@@ -126,29 +138,67 @@ class ThemeAssetStore implements ThemeAssetResolver {
     required Uint8List bytes,
     required String fileName,
   }) async {
-    final extension = _themeAssetExtension(fileName);
-    final directory = await _runtimeStorage.themeAssetsDirPath();
-    final digest = sha256.convert(bytes).toString().substring(0, 16);
-    final storagePath = '$directory/$digest.$extension';
-    await _runtimeStorage.writeBase64(
-      path: storagePath,
-      base64Content: base64Encode(bytes),
-    );
-    return ThemeAssetImport(
-      storagePath: storagePath,
-      bytes: bytes,
-      fileName: fileName,
-    );
+    final requestStack = StackTrace.current;
+    var reference = fileName;
+    var kind = ThemeAssetFailureKind.read;
+    try {
+      if (bytes.isEmpty) {
+        kind = ThemeAssetFailureKind.empty;
+        throw StateError('Theme asset is empty: $fileName');
+      }
+      final extension = _themeAssetExtension(fileName);
+      final directory = await _runtimeStorage.themeAssetsDirPath();
+      final digest = sha256.convert(bytes).toString().substring(0, 16);
+      final storagePath = '$directory/$digest.$extension';
+      reference = storagePath;
+      await _runtimeStorage.writeBase64(
+        path: storagePath,
+        base64Content: base64Encode(bytes),
+      );
+      return ThemeAssetImport(storagePath: storagePath, bytes: bytes, fileName: fileName);
+    } catch (error, stack) {
+      throw ThemeAssetFailure.capture(
+        reference: reference,
+        stage: ThemeAssetStage.importAsset,
+        kind: kind,
+        cause: error,
+        originalStackTrace: stack,
+        requestStackTrace: requestStack,
+        byteLength: bytes.length,
+      );
+    }
   }
 
   /// Reads imported theme asset bytes from runtime storage.
   @override
   Future<Uint8List> readBytes(String storagePath) async {
-    final base64Content = await _runtimeStorage.readBase64(path: storagePath);
-    if (base64Content == null) {
-      throw StateError('theme asset is missing: $storagePath');
+    final requestStack = StackTrace.current;
+    var kind = ThemeAssetFailureKind.read;
+    int? byteLength;
+    try {
+      final base64Content = await _runtimeStorage.readBase64(path: storagePath);
+      if (base64Content == null) {
+        kind = ThemeAssetFailureKind.missing;
+        throw StateError('theme asset is missing: $storagePath');
+      }
+      final bytes = base64Decode(base64Content);
+      byteLength = bytes.length;
+      if (bytes.isEmpty) {
+        kind = ThemeAssetFailureKind.empty;
+        throw StateError('theme asset is empty: $storagePath');
+      }
+      return bytes;
+    } catch (error, stack) {
+      throw ThemeAssetFailure.capture(
+        reference: storagePath,
+        stage: ThemeAssetStage.read,
+        kind: kind,
+        cause: error,
+        originalStackTrace: stack,
+        requestStackTrace: requestStack,
+        byteLength: byteLength,
+      );
     }
-    return base64Decode(base64Content);
   }
 }
 
