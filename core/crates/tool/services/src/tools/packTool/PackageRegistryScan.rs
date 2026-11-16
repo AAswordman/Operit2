@@ -27,7 +27,7 @@ impl PackageRegistryScanner {
     pub(super) fn scan(mut self) -> Result<PreparedPackageRegistry, String> {
         let activation = PackageScanActivation::read()?;
         let assets = self.scanBuiltInPackageAssets(&activation);
-        let snapshot = self.scanExternalPackages(&assets, &activation);
+        let snapshot = self.scanExternalPackages(assets, &activation);
         let (mut snapshot, scopes) = self.prepareOwnership(snapshot);
         let runtimes = self.runtimes.prepareRuntimeMaps(
             std::mem::take(&mut snapshot.toolPkgContainers),
@@ -80,7 +80,7 @@ impl PackageRegistryScanner {
     }
 
     /// Prepares package declarations without holding the live registry owner.
-    fn scanExternalPackages(&mut self, baseSnapshot: &PackageScanSnapshot, activation: &PackageScanActivation) -> PackageScanSnapshot {
+    fn scanExternalPackages(&mut self, mut baseSnapshot: PackageScanSnapshot, activation: &PackageScanActivation) -> PackageScanSnapshot {
         let mut files = Vec::new();
         for scope in operit_store::ExtensionStore::EXTENSION_LOAD_SCOPES {
             let root =
@@ -110,8 +110,7 @@ impl PackageRegistryScanner {
                 Ok(())
             })();
             if let Err(error) = scan {
-                let mut snapshot = baseSnapshot.clone();
-                snapshot.toolPkgLoadIssues.push(newToolPkgLoadIssue(
+                baseSnapshot.toolPkgLoadIssues.push(newToolPkgLoadIssue(
                     vfsPathString(&directory),
                     None,
                     scope.to_string(),
@@ -119,7 +118,7 @@ impl PackageRegistryScanner {
                     error,
                     "external",
                 ));
-                return snapshot;
+                return baseSnapshot;
             }
         }
 
@@ -343,9 +342,9 @@ impl PackageRegistryScanner {
     fn mergePackageScanCandidateResults(
         &self,
         candidateResults: Vec<PackageScanCandidateResult>,
-        baseSnapshot: Option<&PackageScanSnapshot>,
+        baseSnapshot: Option<PackageScanSnapshot>,
     ) -> PackageScanSnapshot {
-        let mut snapshot = baseSnapshot.cloned().unwrap_or_default();
+        let mut snapshot = baseSnapshot.unwrap_or_default();
         for result in candidateResults {
             appendUniqueToolPkgLoadIssues(&mut snapshot.toolPkgLoadIssues, &result.issues);
             if let Some(packageMetadata) = result.toolPackage {

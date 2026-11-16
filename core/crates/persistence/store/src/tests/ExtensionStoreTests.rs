@@ -7,14 +7,31 @@ use std::sync::Mutex;
 
 #[derive(Default)]
 struct MemoryStorage {
-    files: Mutex<BTreeMap<String, Vec<u8>>>,
-    fail_write: Mutex<Option<String>>,
-    modified: Mutex<BTreeMap<String, i64>>,
+    files: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
+    fail_write: Arc<Mutex<Option<String>>>,
+    modified: Arc<Mutex<BTreeMap<String, i64>>>,
     journal: crate::transaction_test_host::TransactionJournalHost,
     reads: Mutex<Vec<String>>,
     lists: Mutex<Vec<String>>,
 }
+struct MemoryWriteSession {
+    host: MemoryStorage,
+    path: String,
+    bytes: Vec<u8>,
+}
+impl operit_host_api::RuntimeStorageWriteSession for MemoryWriteSession {
+    fn writeChunk(&mut self, bytes: &[u8]) -> HostResult<()> { self.bytes.extend_from_slice(bytes); Ok(()) }
+    fn commit(self: Box<Self>) -> HostResult<()> { self.host.writeBytes(&self.path, &self.bytes) }
+    fn discard(self: Box<Self>) -> HostResult<()> { Ok(()) }
+}
 impl RuntimeStorageHost for MemoryStorage {
+    fn openWriteSession(&self, path: &str) -> HostResult<Option<Box<dyn operit_host_api::RuntimeStorageWriteSession>>> {
+        Ok(Some(Box::new(MemoryWriteSession {
+            host: MemoryStorage { files: self.files.clone(), fail_write: self.fail_write.clone(),
+                modified: self.modified.clone(), ..MemoryStorage::default() },
+            path: path.into(), bytes: Vec::new(),
+        })))
+    }
     fn openTransactionDatabase(&self,path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> { self.journal.open(path) }
     /// Confirms synchronous in-memory publication without copying or rewriting bytes.
     fn flushFile(&self, path: &str) -> operit_host_api::HostResult<()> {

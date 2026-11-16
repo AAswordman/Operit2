@@ -7,7 +7,7 @@ impl CoreNodeRouter {
     pub(crate) fn requirePeerStorageProviders(
         &self, originNodeId: &str, targetNodeId: &str,
     ) -> Result<(), CoreLinkError> {
-        requireStorageProviders(&self.spaceStore, &self.networkControlStore, originNodeId, targetNodeId)
+        requireStorageProviders(&self.spaceStore, &self.networkControlStore, originNodeId, targetNodeId, None)
     }
 
     pub(super) fn guardPeerSyncPush(&self, origin: String, target: String, spaceId: String,
@@ -98,10 +98,7 @@ struct AuthorizedSyncPush {
 }
 impl AuthorizedSyncPush {
     fn check(&self) -> Result<(), CoreLinkError> {
-        if self.space.space().map_err(CoreLinkError::internal)?.spaceId != self.spaceId {
-            return Err(CoreLinkError::new("SPACE_STORAGE_PERMISSION_DENIED", "Storage stream belongs to a previous Space"));
-        }
-        requireStorageProviders(&self.space, &self.control, &self.origin, &self.target)
+        requireStorageProviders(&self.space, &self.control, &self.origin, &self.target, Some(&self.spaceId))
     }
 }
 #[async_trait]
@@ -119,15 +116,21 @@ impl CoreLinkPushSession for AuthorizedSyncPush {
 /// The same service-availability and policy check guards admission, each chunk
 /// and final commit. Unknown profiles do not advertise a storage engine.
 fn requireStorageProviders(space: &CoreSpaceStore, control: &NetworkControlStore,
-    origin: &str, target: &str) -> Result<(), CoreLinkError> {
-    let profiles = space.deviceProfiles().map_err(CoreLinkError::internal)?;
-    for node in [origin, target] {
-        if profiles.get(node).and_then(|profile| profile.coreVersion.as_ref()).is_none()
-            || control.nodeIsDisconnected(node).map_err(CoreLinkError::internal)?
-            || !control.nodeHasCapability(node, "storage.provide", None).map_err(CoreLinkError::internal)? {
-            return Err(CoreLinkError::new("SPACE_STORAGE_PERMISSION_DENIED",
-                format!("Node {node} cannot provide authorized Space storage")));
+    origin: &str, target: &str, expectedSpace: Option<&str>) -> Result<(), CoreLinkError> {
+    let profiles = [origin, target].map(|node| space.deviceProfile(node)
+        .map(|profile| profile.and_then(|profile| profile.coreVersion).is_some()));
+    control.withCurrentSpaceState(|space, state| {
+        if expectedSpace.is_some_and(|expected| expected != space.spaceId) {
+            return Err(CoreLinkError::new("SPACE_STORAGE_PERMISSION_DENIED", "Storage stream belongs to a previous Space"));
         }
-    }
-    Ok(())
+        for (node, profile) in [origin, target].into_iter().zip(profiles) {
+            if !profile.map_err(CoreLinkError::internal)?
+                || state.disconnectedNodeIds.contains(node)
+                || !state.nodeHasCapability(node, "storage.provide", None).map_err(CoreLinkError::internal)? {
+                return Err(CoreLinkError::new("SPACE_STORAGE_PERMISSION_DENIED",
+                    format!("Node {node} cannot provide authorized Space storage")));
+            }
+        }
+        Ok(())
+    }).map_err(CoreLinkError::internal)?
 }

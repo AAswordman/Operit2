@@ -287,6 +287,37 @@ impl SnapshotCollector {
     }
 }
 
+/// Restarts only the read-only authority export when a control edit races its pages.
+pub(crate) async fn readSnapshot(service: &dyn NodeSpaceContext, node: &str) -> Result<(String, PeerSpaceSnapshot), String> {
+    for attempt in 0..3 {
+        let result: Result<(String, PeerSpaceSnapshot), String> = async {
+            let header: SnapshotHeader = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
+            let revision = header.controlRevision.clone();
+            let mut collector = SnapshotCollector::new(header)?;
+            loop {
+                let page = callPeerSpace(service, node, "snapshotControlPage",
+                    toCoreValue(collector.request()).map_err(|e| e.to_string())?).await?;
+                if collector.push(page)? { break; }
+            }
+            let current = callPeerSpace(service, node, "snapshotHeader", CoreValue::Null).await?;
+            Ok((revision, collector.finish(current)?))
+        }.await;
+        match result {
+            Err(error) if attempt < 2 && error.starts_with("SPACE_EXPORT_CHANGED:") => continue,
+            result => return result,
+        }
+    }
+    unreachable!()
+}
+
+/// Calls one explicit Space method through the caller's authenticated routing context.
+pub(super) async fn callPeerSpace<T: serde::de::DeserializeOwned>(service: &dyn NodeSpaceContext, node: &str, method: &str, args: CoreValue) -> Result<T, String> {
+    let response = service.callNode(node.to_owned(), operit_link::CoreCallRequest::new(
+        format!("node-space-{method}-{}", operit_host_api::TimeUtils::currentTimeMillis()), super::NODE_SPACE_TARGET, method, args,
+    )).await;
+    fromCoreValue(response.result.map_err(|e| e.to_string())?).map_err(|e| e.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

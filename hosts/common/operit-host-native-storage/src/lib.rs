@@ -32,7 +32,7 @@ struct NativeRuntimeStorageWriteSession {
 
 impl NativeRuntimeStorageWriteSession {
     /// Closes and atomically renames one staged runtime storage file.
-    fn commitInternal(&mut self, sync: bool) -> HostResult<()> {
+    fn commitInternal(&mut self, sync: bool, syncDirectory: bool) -> HostResult<()> {
         let file = self
             .file
             .take()
@@ -41,7 +41,7 @@ impl NativeRuntimeStorageWriteSession {
             file.sync_all()?;
         }
         drop(file);
-        publishStagedFile(&self.temporaryPath, &self.targetPath, sync)?;
+        publishStagedFile(&self.temporaryPath, &self.targetPath, syncDirectory)?;
         Ok(())
     }
 }
@@ -69,12 +69,17 @@ impl RuntimeStorageWriteSession for NativeRuntimeStorageWriteSession {
 
     /// Flushes the staged file and atomically publishes it at the requested path.
     fn commit(mut self: Box<Self>) -> HostResult<()> {
-        self.commitInternal(true)
+        self.commitInternal(true, true)
+    }
+
+    /// Keeps staged contents durable while allowing one directory flush per batch.
+    fn commitFile(mut self: Box<Self>) -> HostResult<()> {
+        self.commitInternal(true, false)
     }
 
     /// Atomically publishes the staged file without forcing a device flush.
     fn commitFast(mut self: Box<Self>) -> HostResult<()> {
-        self.commitInternal(false)
+        self.commitInternal(false, false)
     }
 
     /// Removes the private staging file without modifying the published target.
@@ -713,9 +718,25 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
     }
 
     fn flushFile(&self, path: &str) -> HostResult<()> {
-        let path = self.resolveFile(path)?;
-        fs::OpenOptions::new().write(true).open(&path)?.sync_all()?;
-        syncParentDirectory(&path)
+        self.flushFiles(&[path])
+    }
+
+    fn flushFiles(&self, paths: &[&str]) -> HostResult<()> {
+        for path in paths {
+            fs::OpenOptions::new().write(true).open(self.resolveFile(path)?)?.sync_all()?;
+        }
+        self.flushDirectories(paths)
+    }
+
+    fn flushDirectories(&self, paths: &[&str]) -> HostResult<()> {
+        let mut parents = BTreeSet::new();
+        for path in paths {
+            let path = self.resolveFile(path)?;
+            if let Some(parent) = path.parent() { parents.insert(parent.to_path_buf()); }
+        }
+        #[cfg(unix)]
+        for parent in parents { fs::File::open(parent)?.sync_all()?; }
+        Ok(())
     }
 
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
@@ -1350,6 +1371,11 @@ mod tests {
             replacement.discard().unwrap();
             assert_eq!(host.list(prefix).unwrap().len(), 1);
             assert_eq!(host.readBytes(&path).unwrap(), b"original");
+            let mut batched = host.createWriteSession(&path).unwrap();
+            batched.writeChunk(b"batched replacement").unwrap();
+            batched.commitFile().unwrap();
+            host.flushDirectories(&[&path]).unwrap();
+            assert_eq!(host.readBytes(&path).unwrap(), b"batched replacement");
         }
         fs::remove_dir_all(root).unwrap();
     }

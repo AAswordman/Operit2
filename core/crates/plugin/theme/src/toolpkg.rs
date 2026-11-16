@@ -138,6 +138,7 @@ pub fn validate_declared_theme_templates(
             )?
         }
     };
+    let mut evidence = None;
     let package_id = value["toolpkg_id"].as_str().ok_or_else(|| {
         ThemeValidationError::contract("manifest/toolpkg_id", "package id must be text")
     })?;
@@ -226,7 +227,7 @@ pub fn validate_declared_theme_templates(
             },
         };
         templates.push(crate::validate_template(
-            bytes,
+            evidence.get_or_insert_with(|| (crate::sha256_hex(bytes), bytes.len())),
             metadata,
             manifest_bytes,
             files,

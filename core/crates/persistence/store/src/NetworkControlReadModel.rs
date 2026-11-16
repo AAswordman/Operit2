@@ -23,7 +23,7 @@ pub(crate) struct NetworkControlReadModel {
     received: BTreeMap<String, SyncOperation>,
     projected: BTreeMap<String, SyncOperation>,
     commands: BTreeMap<String, Vec<SyncOperation>>,
-    states: BTreeMap<String, NetworkControlState>,
+    states: BTreeMap<String, Arc<NetworkControlState>>,
     errors: BTreeMap<String, String>,
     recovery_error: Option<String>,
     pub(crate) projection_revision: u64,
@@ -55,11 +55,11 @@ impl NetworkControlReadModel {
         model
     }
 
-    pub(crate) fn state(&self, space_id: &str) -> Result<NetworkControlState, String> {
+    pub(crate) fn state(&self, space_id: &str) -> Result<Arc<NetworkControlState>, String> {
         self.check(space_id)?;
         match self.states.get(space_id) {
             Some(state) => Ok(state.clone()),
-            None => Ok(emptyControlState(space_id)),
+            None => Ok(Arc::new(emptyControlState(space_id))),
         }
     }
 
@@ -180,7 +180,7 @@ impl NetworkControlReadModel {
         for (space_id, commands) in &mut self.commands {
             commands.sort_by_key(SyncOperationOrder::fromOperation);
             match replayControlCommands(space_id, commands.iter(), None) {
-                Ok((state, _)) => { self.states.insert(space_id.clone(), state); }
+                Ok((state, _)) => { self.states.insert(space_id.clone(), Arc::new(state)); }
                 Err(error) => { self.errors.insert(space_id.clone(), format!("Space {space_id} control replay: {error}")); }
             }
         }

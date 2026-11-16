@@ -668,7 +668,7 @@ impl NodeSpaceService {
         departures
     }
     pub fn spaceChannelScope(&self, peer: &str) -> Result<Option<String>, CoreLinkError> {
-        crate::space_policy::spaceChannelScope(&self.space, &self.control, &self.localNodeId, peer)
+        crate::space_policy::spaceChannelScope(&self.control, &self.localNodeId, peer)
     }
 }
 #[async_trait::async_trait(?Send)]

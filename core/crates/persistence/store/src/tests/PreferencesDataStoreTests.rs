@@ -2285,6 +2285,11 @@ fn committed_outbox_survives_journal_failure_and_restart() {
     assert!(store.edit(|p| { p.incrementInteger(&key,2).unwrap(); }).is_err());
     let committed = store.data().unwrap();
     let original = committed.commit.as_ref().unwrap().originals[0].clone();
+    let copied = committed.clone();
+    assert!(Arc::ptr_eq(committed.commit.as_ref().unwrap(), copied.commit.as_ref().unwrap()),
+        "immutable recovery intent must be shared by snapshots");
+    assert!(committed.view.as_ref().unwrap().values.is_empty(),
+        "replay context must not retain another business value tree");
     assert_eq!(committed.get(&key),Some(&json!(2)));
     journal_sql(&host,"DROP TRIGGER reject_original");
     let restarted_host = Arc::new((*host).clone());

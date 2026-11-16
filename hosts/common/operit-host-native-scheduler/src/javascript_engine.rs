@@ -19,6 +19,8 @@ thread_local! {
 
 /// Affine workers share one V8 heap; plugins retain independent contexts and job queues.
 struct NativeEngine {
+    // Global handles must be released before their owning isolate.
+    bootstrap: RefCell<Option<(&'static str, v8::Global<v8::UnboundScript>)>>,
     isolate: RefCell<v8::OwnedIsolate>,
     active: Arc<std::sync::Mutex<usize>>,
 }
@@ -43,7 +45,7 @@ impl NativeEngine {
             isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
             // SAFETY: each operation re-enters this worker's isolate before accessing handles.
             unsafe { isolate.exit(); }
-            let engine = Rc::new(Self { isolate: RefCell::new(isolate), active: Arc::default() });
+            let engine = Rc::new(Self { bootstrap: RefCell::new(None), isolate: RefCell::new(isolate), active: Arc::default() });
             *cached.borrow_mut() = Rc::downgrade(&engine);
             engine
         })
@@ -224,10 +226,28 @@ impl HostJavaScriptRuntime for NativeHostJavaScriptRuntime {
     /// Shares trusted compiled code while keeping each bootstrap's globals in its own context.
     fn evaluateHostJavaScriptBootstrap(&mut self, source: &'static str) -> HostResult<()> {
         let bootstrap = self.bootstrap.clone();
+        let engine = self.engine.clone();
         self.with_scope(|scope| {
             let strict_source = format!("\"use strict\";\n{source}");
-            let bytes = bootstrap.bytecode(source, || compile_bytes(scope, &strict_source))?;
-            let script = consume_cache(scope, &strict_source, bytes)?;
+            let mut fresh = None;
+            let bytes = bootstrap.bytecode(source, || {
+                let (bytes, script) = compile_bytes(scope, &strict_source)?;
+                fresh = Some(script);
+                Ok(bytes)
+            })?;
+            let cached = engine.bootstrap.borrow();
+            let script = if let Some((_, compiled)) = cached.as_ref().filter(|(identity,_)| *identity == source) {
+                v8::Local::new(scope, compiled).bind_to_current_context(scope)
+            } else {
+                drop(cached);
+                let script = match fresh {
+                    Some(script) => v8::Local::new(scope, &script).bind_to_current_context(scope),
+                    None => consume_cache(scope, &strict_source, bytes)?,
+                };
+                let compiled = script.get_unbound_script(scope);
+                *engine.bootstrap.borrow_mut() = Some((source, v8::Global::new(scope, compiled)));
+                script
+            };
             script.run(scope).ok_or_else(engine_error)?;
             Ok(())
         })
@@ -584,10 +604,17 @@ fn dispatch<'s>(
                 ));
             }
             let source = format!("{prefix}{}\n}})", body.to_rust_string_lossy(scope));
-            let bytes = cache.getOrCompile(&source, || compile_bytes(scope, &source))?;
-            let value = consume_cache(scope, &source, &bytes)?
-                .run(scope)
-                .ok_or_else(engine_error)?;
+            let mut fresh = None;
+            let bytes = cache.getOrCompile(&source, || -> HostResult<Vec<u8>> {
+                let (bytes, script) = compile_bytes(scope, &source)?;
+                fresh = Some(script);
+                Ok(bytes)
+            })?;
+            let script = match fresh {
+                Some(script) => v8::Local::new(scope, &script).bind_to_current_context(scope),
+                None => consume_cache(scope, &source, &bytes)?,
+            };
+            let value = script.run(scope).ok_or_else(engine_error)?;
             let function =
                 v8::Local::<v8::Function>::try_from(value).map_err(|_| engine_error())?;
             function.set_name(text(scope, "anonymous")?);
@@ -639,14 +666,12 @@ fn evaluate<'s>(
 }
 
 /// Serializes trusted V8 compiled code and preserves exact compilation failures in the shared cache.
-fn compile_bytes(scope: &mut v8::PinScope<'_, '_>, source: &str) -> HostResult<Vec<u8>> {
+fn compile_bytes(scope: &mut v8::PinScope<'_, '_>, source: &str) -> HostResult<(Vec<u8>, v8::Global<v8::UnboundScript>)> {
     v8::tc_scope!(let scope, scope);
     let result = compile(scope, "operit.compiled.js", source).and_then(|script| {
-        script
-            .get_unbound_script(scope)
-            .create_code_cache()
-            .map(|bytes| bytes.to_vec())
-            .ok_or_else(engine_error)
+        let script = script.get_unbound_script(scope);
+        let bytes = script.create_code_cache().ok_or_else(engine_error)?.to_vec();
+        Ok((bytes, v8::Global::new(scope, script)))
     });
     match scope.exception() {
         Some(exception) => {

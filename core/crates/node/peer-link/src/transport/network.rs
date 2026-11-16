@@ -353,10 +353,12 @@ async fn classify(
                 "Connection closed before protocol header",
             ));
         };
-        if bytes.is_empty() || bytes.len() > 4096 {
+        if bytes.is_empty() || bytes.len() > 64 * 1024 {
             return Err(operit_host_api::HostError::new("Invalid Host TCP chunk"));
         }
-        prefix.extend_from_slice(&bytes);
+        // A method, space and target byte need at most 66 bytes. Keep the
+        // full Host chunk for replay without copying its payload for detection.
+        prefix.extend_from_slice(&bytes[..bytes.len().min(66 - prefix.len())]);
         chunks.push_back(bytes);
         if prefix.len() < 4 {
             continue;
@@ -435,8 +437,21 @@ mod tests {
         }
     }
     #[tokio::test]
+    async fn classification_replays_large_coalesced_payloads_without_truncation() {
+        for (header, http) in [(b"POST /link HTTP/1.1\r\n".as_slice(), true), (b"\x00\x00\x80\x00".as_slice(), false)] {
+            for size in [4097, 16 * 1024, 64 * 1024] {
+                let mut bytes = header.to_vec();
+                bytes.resize(size, b'x');
+                let (detected, stream) = classify(Arc::new(Chunks(StdMutex::new(vec![bytes.clone()].into())))).await.unwrap();
+                assert_eq!(detected, http);
+                assert_eq!(stream.read().await.unwrap(), Some(bytes));
+                assert!(stream.read().await.unwrap().is_none());
+            }
+        }
+    }
+    #[tokio::test]
     async fn incomplete_headers_and_invalid_host_chunks_are_rejected() {
-        for chunks in [vec![vec![0, 0]], vec![vec![]], vec![vec![0; 4097]]] {
+        for chunks in [vec![vec![0, 0]], vec![vec![]], vec![vec![0; 64 * 1024 + 1]]] {
             assert!(classify(Arc::new(Chunks(StdMutex::new(chunks.into()))))
                 .await
                 .is_err());

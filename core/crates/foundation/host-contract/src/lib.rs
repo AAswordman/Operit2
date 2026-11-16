@@ -2032,6 +2032,15 @@ pub trait RuntimeStorageHost: Send + Sync {
     /// Makes preceding file writes durable before their recovery intent is removed.
     /// Each host must flush its backing storage without reading or rewriting the file.
     fn flushFile(&self, path: &str) -> HostResult<()>;
+    /// Makes a group of files durable; hosts may coalesce shared directory flushes.
+    fn flushFiles(&self, paths: &[&str]) -> HostResult<()> {
+        for path in paths { self.flushFile(path)?; }
+        Ok(())
+    }
+    /// Completes publication after commitFile; file contents have already been synchronized.
+    fn flushDirectories(&self, paths: &[&str]) -> HostResult<()> {
+        self.flushFiles(paths)
+    }
     /// Deletes a virtual runtime storage entry.
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()>;
     /// Checks whether a virtual runtime storage entry exists.
@@ -2083,6 +2092,12 @@ macro_rules! delegate_runtime_storage {
             fn flushFile(&self, path: &str) -> $crate::HostResult<()> {
                 $crate::RuntimeStorageHost::flushFile(&self.$field, path)
             }
+            fn flushFiles(&self, paths: &[&str]) -> $crate::HostResult<()> {
+                $crate::RuntimeStorageHost::flushFiles(&self.$field, paths)
+            }
+            fn flushDirectories(&self, paths: &[&str]) -> $crate::HostResult<()> {
+                $crate::RuntimeStorageHost::flushDirectories(&self.$field, paths)
+            }
             fn delete(&self, path: &str, recursive: bool) -> $crate::HostResult<()> {
                 $crate::RuntimeStorageHost::delete(&self.$field, path, recursive)
             }
@@ -2119,6 +2134,12 @@ pub trait RuntimeStorageWriteSession: Send {
 
     /// Publishes the fully written storage file.
     fn commit(self: Box<Self>) -> HostResult<()>;
+
+    /// Syncs file contents before publication; the caller flushes the directory for the batch.
+    /// Hosts without separate file/directory flushing may keep the fully durable commit.
+    fn commitFile(self: Box<Self>) -> HostResult<()> {
+        self.commit()
+    }
 
     /// Publishes a fully written file without forcing a device flush for each entry.
     fn commitFast(self: Box<Self>) -> HostResult<()> {

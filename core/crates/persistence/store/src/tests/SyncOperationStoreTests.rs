@@ -360,7 +360,7 @@ fn network_control_acknowledgement_preserves_business_sequences() {
     for operation in [&earlier, &control, &later] {
         store.appendUnobservedOperation(operation).unwrap();
     }
-    store.observeNetworkControlOperation(&control).unwrap();
+    store.observeNetworkControlOperations(std::slice::from_ref(&control)).unwrap();
     // The acknowledged control page no longer exports, while both business
     // operations on either side of its sequence still do.
     let clock = store.localClock().unwrap();
@@ -368,14 +368,14 @@ fn network_control_acknowledgement_preserves_business_sequences() {
         .operationsSince(&clock, &domains, usize::MAX)
         .unwrap();
     assert_eq!(sequences(&pending), vec![5, 7]);
-    store.observeOperation(&earlier).unwrap();
+    store.observeOperations([&earlier]).unwrap();
     let clock = store.localClock().unwrap();
     let pending = store
         .operationsSince(&clock, &domains, usize::MAX)
         .unwrap();
     assert_eq!(pending, vec![later.clone()]);
     // Replaying the same control page stays idempotent.
-    store.observeNetworkControlOperation(&control).unwrap();
+    store.observeNetworkControlOperations(std::slice::from_ref(&control)).unwrap();
     let clock = store.localClock().unwrap();
     assert_eq!(
         store
@@ -384,7 +384,7 @@ fn network_control_acknowledgement_preserves_business_sequences() {
         vec![later]
     );
     // The acknowledgement is restricted to the control domain.
-    assert!(store.observeNetworkControlOperation(&earlier).is_err());
+    assert!(store.observeNetworkControlOperations(std::slice::from_ref(&earlier)).is_err());
 }
 
 /// Verifies cached policy reads immediately apply revocation and match a fresh replay.
@@ -2749,4 +2749,16 @@ fn already_migrated_journal_deletes_leftovers_without_reimporting() {
     let store = SyncOperationStore::new(host.clone(), root);
     assert!(store.operationsSince(&SyncClock::empty(), &[], 10).unwrap().is_empty());
     assert!(paths.iter().all(|path| !host.exists(&format!("{root}/{path}")).unwrap()));
+}
+
+
+#[test]
+fn owned_wire_envelope_preserves_fields_and_moves_large_payloads() {
+    let original = operation(1, "chat", "probe", "upsert", SyncOperationSemantics::Transaction,
+        json!({"text":"x".repeat(1024 * 1024),"nested":[null,true,1,-2,1.5]}));
+    let expected = serde_json::to_value(&original).unwrap();
+    let pointer = original.payload["text"].as_str().unwrap().as_ptr();
+    let moved = original.intoValue().unwrap();
+    assert_eq!(moved, expected);
+    assert_eq!(moved["payload"]["text"].as_str().unwrap().as_ptr(), pointer);
 }

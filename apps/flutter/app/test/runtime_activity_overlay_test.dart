@@ -63,6 +63,7 @@ class _Bridge extends OperitRuntimeBridge {
 core.SpaceSyncProgress progress({
   core.SpaceSyncStatus status = core.SpaceSyncStatus.syncing,
   core.SpaceSyncStage stage = core.SpaceSyncStage.records,
+  int? startedAt,
   int fileBytes = 0,
   int fileSize = 0,
   int completedRecords = 1200,
@@ -76,7 +77,7 @@ core.SpaceSyncProgress progress({
   return core.SpaceSyncProgress(
     spaceId: 'space',
     peerNodeId: peer,
-    startedAt: now - 10000,
+    startedAt: startedAt ?? now - 10000,
     updatedAt: now,
     status: status,
     stage: stage,
@@ -348,6 +349,40 @@ void main() {
       0.25,
     );
     expect(find.text(' 1.0 MB/4.0 MB'), findsOneWidget);
+  });
+
+  testWidgets('file transfer stays visible when record totals are known', (tester) async {
+    await mount(tester);
+    await emitSync(tester, progress(
+      stage: core.SpaceSyncStage.files, fileBytes: 1048576, fileSize: 4194304,
+      completedRecords: 500, totalRecords: 10000,
+    ));
+    expect(find.text(' 1.0 MB/4.0 MB'), findsOneWidget);
+    expect(tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value, 0.25);
+    await tester.tap(find.text('正在同步'));
+    await tester.pump();
+    expect(find.text('500 / 10000 条 · 5%'), findsOneWidget);
+    expect(find.text('正在传输并校验文件'), findsOneWidget);
+  });
+
+  testWidgets('confirmed progress animates within real bounds and checking remains active', (tester) async {
+    await mount(tester);
+    final started = DateTime.now().millisecondsSinceEpoch - 10000;
+    double? value() => tester.widget<LinearProgressIndicator>(find.byType(LinearProgressIndicator)).value;
+    await emitSync(tester, progress(startedAt: started, completedRecords: 200, totalRecords: 1000));
+    await emitSync(tester, progress(startedAt: started, completedRecords: 800, totalRecords: 1000));
+    expect(value(), 0.2);
+    await tester.pump(const Duration(milliseconds: 150));
+    expect(value(), inExclusiveRange(0.2, 0.8));
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(value(), 0.8);
+    await emitSync(tester, progress(startedAt: started, stage: core.SpaceSyncStage.checking,
+      completedRecords: 1000, totalRecords: 1000));
+    expect(value(), isNull);
+    expect(find.text('同步完成'), findsNothing);
+    await tester.tap(find.text('正在同步'));
+    await tester.pump();
+    expect(find.text('正在检查数据差异'), findsOneWidget);
   });
 
   testWidgets(

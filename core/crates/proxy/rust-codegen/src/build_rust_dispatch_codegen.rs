@@ -1095,6 +1095,8 @@ fn render_call_body(
 fn render_core_value_result(value_type: &str, value: &str) -> String {
     if value_type == "Vec<u8>" {
         format!("Ok(operit_link::CoreValue::Bytes(({value}).into()))")
+    } else if value_type == "serde_json::Value" {
+        format!("operit_rslink_runtime::into_core_json_value({value})")
     } else {
         format!("operit_rslink_runtime::to_core_value({value})")
     }
@@ -1359,3 +1361,14 @@ fn await_suffix(method: &SourceMethod) -> &'static str {
 #[cfg(test)]
 #[path = "owned_dispatch_tests.rs"]
 mod owned_dispatch_tests;
+
+#[cfg(test)]
+mod owned_json_response_tests {
+    #[test]
+    fn json_response_moves_owned_value_for_direct_and_async_dispatch() {
+        assert_eq!(super::render_core_value_result("serde_json::Value", "pending.await?"),
+            "operit_rslink_runtime::into_core_json_value(pending.await?)");
+        assert_eq!(super::render_core_value_result("String", "value"),
+            "operit_rslink_runtime::to_core_value(value)");
+    }
+}

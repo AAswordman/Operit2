@@ -581,6 +581,7 @@ version = "0.1.0"
 dependencies = [
  "operit-host-api",
  "operit-plugin-sdk",
+ "operit-vfs",
  "serde_json",
 ]
 

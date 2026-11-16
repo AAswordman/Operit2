@@ -4,7 +4,10 @@ use crate::Transaction::Revision;
 
 pub(super) fn prepare(store: &SqliteStore) -> Result<(), SqliteStoreError> {
     store.transaction(|tx| {
-        if tx.queryOne("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_sql_versions'", vec![])?.is_some() { return Ok(()); }
+        if tx.queryOne("SELECT 1 FROM sqlite_master WHERE type='table' AND name='sync_sql_versions'", vec![])?.is_some() {
+            tx.execute("CREATE INDEX IF NOT EXISTS sync_sql_versions_chat ON sync_sql_versions(chatId,kind,timestamp,variantIndex)", vec![])?;
+            return Ok(());
+        }
         tx.execute("CREATE TABLE sync_sql_versions (kind TEXT NOT NULL,chatId TEXT NOT NULL,timestamp INTEGER NOT NULL,variantIndex INTEGER NOT NULL,createdAt INTEGER NOT NULL,origin TEXT NOT NULL,sequence INTEGER NOT NULL,PRIMARY KEY(kind,chatId,timestamp,variantIndex))", vec![])?;
         // One-time import of the scope clocks retained by the previous SQL journal.
         for row in tx.queryRows("SELECT * FROM sync_sql_operations ORDER BY createdAt,originDeviceId,sequence", vec![])? {
@@ -12,6 +15,8 @@ pub(super) fn prepare(store: &SqliteStore) -> Result<(), SqliteStoreError> {
             let payload = readPayload(&mut |sql, params| tx.queryRows(sql, params), &operation.opId)?;
             observe_payload(tx, &operation, &payload)?;
         }
+        // Conflict checks constrain chatId while the primary key begins with kind.
+        tx.execute("CREATE INDEX IF NOT EXISTS sync_sql_versions_chat ON sync_sql_versions(chatId,kind,timestamp,variantIndex)", vec![])?;
         Ok(())
     })
 }

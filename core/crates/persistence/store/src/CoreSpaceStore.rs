@@ -711,6 +711,17 @@ impl CoreSpaceStore {
         self.readRecords(RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH, validateDeviceProfile, |record| &record.nodeId, false)
     }
 
+    /// Reads one validated profile without listing unrelated devices on every blob chunk.
+    pub fn deviceProfile(&self, nodeId: &str) -> Result<Option<CoreSpaceDeviceProfile>, String> {
+        validateNodeId(nodeId)?;
+        let path = format!("{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/{nodeId}.preferences.json");
+        if !self.storage.exists(&path).map_err(|error|error.to_string())? { return Ok(None); }
+        let profile = self.readRecord::<CoreSpaceDeviceProfile>(&path)?;
+        validateDeviceProfile(&profile)?;
+        if profile.nodeId != nodeId { return Err("record node id does not match its file".into()); }
+        Ok(Some(profile))
+    }
+
     /// Reads the synchronized device presentations for every current Space member.
     #[allow(non_snake_case)]
     pub fn deviceProfilesForCurrentSpace(&self) -> Result<Vec<CoreSpaceDeviceProfile>, String> {
@@ -2002,6 +2013,22 @@ mod tests {
                 None,
             )
             .expect("test device profile must initialize");
+    }
+
+    #[test]
+    fn selected_device_profile_matches_inventory_and_rejects_wrong_identity() {
+        let storage = Arc::new(MemoryStorageHost::default());
+        let store = CoreSpaceStore::new(storage.clone());
+        store.initialize().unwrap();
+        initializeTestDeviceProfile(&store);
+        addTestSpaceMember(&store, "profile-peer");
+        let profiles = store.deviceProfiles().unwrap();
+        assert_eq!(store.deviceProfile("profile-peer").unwrap().as_ref(), profiles.get("profile-peer"));
+        assert!(store.deviceProfile("unknown").unwrap().is_none());
+        assert!(store.deviceProfile("../escape").is_err());
+        let wrong = format!("{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/wrong.preferences.json");
+        storage.writeBytes(&wrong, &storage.readBytes(&format!("{RUNTIME_SPACE_DEVICE_PROFILES_DIR_PATH}/profile-peer.preferences.json")).unwrap()).unwrap();
+        assert!(store.deviceProfile("wrong").is_err());
     }
 
     #[test]

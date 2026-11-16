@@ -51,10 +51,9 @@ const PEER_FULL_SYNC_BACKOFF_MAX_MS: i64 = 60_000;
 /// incoming batches scan inline, so this only bounds discovery latency for
 /// writes made by terminals and external editors while activity continues.
 const WORKSPACE_SCAN_ACTIVE_INTERVAL_MS: u64 = 2_000;
-/// Idle ceiling for the adaptive workspace-scan backoff. Steady-state scans are
-/// metadata-only (unchanged sizes reuse inventory references), so one listing
-/// comparison per minute is the worst idle cost.
-const WORKSPACE_SCAN_IDLE_INTERVAL_MS: u64 = 60_000;
+/// Bound external-editor discovery even after a long idle period. Unchanged files
+/// reuse metadata and blob references; the five-second ceiling leaves time to apply.
+const WORKSPACE_SCAN_IDLE_INTERVAL_MS: u64 = 5_000;
 
 /// Only verified exchange boundaries may become a caller's scheduling baseline.
 #[derive(Serialize, Deserialize)]
@@ -130,12 +129,17 @@ async fn classifySync<T>(operation: impl std::future::Future<Output = Result<T, 
 
 /// Retains transport provenance before the existing application API formats the error.
 fn syncLinkError(error: operit_link::CoreLinkError) -> String {
+    recordSyncTransportError(&error);
+    error.to_string()
+}
+
+/// Marks transport failures before shared Space helpers format a routed response.
+pub(crate) fn recordSyncTransportError(error: &operit_link::CoreLinkError) {
     if matches!(error.code.as_str(), "CORE_NODE_UNREACHABLE" | "PEER_LINK_CLOSED" | "PEER_RESPONSE_CLOSED"
         | "PEER_SEND_FAILED" | "PEER_CONNECTION_CLOSED" | "PEER_CONNECT_TIMEOUT" | "PEER_HEARTBEAT_TIMEOUT"
         | "PEER_SYNC_NETWORK_FAILED" | "PEER_SECURITY") {
         let _ = SYNC_NETWORK_FAILURE.try_with(|failure| failure.set(true));
     }
-    error.to_string()
 }
 
 /// Stores the runtime state owned by one CoreNode persistence worker.
@@ -587,10 +591,11 @@ impl SpacePersistenceSyncService {
             let request = callRemote::<PeerSyncStatus>(&self.state.nodeRouter, targetNodeId,
                 PeerSyncMethod::SyncRequest, json!(SyncRequest { limit, force }));
             tokio::pin!(request);
+            let mut progress_interval_ms = 3_000;
             let status = loop {
                 tokio::select! { biased;
                     result = &mut request => break result?,
-                    delay = defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(3_000) => {
+                    delay = defaultHostRuntimeTaskSchedulerHost().waitForHostRuntimeDelay(progress_interval_ms) => {
                         delay.map_err(|e|e.to_string())?;
                         let progress = tokio::select! { biased;
                             result = &mut request => break result?,
@@ -598,6 +603,8 @@ impl SpacePersistenceSyncService {
                                 targetNodeId,PeerSyncMethod::SyncProgress,Value::Null) => progress?,
                         };
                         if let Some(progress) = progress {
+                            // Hidden/short passes stay quiet; visible work gets responsive feedback.
+                            progress_interval_ms = 500;
                             self.state.progress.mirror(targetNodeId,&progress);
                         }
                     }
@@ -941,27 +948,29 @@ impl SpacePersistenceSyncService {
                     local["includeProgress"] = json!(page == 0);
                     remote["includeProgress"] = json!(page == 0);
                     let (remotePage, localPage) = tokio::join!(
-                        callRemote::<Value>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncOperationsSince,
+                        callRemote::<SyncOperationPage>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncOperationsSince,
                             json!({"clock":local,"domains":domains,"limit":limit})),
-                        self.callLocal::<Value>("syncOperationsSince", json!({"clock":remote,"domains":domains,"limit":limit})),
+                        self.callLocal::<SyncOperationPage>("syncOperationsSince", json!({"clock":remote,"domains":domains,"limit":limit})),
                     );
                     let (localPage, remotePage) = (localPage?, remotePage?);
                     if page == 0 {
-                        let remaining = localPage["remaining"].as_u64().zip(remotePage["remaining"].as_u64())
+                        let remaining = localPage.report["remaining"].as_u64().zip(remotePage.report["remaining"].as_u64())
                             .map(|(a,b)|a.saturating_add(b));
                         self.state.progress.backlog(targetNodeId, remaining, 0);
                     }
-                    self.recordPendingWork(targetNodeId, "local export", &localPage);
-                    self.recordPendingWork(targetNodeId, "remote export", &remotePage);
+                    self.recordPendingWork(targetNodeId, "local export", &localPage.report);
+                    self.recordPendingWork(targetNodeId, "remote export", &remotePage.report);
                     let mut owners = BTreeMap::<String, String>::new();
-                    for report in [&localPage, &remotePage] {
+                    for report in [&localPage.report, &remotePage.report] {
                         if let Some(routes) = report.get("owners") { owners.extend(serde_json::from_value::<BTreeMap<String,String>>(routes.clone()).map_err(|e|e.to_string())?); }
                     }
-                    let operations = mergeSyncOperations(localPage["operations"].clone(), remotePage["operations"].clone())?;
+                    let localExported = exportedOperationIds(&localPage.operations);
+                    let remoteExported = exportedOperationIds(&remotePage.operations);
+                    let operations = mergeSyncOperations(localPage.operations, remotePage.operations)?;
                     let done = operations.is_empty() || !pageAddsNewOperations(&mut seen, &operations);
                     if !done || operations.is_empty() {
                         let sizes = syncOperationWireSizes(&operations)?;
-                        if !self.applySynchronizedOperationBatch(targetNodeId, &operations, &sizes, &owners, &mut failed).await? { return Ok(true); }
+                        if !self.applySynchronizedOperationBatch(targetNodeId, &operations, &sizes, &owners, &localExported, &remoteExported, &mut failed).await? { return Ok(true); }
                     }
                     boundary = done.then_some((local, remote));
                     Ok(done)
@@ -978,6 +987,7 @@ impl SpacePersistenceSyncService {
             }
             // Repeated/capped pages and replay failures all reach the same final correction.
             if !self.storageReplicationAllowed(targetNodeId)? { return Ok(false); }
+            self.state.progress.checking(targetNodeId);
             if !self.synchronizeConsistency(targetNodeId, boundary.as_ref().map(|(a,b)|(a,b)), &mut failed).await? {
                 boundary = None;
                 seen.clear();
@@ -1000,9 +1010,11 @@ impl SpacePersistenceSyncService {
     async fn applySynchronizedOperationBatch(
         &self,
         targetNodeId: &str,
-        operations: &[Value],
+        operations: &[SyncOperation],
         sizes: &[usize],
         owners: &BTreeMap<String, String>,
+        localExported: &BTreeSet<String>,
+        remoteExported: &BTreeSet<String>,
         failed: &mut BTreeMap<String, BTreeSet<String>>,
     ) -> Result<bool, String> {
         if let Err(error) = self.synchronizeRequiredBlobs(targetNodeId, operations).await {
@@ -1014,14 +1026,17 @@ impl SpacePersistenceSyncService {
         let chunks = if operations.is_empty() { vec![operations] }
             else { syncPageChunks(operations, sizes, self.state.nodeRouter.maxPeerMessageBytes())? };
         for chunk in chunks {
+            let toRemote = exportedOperations(chunk, localExported);
+            let toLocal = exportedOperations(chunk, remoteExported);
+            // Empty calls still replay each side's existing pending journal.
             let (remote, local) = tokio::join!(
-                callRemote::<Value>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncApplyOperations, json!({"operations":chunk})),
-                self.callLocal::<Value>("syncApplyOperations", json!({"operations":chunk})),
+                callRemote::<Value>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncApplyOperations, SyncOperationBatch { operations: &toRemote }),
+                self.callLocal::<Value>("syncApplyOperations", SyncOperationBatch { operations: &toLocal }),
             );
             if !self.storageReplicationAllowed(targetNodeId)? { return Ok(false); }
             let mut errors = Vec::new();
             let mut pending = BTreeSet::new();
-            for (side, result) in [("remote", remote), ("local", local)] {
+            for (side, result, delivered) in [("remote", remote, &toRemote), ("local", local, &toLocal)] {
                 let failedIds = match result {
                     Ok(report) => {
                         self.recordPendingWork(targetNodeId, &format!("{side} apply"), &report);
@@ -1032,7 +1047,7 @@ impl SpacePersistenceSyncService {
                     Err(error) => {
                         if SYNC_NETWORK_FAILURE.try_with(std::cell::Cell::get).unwrap_or(false) { return Err(error); }
                         errors.push(format!("{side} apply: {error}"));
-                        chunk.iter().filter_map(|op|op["opId"].as_str().map(str::to_owned)).collect()
+                        delivered.iter().map(|op|op.opId.clone()).collect()
                     },
                 };
                 for id in failedIds {
@@ -1041,7 +1056,7 @@ impl SpacePersistenceSyncService {
                 }
             }
             if !errors.is_empty() { return Err(errors.join("; ")); }
-            let confirmed = chunk.iter().filter_map(|operation| operation.get("opId").and_then(Value::as_str))
+            let confirmed = chunk.iter().map(|operation| operation.opId.as_str())
                 .filter(|id| !pending.contains(*id)).map(str::to_owned).collect::<Vec<_>>();
             self.state.progress.records(targetNodeId, confirmed.len());
             self.state.progress.confirmRecords(targetNodeId, &confirmed);
@@ -1056,22 +1071,13 @@ impl SpacePersistenceSyncService {
         peerNodeId: &str,
     ) -> Result<bool, String> {
         let protocol = projectionProtocol(&self.state.nodeRouter, peerNodeId).await?;
+        let service = crate::RuntimeRemoteLinkService::RuntimeRemoteLinkService::newWithRouter(
+            (*self.state.localRuntime).clone(), self.state.nodeRouter.clone());
         let mut referenceRevision = None;
         let remote = if protocol.as_ref().is_some_and(|protocol| protocol.snapshotPaging) {
-            use crate::NodeSpaceService::space_projection::{SnapshotHeader, SnapshotCollector};
-            let header: SnapshotHeader = callRemoteService(&self.state.nodeRouter, peerNodeId,
-                crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotHeader", Value::Null).await?;
-            referenceRevision = Some(header.controlRevision.clone());
-            let mut collector = SnapshotCollector::new(header)?;
-            loop {
-                let page = callRemoteService(&self.state.nodeRouter, peerNodeId,
-                    crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotControlPage",
-                    serde_json::to_value(collector.request()).map_err(|error| error.to_string())?).await?;
-                if collector.push(page)? { break; }
-            }
-            let current: SnapshotHeader = callRemoteService(&self.state.nodeRouter, peerNodeId,
-                crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshotHeader", Value::Null).await?;
-            collector.finish(current)?
+            let (revision, snapshot) = crate::NodeSpaceService::space_projection::readSnapshot(&service, peerNodeId).await?;
+            referenceRevision = Some(revision);
+            snapshot
         } else {
             callRemoteService(&self.state.nodeRouter, peerNodeId,
                 crate::NodeSpaceService::NODE_SPACE_TARGET, "snapshot", Value::Null).await?
@@ -1079,8 +1085,6 @@ impl SpacePersistenceSyncService {
         let remoteSpaceId = remote.space.spaceId.clone();
         let remoteHasDepartures = !remote.departures.is_empty();
         let snapshotControlOperations = remote.controlOperations.clone();
-        let service = crate::RuntimeRemoteLinkService::RuntimeRemoteLinkService::newWithRouter(
-            (*self.state.localRuntime).clone(), self.state.nodeRouter.clone());
         service.observePeerSpaceSnapshot(peerNodeId, remote)?;
         self.applyRemovedMemberEffects(&snapshotControlOperations)?;
         let local = crate::NodeSpaceService::peerSpaceSnapshotForPeer(&service, peerNodeId)?;
@@ -1155,12 +1159,11 @@ impl SpacePersistenceSyncService {
     async fn synchronizeRequiredBlobs(
         &self,
         targetNodeId: &str,
-        operations: &[Value],
+        operations: &[SyncOperation],
     ) -> Result<(), String> {
         let mut errors = Vec::new();
         let references = operations.iter().filter_map(|value| {
-            match serde_json::from_value::<SyncOperation>(value.clone()).map_err(|e|e.to_string())
-                .and_then(|op| RuntimeFileSyncStore::requiredBlob(&op)) {
+            match RuntimeFileSyncStore::requiredBlob(value) {
                 Ok(reference) => reference,
                 Err(error) => { errors.push(error); None }
             }
@@ -1179,6 +1182,7 @@ impl SpacePersistenceSyncService {
             .map(|reference|((reference.contentHash.clone(),reference.size),reference))
             .collect::<BTreeMap<_,_>>().into_values().collect::<Vec<_>>();
         if references.is_empty() { return Ok(()); }
+        let timing = std::time::Instant::now();
         let (remote,local) = tokio::join!(biased;
             self.blobPresence(targetNodeId,&references,false), self.blobPresence(targetNodeId,&references,true));
         let mut errors = Vec::new();
@@ -1191,9 +1195,15 @@ impl SpacePersistenceSyncService {
                 Err(error) => errors.push(error),
             }
         }
+        let presence_ms = timing.elapsed().as_millis();
+        let missing = pending.len();
+        let mut transferred_bytes = 0;
         if !pending.is_empty() {
             let size = pending.iter().try_fold(0i64, |size, (reference,_)|
                 size.checked_add(reference.size).ok_or("Synchronization blob batch size overflow"))?;
+            transferred_bytes = size;
+            RuntimeFileSyncStore::new(self.state.localRuntime.runtimeStorageHost(), RUNTIME_SYNC_DIR_PATH)
+                .prepareBlobReads(&pending.iter().filter(|(_, local)| *local).map(|(reference, _)| *reference).collect::<Vec<_>>())?;
             let sent = AtomicI64::new(0);
             self.state.progress.beginFile(targetNodeId, size);
             errors.extend(stream::iter(pending)
@@ -1201,6 +1211,11 @@ impl SpacePersistenceSyncService {
                 .buffer_unordered(SYNC_BLOB_TRANSFER_CONCURRENCY)
                 .filter_map(|result| async move { result.err() }).collect::<Vec<_>>().await);
             self.state.progress.fileOffset(targetNodeId, sent.load(Ordering::Relaxed), true);
+        }
+        if timing.elapsed().as_millis() >= 100 {
+            operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                "sync_blobs.stages references={} missing={missing} bytes={transferred_bytes} presenceMs={presence_ms} transferMs={} totalMs={}",
+                references.len(), timing.elapsed().as_millis()-presence_ms, timing.elapsed().as_millis()));
         }
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
@@ -1236,14 +1251,16 @@ impl SpacePersistenceSyncService {
         } else {
             self.state.localRuntime.openPush(request).map_err(|error| error.to_string())?
         };
+        let localFiles = localSource.then(|| RuntimeFileSyncStore::new(
+            self.state.localRuntime.runtimeStorageHost(), RUNTIME_SYNC_DIR_PATH));
         let mut offset = 0;
         while offset < reference.size {
             self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
                 .map_err(|error| error.to_string())?;
-            let args = json!({ "contentHash": reference.contentHash, "offset": offset, "length": SYNC_BLOB_CHUNK_BYTES });
-            let chunk = if localSource {
-                self.callLocal::<Vec<u8>>("syncReadBlobChunk", args).await?
+            let chunk = if let Some(files) = &localFiles {
+                files.readBlobChunk(&reference.contentHash, offset, SYNC_BLOB_CHUNK_BYTES)?
             } else {
+                let args = json!({ "contentHash": reference.contentHash, "offset": offset, "length": SYNC_BLOB_CHUNK_BYTES });
                 callRemote::<Vec<u8>>(&self.state.nodeRouter, targetNodeId, PeerSyncMethod::SyncReadBlobChunk, args).await?
             };
             self.state.nodeRouter.requirePeerStorageProviders(&self.state.nodeRouter.localNodeId(), targetNodeId)
@@ -1252,7 +1269,8 @@ impl SpacePersistenceSyncService {
             if length == 0 || length > reference.size - offset {
                 return Err(format!("Invalid synchronization blob chunk: hash={} offset={offset} length={length} size={}", reference.contentHash, reference.size));
             }
-            push.send(toCoreValue(chunk).map_err(|error| error.to_string())?).await.map_err(syncLinkError)?;
+            // Link already accepts binary as Vec<u8>; avoid allocating one value per byte.
+            push.send(operit_link::CoreValue::Bytes(chunk.into())).await.map_err(syncLinkError)?;
             offset += length;
             self.state.progress.fileOffset(targetNodeId, sent.fetch_add(length, Ordering::Relaxed) + length, false);
         }
@@ -1358,7 +1376,7 @@ impl SpacePersistenceSyncService {
     }
 
     /// Invokes one local application method through the active in-process Core.
-    async fn callLocal<T>(&self, methodName: &str, args: Value) -> Result<T, String>
+    async fn callLocal<T>(&self, methodName: &str, args: impl Serialize) -> Result<T, String>
     where
         T: DeserializeOwned,
     {
@@ -1370,6 +1388,12 @@ impl SpacePersistenceSyncService {
             format!("local {methodName}: {error}")
         })?)
     }
+}
+
+/// Serializes directly into Link values without a second owned JSON operation page.
+#[derive(Serialize)]
+struct SyncOperationBatch<'a, T = Value> {
+    operations: &'a [T],
 }
 
 /// Weak registration shares one worker across facades without extending its lifetime.
@@ -1402,7 +1426,7 @@ async fn callRemote<T>(
     nodeRouter: &CoreNodeRouter,
     targetNodeId: &str,
     method: PeerSyncMethod,
-    args: Value,
+    args: impl Serialize,
 ) -> Result<T, String>
 where
     T: DeserializeOwned,
@@ -1480,7 +1504,7 @@ fn serviceCallRequest(
     nodeRouter: &CoreNodeRouter,
     targetPath: &str,
     methodName: &str,
-    args: Value,
+    args: impl Serialize,
 ) -> Result<CoreCallRequest, String> {
     let target = if targetPath == crate::RuntimeRemoteLinkService::NODE_SPACE_TARGET
         || targetPath == crate::NodeSpaceService::NODE_SPACE_CONTROL_TARGET {
@@ -1506,25 +1530,33 @@ where
     fromCoreValue(value).map_err(|error| error.to_string())
 }
 
-/// Merges two operation pages into their deterministic application order.
-fn mergeSyncOperations(left: Value, right: Value) -> Result<Vec<Value>, String> {
-    let operations = syncOperations(left)?.into_iter().chain(syncOperations(right)?)
-        .map(|value| serde_json::from_value::<SyncOperation>(value).map_err(|e| format!("Invalid sync operation: {e}")))
-        .collect::<Result<Vec<_>, _>>()?;
-    operit_store::Transaction::ordered(operations, |op| &op.opId,
-        operit_store::Transaction::Revision::fromOperation)?.into_iter()
-        .map(|op| serde_json::to_value(op).map_err(|e| e.to_string())).collect()
+/// Decode originals directly; only small reporting fields use the generic JSON map.
+#[derive(Deserialize)]
+struct SyncOperationPage {
+    operations: Vec<SyncOperation>,
+    #[serde(flatten)]
+    report: Value,
 }
 
-/// Decodes one runtime sync operation page into its ordered operation array.
-fn syncOperations(value: Value) -> Result<Vec<Value>, String> {
-    serde_json::from_value(value).map_err(|error| format!("invalid sync operations: {error}"))
+/// An exporter already durably owns its page; only the opposite side receives it.
+fn exportedOperationIds(page: &[SyncOperation]) -> BTreeSet<String> {
+    page.iter().map(|op| op.opId.clone()).collect()
+}
+
+fn exportedOperations<'a>(operations: &'a [SyncOperation], exported: &BTreeSet<String>) -> Vec<&'a SyncOperation> {
+    operations.iter().filter(|op| exported.contains(&op.opId)).collect()
+}
+
+/// Merge originals once, preserving the shared identity checks and business order.
+fn mergeSyncOperations(left: Vec<SyncOperation>, right: Vec<SyncOperation>) -> Result<Vec<SyncOperation>, String> {
+    operit_store::Transaction::ordered(left.into_iter().chain(right), |op| &op.opId,
+        operit_store::Transaction::Revision::fromOperation)
 }
 
 /// Encoded MessagePack size of every operation, measured once per page.
 /// The same sizes drive the chunking decision and the batch trace.
 #[allow(non_snake_case)]
-fn syncOperationWireSizes(operations: &[Value]) -> Result<Vec<usize>, String> {
+fn syncOperationWireSizes(operations: &[SyncOperation]) -> Result<Vec<usize>, String> {
     operations
         .iter()
         .map(|operation| {
@@ -1555,10 +1587,10 @@ fn syncPageBudget(maxMessageBytes: usize) -> usize {
 /// than the ceiling itself is reported here instead of failing at the socket.
 #[allow(non_snake_case)]
 fn syncPageChunks<'a>(
-    operations: &'a [Value],
+    operations: &'a [SyncOperation],
     sizes: &[usize],
     maxMessageBytes: usize,
-) -> Result<Vec<&'a [Value]>, String> {
+) -> Result<Vec<&'a [SyncOperation]>, String> {
     if operations.len() != sizes.len() {
         return Err("synchronization page size table is incomplete".into());
     }
@@ -1569,8 +1601,8 @@ fn syncPageChunks<'a>(
     let mut bytes = 0usize;
     for (index, size) in sizes.iter().copied().enumerate() {
         if size > ceiling {
-            let opId = operations[index].get("opId").and_then(Value::as_str).unwrap_or("unknown");
-            let domain = operations[index].get("domain").and_then(Value::as_str).unwrap_or("unknown");
+            let opId = &operations[index].opId;
+            let domain = &operations[index].domain;
             return Err(format!(
                 "SYNC_OPERATION_TOO_LARGE opId={opId} domain={domain} bytes={size} limit={ceiling}"
             ));
@@ -1590,17 +1622,15 @@ fn syncPageChunks<'a>(
 
 /// Records one page's operation ids and reports whether it added a new identity.
 ///
-/// A page without complete ids is treated as progress so malformed data can
-/// never terminate a synchronization pass early.
+/// Malformed operation envelopes are rejected while decoding the page.
 #[allow(non_snake_case)]
 fn pageAddsNewOperations(
     seenOperationIds: &mut BTreeSet<String>,
-    operations: &[Value],
+    operations: &[SyncOperation],
 ) -> bool {
     let pageOperationIds = operations
         .iter()
-        .filter_map(|operation| operation.get("opId").and_then(Value::as_str))
-        .map(str::to_string)
+        .map(|operation| operation.opId.clone())
         .collect::<BTreeSet<_>>();
     if pageOperationIds.len() == operations.len()
         && pageOperationIds
@@ -1616,6 +1646,42 @@ fn pageAddsNewOperations(
 #[cfg(test)]
 mod page_budget_tests {
     use super::*;
+
+    #[test]
+    fn borrowed_application_batch_preserves_wire_arguments() {
+        let operations = vec![json!({"opId":"peer:1","payload":{"unicode":"配置","bytes":[0,255],"null":null}})];
+        assert_eq!(toCoreValue(SyncOperationBatch { operations: &operations }).unwrap(),
+            toCoreValue(json!({"operations":operations})).unwrap());
+        assert_eq!(toCoreValue(SyncOperationBatch::<Value> { operations: &[] }).unwrap(),
+            toCoreValue(json!({"operations":[]})).unwrap());
+    }
+
+    #[test]
+    fn typed_export_page_preserves_originals_and_reporting_fields() {
+        let operations = vec![operation("device:1", 4096)];
+        let report = json!({"operations":operations, "remaining":3, "pending":1,
+            "pendingOperationIds":["retry:1"], "owners":{"device:1":"runtime/data/test.json"},
+            "errors":["retry file"], "pendingBlobs":[{"contentHash":"abc","size":4096}]});
+        let page: SyncOperationPage = fromCoreValue(toCoreValue(&report).unwrap()).unwrap();
+        assert_eq!(page.operations, operations);
+        let mut expected = report;
+        expected.as_object_mut().unwrap().remove("operations");
+        assert_eq!(page.report, expected);
+    }
+
+    #[test]
+    fn directional_pages_keep_order_overlap_and_empty_replay() {
+        let operations = vec![operation("left:1", 0), operation("both:1", 0), operation("right:1", 0)];
+        let left = exportedOperationIds(&[operations[0].clone(), operations[1].clone()]);
+        let right = exportedOperationIds(&[operations[2].clone(), operations[1].clone()]);
+        let to_remote = exportedOperations(&operations, &left);
+        let to_local = exportedOperations(&operations, &right);
+        assert_eq!(to_remote.iter().map(|op|op.opId.as_str()).collect::<Vec<_>>(), vec!["left:1","both:1"]);
+        assert_eq!(to_local.iter().map(|op|op.opId.as_str()).collect::<Vec<_>>(), vec!["both:1","right:1"]);
+        assert!(exportedOperations(&operations, &BTreeSet::new()).is_empty());
+        assert_eq!(toCoreValue(SyncOperationBatch { operations: &to_remote }).unwrap(),
+            toCoreValue(json!({"operations":[operations[0], operations[1]]})).unwrap());
+    }
 
     /// Identical messages cannot turn application corruption into a connection retry.
     #[tokio::test]
@@ -1651,20 +1717,26 @@ mod page_budget_tests {
 
 
     /// Constructs one transport-sized plugin operation for page budget tests.
-    fn operation(opId: &str, payloadBytes: usize) -> Value {
-        json!({
-            "opId": opId,
-            "domain": "plugin_storage",
+    fn operation(opId: &str, payloadBytes: usize) -> SyncOperation {
+        serde_json::from_value(json!({
+            "opId": opId, "originDeviceId":"device", "sequence":1,
+            "domain": "plugin_storage", "entityType":"test", "entityId":"entity",
+            "operation":"set", "semantics":"transaction", "createdAt":1, "schemaVersion":1,
             "payload": "x".repeat(payloadBytes),
-        })
+        })).unwrap()
     }
 
     /// Extracts operation identities from one planned message chunk.
-    fn ids(chunk: &[Value]) -> Vec<String> {
+    fn ids(chunk: &[SyncOperation]) -> Vec<String> {
         chunk
             .iter()
-            .map(|value| value["opId"].as_str().unwrap_or_default().to_string())
+            .map(|value| value.opId.clone())
             .collect()
+    }
+
+    fn mergeValues(left: Value, right: Value) -> Result<Vec<SyncOperation>, String> {
+        super::mergeSyncOperations(serde_json::from_value(left).map_err(|e| e.to_string())?,
+            serde_json::from_value(right).map_err(|e| e.to_string())?)
     }
 
     /// Transport rejects a changed original regardless of arrival direction.
@@ -1680,11 +1752,11 @@ mod page_budget_tests {
         new["schemaVersion"] = json!(8);
         new["payload"] = json!({"text":"new"});
         for (left, right) in [(old.clone(), new.clone()), (new.clone(), old.clone())] {
-            assert!(mergeSyncOperations(json!([left]), json!([right])).is_err());
+            assert!(mergeValues(json!([left]), json!([right])).is_err());
         }
         let mut control = old.clone(); control["domain"] = json!("network_control");
         let mut conflict = control.clone(); conflict["payload"] = json!({"permission":"admin"});
-        assert!(mergeSyncOperations(json!([control]), json!([conflict])).is_err());
+        assert!(mergeValues(json!([control]), json!([conflict])).is_err());
     }
 
     #[test]
@@ -1755,13 +1827,11 @@ mod page_budget_tests {
     #[test]
     fn page_union_uses_the_common_business_order_and_rejects_invalid_originals() {
         let mut first = operation("device:1", 4096);
-        first["entityType"] = json!("test"); first["entityId"] = json!("entity"); first["operation"] = json!("set");
-        first["semantics"] = json!("transaction"); first["schemaVersion"] = json!(1);
-        first["originDeviceId"] = json!("device"); first["sequence"] = json!(1); first["createdAt"] = json!(20);
+        first.createdAt = 20;
         let mut second = first.clone();
-        second["opId"] = json!("device:2"); second["sequence"] = json!(2); second["createdAt"] = json!(10);
-        assert_eq!(mergeSyncOperations(json!([second.clone(), first.clone()]), json!([first.clone()])).unwrap(), vec![first,second]);
-        assert!(mergeSyncOperations(json!([{"opId":"device:7"}]), json!([])).is_err());
+        second.opId = "device:2".into(); second.sequence = 2; second.createdAt = 10;
+        assert_eq!(mergeValues(json!([second.clone(), first.clone()]), json!([first.clone()])).unwrap(), vec![first,second]);
+        assert!(mergeValues(json!([{"opId":"device:7"}]), json!([])).is_err());
     }
 
     #[test]
@@ -1774,6 +1844,17 @@ mod page_budget_tests {
         assert!(pageAddsNewOperations(&mut seen, &progressed));
         assert!(!pageAddsNewOperations(&mut seen, &progressed));
         // A page without complete identities must never stop a pass.
-        assert!(pageAddsNewOperations(&mut seen, &[json!({"domain": "chat"})]));
+        assert!(fromCoreValue::<SyncOperationPage>(toCoreValue(json!({"operations":[{"domain":"chat"}]})).unwrap()).is_err());
     }
+    #[test]
+    fn blob_chunks_use_existing_binary_wire_and_decode_as_legacy_byte_vectors() {
+        let chunk = (0..65536).map(|index| (index % 256) as u8).collect::<Vec<_>>();
+        let encoded = operit_link::encodeLink(operit_link::CoreValue::Bytes(chunk.clone().into())).unwrap();
+        assert!(encoded.len() < chunk.len()+16);
+        let wire: operit_link::CoreValue = operit_link::decodeLink(&encoded).unwrap();
+        assert_eq!(operit_link::fromCoreValue::<Vec<u8>>(wire).unwrap(), chunk);
+        let legacy = operit_link::toCoreValue(&chunk).unwrap();
+        assert_eq!(operit_link::fromCoreValue::<Vec<u8>>(legacy).unwrap(), chunk);
+    }
+
 }

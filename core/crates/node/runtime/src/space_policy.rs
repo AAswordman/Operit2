@@ -6,13 +6,11 @@ use operit_store::NetworkControlStore::NetworkControlStore;
 /// Pairing alone cannot authorize a Space entry. Both endpoints must
 /// be admitted and active in the same initialized control projection.
 pub(crate) fn spaceChannelScope(
-    spaceStore: &CoreSpaceStore,
     controlStore: &NetworkControlStore,
     local: &str,
     peer: &str,
 ) -> Result<Option<String>, CoreLinkError> {
-    let space = spaceStore.space().map_err(CoreLinkError::internal)?;
-    controlStore.withCurrentState(|control| {
+    controlStore.withCurrentSpaceState(|space, control| {
         if peer == local || !control.initialized || control.spaceId != space.spaceId {
             return None;
         }
@@ -24,7 +22,7 @@ pub(crate) fn spaceChannelScope(
                 return None;
             }
         }
-        Some(space.spaceId)
+        Some(space.spaceId.clone())
     }).map_err(CoreLinkError::internal)
 }
 

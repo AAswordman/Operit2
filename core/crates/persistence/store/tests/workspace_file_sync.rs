@@ -341,6 +341,10 @@ fn file_to_directory_and_back_replicate_in_order() {
 struct CountingHost {
     inner: Arc<NativeRuntimeStorageHost>,
     workspaceReads: AtomicUsize,
+    inventoryWrites: AtomicUsize,
+    failInventoryAt: AtomicUsize,
+    failFlush: std::sync::atomic::AtomicBool,
+    batchFlushes: AtomicUsize,
     directoryListings: std::sync::Mutex<Vec<String>>,
     removeBeforeMetadata: std::sync::Mutex<Option<String>>,
 }
@@ -381,6 +385,12 @@ impl RuntimeStorageHost for CountingHost {
     /// Preserves source metadata.
     fn setModifiedAt(&self, path: &str, time: i64) -> HostResult<()> { self.inner.setModifiedAt(path, time) }
     fn writeBytesAtomically(&self, path: &str, content: &[u8]) -> HostResult<()> {
+        if path.ends_with("/workspace_inventory.json") {
+            let write = self.inventoryWrites.fetch_add(1, Ordering::SeqCst) + 1;
+            if write == self.failInventoryAt.load(Ordering::SeqCst) {
+                return Err(operit_host_api::HostError::new("injected inventory checkpoint failure"));
+            }
+        }
         self.inner.writeBytesAtomically(path, content)
     }
     fn appendBytes(&self, path: &str, content: &[u8]) -> HostResult<()> {
@@ -388,6 +398,13 @@ impl RuntimeStorageHost for CountingHost {
     }
     fn flushFile(&self, path: &str) -> HostResult<()> {
         self.inner.flushFile(path)
+    }
+    fn flushFiles(&self, paths: &[&str]) -> HostResult<()> {
+        self.batchFlushes.fetch_add(1, Ordering::SeqCst);
+        if self.failFlush.load(Ordering::SeqCst) {
+            return Err(operit_host_api::HostError::new("injected file flush failure"));
+        }
+        self.inner.flushFiles(paths)
     }
     fn delete(&self, path: &str, recursive: bool) -> HostResult<()> {
         self.inner.delete(path, recursive)
@@ -410,7 +427,7 @@ impl CountedNode {
     /// Reuses the native node fixture while instrumenting only workspace content reads.
     fn new() -> Self {
         let node = Node::new();
-        let host = Arc::new(CountingHost { inner: node.host.clone(), workspaceReads: AtomicUsize::new(0), directoryListings: Default::default(), removeBeforeMetadata: Default::default() });
+        let host = Arc::new(CountingHost { inner: node.host.clone(), workspaceReads: AtomicUsize::new(0), inventoryWrites: AtomicUsize::new(0), failInventoryAt: AtomicUsize::new(0), failFlush: Default::default(), batchFlushes: AtomicUsize::new(0), directoryListings: Default::default(), removeBeforeMetadata: Default::default() });
         Self { host, _node: node }
     }
     fn workspace(&self) -> WorkspaceFileSyncStore {
@@ -840,4 +857,85 @@ fn pending_excluded_originals_are_retired_and_cannot_be_requeued() {
         assert_eq!(target.log().pendingOperationIds().unwrap(), vec![normal.opId]);
         assert!(target.ops().iter().all(|op| op.opId != excluded.opId));
     }
+}
+
+
+#[test]
+fn batch_inventory_uses_two_checkpoints_and_recovers_after_final_publication_failure() {
+    let source = Node::new();
+    for i in 0..8 { source.write(&format!("workspaces/batch/{i}.txt"), format!("data-{i}").as_bytes()); }
+    source.workspace().scan().unwrap();
+    let operations = source.ops();
+    let target = CountedNode::new();
+    let files = RuntimeFileSyncStore::new(target.host.clone(), SYNC);
+    for op in &operations {
+        let reference = RuntimeFileSyncStore::requiredBlob(op).unwrap().unwrap();
+        files.writeBlob(&reference, &RuntimeFileSyncStore::new(source.host.clone(), SYNC).readBlob(&reference).unwrap()).unwrap();
+    }
+    target._node.log().receiveOperations(&operations).unwrap();
+    target.host.failInventoryAt.store(2, Ordering::SeqCst);
+    assert!(target.workspace().materializeOperations(&operations.iter().collect::<Vec<_>>(), false).unwrap_err().contains("injected"));
+    assert_eq!(target.host.inventoryWrites.load(Ordering::SeqCst), 2);
+    let saved: serde_json::Value = serde_json::from_slice(&target.host.readBytes("runtime/sync/workspace_inventory.json").unwrap()).unwrap();
+    assert_eq!(saved["pendingBatch"].as_array().unwrap().len(), 8);
+    // Reopen through a different host and recover before scanning local edits.
+    let reopened = WorkspaceFileSyncStore::new(target._node.host.clone(), SYNC);
+    assert_eq!(reopened.scan().unwrap(), 0);
+    for i in 0..8 {
+        assert_eq!(target.host.readBytes(&format!("workspaces/batch/{i}.txt")).unwrap(), format!("data-{i}").as_bytes());
+    }
+    let saved: serde_json::Value = serde_json::from_slice(&target.host.readBytes("runtime/sync/workspace_inventory.json").unwrap()).unwrap();
+    assert!(saved.get("pendingBatch").is_none());
+    assert_eq!(target._node.log().pendingOperations().unwrap().len(), 8);
+    let expected = operations.iter().map(|op|op.opId.clone()).collect::<std::collections::BTreeSet<_>>();
+    assert!(target._node.ops().iter().all(|op|expected.contains(&op.opId)), "recovery must not publish incoming files as local edits");
+}
+
+#[test]
+fn batch_flush_failure_keeps_recovery_intent_and_does_not_publish_versions() {
+    let source = Node::new();
+    for i in 0..3 { source.write(&format!("workspaces/batch/{i}.txt"), b"durable"); }
+    source.workspace().scan().unwrap();
+    let operations = source.ops();
+    let target = CountedNode::new();
+    let files = RuntimeFileSyncStore::new(target.host.clone(), SYNC);
+    for op in &operations {
+        let reference = RuntimeFileSyncStore::requiredBlob(op).unwrap().unwrap();
+        files.writeBlob(&reference, &RuntimeFileSyncStore::new(source.host.clone(), SYNC).readBlob(&reference).unwrap()).unwrap();
+    }
+    target._node.log().receiveOperations(&operations).unwrap();
+    target.host.failFlush.store(true, Ordering::SeqCst);
+    assert!(target.workspace().materializeOperations(&operations.iter().collect::<Vec<_>>(), false).unwrap_err().contains("flush failure"));
+    assert_eq!(target.host.batchFlushes.load(Ordering::SeqCst), 1);
+    for op in &operations { assert!(target._node.log().shouldApplyOperation(op).unwrap()); }
+    let saved: serde_json::Value = serde_json::from_slice(&target.host.readBytes("runtime/sync/workspace_inventory.json").unwrap()).unwrap();
+    assert_eq!(saved["pendingBatch"].as_array().unwrap().len(), 3);
+    let reopened = WorkspaceFileSyncStore::new(target._node.host.clone(), SYNC);
+    assert_eq!(reopened.scan().unwrap(), 0);
+    for op in &operations {
+        assert_eq!(target.host.readBytes(&op.entityId).unwrap(), b"durable");
+        assert!(!target._node.log().shouldApplyOperation(op).unwrap());
+    }
+    assert_eq!(target._node.ops().len(), operations.len());
+}
+
+#[test]
+fn batch_missing_blob_does_not_block_other_files_or_future_scans() {
+    let source = Node::new();
+    source.write("workspaces/batch/a.txt", b"missing");
+    source.write("workspaces/batch/b.txt", b"valid");
+    source.workspace().scan().unwrap();
+    let operations = source.ops();
+    let target = Node::new();
+    for op in operations.iter().filter(|op|op.entityId.ends_with("b.txt")) {
+        let reference = RuntimeFileSyncStore::requiredBlob(op).unwrap().unwrap();
+        RuntimeFileSyncStore::new(target.host.clone(), SYNC).writeBlob(&reference,
+            &RuntimeFileSyncStore::new(source.host.clone(), SYNC).readBlob(&reference).unwrap()).unwrap();
+    }
+    target.log().receiveOperations(&operations).unwrap();
+    assert!(target.workspace().materializeOperations(&operations.iter().collect::<Vec<_>>(), false).is_err());
+    assert_eq!(target.host.readBytes("workspaces/batch/b.txt").unwrap(), b"valid");
+    assert_eq!(target.workspace().scan().unwrap(), 0);
+    assert!(target.log().shouldApplyOperation(operations.iter().find(|op|op.entityId.ends_with("a.txt")).unwrap()).unwrap());
+    assert!(!target.log().shouldApplyOperation(operations.iter().find(|op|op.entityId.ends_with("b.txt")).unwrap()).unwrap());
 }

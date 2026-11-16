@@ -274,6 +274,7 @@ impl Definition {
             migrated.set(&stringPreferencesKey(key), value.clone());
         }
         preferences.values = migrated.values;
+        context.after.values.clear();
         preferences.view = Some(context.after);
         Ok(())
     }

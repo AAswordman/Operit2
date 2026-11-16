@@ -267,6 +267,15 @@ impl SyncProgressTracker {
         });
     }
 
+    pub(crate) fn checking(&self, peer: &str) {
+        self.changePeer(peer, |item| {
+            item.stage = SpaceSyncStage::Checking;
+            item.fileBytes = 0;
+            item.fileSize = 0;
+            item.updatedAt = currentTimeMillis();
+        });
+    }
+
     pub(crate) fn records(&self, peer: &str, count: usize) {
         self.changePeer(peer, |item| {
             item.stage = SpaceSyncStage::Records;
@@ -336,6 +345,24 @@ impl SyncProgressTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn final_check_keeps_confirmed_records_without_stale_file_progress() {
+        let progress = SyncProgressTracker::default();
+        progress.begin("peer", "space");
+        progress.records("peer", 256);
+        progress.reveal("peer");
+        progress.backlog("peer", Some(1), 0);
+        progress.confirmRecords("peer", &["origin:1".into()]);
+        progress.beginFile("peer", 1024);
+        progress.fileOffset("peer", 1024, true);
+        progress.checking("peer");
+        let item = progress.flow().value().remove(0);
+        assert_eq!(item.stage, SpaceSyncStage::Checking);
+        assert_eq!(item.status, SpaceSyncStatus::Syncing);
+        assert_eq!((item.fileBytes, item.fileSize, item.completedRecords), (0, 0, 1));
+        assert_eq!(item.transferredBytes, 1024);
+    }
 
     /// Retried pages cannot inflate confirmed progress or hide a failed materialization at 100 percent.
     #[test]

@@ -1384,7 +1384,11 @@ impl crate::NodeSpaceService::NodeSpaceContext for RuntimeRemoteLinkService {
     fn localNodeId(&self) -> String { self.nodeRouter.localNodeId() }
     fn nodeIsReachable(&self, node: &str) -> Result<bool, String> { self.nodeRouter.nodeIsReachable(node) }
     async fn callNode(&self, node: String, request: CoreCallRequest) -> operit_link::CoreCallResponse {
-        self.nodeRouter.callNode(node, request).await
+        let response = self.nodeRouter.callNode(node, request).await;
+        if let Err(error) = &response.result {
+            crate::SpacePersistenceSyncService::recordSyncTransportError(error);
+        }
+        response
     }
     async fn afterJoined(&self, _peer: String) -> Result<(), String> {
         self.persistenceSyncService().scheduleSynchronization("space_joined")

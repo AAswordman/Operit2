@@ -1578,8 +1578,9 @@ pub fn stringPreferencesKey(name: &str) -> PreferencesKey {
 pub struct Preferences {
     pub(crate) values: Arc<HashMap<String, Value>>,
     pub(crate) pendingMutations: BTreeMap<String, PreferencesTransactionMutation>,
-    pub(crate) commit: Option<crate::Transaction::kernel::FileCommit>,
+    pub(crate) commit: Option<Arc<crate::Transaction::kernel::FileCommit>>,
     pub(crate) legacy: Option<Value>,
+    // Replay metadata only; business values have one owner in `values`.
     pub(crate) view: Option<crate::Transaction::Data>,
 }
 
@@ -1593,6 +1594,16 @@ impl PartialEq for Preferences {
 impl Eq for Preferences {}
 
 impl Preferences {
+    pub(crate) fn setReplayContext(&mut self, source: &crate::Transaction::Data) {
+        let mut context = crate::Transaction::Data::empty(source.owner.clone());
+        context.revision = source.revision.clone();
+        context.deleted = source.deleted.clone();
+        context.aliases = source.aliases.clone();
+        context.versions = source.versions.clone();
+        context.additions = source.additions.clone();
+        self.view = Some(context);
+    }
+
     /// Identifies the exact immutable snapshot, including intervening writes that restore old values.
     pub(crate) fn sharesSnapshot(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.values, &other.values)
@@ -1800,8 +1811,8 @@ impl<'de> Deserialize<'de> for Preferences {
     {
         let mut values = HashMap::<String, Value>::deserialize(deserializer)?;
         let legacy = values.remove(PREFERENCES_REPLICATION_KEY);
-        let commit = values.remove("__operit_transaction_commit").map(serde_json::from_value)
-            .transpose().map_err(serde::de::Error::custom)?;
+        let commit = values.remove("__operit_transaction_commit").map(serde_json::from_value::<crate::Transaction::kernel::FileCommit>)
+            .transpose().map_err(serde::de::Error::custom)?.map(Arc::new);
         Ok(Self {
             values: Arc::new(values),
             pendingMutations: BTreeMap::new(),
@@ -2539,17 +2550,6 @@ enum PreferencesSyncedMutation {
 }
 
 impl PreferencesSyncedMutation {
-    fn visit<F>(&mut self, visitor: &mut F) -> Result<(), PreferencesDataStoreError>
-    where F: FnMut(&mut Self) -> Result<(), PreferencesDataStoreError> {
-        match self {
-            Self::Transaction(mutations) => {
-                for mutation in mutations { mutation.visit(visitor)?; }
-                Ok(())
-            }
-            mutation => visitor(mutation),
-        }
-    }
-
     /// Enumerates root entities without interpreting encoded string contents.
     fn keys(&self) -> Vec<&str> {
         match self {
@@ -3515,11 +3515,16 @@ impl PreferencesDataStore {
                 "Replication metadata is reserved for the dataset commit protocol".into(),
             ));
         }
-        // Preserve the existing sorted JSON encoding without copying business
-        // value trees while both the old and new snapshots are still live.
-        let mut values = preferences.iterEntries().collect::<BTreeMap<_, _>>();
-        let commit = preferences.commit.as_ref().map(serde_json::to_value).transpose()?;
-        if let Some(ref commit) = commit { values.insert("__operit_transaction_commit", commit); }
+        // Borrow the intent as well as business values; its originals may contain
+        // large JSON trees and must not be materialized again just for encoding.
+        #[derive(Serialize)]
+        #[serde(untagged)]
+        enum Entry<'a> { Value(&'a Value), Commit(&'a crate::Transaction::kernel::FileCommit) }
+        let mut values = preferences.iterEntries().map(|(key, value)| (key, Entry::Value(value)))
+            .collect::<BTreeMap<_, _>>();
+        if let Some(commit) = preferences.commit.as_deref() {
+            values.insert("__operit_transaction_commit", Entry::Commit(commit));
+        }
 
         let bounded = self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache();
         let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: bounded, bounded };
@@ -3946,13 +3951,14 @@ impl PreferencesSyncedEntry {
                 .map_err(PreferencesDataStoreError::Message)?
         } else { BTreeSet::new() };
         let mut data = preferences.view.clone().ok_or_else(|| PreferencesDataStoreError::Message("Owner replay context is missing".into()))?;
+        data.values = preferences.iterEntries()
+            .filter(|(key, _)| *key != "__operit_preferences_schema_version")
+            .map(|(key, value)| (key.to_owned(), value.clone())).collect();
         // Coverage permits payload reclamation only after the complete history
         // has been validated. Do not hide an invalid increment/path merely
         // because a later assignment would overwrite its final value.
-        for transaction in &transactions {
-            data.apply(transaction).map_err(PreferencesDataStoreError::Message)?;
-        }
-        preferences.values = Arc::new(data.values.iter().map(|(k,v)| (k.clone(),v.clone())).collect());
+        let mut data = data.into_applied_batch(&transactions).map_err(PreferencesDataStoreError::Message)?;
+        preferences.values = Arc::new(std::mem::take(&mut data.values).into_iter().collect());
         preferences.set(&PreferencesDataStore::schemaVersionKey(), data.owner.format);
         preferences.view = Some(data);
         Ok(retired)

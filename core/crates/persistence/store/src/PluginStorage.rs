@@ -87,7 +87,7 @@ struct Database {
 }
 
 /// Preserves the durable database identity carried by a change transaction.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Manifest {
     pub path: String,
@@ -1396,12 +1396,13 @@ pub fn receipt(
         let result = (|| -> Result<(), SqliteStoreError> {
             let store = openSyncedDatabase(host.clone(), &path)?.store;
             crate::Transaction::compaction::prepare(&store)?;
-            for row in store.queryRows(
+            store.visitRows(
                 "SELECT origin,sequence FROM _operit_log UNION SELECT origin,sequence FROM _operit_compacted ORDER BY origin,sequence",
-                Vec::new(),
-            )? {
-                receipt.observe(&row.get::<_, String>(0)?, row.get(1)?);
-            }
+                Vec::new(), &mut |row| {
+                    receipt.observe(&row.valueAt(0)?.asString()?, row.valueAt(1)?.asI64()?);
+                    Ok(())
+                },
+            )?;
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? { receipt.observe(&origin,sequence); }
             crate::Transaction::compaction::observe_coverage(&store,&mut receipt)?;
             Ok(())
@@ -2666,8 +2667,11 @@ fn mergePayload(
     let sourceChanges = payload.changes.clone();
     let mut pending = BTreeMap::<(String, String), String>::new();
     for entity in &descriptor.entities {
+        if !payload.changes.iter().any(|change| change.collection == entity.collection) { continue; }
         let collection = MergeCollection::open(tx, payload.manifest.kind, &entity.collection)?;
-        let localRows = collection.read(tx)?;
+        let localRows = if entity.key_references.is_empty() && entity.match_mode != StorageMergeMatchMode::Identity {
+            collection.read(tx)?
+        } else { Vec::new() };
         let localContent = localRows.iter().map(|(key, value)| {
             let mut value = value.clone();
             rewriteMergeReferences(tx, &collection, descriptor, &mut value, &pending, preferenceReferences)?;
@@ -2896,8 +2900,27 @@ pub fn applyOperation(
     operation: &SyncOperation,
     preferences: &BTreeMap<String, String>,
 ) -> Result<(), SqliteStoreError> {
+    applyOperations(host, storage, std::slice::from_ref(operation), preferences)
+}
+
+/// Reuses a validated database handle while replaying one owner's ordered operations.
+pub fn applyOperations(
+    host: Arc<dyn RuntimeSqliteHost>, storage: Arc<dyn RuntimeStorageHost>,
+    operations: &[SyncOperation], preferences: &BTreeMap<String, String>,
+) -> Result<(), SqliteStoreError> {
+    let mut database = None;
+    for operation in operations { applyOperationInternal(host.clone(),storage.clone(),operation,preferences,&mut database)?; }
+    Ok(())
+}
+
+fn applyOperationInternal(
+    host: Arc<dyn RuntimeSqliteHost>, storage: Arc<dyn RuntimeStorageHost>,
+    operation: &SyncOperation, preferences: &BTreeMap<String, String>,
+    cached: &mut Option<(Manifest, Database)>,
+) -> Result<(), SqliteStoreError> {
     if operation.domain == PLUGIN_STORAGE_SYNC_DOMAIN {
         if operation.operation=="initialize" && operation.entityType=="initialization" {
+            *cached = None;
             let initialization=if crate::RuntimeFileSyncStore::RuntimeFileSyncStore::requiredBlob(operation).map_err(failure)?.is_some() {
                 crate::RuntimeFileSyncStore::RuntimeFileSyncStore::new(storage.clone(),"runtime/sync").readSqlInitialization(operation).map_err(failure)?
             } else { crate::Transaction::compaction::Initialization::decode(operation).map_err(failure)?.ok_or_else(||failure("Missing initialization"))? };
@@ -2949,9 +2972,13 @@ pub fn applyOperation(
             "Remote storage origin does not match its database path and epoch",
         ));
     }
-    let database = openDatabase(host.clone(), &payload.manifest, String::new())?;
-    registerDatabase(host, &payload.manifest)?;
-    registerFile(storage, &payload.manifest)?;
+    if cached.as_ref().is_none_or(|(manifest,_)| manifest != &payload.manifest) {
+        let database = openDatabase(host.clone(), &payload.manifest, String::new())?;
+        registerDatabase(host, &payload.manifest)?;
+        registerFile(storage, &payload.manifest)?;
+        *cached = Some((payload.manifest.clone(), database));
+    }
+    let database = &cached.as_ref().expect("validated database").1;
     database.store.transaction(|tx| {
         if crate::Transaction::compaction::retired(tx.raw(), operation)? { return Ok(()); }
         if let Some(row) = tx.queryOne("SELECT payload,created_at FROM _operit_log WHERE origin=?1 AND sequence=?2",vec![SqliteValue::Text(operation.originDeviceId.clone()),SqliteValue::Integer(operation.sequence)])? {

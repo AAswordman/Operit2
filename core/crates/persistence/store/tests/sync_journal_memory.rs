@@ -187,7 +187,7 @@ fn production_sync_memory_budget() {
 
     let files = RuntimeFileSyncStore::new(host.clone(), "runtime/sync");
     let ((wire, expected), encode_peak) = measured("initialization_export_from_snapshot", || {
-        let original = Initialization::from_snapshot(&snapshot("runtime/config/preferences/memory.preferences.json", mib * 1024 * 1024)).operation("preferences", false).unwrap();
+        let original = Initialization::from_snapshot(snapshot("runtime/config/preferences/memory.preferences.json", mib * 1024 * 1024)).operation("preferences", false).unwrap();
         let expected = operit_store::Transaction::digest(&original).unwrap();
         (files.prepareTransactionForTransport(original).unwrap(), expected)
     });
@@ -253,7 +253,7 @@ fn production_sync_memory_budget() {
     if !observe {
         for (stage, peak) in [("source initialization", encode_peak), ("hydrate", decode_peak),
             ("SQL export", snapshot_peak), ("SQL receive", apply_peak), ("SQL verify", verify_peak)] {
-            assert!(peak <= 128 * 1024 * 1024, "{stage}: preferences={mib} MiB SQL={sql_mib} MiB exceeded the fixed 128 MiB sync budget: {peak} bytes");
+            assert!(peak <= 64 * 1024 * 1024, "{stage}: preferences={mib} MiB SQL={sql_mib} MiB exceeded the fixed 64 MiB sync budget: {peak} bytes");
         }
     }
 }

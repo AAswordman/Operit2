@@ -6,7 +6,6 @@
 //! refresh downloaded data older than a day; failures keep the active catalog and are logged
 //! for diagnostics without interrupting model configuration.
 
-use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -74,17 +73,8 @@ pub(crate) fn requireCatalog() -> Result<Arc<ModelsDevCatalog>, String> {
 
 /// Decodes the validated snapshot shipped with this runtime, never persisting it as a download.
 fn bundledCatalog() -> ModelsDevCatalog {
-    let mut bytes = Vec::new();
-    flate2::read::GzDecoder::new(BUNDLED_CATALOG)
-        .read_to_end(&mut bytes)
-        .expect("decode bundled models.dev catalog");
-    let bundle: serde_json::Value =
-        serde_json::from_slice(&bytes).expect("parse bundled models.dev catalog");
-    ModelsDevCatalog::parse(
-        &serde_json::to_vec(&bundle["providers"]).expect("encode bundled providers"),
-        &serde_json::to_vec(&bundle["models"]).expect("encode bundled models"),
-    )
-    .expect("index bundled models.dev catalog")
+    ModelsDevCatalog::parseBundle(flate2::read::GzDecoder::new(BUNDLED_CATALOG))
+        .expect("index bundled models.dev catalog")
 }
 
 /// Reports when the catalog in use was downloaded and why the last download failed.

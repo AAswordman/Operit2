@@ -469,12 +469,13 @@ impl SqlChatSyncStore {
     /// Reads actual committed operation sequences without inferring missing SQL history.
     pub fn receipt(&self) -> Result<SyncReceipt, SqlChatSyncStoreError> {
         let mut receipt = SyncReceipt::default();
-        for row in self.store.queryRows(
+        self.store.visitRows(
             "SELECT originDeviceId,sequence FROM sync_sql_operations UNION SELECT origin,sequence FROM _operit_compacted ORDER BY originDeviceId,sequence",
-            Vec::new(),
-        )? {
-            receipt.observe(&row.get::<_, String>(0)?, row.get(1)?);
-        }
+            Vec::new(), &mut |row| {
+                receipt.observe(&row.valueAt(0)?.asString()?, row.valueAt(1)?.asI64()?);
+                Ok(())
+            },
+        )?;
         if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
             receipt.observe(&origin,sequence);
         }
@@ -604,7 +605,7 @@ impl SqlChatSyncStore {
 
     /// Applies a remote SQL chat sync operation to the local database.
     pub fn applyOperation(&self, operation: &SyncOperation) -> Result<(), SqlChatSyncStoreError> {
-        self.applyOperationInternal(operation, false)
+        self.applyOperations(std::slice::from_ref(operation))
     }
 
     /// Applies one Space bootstrap operation without local entity conflict filtering.
@@ -613,51 +614,64 @@ impl SqlChatSyncStore {
         &self,
         operation: &SyncOperation,
     ) -> Result<(), SqlChatSyncStoreError> {
-        self.applyOperationInternal(operation, true)
+        self.applyOperationsInternal(std::slice::from_ref(operation), true)
     }
 
-    /// Applies one SQL operation with the selected conflict policy.
-    #[allow(non_snake_case)]
-    fn applyOperationInternal(
-        &self,
-        operation: &SyncOperation,
-        ignoreNewerEntityState: bool,
-    ) -> Result<(), SqlChatSyncStoreError> {
-        if operation.operation == "initialize" && operation.entityType == "initialization" {
-            self.dataset().receive_initialization(operation, |tx,snapshot| self.reconcileInitialization(tx,snapshot,true))
-                .map_err(SqlChatSyncStoreError::Message)?;
-            return Ok(());
-        }
-        let didApply = self.store.transaction(|transaction| {
-            if crate::Transaction::compaction::retired(transaction.raw(),operation)? { return Ok(false); }
-            if let Some(row) = transaction.queryOne(
-                "SELECT * FROM sync_sql_operations WHERE opId = ?1", sqliteParams![operation.opId],
-            )? {
-                let mut existing = mapOperationMetadata(&row)?;
-                existing.payload = serde_json::to_value(readPayload(
-                    &mut |sql, params| transaction.queryRows(sql, params), &operation.opId,
-                )?).map_err(|error| SqliteStoreError::Message(error.to_string()))?;
-                verifySyncOperation(&existing, operation).map_err(|e| SqliteStoreError::Message(e.to_string()))?;
-                observeOperation(transaction, operation)?;
-                return Ok(false);
+    /// Commits contiguous increments together; initializations retain their ordering boundary.
+    pub fn applyOperations(&self, operations: &[SyncOperation]) -> Result<(), SqlChatSyncStoreError> {
+        self.applyOperationsInternal(operations, false)
+    }
+
+    fn applyOperationsInternal(&self, operations: &[SyncOperation], bootstrap: bool) -> Result<(), SqlChatSyncStoreError> {
+        let isInitialization = |op: &SyncOperation| op.operation == "initialize" && op.entityType == "initialization";
+        for batch in operations.split_inclusive(isInitialization) {
+            let initialization = batch.last().filter(|op| isInitialization(op));
+            let increments = &batch[..batch.len()-usize::from(initialization.is_some())];
+            if !increments.is_empty() {
+                let changed = self.store.transaction(|transaction| {
+                    let mut changed = false;
+                    for operation in increments { changed |= self.applyIncrementalOperation(transaction, operation, bootstrap)?; }
+                    Ok(changed)
+                })?;
+                if changed { self.store.notifyInvalidated()?; publishSyncMutation(); }
             }
-            let payload = decodePayload(operation)
-                .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
-            if crate::Transaction::covered_by_initialization(transaction, operation)? {
-                crate::Transaction::compaction::seal(transaction.raw(),operation)?;
-                observeOperation(transaction, operation)?;
-                return Ok(false);
+            if let Some(operation) = initialization {
+                self.dataset().receive_initialization(operation, |tx,snapshot| self.reconcileInitialization(tx,snapshot,true))
+                    .map_err(SqlChatSyncStoreError::Message)?;
             }
-            applyPayload(transaction, operation, &payload, ignoreNewerEntityState)?;
-            insertOperation(transaction, operation, &payload)?;
-            observeOperation(transaction, operation)?;
-            Ok(true)
-        })?;
-        if didApply {
-            self.store.notifyInvalidated()?;
-            publishSyncMutation();
         }
         Ok(())
+    }
+
+    fn applyIncrementalOperation(
+        &self,
+        transaction: &mut SqliteTransaction<'_>,
+        operation: &SyncOperation,
+        ignoreNewerEntityState: bool,
+    ) -> Result<bool, SqliteStoreError> {
+        if crate::Transaction::compaction::retired(transaction.raw(),operation)? { return Ok(false); }
+        if let Some(row) = transaction.queryOne(
+            "SELECT * FROM sync_sql_operations WHERE opId = ?1", sqliteParams![operation.opId],
+        )? {
+            let mut existing = mapOperationMetadata(&row)?;
+            existing.payload = serde_json::to_value(readPayload(
+                &mut |sql, params| transaction.queryRows(sql, params), &operation.opId,
+            )?).map_err(|error| SqliteStoreError::Message(error.to_string()))?;
+            verifySyncOperation(&existing, operation).map_err(|e| SqliteStoreError::Message(e.to_string()))?;
+            observeOperation(transaction, operation)?;
+            return Ok(false);
+        }
+        let payload = decodePayload(operation)
+            .map_err(|error| SqliteStoreError::Message(error.to_string()))?;
+        if crate::Transaction::covered_by_initialization(transaction, operation)? {
+            crate::Transaction::compaction::seal(transaction.raw(),operation)?;
+            observeOperation(transaction, operation)?;
+            return Ok(false);
+        }
+        applyPayload(transaction, operation, &payload, ignoreNewerEntityState)?;
+        insertOperation(transaction, operation, &payload)?;
+        observeOperation(transaction, operation)?;
+        Ok(true)
     }
 
     /// Marks local SQL operations before the Space join as unexportable.

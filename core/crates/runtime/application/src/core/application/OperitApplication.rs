@@ -1000,13 +1000,18 @@ impl OperitApplication {
             .collect::<Result<BTreeMap<_,_>,_>>()?;
         let files = self.runtimeFileSyncStore()?;
         let operations = operations.into_iter().map(|op|files.prepareTransactionForTransport(op)).collect::<Result<Vec<_>,_>>()?;
-        Ok(serde_json::json!({"operations":boundSyncOperationPage(operations,DEFAULT_SYNC_PAGE_BYTES),"remaining":remaining,
-            "progressErrors":progress_errors,"errors":errors,"owners":owners}))
+        let operations = boundSyncOperationPage(operations,DEFAULT_SYNC_PAGE_BYTES).into_iter()
+            .map(SyncOperation::intoValue).collect::<Result<Vec<_>,_>>().map_err(|e|e.to_string())?;
+        let mut report = serde_json::json!({"remaining":remaining,
+            "progressErrors":progress_errors,"errors":errors,"owners":owners});
+        report["operations"] = serde_json::Value::Array(operations);
+        Ok(report)
     }
 
     /// Durably receives originals and materializes independent owners without acknowledging failed application.
     #[allow(non_snake_case)]
     pub fn syncApplyOperations(&self, operations: serde_json::Value) -> Result<serde_json::Value,String> {
+        let timing = std::time::Instant::now();
         let operations: Vec<SyncOperation> = serde_json::from_value(operations).map_err(|e|e.to_string())?;
         let received = operations.len();
         let files = self.runtimeFileSyncStore()?;
@@ -1021,13 +1026,24 @@ impl OperitApplication {
         }).collect::<Vec<_>>();
         let journal = self.runtimeSyncOperationStore()?;
         let application = journal.lockApplication().map_err(|e|e.to_string())?;
+        let locked_ms = timing.elapsed().as_millis();
         journal.receiveOperations(&operations).map_err(|e|e.to_string())?;
+        let received_ms = timing.elapsed().as_millis();
         let pending = journal.pendingOperations().map_err(|e|e.to_string())?;
+        journal.observeOperations(pending.iter().filter(|op| op.domain == "preferences")).map_err(|e|e.to_string())?;
+        files.prepareSyncedOperations(&pending)?;
+        // Observe Binding clocks once per received/retry batch. Application and pending
+        // completion remain per owner; a received original is not an applied record.
+        if pending.iter().any(|operation| operation.domain == BINDING_SYNC_DOMAIN) {
+            self.runtimeBindingStore()?.prepareSyncedOperations(&pending)?;
+        }
         let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
         if let Err(error) = PreferenceSpaceMerge::prepareLayout(storage.clone()) { errors.push(format!("layout: {error}")); }
         let schema = PreferenceSpaceMerge::schema();
         let registry = self.transactionRegistry(&schema,&pending)?;
+        let prepared_ms = timing.elapsed().as_millis();
         let mut report = registry.apply_pending()?;
+        let applied_ms = timing.elapsed().as_millis();
         errors.append(&mut report.errors);
         let pending_owners = pending.iter().filter(|op|report.pending.contains(&op.opId)).map(|op|registry.target(op))
             .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
@@ -1036,6 +1052,12 @@ impl OperitApplication {
         let chats = report.applied.iter().filter_map(synchronizedChatId).collect();
         if let Err(error) = self.dispatchSynchronizedChatChanges(chats) {
             AppLogger::e("CoreSyncTrace", &format!("sync_apply.chat_refresh: {error}"));
+        }
+        if timing.elapsed().as_millis() >= 100 {
+            AppLogger::trace("CoreSyncTrace", &format!(
+                "sync_apply.stages received={received} pending={} lockHydrateMs={locked_ms} receiveMs={} prepareMs={} applyMs={} refreshMs={} totalMs={}",
+                pending.len(), received_ms-locked_ms, prepared_ms-received_ms, applied_ms-prepared_ms,
+                timing.elapsed().as_millis()-applied_ms, timing.elapsed().as_millis()));
         }
         Ok(serde_json::json!({"received":received,"applied":report.applied.len(),"skipped":report.skipped,"pending":report.pending.len(),
             "pendingOperationIds":report.pending,"pendingOwners":pending_owners,"failedOperationIds":failedOperationIds,"errors":errors}))

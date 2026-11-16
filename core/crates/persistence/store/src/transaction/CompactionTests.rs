@@ -669,7 +669,13 @@ fn indexed_preference_retirement_rolls_back_and_preserves_other_authors() {
 fn initialization_validation_preserves_canonical_identity() {
     use sha2::Digest;
     let data = Data::empty(super::super::Owner { backend: super::super::Backend::Sql, path: "runtime/probe.db".into(), format: 1, layout: 1 });
-    let original = Initialization { data, covered: BTreeSet::from(["a:1".into(),"b:2".into()]), definition: None }.operation("plugin_storage",false).unwrap();
+    let mut data = data;
+    data.values.insert("escaped/field".into(), json!({"text":"hello", "items":[1,true,null]}));
+    let initialization = Initialization { data, covered: BTreeSet::from(["a:1".into(),"b:2".into()]), definition: None };
+    let expected = json!({"storagePath":initialization.data.owner.path,"schemaVersion":initialization.data.owner.format,
+        "encrypted":false,"initialization":initialization});
+    let original = initialization.operation("plugin_storage",false).unwrap();
+    assert_eq!(original.payload, expected, "Moving snapshot values must preserve the existing wire envelope");
     let mut variants = vec![original.clone()];
     for pointer in ["/initialization/data/versions", "/initialization/data/additions", "/initialization/data/owner/layout", "/encrypted"] {
         let mut changed = original.clone();

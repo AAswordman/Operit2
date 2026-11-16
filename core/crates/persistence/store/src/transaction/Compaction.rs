@@ -36,13 +36,7 @@ pub struct Initialization {
     pub definition: Option<serde_json::Value>,
 }
 impl Initialization {
-    pub fn from_snapshot(snapshot: &Snapshot) -> Self {
-        Self {
-            data: snapshot.data.clone(),
-            covered: snapshot.covered.clone(),
-            definition: None,
-        }
-    }
+    pub fn from_snapshot(snapshot: impl Into<Self>) -> Self { snapshot.into() }
     pub fn snapshot(&self, node: &str, generation: u64) -> Snapshot {
         Snapshot {
             damage: None,
@@ -52,11 +46,13 @@ impl Initialization {
             covered: self.covered.clone(),
         }
     }
-    pub fn operation(&self, domain: &str, encrypted: bool) -> super::Result<SyncOperation> {
+    pub fn operation(mut self, domain: &str, encrypted: bool) -> super::Result<SyncOperation> {
         #[cfg(feature="full")]
-        if self.data.sql.is_some() { return super::sql_snapshot::operation(self,domain,encrypted); }
-        let payload = serde_json::json!({"storagePath":self.data.owner.path,"schemaVersion":self.data.owner.format,
+        if self.data.sql.is_some() { return super::sql_snapshot::operation(&self,domain,encrypted); }
+        let values = std::mem::take(&mut self.data.values);
+        let mut payload = serde_json::json!({"storagePath":self.data.owner.path,"schemaVersion":self.data.owner.format,
             "encrypted":encrypted,"initialization":self});
+        payload["initialization"]["data"]["values"] = serde_json::Value::Object(values.into_iter().collect());
         let origin = format!("~init:{}", digest(&(domain, &payload))?);
         Ok(SyncOperation {
             opId: format!("{origin}:1"),
@@ -115,6 +111,16 @@ impl Initialization {
         }
         Ok(Some(value))
     }
+}
+
+impl From<Snapshot> for Initialization {
+    fn from(snapshot: Snapshot) -> Self {
+        Self { data: snapshot.data, covered: snapshot.covered, definition: None }
+    }
+}
+
+impl From<&Snapshot> for Initialization {
+    fn from(snapshot: &Snapshot) -> Self { snapshot.clone().into() }
 }
 
 /// A footprint includes every effect of an atomic transaction. Only absolute
@@ -562,11 +568,10 @@ pub(crate) fn observe_coverage(
     store: &crate::SqliteStore::SqliteStore,
     receipt: &mut crate::SyncOperationStore::SyncReceipt,
 ) -> Result<(), crate::SqliteStore::SqliteStoreError> {
-    use crate::SqliteStore::SqliteRowGet;
-    for row in store.queryRows("SELECT id FROM _operit_initialization_coverage", vec![])? {
-        observe_id(receipt, &row.get::<_, String>(0)?);
-    }
-    Ok(())
+    store.visitRows("SELECT id FROM _operit_initialization_coverage", vec![], &mut |row| {
+        observe_id(receipt, &row.valueAt(0)?.asString()?);
+        Ok(())
+    })
 }
 
 pub(crate) fn observe_id(receipt: &mut crate::SyncOperationStore::SyncReceipt, id: &str) {

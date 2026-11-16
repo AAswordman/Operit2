@@ -213,3 +213,25 @@ fn blob_sweep_keeps_sql_roots_and_active_transfers_then_reclaims_replaced_initia
     assert!(host.exists(&blob(&replacement)).unwrap());
     assert!(host.exists(&blob(&history)).unwrap());
 }
+
+#[test]
+fn prepared_carriers_keep_verified_revisions_after_source_changes_and_reopen() {
+    let node = Node::new();
+    let host = node.host();
+    let files = RuntimeFileSyncStore::new(host.clone(), ROOT);
+    let mut references = Vec::new();
+    for (suffix, bytes) in [("first", vec![1; 32]), ("second", vec![2; 192 * 1024])] {
+        let path = format!("{FILE}.{suffix}");
+        files.writeBytes(&path, &bytes).unwrap();
+        references.push(RuntimeFileSyncReference { contentHash: contentHash(&bytes), size: bytes.len() as i64 });
+    }
+    let pending = files.syncOperationStore.pendingOperationIds().unwrap();
+    files.prepareBlobReads(&references.iter().collect::<Vec<_>>()).unwrap();
+    for suffix in ["first", "second"] { host.writeBytes(&format!("{FILE}.{suffix}"), b"external replacement").unwrap(); }
+    let reopened = RuntimeFileSyncStore::new(node.host(), ROOT);
+    assert_eq!(reopened.readBlob(&references[0]).unwrap(), vec![1; 32]);
+    assert_eq!(reopened.readBlob(&references[1]).unwrap(), vec![2; 192 * 1024]);
+    assert_eq!(files.syncOperationStore.pendingOperationIds().unwrap(), pending);
+    // Cached carriers can be prepared repeatedly without consulting the changed live files.
+    reopened.prepareBlobReads(&references.iter().collect::<Vec<_>>()).unwrap();
+}

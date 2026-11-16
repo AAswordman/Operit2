@@ -78,15 +78,7 @@ impl Fixture {
     }
     /// Replays all exported transactions onto another actual SQLite host.
     fn replay(&self, operations: &[SyncOperation]) {
-        for operation in operations {
-            PluginStorage::applyOperation(
-                self.host.clone(),
-                self.host.clone(),
-                operation,
-                &Default::default(),
-            )
-            .unwrap();
-        }
+        PluginStorage::applyOperations(self.host.clone(), self.host.clone(), operations, &Default::default()).unwrap();
     }
     /// Applies the source's complete declaration and baseline through the production recovery path.
     fn repair(&self, source: &Fixture, expected: &str, snapshot: &operit_store::Transaction::Snapshot) -> Result<bool, String> {

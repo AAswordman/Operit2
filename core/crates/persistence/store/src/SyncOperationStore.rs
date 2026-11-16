@@ -1,4 +1,5 @@
 use operit_host_api::AtomicCounter::AtomicU64;
+use std::borrow::Cow;
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
@@ -249,6 +250,16 @@ pub struct SyncOperation<P = Value> {
     pub schemaVersion: i32,
 }
 
+impl SyncOperation {
+    /// Moves the existing JSON payload into its wire envelope instead of serializing a copy.
+    pub fn intoValue(mut self) -> Result<Value, serde_json::Error> {
+        let payload = std::mem::take(&mut self.payload);
+        let mut value = serde_json::to_value(self)?;
+        value["payload"] = payload;
+        Ok(value)
+    }
+}
+
 impl<P> SyncOperation<P> {
     pub(crate) fn with_payload<Q>(&self, payload: Q) -> SyncOperation<Q> {
         SyncOperation { opId:self.opId.clone(), originDeviceId:self.originDeviceId.clone(), sequence:self.sequence,
@@ -421,7 +432,6 @@ pub struct SyncOperationStore {
 
 #[derive(Default)]
 struct SyncOperationStoreSharedState {
-    controlRevision: AtomicU64,
     #[cfg(feature = "full")]
     lastBlobCollection: Mutex<[i64; 2]>,
     clock: Mutex<SyncOperationCachedValue<SyncClock>>,
@@ -431,25 +441,6 @@ struct SyncOperationStoreSharedState {
     exportFloors: Mutex<SyncOperationCachedValue<BTreeMap<String, i64>>>,
     localDeviceId: Mutex<SyncOperationCachedValue<Option<String>>>,
     application: Mutex<()>,
-    preferenceOutboxes: Mutex<SyncOperationCachedValue<BTreeMap<String, bool>>>,
-}
-
-/// Invalidates readers before and after a journal write, including uncertain failures.
-struct ControlJournalMutation<'a>(&'a AtomicU64);
-
-impl<'a> ControlJournalMutation<'a> {
-    /// Opens a publication interval while the caller holds the journal mutation lock.
-    fn new(revision: &'a AtomicU64) -> Self {
-        revision.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
-        Self(revision)
-    }
-}
-
-impl Drop for ControlJournalMutation<'_> {
-    /// Invalidates snapshots observed before the publication interval completed.
-    fn drop(&mut self) {
-        self.0.fetch_add(1, std::sync::atomic::Ordering::Release);
-    }
 }
 
 struct SyncOperationCachedValue<T> {
@@ -537,11 +528,6 @@ impl SyncOperationStore {
     pub fn devices(&self) -> Result<Vec<String>, SyncOperationStoreError> {
         Ok(self.withJournal(|journal| journal.headers(None))?.into_iter().map(|record| record.origin_device_id)
             .collect::<BTreeSet<_>>().into_iter().collect())
-    }
-
-    /// Identifies committed or interrupted changes to the authority journal.
-    pub(crate) fn controlRevision(&self) -> u64 {
-        self.sharedState.controlRevision.load(std::sync::atomic::Ordering::Acquire)
     }
 
     /// Creates a sync operation store over an explicit storage host and root path.
@@ -1017,7 +1003,6 @@ impl SyncOperationStore {
         }
         let mut nextFloors = floors;
         nextFloors.insert(originDeviceId.to_string(), sequence);
-        let _revision = ControlJournalMutation::new(&self.sharedState.controlRevision);
         self.writeJson(&self.exportFloorsPath(), &nextFloors)?;
         state.value = nextFloors;
         Ok(())
@@ -1171,73 +1156,65 @@ impl SyncOperationStore {
         Ok(())
     }
 
-    /// Persists a local observation of a sync operation with origin metadata.
+    /// Observes received business sequences once without acknowledging owner application.
+    /// Control traffic retains its separate clock so missing business predecessors remain visible.
     #[allow(non_snake_case)]
-    pub fn observeOperation(
+    pub fn observeOperations<'a>(
         &self,
-        operation: &SyncOperation,
+        operations: impl IntoIterator<Item = &'a SyncOperation>,
     ) -> Result<(), SyncOperationStoreError> {
-        let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
-        let mut clock = self
-            .loadCachedJson(&mut clockState, &self.clockPath())?
-            .clone();
-        if !self.observeOperationWithClock(operation, &mut clock)? {
-            return Ok(());
+        let mut state = lockSyncState(&self.sharedState.clock, "clock")?;
+        let mut clock = self.loadCachedJson(&mut state, &self.clockPath())?.clone();
+        let mut changed = false;
+        for operation in operations {
+            if operation.domain == NETWORK_CONTROL_SYNC_DOMAIN {
+                return Err(SyncOperationStoreError::Message("Control operations require their independent clock".into()));
+            }
+            if operation.sequence > clock.sequenceFor(&operation.originDeviceId) {
+                clock.setSequence(operation.originDeviceId.clone(), operation.sequence);
+                changed = true;
+            }
         }
-        clockState.value = clock;
+        if changed {
+            self.writeLocalClockValue(&clock)?;
+            state.value = clock;
+        }
         Ok(())
     }
 
-    /// Advances an already locked vector clock from one operation.
-    #[allow(non_snake_case)]
-    fn observeOperationWithClock(
-        &self,
-        operation: &SyncOperation,
-        clock: &mut SyncClock,
-    ) -> Result<bool, SyncOperationStoreError> {
-        if operation.sequence > clock.sequenceFor(&operation.originDeviceId) {
-            clock.setSequence(operation.originDeviceId.clone(), operation.sequence);
-            self.writeLocalClockValue(clock)?;
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
-    /// Acknowledges one received control operation on its own per-origin clock.
+    /// Acknowledges received control operations with one write of their independent clock.
     ///
     /// Control operations are replayed into every peer but must not advance the
     /// origin's business sequence: a later authority command would otherwise
     /// hide an earlier chat or file operation that this device still needs.
-    pub fn observeNetworkControlOperation(
-        &self,
-        operation: &SyncOperation,
-    ) -> Result<(), SyncOperationStoreError> {
-        if operation.domain != NETWORK_CONTROL_SYNC_DOMAIN {
+    pub fn observeNetworkControlOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+        if operations.iter().any(|operation| operation.domain != NETWORK_CONTROL_SYNC_DOMAIN) {
             return Err(SyncOperationStoreError::Message(format!(
                 "network-control acknowledgement requires a {NETWORK_CONTROL_SYNC_DOMAIN} operation"
             )));
         }
         let mut clockState = lockSyncState(&self.sharedState.clock, "clock")?;
-        let mut clock = self
-            .loadCachedJson(&mut clockState, &self.clockPath())?
-            .clone();
-        let key = networkControlClockKey(&operation.originDeviceId);
-        if operation.sequence <= clock.sequenceFor(&key) {
-            return Ok(());
+        let mut clock = self.loadCachedJson(&mut clockState, &self.clockPath())?.clone();
+        let mut changed = false;
+        for operation in operations {
+            let key = networkControlClockKey(&operation.originDeviceId);
+            if operation.sequence > clock.sequenceFor(&key) {
+                clock.setSequence(key, operation.sequence);
+                changed = true;
+            }
         }
-        clock.setSequence(key, operation.sequence);
-        self.writeLocalClockValue(&clock)?;
+        if changed { self.writeLocalClockValue(&clock)?; }
         clockState.value = clock;
         Ok(())
     }
 
     /// Encodes operation payloads that are stored encrypted in the sync log.
-    fn encodeOperationPayload(
+    fn encodeOperationPayload<'a>(
         &self,
-        operation: &SyncOperation,
-    ) -> Result<SyncOperation, SyncOperationStoreError> {
+        operation: &'a SyncOperation,
+    ) -> Result<Cow<'a, SyncOperation>, SyncOperationStoreError> {
         if !encryptedPreferenceSyncOperation(operation) {
-            return Ok(operation.clone());
+            return Ok(Cow::Borrowed(operation));
         }
         let encryption = PreferencesEncryption::load_or_create()
             .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
@@ -1246,13 +1223,13 @@ impl SyncOperationStore {
 
     /// Encodes one operation using a batch-owned preferences encryption context.
     #[allow(non_snake_case)]
-    fn encodeOperationPayloadWithEncryption(
+    fn encodeOperationPayloadWithEncryption<'a>(
         &self,
-        operation: &SyncOperation,
+        operation: &'a SyncOperation,
         encryption: Option<&PreferencesEncryption>,
-    ) -> Result<SyncOperation, SyncOperationStoreError> {
+    ) -> Result<Cow<'a, SyncOperation>, SyncOperationStoreError> {
         if !encryptedPreferenceSyncOperation(operation) {
-            return Ok(operation.clone());
+            return Ok(Cow::Borrowed(operation));
         }
         let encryption = encryption.ok_or_else(|| {
             SyncOperationStoreError::Message(
@@ -1263,12 +1240,11 @@ impl SyncOperationStore {
         let encryptedPayload = encryption
             .encrypt(&encryptedPreferenceSyncPayloadAad(operation), &payloadBytes)
             .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
-        let mut storedOperation = operation.clone();
-        storedOperation.payload = serde_json::to_value(StoredEncryptedSyncPayload {
+        let payload = serde_json::to_value(StoredEncryptedSyncPayload {
             format: ENCRYPTED_SYNC_PAYLOAD_FORMAT.to_string(),
             envelope: serde_json::from_slice(&encryptedPayload)?,
         })?;
-        Ok(storedOperation)
+        Ok(Cow::Owned(operation.with_payload(payload)))
     }
 
     /// Decodes operation payloads that are stored encrypted in the sync log.
@@ -1536,7 +1512,6 @@ impl SyncOperationStore {
             );
             sidecar.push('\n');
         }
-        let _revision = ControlJournalMutation::new(&self.sharedState.controlRevision);
         self.storageHost
             .writeBytes(&self.operationsPath(deviceId), kept.as_bytes())?;
         drop(legacy);
@@ -1871,10 +1846,13 @@ impl SyncOperationStore {
 
     fn storeOriginals(&self, operations: &[SyncOperation], pending: bool) -> Result<(), SyncOperationStoreError> {
         for operation in operations { crate::SyncBlobIo::verify_transaction(self.storageHost.as_ref(),&self.rootPath,operation).map_err(SyncOperationStoreError::Message)?; }
-        let stored = operations.iter().map(|operation| self.encodeOperationPayload(operation)).collect::<Result<Vec<_>, _>>()?;
+        let encryption = operations.iter().any(encryptedPreferenceSyncOperation)
+            .then(PreferencesEncryption::load_or_create).transpose()
+            .map_err(|error| SyncOperationStoreError::Message(error.to_string()))?;
         self.withJournal(|journal| journal.transaction(|tx| {
-            for (operation, stored) in operations.iter().zip(&stored) {
-                crate::Transaction::Journal::put(tx, operation, stored, pending)?;
+            for operation in operations {
+                let stored = self.encodeOperationPayloadWithEncryption(operation, encryption.as_ref())?;
+                crate::Transaction::Journal::put(tx, operation, &stored, pending)?;
             }
             Ok(())
         }))
@@ -1882,7 +1860,6 @@ impl SyncOperationStore {
 
     pub fn appendLocalOperation(&self, originDeviceId: &str, operation: NewSyncOperation) -> Result<SyncOperation, SyncOperationStoreError> {
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN)?;
-        let _revision = control.as_ref().map(|_| ControlJournalMutation::new(&self.sharedState.controlRevision));
         let mut cached = lockSyncState(&self.sharedState.clock, "clock")?;
         let mut clock = self.loadCachedJson(&mut cached, &self.clockPath())?.clone();
         let op = self.withJournal(|journal| {
@@ -1919,15 +1896,19 @@ impl SyncOperationStore {
     pub fn appendOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
         if operations.is_empty() { return Ok(()); }
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
-        let _revision = control.as_ref().map(|_| ControlJournalMutation::new(&self.sharedState.controlRevision));
         let mut cached = lockSyncState(&self.sharedState.clock, "clock")?;
         let mut clock = self.loadCachedJson(&mut cached, &self.clockPath())?.clone();
         self.storeOriginals(operations, false)?;
         if let Some(control) = &control { control.update(|model| model.append_journal(operations))?; }
+        let mut changed = false;
         for op in operations {
-            if op.sequence > clock.sequenceFor(&op.originDeviceId) { clock.setSequence(&op.originDeviceId, op.sequence); }
+            if op.sequence > clock.sequenceFor(&op.originDeviceId) {
+                clock.setSequence(&op.originDeviceId, op.sequence);
+                changed = true;
+            }
         }
-        self.writeLocalClockValue(&clock)?;
+        // Received batches may already have published this clock before per-owner replay.
+        if changed { self.writeLocalClockValue(&clock)?; }
         cached.value = clock;
         drop(cached);
         drop(control);
@@ -1936,24 +1917,22 @@ impl SyncOperationStore {
     }
 
     pub fn appendUnobservedOperation(&self, operation: &SyncOperation) -> Result<(), SyncOperationStoreError> {
-        let control = beginControlWrite(&self.storageHost, &self.rootPath, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN)?;
-        let _revision = control.as_ref().map(|_| ControlJournalMutation::new(&self.sharedState.controlRevision));
-        self.storeOriginals(std::slice::from_ref(operation), false)?;
-        if let Some(control) = &control { control.update(|model| model.append_journal([operation]))?; }
+        self.appendUnobservedOperations(std::slice::from_ref(operation))
+    }
+
+    pub fn appendUnobservedOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+        if operations.is_empty() { return Ok(()); }
+        let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
+        self.storeOriginals(operations, false)?;
+        if let Some(control) = &control { control.update(|model| model.append_journal(operations))?; }
         drop(control);
         publishSyncMutation();
         Ok(())
     }
 
-    pub(crate) fn flushOperations(&self, _: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
-        // Every journal write has already completed a synchronous SQL commit.
-        self.withJournal(|_| Ok(()))
-    }
-
     pub fn receiveOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
         if operations.is_empty() { return Ok(()); }
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
-        let _revision = control.as_ref().map(|_| ControlJournalMutation::new(&self.sharedState.controlRevision));
         self.storeOriginals(operations, true)?;
         if let Some(control) = &control {
             let pending = self.pendingOperationIds()?.into_iter().collect::<BTreeSet<_>>();
@@ -1965,9 +1944,9 @@ impl SyncOperationStore {
     }
 
     /// The caller supplies a committed coverage proof for these exact originals.
-    pub(crate) fn retireCoveredOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
+    pub(crate) fn retireCoveredOperations<'a>(&self, operations: impl IntoIterator<Item = &'a SyncOperation>) -> Result<(), SyncOperationStoreError> {
         self.withJournal(|journal|journal.transaction(|tx|crate::Transaction::Journal::retire_ids(tx,
-            operations.iter().map(|operation|operation.opId.clone()))))
+            operations.into_iter().map(|operation|operation.opId.clone()))))
     }
 
     pub fn pendingOperationIds(&self) -> Result<Vec<String>, SyncOperationStoreError> {
@@ -2059,7 +2038,6 @@ impl SyncOperationStore {
 
     pub fn completeOperations(&self, operations: &[SyncOperation]) -> Result<(), SyncOperationStoreError> {
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
-        let _revision = control.as_ref().map(|_| ControlJournalMutation::new(&self.sharedState.controlRevision));
         self.withJournal(|journal| journal.complete(operations))?;
         if let Some(control) = &control { control.update(|model| model.complete(operations))?; }
         #[cfg(feature = "full")]

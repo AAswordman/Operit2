@@ -14,7 +14,7 @@ impl TcpHost for NativeTcpHost {
         let stream = TcpStream::connect(address)
             .await
             .map_err(|error| HostError::new(format!("TCP connect {address}: {error}")))?;
-        Ok(Arc::new(NativeTcpConnection::from_stream(stream)))
+        Ok(Arc::new(NativeTcpConnection::from_stream(stream)?))
     }
 
     async fn bind(&self, address: &str) -> HostResult<Arc<dyn TcpListener>> {
@@ -42,16 +42,18 @@ pub struct NativeTcpConnection {
 }
 
 impl NativeTcpConnection {
-    pub fn from_stream(stream: TcpStream) -> Self {
+    pub fn from_stream(stream: TcpStream) -> HostResult<Self> {
+        // Peer RPCs already define their frames; avoid waiting to coalesce small replies.
+        stream.set_nodelay(true).map_err(|error| HostError::new(error.to_string()))?;
         let remote = stream.peer_addr().ok();
         let (reader, writer) = tokio::io::split(stream);
         let (closed, _) = watch::channel(false);
-        Self {
+        Ok(Self {
             remote,
             reader: Mutex::new(Some(reader)),
             writer: Mutex::new(Some(writer)),
             closed,
-        }
+        })
     }
 }
 
@@ -82,7 +84,8 @@ impl TcpConnection for NativeTcpConnection {
             result = async {
                 let mut reader = self.reader.lock().await;
                 let Some(reader) = reader.as_mut() else { return Ok(None); };
-                let mut bytes = [0; 1024];
+                // Four bounded reads fill a 64 KiB sync block without per-packet 4 KiB wakeups.
+                let mut bytes = [0; 16 * 1024];
                 let count = reader.read(&mut bytes).await.map_err(|error| HostError::new(error.to_string()))?;
                 Ok((count > 0).then(|| bytes[..count].to_vec()))
             } => result,
@@ -164,7 +167,7 @@ impl TcpListener for NativeTcpListener {
                 let listener = self.listener.lock().await;
                 let listener = listener.as_ref().ok_or_else(|| HostError::new("TCP listener is closed"))?;
                 let (stream, _) = listener.accept().await.map_err(|error| HostError::new(error.to_string()))?;
-                Ok(Arc::new(NativeTcpConnection::from_stream(stream)) as Arc<dyn TcpConnection>)
+                Ok(Arc::new(NativeTcpConnection::from_stream(stream)?) as Arc<dyn TcpConnection>)
             } => result,
         }
     }

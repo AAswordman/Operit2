@@ -132,8 +132,8 @@ impl<'a> Registry<'a> {
     fn discard_covered(&self, path: &str, operations: &mut Vec<SyncOperation>) -> Result<(),String> {
         if operations.is_empty() { return Ok(()); }
         let covered = match self.owners.get(path) { Some(owner) => (owner.coverage)()?, None => BTreeSet::new() };
-        let retired = operations.iter().filter(|op|covered.contains(&op.opId)).cloned().collect::<Vec<_>>();
-        if !retired.is_empty() { self.journal.retireCoveredOperations(&retired).map_err(|e|e.to_string())?; }
+        let retired = operations.iter().filter(|op|covered.contains(&op.opId)).collect::<Vec<_>>();
+        if !retired.is_empty() { self.journal.retireCoveredOperations(retired).map_err(|e|e.to_string())?; }
         operations.retain(|op| !covered.contains(&op.opId));
         Ok(())
     }
@@ -253,15 +253,19 @@ impl<'a> Registry<'a> {
                 owner.validate.as_ref()?.as_ref()(operation).err().map(|error|(index,error)));
             let count = invalid.as_ref().map_or(operations.len(), |(index,_)|*index);
             if count > 0 {
+                let timing = std::time::Instant::now();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(||
                     (owner.apply)(&operations[..count], &report.aliases)))
                     .unwrap_or_else(|_| Err(ApplyError::Capability(format!("Owner panicked: {path}"))));
+                let apply_ms = timing.elapsed().as_millis();
                 match result {
                     Ok(aliases) => {
-                        self.journal.completeOperations(&operations[..count]).map_err(|e|e.to_string())?;
-                        report.applied.extend_from_slice(&operations[..count]);
                         report.aliases.extend(aliases.clone());
                         report.outcomes.insert(path.clone(), Ok(aliases));
+                        if timing.elapsed().as_millis() >= 100 {
+                            operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                                "sync_owner.stages owner={path} operations={count} applyMs={apply_ms} totalMs={}", timing.elapsed().as_millis()));
+                        }
                     }
                     Err(error) => {
                         self.failure(&path, &operations, error, &mut report)?;
@@ -272,7 +276,11 @@ impl<'a> Registry<'a> {
             if let Some((index,error)) = invalid {
                 self.failure(&path, &operations[index..], error, &mut report)?;
             }
+            report.applied.extend(operations.into_iter().take(count));
         }
+        // Business commits are already durable. One journal commit acknowledges only
+        // successful owners; a crash before it leaves their originals safe to replay.
+        if !report.applied.is_empty() { self.journal.completeOperations(&report.applied).map_err(|e|e.to_string())?; }
         if !report.aliases.is_empty() {
             let skipped = self.skipped()?;
             for (path, owner) in &self.owners {

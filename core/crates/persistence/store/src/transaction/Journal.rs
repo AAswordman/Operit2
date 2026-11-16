@@ -74,9 +74,9 @@ impl Journal {
         // A completed legacy receipt may have no retained payload. A matching redelivery restores it.
         let completed = !pending || !tx.query("SELECT 1 FROM legacy_receipts WHERE origin=?1 AND first<=?2 AND last>=?2", vec![text(&original.originDeviceId), SqliteValue::Integer(original.sequence)])?.is_empty();
         let header = JournalRecord::parse(&serde_json::to_vec(original)?, 0)?;
-        tx.execute("INSERT INTO originals(id,origin,sequence,domain,header,original,fingerprint,pending,business_time,target,format_version)
+        let _changed = tx.execute("INSERT INTO originals(id,origin,sequence,domain,header,original,fingerprint,pending,business_time,target,format_version)
             VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11) ON CONFLICT(id) DO UPDATE SET domain=excluded.domain,header=excluded.header,original=excluded.original,
-                business_time=excluded.business_time,target=excluded.target,format_version=excluded.format_version WHERE originals.pending=1", vec![
+                business_time=excluded.business_time,target=excluded.target,format_version=excluded.format_version WHERE originals.pending=1 AND originals.original<>excluded.original", vec![
             text(&original.opId), text(&original.originDeviceId), SqliteValue::Integer(original.sequence), text(&original.domain),
             text(&serde_json::to_string(&header)?), text(&serde_json::to_string(stored)?), text(&fingerprint), SqliteValue::Integer(i64::from(!completed)),
             SqliteValue::Integer(crate::Transaction::Revision::fromOperation(original).createdAt),
@@ -84,7 +84,7 @@ impl Journal {
             SqliteValue::Integer(original.payload.get("schemaVersion").and_then(serde_json::Value::as_i64).unwrap_or(0)),
         ])?;
         #[cfg(feature = "full")]
-        Self::index_blob_references(tx, &original.opId)?;
+        if _changed > 0 { Self::index_blob_references(tx, &original.opId)?; }
         Ok(())
     }
 
@@ -180,15 +180,18 @@ impl Journal {
 
     pub(crate) fn receipt(&mut self) -> Result<SyncReceipt, Error> {
         let mut receipt = SyncReceipt::default();
-        for row in self.0.query("SELECT origin,first,last FROM legacy_receipts", vec![])? {
+        self.0.visitRows("SELECT origin,first,last FROM legacy_receipts", vec![], &mut |row| {
             receipt.observeRange(&row.valueAt(0)?.asString()?, row.valueAt(1)?.asI64()?, row.valueAt(2)?.asI64()?);
-        }
-        for row in self.0.query("SELECT origin,sequence FROM originals UNION SELECT origin,sequence FROM _operit_compacted ORDER BY origin,sequence", vec![])? {
+            Ok(())
+        })?;
+        self.0.visitRows("SELECT origin,sequence FROM originals UNION SELECT origin,sequence FROM _operit_compacted ORDER BY origin,sequence", vec![], &mut |row| {
             receipt.observe(&row.valueAt(0)?.asString()?, row.valueAt(1)?.asI64()?);
-        }
-        for row in self.0.query("SELECT id FROM _operit_initialization_coverage",vec![])? {
+            Ok(())
+        })?;
+        self.0.visitRows("SELECT id FROM _operit_initialization_coverage", vec![], &mut |row| {
             super::compaction::observe_id(&mut receipt,&row.valueAt(0)?.asString()?);
-        }
+            Ok(())
+        })?;
         Ok(receipt)
     }
 

@@ -437,7 +437,7 @@ pub fn check_theme_template_files(
 
 /// Produces renderer evidence for one template without validating unrelated package capabilities.
 fn validate_template(
-    archive_bytes: &[u8],
+    archive: &(String, usize),
     manifest: ThemeTemplateMetadata,
     manifest_bytes: &[u8],
     files: BTreeMap<String, Vec<u8>>,
@@ -449,8 +449,8 @@ fn validate_template(
     let receipt = ThemeValidationReceipt {
         validator_version: 1,
         theme_id: checked.manifest.theme_id.clone(),
-        archive_sha256: sha256_hex(archive_bytes),
-        archive_bytes: archive_bytes.len(),
+        archive_sha256: archive.0.clone(),
+        archive_bytes: archive.1,
         expanded_bytes,
         manifest_sha256: checked.manifest_sha256.clone(),
         theme_sha256: checked.theme.sha256(),
@@ -469,7 +469,7 @@ fn validate_template(
     };
     Ok(ValidatedThemeTemplate {
         archive_sha256: receipt.archive_sha256.clone(),
-        archive_bytes: archive_bytes.len(),
+        archive_bytes: archive.1,
         expanded_bytes,
         manifest: checked.manifest,
         theme: checked.theme,

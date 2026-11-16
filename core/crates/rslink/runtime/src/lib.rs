@@ -128,6 +128,7 @@ trait CoreReverseStreamSender: Send {
 /// Bridges one typed reverse stream producer to Link values.
 struct TypedCoreReverseStreamSender<T> {
     sender: ReverseStreamSender<T>,
+    decode: fn(CoreValue) -> Result<T, operit_link::CoreLinkCodecError>,
 }
 
 #[async_trait]
@@ -137,7 +138,7 @@ where
 {
     /// Decodes one Link item and forwards it to the typed stream.
     async fn send(&self, value: CoreValue) -> Result<(), CoreLinkError> {
-        let value = operit_link::fromCoreValue(value).map_err(|error| {
+        let value = (self.decode)(value).map_err(|error| {
             CoreLinkError::new("INVALID_REVERSE_STREAM_ITEM", error.to_string())
         })?;
         self.sender
@@ -161,10 +162,15 @@ impl CoreReverseStreamSession {
     where
         T: DeserializeOwned + Send + 'static,
     {
-        Self {
-            sender: Box::new(TypedCoreReverseStreamSender { sender }),
-            completion: Some(completion),
-        }
+        Self::newWithDecoder(sender, completion, operit_link::fromCoreValue)
+    }
+
+    /// Reuses the same stream lifecycle with a decoder for native wire representations.
+    pub fn newWithDecoder<T: DeserializeOwned + Send + 'static>(
+        sender: ReverseStreamSender<T>, completion: oneshot::Receiver<Result<(), CoreLinkError>>,
+        decode: fn(CoreValue) -> Result<T, operit_link::CoreLinkCodecError>,
+    ) -> Self {
+        Self { sender: Box::new(TypedCoreReverseStreamSender { sender, decode }), completion: Some(completion) }
     }
 
     /// Delivers one ordered Link item into the reverse stream.
@@ -229,6 +235,21 @@ pub fn to_core_value(value: impl serde::Serialize) -> Result<CoreValue, CoreLink
 pub fn to_core_arg_value(value: impl serde::Serialize) -> Result<CoreValue, CoreLinkError> {
     operit_link::toCoreValue(value)
         .map_err(|error| CoreLinkError::new("INVALID_ARGS", error.to_string()))
+}
+
+/// Moves an owned JSON response into Link, reusing its string and map-key allocations.
+pub fn into_core_json_value(value: serde_json::Value) -> Result<CoreValue, CoreLinkError> {
+    Ok(match value {
+        serde_json::Value::Null => CoreValue::Null,
+        serde_json::Value::Bool(value) => CoreValue::Bool(value),
+        serde_json::Value::Number(value) => return to_core_value(value),
+        serde_json::Value::String(value) => CoreValue::String(value),
+        serde_json::Value::Array(values) => CoreValue::List(values.into_iter()
+            .map(into_core_json_value).collect::<Result<_, _>>()?),
+        serde_json::Value::Object(values) => CoreValue::Map(values.into_iter()
+            .map(|(key, value)| Ok((key, into_core_json_value(value)?)))
+            .collect::<Result<_, CoreLinkError>>()?),
+    })
 }
 
 /// Converts one named caller argument into a Link request value.
@@ -1384,6 +1405,39 @@ pub fn generated_proxy_request_id() -> String {
 mod tests {
     use super::*;
     mod stream_lifecycle;
+
+    #[test]
+    fn owned_json_response_preserves_wire_values_and_string_storage() {
+        let mut value = serde_json::json!({"text": "mixed 中文 text".repeat(512),
+            "values": [null, true, false, -1, 0, 1, i64::MIN, u64::MAX, -0.0, 1.25],
+            "nested": {"array": [], "object": {}}});
+        let text = value["text"].as_str().unwrap().as_ptr();
+        let expected = to_core_value(&value).unwrap();
+        let owned = into_core_json_value(value.take()).unwrap();
+        assert_eq!(owned, expected);
+        let CoreValue::Map(fields) = &owned else { panic!("expected object") };
+        let CoreValue::String(actual) = &fields["text"] else { panic!("expected string") };
+        assert_eq!(actual.as_ptr(), text, "JSON text must move into Link without copying");
+        let encoded = operit_link::encodeLink(&owned).unwrap();
+        assert_eq!(operit_link::decodeLink::<CoreValue>(&encoded).unwrap(), expected);
+    }
+
+    #[tokio::test]
+    async fn binary_reverse_stream_decoder_keeps_legacy_validation_and_completion() {
+        let (sender, mut input) = core_reverse_stream_channel::<Vec<u8>>();
+        let (done, completion) = oneshot::channel();
+        let mut session = CoreReverseStreamSession::newWithDecoder(sender, completion, |value| match value {
+            CoreValue::Bytes(bytes) => Ok(bytes.to_vec()), other => operit_link::fromCoreValue(other),
+        });
+        for value in [CoreValue::Bytes(vec![0, 255, 1].into()), operit_link::toCoreValue(vec![0u8,255,1]).unwrap()] {
+            session.pushItem(value).await.unwrap();
+            assert_eq!(input.recv().await.unwrap(), vec![0,255,1]);
+        }
+        assert!(session.pushItem(CoreValue::List(vec![CoreValue::Unsigned(256)])).await.is_err());
+        done.send(Ok(())).unwrap();
+        session.close().await.unwrap();
+        assert!(input.recv().await.is_none());
+    }
 
     #[test]
     fn watch_sender_optimizes_without_request_capabilities() {

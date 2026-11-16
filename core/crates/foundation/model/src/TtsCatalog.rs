@@ -44,16 +44,14 @@ struct TtsCatalogVoiceRow {
 
 impl TtsCatalog {
     pub fn provider(providerTypeId: &str) -> Result<TtsProviderCatalogEntry, String> {
-        Self::providers()?
-            .into_iter()
+        providerCatalog()?.iter()
             .find(|provider| provider.providerTypeId.eq_ignore_ascii_case(providerTypeId))
+            .cloned()
             .ok_or_else(|| format!("tts catalog provider not found: {providerTypeId}"))
     }
 
     pub fn providers() -> Result<Vec<TtsProviderCatalogEntry>, String> {
-        dataLines(TTS_CATALOG_PROVIDER_ROWS)
-            .map(parseProviderRow)
-            .collect()
+        providerCatalog().cloned()
     }
 
     #[allow(non_snake_case)]
@@ -76,6 +74,13 @@ impl TtsCatalog {
             })
             .collect())
     }
+}
+
+// The bundled directory is immutable; parse it once and clone only the requested entry.
+fn providerCatalog() -> Result<&'static Vec<TtsProviderCatalogEntry>, String> {
+    static CATALOG: std::sync::OnceLock<Result<Vec<TtsProviderCatalogEntry>, String>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| dataLines(TTS_CATALOG_PROVIDER_ROWS).map(parseProviderRow).collect())
+        .as_ref().map_err(Clone::clone)
 }
 
 #[allow(non_snake_case)]

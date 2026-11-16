@@ -62,6 +62,14 @@ impl RuntimeFileSyncStore {
             && operation.semantics == SyncOperationSemantics::EntityState && matches!(operation.operation.as_str(), "upsert" | "delete")
     }
 
+    /// Observe durable originals once per page; failed file application remains pending.
+    pub fn prepareSyncedOperations(&self, operations: &[SyncOperation]) -> Result<(), String> {
+        let valid = operations.iter().filter(|op| Self::isCompleteState(op)
+            && requireSpaceFile(&op.entityId).is_ok() && FileUtils::isPortableFilePath(&op.entityId)
+            && Self::requiredBlob(op).is_ok()).cloned().collect::<Vec<_>>();
+        self.syncOperationStore.appendOperations(&valid).map_err(|e|e.to_string())
+    }
+
     /// Creates a runtime file synchronization store over one host and operation root.
     pub fn new(storageHost: Arc<dyn RuntimeStorageHost>, syncRootPath: impl Into<String>) -> Self {
         let syncRootPath = syncRootPath.into();
@@ -468,12 +476,25 @@ impl RuntimeFileSyncStore {
 
     /// Materialized remote bytes replace their temporary blob with the same live-file index.
     pub(crate) fn indexMaterializedFile(&self, path: &str, reference: Option<&RuntimeFileSyncReference>) -> Result<(), String> {
-        requireSpaceFile(path)?;
-        let source = reference.map(|reference| self.storageHost.modifiedAt(path).map(|modified_at|
-            crate::Transaction::FileSource { path: path.into(), reference: reference.clone(), modified_at })).transpose().map_err(|e|e.to_string())?;
-        self.syncOperationStore.withJournal(|journal| journal.transaction(|tx| match &source {
-            Some(source) => crate::Transaction::Journal::index_file(tx, source),
-            None => crate::Transaction::Journal::unindex_file(tx, path),
+        self.indexMaterializedFiles(&[(path, reference)])
+    }
+
+    /// The durable page intent allows successful file indices to share one SQL commit.
+    pub(crate) fn indexMaterializedFiles(&self, files: &[(&str, Option<&RuntimeFileSyncReference>)]) -> Result<(), String> {
+        let sources = files.iter().map(|(path, reference)| {
+            requireSpaceFile(path)?;
+            reference.map(|reference| self.storageHost.modifiedAt(path).map(|modified_at|
+                crate::Transaction::FileSource { path: (*path).into(), reference: reference.clone(), modified_at }))
+                .transpose().map_err(|e| e.to_string())
+        }).collect::<Result<Vec<_>, String>>()?;
+        self.syncOperationStore.withJournal(|journal| journal.transaction(|tx| {
+            for ((path, _), source) in files.iter().zip(&sources) {
+                match source {
+                    Some(source) => crate::Transaction::Journal::index_file(tx, source)?,
+                    None => crate::Transaction::Journal::unindex_file(tx, path)?,
+                }
+            }
+            Ok(())
         })).map_err(|e|e.to_string())?;
         self.syncOperationStore.collectBlobs(None);
         Ok(())
@@ -485,13 +506,26 @@ impl RuntimeFileSyncStore {
             .into_iter().find(|source| source.current(self.storageHost.as_ref()).unwrap_or(false)))
     }
 
+    /// Pins the sender's carriers with durable file contents and one shared directory flush.
+    pub fn prepareBlobReads(&self, references: &[&RuntimeFileSyncReference]) -> Result<(), String> {
+        let paths = references.iter().map(|reference| {
+            validateBlobReference(reference)?;
+            self.blobReadPathWithFlush(&reference.contentHash, crate::SyncBlobIo::BlobFlush::File)
+        }).collect::<Result<Vec<_>, String>>()?;
+        self.storageHost.flushDirectories(&paths.iter().map(String::as_str).collect::<Vec<_>>()).map_err(|e|e.to_string())
+    }
+
     /// Pins verified live bytes in the leased immutable carrier before any range is served.
     fn blobReadPath(&self, hash: &str) -> Result<String, String> {
+        self.blobReadPathWithFlush(hash, crate::SyncBlobIo::BlobFlush::All)
+    }
+
+    fn blobReadPathWithFlush(&self, hash: &str, flush: crate::SyncBlobIo::BlobFlush) -> Result<String, String> {
         let path = self.blobPath(hash)?;
         self.syncOperationStore.withJournal(|journal|journal.lease_blob(hash)).map_err(|e|e.to_string())?;
         if !self.storageHost.exists(&path).map_err(|e|e.to_string())? {
             if let Some(source) = self.fileSource(hash)? {
-                crate::SyncBlobIo::write_stream(self.storageHost.as_ref(), &path, &source.reference, |writer| {
+                crate::SyncBlobIo::write_stream_with_flush(self.storageHost.as_ref(), &path, &source.reference, flush, |writer| {
                     let mut reader = crate::LegacyTransactionImport::JournalReader::new(self.storageHost.as_ref(), &source.path, 0, source.reference.size as u64 + 1);
                     std::io::copy(&mut reader, writer).map(|_|()).map_err(|e|e.to_string())
                 })?;

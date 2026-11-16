@@ -205,10 +205,10 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
           : waiting
           ? l10n.runtimeActivityWaiting
           : l10n.runtimeActivitySyncing,
-      compactDetail: item.totalRecords != null
-          ? '${item.completedRecords}/${item.totalRecords}'
-          : file && !completed
+      compactDetail: file && !completed
           ? '${_bytes(item.fileBytes)}/${_bytes(item.fileSize)}'
+          : item.totalRecords != null
+          ? '${item.completedRecords}/${item.totalRecords}'
           : null,
       detail: _recordProgress(
         item.completedRecords,
@@ -218,10 +218,12 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
       ),
       value: completed
           ? 1
-          : item.totalRecords != null && item.totalRecords! > 0
-          ? (item.completedRecords / item.totalRecords!).clamp(0.0, 1.0)
           : file && !waiting
           ? (item.fileBytes / item.fileSize).clamp(0.0, 1.0)
+          : item.stage == core.SpaceSyncStage.checking
+          ? null
+          : item.totalRecords != null && item.totalRecords! > 0
+          ? (item.completedRecords / item.totalRecords!).clamp(0.0, 1.0)
           : null,
       paused: waiting || completed,
     );
@@ -404,6 +406,7 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
                                                 item,
                                                 l10n,
                                               ),
+                                              identity: '${item.peerNodeId}:${item.startedAt}:${item.stage}',
                                               title:
                                                   '${_peerName(item, l10n)} · ${_syncActivity(item, l10n).title}',
                                             ),
@@ -427,7 +430,8 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
                                                       ).colorScheme.error,
                                                     ),
                                               ),
-                                            if (item.fileSize > 0)
+                                            if (item.fileSize > 0 &&
+                                                item.status != core.SpaceSyncStatus.completed)
                                               Text(
                                                 l10n.deviceSpaceSyncCurrentFile(
                                                   _bytes(item.fileBytes),
@@ -539,9 +543,12 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
                                             ),
                                           ),
                                           if (!primary.paused)
-                                            LinearProgressIndicator(
+                                            _SmoothProgress(
                                               value: primary.value,
                                               minHeight: 2,
+                                              identity: sync.length == 1
+                                                  ? '${sync.single.peerNodeId}:${sync.single.startedAt}:${sync.single.stage}'
+                                                  : 'summary',
                                             ),
                                         ],
                                       ),
@@ -601,7 +608,8 @@ class _ActivitySurface extends StatelessWidget {
 }
 
 class _ActivityProgress extends StatelessWidget {
-  const _ActivityProgress({required this.activity, this.title, this.trailing});
+  const _ActivityProgress({required this.activity, this.title, this.trailing, this.identity});
+  final String? identity;
   final _Activity activity;
   final String? title;
   final Widget? trailing;
@@ -626,11 +634,36 @@ class _ActivityProgress extends StatelessWidget {
         Text(activity.detail, style: Theme.of(context).textTheme.bodySmall),
         if (!activity.paused) ...[
           const SizedBox(height: 8),
-          LinearProgressIndicator(value: activity.value, minHeight: 3),
+          _SmoothProgress(value: activity.value, minHeight: 3, identity: identity),
         ],
       ],
     ),
   );
+}
+
+/// Animate only confirmed progress; a new phase starts from its own real value.
+class _SmoothProgress extends StatelessWidget {
+  const _SmoothProgress({required this.value, required this.minHeight, this.identity});
+  final double? value;
+  final double minHeight;
+  final String? identity;
+
+  @override
+  Widget build(BuildContext context) {
+    if (value == null) return LinearProgressIndicator(minHeight: minHeight);
+    return TweenAnimationBuilder<double>(
+      key: ValueKey(identity),
+      tween: Tween(begin: value, end: value),
+      duration: MediaQuery.disableAnimationsOf(context)
+          ? Duration.zero
+          : const Duration(milliseconds: 300),
+      curve: Curves.easeOutCubic,
+      builder: (context, value, child) => LinearProgressIndicator(
+        value: value,
+        minHeight: minHeight,
+      ),
+    );
+  }
 }
 
 String _bytes(int bytes) {

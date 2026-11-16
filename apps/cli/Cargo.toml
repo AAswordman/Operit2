@@ -66,3 +66,7 @@ operit-host-linux-native = { path = "../../hosts/linux", features = ["daemon"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 operit-host-macos-native = { path = "../../hosts/macos", features = ["daemon"] }
+
+# Match core and Flutter: hashing file and SQL snapshots must not use unoptimized SHA rounds.
+[profile.dev.package.sha2]
+opt-level = 2

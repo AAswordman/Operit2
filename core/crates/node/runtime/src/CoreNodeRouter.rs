@@ -616,7 +616,7 @@ impl CoreNodeRouter {
     /// A transport grant is usable only after both memberships have been
     /// admitted by the current Space control log; mere pairing is insufficient.
     pub(crate) fn spaceChannelScope(&self, peer: &str) -> Result<Option<String>, CoreLinkError> {
-        crate::space_policy::spaceChannelScope(&self.spaceStore, &self.networkControlStore, &self.localNodeId, peer)
+        crate::space_policy::spaceChannelScope(&self.networkControlStore, &self.localNodeId, peer)
     }
 
     /// Reports whether the active Peer Link graph currently proves one device reachable.
@@ -2630,7 +2630,29 @@ mod tests {
         }
     }
 
+    struct TestStorageWriteSession {
+        host: TestRuntimeStorageHost,
+        path: String,
+        bytes: Vec<u8>,
+    }
+
+    impl operit_host_api::RuntimeStorageWriteSession for TestStorageWriteSession {
+        fn writeChunk(&mut self, chunk: &[u8]) -> HostResult<()> {
+            self.bytes.extend_from_slice(chunk);
+            Ok(())
+        }
+        fn commit(self: Box<Self>) -> HostResult<()> {
+            self.host.files.lock().map_err(|e|HostError::new(e.to_string()))?
+                .insert(self.path, self.bytes);
+            Ok(())
+        }
+        fn discard(self: Box<Self>) -> HostResult<()> { Ok(()) }
+    }
+
     impl RuntimeStorageHost for TestRuntimeStorageHost {
+        fn openWriteSession(&self, path: &str) -> HostResult<Option<Box<dyn operit_host_api::RuntimeStorageWriteSession>>> {
+            Ok(Some(Box::new(TestStorageWriteSession { host: self.clone(), path: path.into(), bytes: Vec::new() })))
+        }
         fn openTransactionDatabase(&self, path: &str) -> operit_host_api::HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
             operit_host_api::RuntimeSqliteHost::openSqliteDatabase(
                 &operit_host_native_storage::NativeRuntimeStorageHost::new(self.runtimeRoot.clone(),self.workspaceRoot.clone()),path)
@@ -3703,6 +3725,48 @@ mod tests {
         assert_eq!(stream.send(CoreValue::Null).await.unwrap_err().code, "SPACE_STORAGE_PERMISSION_DENIED");
         assert_eq!(stream.close().await.unwrap_err().code, "SPACE_STORAGE_PERMISSION_DENIED");
         assert_eq!(count.load(Ordering::SeqCst), 1, "no chunk or final commit reaches persistence after revocation");
+    }
+
+    #[tokio::test]
+    async fn storage_stream_checks_current_space_and_profile_after_open() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        for leave in [false, true] {
+            let router = testCoreNodeRouter("stream-local", "stream-peer", "stream-binding");
+            grantTestReplicaRole(&router.networkControlStore, "stream-peer");
+            let count = Arc::new(AtomicUsize::new(0));
+            let mut stream = router.guardPeerSyncPush("stream-peer".into(), "stream-local".into(),
+                router.spaceStore.space().unwrap().spaceId, Box::new(CountingSyncPush(count.clone())));
+            stream.send(CoreValue::Null).await.unwrap();
+            if leave {
+                router.spaceStore.leave().unwrap();
+            } else {
+                let mut profile = router.spaceStore.deviceProfile("stream-peer").unwrap().unwrap();
+                profile.coreVersion = None;
+                profile.updatedAt += 1;
+                router.spaceStore.importDeviceProfiles(vec![profile]).unwrap();
+            }
+            assert_eq!(stream.send(CoreValue::Null).await.unwrap_err().code, "SPACE_STORAGE_PERMISSION_DENIED");
+            assert_eq!(stream.close().await.unwrap_err().code, "SPACE_STORAGE_PERMISSION_DENIED");
+            assert_eq!(count.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn shared_control_snapshot_releases_model_lock_before_callback() {
+        let _guard = routeTestGlobalLock().lock().await;
+        installTestRuntimeScheduler();
+        let router = testCoreNodeRouter("snapshot-local", "snapshot-peer", "snapshot-binding");
+        grantTestReplicaRole(&router.networkControlStore, "snapshot-peer");
+        router.networkControlStore.withCurrentSpaceState(|space, state| {
+            assert_eq!(space.spaceId, state.spaceId);
+            assert!(state.nodeHasCapability("snapshot-peer", "storage.provide", None).unwrap());
+            router.networkControlStore.setIdentity(operit_store::NetworkControlStore::NetworkControlIdentityAssignment {
+                nodeId: "snapshot-peer".into(), roleId: "edge".into(),
+            }).unwrap();
+            assert!(state.nodeHasCapability("snapshot-peer", "storage.provide", None).unwrap());
+            assert!(!router.networkControlStore.nodeHasCapability("snapshot-peer", "storage.provide", None).unwrap());
+        }).unwrap();
     }
 
     #[tokio::test]

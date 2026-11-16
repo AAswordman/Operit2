@@ -12,6 +12,7 @@ operit-link = { path = "../../foundation/link" }
 operit-store = { path = "../../persistence/store" }
 operit-util = { path = "../../foundation/util" }
 serde.workspace = true
+serde_json.workspace = true
 tokio = { workspace = true, features = ["sync"] }
 
 [dev-dependencies]

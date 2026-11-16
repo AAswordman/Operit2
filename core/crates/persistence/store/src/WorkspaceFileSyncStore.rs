@@ -38,6 +38,8 @@ struct ScanState {
     deferred: BTreeMap<String, Option<RuntimeFileSnapshot>>,
     // Persist the complete incoming write before touching the live file.
     pending: Option<(String, Option<RuntimeFileSnapshot>)>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pendingBatch: Vec<SyncOperation>,
 }
 
 pub struct WorkspaceFileSyncStore {
@@ -149,6 +151,10 @@ impl WorkspaceFileSyncStore {
         self.host.writeBytesAtomically(&self.statePath(), &serde_json::to_vec(state).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
     }
 
+    fn saveProgress(&self, state: &ScanState, checkpoint: bool) -> Result<(), String> {
+        if checkpoint { self.save(state) } else { Ok(()) }
+    }
+
     /// Traverses accessible files and retains prior inventory beneath permission failures.
     fn scanUnlocked(&self) -> Result<usize, String> {
         let mut state = self.load()?;
@@ -172,7 +178,7 @@ impl WorkspaceFileSyncStore {
                 state.deferred.remove(&path);
                 state.pending = Some((path.clone(), next));
                 self.save(&state)?;
-                self.finishPending(&mut state, content.as_deref())?;
+                self.finishPending(&mut state, content.as_deref(), true)?;
                 if state.deferred.contains_key(&path) { skipped.push(path); }
             }
         }
@@ -361,24 +367,64 @@ impl WorkspaceFileSyncStore {
             if !Self::owns(operation) || operation.entityType != "file" { return Err("Invalid workspace operation".into()); }
             if FileUtils::isPortableFilePath(&operation.entityId) { validateFilePath(&operation.entityId)?; }
         }
+        // Repeated paths preserve their original ordered conflict and policy decisions.
+        let mut paths = std::collections::BTreeSet::new();
+        if batch.iter().any(|op| !paths.insert(&op.entityId)) {
+            return batch.iter().map(|op|self.materializeOperation(op, bootstrap)).collect();
+        }
         let _guard = self.lock.lock().map_err(|e| e.to_string())?;
         self.scanUnlocked()?;
         let operations = self.operations();
+        let mut state = self.load()?;
         let mut decisions = Vec::new();
         for operation in batch {
-            if !FileUtils::isPortableFilePath(&operation.entityId) {
-                decisions.push(false);
-                continue;
-            }
-            let apply = bootstrap || operations.shouldApplyOperation(operation).map_err(|e| e.to_string())?;
+            let apply = FileUtils::isPortableFilePath(&operation.entityId)
+                && (bootstrap || operations.shouldApplyOperation(operation).map_err(|e| e.to_string())?);
             if apply {
-                self.applyUnlocked(&operation.entityId, &operation.operation, operation.payload.clone())?;
-                if bootstrap { operations.recordBootstrapAppliedOperations(std::slice::from_ref(*operation)) }
-                else { operations.recordAppliedOperation(operation) }.map_err(|e| e.to_string())?;
+                // Validate payloads before publishing any multi-file recovery intent.
+                if operation.operation == "upsert" {
+                    serde_json::from_value::<RuntimeFileSnapshot>(operation.payload.clone()).map_err(|e|e.to_string())?;
+                } else if operation.operation != "delete" { return Err("Unsupported managed file operation".into()); }
+                state.pendingBatch.push((*operation).clone());
             }
             decisions.push(apply);
         }
+        if !state.pendingBatch.is_empty() {
+            self.save(&state)?;
+            self.finishBatch(&mut state, bootstrap)?;
+        }
         Ok(decisions)
+    }
+
+    /// One durable intent covers the page; recovery replays it before any local scan.
+    fn finishBatch(&self, state: &mut ScanState, bootstrap: bool) -> Result<(), String> {
+        let mut errors = Vec::new();
+        let mut retry = Vec::new();
+        let mut applied = Vec::new();
+        for operation in state.pendingBatch.clone() {
+            if !FileUtils::isPortableFilePath(&operation.entityId) { continue; }
+            match self.applyToState(state, &operation.entityId, &operation.operation, operation.payload.clone(), false) {
+                Ok(()) => applied.push(operation),
+                Err(error) => {
+                    // Missing blobs have not touched the destination and stay in the journal.
+                    if state.pending.is_some() { retry.push(operation); }
+                    errors.push(error);
+                }
+            }
+            state.pending = None;
+        }
+        let indexed = applied.iter().filter(|op| !state.deferred.contains_key(&op.entityId))
+            .map(|op| RuntimeFileSyncStore::requiredBlob(op).map(|reference| (op.entityId.as_str(), reference)))
+            .collect::<Result<Vec<_>, _>>()?;
+        // The durable batch intent remains on disk if any file or directory flush fails.
+        self.host.flushFiles(&indexed.iter().filter(|(_, reference)| reference.is_some())
+            .map(|(path, _)| *path).collect::<Vec<_>>()).map_err(|e| e.to_string())?;
+        self.files().indexMaterializedFiles(&indexed.iter().map(|(path, reference)| (*path, reference.as_ref())).collect::<Vec<_>>())?;
+        if bootstrap { self.operations().recordBootstrapAppliedOperations(&applied) }
+        else { self.operations().recordAppliedOperations(&applied) }.map_err(|e|e.to_string())?;
+        state.pendingBatch = retry;
+        self.save(state)?;
+        if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
 
     /// Low-level file materialization used by RuntimeFileSyncStore callers.
@@ -396,26 +442,29 @@ impl WorkspaceFileSyncStore {
 
     /// Saves a complete recovery intent before materializing the incoming state.
     fn applyUnlocked(&self, path: &str, operation: &str, payload: serde_json::Value) -> Result<(), String> {
+        self.applyToState(&mut self.load()?, path, operation, payload, true)
+    }
+
+    fn applyToState(&self, state: &mut ScanState, path: &str, operation: &str, payload: serde_json::Value, checkpoint: bool) -> Result<(), String> {
         if !FileUtils::isPortableFilePath(path) { return Ok(()); }
         let next: Option<RuntimeFileSnapshot> = match operation {
             "upsert" => Some(serde_json::from_value(payload).map_err(|e| e.to_string())?),
             "delete" => None,
             other => return Err(format!("Unsupported managed file operation: {other}")),
         };
-        let mut state = self.load()?;
-        if !self.accepts(path, next.as_ref())? {
+        if !self.scanRead(self.acceptsForScan(path, next.as_ref(), Some(state)), path, &mut Vec::new())?.unwrap_or(false) {
             state.deferred.insert(path.to_string(), next);
-            return self.save(&state);
+            return self.saveProgress(state, checkpoint);
         }
         if self.scanRead(self.checkDestination(path), path, &mut Vec::new())?.is_none() {
             state.deferred.insert(path.to_string(), next);
-            return self.save(&state);
+            return self.saveProgress(state, checkpoint);
         }
         state.deferred.remove(path);
         let content = next.as_ref().map(|snapshot: &RuntimeFileSnapshot| self.files().readBlob(&snapshot.reference)).transpose()?;
         state.pending = Some((path.to_string(), next));
-        self.save(&state)?;
-        self.finishPending(&mut state, content.as_deref())
+        self.saveProgress(state, checkpoint)?;
+        self.finishPending(state, content.as_deref(), checkpoint)
     }
 
     /// Policy decisions precede content transfer as well as materialization.
@@ -448,11 +497,11 @@ impl WorkspaceFileSyncStore {
 
     /// Leaves inaccessible incoming files deferred until their permissions permit access.
     fn accepts(&self, path: &str, snapshot: Option<&RuntimeFileSnapshot>) -> Result<bool, String> {
-        Ok(self.scanRead(self.acceptsForScan(path, snapshot), path, &mut Vec::new())?.is_some_and(|accepted| accepted))
+        Ok(self.scanRead(self.acceptsForScan(path, snapshot, None), path, &mut Vec::new())?.is_some_and(|accepted| accepted))
     }
 
     /// Evaluates incoming policy limits while retaining typed errors from local rules.
-    fn acceptsForScan(&self, path: &str, snapshot: Option<&RuntimeFileSnapshot>) -> HostResult<bool> {
+    fn acceptsForScan(&self, path: &str, snapshot: Option<&RuntimeFileSnapshot>, state: Option<&ScanState>) -> HostResult<bool> {
         if !FileUtils::isPortableFilePath(path) { return Ok(false); }
         let root = managedDirectory(path).map_err(HostError::new)?;
         let policy = FileSyncPolicy::loadForScan(self.host.as_ref(), &root)?;
@@ -463,7 +512,8 @@ impl WorkspaceFileSyncStore {
         if snapshot.reference.size < 0 || snapshot.reference.size as u64 > limit { return Ok(false); }
         if control { return Ok(true); }
         let mut total = snapshot.reference.size as u64;
-        let state = self.load().map_err(HostError::new)?;
+        let loaded;
+        let state = match state { Some(state) => state, None => { loaded = self.load().map_err(HostError::new)?; &loaded } };
         for (other, stamp) in &state.files {
             if other != path && !state.references.contains_key(other) && other.starts_with(&format!("{root}/"))
                 && !isControl(&root, other) && !other.ends_with(REFERENCE_SUFFIX)
@@ -476,6 +526,7 @@ impl WorkspaceFileSyncStore {
 
     /// Completes an interrupted incoming write before any scan can publish local changes.
     fn recoverPending(&self, state: &mut ScanState) -> Result<(), String> {
+        if !state.pendingBatch.is_empty() { self.finishBatch(state, false)?; }
         if state.pending.as_ref().is_some_and(|(path, _)| !FileUtils::isPortableFilePath(path)) {
             state.pending = None;
             return self.save(state);
@@ -484,18 +535,18 @@ impl WorkspaceFileSyncStore {
             Some((_, Some(snapshot))) => Some(self.files().readBlob(&snapshot.reference)?),
             _ => None,
         };
-        self.finishPending(state, content.as_deref())
+        self.finishPending(state, content.as_deref(), true)
     }
 
     /// Publishes already verified bytes and commits the corresponding metadata inventory.
-    fn finishPending(&self, state: &mut ScanState, content: Option<&[u8]>) -> Result<(), String> {
+    fn finishPending(&self, state: &mut ScanState, content: Option<&[u8]>, checkpoint: bool) -> Result<(), String> {
         let Some((path, next)) = state.pending.clone() else {
             return Ok(());
         };
-        let Some(stamp) = self.scanRead(self.writePending(&path, next.as_ref(), content), &path, &mut Vec::new())? else {
+        let Some(stamp) = self.scanRead(self.writePending(&path, next.as_ref(), content, checkpoint), &path, &mut Vec::new())? else {
             state.deferred.insert(path, next);
             state.pending = None;
-            return self.save(state);
+            return self.saveProgress(state, checkpoint);
         };
         match stamp {
             Some(stamp) => { state.files.insert(path.clone(), stamp); }
@@ -504,13 +555,13 @@ impl WorkspaceFileSyncStore {
                 self.removeEmptyParents(&path)?;
             }
         }
-        self.files().indexMaterializedFile(&path, next.as_ref().map(|snapshot| &snapshot.reference))?;
+        if checkpoint { self.files().indexMaterializedFile(&path, next.as_ref().map(|snapshot| &snapshot.reference))?; }
         state.pending = None;
-        self.save(state)
+        self.saveProgress(state, checkpoint)
     }
 
     /// Materializes one pending file while keeping permission failures recoverable.
-    fn writePending(&self, path: &str, next: Option<&RuntimeFileSnapshot>, content: Option<&[u8]>) -> HostResult<Option<FileStamp>> {
+    fn writePending(&self, path: &str, next: Option<&RuntimeFileSnapshot>, content: Option<&[u8]>, checkpoint: bool) -> HostResult<Option<FileStamp>> {
         validateFilePath(path).map_err(HostError::new)?;
         self.checkDestination(path)?;
         match next {
@@ -519,7 +570,7 @@ impl WorkspaceFileSyncStore {
                 if let Some(modifiedAt) = reference.modifiedAt {
                     self.host.setModifiedAt(path, modifiedAt)?;
                 }
-                self.host.flushFile(path)?;
+                if checkpoint { self.host.flushFile(path)?; }
                 let modifiedAt = Some(self.host.modifiedAt(path)?);
                 Ok(Some(FileStamp { size: reference.reference.size, modifiedAt }))
             }

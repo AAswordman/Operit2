@@ -25,6 +25,16 @@ impl OperitApplication {
     pub(super) fn transactionRegistry<'a>(&'a self, schema: &'a PreferenceMergeSchema, operations: &[SyncOperation]) -> Result<Registry<'a>,String> {
         let storage = self.hostManager.runtimeStorageHost.clone().ok_or("Runtime storage is unavailable")?;
         self.runtimeSyncOperationStore()?.ignoreNonPortableFileOperations().map_err(|e|e.to_string())?;
+        // Reuse the managed-file batch API so one incoming page scans the tree once.
+        // Failed files fall back to the ordinary owner path and retain their own error.
+        let mut file_groups = BTreeMap::<String, Vec<&SyncOperation>>::new();
+        for operation in operations.iter().filter(|op| operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::owns(op)) {
+            file_groups.entry(operation.entityId.clone()).or_default().push(operation);
+        }
+        let file_batch = std::rc::Rc::new(std::cell::RefCell::new(Some(file_groups.into_values()
+            .filter(|group| group.iter().all(|op| operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState(op)))
+            .filter_map(|group| group.into_iter().max_by_key(|op| operit_store::Transaction::Revision::fromOperation(op)).cloned())
+            .collect::<Vec<_>>())));
         let skipped = self.runtimeSyncOperationStore()?.skippedOperations().map_err(|e|e.to_string())?;
         let operations = operations.iter().chain(&skipped).collect::<Vec<_>>();
         let mut registry = PreferenceMerge::registry(storage.clone(), schema, operations.iter().copied(), |_,_|true)?;
@@ -43,11 +53,11 @@ impl OperitApplication {
             prepare: Box::new(move || prepare.as_ref().map(|_|()).map_err(|e|ApplyError::Retry(e.clone()))),
             apply: Box::new(move |operations,_| {
                 let store = apply.as_ref().map_err(|e|ApplyError::Retry(e.clone()))?;
-                for operation in operations { store.applyOperation(operation).map_err(|error| match error {
+                store.applyOperations(operations).map_err(|error| match error {
                     operit_store::sync::SqlChatSyncStore::SqlChatSyncStoreError::Store(error) => ApplyError::from(error),
                     operit_store::sync::SqlChatSyncStore::SqlChatSyncStoreError::Json(_) | operit_store::sync::SqlChatSyncStore::SqlChatSyncStoreError::Message(_) => ApplyError::Capability(error.to_string()),
                     _ => ApplyError::Retry(error.to_string()),
-                })?; }
+                })?;
                 Ok(BTreeMap::new())
             }), project: None,
             snapshot: Some(Box::new(move || snapshot.as_ref().map_err(Clone::clone)?.syncSnapshot().map_err(|e|e.to_string()))),
@@ -81,7 +91,7 @@ impl OperitApplication {
                 content_digest: PluginStorage::snapshotContentDigest,
                 prepare: Box::new(||Ok(())),
                 apply: Box::new(move |operations,aliases| {
-                    for operation in operations { PluginStorage::applyOperation(apply.clone().map_err(ApplyError::Retry)?,storage.clone(),operation,aliases)?; }
+                    PluginStorage::applyOperations(apply.clone().map_err(ApplyError::Retry)?,storage.clone(),operations,aliases)?;
                     Ok(BTreeMap::new())
                 }),
                 project: Some(Box::new(move |aliases|PluginStorage::reconcilePreferenceReferences(project.clone()?,&project_path,aliases).map_err(|e|e.to_string()))),
@@ -100,15 +110,24 @@ impl OperitApplication {
             }
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
+            let file_batch = file_batch.clone();
             registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, definition: None, coverage: Box::new(||Ok(Default::default())), content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
                 apply: Box::new(move |operations,_| (|| {
+                    if operations.iter().all(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN) {
+                        self.runtimeNetworkControlStore()?.applySyncedOperations(operations)?;
+                        return Ok(BTreeMap::new());
+                    }
+                    if operations.iter().any(operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::owns) {
+                        if let Some(batch) = file_batch.borrow_mut().take() {
+                            let _ = self.runtimeWorkspaceFileSyncStore()?.materializeOperations(&batch.iter().collect::<Vec<_>>(), false);
+                        }
+                    }
                     // Every operation in a file owner replaces the whole file; materialize only the winner.
                     let winner = operations.iter().max_by_key(|op| operit_store::Transaction::Revision::fromOperation(op));
                     let complete = operations.iter().all(operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState);
                     for operation in operations.iter().filter(|op| !complete || Some(*op) == winner) {
                         match operation.domain.as_str() {
                             BINDING_SYNC_DOMAIN => self.runtimeBindingStore()?.applySyncedOperation(operation)?,
-                            NETWORK_CONTROL_SYNC_DOMAIN => self.runtimeNetworkControlStore()?.applySyncedOperation(operation)?,
                             _ => {
                                 let journal = self.runtimeSyncOperationStore()?;
                                 if journal.shouldApplyOperation(operation).map_err(|e|e.to_string())? {

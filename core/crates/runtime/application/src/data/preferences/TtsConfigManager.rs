@@ -107,15 +107,12 @@ impl TtsConfigManager {
     #[allow(non_snake_case)]
     /// Reads every configured text-to-speech provider or voice profile.
     pub fn getAllTtsConfigs(&self) -> Result<Vec<TtsConfig>, String> {
-        let ids = self
-            .ttsConfigListFlow()
-            .first()
-            .map_err(|error| error.to_string())?;
-        let mut configs = Vec::new();
-        for id in ids {
-            configs.push(self.getTtsConfig(&id)?);
-        }
-        Ok(configs)
+        let preferences = self.dataStore.data().map_err(|error| error.to_string())?;
+        readConfigRecords(&preferences)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .map(normalizeConfig)
+            .collect()
     }
 
     #[allow(non_snake_case)]
@@ -478,6 +475,11 @@ impl TtsConfigManager {
 
 /// Derives TTS membership directly from complete records and validates their identities.
 fn readConfigList(preferences: &Preferences) -> Result<Vec<String>, PreferencesDataStoreError> {
+    Ok(readConfigRecords(preferences)?.into_iter().map(|config| config.id).collect())
+}
+
+/// Decodes and validates each record once, preserving the public identifier order.
+fn readConfigRecords(preferences: &Preferences) -> Result<Vec<TtsConfig>, PreferencesDataStoreError> {
     let mut configs = Vec::new();
     for (key, value) in preferences.iterEntries() {
         let Some(id) = key
@@ -492,9 +494,9 @@ fn readConfigList(preferences: &Preferences) -> Result<Vec<String>, PreferencesD
                 "TTS record identity mismatch: {key}"
             )));
         }
-        configs.push(config.id);
+        configs.push(config);
     }
-    configs.sort();
+    configs.sort_by(|left, right| left.id.cmp(&right.id));
     Ok(configs)
 }
 
@@ -531,17 +533,10 @@ fn readExistingTtsConfig(
             "tts config id is empty".to_string(),
         ));
     }
-    let list = readConfigList(preferences)?;
-    if !list.iter().any(|entry| entry == id) {
-        return Err(PreferencesDataStoreError::Message(format!(
-            "tts config not found: {id}"
-        )));
-    }
-    let raw = preferences.get(&configJsonKey(id)).ok_or_else(|| {
-        PreferencesDataStoreError::Message(format!("tts config payload missing: {id}"))
-    })?;
-    let config = serde_json::from_value::<TtsConfig>(raw.clone())
-        .map_err(PreferencesDataStoreError::from)?;
+    let config = readConfigRecords(preferences)?
+        .into_iter()
+        .find(|config| config.id == id)
+        .ok_or_else(|| PreferencesDataStoreError::Message(format!("tts config not found: {id}")))?;
     normalizeConfig(config).map_err(PreferencesDataStoreError::Message)
 }
 
@@ -550,11 +545,11 @@ fn assertTtsConfigVoiceDoesNotExist(
     config: &TtsConfig,
     currentId: Option<&str>,
 ) -> Result<(), PreferencesDataStoreError> {
-    for id in readConfigList(preferences)? {
-        if currentId.is_some_and(|currentId| currentId == id) {
+    for existing in readConfigRecords(preferences)? {
+        if currentId.is_some_and(|currentId| currentId == existing.id) {
             continue;
         }
-        let existing = readExistingTtsConfig(preferences, &id)?;
+        let existing = normalizeConfig(existing).map_err(PreferencesDataStoreError::Message)?;
         if existing.providerType == config.providerType
             && existing.endpoint == config.endpoint
             && existing.model == config.model
@@ -926,4 +921,53 @@ fn templateHasTextPlaceholder(template: &str) -> bool {
 #[allow(non_snake_case)]
 fn currentTimeMillis() -> i64 {
     operit_host_api::TimeUtils::currentTimeMillis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(id: &str, voice: &str) -> TtsConfig {
+        TtsConfig { id: id.into(), voice: voice.into(), ..defaultSystemTtsConfig(1) }
+    }
+
+    #[test]
+    fn record_scan_preserves_order_and_checks_other_record_identities() {
+        let mut preferences = Preferences::default();
+        writeTtsConfig(&mut preferences, &config("b", "second"));
+        writeTtsConfig(&mut preferences, &config("a", "first"));
+        assert_eq!(readConfigList(&preferences).unwrap(), vec!["a", "b"]);
+        assert_eq!(readExistingTtsConfig(&preferences, " a ").unwrap().voice, "first");
+        preferences.set(&configJsonKey("broken"), serde_json::to_value(config("different", "third")).unwrap());
+        assert!(readExistingTtsConfig(&preferences, "a").unwrap_err().to_string().contains("identity mismatch"));
+    }
+
+    #[test]
+    fn duplicate_voice_check_normalizes_records_and_excludes_the_updated_identity() {
+        let mut preferences = Preferences::default();
+        writeTtsConfig(&mut preferences, &config("a", " first "));
+        writeTtsConfig(&mut preferences, &config("b", "second"));
+        let incoming = config("new", "first");
+        assert!(assertTtsConfigVoiceDoesNotExist(&preferences, &incoming, None).unwrap_err().to_string().contains("already exists"));
+        assertTtsConfigVoiceDoesNotExist(&preferences, &incoming, Some("a")).unwrap();
+        assertTtsConfigVoiceDoesNotExist(&preferences, &config("new", "third"), None).unwrap();
+    }
+
+    #[test]
+    fn full_query_uses_one_snapshot_and_preserves_record_validation() {
+        let root = std::env::temp_dir().join(format!("operit-tts-query-{}", Uuid::new_v4()));
+        let host = std::sync::Arc::new(operit_host_native_storage::NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
+        let store = PreferencesDataStore::newWithStorage(host, "runtime/tts.json");
+        store.edit(|preferences| {
+            writeTtsConfig(preferences, &config("b", " second "));
+            writeTtsConfig(preferences, &config("a", "first"));
+        }).unwrap();
+        let manager = TtsConfigManager { paths: RuntimeStorePaths::default(), dataStore: store };
+        let configs = manager.getAllTtsConfigs().unwrap();
+        assert_eq!(configs.iter().map(|config| config.id.as_str()).collect::<Vec<_>>(), vec!["a", "b"]);
+        assert_eq!(configs[1].voice, "second");
+        manager.dataStore.edit(|preferences| writeTtsConfig(preferences, &TtsConfig { name: String::new(), ..config("c", "third") })).unwrap();
+        assert!(manager.getAllTtsConfigs().unwrap_err().contains("name is empty"));
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -189,10 +189,9 @@ impl Votes {
 #[derive(Default)]
 struct CatalogProvider {
     models: Vec<ModelsDevProviderModel>,
-    byKey: HashMap<String, usize>,
-    byBare: HashMap<String, usize>,
-    byDashed: HashMap<String, usize>,
-    byCanonical: HashMap<String, usize>,
+    // One spelling can occur in several lookup stages; retain its key only once.
+    // Zero means absent; each stage keeps its own first model index plus one.
+    aliases: HashMap<String, [usize; 4]>,
 }
 
 impl CatalogProvider {
@@ -204,39 +203,47 @@ impl CatalogProvider {
             facts: entry.facts(bare),
             pricing: entry.pricing.clone(),
         });
-        self.byKey.entry(key.to_lowercase()).or_insert(index);
-        self.byBare.entry(bare.to_string()).or_insert(index);
-        self.byDashed.entry(dashed(bare)).or_insert(index);
+        self.alias(key.to_lowercase(), 0, index);
+        self.alias(bare.to_string(), 1, index);
+        self.alias(dashed(bare), 2, index);
         // A vendor's own entry also answers for the id models.dev says it is, which
         // relays serve it under: DeepSeek's deepseek-flash for deepseek-v4.1-flash.
         if let Some((maker, model)) = entry.canonical.as_deref().and_then(|id| id.split_once('/')) {
             if ownApi(providerId, maker) {
                 let canonical = bareId(model);
-                self.byCanonical.entry(dashed(&canonical)).or_insert(index);
-                self.byCanonical.entry(canonical).or_insert(index);
+                self.alias(dashed(&canonical), 3, index);
+                self.alias(canonical, 3, index);
             }
         }
+    }
+
+    fn alias(&mut self, key: String, stage: usize, index: usize) {
+        let slot = &mut self.aliases.entry(key).or_default()[stage];
+        if *slot == 0 { *slot = index + 1; }
+    }
+
+    fn index(&self, key: &str, stage: usize) -> Option<usize> {
+        self.aliases.get(key)?[stage].checked_sub(1)
     }
 
     /// Finds the provider's entry for a model id.
     fn find(&self, modelId: &str) -> Option<&ModelsDevProviderModel> {
         let lowered = modelId.trim().to_lowercase();
-        if let Some(index) = self.byKey.get(&lowered) {
-            return Some(&self.models[*index]);
+        if let Some(index) = self.index(&lowered, 0) {
+            return Some(&self.models[index]);
         }
         let bare = bareId(&lowered);
         let bare = unprofiled(&bare).unwrap_or(bare);
         for wanted in [bare.clone(), cutAt(&bare, '('), cutAt(&bare, ':')] {
-            if let Some(index) = self.byBare.get(&wanted) {
-                return Some(&self.models[*index]);
+            if let Some(index) = self.index(&wanted, 1) {
+                return Some(&self.models[index]);
             }
         }
         let dashedBare = dashed(&bare);
-        self.byDashed
-            .get(&dashedBare)
-            .or_else(|| self.byCanonical.get(&bare))
-            .or_else(|| self.byCanonical.get(&dashedBare))
-            .map(|index| &self.models[*index])
+        self.index(&dashedBare, 2)
+            .or_else(|| self.index(&bare, 3))
+            .or_else(|| self.index(&dashedBare, 3))
+            .map(|index| &self.models[index])
     }
 }
 
@@ -253,22 +260,29 @@ pub struct ModelsDevCatalog {
 impl ModelsDevCatalog {
     /// Indexes models.dev's provider catalog (`api.json`) and lab catalog (`models.json`).
     pub fn parse(providerCatalog: &[u8], labCatalog: &[u8]) -> Result<Self, String> {
-        let providerCatalog: Value = serde_json::from_slice(providerCatalog)
+        let providers: Value = serde_json::from_slice(providerCatalog)
             .map_err(|error| format!("models.dev api.json is not valid JSON: {error}"))?;
-        let providerCatalog = providerCatalog
-            .as_object()
-            .filter(|providers| !providers.is_empty())
-            .ok_or_else(|| "models.dev api.json lists no providers".to_string())?;
-        let labCatalog: Value = serde_json::from_slice(labCatalog)
+        let models: Value = serde_json::from_slice(labCatalog)
             .map_err(|error| format!("models.dev models.json is not valid JSON: {error}"))?;
-        let labCatalog = labCatalog
-            .as_object()
+        Self::fromValues(&providers, &models)
+    }
+
+    /// Decodes the bundle once, without re-encoding and re-parsing each catalog.
+    pub fn parseBundle(reader: impl std::io::Read) -> Result<Self, String> {
+        let bundle: Value = serde_json::from_reader(reader).map_err(|error| error.to_string())?;
+        Self::fromValues(&bundle["providers"], &bundle["models"])
+    }
+
+    fn fromValues(providers: &Value, models: &Value) -> Result<Self, String> {
+        let providerCatalog = providers.as_object().filter(|providers| !providers.is_empty())
+            .ok_or_else(|| "models.dev api.json lists no providers".to_string())?;
+        let labCatalog = models.as_object()
             .ok_or_else(|| "models.dev models.json is not an object".to_string())?;
 
         let mut providers = HashMap::new();
         let mut endpoints: HashMap<String, Vec<String>> = HashMap::new();
         let mut votes: HashMap<String, Votes> = HashMap::new();
-        let mut canonicalEntries = Vec::new();
+        let mut canonicalVotes = HashMap::<String, Votes>::new();
         for (providerId, provider) in providerCatalog {
             let Some(provider) = provider.as_object() else {
                 continue;
@@ -299,18 +313,15 @@ impl ModelsDevCatalog {
                     .filter(|id| id.contains('/'))
                     .map(bareId);
                 if let Some(canonical) = canonical {
-                    canonicalEntries.push((canonical, entry));
+                    canonicalVotes.entry(canonical).or_default().add(&entry);
                 }
             }
             providers.insert(providerId.clone(), catalogProvider);
         }
         // A model no provider lists by its own id, only as an entry's canonical id, takes
         // those entries' word: relays serve it under that id.
-        let listed = votes.keys().cloned().collect::<HashSet<_>>();
-        for (canonical, entry) in &canonicalEntries {
-            if !listed.contains(canonical) {
-                votes.entry(canonical.clone()).or_default().add(entry);
-            }
+        for (canonical, vote) in canonicalVotes {
+            votes.entry(canonical).or_insert(vote);
         }
         // A model only its lab lists, as a gated one an account can still call, takes the
         // lab's word on it.
@@ -866,6 +877,44 @@ mod tests {
 
     fn catalog() -> ModelsDevCatalog {
         ModelsDevCatalog::parse(PROVIDERS.as_bytes(), LABS.as_bytes()).expect("catalog parses")
+    }
+
+    #[test]
+    fn bundle_parse_preserves_provider_facts_prices_and_invalid_entries() {
+        let expected = catalog();
+        let bundle = format!(r#"{{"providers":{PROVIDERS},"models":{LABS}}}"#);
+        let actual = ModelsDevCatalog::parseBundle(bundle.as_bytes()).unwrap();
+        assert_eq!(actual.facts, expected.facts);
+        assert_eq!(actual.normal, expected.normal);
+        assert_eq!(actual.endpoints, expected.endpoints);
+        for id in expected.providers.keys() {
+            let ids = [id.clone()];
+            let left = expected.providerModels(&ids);
+            let right = actual.providerModels(&ids);
+            assert_eq!(left.len(), right.len());
+            for (left,right) in left.iter().zip(&right) {
+                assert_eq!(left.modelId, right.modelId);
+                assert_eq!(left.facts, right.facts);
+                assert_eq!(left.pricing, right.pricing);
+            }
+        }
+        let invalid = ModelsDevCatalog::parse(br#"{"missing":null,"empty":{}}"#, b"{}").unwrap();
+        assert!(!invalid.providers.contains_key("missing"));
+        assert!(invalid.providers.contains_key("empty"));
+        assert!(ModelsDevCatalog::parse(b"[]",b"{}").is_err());
+        assert!(ModelsDevCatalog::parse(b"{}",b"{}").is_err());
+    }
+
+    #[test]
+    fn exact_and_bare_alias_collisions_keep_their_lookup_priority() {
+        let catalog = ModelsDevCatalog::parse(br#"{"relay":{"models":{
+            "maker/model-a":{"limit":{"context":4096}},
+            "model-a":{"limit":{"context":8192}}
+        }}}"#, b"{}").unwrap();
+        let relay = vec!["relay".to_string()];
+        assert_eq!(catalog.facts(&relay, "model-a").unwrap().contextTokens, Some(8192));
+        assert_eq!(catalog.facts(&relay, "other/model-a").unwrap().contextTokens, Some(4096));
+        assert_eq!(catalog.facts(&relay, "maker/model-a").unwrap().contextTokens, Some(4096));
     }
 
     #[test]

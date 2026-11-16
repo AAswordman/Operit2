@@ -419,48 +419,73 @@ impl Data {
         Ok(())
     }
 
-    /// Publish the entire transaction only after all edits succeed.
+    /// Publish a transaction only after all edits succeed.
     pub fn apply(&mut self, transaction: &Transaction) -> Result<()> {
+        self.apply_batch(std::slice::from_ref(transaction))
+    }
+
+    /// Retains the caller's state if any edit in the batch fails.
+    pub fn apply_batch(&mut self, transactions: &[Transaction]) -> Result<()> {
+        if transactions.is_empty() { return Ok(()); }
+        *self = self.clone().into_applied_batch(transactions)?;
+        Ok(())
+    }
+
+    /// Consumes a private replay view; failure drops it before any state is published.
+    pub(crate) fn into_applied_batch(mut self, transactions: &[Transaction]) -> Result<Self> {
+        if transactions.is_empty() { return Ok(self); }
+        // Validate encoded scopes once; individual edits only decode their key or namespace.
+        let mut canonical_scopes = true;
+        for encoded in self.versions.keys().chain(self.additions.keys()) {
+            let scope = serde_json::from_str::<(String, Vec<Path>)>(encoded).map_err(|e|e.to_string())?;
+            canonical_scopes &= serde_json::to_string(&scope).map_err(|e|e.to_string())? == *encoded;
+        }
+        for transaction in transactions { self.apply_in_place(transaction, canonical_scopes)?; }
+        Ok(self)
+    }
+
+    /// Publish the entire transaction only after all edits succeed.
+    fn apply_in_place(&mut self, transaction: &Transaction, canonical_scopes: bool) -> Result<()> {
         if transaction.target != Target::Data(self.owner.clone()) {
             return Err("Transaction owner/version is not ready".into());
         }
-        let mut staged = self.clone();
         for edit in &transaction.edits {
             if let Edit::Patch { key, set, delete } = edit {
                 for (field, value) in set {
-                    staged.apply_edit(
+                    self.apply_edit(
                         &Edit::Set {
                             key: key.clone(),
                             path: vec![Path::Field(field.clone())],
                             value: value.clone(),
                         },
                         &transaction.revision,
+                        canonical_scopes,
                     )?;
                 }
                 for field in delete {
-                    staged.apply_edit(
+                    self.apply_edit(
                         &Edit::Delete {
                             key: key.clone(),
                             path: vec![Path::Field(field.clone())],
                         },
                         &transaction.revision,
+                        canonical_scopes,
                     )?;
                 }
             } else {
-                staged.apply_edit(edit, &transaction.revision)?;
+                self.apply_edit(edit, &transaction.revision, canonical_scopes)?;
             }
         }
-        if staged
+        if self
             .revision
             .as_ref()
             .is_none_or(|previous| newer(&transaction.revision, previous))
         {
-            staged.revision = Some(transaction.revision.clone());
+            self.revision = Some(transaction.revision.clone());
         }
-        *self = staged;
         Ok(())
     }
-    fn apply_edit(&mut self, edit: &Edit, revision: &Revision) -> Result<()> {
+    fn apply_edit(&mut self, edit: &Edit, revision: &Revision, canonical_scopes: bool) -> Result<()> {
         if let Edit::ReplaceRecords { prefix, records } = edit {
             if prefix.is_empty() {
                 return Err("Empty record namespace".into());
@@ -490,7 +515,7 @@ impl Data {
                     },
                     None => Edit::Delete { key, path: vec![] },
                 };
-                self.apply_edit(&effect, revision)?;
+                self.apply_edit(&effect, revision, canonical_scopes)?;
             }
             self.versions.retain(|encoded, previous| {
                 let (key, path): (String, Vec<Path>) =
@@ -513,8 +538,11 @@ impl Data {
             _ => unreachable!(),
         };
         let scope = (edit.key().to_owned(), path.clone());
+        let key_prefix = format!("[{},", serde_json::to_string(&scope.0).map_err(|e|e.to_string())?);
         let mut descendants = Vec::new();
         for (encoded, previous) in &self.versions {
+            // Ordinary scopes for other keys cannot affect this edit. Record namespaces can.
+            if canonical_scopes && !encoded.starts_with(&key_prefix) && !encoded.ends_with(",[{\"kind\":\"records\"}]]") { continue; }
             let (key, ancestor): (String, Vec<Path>) =
                 serde_json::from_str(encoded).map_err(|e| e.to_string())?;
             if ancestor == [Path::Records] && scope.0.starts_with(&key) {
@@ -554,6 +582,7 @@ impl Data {
             // A checkpoint contains totals and the still-relevant additive effects.
             // Retain only effects after this assignment and reapply them to its new value.
             for (encoded, additions) in &mut self.additions {
+                if canonical_scopes && !encoded.starts_with(&key_prefix) { continue; }
                 let (key, nested): (String, Vec<Path>) =
                     serde_json::from_str(encoded).map_err(|e| e.to_string())?;
                 if key != scope.0 || !nested.starts_with(path) {
@@ -591,6 +620,7 @@ impl Data {
                 restore.apply(&mut self.values)?;
             }
             self.versions.retain(|encoded, previous| {
+                if canonical_scopes && !encoded.starts_with(&key_prefix) { return true; }
                 let (key, nested): (String, Vec<Path>) =
                     serde_json::from_str(encoded).expect("validated scope");
                 key != scope.0 || !nested.starts_with(path) || newer(previous, revision)
@@ -1189,7 +1219,12 @@ pub(crate) fn serialized_digest<T: Serialize>(value: &T) -> Result<(String, u64)
         fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
     }
     let mut writer = HashWriter { hash: Sha256::new(), bytes: 0 };
-    serde_json::to_writer(&mut writer, value).map_err(|e| e.to_string())?;
+    // JSON emits many tiny writes. Buffer them without changing the canonical bytes.
+    {
+        let mut buffered = std::io::BufWriter::with_capacity(8192, &mut writer);
+        serde_json::to_writer(&mut buffered, value).map_err(|e| e.to_string())?;
+        std::io::Write::flush(&mut buffered).map_err(|e| e.to_string())?;
+    }
     Ok((format!("{:x}", writer.hash.finalize()), writer.bytes))
 }
 
@@ -1616,7 +1651,7 @@ impl SqlDataset<'_> {
             if let Some(operation) = original {
                 compaction::save_initialization(tx, operation, &source.covered,&source.data)?;
             } else {
-                let mut initialization = compaction::Initialization::from_snapshot(&source);
+                let mut initialization = compaction::Initialization::from_snapshot(&*source);
                 initialization.definition = definition;
                 compaction::save_initialization(tx, &initialization.operation(self.domain(),false).map_err(sql_error)?, &source.covered,&source.data)?;
             }

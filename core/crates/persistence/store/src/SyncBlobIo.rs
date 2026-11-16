@@ -95,8 +95,16 @@ pub(crate) fn write_json<T: Serialize>(host: &dyn RuntimeStorageHost, path: &str
     write_stream(host,path,reference,|writer|serde_json::to_writer(writer,value).map_err(|e|e.to_string()))
 }
 
+pub(crate) enum BlobFlush { All, File, None }
+
 pub(crate) fn write_stream(host:&dyn RuntimeStorageHost,path:&str,reference:&RuntimeFileSyncReference,
     write:impl FnOnce(&mut dyn Write)->Result<(),String>)->Result<(),String> {
+    write_stream_with_flush(host, path, reference, BlobFlush::All, write)
+}
+
+/// Callers using a recoverable file intent flush after restoring metadata.
+pub(crate) fn write_stream_with_flush(host:&dyn RuntimeStorageHost,path:&str,reference:&RuntimeFileSyncReference,
+    flush: BlobFlush, write:impl FnOnce(&mut dyn Write)->Result<(),String>)->Result<(),String> {
     let session=host.openWriteSession(path).map_err(|e|e.to_string())?.ok_or("Storage host cannot stream synchronization blobs")?;
     let mut writer = BufWriter::with_capacity(BUFFER_BYTES, SessionWriter { session: Some(session), hash: Sha256::new(), bytes: 0 });
     write(&mut writer)?;
@@ -105,7 +113,8 @@ pub(crate) fn write_stream(host:&dyn RuntimeStorageHost,path:&str,reference:&Run
     if writer.bytes != reference.size as u64 || format!("{:x}", writer.hash.clone().finalize()) != reference.contentHash {
         return Err("Synchronization blob changed during serialization".into());
     }
-    writer.session.take().expect("open blob writer").commit().map_err(|e|e.to_string())
+    let session = writer.session.take().expect("open blob writer");
+    (match flush { BlobFlush::All => session.commit(), BlobFlush::File => session.commitFile(), BlobFlush::None => session.commitFast() }).map_err(|e|e.to_string())
 }
 
 pub(crate) struct VerifiedReader<'a> {

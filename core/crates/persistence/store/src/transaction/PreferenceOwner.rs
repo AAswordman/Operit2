@@ -9,6 +9,7 @@ use crate::PreferencesDataStore::{
 };
 use crate::SyncOperationStore::SyncOperation;
 use std::collections::{BTreeMap, BTreeSet};
+use std::{borrow::Cow, sync::Arc};
 
 fn journal(
     store: &PreferencesDataStore,
@@ -38,16 +39,16 @@ fn data(store: &PreferencesDataStore, preferences: &Preferences) -> Result<Data,
         .collect();
     Ok(result)
 }
-fn preferences(snapshot: &Snapshot) -> Preferences {
+fn preferences(mut data: Data) -> Preferences {
     let mut result = file::emptyPreferences();
-    for (key, value) in &snapshot.data.values {
-        result.set(&stringPreferencesKey(key), value.clone());
+    for (key, value) in std::mem::take(&mut data.values) {
+        result.set(&stringPreferencesKey(&key), value);
     }
     result.set(
         &PreferencesDataStore::schemaVersionKey(),
-        snapshot.data.owner.format,
+        data.owner.format,
     );
-    result.view = Some(snapshot.data.clone());
+    result.view = Some(data);
     result
 }
 fn state(store: &PreferencesDataStore) -> Result<Option<OwnerState>, Error> {
@@ -55,7 +56,7 @@ fn state(store: &PreferencesDataStore) -> Result<Option<OwnerState>, Error> {
     if let Some(owner) = &mut owner {
         if let Some(baseline) = owner.legacy_baseline.take() {
             if !baseline.data.values.is_empty() || !baseline.covered.is_empty() || !baseline.data.deleted.is_empty() {
-                let operation = super::compaction::Initialization::from_snapshot(&baseline).operation("preferences",store.encryption.is_some()).map_err(Error::Message)?;
+                let operation = super::compaction::Initialization::from_snapshot(baseline).operation("preferences",store.encryption.is_some()).map_err(Error::Message)?;
                 journal(store)?.appendOperations(&[operation])?;
             }
             journal(store)?.withJournal(|j|j.transaction(|tx|Journal::save_owner(tx,owner)))?;
@@ -84,22 +85,23 @@ fn replay_start(store: &PreferencesDataStore, history: &[SyncOperation], format:
     snapshot.covered = initializations.iter().flat_map(|(operation, initialization)|
         initialization.covered.iter().chain(std::iter::once(&operation.opId)))
         .cloned().collect();
-    for (index, (_, initialization)) in initializations.iter().filter(|(original, _)|
-        !initializations.iter().any(|(_, other)| other.covered.contains(&original.opId))).enumerate() {
-        let mut current = initialization.snapshot(&snapshot.node, 0);
-        current.data.relocate(&store.storagePath).map_err(Error::Message)?;
-        let source = current.data.clone();
-        let mut values = preferences(&current);
+    let covered = initializations.iter().flat_map(|(_, initialization)| initialization.covered.iter())
+        .cloned().collect::<BTreeSet<_>>();
+    for (index, (_, initialization)) in initializations.into_iter()
+        .filter(|(original, _)| !covered.contains(&original.opId)).enumerate() {
+        let mut source = initialization.data;
+        source.relocate(&store.storagePath).map_err(Error::Message)?;
+        let mut values = preferences(source.clone());
         if let Some(contract) = &contract {
             values.set(&stringPreferencesKey(crate::PluginPreferenceSchema::KEY), contract.clone());
         }
         store.migratePreferencesToCurrentSchema(&mut values)?;
-        current.data = data(store,&values)?;
-        if source.owner.format != current.data.owner.format {
+        let current = data(store,&values)?;
+        if source.owner.format != current.owner.format {
             journal(store)?.withJournal(|j|j.transaction(|tx|format::save_source(tx,&source)))?;
         }
-        if index == 0 { snapshot.data = current.data; }
-        else { snapshot.data.merge(&current.data).map_err(Error::Message)?; }
+        if index == 0 { snapshot.data = current; }
+        else { snapshot.data.merge(&current).map_err(Error::Message)?; }
     }
     if let Some(contract) = contract {
         snapshot.data.values.insert(crate::PluginPreferenceSchema::KEY.into(), contract);
@@ -138,7 +140,7 @@ fn compact_local(
 pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) -> Result<(), Error> {
     let Some(commit) = values.commit.clone() else {
         if values.view.is_none() {
-            values.view = state(store)?.map(|owner| owner.current.data);
+            if let Some(owner) = state(store)? { values.setReplayContext(&owner.current.data); }
         }
         return Ok(());
     };
@@ -148,28 +150,28 @@ pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) ->
         covered: commit.covered.clone(),
         generation: commit.generation,
     };
-    current.data.aliases = commit.aliases;
-    current.data.deleted = commit.deleted;
-    current.data.revision = commit.revision;
-    current.data.versions = commit.versions;
-    current.data.additions = commit.additions;
-    let mut originals = commit.originals.clone();
+    current.data.aliases = commit.aliases.clone();
+    current.data.deleted = commit.deleted.clone();
+    current.data.revision = commit.revision.clone();
+    current.data.versions = commit.versions.clone();
+    current.data.additions = commit.additions.clone();
+    let mut originals: Cow<'_, [SyncOperation]> = Cow::Borrowed(&commit.originals);
     if commit.legacy_reset && !originals.iter().any(|op|op.operation == "initialize") {
-        originals.push(initialization(store,&current)?);
+        originals.to_mut().push(initialization(store,&current)?);
     }
     if let Err(error) = journal(store)?.appendOperations(&originals) {
         // Recover only this device's unfinished legacy import through a complete initialization.
         if !commit.completed.is_empty() || originals.is_empty() || !originals.iter().all(|op|op.originDeviceId.starts_with("~import:"))
             || !error.to_string().contains("Conflicting immutable operation") { return Err(error.into()); }
-        originals = vec![initialization(store,&current)?];
+        originals = Cow::Owned(vec![initialization(store,&current)?]);
         journal(store)?.appendOperations(&originals)?;
     }
     current.covered.extend(history_initialization_ids(&originals));
     let owner = OwnerState {
         legacy_baseline: None,
-        current: current.clone(),
         format_progress: current.data.owner.format,
         layout_progress: current.data.owner.layout,
+        current,
     };
     let mut sealed = BTreeSet::new();
     for original in originals.iter().filter(|op|op.operation == "initialize") {
@@ -187,7 +189,7 @@ pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) ->
                 Journal::retire_covered(tx,&paths,&sealed)?;
             }
             Journal::retire_ids(tx, commit.retired.iter().cloned())?;
-            compact_local(tx, &store.storagePath, owner.format_progress, &current.node, &originals)?;
+            compact_local(tx, &store.storagePath, owner.format_progress, &owner.current.node, &originals)?;
             tx.execute(
                 "INSERT OR IGNORE INTO transaction_commits(id) VALUES(?1)",
                 vec![super::text(&commit.id)],
@@ -197,10 +199,10 @@ pub(crate) fn recover(store: &PreferencesDataStore, values: &mut Preferences) ->
     })?;
     values.commit = None;
     values.legacy = None;
-    values.view = Some(current.data);
+    values.setReplayContext(&owner.current.data);
     // Failure to remove a finished intent is safe: the next open repeats the same SQL commit.
-    match commit.file {
-        Some(file) => store.writePlaintextFile(&file)?,
+    match &commit.file {
+        Some(file) => store.writePlaintextFile(file)?,
         None => store.writeStoredPreferencesUnlocked(values)?,
     }
     store.publishCommitted(values);
@@ -225,8 +227,8 @@ fn save_file(
 ) -> Result<(), Error> {
     let mut originals = originals;
     if reset { originals.push(initialization(store,&snapshot)?); }
-    values.view = Some(snapshot.data.clone());
-    values.commit = Some(FileCommit {
+    values.setReplayContext(&snapshot.data);
+    values.commit = Some(Arc::new(FileCommit {
         id: uuid::Uuid::new_v4().to_string(),
         originals,
         retired,
@@ -240,8 +242,9 @@ fn save_file(
         generation: snapshot.generation,
         legacy_reset: false,
         file,
-    });
+    }));
     values.legacy = None;
+    drop(snapshot.data.values);
     store.writeStoredPreferencesUnlocked(values)?;
     store.publishCommitted(values);
     recover(store, values)
@@ -253,7 +256,7 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
         if existing.current.data.owner.format != PreferencesDataStore::readSchemaVersion(values)? {
             let history = journal(store)?.archivedPreferenceHistory(&store.storagePath)?;
             let source = replay_start(store,&history,existing.current.data.owner.format,values)?.data;
-            let mut converted = preferences(&existing.current);
+            let mut converted = preferences(existing.current.data.clone());
             store.migratePreferencesToCurrentSchema(&mut converted)?;
             existing.current.data = data(store,&converted)?;
             existing.format_progress = existing.current.data.owner.format;
@@ -262,7 +265,7 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
                 Journal::save_owner(tx, &existing)
             }))?;
         }
-        values.view = Some(existing.current.data.clone());
+        values.setReplayContext(&existing.current.data);
         return Ok(existing);
     }
     let history = journal(store)?.archivedPreferenceHistory(&store.storagePath)?;
@@ -316,7 +319,7 @@ fn initialize(store: &PreferencesDataStore, values: &mut Preferences) -> Result<
         layout_progress: 1,
     };
     journal(store)?.withJournal(|j| j.transaction(|tx| Journal::save_owner(tx, &owner)))?;
-    if originals.is_empty() { values.view = Some(owner.current.data.clone()); }
+    if originals.is_empty() { values.setReplayContext(&owner.current.data); }
     else { save(store, values, owner.current.clone(), originals, vec![], false)?; }
     Ok(owner)
 }
@@ -362,14 +365,14 @@ pub(crate) fn move_to(
         .data
         .relocate(&destination.storagePath)
         .map_err(Error::Message)?;
-    let mut values = preferences(&current);
+    let mut values = preferences(current.data.clone());
     destination.migratePreferencesToCurrentSchema(&mut values)?;
     current.data = data(destination, &values)?;
     if let Some(mut existing) = existing {
         existing.data.merge(&current.data).map_err(Error::Message)?;
         existing.covered.extend(current.covered);
         current = existing;
-        values = preferences(&current);
+        values = preferences(current.data.clone());
     }
     current.generation = current
         .generation
@@ -412,7 +415,7 @@ fn snapshot_unlocked(store: &PreferencesDataStore) -> Result<Snapshot, Error> {
     let mut restored = false;
     if !exists {
         if let Some(owner) = state(store)? {
-            values = preferences(&owner.current);
+            values = preferences(owner.current.data);
             restored = true;
         }
     }
@@ -515,12 +518,12 @@ pub fn repair_file(store: &PreferencesDataStore, expected: &str, source: &Snapsh
             }
             values
         },
-        None => preferences(&current),
+        None => preferences(current.data.clone()),
     };
     journal(store)?.registerPreferenceOutbox(&store.storagePath, store.encryption.is_some())?;
     if unchanged {
         // Only SQL changes when the correct file already exists. No file/SQL handoff is needed.
-        values.view = Some(current.data.clone());
+        values.setReplayContext(&current.data);
         let original = initialization(store,&current)?;
         journal(store)?.appendOperations(&[original.clone()])?;
         let sealed = current.covered.clone();
@@ -569,7 +572,7 @@ where
     )
     .map_err(Error::Message)?;
     let start = replay_start(store,&history,owner.current.data.owner.format,&values)?;
-    values = preferences(&start);
+    values = preferences(start.data);
     if start.covered.iter().all(|id| !id.starts_with("~init:") || owner.current.covered.contains(id)) {
         values.setMergeAliases(owner.current.data.aliases.clone());
     }
@@ -602,13 +605,15 @@ where
         journal(store)?.completeOperations(originals)?;
         return Ok(aliases);
     }
+    let node = owner.current.node;
+    drop(owner.current.data);
     save_file(store, &mut values, current, originals.to_vec(),
         originals.iter().map(|op| op.opId.clone()).collect(), false, None, retired)?;
     // Validation already materialized this batch. Seed surviving local effects
     // here without adding any history query to the ordinary commit path.
     journal(store)?.withJournal(|j|j.transaction(|tx|
         compact_local(tx, &store.storagePath, values.view.as_ref().expect("replayed view").owner.format,
-            &owner.current.node, &uncovered)))?;
+            &node, &uncovered)))?;
     store.notifyChanged();
     Ok(aliases)
 }

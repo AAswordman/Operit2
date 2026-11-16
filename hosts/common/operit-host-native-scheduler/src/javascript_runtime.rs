@@ -631,6 +631,28 @@ mod bridge_tests {
         controller.replace(Vec::new());
     }
 
+    #[test]
+    fn shared_bootstrap_code_keeps_globals_and_host_identities_independent() {
+        let first_host = NativeHostJavaScriptRuntimeHost::new();
+        let second_host = NativeHostJavaScriptRuntimeHost::new();
+        let mut first = first_host.createHostJavaScriptRuntime().unwrap();
+        let mut second = first_host.createHostJavaScriptRuntime().unwrap();
+        let source = "globalThis.count=(globalThis.count||0)+1; globalThis.owner='shared';";
+        first.evaluateHostJavaScriptBootstrap(source).unwrap();
+        first.evaluateHostJavaScriptBootstrap(source).unwrap();
+        second.evaluateHostJavaScriptBootstrap(source).unwrap();
+        assert_eq!(first.evaluateHostJavaScriptString("first", "String(count)").unwrap(), "2");
+        assert_eq!(second.evaluateHostJavaScriptString("second", "String(count)").unwrap(), "1");
+        let mut different = second_host.createHostJavaScriptRuntime().unwrap();
+        different.evaluateHostJavaScriptBootstrap("globalThis.owner='different';").unwrap();
+        assert_eq!(different.evaluateHostJavaScriptString("other", "owner").unwrap(), "different");
+        second.evaluateHostJavaScriptBootstrap(source).unwrap();
+        assert_eq!(second.evaluateHostJavaScriptString("second", "owner+count").unwrap(), "shared2");
+        drop(first);
+        drop(different);
+        assert_eq!(second.evaluateHostJavaScriptString("survivor", "owner").unwrap(), "shared");
+    }
+
     /// Permits independent runtimes on one executor to be dropped in any order.
     #[test]
     fn runtimes_keep_isolate_entries_balanced_when_dropped_out_of_order() {

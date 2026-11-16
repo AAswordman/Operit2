@@ -210,6 +210,18 @@ impl CoreNodeBindingStore {
         })
     }
 
+    /// Observes a received Binding batch without acknowledging owner application.
+    /// The journal retains originals and pending flags; per-owner replay reuses this clock.
+    /// Invalid records remain pending so their own owner reports the validation error.
+    #[allow(non_snake_case)]
+    pub fn prepareSyncedOperations(&self, operations: &[SyncOperation]) -> Result<(), String> {
+        let operations = operations.iter()
+            .filter(|operation| validateBindingOperation(operation).is_ok())
+            .cloned()
+            .collect::<Vec<_>>();
+        self.syncOperationStore.appendOperations(&operations).map_err(|error| error.to_string())
+    }
+
     /// Applies one synchronized Binding operation without creating another local operation.
     #[allow(non_snake_case)]
     pub fn applySyncedOperation(&self, operation: &SyncOperation) -> Result<(), String> {
