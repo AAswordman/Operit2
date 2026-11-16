@@ -2,6 +2,7 @@ use super::ClaudeProvider;
 use crate::chat::llmprovider::MediaLinkBuilder::MediaLinkBuilder;
 use crate::chat::llmprovider::ProviderMediaTestSupport::{send_request, TestImage};
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
+use operit_util::ChatMarkupRegex::ChatMarkupRegex;
 use operit_util::ImagePoolManager::ImagePoolManager;
 use serde_json::{json, Value};
 
@@ -15,6 +16,21 @@ fn test_provider() -> ClaudeProvider {
         Vec::new(),
         true,
     )
+}
+
+fn non_streaming_response() -> Value {
+    json!({
+        "content": [
+            {"type": "thinking", "thinking": "check the weather first"},
+            {"type": "text", "text": "I can check the weather."},
+            {
+                "type": "tool_use",
+                "id": "toolu_weather",
+                "name": "get_weather",
+                "input": {"city": "Hangzhou", "unit": "celsius"}
+            }
+        ]
+    })
 }
 
 /// Verifies image media links become Claude base64 image blocks.
@@ -40,6 +56,38 @@ fn imageLinksBecomeClaudeImageBlocks() {
         .is_empty());
     assert_eq!(blocks[1]["text"], "look");
     ImagePoolManager::remove_image(&image_id);
+}
+
+#[test]
+fn nonStreamingResponsePreservesThinkingAndConvertsToolUse() {
+    let content = test_provider()
+        .parse_anthropic_non_streaming(&non_streaming_response());
+
+    assert!(content.contains("<think>check the weather first</think>"));
+    assert!(content.contains("I can check the weather."));
+    let tool_calls = ChatMarkupRegex::tool_call_matches(&content);
+    assert_eq!(tool_calls.len(), 1);
+    assert_eq!(tool_calls[0].name, "get_weather");
+    assert!(tool_calls[0].body.contains(r#"<param name="city">Hangzhou</param>"#));
+    assert!(tool_calls[0].body.contains(r#"<param name="unit">celsius</param>"#));
+}
+
+#[test]
+fn nonStreamingResponseDisablesToolUseWhenCapabilityIsOff() {
+    let provider = ClaudeProvider::new(
+        "http://localhost".to_string(),
+        String::new().into(),
+        "claude-test".to_string(),
+        "CLAUDE".to_string(),
+        Vec::new(),
+        false,
+    );
+    let content = provider.parse_anthropic_non_streaming(&non_streaming_response());
+
+    assert!(content.contains("<think>check the weather first</think>"));
+    assert!(content.contains("I can check the weather."));
+    assert!(ChatMarkupRegex::tool_call_matches(&content).is_empty());
+    assert!(!content.contains("get_weather"));
 }
 
 fn history_messages(history: Vec<PromptTurn>) -> Vec<Value> {
