@@ -1,7 +1,7 @@
 // ignore_for_file: file_names
 
-import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
@@ -11,7 +11,7 @@ import 'package:mime/mime.dart';
 import '../../../../core/bridge/PlatformCoreProxy.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
-import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../core/runtime/RuntimeFileBytes.dart';
 
 /// Shares immutable data-URI bytes so Flutter can reuse the same decoded image.
 /// The LRU bounds both entry count and retained source/byte memory. Mutable VFS
@@ -131,27 +131,7 @@ Future<Uint8List> readImageDisplayBytes(
 Future<Uint8List> readComposeDslVfsBytes(
   GeneratedCoreProxyClients clients,
   String path,
-) async {
-  final result = await clients.application.aiToolHandler().executeTool(
-    tool: core_proxy.CoreOperitToolsToolExecutionManagerAiTool(
-      name: 'read_file_binary',
-      parameters: [
-        core_proxy.CoreOperitToolsToolExecutionManagerToolParameter(
-          name: 'path',
-          value: path,
-        ),
-      ],
-    ),
-  );
-  if (!result.success) {
-    throw StateError('DSL VFS image $path: ${result.error}');
-  }
-  final data = result.result.value;
-  if (data is! core_proxy.BinaryFileContentData) {
-    throw StateError('DSL VFS image did not return binary file content');
-  }
-  return base64Decode(data.contentBase64);
-}
+) => readRuntimeFileBytes(clients, path);
 
 /// Gives known VFS roots precedence even when wrapped in a file URI.
 String? composeDslVfsImagePath(String source) {

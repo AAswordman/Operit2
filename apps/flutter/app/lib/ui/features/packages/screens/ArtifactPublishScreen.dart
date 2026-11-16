@@ -4,12 +4,12 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart' as crypto;
-import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../../core/runtime/RuntimeFileBytes.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
@@ -1334,7 +1334,7 @@ Future<_PublishResult> _publishArtifact({
       clients: clients,
       asset: asset,
     );
-    final localBytes = await XFile(source.sourcePath).readAsBytes();
+    final localBytes = await readRuntimeFileBytes(clients, source.sourcePath);
     final remoteSha256 = crypto.sha256.convert(remoteBytes).toString();
     if (remoteSha256 != crypto.sha256.convert(localBytes).toString()) {
       throw StateError('所选 GitHub Release 资产与本地插件文件不一致。');
