@@ -1,5 +1,5 @@
 use operit_vfs::VisualFileSystem::VisualFileSystem;
-use operit_store::ExtensionStore::ExtensionStore;
+use operit_store::ExtensionStore::{ExtensionStore, SKILL_IMPORT_TEMP_PREFIX};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
@@ -55,6 +55,7 @@ impl SkillManager {
         let mut errors = BTreeMap::new();
         let store = ExtensionStore::default();
         let scanned = (|| -> Result<(), String> {
+            store.recoverFailedSkillImports()?;
             let selection = store.selection("skill")?;
             let owners = selection
                 .records
@@ -70,7 +71,11 @@ impl SkillManager {
                     .filesystem
                     .listFiles(&path)?
                     .into_iter()
-                    .filter(|child| child.isDirectory && acceptsSource(&child.name))
+                    .filter(|child| {
+                        child.isDirectory
+                            && !child.name.starts_with(SKILL_IMPORT_TEMP_PREFIX)
+                            && acceptsSource(&child.name)
+                    })
                 {
                     let parsed = (|| -> Result<Option<SkillPackage>, String> {
                         let skill = self.readSkillDirectory(&directory.join(&child.name))?;
@@ -486,7 +491,11 @@ impl SkillManager {
             return format!("Cannot access skills directory: {}", error);
         }
 
-        let tmpDir = skillsRoot.join(format!(".import_tmp_{}", currentTimeMillis()));
+        // Keep incomplete packages outside the installed skills tree, even during catalog refreshes.
+        let Some(stagingRoot) = skillsRoot.parent() else {
+            return "Invalid skills directory".to_string();
+        };
+        let tmpDir = stagingRoot.join(format!("{SKILL_IMPORT_TEMP_PREFIX}{}", uuid::Uuid::new_v4()));
         if let Err(error) = self.filesystem.makeDirectory(&hostPath(&tmpDir), true) {
             return format!(
                 "Failed to create temporary import directory {}: {}",
@@ -550,7 +559,12 @@ impl SkillManager {
             };
         }
 
-        let installedNames = self.getAvailableSkills().into_keys().collect::<BTreeSet<_>>();
+        let mut installedNames = self.getAvailableSkills().into_keys().collect::<BTreeSet<_>>();
+        // A registered but unloadable installation still owns its identity.
+        match ExtensionStore::default().activeRecords("skill") {
+            Ok(records) => installedNames.extend(records.into_iter().map(|record| record.id)),
+            Err(error) => return format!("Failed to import skill: {error}"),
+        }
         let mut imported = Vec::new();
         let mut failed = Vec::new();
         let singleSkill = skillMdCandidates.len() == 1;
@@ -627,7 +641,10 @@ impl SkillManager {
                 "Skill already exists in an installation location: {finalDirName}"
             ));
         }
-        if finalDirName.contains(['/', '\\']) || Path::new(&finalDirName).components().count() != 1 {
+        if finalDirName.starts_with(SKILL_IMPORT_TEMP_PREFIX)
+            || finalDirName.contains(['/', '\\'])
+            || Path::new(&finalDirName).components().count() != 1
+        {
             return Err(format!("Invalid skill name: {finalDirName}"));
         }
         let finalDir = safeChildPath(skillsRoot, &finalDirName)?;
@@ -639,13 +656,22 @@ impl SkillManager {
         if finalDirInfo.exists {
             return Err(format!("Skill '{}' already exists", finalDirName));
         }
-        if let Err(error) =
-            self.filesystem
-                .copyFile(&hostPath(selectedSkillDir), &finalDirPath, true)
-        {
-            return Err(format!("Failed to import skill: {}", error));
+        self.filesystem
+            .moveFile(&hostPath(selectedSkillDir), &finalDirPath)
+            .map_err(|error| format!("Failed to import skill: {error}"))?;
+        if let Err(error) = ExtensionStore::default().registerDevice(
+            "skill",
+            &finalDirName,
+            &finalDirName,
+            serde_json::json!({"visible": true}),
+        ) {
+            self.filesystem.deleteFile(&finalDirPath, true).map_err(|rollback| {
+                format!("Failed to import skill: {error}; failed to remove incomplete installation: {rollback}")
+            })?;
+            return Err(format!("Failed to import skill: {error}"));
         }
 
+        operit_store::ExtensionStore::notifyCatalogChanged();
         Ok(if metaDesc.trim().is_empty() {
             format!("Imported skill: {}", finalDirName)
         } else {
@@ -782,11 +808,6 @@ fn walkDirectory(
             output.push('\n');
         }
     }
-}
-
-#[allow(non_snake_case)]
-fn currentTimeMillis() -> u128 {
-    operit_host_api::TimeUtils::currentTimeMillisU128()
 }
 
 #[allow(non_snake_case)]

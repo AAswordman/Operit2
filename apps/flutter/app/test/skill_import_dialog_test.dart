@@ -35,17 +35,61 @@ void main() {
     expect(bridge.scopedSkills, {'alpha': 'space'});
   });
 
+  testWidgets('copied skill reports its load error without the description', (
+    tester,
+  ) async {
+    final bridge = _SkillImportBridge([])
+      ..message = 'Imported skill: neat-freak - A very long skill description'
+      ..loadErrors = {
+        'neat-freak': 'Skill content does not match its registered location',
+      };
+    final result = await _importZip(tester, bridge);
+
+    expect(result, isNull);
+    expect(bridge.scopedSkills, isEmpty);
+    expect(find.byType(SkillImportDialog), findsOneWidget);
+    expect(
+      find.textContaining(
+        'Skill content does not match its registered location',
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('A very long skill description'), findsNothing);
+    expect(find.textContaining('Bad state:'), findsNothing);
+  });
+
+  testWidgets(
+    'success report without a loaded skill stays open with a short error',
+    (tester) async {
+      final bridge = _SkillImportBridge(
+        [],
+      )..message = 'Imported skill: neat-freak - A very long skill description';
+      final result = await _importZip(tester, bridge);
+
+      expect(result, isNull);
+      expect(bridge.scopedSkills, isEmpty);
+      expect(find.byType(SkillImportDialog), findsOneWidget);
+      expect(find.textContaining('技能文件已导入，但未能加载'), findsOneWidget);
+      expect(
+        find.textContaining('A very long skill description'),
+        findsNothing,
+      );
+    },
+  );
+
   testWidgets('a ZIP with no imported skills stays open and shows the error', (
     tester,
   ) async {
     final bridge = _SkillImportBridge([])
-      ..message = 'No SKILL.md found in the imported zip';
+      ..message = 'No SKILL.md found in the imported zip'
+      ..loadErrors = {'unrelated': 'An existing skill is broken'};
     final result = await _importZip(tester, bridge);
 
     expect(result, isNull);
     expect(bridge.scopedSkills, isEmpty);
     expect(find.byType(SkillImportDialog), findsOneWidget);
     expect(find.textContaining(bridge.message), findsOneWidget);
+    expect(find.textContaining('An existing skill is broken'), findsNothing);
   });
 }
 
@@ -105,6 +149,7 @@ class _SkillImportBridge extends OperitRuntimeBridge {
   final Map<String, String> scopedSkills = {};
   bool imported = false;
   String message = 'Imported 2 skills; failed: 0';
+  Map<String, String> loadErrors = {};
 
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
@@ -121,6 +166,8 @@ class _SkillImportBridge extends OperitRuntimeBridge {
                   '/operitapp/data/extensions/device/skills/$id/SKILL.md',
             ).toJson(),
         };
+      case 'getSkillLoadErrors':
+        result = loadErrors;
       case 'importSkillFromZip':
         expect((request.args as Map)['zipFile'], '/tmp/skills.zip');
         imported = true;

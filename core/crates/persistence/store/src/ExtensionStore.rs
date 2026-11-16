@@ -31,6 +31,9 @@ pub fn notifyCatalogChanged() {
 
 pub const SPACE_EXTENSION_RECORDS: &str = "runtime/extensions/space/records";
 
+/// Reserved staging names used by skill archive imports, including older releases.
+pub const SKILL_IMPORT_TEMP_PREFIX: &str = ".import_tmp_";
+
 /// Defines the installation precedence shared by every extension loader.
 pub const EXTENSION_LOAD_SCOPES: [&str; 2] = ["space", "device"];
 
@@ -323,6 +326,42 @@ impl ExtensionStore {
     /// Returns the same effective owners used by direct identity lookups.
     pub fn activeRecords(&self, kind: &str) -> Result<Vec<ExtensionRecord>, String> {
         Ok(self.selection(kind)?.records)
+    }
+
+    /// Repairs legacy imports registered against a temporary directory that no longer exists.
+    /// Keeps copied skill content and its settings; removes only orphaned local metadata.
+    pub fn recoverFailedSkillImports(&self) -> Result<(), String> {
+        let root = Self::root("skill", "device")?;
+        for mut record in self.records("skill")? {
+            if record.scope != "device"
+                || !record
+                    .sourceName
+                    .strip_prefix(SKILL_IMPORT_TEMP_PREFIX)
+                    .is_some_and(|suffix| {
+                        !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+                    })
+                || self
+                    .storage
+                    .exists(&format!("{root}/{}", record.sourceName))
+                    .map_err(|e| e.to_string())?
+            {
+                continue;
+            }
+            if validateSegment(&record.id).is_ok()
+                && !record.id.starts_with(SKILL_IMPORT_TEMP_PREFIX)
+                && self
+                    .storage
+                    .exists(&format!("{root}/{}", record.id))
+                    .map_err(|e| e.to_string())?
+            {
+                record.sourceName = record.id.clone();
+                self.write(&record)?;
+            } else {
+                self.removeRecordMetadata(&record)?;
+            }
+            notifyCatalogChanged();
+        }
+        Ok(())
     }
 
     /// Reads and upgrades one descriptor through the same validation used by full scans.
