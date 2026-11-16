@@ -562,6 +562,98 @@ fn character_preferences_request() -> operit_plugin_sdk::javascript::JsToolPkgIp
     }
 }
 
+/// Creates a canonical registry whose startup has been scheduled but has not published a catalog.
+fn public_api_startup_fixture() -> (
+    LocalCoreProxy,
+    Arc<Mutex<operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager>>,
+) {
+    let storage = register_test_runtime_roots();
+    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+    hosts.runtimeStorageHost = Some(storage.clone());
+    hosts.runtimeSqliteHost = Some(storage);
+    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+    configure_package_hosts(&mut hosts);
+    let app = OperitApplication::newWithContext(hosts);
+    let packages = app.packageManager();
+    assert!(packages.lock().unwrap().claimInitialPackageRegistryLoad().unwrap());
+    (LocalCoreProxy::new(app), packages)
+}
+
+/// Covers the discovery and invocation requests issued by chat UI during startup.
+fn public_api_startup_requests() -> Vec<CoreCallRequest> {
+    let package = "com.operit.character_cards";
+    let invocation = json!({
+        "packageName": package, "methodName": "chat.sidebar.prepare", "payload": {"chats": []},
+    });
+    let mut timed = invocation.clone();
+    timed["timeoutMillis"] = json!(10_000);
+    vec![
+        package_request("getToolPkgPublicApiOwners", json!({"apiName": "chat.sidebar.prepare"})),
+        package_request("getToolPkgPublicApis", json!({"packageName": package})),
+        package_request("invokeToolPkgPublicApi", invocation),
+        package_request("invokeToolPkgPublicApiWithTimeoutMillis", timed),
+    ]
+}
+
+/// Chat discovery and invocation wait without holding proxy locks, then read the newly published catalog.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_api_startup_waits_for_canonical_publication() {
+    use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
+    let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    let (proxy, packages) = public_api_startup_fixture();
+    let mut pending = public_api_startup_requests().into_iter()
+        .map(|request| Box::pin(CoreLinkSharedClient::call(&proxy, request)))
+        .collect::<Vec<_>>();
+    for call in &mut pending {
+        assert!(tokio::time::timeout(Duration::from_millis(20), call).await.is_err(),
+            "chat API calls must wait while startup is scheduled");
+    }
+    assert!(packages.try_lock().is_ok(), "startup must retain access to the canonical registry");
+    let app_target = LocalCoreProxy::generatedTargetForSchema("application").unwrap();
+    assert!(tokio::time::timeout(Duration::from_secs(2), CoreLinkSharedClient::call(
+        &proxy, CoreCallRequest::new("startup-version", app_target, "coreVersion", toCoreValue(json!({})).unwrap()),
+    )).await.expect("waiting chat calls must release the application lock").result.is_ok());
+
+    let readiness = packages.lock().unwrap().packageRegistryReadiness();
+    readiness.begin_scan();
+    for call in &mut pending {
+        assert!(tokio::time::timeout(Duration::from_millis(20), call).await.is_err(),
+            "chat API calls must wait until the scan publishes its catalog");
+    }
+    RuntimePackageManager::reloadRegistry(packages.clone()).await.unwrap();
+    for (index, call) in pending.into_iter().enumerate() {
+        let response = tokio::time::timeout(Duration::from_secs(10), call).await.unwrap();
+        let value: Value = fromCoreValue(response.result.unwrap()).unwrap();
+        match index {
+            0 => assert!(value.as_array().unwrap().iter().any(|owner|
+                owner["containerPackageName"] == "com.operit.character_cards"
+                    && owner["apiName"] == "chat.sidebar.prepare")),
+            1 => assert!(value.as_array().unwrap().iter().any(|name| name == "chat.sidebar.prepare")),
+            _ => assert_eq!(value["entries"][0]["entryId"], "sidebar-characters"),
+        }
+    }
+}
+
+/// A real startup failure reaches all pending chat API requests with its original error.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn public_api_startup_propagates_failure_to_waiters() {
+    let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
+    let (proxy, packages) = public_api_startup_fixture();
+    let mut pending = public_api_startup_requests().into_iter()
+        .map(|request| Box::pin(CoreLinkSharedClient::call(&proxy, request)))
+        .collect::<Vec<_>>();
+    for call in &mut pending {
+        assert!(tokio::time::timeout(Duration::from_millis(20), call).await.is_err());
+    }
+    packages.lock().unwrap().failPackageRegistryLoad("original registry startup failure".into());
+    for call in pending {
+        let response = tokio::time::timeout(Duration::from_secs(2), call).await.unwrap();
+        assert_eq!(response.result.unwrap_err().message, "original registry startup failure");
+    }
+}
+
 /// Preserves a running plugin across canonical installation-setting changes and rescans.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_api_and_ipc_preserve_the_engine_after_installation_settings_change() {

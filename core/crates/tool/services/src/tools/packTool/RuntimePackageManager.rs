@@ -484,32 +484,46 @@ impl RuntimePackageManager {
         Ok(captured)
     }
 
-    /// Finds exact registerApi owners from the ready catalog without invoking their handlers or building domain UI inputs.
+    /// Waits for startup before finding exact registerApi owners in the canonical catalog.
     #[allow(non_snake_case)]
     pub fn getToolPkgPublicApiOwners(
         &self,
         apiName: &str,
-    ) -> Result<Vec<ToolPkgPublicApiOwner>, String> {
-        self.packageRegistryReadiness.require_ready()?;
-        let registered = self.toolPkgManager().getToolPkgContainerRuntimes();
-        let enabled = self.getEnabledToolPkgContainerRuntimes();
-        discover_public_api_owners(apiName, &registered, &enabled)
+    ) -> impl Future<Output = Result<Vec<ToolPkgPublicApiOwner>, String>> + 'static {
+        let manager = self.toolHandler.getOrCreatePackageManager();
+        let apiName = apiName.to_string();
+        async move {
+            Self::withReady(manager, |manager| {
+                let registered = manager.toolPkgManager().getToolPkgContainerRuntimes();
+                let enabled = manager.getEnabledToolPkgContainerRuntimes();
+                discover_public_api_owners(&apiName, &registered, &enabled)
+            }).await
+        }
     }
 
-    /// Lists only methods actually published by one enabled ToolPkg in this ready snapshot.
+    /// Waits for startup before listing methods published by one enabled ToolPkg.
     #[allow(non_snake_case)]
-    pub fn getToolPkgPublicApis(&self, packageName: &str) -> Result<Vec<String>, String> {
-        let runtime = self.requireToolPkgPublicApiRuntime(packageName)?;
-        let mut names = BTreeSet::new();
-        for declaration in runtime.publicApis {
-            if !names.insert(declaration.id.clone()) {
-                return Err(format!(
-                    "Duplicate public API: {}/{}",
-                    runtime.packageName, declaration.id
-                ));
-            }
+    pub fn getToolPkgPublicApis(
+        &self,
+        packageName: &str,
+    ) -> impl Future<Output = Result<Vec<String>, String>> + 'static {
+        let manager = self.toolHandler.getOrCreatePackageManager();
+        let packageName = packageName.to_string();
+        async move {
+            Self::withReady(manager, |manager| {
+                let runtime = manager.requireToolPkgPublicApiRuntime(&packageName)?;
+                let mut names = BTreeSet::new();
+                for declaration in runtime.publicApis {
+                    if !names.insert(declaration.id.clone()) {
+                        return Err(format!(
+                            "Duplicate public API: {}/{}",
+                            runtime.packageName, declaration.id
+                        ));
+                    }
+                }
+                Ok(names.into_iter().collect())
+            }).await
         }
-        Ok(names.into_iter().collect())
     }
 
     /// Calls one registerApi export in its owning main runtime without dispatching an AI tool.
@@ -535,6 +549,7 @@ impl RuntimePackageManager {
         self.invokeToolPkgPublicApiWithDeadline(packageName, methodName, payload, Some(timeoutMillis))
     }
 
+    /// Waits outside the registry lock before preparing an invocation from its published owner.
     #[allow(non_snake_case)]
     fn invokeToolPkgPublicApiWithDeadline(
         &self,
@@ -544,6 +559,29 @@ impl RuntimePackageManager {
         timeoutMillis: Option<u64>,
     ) -> impl Future<Output = Result<serde_json::Value, String>> + 'static {
         let startedAt = currentTimeMillis();
+        let manager = self.toolHandler.getOrCreatePackageManager();
+        let packageName = packageName.to_string();
+        let methodName = methodName.to_string();
+        async move {
+            let pending = Self::withReady(manager, |manager| {
+                Ok(manager.prepareToolPkgPublicApiInvocation(
+                    &packageName, &methodName, payload, timeoutMillis, startedAt,
+                ))
+            }).await?;
+            pending.await
+        }
+    }
+
+    /// Captures one enabled publication after startup and executes it outside the registry lock.
+    #[allow(non_snake_case)]
+    fn prepareToolPkgPublicApiInvocation(
+        &self,
+        packageName: &str,
+        methodName: &str,
+        payload: serde_json::Value,
+        timeoutMillis: Option<u64>,
+        startedAt: i64,
+    ) -> impl Future<Output = Result<serde_json::Value, String>> + 'static {
         let manager = self.toolPkgManager().clone();
         let reader = self.resourceReader();
         let apiName = format!("{packageName}/{methodName}");
