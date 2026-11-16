@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../../l10n/generated/app_localizations.dart';
 import '../WorkspaceTabModels.dart';
+import 'WorkspaceExternalOpenAction.dart';
 
 class WorkspaceOpenOnlyPreview extends StatelessWidget {
   const WorkspaceOpenOnlyPreview({
@@ -79,12 +80,22 @@ class WorkspaceOpenOnlyPreviewBody extends StatelessWidget {
             ),
             if (filePath != null) ...<Widget>[
               const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: () {
-                  onOpenWorkspaceFile(filePath);
-                },
-                icon: const Icon(Icons.open_in_new),
-                label: Text(l10n.openFile),
+              WorkspaceExternalOpenAction(
+                identity: (tab.identityToken, filePath, tab.absolutePath),
+                builder: (context, opening, run) => FilledButton.icon(
+                  onPressed: opening
+                      ? null
+                      : () => run(() => onOpenWorkspaceFile(filePath)),
+                  icon: opening
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.open_in_new),
+                  label: Text(
+                    opening ? l10n.workspaceFileOpening : l10n.openFile,
+                  ),
+                ),
               ),
             ],
           ],

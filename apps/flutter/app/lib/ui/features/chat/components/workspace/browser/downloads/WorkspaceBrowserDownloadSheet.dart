@@ -1,8 +1,10 @@
 // ignore_for_file: file_names
 
+import 'package:flutter/foundation.dart' show AsyncCallback;
 import 'package:flutter/material.dart';
 
 import '../../../../../../../l10n/generated/app_localizations.dart';
+import '../../file_preview/WorkspaceExternalOpenAction.dart';
 import '../chrome/WorkspaceBrowserPopupWidgets.dart';
 import 'WorkspaceBrowserDownloadStore.dart';
 
@@ -98,20 +100,29 @@ class _WorkspaceBrowserDownloadSheetState
               )
             else
               for (final item in items)
-                _DownloadRow(
-                  l10n: l10n,
-                  item: item,
-                  onOpen: item.savedPath == null
-                      ? null
-                      : () => widget.onOpenWorkspaceFile(item.savedPath!),
-                  onOpenLocation: item.savedPath == null
-                      ? null
-                      : () => widget.onOpenWorkspaceFile('downloads'),
-                  onPause: () => widget.store.pause(item),
-                  onResume: () => widget.store.resume(item),
-                  onCancel: () => widget.store.cancel(item),
-                  onRetry: () => widget.store.retry(item),
-                  onRemove: () => widget.store.remove(item.url),
+                WorkspaceExternalOpenAction(
+                  key: ValueKey(item.url),
+                  identity: (widget.store, item.url, item.savedPath),
+                  builder: (context, opening, run) => _DownloadRow(
+                    l10n: l10n,
+                    item: item,
+                    opening: opening,
+                    onOpen: opening || item.savedPath == null
+                        ? null
+                        : () => run(
+                            () => widget.onOpenWorkspaceFile(item.savedPath!),
+                          ),
+                    onOpenLocation: opening || item.savedPath == null
+                        ? null
+                        : () => run(
+                            () => widget.onOpenWorkspaceFile('downloads'),
+                          ),
+                    onPause: () => widget.store.pause(item),
+                    onResume: () => widget.store.resume(item),
+                    onCancel: () => widget.store.cancel(item),
+                    onRetry: () => widget.store.retry(item),
+                    onRemove: () => widget.store.remove(item.url),
+                  ),
                 ),
           ],
         );
@@ -153,6 +164,7 @@ class _DownloadRow extends StatelessWidget {
   const _DownloadRow({
     required this.l10n,
     required this.item,
+    required this.opening,
     required this.onOpen,
     required this.onOpenLocation,
     required this.onPause,
@@ -164,8 +176,9 @@ class _DownloadRow extends StatelessWidget {
 
   final AppLocalizations l10n;
   final WorkspaceBrowserDownloadItem item;
-  final VoidCallback? onOpen;
-  final VoidCallback? onOpenLocation;
+  final bool opening;
+  final AsyncCallback? onOpen;
+  final AsyncCallback? onOpenLocation;
   final VoidCallback onPause;
   final VoidCallback onResume;
   final VoidCallback onCancel;
@@ -182,7 +195,9 @@ class _DownloadRow extends StatelessWidget {
           icon: Icons.download_outlined,
           iconColor: _stateColor(theme, item),
           title: item.fileName,
-          subtitle: _detailText(l10n, item),
+          subtitle: opening
+              ? l10n.workspaceFileOpening
+              : _detailText(l10n, item),
           detail: item.savedPath,
           highlighted: item.state == WorkspaceBrowserDownloadState.running,
           trailing: _DownloadMenu(
@@ -197,10 +212,12 @@ class _DownloadRow extends StatelessWidget {
             onRemove: onRemove,
           ),
         ),
-        if (item.state == WorkspaceBrowserDownloadState.running)
+        if (opening || item.state == WorkspaceBrowserDownloadState.running)
           Padding(
             padding: const EdgeInsets.fromLTRB(40, 0, 12, 4),
-            child: LinearProgressIndicator(value: item.progress / 100),
+            child: LinearProgressIndicator(
+              value: opening ? null : item.progress / 100,
+            ),
           ),
       ],
     );
@@ -222,8 +239,8 @@ class _DownloadMenu extends StatelessWidget {
 
   final AppLocalizations l10n;
   final WorkspaceBrowserDownloadItem item;
-  final VoidCallback? onOpen;
-  final VoidCallback? onOpenLocation;
+  final AsyncCallback? onOpen;
+  final AsyncCallback? onOpenLocation;
   final VoidCallback onPause;
   final VoidCallback onResume;
   final VoidCallback onCancel;
@@ -238,12 +255,12 @@ class _DownloadMenu extends StatelessWidget {
       padding: EdgeInsets.zero,
       style: const ButtonStyle(tapTargetSize: MaterialTapTargetSize.shrinkWrap),
       constraints: const BoxConstraints.tightFor(width: 30, height: 30),
-      onSelected: (action) {
+      onSelected: (action) async {
         switch (action) {
           case _DownloadAction.open:
-            onOpen?.call();
+            await onOpen?.call();
           case _DownloadAction.location:
-            onOpenLocation?.call();
+            await onOpenLocation?.call();
           case _DownloadAction.pause:
             onPause();
           case _DownloadAction.resume:
@@ -260,11 +277,13 @@ class _DownloadMenu extends StatelessWidget {
         if (item.state == WorkspaceBrowserDownloadState.completed)
           PopupMenuItem(
             value: _DownloadAction.open,
+            enabled: onOpen != null,
             child: Text(l10n.openFile),
           ),
         if (item.state == WorkspaceBrowserDownloadState.completed)
           PopupMenuItem(
             value: _DownloadAction.location,
+            enabled: onOpenLocation != null,
             child: Text(l10n.openLocation),
           ),
         if (item.state == WorkspaceBrowserDownloadState.running)

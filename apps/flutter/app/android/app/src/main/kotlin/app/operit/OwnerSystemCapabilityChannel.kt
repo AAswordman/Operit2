@@ -25,6 +25,7 @@ import android.media.projection.MediaProjection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.SystemClock
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -284,48 +285,74 @@ class OwnerSystemCapabilityChannel(
             result.error("INVALID_ARGS", "ownerSystemOperation expects a map", null)
             return
         }
-        runtimeHost.runBackground {
-            try {
-                val operation =
-                    payload["operation"] as? String
-                        ?: throw IllegalArgumentException("system operation is required")
-                val paramsJson =
-                    payload["paramsJson"] as? String
-                        ?: throw IllegalArgumentException("system operation paramsJson is required")
-                val response =
-                    when (operation) {
-                        "ui_automation" -> mapOf("resultJson" to uiAutomation.execute(JSONObject(paramsJson)).toString())
-                        "send_notification" -> systemSendNotification(JSONObject(paramsJson))
-                        "get_device_location" -> mapOf(
-                            "resultJson" to JSONObject(locationReader.read(JSONObject(paramsJson))).toString(),
-                        )
-                        "get_notifications" -> {
-                            val params = JSONObject(paramsJson)
-                            mapOf("resultJson" to JSONObject(OperitNotificationListener.read(
-                                activity, params.getInt("limit"), params.getBoolean("includeOngoing"),
-                            )).toString())
+        val filePresentation = payload["operation"] == "android_file_presentation"
+        val requestId = (payload["requestId"] as? String)
+            ?.takeIf { Regex("[A-Za-z0-9_.:-]{1,128}").matches(it) } ?: "unknown"
+        val queuedAt = SystemClock.elapsedRealtime()
+        fun traceFilePresentation(phase: String, failureType: String? = null) {
+            if (!filePresentation) return
+            Log.i("WorkspaceFileOpen", "requestId=$requestId phase=$phase " +
+                "elapsedMs=${SystemClock.elapsedRealtime() - queuedAt} thread=${Thread.currentThread().name}" +
+                (failureType?.let { " failureType=$it" } ?: ""))
+        }
+        traceFilePresentation("owner_queued")
+        try {
+            runtimeHost.runBackground {
+                traceFilePresentation("owner_started")
+                try {
+                    val operation =
+                        payload["operation"] as? String
+                            ?: throw IllegalArgumentException("system operation is required")
+                    val paramsJson =
+                        payload["paramsJson"] as? String
+                            ?: throw IllegalArgumentException("system operation paramsJson is required")
+                    val response =
+                        when (operation) {
+                            "ui_automation" -> mapOf("resultJson" to uiAutomation.execute(JSONObject(paramsJson)).toString())
+                            "send_notification" -> systemSendNotification(JSONObject(paramsJson))
+                            "get_device_location" -> mapOf(
+                                "resultJson" to JSONObject(locationReader.read(JSONObject(paramsJson))).toString(),
+                            )
+                            "get_notifications" -> {
+                                val params = JSONObject(paramsJson)
+                                mapOf("resultJson" to JSONObject(OperitNotificationListener.read(
+                                    activity, params.getInt("limit"), params.getBoolean("includeOngoing"),
+                                )).toString())
+                            }
+                            "get_device_info" -> mapOf(
+                                "resultJson" to AndroidHostDeviceInfo.read(activity.applicationContext),
+                            )
+                            "get_system_setting" -> systemGetSystemSetting(JSONObject(paramsJson))
+                            "modify_system_setting" -> systemModifySystemSetting(JSONObject(paramsJson))
+                            "android_file_presentation" -> {
+                                val response = AndroidFileOpener.withPresentationTrace(requestId) {
+                                    JSONObject(runtimeHost.fileSystemResourceOperation(paramsJson))
+                                }
+                                check(response.getBoolean("ok")) { response.optString("error", "File presentation failed") }
+                                mapOf("resultJson" to JSONObject().put("success", true).toString())
+                            }
+                            "application_update_base", "install_app", "uninstall_app", "list_installed_apps", "start_app", "stop_app", "get_app_usage_time" ->
+                                mapOf("resultJson" to packageOperations.execute(operation, JSONObject(paramsJson)).toString())
+                            "execute_privileged_command" -> systemExecutePrivilegedCommand(JSONObject(paramsJson))
+                            else -> throw IllegalArgumentException("unsupported system operation: $operation")
                         }
-                        "get_device_info" -> mapOf(
-                            "resultJson" to AndroidHostDeviceInfo.read(activity.applicationContext),
-                        )
-                        "get_system_setting" -> systemGetSystemSetting(JSONObject(paramsJson))
-                        "modify_system_setting" -> systemModifySystemSetting(JSONObject(paramsJson))
-                        "android_file_presentation" -> {
-                            val response = JSONObject(runtimeHost.fileSystemResourceOperation(paramsJson))
-                            check(response.getBoolean("ok")) { response.optString("error", "File presentation failed") }
-                            mapOf("resultJson" to JSONObject().put("success", true).toString())
-                        }
-                        "application_update_base", "install_app", "uninstall_app", "list_installed_apps", "start_app", "stop_app", "get_app_usage_time" ->
-                            mapOf("resultJson" to packageOperations.execute(operation, JSONObject(paramsJson)).toString())
-                        "execute_privileged_command" -> systemExecutePrivilegedCommand(JSONObject(paramsJson))
-                        else -> throw IllegalArgumentException("unsupported system operation: $operation")
+                    traceFilePresentation("owner_finished")
+                    activity.runOnUiThread {
+                        traceFilePresentation("owner_responding")
+                        result.success(response)
                     }
-                activity.runOnUiThread { result.success(response) }
-            } catch (error: Throwable) {
-                activity.runOnUiThread {
-                    result.error("OWNER_SYSTEM_OPERATION_ERROR", error.message, null)
+                } catch (error: Throwable) {
+                    traceFilePresentation("owner_failed", error.javaClass.simpleName)
+                    activity.runOnUiThread {
+                        traceFilePresentation("owner_responding_error")
+                        result.error("OWNER_SYSTEM_OPERATION_ERROR", error.message, null)
+                    }
                 }
             }
+        } catch (error: Throwable) {
+            if (!filePresentation) throw error
+            traceFilePresentation("owner_schedule_failed", error.javaClass.simpleName)
+            result.error("OWNER_SYSTEM_OPERATION_ERROR", "File presentation could not be scheduled", null)
         }
     }
 

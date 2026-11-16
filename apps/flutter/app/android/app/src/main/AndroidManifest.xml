@@ -146,6 +146,12 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/open_file_paths" />
         </provider>
+        <!-- Individual opaque workspace-file grants; no filesystem root is exposed. -->
+        <provider
+            android:name=".WorkspaceOpenFileProvider"
+            android:authorities="${applicationId}.workspaceopenfiles"
+            android:exported="false"
+            android:grantUriPermissions="true" />
         <provider
             android:name="rikka.shizuku.ShizukuProvider"
             android:authorities="${applicationId}.shizuku"
