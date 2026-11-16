@@ -211,7 +211,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   Timer? _refresh;
   bool _busy = false;
   bool _scanning = false;
-  String? _error;
+  Object? _error;
   String? _discoveryError;
   List<generated.DiscoveredPeer> _peers = [];
 
@@ -358,7 +358,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
           stackTrace: stackTrace,
         );
       }
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted) setState(() => _error = error);
     } finally {
       _setBusy(false);
     }
@@ -579,7 +579,7 @@ class _AddDeviceDialogState extends State<_AddDeviceDialog> {
   }
 
   /// Keeps discovery errors readable inside the scrollable device content.
-  Widget _buildError(BuildContext context, String error) {
+  Widget _buildError(BuildContext context, Object error) {
     final colors = Theme.of(context).colorScheme;
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
@@ -788,7 +788,7 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
   generated.PeerTransport? _transport;
   generated.PendingPairing? _pairing;
   bool _busy = false;
-  String? _error;
+  Object? _error;
 
   /// Releases all dialog-owned text controllers.
   @override
@@ -820,7 +820,7 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error.toString());
+        setState(() => _error = error);
       }
     } finally {
       if (mounted) {
@@ -858,7 +858,7 @@ class _RemotePairDialogState extends State<_RemotePairDialog> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error.toString());
+        setState(() => _error = error);
       }
     } finally {
       if (mounted) {
@@ -975,7 +975,7 @@ class _RemotePairCodeDialog extends StatefulWidget {
 class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
   final TextEditingController _codeController = TextEditingController();
   bool _busy = false;
-  String? _error;
+  Object? _error;
 
   /// Releases the one-time pairing code controller.
   @override
@@ -1009,7 +1009,7 @@ class _RemotePairCodeDialogState extends State<_RemotePairCodeDialog> {
       }
     } catch (error) {
       if (mounted) {
-        setState(() => _error = error.toString());
+        setState(() => _error = error);
       }
     } finally {
       if (mounted) {

@@ -48,7 +48,8 @@ class PeerQrCodeDialog extends StatefulWidget {
 class _PeerQrCodeDialogState extends State<PeerQrCodeDialog> {
   late PeerQrMode _mode = widget.initialMode;
   final _paste = TextEditingController();
-  String? _ownCode, _candidateCode, _error, _lastScan;
+  String? _ownCode, _candidateCode, _lastScan;
+  Object? _error;
   generated.PeerConnectionInfo? _candidate;
   bool _busy = false, _copied = false;
   int _generation = 0;
@@ -96,7 +97,7 @@ class _PeerQrCodeDialogState extends State<PeerQrCodeDialog> {
       if (mounted && generation == _generation) setState(() => _ownCode = code);
     } catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _error = error.toString());
+        setState(() => _error = error);
       }
     } finally {
       if (mounted && generation == _generation) setState(() => _busy = false);
@@ -127,7 +128,7 @@ class _PeerQrCodeDialogState extends State<PeerQrCodeDialog> {
       }
     } catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _error = error.toString());
+        setState(() => _error = error);
       }
     } finally {
       if (mounted && generation == _generation) setState(() => _busy = false);
@@ -166,7 +167,7 @@ class _PeerQrCodeDialogState extends State<PeerQrCodeDialog> {
       if (value == null) throw FormatException(l10n.peerQrImageInvalid);
     } catch (error) {
       if (mounted && generation == _generation) {
-        setState(() => _error = error.toString());
+        setState(() => _error = error);
       }
     } finally {
       if (mounted && generation == _generation) setState(() => _busy = false);

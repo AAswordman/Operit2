@@ -157,6 +157,10 @@ class CoreLinkError implements Exception {
   /// Reports whether the route was rejected because its target lacks a capability.
   bool get isRoutePermissionDenied => code == 'ROUTE_PERMISSION_DENIED';
 
+  /// Reports whether pairing or peer connection establishment timed out.
+  bool get isPairingTimeout =>
+      code == 'PAIRING_TIMEOUT' || code == 'PEER_CONNECT_TIMEOUT';
+
   /// Returns the capability required by a route permission denial.
   String? get requiredCapability => _detailString('requiredCapability');
 
