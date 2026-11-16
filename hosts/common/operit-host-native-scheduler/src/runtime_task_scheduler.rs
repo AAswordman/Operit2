@@ -3,7 +3,9 @@ use operit_host_api::{
     HostRuntimeTurnFuture,
 };
 use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::Instant;
 
 const RUNTIME_WORKER_COUNT: usize = 16;
 const BLOCKING_WORKER_COUNT: usize = 16;
@@ -521,6 +523,94 @@ mod tests {
     }
 }
 
+/// Names one admitted service group for capacity diagnostics.
+struct ServiceAdmissionEntry {
+    id: u64,
+    name: String,
+    size: u32,
+    since: Instant,
+    running: Arc<AtomicBool>,
+}
+
+/// Registry of every service group currently holding service capacity.
+/// The holders lock guards only this list; it never spans a task call or cleanup.
+#[derive(Default)]
+struct ServiceAdmissions {
+    holders: Mutex<Vec<ServiceAdmissionEntry>>,
+    nextId: AtomicU64,
+}
+
+impl ServiceAdmissions {
+    /// Records one admitted group and returns its id and running flag.
+    fn register(&self, name: &str, size: u32) -> (u64, Arc<AtomicBool>) {
+        let running = Arc::new(AtomicBool::new(false));
+        let id = self.nextId.fetch_add(1, Ordering::Relaxed);
+        let mut holders = self.holders.lock().unwrap_or_else(|error| error.into_inner());
+        holders.push(ServiceAdmissionEntry {
+            id,
+            name: name.to_string(),
+            size,
+            since: Instant::now(),
+            running: running.clone(),
+        });
+        (id, running)
+    }
+
+    /// Removes one admitted group after its last member released the shared lease.
+    fn release(&self, id: u64) {
+        let mut holders = self.holders.lock().unwrap_or_else(|error| error.into_inner());
+        holders.retain(|entry| entry.id != id);
+    }
+
+    /// Describes current holders with group size, state, and age for rejections.
+    fn describe(&self) -> String {
+        let holders = self.holders.lock().unwrap_or_else(|error| error.into_inner());
+        if holders.is_empty() {
+            return "none".to_string();
+        }
+        holders
+            .iter()
+            .map(|entry| {
+                format!(
+                    "{}(group={}, {}, alive={}s)",
+                    entry.name,
+                    entry.size,
+                    if entry.running.load(Ordering::Acquire) {
+                        "running"
+                    } else {
+                        "queued"
+                    },
+                    entry.since.elapsed().as_secs()
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
+/// Releases the registration exactly when the last shared permit clone drops.
+struct AdmittedServiceLease {
+    permit: tokio::sync::OwnedSemaphorePermit,
+    admissions: &'static ServiceAdmissions,
+    id: u64,
+}
+
+impl Drop for AdmittedServiceLease {
+    fn drop(&mut self) {
+        self.admissions.release(self.id);
+    }
+}
+
+/// Process-wide service pool, capacity, and admission bookkeeping.
+static SERVICE_TASKS: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
+static SERVICE_CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
+static SERVICE_ADMISSIONS: OnceLock<ServiceAdmissions> = OnceLock::new();
+
+/// Returns the process-wide service admission registry.
+fn serviceAdmissions() -> &'static ServiceAdmissions {
+    SERVICE_ADMISSIONS.get_or_init(ServiceAdmissions::default)
+}
+
 /// Schedules native runtime tasks on process-wide coordination and blocking pools.
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativeHostRuntimeTaskSchedulerHost;
@@ -609,16 +699,19 @@ impl NativeHostRuntimeTaskSchedulerHost {
         }
         let count = u32::try_from(tasks.len())
             .map_err(|_| HostError::new("Host service group exceeds capacity"))?;
-        static SERVICES: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
-        static CAPACITY: OnceLock<Arc<tokio::sync::Semaphore>> = OnceLock::new();
-        let permit = Arc::new(
-            CAPACITY
-                .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(SERVICE_WORKER_COUNT)))
-                .clone()
-                .try_acquire_many_owned(count)
-                .map_err(|_| HostError::new(format!("Host service capacity exhausted: {name}")))?,
-        );
-        let queue = SERVICES
+        let capacity = SERVICE_CAPACITY
+            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(SERVICE_WORKER_COUNT)))
+            .clone();
+        // try_acquire_many_owned consumes its Arc receiver, so acquire through a
+        // clone and keep `capacity` borrowable for the rejection diagnostics.
+        let permit = capacity.clone().try_acquire_many_owned(count).map_err(|_| {
+            let reserved = SERVICE_WORKER_COUNT - capacity.available_permits();
+            let holders = serviceAdmissions().describe();
+            HostError::new(format!(
+                "Host service capacity exhausted: {name} (requested={count}, reserved={reserved}/{SERVICE_WORKER_COUNT}; holders: {holders})"
+            ))
+        })?;
+        let queue = SERVICE_TASKS
             .get_or_init(|| {
                 #[cfg(feature = "esp32-compat")]
                 { spawnTaskPoolWithOptions("operit-svc", SERVICE_WORKER_COUNT, 128 * 1024, false) }
@@ -627,14 +720,24 @@ impl NativeHostRuntimeTaskSchedulerHost {
             })
             .as_ref()
             .map_err(|error| HostError::new(format!("create service task pool failed: {error}")))?;
+        // The registration joins the permit group: both are released together
+        // when the last member of the group finishes, fails to queue, or panics.
+        let (leaseId, running) = serviceAdmissions().register(name, count);
+        let lease = Arc::new(AdmittedServiceLease {
+            permit,
+            admissions: serviceAdmissions(),
+            id: leaseId,
+        });
         let admitted = tasks
             .into_iter()
             .map(|task| {
-                let permit = permit.clone();
+                let lease = lease.clone();
+                let running = running.clone();
                 Box::new(
                     move || -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> {
                         Box::pin(async move {
-                            let _permit = permit;
+                            running.store(true, Ordering::Release);
+                            let _lease = lease;
                             task();
                         })
                     },
@@ -1245,7 +1348,7 @@ mod javascript_dependency_tests {
 mod admission_tests {
     use super::*;
     use std::sync::mpsc;
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     /// Many independent network waits reuse at most the configured four workers.
     #[test]
@@ -1292,7 +1395,24 @@ mod admission_tests {
         }
     }
 
-    /// An oversized service group must fail before any of its jobs can start.
+    /// Waits until every service permit returned; capacity and registry move together.
+    fn waitForServiceCapacity(stage: &str) {
+        let capacity = SERVICE_CAPACITY
+            .get_or_init(|| Arc::new(tokio::sync::Semaphore::new(SERVICE_WORKER_COUNT)))
+            .clone();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while capacity.available_permits() < SERVICE_WORKER_COUNT {
+            assert!(
+                Instant::now() < deadline,
+                "service permits were not fully released: {stage}"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// An oversized service group must fail before any of its jobs can start, and
+    /// admission, permits, and holder registrations stay consistent across
+    /// success, rejection, dropped handles, and panicking members.
     #[test]
     fn service_group_reservation_is_atomic() {
         let scheduler = NativeHostRuntimeTaskSchedulerHost::new();
@@ -1309,6 +1429,71 @@ mod admission_tests {
             .scheduleServiceTasks("oversized", too_many)
             .is_err());
         assert!(receiver.try_recv().is_err());
+        assert_eq!(serviceAdmissions().describe(), "none");
+
+        // Dropping a NativeTaskHandle must not release capacity while its service runs.
+        let (heldEntered, heldReady) = mpsc::channel();
+        let (heldRelease, heldReleased) = mpsc::channel();
+        let handle = crate::task_handle::scheduleNativeServiceTask(
+            "dropped-handle-holder",
+            move || {
+                heldEntered.send(()).unwrap();
+                let _ = heldReleased.recv_timeout(Duration::from_secs(10));
+            },
+        )
+        .unwrap();
+        heldReady.recv_timeout(Duration::from_secs(5)).unwrap();
+        drop(handle);
+        let mut fillReleases = Vec::new();
+        let fill = (0..SERVICE_WORKER_COUNT - 1)
+            .map(|index| {
+                let sender = sender.clone();
+                let (release, wait) = mpsc::channel();
+                fillReleases.push(release);
+                Box::new(move || {
+                    sender.send(index).unwrap();
+                    let _ = wait.recv_timeout(Duration::from_secs(10));
+                }) as HostRuntimeTask
+            })
+            .collect();
+        scheduler
+            .scheduleServiceTasks("capacity-fill", fill)
+            .unwrap();
+        for _ in 0..SERVICE_WORKER_COUNT - 1 {
+            receiver.recv_timeout(Duration::from_secs(5)).unwrap();
+        }
+        let rejectedWhileHeld = scheduler.scheduleServiceTask(
+            "after-dropped-handle",
+            Box::new(|| panic!("rejected task started")),
+        );
+        let message = rejectedWhileHeld.unwrap_err().message;
+        assert!(
+            message.contains("Host service capacity exhausted: after-dropped-handle"),
+            "{message}"
+        );
+        assert!(message.contains("requested=1"), "{message}");
+        assert!(
+            message.contains(&format!(
+                "reserved={SERVICE_WORKER_COUNT}/{SERVICE_WORKER_COUNT}"
+            )),
+            "{message}"
+        );
+        assert!(message.contains("dropped-handle-holder"), "{message}");
+        assert!(message.contains("capacity-fill"), "{message}");
+        assert!(
+            message.contains(&format!("group={}", SERVICE_WORKER_COUNT - 1)),
+            "{message}"
+        );
+        assert!(message.contains("running"), "{message}");
+        assert!(message.contains("alive="), "{message}");
+        heldRelease.send(()).unwrap();
+        for release in fillReleases {
+            release.send(()).unwrap();
+        }
+        waitForServiceCapacity("dropped handle and fill group");
+        assert_eq!(serviceAdmissions().describe(), "none");
+
+        // A full atomic group is rejected with holder diagnostics and releases together.
         let mut releases = Vec::new();
         let admitted = (0..SERVICE_WORKER_COUNT)
             .map(|_| {
@@ -1331,10 +1516,64 @@ mod admission_tests {
             "over-capacity",
             Box::new(|| panic!("rejected task started")),
         );
+        let message = rejected.unwrap_err().message;
+        assert!(message.contains("complete-pipeline"), "{message}");
+        assert!(
+            message.contains(&format!("group={SERVICE_WORKER_COUNT}")),
+            "{message}"
+        );
+        assert!(message.contains("running"), "{message}");
+        assert_ne!(serviceAdmissions().describe(), "none");
         for release in releases {
             release.send(()).unwrap();
         }
-        assert!(rejected.is_err());
+        waitForServiceCapacity("complete pipeline group");
+
+        // A panicking member still releases its whole admission and permit group.
+        let (panicEntered, panicReady) = mpsc::channel();
+        scheduler
+            .scheduleServiceTasks(
+                "panicking-holder",
+                vec![Box::new(move || {
+                    panicEntered.send(()).unwrap();
+                    panic!("service panic must release its admission");
+                })],
+            )
+            .unwrap();
+        // Fill every remaining permit so a probe can only pass once the panicked
+        // service actually released its own admission.
+        let mut panicFillReleases = Vec::new();
+        let panicFill = (0..SERVICE_WORKER_COUNT - 1)
+            .map(|_| {
+                let (release, wait) = mpsc::channel();
+                panicFillReleases.push(release);
+                Box::new(move || {
+                    let _ = wait.recv_timeout(Duration::from_secs(10));
+                }) as HostRuntimeTask
+            })
+            .collect();
+        scheduler
+            .scheduleServiceTasks("panic-capacity-fill", panicFill)
+            .unwrap();
+        panicReady.recv_timeout(Duration::from_secs(5)).unwrap();
+        let mut recovered = false;
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while Instant::now() < deadline {
+            if scheduler
+                .scheduleServiceTask("post-panic-probe", Box::new(|| {}))
+                .is_ok()
+            {
+                recovered = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(recovered, "a panicked service must release its admission");
+        for release in panicFillReleases {
+            release.send(()).unwrap();
+        }
+        waitForServiceCapacity("panicking holder");
+        assert_eq!(serviceAdmissions().describe(), "none");
     }
 
     /// Releasing a non-global scheduler stops workers and drops their suspended futures.

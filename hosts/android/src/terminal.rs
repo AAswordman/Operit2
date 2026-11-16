@@ -204,15 +204,21 @@ impl AndroidTerminalHost {
     }
 
     pub fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
-        let mut state = self.lockState()?;
-        let removed = state.ptySessions.remove(sessionId);
-        if removed.is_none() {
-            androidLogError(&format!("closePtySession missing sessionId={sessionId}"));
-            return Err(HostError::new(format!(
-                "Android PTY session does not exist: {sessionId}"
-            )));
-        }
-        removeAndroidSessionMappings(&mut state, sessionId);
+        let removed = {
+            let mut state = self.lockState()?;
+            let removed = state.ptySessions.remove(sessionId);
+            if removed.is_none() {
+                androidLogError(&format!("closePtySession missing sessionId={sessionId}"));
+                return Err(HostError::new(format!(
+                    "Android PTY session does not exist: {sessionId}"
+                )));
+            }
+            removeAndroidSessionMappings(&mut state, sessionId);
+            removed
+        };
+        // Session teardown terminates the child and waits for it; that blocking
+        // work must never run while the terminal state lock is held.
+        drop(removed);
         Ok(())
     }
 
@@ -549,19 +555,20 @@ impl TerminalHost for AndroidTerminalHost {
 
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
-        let mut state = self.lockState()?;
-        state
-            .ptySessions
-            .remove(&normalizedSessionId)
-            .ok_or_else(|| {
-                HostError::new(format!("Terminal session does not exist: {sessionId}"))
-            })?;
-        state
-            .sessionNameToId
-            .retain(|_, value| value != &normalizedSessionId);
-        state
-            .hiddenExecutorKeyToSessionId
-            .retain(|_, value| value != &normalizedSessionId);
+        let removed = {
+            let mut state = self.lockState()?;
+            let removed = state
+                .ptySessions
+                .remove(&normalizedSessionId)
+                .ok_or_else(|| {
+                    HostError::new(format!("Terminal session does not exist: {sessionId}"))
+                })?;
+            removeAndroidSessionMappings(&mut state, &normalizedSessionId);
+            removed
+        };
+        // Dropping the session kills and reaps its child process, so it stays
+        // outside the registry lock to keep input and close available.
+        drop(removed);
         Ok(TerminalCloseOutput {
             sessionId: normalizedSessionId.clone(),
             success: true,
@@ -683,6 +690,9 @@ fn createAndroidPtySession(
         commandOutput.clone(),
         screenOutput.clone(),
         cursorState,
+        &session.sessionName,
+        &session.terminalType,
+        pid,
     )?;
     if let Some(input) = command.startupInput {
         writeAndroidPtyBytes(&writer, input.as_bytes())?;
@@ -716,7 +726,9 @@ impl Drop for AndroidPtyReaderFd {
     }
 }
 
-/// Schedules the PTY reader on bounded Host service capacity.
+/// Schedules the PTY reader on bounded Host service capacity. The registration
+/// name carries the session identity so capacity diagnostics can be mapped back
+/// to a concrete session and process.
 fn scheduleAndroidPtyReader(
     masterFd: RawFd,
     stopped: Arc<AtomicBool>,
@@ -725,12 +737,23 @@ fn scheduleAndroidPtyReader(
     commandOutput: AndroidPtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     cursorState: AndroidPtyCursorState,
+    sessionName: &str,
+    terminalType: &str,
+    pid: AndroidPtyProcess,
 ) -> HostResult<()> {
-    androidLogInfo(&format!("Android PTY reader thread start fd={masterFd}"));
+    let identity = format!("android-pty-reader[{sessionName}:{terminalType}:pid={pid:?}]");
+    androidLogInfo(&format!("Android PTY reader thread start {identity} fd={masterFd}"));
+    let readerIdentity = identity.clone();
     let descriptor = AndroidPtyReaderFd(masterFd);
-    operit_host_native_common::scheduleNativeServiceTask("android-pty-reader", move || {
+    operit_host_native_common::scheduleNativeServiceTask(&identity, move || {
         let descriptor = descriptor;
-        while !stopped.load(Ordering::Acquire) {
+        loop {
+            if stopped.load(Ordering::Acquire) {
+                androidLogInfo(&format!(
+                    "Android PTY reader stop requested {readerIdentity} fd={masterFd}"
+                ));
+                break;
+            }
             match readPtyFd(descriptor.0) {
                 Ok(data) if data.is_empty() => thread::sleep(Duration::from_millis(20)),
                 Ok(data) => {
@@ -743,12 +766,15 @@ fn scheduleAndroidPtyReader(
                 }
                 Err(error) => {
                     androidLogError(&format!(
-                        "Android PTY reader thread exit fd={masterFd}: {error}"
+                        "Android PTY reader thread exit {readerIdentity} fd={masterFd}: {error}"
                     ));
                     break;
                 }
             }
         }
+        androidLogInfo(&format!(
+            "Android PTY reader thread stopped {readerIdentity} fd={masterFd}"
+        ));
     })
     .map(|_| ())
 }
@@ -1966,12 +1992,30 @@ fn terminateAndroidPtyProcess(process: AndroidPtyProcess) {
                 if libc::waitpid(pid, &mut status, libc::WNOHANG) != 0 {
                     return;
                 }
-                libc::kill(pid, libc::SIGHUP);
-                libc::kill(pid, libc::SIGKILL);
-                while libc::waitpid(pid, &mut status, 0) < 0
-                    && std::io::Error::last_os_error().raw_os_error() == Some(libc::EINTR)
-                {
+                let hupResult = libc::kill(pid, libc::SIGHUP);
+                let hupErrno = std::io::Error::last_os_error().raw_os_error();
+                let killResult = libc::kill(pid, libc::SIGKILL);
+                let killErrno = std::io::Error::last_os_error().raw_os_error();
+                if hupResult != 0 || killResult != 0 {
+                    androidLogError(&format!(
+                        "terminateAndroidPtyProcess kill failed pid={pid} hup={hupResult}/errno={hupErrno:?} kill={killResult}/errno={killErrno:?}"
+                    ));
                 }
+                let mut waited;
+                loop {
+                    waited = libc::waitpid(pid, &mut status, 0);
+                    if waited >= 0 {
+                        break;
+                    }
+                    let waitErrno = std::io::Error::last_os_error().raw_os_error();
+                    if waitErrno != Some(libc::EINTR) {
+                        androidLogError(&format!(
+                            "terminateAndroidPtyProcess wait failed pid={pid} errno={waitErrno:?}"
+                        ));
+                        break;
+                    }
+                }
+                let _ = waited;
             }
             #[cfg(not(target_os = "android"))]
             let _ = pid;
@@ -2360,7 +2404,10 @@ fn pollPidExitCode(process: AndroidPtyProcess) -> HostResult<Option<i32>> {
             return Ok(None);
         }
         if result < 0 {
-            androidLogError(&format!("waitpid failed pid={pid}"));
+            let waitErrno = std::io::Error::last_os_error().raw_os_error();
+            androidLogError(&format!(
+                "waitpid failed pid={pid} errno={waitErrno:?}"
+            ));
             return Err(HostError::new("waitpid failed for Android PTY"));
         }
         if libc::WIFEXITED(status) {
