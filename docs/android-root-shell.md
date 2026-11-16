@@ -76,6 +76,16 @@ Linux/proot 的 bash 启动链路保持不变。
 `/sdcard`，不携带应用私有动态库路径；显式指定的目录不会被替换。
 应用退出或服务销毁时回收子进程和管道，管道 EOF 会停止应用侧读取任务。
 
+一次性特权命令（`execute_privileged_command` 的 `shizuku` target、Shizuku 截屏、
+`am force-stop` 等）不再使用 `Shizuku.newProcess`——该 API 在 Shizuku 服务端进程内
+fork+exec，应用没有降权插入点，root 启动的 Shizuku 下会静默以 uid 0 执行。改为绑定
+与终端同一个 UserService，走新增的 `exec` 操作：Rust `forkPipeExecve` 以独立
+stdout/stderr 管道 fork（非 PTY，保证 screencap 等二进制输出不被终端加工），子进程
+stdin 接 `/dev/null`，并复用与 PTY 相同的 `dropRootToShellIdentity` 降权与 fail-closed
+校验。客户端 `AndroidTerminalPrivileges` 为进程级单例（UserService 只接受一个 owner
+token），终端会话与一次性命令共享同一连接与会话表；退出码轮询、超时预算和销毁沿用
+`AndroidCommandProcessRunner.collect`。
+
 ## 维护检查
 
 原生接线契约（无需 Android SDK）：
@@ -103,4 +113,6 @@ JAVA_HOME=/path/to/java KOTLINC=/path/to/kotlinc \
 权限撤销、截图和长时间命令超时，以及 Shizuku 的多会话、窗口调整、Ctrl-C 和服务断连；
 JVM 测试不能替代设备级兼容性验证。root 启动的 Shizuku（KernelSU 直接授权）还需
 真机确认终端 `id` 输出 uid=2000、`/proc/self/attr/current` 为 shell 域，以及
-降权失败时终端拒绝启动而非以 root 运行。
+降权失败时终端拒绝启动而非以 root 运行；一次性命令（`execute_privileged_command`
+的 `shizuku` target 执行 `id`、Shizuku 截屏、force-stop）同样应为 uid=2000，
+且截屏 PNG 字节完整、超时命令被销毁。

@@ -52,7 +52,7 @@ test('Root requests support automatic, forced libsu, and custom exec settings', 
 test('all Root transports share the router; Shizuku retains an independent transport', () => {
   const executor = source(system + 'AndroidPrivilegedCommandExecutor.kt');
   assert.match(executor, /RootAuto,[\s\S]*?RootLibsu,[\s\S]*?RootExec -> AndroidRootShell\.execute\(target, command, timeoutMillis, rootSettings\)/);
-  assert.match(executor, /Shizuku -> executeWithShizuku\(command, timeoutMillis\)/);
+  assert.match(executor, /Shizuku -> executeWithShizuku\(context, command, timeoutMillis\)/);
   assert.doesNotMatch(executor, /ProcessBuilder\("su"|Shell\.cmd/);
 });
 

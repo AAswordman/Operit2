@@ -36,7 +36,7 @@ class AndroidRuntimeHost(context: Context) {
     private var runtimeStartupMessage = "正在准备本地运行时"
 
     private val documentFileSystem by lazy { AndroidDocumentFileSystem(applicationContext) }
-    private val terminalPrivileges by lazy { AndroidTerminalPrivileges(applicationContext) }
+    private val terminalPrivileges by lazy { AndroidTerminalPrivileges.shared(applicationContext) }
 
     /** Serves native terminal privilege probes and remote PTY lifecycle operations. */
     fun terminalPrivilegeOperation(request: String): String = terminalPrivileges.execute(request)
