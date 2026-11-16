@@ -138,7 +138,7 @@ impl ModelConfigManager {
             })
     }
 
-    const PREFERENCES_VERSION: u32 = 9;
+    const PREFERENCES_VERSION: u32 = 10;
     pub const DEFAULT_PROVIDER_ID: &'static str = ModelConfigDefaults::DEFAULT_PROVIDER_ID;
     pub const DEFAULT_MODEL_ID: &'static str = ModelConfigDefaults::DEFAULT_MODEL_ID;
 
@@ -1375,8 +1375,49 @@ impl ModelConfigManager {
                 }
                 Ok(())
             }
+            9 => {
+                // DeepSeek retired deepseek-v4-flash; its official API now only serves
+                // deepseek-flash and deepseek-v4-pro. Relays may still serve the old
+                // name, so only official endpoints are renamed.
+                let records = preferences
+                    .iterEntries()
+                    .filter_map(|(key, value)| {
+                        (key != "provider_list" && key.starts_with("provider_"))
+                            .then(|| (key.to_owned(), value.clone()))
+                    })
+                    .collect::<Vec<_>>();
+                for (key, record) in records {
+                    let mut provider: ProviderProfile = serde_json::from_value(record)?;
+                    if provider.providerType == ApiProviderType::DEEPSEEK
+                        && Self::isOfficialDeepseekEndpoint(&provider.endpoint)
+                        && !provider
+                            .models
+                            .iter()
+                            .any(|model| model.id == "deepseek-flash")
+                    {
+                        for model in &mut provider.models {
+                            if model.id == "deepseek-v4-flash" {
+                                model.id = "deepseek-flash".to_string();
+                            }
+                        }
+                    }
+                    preferences.set(&stringPreferencesKey(&key), serde_json::to_value(provider)?);
+                }
+                Ok(())
+            }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
+    }
+
+    /// Returns whether one endpoint points at DeepSeek's own API servers.
+    pub(crate) fn isOfficialDeepseekEndpoint(endpoint: &str) -> bool {
+        url::Url::parse(endpoint)
+            .ok()
+            .and_then(|url| {
+                url.host_str()
+                    .map(|host| host.eq_ignore_ascii_case("api.deepseek.com"))
+            })
+            .unwrap_or(false)
     }
 
     /// Provider type ids that earlier builds could persist but that no longer exist in
@@ -2827,6 +2868,67 @@ mod tests {
             reopened.data().unwrap().get(&stringPreferencesKey("provider_custom")),
             Some(&expected)
         );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Tests the retired deepseek-v4-flash rename: official endpoints follow the
+    /// new name, relays and providers already holding deepseek-flash stay put.
+    #[test]
+    fn schema_nine_migration_renames_retired_deepseek_model_on_official_endpoints() {
+        use operit_model::ModelConfigData::{ModelProfile, ProviderProfile};
+        use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
+        let root = unique_test_root("schema_nine_deepseek_rename");
+        let host: Arc<dyn RuntimeStorageHost> =
+            Arc::new(TestRuntimeStorageHost { root: root.clone() });
+        let path = "runtime/config/model-schema-nine.preferences.json";
+        let provider_record = |id: &str, endpoint: &str, models: &[&str]| {
+            let mut provider = ProviderProfile::new(
+                id.into(),
+                id.into(),
+                ApiProviderType::DEEPSEEK,
+                endpoint.into(),
+            );
+            provider.models = models
+                .iter()
+                .map(|model| ModelProfile::new(model.to_string()))
+                .collect();
+            serde_json::to_value(&provider).unwrap()
+        };
+        let legacy = serde_json::json!({
+            "__operit_preferences_schema_version": "9",
+            "provider_official": provider_record(
+                "official",
+                "https://api.deepseek.com/v1/chat/completions",
+                &["deepseek-v4-flash", "deepseek-v4-pro"],
+            ),
+            "provider_relay": provider_record(
+                "relay",
+                "https://relay.example.com/v1/chat/completions",
+                &["deepseek-v4-flash"],
+            ),
+            "provider_conflict": provider_record(
+                "conflict",
+                "https://api.deepseek.com/v1/chat/completions",
+                &["deepseek-v4-flash", "deepseek-flash"],
+            ),
+        });
+        host.writeBytes(path, &serde_json::to_vec(&legacy).unwrap()).unwrap();
+        let store = PreferencesDataStore::newWithStorage(host, path).withSchema(
+            ModelConfigManager::PREFERENCES_VERSION,
+            ModelConfigManager::migratePreferences,
+        );
+        let migrated = store.data().unwrap();
+        let model_ids = |key: &str| {
+            let provider: ProviderProfile = serde_json::from_value(
+                migrated.get(&stringPreferencesKey(key)).unwrap().clone(),
+            )
+            .unwrap();
+            provider.models.iter().map(|model| model.id.clone()).collect::<Vec<_>>()
+        };
+        assert_eq!(model_ids("provider_official"), ["deepseek-flash", "deepseek-v4-pro"]);
+        assert_eq!(model_ids("provider_relay"), ["deepseek-v4-flash"]);
+        assert_eq!(model_ids("provider_conflict"), ["deepseek-v4-flash", "deepseek-flash"]);
+        assert_eq!(store.schemaVersion().unwrap(), ModelConfigManager::PREFERENCES_VERSION);
         let _ = fs::remove_dir_all(root);
     }
 

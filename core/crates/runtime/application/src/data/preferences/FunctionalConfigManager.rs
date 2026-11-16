@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,7 @@ use thiserror::Error;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use operit_model::FunctionType::FunctionType;
+use operit_model::ModelConfigData::{ApiProviderType, ProviderProfile};
 use operit_store::PreferencesDataStore::{
     stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
 };
@@ -67,11 +68,23 @@ impl FunctionalConfigManager {
         storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
         path: impl Into<String>,
     ) -> PreferencesDataStore {
-        PreferencesDataStore::newWithStorage(storage, path)
-            .withSchema(Self::PREFERENCES_VERSION, Self::migratePreferences)
+        let modelStorage = storage.clone();
+        PreferencesDataStore::newWithStorage(storage, path).withMigration(
+            Self::PREFERENCES_VERSION,
+            move |from, context| {
+                let officialDeepseekProviders = if from == 3 {
+                    Self::officialDeepseekProviderIds(&modelStorage)?
+                } else {
+                    HashSet::new()
+                };
+                context.map_preferences(from, &move |version, preferences| {
+                    Self::migratePreferences(version, preferences, &officialDeepseekProviders)
+                })
+            },
+        )
     }
 
-    const PREFERENCES_VERSION: u32 = 3;
+    const PREFERENCES_VERSION: u32 = 4;
 
     /// Returns the preference key that stores function-to-model bindings.
     pub fn FUNCTION_MODEL_BINDING() -> operit_store::PreferencesDataStore::PreferencesKey {
@@ -211,6 +224,7 @@ impl FunctionalConfigManager {
     fn migratePreferences(
         version: u32,
         preferences: &mut Preferences,
+        officialDeepseekProviderIds: &HashSet<String>,
     ) -> Result<(), PreferencesDataStoreError> {
         fn read(
             preferences: &Preferences,
@@ -266,8 +280,51 @@ impl FunctionalConfigManager {
                 }
                 Ok(())
             }
+            3 => {
+                // DeepSeek retired deepseek-v4-flash on its official API; the model
+                // store renames it there, so bindings on those providers follow.
+                if !preferences.contains(&Self::FUNCTION_MODEL_BINDING()) {
+                    return Ok(());
+                }
+                let mut binding = read(preferences)?;
+                for value in binding.values_mut() {
+                    if value.modelId == "deepseek-v4-flash"
+                        && officialDeepseekProviderIds.contains(&value.providerId)
+                    {
+                        value.modelId = "deepseek-flash".to_string();
+                    }
+                }
+                write(preferences, binding)
+            }
             from => Err(PreferencesDataStoreError::MissingMigration { from, to: from + 1 }),
         }
+    }
+
+    /// Collects provider ids served by DeepSeek's official API. Reading the model store
+    /// here also runs its rename migration first, whichever store migrates first.
+    fn officialDeepseekProviderIds(
+        storage: &std::sync::Arc<dyn operit_host_api::RuntimeStorageHost>,
+    ) -> Result<HashSet<String>, PreferencesDataStoreError> {
+        let store = ModelConfigManager::preferenceStore(
+            storage.clone(),
+            operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
+        );
+        let preferences = store.data()?;
+        let mut ids = HashSet::new();
+        for (key, value) in preferences.iterEntries() {
+            let Some(id) = key.strip_prefix("provider_") else {
+                continue;
+            };
+            let Ok(provider) = serde_json::from_value::<ProviderProfile>(value.clone()) else {
+                continue;
+            };
+            if provider.providerType == ApiProviderType::DEEPSEEK
+                && ModelConfigManager::isOfficialDeepseekEndpoint(&provider.endpoint)
+            {
+                ids.insert(id.to_string());
+            }
+        }
+        Ok(ids)
     }
 
     /// Reads the effective model binding for one runtime function.
@@ -438,7 +495,7 @@ impl FunctionalConfigManager {
 #[cfg(test)]
 mod tests {
     use super::{FunctionModelBinding, FunctionType, FunctionalConfigManager};
-    use std::collections::HashMap;
+    use std::collections::{HashMap, HashSet};
 
     #[test]
     fn migration_encoding_is_deterministic_and_keeps_custom_title_binding() {
@@ -455,19 +512,109 @@ mod tests {
                 );
             }
             let mut expected = source.clone();
-            FunctionalConfigManager::migratePreferences(version, &mut expected).unwrap();
+            FunctionalConfigManager::migratePreferences(version, &mut expected, &HashSet::new())
+                .unwrap();
             for _ in 0..32 {
                 let mut actual = source.clone();
-                FunctionalConfigManager::migratePreferences(version, &mut actual).unwrap();
+                FunctionalConfigManager::migratePreferences(version, &mut actual, &HashSet::new())
+                    .unwrap();
                 assert_eq!(actual, expected);
             }
             if version == 1 {
-                FunctionalConfigManager::migratePreferences(2, &mut expected).unwrap();
+                FunctionalConfigManager::migratePreferences(2, &mut expected, &HashSet::new())
+                    .unwrap();
                 assert_eq!(
                     expected.get(&key).unwrap()["TITLE_GENERATION"]["modelId"],
                     "title"
                 );
             }
+        }
+    }
+
+    /// The binding migration follows the model store rename on official DeepSeek
+    /// endpoints, leaves relay bindings alone, and works whichever store opens first.
+    #[test]
+    fn schema_three_migration_retargets_bindings_on_official_deepseek_providers() {
+        use operit_host_native_storage::NativeRuntimeStorageHost;
+        use operit_model::ModelConfigData::{ApiProviderType, ModelProfile, ProviderProfile};
+        use operit_store::PreferencesDataStore::stringPreferencesKey;
+
+        for model_store_first in [false, true] {
+            let root = std::env::temp_dir().join(format!(
+                "operit-functional-deepseek-{}",
+                uuid::Uuid::new_v4()
+            ));
+            let storage: std::sync::Arc<dyn operit_host_api::RuntimeStorageHost> =
+                std::sync::Arc::new(NativeRuntimeStorageHost::new(
+                    root.join("runtime"),
+                    root.join("workspaces"),
+                ));
+            let provider_record = |id: &str, endpoint: &str| {
+                let mut provider = ProviderProfile::new(
+                    id.into(),
+                    id.into(),
+                    ApiProviderType::DEEPSEEK,
+                    endpoint.into(),
+                );
+                provider.models = vec![ModelProfile::new("deepseek-v4-flash".to_string())];
+                serde_json::to_value(&provider).unwrap()
+            };
+            let model_legacy = serde_json::json!({
+                "__operit_preferences_schema_version": "9",
+                "provider_official": provider_record(
+                    "official",
+                    "https://api.deepseek.com/v1/chat/completions",
+                ),
+                "provider_relay": provider_record(
+                    "relay",
+                    "https://relay.example.com/v1/chat/completions",
+                ),
+            });
+            storage
+                .writeBytes(
+                    operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
+                    &serde_json::to_vec(&model_legacy).unwrap(),
+                )
+                .unwrap();
+            let key = FunctionalConfigManager::FUNCTION_MODEL_BINDING();
+            let functional_legacy = serde_json::json!({
+                "__operit_preferences_schema_version": "3",
+                "function_model_binding": {
+                    "CHAT": binding("official", "deepseek-v4-flash", false),
+                    "SUMMARY": binding("relay", "deepseek-v4-flash", false),
+                },
+            });
+            storage
+                .writeBytes(
+                    operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
+                    &serde_json::to_vec(&functional_legacy).unwrap(),
+                )
+                .unwrap();
+            let model_store = super::ModelConfigManager::preferenceStore(
+                storage.clone(),
+                operit_util::RuntimeStorageLayout::MODEL_CONFIGS_PREFERENCES_PATH,
+            );
+            if model_store_first {
+                model_store.data().unwrap();
+            }
+            let functional_store = FunctionalConfigManager::preferenceStore(
+                storage.clone(),
+                operit_util::RuntimeStorageLayout::FUNCTIONAL_CONFIGS_PREFERENCES_PATH,
+            );
+            let migrated = functional_store.data().unwrap();
+            let binding_value = migrated.get(&key).unwrap();
+            assert_eq!(binding_value["CHAT"]["modelId"], "deepseek-flash");
+            assert_eq!(binding_value["SUMMARY"]["modelId"], "deepseek-v4-flash");
+            let models = model_store.data().unwrap();
+            let official: ProviderProfile = serde_json::from_value(
+                models
+                    .get(&stringPreferencesKey("provider_official"))
+                    .unwrap()
+                    .clone(),
+            )
+            .unwrap();
+            assert_eq!(official.models[0].id, "deepseek-flash");
+            let _ = std::fs::remove_dir_all(root);
         }
     }
 

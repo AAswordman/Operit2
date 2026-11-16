@@ -18,7 +18,7 @@ pub struct ApiPreferences {
 impl ApiPreferences {
     pub const DEFAULT_API_KEY: &'static str = "";
     pub const DEFAULT_API_ENDPOINT: &'static str = "https://api.deepseek.com/v1/chat/completions";
-    pub const DEFAULT_MODEL_NAME: &'static str = "deepseek-v4-flash";
+    pub const DEFAULT_MODEL_NAME: &'static str = "deepseek-flash";
     pub const DEFAULT_CONFIG_ID: &'static str = "default";
     pub const DEFAULT_CONFIG_NAME: &'static str = "model_config_default_name";
     pub const DEFAULT_FEATURE_TOGGLE_STATE: bool = false;

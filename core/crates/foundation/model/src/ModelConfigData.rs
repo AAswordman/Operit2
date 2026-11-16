@@ -148,9 +148,9 @@ impl ModelConfigDefaults {
     pub const DEFAULT_ENABLE_SUMMARY: bool = true;
     pub const DEFAULT_DEEPSEEK_ENDPOINT: &'static str =
         "https://api.deepseek.com/v1/chat/completions";
-    pub const DEFAULT_DEEPSEEK_MODEL: &'static str = "deepseek-v4-flash";
+    pub const DEFAULT_DEEPSEEK_MODEL: &'static str = "deepseek-flash";
     pub const DEFAULT_PROVIDER_ID: &'static str = "DEEPSEEK";
-    pub const DEFAULT_MODEL_ID: &'static str = "deepseek-v4-flash";
+    pub const DEFAULT_MODEL_ID: &'static str = "deepseek-flash";
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
