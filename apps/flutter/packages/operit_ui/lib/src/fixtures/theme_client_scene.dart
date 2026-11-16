@@ -430,7 +430,7 @@ class _PreviewChatSurface extends StatelessWidget {
         Expanded(
           child: Center(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 20),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
               child: ConstrainedBox(
                 constraints: BoxConstraints(
                   maxWidth: snapshot.bubbleWideLayoutEnabled
@@ -514,27 +514,29 @@ class _PreviewBubble extends StatelessWidget {
   final String? fontFamily;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context) => LayoutBuilder(
+    builder: (context, constraints) =>
+        _buildConstrainedBubble(context, constraints.maxWidth),
+  );
+
+  Widget _buildConstrainedBubble(BuildContext context, double contentWidth) {
     final scheme = Theme.of(context).colorScheme;
     final bubbleStyle =
         (user ? snapshot.userChatStyle : snapshot.aiChatStyle) ==
         ThemePreferenceDefaults.CHAT_STYLE_BUBBLE;
     final showsAvatar = bubbleStyle && snapshot.bubbleShowAvatar;
-    final contentWidth = (MediaQuery.sizeOf(context).width - 36)
-        .clamp(
-          0.0,
-          snapshot.bubbleWideLayoutEnabled
-              ? themeChatWideContentMaxWidth
-              : themeChatContentMaxWidth,
-        )
-        .toDouble();
-    final messageInsets = user
-        ? (showsAvatar ? 72.0 : 40.0)
-        : (showsAvatar ? 40.0 : 8.0);
-    final availableBubbleWidth = contentWidth - messageInsets;
-    final maximumBubbleWidth = snapshot.bubbleWideLayoutEnabled
-        ? availableBubbleWidth
-        : availableBubbleWidth * 0.85;
+    final wideLayout = bubbleStyle && snapshot.bubbleWideLayoutEnabled;
+    final avatarWidth = showsAvatar && !wideLayout
+        ? themeBubbleAvatarSize + themeBubbleAvatarGap
+        : 0.0;
+    // Cursor samples keep their existing reservation and fixed content inset.
+    final availableBubbleWidth = bubbleStyle
+        ? contentWidth - avatarWidth
+        : contentWidth - (user ? 40.0 : 0.0);
+    final maximumBubbleWidth = resolveThemeBubbleMaxWidth(
+      availableBubbleWidth,
+      wideLayout: snapshot.bubbleWideLayoutEnabled,
+    );
     final color = user
         ? Color(
             (bubbleStyle
@@ -608,15 +610,18 @@ class _PreviewBubble extends StatelessWidget {
         : user
         ? const EdgeInsets.all(16)
         : EdgeInsets.zero;
-    final content = Padding(
-      padding: bubbleStyle || user ? padding : const EdgeInsets.all(0),
-      child: Text(
-        text,
-        style: TextStyle(
-          color: textColor,
-          fontFamily: bubbleStyle ? fontFamily : null,
-        ),
+    final messageText = Text(
+      text,
+      style: TextStyle(
+        color: textColor,
+        fontFamily: bubbleStyle ? fontFamily : null,
       ),
+    );
+    final content = Padding(
+      padding: bubbleStyle || user ? padding : EdgeInsets.zero,
+      child: wideLayout && !user
+          ? SizedBox(width: double.infinity, child: messageText)
+          : messageText,
     );
     if (!user && !bubbleStyle) {
       return Padding(
@@ -633,7 +638,10 @@ class _PreviewBubble extends StatelessWidget {
               : BorderRadius.circular(4)
         : BorderRadius.circular(user && !bubbleStyle ? 12 : 16);
     final bubble = ConstrainedBox(
-      constraints: BoxConstraints(maxWidth: maximumBubbleWidth),
+      constraints: BoxConstraints(
+        maxWidth: maximumBubbleWidth,
+        minHeight: bubbleStyle ? 44 : 0,
+      ),
       child: BubbleSurface(
         color: color,
         borderRadius: borderRadius,
@@ -642,7 +650,6 @@ class _PreviewBubble extends StatelessWidget {
         child: content,
       ),
     );
-    if (!showsAvatar) return bubble;
     final avatar = ClipRRect(
       borderRadius:
           snapshot.avatarShape == ThemePreferenceDefaults.AVATAR_SHAPE_CIRCLE
@@ -651,7 +658,7 @@ class _PreviewBubble extends StatelessWidget {
       child: ColoredBox(
         color: user ? scheme.primary : scheme.tertiaryContainer,
         child: SizedBox.square(
-          dimension: 32,
+          dimension: themeBubbleAvatarSize,
           child: Center(
             child: Icon(
               user ? Icons.person : Icons.assistant,
@@ -662,11 +669,42 @@ class _PreviewBubble extends StatelessWidget {
         ),
       ),
     );
+    if (wideLayout) {
+      return Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[
+          if (showsAvatar) ...<Widget>[
+            Align(
+              alignment: user ? Alignment.centerRight : Alignment.centerLeft,
+              child: avatar,
+            ),
+            const SizedBox(height: 6),
+          ],
+          Align(
+            alignment: user ? Alignment.centerRight : Alignment.centerLeft,
+            child: user
+                ? bubble
+                : SizedBox(width: contentWidth, child: bubble),
+          ),
+        ],
+      );
+    }
+    if (!showsAvatar) return bubble;
     return Row(
       mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.start,
       children: user
-          ? <Widget>[bubble, const SizedBox(width: 8), avatar]
-          : <Widget>[avatar, const SizedBox(width: 8), bubble],
+          ? <Widget>[
+              bubble,
+              const SizedBox(width: themeBubbleAvatarGap),
+              avatar,
+            ]
+          : <Widget>[
+              avatar,
+              const SizedBox(width: themeBubbleAvatarGap),
+              bubble,
+            ],
     );
   }
 }
