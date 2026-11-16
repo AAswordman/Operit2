@@ -353,13 +353,13 @@ impl ApplicationUpdateManager {
     pub(super) fn progress(&self) -> StateFlow<ApplicationUpdateProgress> {
         self.progress.clone()
     }
-    /// Validates the update receipt and submits its VFS file reference to the installer.
+    /// Keeps synchronous installer and owner waits off the Core coordination worker.
     pub(super) async fn install(
         &self,
         receipt: String,
         context: HostManager,
     ) -> Result<ApplicationUpdateInstallResult, String> {
-        let _busy = self.begin()?;
+        let busy = self.begin()?;
         let (source, timing) = {
             let state = self.state.lock().map_err(|e| e.to_string())?;
             let prepared = state
@@ -383,11 +383,19 @@ impl ApplicationUpdateManager {
         };
         let host = context
             .systemOperationHost
-            .as_deref()
+            .clone()
             .ok_or("SystemOperationHost is not registered for application updates")?;
-        let data = host
-            .installApp(&source, timing)
-            .map_err(|error| error.to_string())?;
+        let scheduler = context.hostRuntimeTaskSchedulerHost
+            .ok_or("HostRuntimeTaskSchedulerHost is not registered for application updates")?;
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        scheduler.scheduleHostRuntimeTask("application-update-install", Box::new(move || {
+            let result = host.installApp(&source, timing);
+            let _ = sender.send((busy, result));
+        })).map_err(|error| error.to_string())?;
+        // Keep operation ownership through the Host wait and receipt update, even on cancellation.
+        let (_busy, data) = receiver.await
+            .map_err(|error| format!("Application update installer task stopped: {error}"))?;
+        let data = data.map_err(|error| error.to_string())?;
         if !data.success {
             return Err(data.details);
         }

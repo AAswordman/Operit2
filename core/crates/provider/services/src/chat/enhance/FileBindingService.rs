@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 
+use similar::{capture_diff_slices, Algorithm, DiffTag};
+
 const MATCH_THRESHOLD: f64 = 0.90;
 
 /// Applies AI-provided structured edits to bound file content.
@@ -175,22 +177,15 @@ impl FileBindingService {
 
     /// Builds a unified diff between the original and modified file content.
     pub fn generateUnifiedDiff(&self, original: &str, modified: &str) -> String {
+        if original == modified {
+            return "No changes detected (files are identical)".to_string();
+        }
         let originalLines = kotlinLines(original);
         let modifiedLines = kotlinLines(modified);
         let diffOps = buildDiffOps(&originalLines, &modifiedLines);
 
         if diffOps.iter().all(|op| matches!(op, DiffOp::Equal(_))) {
             return "No changes detected (files are identical)".to_string();
-        }
-
-        let mut additions = 0;
-        let mut deletions = 0;
-        for op in &diffOps {
-            match op {
-                DiffOp::Insert(_) => additions += 1,
-                DiffOp::Delete(_) => deletions += 1,
-                DiffOp::Equal(_) => {}
-            }
         }
 
         let annotatedLines = annotateDiffOps(&diffOps);
@@ -556,40 +551,20 @@ fn kotlinLines(value: &str) -> Vec<String> {
 }
 
 #[allow(non_snake_case)]
+/// Computes exact line edits with Myers' linear-space divide-and-conquer algorithm.
 fn buildDiffOps(originalLines: &[String], modifiedLines: &[String]) -> Vec<DiffOp> {
-    let originalLen = originalLines.len();
-    let modifiedLen = modifiedLines.len();
-    let mut table = vec![vec![0usize; modifiedLen + 1]; originalLen + 1];
-
-    for i in 0..originalLen {
-        for (j, modifiedLine) in modifiedLines.iter().enumerate() {
-            if originalLines[i] == *modifiedLine {
-                table[i + 1][j + 1] = table[i][j] + 1;
-            } else {
-                table[i + 1][j + 1] = table[i][j + 1].max(table[i + 1][j]);
-            }
-        }
-    }
-
-    let mut reversed = Vec::new();
-    let mut i = originalLen;
-    let mut j = modifiedLen;
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && originalLines[i - 1] == modifiedLines[j - 1] {
-            reversed.push(DiffOp::Equal(originalLines[i - 1].clone()));
-            i -= 1;
-            j -= 1;
-        } else if i > 0 && (j == 0 || table[i - 1][j] >= table[i][j - 1]) {
-            reversed.push(DiffOp::Delete(originalLines[i - 1].clone()));
-            i -= 1;
+    let mut result = Vec::new();
+    for op in capture_diff_slices(Algorithm::Myers, originalLines, modifiedLines) {
+        if op.tag() == DiffTag::Equal {
+            result.extend(
+                originalLines[op.old_range()].iter().cloned().map(DiffOp::Equal),
+            );
         } else {
-            reversed.push(DiffOp::Insert(modifiedLines[j - 1].clone()));
-            j -= 1;
+            result.extend(originalLines[op.old_range()].iter().cloned().map(DiffOp::Delete));
+            result.extend(modifiedLines[op.new_range()].iter().cloned().map(DiffOp::Insert));
         }
     }
-
-    reversed.reverse();
-    reversed
+    result
 }
 
 #[allow(non_snake_case)]
@@ -739,6 +714,7 @@ fn tokenize_line_for_diff(line: &str) -> Vec<(&str, usize, usize)> {
     tokens
 }
 
+/// Computes UTF-8 byte spans using the same linear-space diff as whole-file edits.
 pub fn compute_intra_line_spans(
     old_line: &str,
     new_line: &str,
@@ -753,39 +729,28 @@ pub fn compute_intra_line_spans(
         return None;
     }
 
-    let mut table = vec![vec![0usize; new_tokens.len() + 1]; old_tokens.len() + 1];
-    for i in 0..old_tokens.len() {
-        for j in 0..new_tokens.len() {
-            if old_tokens[i].0 == new_tokens[j].0 {
-                table[i + 1][j + 1] = table[i][j] + 1;
-            } else {
-                table[i + 1][j + 1] = table[i + 1][j].max(table[i][j + 1]);
-            }
-        }
-    }
-    if table[old_tokens.len()][new_tokens.len()] * 5 < max_len {
+    let old_text: Vec<_> = old_tokens.iter().map(|token| token.0).collect();
+    let new_text: Vec<_> = new_tokens.iter().map(|token| token.0).collect();
+    let operations = capture_diff_slices(Algorithm::Myers, &old_text, &new_text);
+    let unchanged: usize = operations
+        .iter()
+        .filter(|op| op.tag() == DiffTag::Equal)
+        .map(|op| op.old_range().len())
+        .sum();
+    if unchanged * 5 < max_len {
         return None;
     }
 
     let mut old_indices = Vec::new();
     let mut new_indices = Vec::new();
-    let mut i = old_tokens.len();
-    let mut j = new_tokens.len();
-    while i > 0 || j > 0 {
-        if i > 0 && j > 0 && old_tokens[i - 1].0 == new_tokens[j - 1].0 {
-            i -= 1;
-            j -= 1;
-        } else if i > 0 && (j == 0 || table[i - 1][j] >= table[i][j - 1]) {
-            old_indices.push(i - 1);
-            i -= 1;
-        } else {
-            new_indices.push(j - 1);
-            j -= 1;
+    for op in operations {
+        if op.tag() != DiffTag::Equal {
+            old_indices.extend(op.old_range());
+            new_indices.extend(op.new_range());
         }
     }
-    old_indices.reverse();
-    new_indices.reverse();
 
+    /// Coalesces adjacent changed tokens without splitting a UTF-8 character.
     fn merge_spans(tokens: &[(&str, usize, usize)], indices: &[usize]) -> Vec<(usize, usize)> {
         let mut spans = Vec::new();
         for &index in indices {
@@ -805,4 +770,53 @@ pub fn compute_intra_line_spans(
         merge_spans(&old_tokens, &old_indices),
         merge_spans(&new_tokens, &new_indices),
     ))
+}
+
+#[cfg(test)]
+mod bounded_diff_tests {
+    use super::*;
+
+    /// Exercises a file size whose former 25,001 by 25,001 table required about five GiB.
+    #[test]
+    fn large_file_edit_keeps_an_exact_small_unified_hunk() {
+        let old = (0..25000).map(|index| format!("line {index}\n")).collect::<String>();
+        let new = old.replace("line 12500\n", "changed 中文\n");
+        let diff = FileBindingService.generateUnifiedDiff(&old, &new);
+        assert_eq!(diff, "@@ -12498,7 +12498,7 @@\n line 12497\n line 12498\n line 12499\n-line 12500\n+changed 中文\n line 12501\n line 12502\n line 12503");
+        assert_eq!(FileBindingService.generateUnifiedDiff(&old, &old), "No changes detected (files are identical)");
+    }
+
+    /// Long state lines also avoid a token-count product allocation and preserve byte-accurate highlighting.
+    #[test]
+    fn large_single_line_edit_preserves_unicode_spans_and_similarity_threshold() {
+        let prefix = "field, ".repeat(10000);
+        let old = format!("{prefix}旧值, tail");
+        let new = format!("{prefix}新值, tail");
+        let spans = compute_intra_line_spans(&old, &new).unwrap();
+        assert_eq!(spans, (vec![(prefix.len(), prefix.len() + "旧值".len())], vec![(prefix.len(), prefix.len() + "新值".len())]));
+        assert_eq!(compute_intra_line_spans("aaa", "bbb"), None);
+        assert_eq!(compute_intra_line_spans("same", "same"), None);
+    }
+
+    /// Reconstructs both inputs across repeated lines, empty inputs, insertions and deletions.
+    #[test]
+    fn line_edits_reconstruct_both_sources_with_duplicate_lines_and_line_endings() {
+        for old in ["", "a", "a\nb\na\n", "a\r\nb\r\n", "\n\n"] {
+            for new in ["", "b", "b\na\nb\n", "a\r\nc\r\n", "\n"] {
+                let original = kotlinLines(old);
+                let modified = kotlinLines(new);
+                let ops = buildDiffOps(&original, &modified);
+                let before: Vec<_> = ops.iter().filter_map(|op| match op {
+                    DiffOp::Equal(text) | DiffOp::Delete(text) => Some(text.clone()),
+                    DiffOp::Insert(_) => None,
+                }).collect();
+                let after: Vec<_> = ops.iter().filter_map(|op| match op {
+                    DiffOp::Equal(text) | DiffOp::Insert(text) => Some(text.clone()),
+                    DiffOp::Delete(_) => None,
+                }).collect();
+                assert_eq!(before, original);
+                assert_eq!(after, modified);
+            }
+        }
+    }
 }

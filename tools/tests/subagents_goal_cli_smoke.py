@@ -67,7 +67,7 @@ class CliSession:
         self.transcript.write(line)
         self.transcript.flush()
         value = json.loads(line)
-        assert not (isinstance(value, dict) and "error" in value), value
+        assert not (isinstance(value, dict) and value.get("error") is not None), value
         return value
 
     def command(self, *args):
