@@ -961,28 +961,9 @@ impl ClaudeProvider {
             } else {
                 self.apply_usage(json_response.get("usage"))
             };
-            let mut chunks = Vec::new();
-            if let Some(content) = json_response.get("content").and_then(Value::as_array) {
-                for part in content {
-                    match part.get("type").and_then(Value::as_str).unwrap_or_default() {
-                        "text" => {
-                            if let Some(text) = part.get("text").and_then(Value::as_str) {
-                                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
-                                    text,
-                                ));
-                            }
-                        }
-                        "tool_use" => {
-                            chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
-                                &part.to_string(),
-                            ))
-                        }
-                        _ => {}
-                    }
-                }
-            }
             let _ = token_counts;
-            return Ok(response_stream_from_chunks(chunks));
+            let content = self.parse_anthropic_non_streaming(&json_response);
+            return Ok(response_stream_from_chunks(vec![content]));
         }
     }
 
