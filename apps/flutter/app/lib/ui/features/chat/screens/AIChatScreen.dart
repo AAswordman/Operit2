@@ -1300,21 +1300,6 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _toastMessageNotifier.value = message;
   }
 
-  /// Opens one workspace file and reports failures as a local toast instead of
-  /// letting the command error escape into the zone as an unhandled exception.
-  Future<void> _openWorkspaceFile(String path) async {
-    try {
-      await _viewModel.openWorkspaceFile(path);
-    } catch (error) {
-      ClientLogger.e(
-        'open workspace file failed',
-        tag: 'AIChatScreen',
-        error: error,
-      );
-      if (mounted) _showLocalToast(error.toString());
-    }
-  }
-
   Future<void> _refreshAttachments() async {
     final attachments = await _viewModel.attachments();
     if (!mounted) {
@@ -2765,7 +2750,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
         onReadWorkspaceFileBytes: _viewModel.readWorkspaceFileBytes,
         onWriteWorkspaceFileBytes: _viewModel.writeWorkspaceFileBytes,
-        onOpenWorkspaceFile: _openWorkspaceFile,
+        onOpenWorkspaceFile: _viewModel.openWorkspaceFile,
         onCreateWorkspace: _createWorkspace,
         onBindWorkspace: _bindWorkspace,
         onUnbindWorkspace: _unbindWorkspace,
@@ -2994,7 +2979,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
       onReadWorkspaceFileBytes: _viewModel.readWorkspaceFileBytes,
       onWriteWorkspaceFileBytes: _viewModel.writeWorkspaceFileBytes,
-      onOpenWorkspaceFile: _openWorkspaceFile,
+      onOpenWorkspaceFile: _viewModel.openWorkspaceFile,
       onCreateWorkspace: _createWorkspace,
       onBindWorkspace: _bindWorkspace,
       onUnbindWorkspace: _unbindWorkspace,

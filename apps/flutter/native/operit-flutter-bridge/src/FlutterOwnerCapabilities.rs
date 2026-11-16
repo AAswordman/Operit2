@@ -217,23 +217,6 @@ pub(crate) fn ownerBluetooth(
         .map_err(|error| HostError::new(format!("Bluetooth response decode failed: {error}")))
 }
 
-/// Presents an owner-visible file without blocking on the owner's execution.
-/// File presentation is a device-local hand-off: the owner acknowledges after
-/// running it, and failures surface through owner-side logs rather than a
-/// caller-side timeout.
-pub(crate) fn ownerFilePresentation(operation: &str, path: &str, title: &str) -> HostResult<()> {
-    operit_runtime::services::RuntimeHostInteractionService::publishOwnerSystemOperation(
-        RuntimeHostInteractionSystemOperationPayload {
-            operation: operation.to_string(),
-            paramsJson: serde_json::to_string(&serde_json::json!({
-                "operation": operation, "path": path, "title": title,
-            }))
-            .map_err(|error| HostError::new(format!("{operation} request encode failed: {error}")))?,
-        },
-    );
-    Ok(())
-}
-
 /// Opens an owner-visible file using the installed platform file capability.
 pub(crate) fn ownerFileOpen(path: &str) -> HostResult<()> {
     let response = requestOwnerFileOpen(
