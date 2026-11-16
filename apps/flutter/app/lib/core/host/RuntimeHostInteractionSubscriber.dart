@@ -18,6 +18,7 @@ import '../proxy/generated/CoreProxyModels.g.dart';
 import '../web_visit/WebVisitBridge.dart';
 import '../web_visit/WebVisitModels.dart';
 import 'AppToastController.dart';
+import 'RuntimeHostInteractionDelivery.dart';
 import 'RuntimeFloatingWindowController.dart';
 import 'ComposeDslFilePickerService.dart';
 import 'ComposeDslFileSaveService.dart';
@@ -59,6 +60,12 @@ class RuntimeHostInteractionSubscriber {
   static const int _browserInteractHostSummaryIntervalMs = 500;
   static const GeneratedCoreProxyClients _clients = GeneratedCoreProxyClients(
     ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
+  );
+  static final _delivery = RuntimeHostInteractionDelivery(
+    dispatch: _dispatch,
+    respond: _respondOwnerHostInteraction,
+    errorResponse: _errorResponse,
+    onDispatchError: _reportDispatchError,
   );
   static const List<RuntimeHostInteractionKind> _ownerKinds =
       <RuntimeHostInteractionKind>[
@@ -102,37 +109,65 @@ class RuntimeHostInteractionSubscriber {
     if (_subscription != null) {
       return;
     }
-    late final StreamSubscription<RuntimeHostInteractionRequest> subscription;
-    subscription = _clients.servicesRuntimeHostInteractionService
-        .ownerHostInteractionEvents(kinds: _ownerKinds)
-        .listen(
-          (event) => unawaited(_handleEvent(event)),
-          onError: (Object error, StackTrace stackTrace) {
-            _releaseSubscription(subscription);
-            FlutterError.reportError(
-              FlutterErrorDetails(
-                exception: error,
-                stack: stackTrace,
-                library: 'runtime host interaction subscriber',
-                context: ErrorDescription(
-                  'listening owner host interaction stream',
+    try {
+      final pending = _delivery.pending;
+      final resumingRequestIds = pending
+          .map((request) => request.requestId)
+          .toSet();
+      late final StreamSubscription<RuntimeHostInteractionRequest> subscription;
+      subscription = _clients.servicesRuntimeHostInteractionService
+          .ownerHostInteractionEvents(kinds: _ownerKinds)
+          .listen(
+            (event) {
+              // A replay may already be queued when the resumed response is accepted.
+              if (resumingRequestIds.contains(event.requestId)) return;
+              unawaited(_handleEvent(event, subscription));
+            },
+            onError: (Object error, StackTrace stackTrace) {
+              if (!identical(_subscription, subscription)) return;
+              _releaseSubscription(subscription);
+              FlutterError.reportError(
+                FlutterErrorDetails(
+                  exception: error,
+                  stack: stackTrace,
+                  library: 'runtime host interaction subscriber',
+                  context: ErrorDescription(
+                    'listening owner host interaction stream',
+                  ),
                 ),
-              ),
-            );
-            _scheduleReconnect();
-          },
-          onDone: () {
-            _releaseSubscription(subscription);
-            ClientLogger.v(
-              'owner host interaction stream closed',
-              tag: 'RuntimeHostInteraction',
-              verboseLevel: VerboseLevel.level4,
-            );
-            _scheduleReconnect();
-          },
-          cancelOnError: false,
-        );
-    _subscription = subscription;
+              );
+              _scheduleReconnect();
+            },
+            onDone: () {
+              if (!identical(_subscription, subscription)) return;
+              _releaseSubscription(subscription);
+              ClientLogger.v(
+                'owner host interaction stream closed',
+                tag: 'RuntimeHostInteraction',
+                verboseLevel: VerboseLevel.level4,
+              );
+              _scheduleReconnect();
+            },
+            cancelOnError: true,
+          );
+      _subscription = subscription;
+      for (final request in pending) {
+        unawaited(_handleEvent(request, subscription));
+      }
+    } catch (error, stackTrace) {
+      // A synchronous failure while re-subscribing must not break the
+      // reconnect chain, or pending interactions would wait for their full
+      // timeout with no consumer.
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'runtime host interaction subscriber',
+          context: ErrorDescription('installing owner host interaction stream'),
+        ),
+      );
+      _scheduleReconnect();
+    }
   }
 
   /// Schedules a reconnect if the host subscriber was not deliberately uninstalled.
@@ -156,6 +191,7 @@ class RuntimeHostInteractionSubscriber {
     _reconnectTimer = null;
     final subscription = _subscription;
     _subscription = null;
+    _delivery.clear();
     await subscription?.cancel();
   }
 
@@ -168,54 +204,59 @@ class RuntimeHostInteractionSubscriber {
     }
   }
 
-  /// Handles one owner-host interaction request.
+  /// Reconnects the owner stream after a completion loses its transport connection.
+  static void _reconnectAfterDeliveryFailure() {
+    if (_uninstalled) return;
+    final subscription = _subscription;
+    _subscription = null;
+    unawaited(subscription?.cancel());
+    _scheduleReconnect();
+  }
+
+  /// Reports native execution failures while their structured response returns to Core.
+  static void _reportDispatchError(Object error, StackTrace stackTrace) {
+    FlutterError.reportError(
+      FlutterErrorDetails(
+        exception: error,
+        stack: stackTrace,
+        library: 'runtime host interaction subscriber',
+        context: ErrorDescription('executing owner host interaction'),
+      ),
+    );
+  }
+
+  /// Delivers the original operation result through the current owner connection.
   static Future<void> _handleEvent(
     RuntimeHostInteractionRequest request,
+    StreamSubscription<RuntimeHostInteractionRequest> subscription,
   ) async {
+    if (!identical(_subscription, subscription)) return;
     final eventStopwatch = Stopwatch()..start();
-    var dispatchCompleted = false;
     try {
-      final response = await _dispatch(request);
-      dispatchCompleted = true;
-      final respondStopwatch = Stopwatch()..start();
-      await _respondOwnerHostInteraction(request.requestId, response);
-      respondStopwatch.stop();
+      final respondElapsed = await _delivery.deliver(request);
+      if (respondElapsed == null) return;
       _recordBrowserInteractHostResponseTiming(
         request.requestId,
-        respondElapsedUs: respondStopwatch.elapsedMicroseconds,
+        respondElapsedUs: respondElapsed.inMicroseconds,
         roundTripElapsedUs: eventStopwatch.elapsedMicroseconds,
         failed: false,
       );
     } catch (error, stackTrace) {
-      if (!dispatchCompleted) {
-        final response = _errorResponse(error);
-        try {
-          await _respondOwnerHostInteraction(request.requestId, response);
-        } catch (respondError, respondStackTrace) {
-          FlutterError.reportError(
-            FlutterErrorDetails(
-              exception: respondError,
-              stack: respondStackTrace,
-              library: 'runtime host interaction subscriber',
-              context: ErrorDescription(
-                'responding owner host interaction error',
-              ),
-            ),
-          );
-        }
-      }
       _recordBrowserInteractHostResponseTiming(
         request.requestId,
         respondElapsedUs: 0,
         roundTripElapsedUs: eventStopwatch.elapsedMicroseconds,
         failed: true,
       );
-      final isRequestNotFound =
-          error is CoreLinkError &&
-          error.message.contains('host interaction request not found');
-      if (isRequestNotFound) {
+      if (!RuntimeHostInteractionDelivery.isCoreRejection(error) &&
+          identical(_subscription, subscription)) {
+        _reconnectAfterDeliveryFailure();
+      }
+      if (error is CoreLinkError &&
+          error.message ==
+              'host interaction request not found: ${request.requestId}') {
         ClientLogger.w(
-          'Host interaction request expired or was cancelled by Core: ${request.requestId}',
+          'Host interaction expired or was cancelled by Core: ${request.requestId}',
           tag: 'RuntimeHostInteraction',
         );
       } else {
@@ -224,21 +265,19 @@ class RuntimeHostInteractionSubscriber {
             exception: error,
             stack: stackTrace,
             library: 'runtime host interaction subscriber',
-            context: ErrorDescription('handling owner host interaction event'),
+            context: ErrorDescription('responding owner host interaction'),
           ),
         );
       }
     }
   }
 
-  /// Sends one owner host interaction response through the runtime service.
+  /// Sends a response only after the native operation has completed.
   static Future<void> _respondOwnerHostInteraction(
     String requestId,
     RuntimeHostInteractionResponse response,
-  ) {
-    return _clients.servicesRuntimeHostInteractionService
-        .respondOwnerHostInteraction(requestId: requestId, response: response);
-  }
+  ) => _clients.servicesRuntimeHostInteractionService
+      .respondOwnerHostInteraction(requestId: requestId, response: response);
 
   /// Builds a typed error response for one failed owner interaction.
   static RuntimeHostInteractionResponse _errorResponse(Object error) {

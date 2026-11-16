@@ -1833,6 +1833,7 @@ impl RuntimeHostInteractionBroker {
         }
     }
 
+    /// Retires a pending operation atomically before making its result available.
     fn respond(
         &self,
         requestId: &str,
@@ -1851,6 +1852,7 @@ impl RuntimeHostInteractionBroker {
             ));
         }
         state.responses.insert(requestId.to_string(), response);
+        state.pending.remove(requestId);
         self.notifyChanged();
         Ok(())
     }
@@ -1964,6 +1966,46 @@ mod tests {
     }
 
 
+
+    /// Verifies reconnects cannot replay an answered operation before its waiter resumes.
+    #[test]
+    fn brokerRetiresRespondedRequestsBeforeReplay() {
+        let broker = RuntimeHostInteractionBroker::default();
+        let request = RuntimeHostInteractionRequest::fileOpen(
+            RuntimeHostInteractionFileOpenPayload {
+                path: "/tmp/file".to_string(),
+            },
+        );
+        let requestId = request.requestId.clone();
+        broker.state.lock().unwrap().pending.insert(
+            requestId.clone(),
+            RuntimeHostInteractionPending {
+                target: RuntimeHostInteractionTarget::OwnerHost,
+                request,
+                sequence: 0,
+                awaitsResponse: true,
+            },
+        );
+        let mut response = RuntimeHostInteractionResponse::empty();
+        response.error = Some("native open failed".to_string());
+
+        broker.respond(&requestId, response).unwrap();
+
+        {
+            let state = broker.state.lock().unwrap();
+            assert!(!state.pending.contains_key(&requestId));
+            assert_eq!(
+                state.responses[&requestId].error.as_deref(),
+                Some("native open failed"),
+            );
+        }
+        assert_eq!(
+            broker
+                .respond(&requestId, RuntimeHostInteractionResponse::empty())
+                .unwrap_err(),
+            format!("host interaction request not found: {requestId}"),
+        );
+    }
 
     /// Verifies that a structured owner error returns without waiting for timeout.
     #[test]

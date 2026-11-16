@@ -108,7 +108,7 @@ internal class AndroidPackageOperations(private val context: Activity) {
             else -> throw SecurityException("Force stopping apps requires authorized Shizuku or Root")
         }
         val response = AndroidPrivilegedCommandExecutor.execute(
-            target, "am force-stop '$name'", rootSettings = AndroidPrivilegeAuthorization.rootExecutionSettings(context),
+            context, target, "am force-stop '$name'", rootSettings = AndroidPrivilegeAuthorization.rootExecutionSettings(context),
         )
         check(response.exitCode == 0) { "Force stop failed: ${response.stderrText()}" }
         return result("stop_app", name, "Force stop completed")

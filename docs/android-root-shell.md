@@ -60,6 +60,14 @@ Linux/proot 的 bash 启动链路保持不变。
 - Shizuku：Root 当前不可用且已有 Shizuku 授权时，绑定专用 UserService。
   特权进程持有真实 PTY，双向普通管道通过 Binder 传给应用，避免跨身份直接访问
   devpts；调整窗口、查询退出码和结束子进程仍由特权服务处理。
+  Shizuku 服务本身以 root 启动时（如 KernelSU 授权启动，Shizuku 不降级为
+  shell），UserService 在 fork PTY 子进程后、exec 前检测 euid=0 并按 Operit1
+  `shell_identity_launcher` 的顺序降权：setgroups(shell 补充组) →
+  setgid(2000) → setuid(2000) → 尽力 setcon(`u:r:shell:s0`)。
+  setgroups/setgid/setuid 失败或最终 uid/gid 不是 2000 时以 126 退出拒绝启动，
+  绝不静默以 root 运行终端；setcon 失败仅记录日志（部分 su 域禁止
+  dyntransition），此时仍为 uid 2000。降权只作用于 Shizuku PTY，Root 传输和
+  root 模块 Core 是用户显式授权的 root，不受影响。
 - 普通 sh：两项授权均不可用时，以应用自身 UID 启动 `/system/bin/sh`。
 
 终端创建不会主动发起新的授权申请。身份在会话创建时确定，后续命令不重新路由，
@@ -67,6 +75,16 @@ Linux/proot 的 bash 启动链路保持不变。
 标准输入和终端尺寸等会话状态。Shizuku 的默认工作目录从应用私有目录调整为
 `/sdcard`，不携带应用私有动态库路径；显式指定的目录不会被替换。
 应用退出或服务销毁时回收子进程和管道，管道 EOF 会停止应用侧读取任务。
+
+一次性特权命令（`execute_privileged_command` 的 `shizuku` target、Shizuku 截屏、
+`am force-stop` 等）不再使用 `Shizuku.newProcess`——该 API 在 Shizuku 服务端进程内
+fork+exec，应用没有降权插入点，root 启动的 Shizuku 下会静默以 uid 0 执行。改为绑定
+与终端同一个 UserService，走新增的 `exec` 操作：Rust `forkPipeExecve` 以独立
+stdout/stderr 管道 fork（非 PTY，保证 screencap 等二进制输出不被终端加工），子进程
+stdin 接 `/dev/null`，并复用与 PTY 相同的 `dropRootToShellIdentity` 降权与 fail-closed
+校验。客户端 `AndroidTerminalPrivileges` 为进程级单例（UserService 只接受一个 owner
+token），终端会话与一次性命令共享同一连接与会话表；退出码轮询、超时预算和销毁沿用
+`AndroidCommandProcessRunner.collect`。
 
 ## 维护检查
 
@@ -93,4 +111,8 @@ JAVA_HOME=/path/to/java KOTLINC=/path/to/kotlinc \
 
 还需要在 Magisk / KernelSU / APatch 真机上验证 Root 管理器授权弹窗、拒绝后重试、
 权限撤销、截图和长时间命令超时，以及 Shizuku 的多会话、窗口调整、Ctrl-C 和服务断连；
-JVM 测试不能替代设备级兼容性验证。
+JVM 测试不能替代设备级兼容性验证。root 启动的 Shizuku（KernelSU 直接授权）还需
+真机确认终端 `id` 输出 uid=2000、`/proc/self/attr/current` 为 shell 域，以及
+降权失败时终端拒绝启动而非以 root 运行；一次性命令（`execute_privileged_command`
+的 `shizuku` target 执行 `id`、Shizuku 截屏、force-stop）同样应为 uid=2000，
+且截屏 PNG 字节完整、超时命令被销毁。

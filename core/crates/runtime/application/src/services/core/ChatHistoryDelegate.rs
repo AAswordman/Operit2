@@ -125,7 +125,9 @@ fn preserveLiveMessageStreams(
         let Some(previousMessage) = liveMessages.get(&message.timestamp) else {
             continue;
         };
-        if previousMessage.selectedVariantIndex != message.selectedVariantIndex {
+        if previousMessage.selectedVariantIndex != message.selectedVariantIndex
+            || message.completedAt > 0
+        {
             continue;
         }
         message.contentStream = previousMessage.contentStream.clone();
@@ -352,13 +354,6 @@ impl ChatHistoryDelegate {
             hasOlderDisplayHistory: self.hasOlderDisplayHistory,
             hasNewerDisplayHistory: self.hasNewerDisplayHistory,
             isLoadingDisplayWindow: self.isLoadingDisplayWindow,
-        }
-    }
-
-    #[allow(non_snake_case)]
-    fn emitChatHistoryState(&mut self) {
-        if let Some(chatId) = self.currentChatIdFlow.value() {
-            self.dispatchChatViewEvent(ChatViewEvent::ViewUpdated, &chatId);
         }
     }
 
@@ -622,7 +617,6 @@ impl ChatHistoryDelegate {
         self.hasNewerDisplayHistory = false;
         self.isLoadingDisplayWindow = false;
         self.emitDisplayWindowState();
-        self.emitChatHistoryState();
         AppLogger::v_with_level(
             "ChatFlowTrace",
             "clear_current.done",
@@ -664,7 +658,6 @@ impl ChatHistoryDelegate {
                 ),
             );
         }
-        self.emitChatHistoryState();
         if let Some(value) = hasOlderPersistedHistory {
             self.currentChatWindow.hasOlderDisplayHistory = value;
             self.hasOlderDisplayHistory = value;
@@ -1652,9 +1645,6 @@ impl ChatHistoryDelegate {
             .deleteMessage(chatId.clone(), timestamp)
             .expect("ChatHistoryManager.deleteMessage must remove message");
         self.removeChatMessage(&chatId, timestamp);
-        if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-            self.emitChatHistoryState();
-        }
         true
     }
 
@@ -1692,9 +1682,6 @@ impl ChatHistoryDelegate {
                     .expect("ChatHistoryManager.deleteMessage must remove message");
                 delegate.removeChatMessage(&chatId, timestamp);
             }
-            if delegate.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-                delegate.emitChatHistoryState();
-            }
             true
         })
     }
@@ -1711,9 +1698,6 @@ impl ChatHistoryDelegate {
         self.updateOpenedChatMessage(&chatId, timestamp, |message| {
             message.isFavorite = isFavorite;
         });
-        if self.currentChatIdFlow.value().as_deref() == Some(chatId.as_str()) {
-            self.emitChatHistoryState();
-        }
     }
 
     #[allow(non_snake_case)]
@@ -1737,9 +1721,6 @@ impl ChatHistoryDelegate {
                 .deleteMessagesFrom(chatId.clone(), timestamp)
                 .expect("ChatHistoryManager.deleteMessagesFrom must remove messages");
             delegate.removeChatMessagesFrom(&chatId, timestamp);
-            if delegate.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-                delegate.emitChatHistoryState();
-            }
             true
         })
     }
@@ -2049,7 +2030,6 @@ impl ChatHistoryDelegate {
             ),
         );
         flow.set_value(messages);
-        self.emitChatHistoryState();
         didUpdate
     }
 
@@ -2374,7 +2354,6 @@ impl ChatHistoryDelegate {
                 self.clearChatFlow(&chatId);
             }
         }
-        self.emitChatHistoryState();
     }
 
     #[allow(non_snake_case)]
@@ -2400,9 +2379,6 @@ impl ChatHistoryDelegate {
                         .expect("ChatHistoryManager.clearChatMessages must succeed");
                     delegate.clearChatFlow(&chatId);
                 }
-            }
-            if delegate.currentChatIdFlow.value().as_ref() == Some(&chatId) {
-                delegate.emitChatHistoryState();
             }
             true
         })
@@ -2559,6 +2535,31 @@ mod tests {
 
         assert_eq!(loaded.contentStream, previous.contentStream);
         assert_eq!(loaded.parts, previous.parts);
+    }
+
+    /// A completed stored role reply must retire a stale stream retained by another delegate clone.
+    #[test]
+    fn persistence_refresh_keeps_completed_reply_instead_of_reviving_stale_stream() {
+        let source = Arc::new(CoreStreamSource::new(|_request| {
+            let (_sender, receiver) = CoreEventStream::channel();
+            Ok(receiver)
+        }));
+        let mut previous = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(), "partial role reply".to_string(), 123,
+        );
+        previous.contentStream = Some(CoreStream::<MarkdownStreamEvent>::fromSourceWithId(
+            "stale-role-stream".to_string(), source,
+        ));
+        let mut loaded = ChatMessage::new_with_markdown_timestamp(
+            "ai".to_string(), "completed role reply".to_string(), 123,
+        );
+        loaded.completedAt = 456;
+        let completed = loaded.clone();
+
+        preserveLiveMessageStreams(&[previous], std::slice::from_mut(&mut loaded), None);
+
+        assert_eq!(loaded, completed);
+        assert!(loaded.contentStream.is_none());
     }
 
     /// Keeps the reloaded survivor's parts even when its index matches the deleted live revision.

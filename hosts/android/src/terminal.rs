@@ -1617,6 +1617,7 @@ struct AndroidPtyCommand {
     envp: Vec<CString>,
     cwd: CString,
     shizuku: bool,
+    dropRootToShell: bool,
     workingDir: Option<String>,
     startupInput: Option<String>,
 }
@@ -1688,6 +1689,7 @@ fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand>
         envp,
         cwd: cstringPath(&internalRoot)?,
         shizuku: false,
+        dropRootToShell: false,
         workingDir: None,
         startupInput: None,
     })
@@ -1824,6 +1826,7 @@ fn buildAndroidSystemShellCommand(
             cstringPath(&internalRoot)?
         },
         shizuku: transport == ShellTransport::Shizuku,
+        dropRootToShell: false,
         workingDir: Some(workDir),
         startupInput: Some(include_str!("system_shell_init.sh").to_string()),
     })
@@ -1992,6 +1995,62 @@ fn resizeAndroidPtyProcess(
     }
 }
 
+/// A root-started Shizuku (e.g. KernelSU) leaks uid 0 into its UserService
+/// children; the terminal promises shell identity, so drop before exec or die.
+/// Mirrors Operit1's shell_identity_launcher: groups → gid → uid → setcon.
+#[cfg(target_os = "android")]
+unsafe fn dropRootToShellIdentity() {
+    const SHELL_UID: libc::uid_t = 2000;
+    const SHELL_GID: libc::gid_t = 2000;
+    const SHELL_GROUPS: [libc::gid_t; 12] = [
+        2000, // shell
+        1004, // input
+        1007, // log
+        1011, // adb
+        1015, // sdcard_rw
+        1028, // sdcard_r
+        3001, // net_bt_admin
+        3002, // net_bt
+        3003, // inet
+        3006, // net_bw_stats
+        3009, // readproc
+        3011, // uhid
+    ];
+    let fail = |message: &[u8]| -> ! {
+        libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
+        libc::_exit(126);
+    };
+    if libc::setgroups(SHELL_GROUPS.len(), SHELL_GROUPS.as_ptr()) != 0 {
+        fail(b"setgroups(shell) failed\n");
+    }
+    if libc::setgid(SHELL_GID) != 0 {
+        fail(b"setgid(2000) failed\n");
+    }
+    if libc::setuid(SHELL_UID) != 0 {
+        fail(b"setuid(2000) failed\n");
+    }
+    // Best effort: some su domains cannot dyntransition to u:r:shell:s0, and
+    // uid 2000 already removes root DAC powers. Drop uid first because the
+    // shell domain would deny setuid/setgid.
+    let context = b"u:r:shell:s0\0";
+    let fd = libc::open(
+        b"/proc/self/attr/current\0".as_ptr().cast(),
+        libc::O_WRONLY | libc::O_CLOEXEC,
+    );
+    let switched = fd >= 0 && {
+        let written = libc::write(fd, context.as_ptr().cast(), context.len());
+        libc::close(fd);
+        written == context.len() as libc::ssize_t
+    };
+    if !switched {
+        let message = b"setcon(u:r:shell:s0) failed; continuing as uid 2000\n";
+        libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
+    }
+    if libc::getuid() != SHELL_UID || libc::getgid() != SHELL_GID {
+        fail(b"shell identity verification failed\n");
+    }
+}
+
 /// Forks the PTY child in the current process's Android security context.
 fn forkPtyExecve(
     command: &AndroidPtyCommand,
@@ -2024,6 +2083,9 @@ fn forkPtyExecve(
         }
         if pid == 0 {
             unsafe {
+                if command.dropRootToShell && libc::geteuid() == 0 {
+                    dropRootToShellIdentity();
+                }
                 if libc::chdir(command.cwd.as_ptr()) != 0 {
                     libc::write(
                         libc::STDERR_FILENO,
@@ -2061,6 +2123,89 @@ fn forkPtyExecve(
             return Err(HostError::new("Could not mark Android PTY close-on-exec"));
         }
         Ok((pid, masterFd))
+    }
+}
+
+/// Forks a noninteractive child with separate stdout/stderr pipes so binary
+/// output (e.g. screencap PNG) never passes through PTY line discipline.
+#[cfg(target_os = "android")]
+fn forkPipeExecve(command: &AndroidPtyCommand) -> HostResult<(AndroidPid, RawFd, RawFd)> {
+    let mut stdoutPipe: [libc::c_int; 2] = [-1, -1];
+    let mut stderrPipe: [libc::c_int; 2] = [-1, -1];
+    unsafe {
+        if libc::pipe(stdoutPipe.as_mut_ptr()) != 0 {
+            return Err(HostError::new("stdout pipe failed"));
+        }
+        if libc::pipe(stderrPipe.as_mut_ptr()) != 0 {
+            libc::close(stdoutPipe[0]);
+            libc::close(stdoutPipe[1]);
+            return Err(HostError::new("stderr pipe failed"));
+        }
+        let pid = libc::fork();
+        if pid < 0 {
+            for fd in stdoutPipe.iter().chain(stderrPipe.iter()) {
+                libc::close(*fd);
+            }
+            return Err(HostError::new("fork failed"));
+        }
+        if pid == 0 {
+            if libc::dup2(stdoutPipe[1], libc::STDOUT_FILENO) < 0
+                || libc::dup2(stderrPipe[1], libc::STDERR_FILENO) < 0
+            {
+                libc::write(
+                    stderrPipe[1],
+                    b"dup2 failed\n".as_ptr().cast(),
+                    b"dup2 failed\n".len(),
+                );
+                libc::_exit(1);
+            }
+            for fd in stdoutPipe.iter().chain(stderrPipe.iter()) {
+                libc::close(*fd);
+            }
+            let fail = |message: &[u8]| -> ! {
+                libc::write(libc::STDERR_FILENO, message.as_ptr().cast(), message.len());
+                libc::_exit(1);
+            };
+            let null = libc::open(b"/dev/null\0".as_ptr().cast(), libc::O_RDONLY);
+            if null < 0 || libc::dup2(null, libc::STDIN_FILENO) < 0 {
+                fail(b"stdin /dev/null failed\n");
+            }
+            if null > libc::STDERR_FILENO {
+                libc::close(null);
+            }
+            // After dup2 so a refused identity drop is visible in collected stderr.
+            if command.dropRootToShell && libc::geteuid() == 0 {
+                dropRootToShellIdentity();
+            }
+            if libc::chdir(command.cwd.as_ptr()) != 0 {
+                fail(b"chdir failed\n");
+            }
+            let mut argv = command
+                .argv
+                .iter()
+                .map(|item| item.as_ptr())
+                .collect::<Vec<_>>();
+            argv.push(ptr::null());
+            let mut envp = command
+                .envp
+                .iter()
+                .map(|item| item.as_ptr())
+                .collect::<Vec<_>>();
+            envp.push(ptr::null());
+            libc::execve(command.executable.as_ptr(), argv.as_ptr(), envp.as_ptr());
+            fail(b"execve failed\n");
+        }
+        libc::close(stdoutPipe[1]);
+        libc::close(stderrPipe[1]);
+        for fd in [stdoutPipe[0], stderrPipe[0]] {
+            if libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) < 0 {
+                terminateAndroidPtyProcess(AndroidPtyProcess::Local(pid));
+                libc::close(stdoutPipe[0]);
+                libc::close(stderrPipe[0]);
+                return Err(HostError::new("Could not mark Android exec pipes close-on-exec"));
+            }
+        }
+        Ok((pid, stdoutPipe[0], stderrPipe[0]))
     }
 }
 
@@ -2228,6 +2373,44 @@ fn pollPidExitCode(process: AndroidPtyProcess) -> HostResult<Option<i32>> {
     }
 }
 
+/// Parses one privileged launch request; every child must keep the shell identity.
+#[cfg(target_os = "android")]
+fn privilegedPtyCommand(request: &serde_json::Value) -> HostResult<AndroidPtyCommand> {
+    use serde_json::Value;
+    let strings = |key: &str| -> HostResult<Vec<CString>> {
+        request
+            .get(key)
+            .and_then(Value::as_array)
+            .ok_or_else(|| HostError::new(format!("Missing PTY {key}")))?
+            .iter()
+            .map(|v| {
+                v.as_str()
+                    .ok_or_else(|| HostError::new("Invalid PTY argument"))
+                    .and_then(cstring)
+            })
+            .collect()
+    };
+    let argv = strings("argv")?;
+    let executable = argv
+        .first()
+        .ok_or_else(|| HostError::new("Empty PTY argv"))?
+        .clone();
+    let cwd = request
+        .get("cwd")
+        .and_then(Value::as_str)
+        .ok_or_else(|| HostError::new("Missing PTY cwd"))?;
+    Ok(AndroidPtyCommand {
+        executable,
+        argv,
+        envp: strings("env")?,
+        cwd: cstring(cwd)?,
+        shizuku: false,
+        dropRootToShell: true,
+        workingDir: None,
+        startupInput: None,
+    })
+}
+
 /// Provides PTY primitives to the privileged Binder service without invoking the app runtime.
 #[cfg(target_os = "android")]
 pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
@@ -2235,49 +2418,25 @@ pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
     let request: Value =
         serde_json::from_str(request).map_err(|e| HostError::new(e.to_string()))?;
     if request.get("operation").and_then(Value::as_str) != Some("start")
+        && request.get("operation").and_then(Value::as_str) != Some("exec")
         && requiredPtyInteger(&request, "pid")? == 0
     {
         return Err(HostError::new("Android PTY PID must be positive"));
     }
     let response = match request.get("operation").and_then(Value::as_str) {
         Some("start") => {
-            let strings = |key: &str| -> HostResult<Vec<CString>> {
-                request
-                    .get(key)
-                    .and_then(Value::as_array)
-                    .ok_or_else(|| HostError::new(format!("Missing PTY {key}")))?
-                    .iter()
-                    .map(|v| {
-                        v.as_str()
-                            .ok_or_else(|| HostError::new("Invalid PTY argument"))
-                            .and_then(cstring)
-                    })
-                    .collect()
-            };
-            let argv = strings("argv")?;
-            let executable = argv
-                .first()
-                .ok_or_else(|| HostError::new("Empty PTY argv"))?
-                .clone();
-            let cwd = request
-                .get("cwd")
-                .and_then(Value::as_str)
-                .ok_or_else(|| HostError::new("Missing PTY cwd"))?;
-            let command = AndroidPtyCommand {
-                executable,
-                argv,
-                envp: strings("env")?,
-                cwd: cstring(cwd)?,
-                shizuku: false,
-                workingDir: None,
-                startupInput: None,
-            };
+            let command = privilegedPtyCommand(&request)?;
             let rows = u16::try_from(requiredPtyInteger(&request, "rows")?)
                 .map_err(|e| HostError::new(e.to_string()))?;
             let cols = u16::try_from(requiredPtyInteger(&request, "cols")?)
                 .map_err(|e| HostError::new(e.to_string()))?;
             let (pid, fd) = forkPtyExecve(&command, rows, cols)?;
             json!({"pid": pid, "fd": fd})
+        }
+        Some("exec") => {
+            let command = privilegedPtyCommand(&request)?;
+            let (pid, stdoutFd, stderrFd) = forkPipeExecve(&command)?;
+            json!({"pid": pid, "stdoutFd": stdoutFd, "stderrFd": stderrFd})
         }
         Some("poll") => {
             json!({"exitCode": pollPidExitCode(AndroidPtyProcess::Local(requiredPtyInteger(&request, "pid")?))?})
