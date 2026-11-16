@@ -471,35 +471,6 @@ class ChatViewModel {
     return _chat.clearAttachments();
   }
 
-  String createAttachmentReference(AttachmentInfo attachment) {
-    final buffer = StringBuffer('<attachment ');
-    const escape = HtmlEscape(HtmlEscapeMode.attribute);
-    final toolPath = attachment.vfsPath ?? attachment.filePath;
-    buffer.write('id="${escape.convert(toolPath)}" ');
-    buffer.write('filename="${escape.convert(attachment.fileName)}" ');
-    buffer.write('type="${escape.convert(attachment.mimeType)}" ');
-    final nodeId = attachment.nodeId;
-    if (nodeId != null && nodeId.isNotEmpty) {
-      buffer.write('node_id="${escape.convert(nodeId)}" ');
-    }
-    if ([
-      '/app/',
-      '/operitapp/',
-      '/mnt/',
-      '/virtual/',
-    ].any(toolPath.startsWith)) {
-      buffer.write('path="${escape.convert(toolPath)}" ');
-    }
-    if (attachment.fileSize > 0) {
-      buffer.write('size="${attachment.fileSize}" ');
-    }
-    if (attachment.content.isNotEmpty) {
-      buffer.write('content="${escape.convert(attachment.content)}" ');
-    }
-    buffer.write('/>');
-    return buffer.toString();
-  }
-
   /// Splits Markdown with the runtime surface that owns this chat.
   Future<List<ChatResponseStreamEvent>> splitMarkdownContent(String content) {
     return _chat.splitMarkdownContent(content: content);
