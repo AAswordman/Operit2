@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import '../../../core/link/CoreLinkProtocol.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import 'ChatUiContributionModels.dart';
@@ -234,3 +235,38 @@ class ToolPkgChatUiCatalog {
     return text;
   }
 }
+
+/// How one chat UI context load failure should be handled.
+enum ChatUiContextFailurePolicy {
+  /// The package registry startup scan has not published its catalog yet.
+  /// This is a normal startup race: degrade to the app-default presentation
+  /// silently and allow one bounded retry.
+  silentRetry,
+
+  /// A real load failure that must stay visible through error logging and a
+  /// user-facing toast.
+  fatal,
+}
+
+/// Returns whether [error] reports the package registry's startup race.
+///
+/// Core's `PackageRegistryReadiness::require_ready` publishes exactly two
+/// transient texts: "Package registry load has not completed" while the
+/// canonical startup scan is scheduled or loading, and "Package registry
+/// startup has not been scheduled" before the application claims the startup
+/// task (core/crates/tool/services/src/tools/packTool/PackageRegistryReadiness.rs:85
+/// and :82). A genuine load failure instead propagates the original error
+/// recorded by `fail()`, so it never matches here and remains reportable.
+bool isTransientPackageRegistryReadinessError(Object error) {
+  if (error is! CoreLinkError || error.code != 'COMMAND_ERROR') {
+    return false;
+  }
+  return error.message == 'Package registry load has not completed' ||
+      error.message == 'Package registry startup has not been scheduled';
+}
+
+/// Classifies one chat UI context load failure into its handling policy.
+ChatUiContextFailurePolicy chatUiContextFailurePolicy(Object error) =>
+    isTransientPackageRegistryReadinessError(error)
+        ? ChatUiContextFailurePolicy.silentRetry
+        : ChatUiContextFailurePolicy.fatal;

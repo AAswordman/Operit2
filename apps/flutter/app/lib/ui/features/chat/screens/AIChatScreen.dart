@@ -2548,7 +2548,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   }
 
   /// Loads the actual current chat profile without interpreting plugin bindings.
-  Future<void> _reloadChatUiContext() async {
+  ///
+  /// [allowTransientRetry] permits one silent follow-up reload when Core
+  /// reports the package registry startup race; the scheduled retry itself
+  /// passes false so a still-unready registry degrades quietly instead of
+  /// retrying forever.
+  Future<void> _reloadChatUiContext({bool allowTransientRetry = true}) async {
     final generation = ++_chatUiContextGeneration;
     final chatId = _currentChatId;
     try {
@@ -2565,6 +2570,23 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     } catch (error, stackTrace) {
       if (!mounted || generation != _chatUiContextGeneration) return;
       _mutateChatContentData(() => _chatUiContext = null);
+      if (chatUiContextFailurePolicy(error) ==
+          ChatUiContextFailurePolicy.silentRetry) {
+        // Startup-race readiness is a normal transient state: no toast and no
+        // error-level report; the waiting Core call normally resolves as soon
+        // as the canonical registry scan publishes its catalog.
+        ClientLogger.v(
+          'Chat UI context degraded while the package registry startup scan '
+          'had not completed',
+          tag: 'AIChatScreen',
+          error: error,
+          stackTrace: stackTrace,
+        );
+        if (allowTransientRetry) {
+          _scheduleTransientChatUiContextRetry(generation, chatId);
+        }
+        return;
+      }
       ClientLogger.e(
         'Failed to load registered chat UI context',
         tag: 'AIChatScreen',
@@ -2573,6 +2595,18 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       );
       _showLocalToast(error.toString());
     }
+  }
+
+  /// Schedules the single silent follow-up after a registry-readiness race.
+  void _scheduleTransientChatUiContextRetry(int generation, String? chatId) {
+    Future<void>.delayed(const Duration(milliseconds: 500), () {
+      if (!mounted ||
+          generation != _chatUiContextGeneration ||
+          chatId != _currentChatId) {
+        return;
+      }
+      unawaited(_reloadChatUiContext(allowTransientRetry: false));
+    });
   }
 
   /// Opens only the plugin-provided avatar preview, not the application title.
