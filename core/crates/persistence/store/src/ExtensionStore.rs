@@ -370,8 +370,9 @@ impl ExtensionStore {
             &self.storage.readBytes(path).map_err(|e| e.to_string())?,
         ).map_err(|e| e.to_string())?;
         self.validate(&record)?;
-        if recordPath(&record.kind, &record.id, &record.scope)? != path {
-            return Err("Extension identity does not match its record path".to_string());
+        let expected = recordPath(&record.kind, &record.id, &record.scope)?;
+        if expected != path {
+            return Err(identityMismatchMessage(&record, &expected, path));
         }
         let legacy = record.schemaVersion == 0;
         if legacy {
@@ -1302,6 +1303,47 @@ pub fn recordPath(kind: &str, id: &str, scope: &str) -> Result<String, String> {
         "runtime/extensions/{scope}/records/{kind}-{:x}.json",
         Sha256::digest(id.as_bytes())
     ))
+}
+
+/// Names identity components that disagree with a record's relative storage path.
+fn identityMismatchMessage(record: &ExtensionRecord, expected: &str, actual: &str) -> String {
+    let fields = (|| {
+        let relative = actual.strip_prefix("runtime/extensions/")?;
+        let (scope, name) = relative.split_once("/records/")?;
+        let (kind, hash) = name.strip_suffix(".json")?.split_once('-')?;
+        if scope.is_empty()
+            || scope.contains('/')
+            || name.contains('/')
+            || kind.is_empty()
+            || hash.is_empty()
+        {
+            return None;
+        }
+        let expected_name = expected.rsplit_once('/')?.1;
+        let (_, expected_hash) = expected_name.strip_suffix(".json")?.split_once('-')?;
+        let mut fields = Vec::new();
+        if scope != record.scope {
+            fields.push("scope");
+        }
+        if kind != record.kind {
+            fields.push("kind");
+        }
+        if hash != expected_hash {
+            fields.push("id");
+        }
+        Some(fields)
+    })()
+    .unwrap_or_else(|| vec!["path"]);
+
+    // 目录诊断层建议文案：「扩展记录与存储路径不一致：字段 {fields}；期望 {expected}；
+    // 实际 {actual}。可删除该记录文件或恢复对应备份。」store 层继续返回英文。
+    format!(
+        "Extension identity does not match its record path: expected {expected} (kind={}, id={}, scope={}), actual {actual}, mismatched fields: {}",
+        record.kind,
+        record.id,
+        record.scope,
+        fields.join(", ")
+    )
 }
 
 /// Resolves the retired settings namespace through the extension owner's storage scope.

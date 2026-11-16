@@ -714,7 +714,61 @@ fn exact_record_read_selects_space_and_rejects_mismatched_paths() {
     assert!((selection.sourceFilter("space"))("demo.toolpkg"));
     record.id = "other".into();
     storage.writeBytes(&shared, &serde_json::to_vec(&record).unwrap()).unwrap();
-    assert_eq!(store.record("package", "demo").unwrap_err(), "Extension identity does not match its record path");
+    let message = store.record("package", "demo").unwrap_err();
+    let expected = recordPath("package", "other", "space").unwrap();
+    assert!(
+        message.contains("Extension identity does not match its record path"),
+        "{message}"
+    );
+    assert!(message.contains(&format!("expected {expected}")), "{message}");
+    assert!(message.contains(&format!("actual {shared}")), "{message}");
+    assert!(message.contains("mismatched fields: id"), "{message}");
+}
+
+/// Identifies each mismatched field through full scans and direct identity lookups.
+#[test]
+fn record_path_mismatch_names_expected_actual_and_mismatched_fields() {
+    for (field, kind, id, scope) in [
+        ("id", "package", "other", "device"),
+        ("scope", "package", "demo", "space"),
+        ("kind", "skill", "demo", "device"),
+    ] {
+        let storage = host();
+        let store = ExtensionStore::new(storage.clone());
+        register_package_owner(&store, "demo", &["demo"]);
+        let actual = recordPath("package", "demo", "device").unwrap();
+        let mut record = store.record("package", "demo").unwrap();
+        record.kind = kind.into();
+        record.id = id.into();
+        record.scope = scope.into();
+        if kind == "skill" {
+            record.sourceName = "demo".into();
+            record.settings = json!({"visible": true});
+        }
+        let expected = recordPath(kind, id, scope).unwrap();
+        storage
+            .writeBytes(&actual, &serde_json::to_vec(&record).unwrap())
+            .unwrap();
+        for message in [
+            store.records("package").unwrap_err(),
+            store.record("package", "demo").unwrap_err(),
+        ] {
+            assert!(
+                message.contains("Extension identity does not match its record path"),
+                "{message}"
+            );
+            assert!(message.contains(&format!("expected {expected}")), "{message}");
+            assert!(message.contains(&format!("actual {actual}")), "{message}");
+            assert!(
+                message.contains(&format!("kind={kind}, id={id}, scope={scope}")),
+                "{message}"
+            );
+            assert!(
+                message.ends_with(&format!("mismatched fields: {field}")),
+                "{message}"
+            );
+        }
+    }
 }
 
 /// Applies identical ownership and settings isolation to skills, MCP, and A2A.
