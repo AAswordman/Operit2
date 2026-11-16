@@ -4,6 +4,8 @@ use core::time::Duration;
 use std::collections::{BTreeMap, BTreeSet};
 use std::future::Future;
 use std::sync::{Arc, Condvar, Mutex, OnceLock};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
 
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
@@ -15,6 +17,8 @@ use operit_host_api::{
 };
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 use operit_util::stream::Stream::{CollectFuture, Stream};
+#[cfg(not(target_arch = "wasm32"))]
+use operit_util::AppLogger::AppLogger;
 use operit_util::ImagePoolManager::ImagePoolManager;
 use operit_util::MediaPoolManager::MediaPoolManager;
 use tokio::sync::{oneshot, Notify};
@@ -1683,6 +1687,53 @@ impl RuntimeHostInteractionEventStream {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+type FilePresentationTraceTime = Instant;
+#[cfg(target_arch = "wasm32")]
+type FilePresentationTraceTime = ();
+
+/// Starts diagnostics only for Android's file-presentation operation. Payloads may contain
+/// private paths; log only the broker-generated correlation id, phase and monotonic elapsed time.
+fn filePresentationTraceStartedAt(
+    request: &RuntimeHostInteractionRequest,
+) -> Option<FilePresentationTraceTime> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let isFilePresentation = request.kind == RuntimeHostInteractionKind::SystemOperation
+            && request
+                .systemOperation
+                .as_ref()
+                .map(|payload| payload.operation == "android_file_presentation")
+                .unwrap_or(false);
+        isFilePresentation.then(Instant::now)
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        // Browser wasm has no std monotonic clock; keep its existing host timing semantics.
+        let _ = request;
+        None
+    }
+}
+
+fn logFilePresentationPhase(
+    requestId: &str,
+    phase: &str,
+    startedAt: Option<FilePresentationTraceTime>,
+) {
+    #[cfg(not(target_arch = "wasm32"))]
+    if let Some(startedAt) = startedAt {
+        AppLogger::i(
+            "WorkspaceFileOpen",
+            &format!(
+                "request_id={requestId} operation=android_file_presentation phase={phase} elapsed_ms={}",
+                startedAt.elapsed().as_millis()
+            ),
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    let _ = (requestId, phase, startedAt);
+}
+
 impl RuntimeHostInteractionBroker {
     /// Wakes synchronous and asynchronous observers after broker state changes.
     fn notifyChanged(&self) {
@@ -1698,6 +1749,7 @@ impl RuntimeHostInteractionBroker {
         timeout: Duration,
     ) -> Result<RuntimeHostInteractionResponse, String> {
         let startedAt = tryCurrentTimeMillisU128()?;
+        let traceStartedAt = filePresentationTraceStartedAt(&request);
         let requestId = request.requestId.clone();
         let mut state = self
             .state
@@ -1714,14 +1766,17 @@ impl RuntimeHostInteractionBroker {
                 awaitsResponse: true,
             },
         );
+        logFilePresentationPhase(&requestId, "published", traceStartedAt);
         self.notifyChanged();
         loop {
             if let Some(response) = state.responses.remove(&requestId) {
                 state.pending.remove(&requestId);
                 self.notifyChanged();
                 if let Some(error) = response.error.as_ref() {
+                    logFilePresentationPhase(&requestId, "owner_error", traceStartedAt);
                     return Err(error.clone());
                 }
+                logFilePresentationPhase(&requestId, "completed", traceStartedAt);
                 return Ok(response);
             }
             let elapsedMillis = tryCurrentTimeMillisU128()?.saturating_sub(startedAt);
@@ -1732,6 +1787,7 @@ impl RuntimeHostInteractionBroker {
             if elapsed >= timeout {
                 state.pending.remove(&requestId);
                 self.notifyChanged();
+                logFilePresentationPhase(&requestId, "timed_out", traceStartedAt);
                 return Err(format!("host interaction timed out: {requestId}"));
             }
             let wait = timeout.saturating_sub(elapsed);
@@ -1750,6 +1806,7 @@ impl RuntimeHostInteractionBroker {
         request: RuntimeHostInteractionRequest,
         timeout: Duration,
     ) -> Result<RuntimeHostInteractionResponse, String> {
+        let traceStartedAt = filePresentationTraceStartedAt(&request);
         let requestId = request.requestId.clone();
         {
             let mut state = self
@@ -1768,6 +1825,7 @@ impl RuntimeHostInteractionBroker {
                 },
             );
         }
+        logFilePresentationPhase(&requestId, "published", traceStartedAt);
         self.notifyChanged();
 
         let timeoutMillis = u64::try_from(timeout.as_millis())
@@ -1803,8 +1861,10 @@ impl RuntimeHostInteractionBroker {
                     state.pending.remove(&requestId);
                     self.notifyChanged();
                     if let Some(error) = response.error.as_ref() {
+                        logFilePresentationPhase(&requestId, "owner_error", traceStartedAt);
                         return Err(error.clone());
                     }
+                    logFilePresentationPhase(&requestId, "completed", traceStartedAt);
                     return Ok(response);
                 }
             }
@@ -1821,12 +1881,15 @@ impl RuntimeHostInteractionBroker {
                         state.pending.remove(&requestId);
                         self.notifyChanged();
                         if let Some(error) = response.error.as_ref() {
+                            logFilePresentationPhase(&requestId, "owner_error", traceStartedAt);
                             return Err(error.clone());
                         }
+                        logFilePresentationPhase(&requestId, "completed", traceStartedAt);
                         return Ok(response);
                     }
                     state.pending.remove(&requestId);
                     self.notifyChanged();
+                    logFilePresentationPhase(&requestId, "timed_out", traceStartedAt);
                     return Err(format!("host interaction timed out: {requestId}"));
                 }
             }

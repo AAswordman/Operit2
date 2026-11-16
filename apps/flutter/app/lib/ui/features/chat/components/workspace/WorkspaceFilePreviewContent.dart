@@ -176,9 +176,13 @@ class _WorkspaceBytesPreviewState extends State<_WorkspaceBytesPreview> {
                   widget.onOpenBrowser(localFilePath: tab.absolutePath);
                 },
                 canOpenWorkspaceFile: filePath.isNotEmpty,
-                onOpenWorkspaceFile: () {
-                  widget.onOpenWorkspaceFile(filePath);
-                },
+                workspaceFileIdentity: (
+                  tab.identityToken,
+                  filePath,
+                  tab.absolutePath,
+                ),
+                onOpenWorkspaceFile: () =>
+                    widget.onOpenWorkspaceFile(filePath),
               ),
               Expanded(
                 child: KeyedSubtree(

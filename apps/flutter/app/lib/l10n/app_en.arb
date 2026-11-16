@@ -401,6 +401,8 @@
   "searchHistory": "Search history",
   "noDownloadTasks": "No download tasks yet",
   "openFile": "Open file",
+  "workspaceFileOpening": "Opening file…",
+  "workspaceFileOpenTimedOut": "Opening the file timed out. Please try again.",
   "openLocation": "Open location",
   "retry": "Retry",
   "removeRecord": "Remove record",

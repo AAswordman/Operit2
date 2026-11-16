@@ -57,6 +57,8 @@ pub struct WorkspaceService {
     workspaceStore: WorkspacePreferenceStore,
     filesystem: VisualFileSystem,
     runtimeStorageHost: Arc<dyn operit_host_api::RuntimeStorageHost>,
+    #[cfg(not(target_arch = "wasm32"))]
+    taskSchedulerHost: Option<Arc<dyn operit_host_api::HostRuntimeTaskSchedulerHost>>,
 }
 
 impl WorkspaceService {
@@ -74,6 +76,8 @@ impl WorkspaceService {
             workspaceStore: WorkspacePreferenceStore::getInstance(),
             filesystem: context.vfs().expect("VFS must be configured for WorkspaceService"),
             runtimeStorageHost: runtimeStorageHost.clone(),
+            #[cfg(not(target_arch = "wasm32"))]
+            taskSchedulerHost: context.hostRuntimeTaskSchedulerHost.clone(),
         }
     }
 
@@ -299,11 +303,47 @@ impl WorkspaceService {
             .writeFileBytes(&filePath, &bytes))
     }
 
-    /// Opens a chat-bound workspace file through the host file opener.
+    /// Captures a file-open operation without retaining the service or its proxy lock.
     #[allow(non_snake_case)]
-    pub fn openWorkspaceFile(&self, chatId: String, relativePath: String) -> Result<(), String> {
-        let filePath = self.previewFilePathForChat(&chatId, &relativePath)?;
-        self.vfs().openFile(&filePath)
+    pub fn openWorkspaceFile(
+        &self,
+        chatId: String,
+        relativePath: String,
+    ) -> impl std::future::Future<Output = Result<(), String>> + 'static {
+        let filePath = self.previewFilePathForChat(&chatId, &relativePath);
+        let filesystem = self.vfs();
+        #[cfg(not(target_arch = "wasm32"))]
+        let scheduler = self.taskSchedulerHost.clone();
+        async move {
+            let filePath = filePath?;
+            #[cfg(target_arch = "wasm32")]
+            {
+                // Preserve the web host's existing supported/unsupported result.
+                filesystem.openFile(&filePath)
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            {
+                let scheduler = scheduler.ok_or_else(|| {
+                    "HostRuntimeTaskSchedulerHost is not registered for workspace file opening"
+                        .to_string()
+                })?;
+                let (sender, receiver) = tokio::sync::oneshot::channel();
+                scheduler
+                    .scheduleHostRuntimeTask(
+                        "workspace-file-open",
+                        Box::new(move || {
+                            // The host may synchronously wait for an owner response. Keep that
+                            // wait on Host blocking capacity, not the Core coordination worker.
+                            let result = filesystem.openFile(&filePath);
+                            let _ = sender.send(result);
+                        }),
+                    )
+                    .map_err(|error| error.message)?;
+                receiver
+                    .await
+                    .map_err(|error| format!("workspace file opener task stopped: {error}"))?
+            }
+        }
     }
 
     /// Builds the workspace-management summary for chat bindings and stored workspace folders.

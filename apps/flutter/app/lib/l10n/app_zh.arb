@@ -401,6 +401,8 @@
   "searchHistory": "搜索历史",
   "noDownloadTasks": "还没有下载任务",
   "openFile": "打开文件",
+  "workspaceFileOpening": "正在打开文件…",
+  "workspaceFileOpenTimedOut": "打开文件超时，请重试。",
   "openLocation": "打开位置",
   "retry": "重试",
   "removeRecord": "移除记录",
