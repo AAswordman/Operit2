@@ -86,6 +86,10 @@ pub struct RuntimeHostInteractionRequest {
     pub ttsPlayback: Option<RuntimeHostInteractionTtsPlaybackPayload>,
     pub localInference: Option<RuntimeHostInteractionLocalInferencePayload>,
     pub appNotification: Option<RuntimeHostInteractionAppNotificationPayload>,
+    /// Set when the event was published without waiting for a response, so the
+    /// consumer acknowledges consumption instead of answering with a response.
+    #[serde(default)]
+    pub notification: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -250,6 +254,7 @@ impl RuntimeHostInteractionRequest {
             ttsPlayback: None,
             localInference: None,
             appNotification: None,
+            notification: None,
         }
     }
 }
@@ -1670,6 +1675,16 @@ pub fn publishOwnerAppNotification(payload: RuntimeHostInteractionAppNotificatio
     );
 }
 
+/// Publishes one fire-and-forget owner system operation, such as file
+/// presentation, and returns before the owner executes it. Failures surface
+/// through owner-side logging instead of blocking the caller until timeout.
+pub fn publishOwnerSystemOperation(payload: RuntimeHostInteractionSystemOperationPayload) {
+    runtimeHostInteractionBroker().publish(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::systemOperation(payload),
+    );
+}
+
 fn runtimeHostInteractionBroker() -> &'static RuntimeHostInteractionBroker {
     RUNTIME_HOST_INTERACTIONS.get_or_init(RuntimeHostInteractionBroker::default)
 }
@@ -1865,6 +1880,8 @@ impl RuntimeHostInteractionBroker {
         let mut state = self.state.lock().expect("host interaction mutex poisoned");
         let sequence = state.nextSequence;
         state.nextSequence = state.nextSequence.wrapping_add(1);
+        let mut request = request;
+        request.notification = Some(true);
         state.pending.insert(
             requestId,
             RuntimeHostInteractionPending {
@@ -1999,5 +2016,87 @@ mod tests {
             .expect_err("structured owner error must fail the request");
 
         assert_eq!(error, "owner tts failed");
+    }
+
+    /// Verifies published notifications carry the notification flag, reject
+    /// responses, and are removed once the owner acknowledges consumption.
+    #[test]
+    fn brokerPublishedNotificationIsAcknowledgedNotResponded() {
+        let broker = RuntimeHostInteractionBroker::default();
+        broker.publish(
+            RuntimeHostInteractionTarget::OwnerHost,
+            RuntimeHostInteractionRequest::systemOperation(
+                RuntimeHostInteractionSystemOperationPayload {
+                    operation: "android_file_presentation".to_string(),
+                    paramsJson: r#"{"operation":"openFile","path":"a.txt","title":""}"#.to_string(),
+                },
+            ),
+        );
+
+        let requestId = {
+            let state = broker
+                .state
+                .lock()
+                .expect("host interaction mutex poisoned");
+            let pending = state
+                .pending
+                .values()
+                .find(|pending| {
+                    pending.request.kind == RuntimeHostInteractionKind::SystemOperation
+                })
+                .expect("published notification must stay pending");
+            assert!(!pending.awaitsResponse);
+            assert_eq!(pending.request.notification, Some(true));
+            pending.request.requestId.clone()
+        };
+
+        let error = broker
+            .respond(&requestId, RuntimeHostInteractionResponse::empty())
+            .expect_err("published notification must reject responses");
+        assert!(error.contains("must be acknowledged"));
+
+        broker
+            .acknowledge(&requestId)
+            .expect("published notification must acknowledge cleanly");
+        let error = broker
+            .acknowledge(&requestId)
+            .expect_err("acknowledged notification must be removed");
+        assert!(error.contains("not found"));
+    }
+
+    /// Verifies the fire-and-forget presentation entry point publishes an
+    /// owner notification instead of a blocking request.
+    #[test]
+    fn publishOwnerSystemOperationIsFireAndForget() {
+        let path = format!("presentation-{}", Uuid::new_v4());
+        publishOwnerSystemOperation(RuntimeHostInteractionSystemOperationPayload {
+            operation: "android_file_presentation".to_string(),
+            paramsJson: serde_json::json!({ "operation": "openFile", "path": path }).to_string(),
+        });
+
+        let broker = runtimeHostInteractionBroker();
+        let requestId = {
+            let state = broker
+                .state
+                .lock()
+                .expect("host interaction mutex poisoned");
+            state
+                .pending
+                .values()
+                .find(|pending| {
+                    pending
+                        .request
+                        .systemOperation
+                        .as_ref()
+                        .is_some_and(|payload| payload.paramsJson.contains(&path))
+                })
+                .expect("published presentation must stay pending")
+                .request
+                .requestId
+                .clone()
+        };
+        broker
+            .acknowledge(&requestId)
+            .expect("published presentation must acknowledge cleanly");
     }
 }
