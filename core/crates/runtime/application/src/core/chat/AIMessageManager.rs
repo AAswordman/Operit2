@@ -530,6 +530,7 @@ impl AIMessageManager {
         chatId: String,
         configuration: &ChatConfigurationResult,
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
+        trigger: Option<operit_providers::chat::enhance::ConversationService::SummaryTriggerContext>,
     ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
     {
         let lastSummaryIndex = messages
@@ -575,10 +576,14 @@ impl AIMessageManager {
         }).collect::<Vec<_>>();
 
         let startTime = ChatMessageTimestampAllocator::currentTimeMillis();
-        let summary = enhancedAiService
-            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, progress)
+        let generation = enhancedAiService
+            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, progress, trigger)
             .await?;
         let endTime = ChatMessageTimestampAllocator::currentTimeMillis();
+        let summaryInputTokens = generation.input_tokens;
+        let summaryOutputTokens = generation.output_tokens;
+        let summaryCachedInputTokens = generation.cached_input_tokens;
+        let summary = generation.content;
         if summary.trim().is_empty() {
             return Ok(None);
         }
@@ -596,9 +601,6 @@ impl AIMessageManager {
             summaryWithQuotes.trim_end().to_string()
         };
 
-        let estimatedInputTokens = (summaryWithQuotes.len() * 3 / 2).max(1) as i64;
-        let estimatedOutputTokens = (finalSummary.len() / 2).max(1) as i64;
-
         Ok(Some(ChatMessage {
             sender: "summary".to_string(),
             parts: vec![operit_model::MessagePart::MessagePart::markdown(
@@ -608,8 +610,9 @@ impl AIMessageManager {
             )],
             timestamp: ChatMessageTimestampAllocator::next(),
             roleName: "system".to_string(),
-            inputTokens: estimatedInputTokens,
-            outputTokens: estimatedOutputTokens,
+            inputTokens: summaryInputTokens,
+            outputTokens: summaryOutputTokens,
+            cachedInputTokens: summaryCachedInputTokens,
             waitDurationMs: (endTime - startTime).max(1),
             sentAt: startTime,
             completedAt: endTime,

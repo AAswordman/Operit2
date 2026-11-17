@@ -55,6 +55,7 @@ struct ConversationSummaryRequest {
     chatModelIdOverride: Option<String>,
     autoContinue: bool,
     requireCurrentChat: bool,
+    trigger: Option<operit_providers::chat::enhance::ConversationService::SummaryTriggerContext>,
 }
 
 /// Separates optional history scheduling from the token guard needed during every persisted tool loop.
@@ -837,6 +838,13 @@ impl MessageCoordinationDelegate {
                         chatModelIdOverride: Some(modelId),
                         autoContinue: false,
                         requireCurrentChat: true,
+                        trigger: Some(operit_providers::chat::enhance::ConversationService::SummaryTriggerContext {
+                            current_tokens: chat.currentWindowSize,
+                            max_tokens: maxTokens,
+                            token_usage_threshold: policy.tokenUsageThreshold,
+                            usage_ratio: if maxTokens > 0 { chat.currentWindowSize as f64 / f64::from(maxTokens) } else { 0.0 },
+                            trigger_point: "before_send".to_string(),
+                        }),
                     },
                 )?;
             }
@@ -872,6 +880,16 @@ impl MessageCoordinationDelegate {
                     configuration: configuration.clone(), promptFunctionType: PromptFunctionType::CHAT,
                     chatProviderIdOverride: None, chatModelIdOverride: None,
                     autoContinue: false, requireCurrentChat: false,
+                    trigger: Some(operit_providers::chat::enhance::ConversationService::SummaryTriggerContext {
+                        current_tokens: window,
+                        max_tokens: settings.context.maxContextTokens(),
+                        token_usage_threshold: settings.summary.tokenThresholdRatio(),
+                        usage_ratio: {
+                            let max = settings.context.maxContextTokens();
+                            if max > 0 { window as f64 / f64::from(max) } else { 0.0 }
+                        },
+                        trigger_point: "after_reply".to_string(),
+                    }),
                 })?.await;
             }
         }
@@ -1013,7 +1031,7 @@ impl MessageCoordinationDelegate {
             .map(|message| message.timestamp);
         let summary =
             AIMessageManager::summarizeMemory(
-                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress,
+                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger.clone(),
             )
                 .await
                 .map_err(|error| error.to_string())?
@@ -1084,6 +1102,7 @@ impl MessageCoordinationDelegate {
                 chatModelIdOverride: self.currentChatModelIdOverride.clone(),
                 autoContinue: false,
                 requireCurrentChat: false,
+                trigger: None,
             },
         ) {
             Ok(completion) => completion.await,
@@ -1153,6 +1172,7 @@ impl MessageCoordinationDelegate {
                 chatModelIdOverride: request.chatModelIdOverride.clone(),
                 autoContinue: true,
                 requireCurrentChat: false,
+                trigger: None,
             },
         )?
         .await?;

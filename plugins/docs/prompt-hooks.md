@@ -55,6 +55,15 @@ The payload includes `chatId`, `chatHistory`, `preparedHistory`, `systemPrompt`,
 `summaryPrompt`, `summaryResult`, `previousSummary`, model parameters and metadata.
 The histories retain turn kinds, tool identities and metadata.
 
+`metadata` carries context across stages. When compaction fired because the
+conversation reached the configured window threshold, `metadata.trigger`
+records that decision: `currentTokens`, `maxTokens`, `tokenUsageThreshold`,
+`usageRatio` (`currentTokens / maxTokens`) and `triggerPoint` (`"before_send"`
+or `"after_reply"`). It is absent for manual summaries and token-limit
+continuations. From `before_send_to_model` onward metadata also includes
+`preparedMessageCount`; `after_generate_summary` adds the summary model's real
+token usage (`inputTokens`, `cachedInputTokens`, `outputTokens`).
+
 An object result can replace `chatHistory`, `preparedHistory`, `systemPrompt`,
 `summaryPrompt` and `summaryResult`; metadata entries are merged. Every handler
 sees changes from the preceding handler, and metadata carries across stages.
