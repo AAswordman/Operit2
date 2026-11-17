@@ -90,3 +90,18 @@ A string result replaces `summaryPrompt` at either before stage and
 `summaryResult` at `after_generate_summary`. Empty strings are accepted as
 explicit replacements; the normal summary-content validation still applies to
 the final result. Return `null` or `undefined` to leave the summary unchanged.
+
+## Message processing
+
+`registerMessageProcessingPlugin` runs before a send (and its independent
+estimate) with `chatId`, `messageContent`, `chatHistory`, `workspacePath`,
+`maxTokens`, `tokenUsageThreshold` and `probeOnly`. It also carries
+`lastAssistantUsage`: the real generation usage (`inputTokens`,
+`cachedInputTokens`, `outputTokens`) of the latest completed assistant turn in
+that chat, or `null` before the first reply. Because it describes the previous
+completed call, it lags the current send by one turn. `cachedInputTokens` is the
+portion of that prompt served from the provider's prompt cache — the signal a
+cache-aware policy needs to weigh what a history rewrite would discard.
+`inputTokens` conventions differ across providers (some report the prompt total,
+some prompt-minus-cached), so treat `cachedInputTokens` as the cache-hit count
+rather than assuming a fixed ratio against `inputTokens`.

@@ -17,7 +17,7 @@ use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
 use operit_providers::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
-use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
+use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream, TokenCounts};
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
     ChatGuidanceInbox, EnhancedAIService, MessageCancellationToken, ResumeRequest,
@@ -384,6 +384,16 @@ impl AIMessageManager {
                 workspace_path: request.workspacePath.clone(),
                 max_tokens: request.maxTokens,
                 token_usage_threshold: request.tokenUsageThreshold,
+                last_assistant_usage: request
+                    .chatHistory
+                    .iter()
+                    .rev()
+                    .find(|message| message.sender == "ai")
+                    .map(|message| TokenCounts {
+                        input: message.inputTokens,
+                        cached_input: message.cachedInputTokens,
+                        output: message.outputTokens,
+                    }),
             },
         )
         .await;
