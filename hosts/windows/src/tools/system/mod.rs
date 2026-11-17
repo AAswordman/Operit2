@@ -31,6 +31,75 @@ impl WindowsSystemOperationHost {
     pub fn new() -> Self {
         Self
     }
+
+    /// Reads the SMBIOS model directly without starting a hardware inventory query.
+    pub fn deviceModel() -> HostResult<String> {
+        use windows_sys::Win32::Foundation::ERROR_SUCCESS;
+        use windows_sys::Win32::System::Registry::{RegGetValueW, HKEY_LOCAL_MACHINE, RRF_RT_REG_SZ};
+
+        let key: Vec<u16> = r"HARDWARE\DESCRIPTION\System\BIOS"
+            .encode_utf16()
+            .chain(Some(0))
+            .collect();
+        let name: Vec<u16> = "SystemProductName".encode_utf16().chain(Some(0)).collect();
+        let mut bytes = 0;
+        // SAFETY: Both strings are terminated; the first call only reads the required size.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                &mut bytes,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(HostError::new(format!(
+                "Failed to read Windows device model: {}",
+                std::io::Error::from_raw_os_error(status as i32),
+            )));
+        }
+        if bytes < 2 || bytes % 2 != 0 {
+            return Err(HostError::new(
+                "Windows device model has an invalid UTF-16 size",
+            ));
+        }
+        let mut value = vec![0u16; bytes as usize / 2];
+        // SAFETY: The output buffer is aligned and holds the requested byte count.
+        let status = unsafe {
+            RegGetValueW(
+                HKEY_LOCAL_MACHINE,
+                key.as_ptr(),
+                name.as_ptr(),
+                RRF_RT_REG_SZ,
+                std::ptr::null_mut(),
+                value.as_mut_ptr().cast(),
+                &mut bytes,
+            )
+        };
+        if status != ERROR_SUCCESS {
+            return Err(HostError::new(format!(
+                "Failed to read Windows device model: {}",
+                std::io::Error::from_raw_os_error(status as i32),
+            )));
+        }
+        if bytes < 2 || bytes % 2 != 0 {
+            return Err(HostError::new(
+                "Windows device model has an invalid UTF-16 size",
+            ));
+        }
+        let value = value[..bytes as usize / 2]
+            .strip_suffix(&[0])
+            .ok_or_else(|| HostError::new("Windows device model is not terminated"))?;
+        let model = String::from_utf16(value)
+            .map_err(|error| HostError::new(format!("Invalid Windows device model: {error}")))?;
+        if model.trim().is_empty() {
+            return Err(HostError::new("Windows device model is empty"));
+        }
+        Ok(model)
+    }
 }
 
 impl SystemOperationHost for WindowsSystemOperationHost {

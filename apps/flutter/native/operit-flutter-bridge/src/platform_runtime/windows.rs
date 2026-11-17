@@ -6,7 +6,8 @@ use std::sync::Arc;
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::SystemOperationHost;
 use operit_host_windows_native::{
-    createRuntimeHostManager, WindowsRuntimeStorageHost, WindowsTerminalHost,
+    createRuntimeHostManager, WindowsRuntimeStorageHost, WindowsSystemOperationHost,
+    WindowsTerminalHost,
 };
 use operit_link::LinkDeviceInfo;
 
@@ -53,23 +54,16 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
     Ok(context)
 }
 
-/// Reads Windows identity through its system host.
+/// Reads the startup model without coupling Core availability to WMI hardware inventory.
 pub(crate) fn startup_device_info(
     context: &HostManager,
     _metadata: &StartupMetadata,
 ) -> Result<LinkDeviceInfo, String> {
-    let system = context
-        .systemOperationHost
-        .as_ref()
-        .ok_or_else(|| "Runtime identity requires its Windows system host".to_string())?;
     Ok(LinkDeviceInfo {
         platform: context.hostEnvironment.id.clone(),
-        model: system
-            .getDeviceInfo()
-            .map_err(|error| error.to_string())?
-            .model,
-    pairingIncarnation: None,
-})
+        model: WindowsSystemOperationHost::deviceModel().map_err(|error| error.to_string())?,
+        pairingIncarnation: None,
+    })
 }
 
 /// Resolves Windows storage roots from the native storage host.

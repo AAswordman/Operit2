@@ -65,6 +65,19 @@ test('platform construction has one explicit selection boundary', () => {
   assert.match(source(bridge + 'PlatformRuntimeExecution.rs'), /only place where the ABI execution style is selected/);
 });
 
+/** Keeps transient hardware inventory failures out of the Windows Core startup path. */
+test('Windows startup reads its model independently of the WMI hardware inventory', () => {
+  const platform = source(`${bridge}platform_runtime/windows.rs`);
+  const startup = section(platform, 'pub(crate) fn startup_device_info(', '/// Resolves Windows storage roots');
+  assert.match(startup, /WindowsSystemOperationHost::deviceModel\(\)/);
+  assert.doesNotMatch(startup, /getDeviceInfo/);
+  const host = source('hosts/windows/src/tools/system/mod.rs');
+  const model = section(host, 'pub fn deviceModel()', '\nimpl SystemOperationHost');
+  assert.match(model, /RegGetValueW/);
+  assert.match(model, /SystemProductName/);
+  assert.doesNotMatch(model, /powershell|get_windows_device_info|Get-CimInstance/);
+});
+
 /** Requires bounded queues and one shared owner instead of per-watch scheduler tasks. */
 test('connection streams share one bounded Host task', () => {
   const transport = source(bridge + 'BridgeTransport.rs');
