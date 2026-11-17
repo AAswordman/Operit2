@@ -25,7 +25,7 @@ class IncrementalPublishTests(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.dist = Path(temporary.name)
         self.version = release_version()
-        self.package = self.dist / f"operit2-app-windows-x86_64-{self.version}.zip"
+        self.package = self.dist / f"operit2-cli-windows-x86_64-{self.version}.zip"
         self.package.write_bytes(b"PK\x03\x04" + b"signed-package" * 1000)
         prepare.prepare(self.dist, [])
         self.calls = []
@@ -91,7 +91,7 @@ class IncrementalPublishTests(unittest.TestCase):
     def test_patch_only_publication_excludes_full_packages_without_deleting_local_original(self):
         base_dir = self.dist / "old"
         base_dir.mkdir()
-        old = base_dir / "operit2-app-windows-x86_64-1.0.0.zip"
+        old = base_dir / "operit2-cli-windows-x86_64-1.0.0.zip"
         old.write_bytes(self.package.read_bytes() + b"old content")
         prepare.prepare(self.dist, [base_dir])
         self.remote = {"assets": [{"name": path.name, "digest": "sha256:" + file_sha256(path)}
@@ -132,7 +132,7 @@ class IncrementalPublishTests(unittest.TestCase):
         import download_action_artifacts
         old = self.dist / "old"
         old.mkdir()
-        (old / "operit2-app-windows-x86_64-1.0.0.zip").write_bytes(self.package.read_bytes() + b"old")
+        (old / "operit2-cli-windows-x86_64-1.0.0.zip").write_bytes(self.package.read_bytes() + b"old")
         history = self.dist / "history"
         archive.retain(old, history, "1.0.0")
         for mode, expected in (({}, [(gh_publish.PATCH_REPO, True), (gh_publish.SOURCE_REPO, False)]),
@@ -171,7 +171,7 @@ class IncrementalPublishTests(unittest.TestCase):
     def test_patch_only_validation_rejects_corrupt_patch_bytes(self):
         base_dir = self.dist / "old"
         base_dir.mkdir()
-        (base_dir / "operit2-app-windows-x86_64-1.0.0.zip").write_bytes(self.package.read_bytes() + b"old content")
+        (base_dir / "operit2-cli-windows-x86_64-1.0.0.zip").write_bytes(self.package.read_bytes() + b"old content")
         prepare.prepare(self.dist, [base_dir])
         delta = next(self.dist.glob("*.patch.gz"))
         delta.write_bytes(b"corrupt")
@@ -185,7 +185,7 @@ class IncrementalPublishTests(unittest.TestCase):
             with self.subTest(version=version), patch.object(release_artifacts, "release_version", return_value=version), patch.object(prepare, "release_version", return_value=version), patch.object(gh_publish, "release_version", return_value=version):
                 dist = self.dist / version
                 dist.mkdir()
-                (dist / f"operit2-app-windows-x86_64-{version}.zip").write_bytes(b"PK\x03\x04" + b"signed" * 1000)
+                (dist / f"operit2-cli-windows-x86_64-{version}.zip").write_bytes(b"PK\x03\x04" + b"signed" * 1000)
                 prepare.prepare(dist, [])
                 self.calls.clear()
                 self.remote = {"assets": [{"name": path.name, "digest": "sha256:" + file_sha256(path)}
@@ -214,7 +214,7 @@ class IncrementalPublishTests(unittest.TestCase):
             if args[0] == "api":
                 version = args[1].rsplit("/v", 1)[1]
                 requested.append(version)
-                return json.dumps({"assets": [{"name": f"operit2-app-windows-x86_64-{version}.zip", "digest": digest}]})
+                return json.dumps({"assets": [{"name": f"operit2-cli-windows-x86_64-{version}.zip", "digest": digest}]})
             self.assertEqual(args[:2], ("release", "download"))
             self.assertEqual(args[args.index("--repo") + 1], gh_publish.SOURCE_REPO)
             (Path(args[args.index("--dir") + 1]) / args[args.index("--pattern") + 1]).write_bytes(payload)

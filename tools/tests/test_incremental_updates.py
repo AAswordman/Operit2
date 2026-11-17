@@ -171,10 +171,10 @@ class IncrementalUpdateTests(unittest.TestCase):
     # Prepared releases accept only target-bound manifests and the declared patch set.
     def test_prepare_and_publisher_validate_the_complete_asset_set(self):
         version = release_artifacts.release_version()
-        name = f"operit2-app-windows-x86_64-{version}.zip"
+        name = f"operit2-cli-windows-x86_64-{version}.zip"
         dist, old = self.root / "dist", self.root / "old"
         dist.mkdir(); old.mkdir()
-        (old / "operit2-app-windows-x86_64-1.0.0.zip").write_bytes(b"PK\x03\x04" + self.data)
+        (old / "operit2-cli-windows-x86_64-1.0.0.zip").write_bytes(b"PK\x03\x04" + self.data)
         (dist / name).write_bytes(b"PK\x03\x04" + self.data + b"new signed target")
         prepare.prepare(dist, [old])
         assets = list(dist.iterdir())
@@ -190,7 +190,7 @@ class IncrementalUpdateTests(unittest.TestCase):
     def test_first_release_has_an_empty_patch_set(self):
         version = release_artifacts.release_version()
         dist = self.root / "dist"; dist.mkdir()
-        name = f"operit2-app-windows-x86_64-{version}.zip"
+        name = f"operit2-cli-windows-x86_64-{version}.zip"
         (dist / name).write_bytes(b"PK\x03\x04" + self.data)
         prepare.prepare(dist, [])
         release_artifacts.validate_release_assets(list(dist.iterdir()))
@@ -201,8 +201,8 @@ class IncrementalUpdateTests(unittest.TestCase):
         version = release_artifacts.release_version()
         dist, old = self.root / "dist", self.root / "old"
         dist.mkdir(); old.mkdir()
-        name = f"operit2-app-windows-x86_64-{version}.zip"
-        (old / "operit2-app-windows-x86_64-1.0.0.zip").write_bytes(b"PK\x03\x04" + self.data)
+        name = f"operit2-cli-windows-x86_64-{version}.zip"
+        (old / "operit2-cli-windows-x86_64-1.0.0.zip").write_bytes(b"PK\x03\x04" + self.data)
         (dist / name).write_bytes(b"PK\x03\x04" + random.Random(7).randbytes(len(self.data)))
         prepare.prepare(dist, [old])
         release_artifacts.validate_release_assets(list(dist.iterdir()))
@@ -212,7 +212,7 @@ class IncrementalUpdateTests(unittest.TestCase):
     # Both channels build byte-exact patches for matching Android, Windows and macOS distributions.
     def test_release_and_preview_generate_platform_deltas(self):
         families = (
-            ("operit2-app-windows-x86_64", "zip", b"PK\x03\x04"),
+            ("operit2-cli-windows-x86_64", "zip", b"PK\x03\x04"),
             ("operit2-app-android-arm64-v8a", "apk", b"PK\x03\x04"),
             ("operit2-app-macos-universal-unsandbox", "pkg", b"xar!"),
         )

@@ -13,8 +13,6 @@ RELEASE_MANIFESTS = (
     Path("apps/cli/Cargo.toml"),
 )
 RELEASE_TARGETS = (
-    ("app", "windows", "x86_64", "zip"),
-    ("app", "windows", "aarch64", "zip"),
     ("app", "windows", "x86_64", "msi"),
     ("app", "linux", "x86_64", "tar.gz"),
     ("app", "linux", "aarch64", "tar.gz"),

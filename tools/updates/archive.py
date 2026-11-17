@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+import re
 import shutil
 import sys
 import tempfile
@@ -28,8 +29,12 @@ def inventory(directory: Path) -> dict:
     if (set(data) != {"schema", "version", "packages"} or data["schema"] != 1
             or data["version"] != directory.name):
         raise ValueError(f"Invalid base archive: {directory}")
-    allowed = package_names(data["version"])
-    if not data["packages"] or any(name not in allowed for name in data["packages"]):
+    # Historical snapshots retain their identities when the active release matrix changes.
+    version = data["version"]
+    if RELEASE_VERSION_PATTERN.fullmatch(version) is None:
+        raise ValueError(f"Invalid archived version: {directory}")
+    pattern = rf"operit2-[a-z0-9]+(?:[-_][a-z0-9]+)*-{re.escape(version)}\.(?:apk|hap|zip|tar\.gz|pkg|ipa|msi)"
+    if not data["packages"] or any(re.fullmatch(pattern, name) is None for name in data["packages"]):
         raise ValueError(f"Invalid archived package names: {directory}")
     actual = {path.name for path in directory.iterdir() if path.name != "packages.json"}
     if actual != set(data["packages"]):

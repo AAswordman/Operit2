@@ -52,7 +52,7 @@ are required. This command builds packages without installing them on a phone.
 
 ## Windows Bash runtime
 
-Windows App ZIP/MSI and CLI ZIP packages include Bash and common Unix commands
+Windows App MSI and CLI ZIP packages include Bash and common Unix commands
 selected from checksum-pinned PortableGit under `bash/`, including their transitive
 DLL dependencies, terminal descriptions, and upstream licenses. Git, Git GUI,
 Perl, Vim aliases, and development files are excluded. The Windows host starts

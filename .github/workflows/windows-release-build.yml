@@ -108,7 +108,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: operit2-windows-app-${{ github.sha }}
-          path: tools/release/dist/operit2-app-windows-x86_64-*.*
+          path: tools/release/dist/operit2-app-windows-x86_64-*.msi
           if-no-files-found: error
           retention-days: 14
 

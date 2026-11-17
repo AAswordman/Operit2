@@ -43,7 +43,7 @@ CLI/TUI 保留命令行和终端交互，其检查/下载继续调用同一共�
 
 ## Windows MSI 自身更新
 
-Windows Host 将当前可执行文件所在目录与当前用户的 `Software\Operit\Operit2\Installer\InstallLocation` 比对，并通过 Windows Installer 核实固定 UpgradeCode 下的用户安装产品。另一目录中的便携副本保持 ZIP 发行身份；目录匹配而产品登记缺失或冲突时明确报错。MSI 安装版只选择 MSI，便携版只选择 ZIP；目前发布矩阵仅提供 x86_64 MSI。
+Windows Host 将当前可执行文件所在目录与当前用户的 `Software\Operit\Operit2\Installer\InstallLocation` 比对，并通过 Windows Installer 核实固定 UpgradeCode 下的用户安装产品。目录匹配而产品登记缺失或冲突时明确报错。Windows App 发布矩阵仅提供 x86_64 MSI，后续完整包和增量补丁均使用 MSI，不再分发便携 ZIP。历史便携副本仍按原有安装身份识别；迁移到当前分发形式需要使用 MSI 安装器。
 
 复用现有的版本检查、下载、格式校验、凭证、进度和重启按钮。MSI 下载增加 Compound File 头校验；Host 在发布助手就绪标记前读取 MSI 数据库，核对产品族、产品名、厂商、架构、用户安装范围、资产版本名及 MSI 升级版本。安装身份查询与通用安装请求的执行由 `SystemOperationHost` 的平台实现负责，公共更新层不再额外包装阻塞调度。
 

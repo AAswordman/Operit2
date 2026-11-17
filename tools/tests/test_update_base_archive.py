@@ -12,7 +12,7 @@ sys.path.insert(0, str(ROOT / "tools/updates"))
 sys.path.insert(0, str(ROOT / "tools/release"))
 import archive
 import prepare
-from release_artifacts import release_version
+from release_artifacts import file_sha256, release_version
 
 
 class UpdateBaseArchiveTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class UpdateBaseArchiveTests(unittest.TestCase):
         self.dist = self.root / "dist"
         self.dist.mkdir()
         self.version = release_version()
-        self.name = f"operit2-app-windows-x86_64-{self.version}.zip"
+        self.name = f"operit2-cli-windows-x86_64-{self.version}.zip"
         self.payload = b"PK\x03\x04" + random.Random(17).randbytes(128 * 1024)
         (self.dist / self.name).write_bytes(self.payload)
 
@@ -36,6 +36,23 @@ class UpdateBaseArchiveTests(unittest.TestCase):
         self.assertEqual(archive.retain(self.dist, self.history), directory)
         (self.dist / self.name).unlink()
         self.assertEqual(archive.inventory(directory)["packages"][self.name]["size"], len(self.payload))
+
+    def test_discontinued_windows_zip_remains_valid_only_in_existing_history(self):
+        """Preserve immutable historical inventories without retaining new Windows ZIP releases."""
+        directory = self.history / "1.0.0"
+        directory.mkdir(parents=True)
+        package = directory / "operit2-app-windows-x86_64-1.0.0.zip"
+        package.write_bytes(self.payload)
+        metadata = {"schema": 1, "version": "1.0.0", "packages": {
+            package.name: {"size": package.stat().st_size, "sha256": file_sha256(package)}
+        }}
+        (directory / "packages.json").write_text(json.dumps(metadata), encoding="utf-8")
+        self.assertEqual(archive.inventory(directory), metadata)
+        self.assertEqual(archive.history(self.history, self.version), [directory])
+        current_zip = self.dist / f"operit2-app-windows-x86_64-{self.version}.zip"
+        current_zip.write_bytes(self.payload)
+        retained = archive.retain(self.dist, self.history)
+        self.assertNotIn(current_zip.name, archive.inventory(retained)["packages"])
 
     # A rebuilt same-version package may not replace a base already sent to testers.
     def test_same_version_cannot_be_replaced_by_different_bytes(self):
@@ -56,7 +73,7 @@ class UpdateBaseArchiveTests(unittest.TestCase):
     def test_manual_old_package_generates_verified_delta_without_releases(self):
         old = self.root / "manually-sent"
         old.mkdir()
-        old_name = "operit2-app-windows-x86_64-1.0.0.zip"
+        old_name = "operit2-cli-windows-x86_64-1.0.0.zip"
         (old / old_name).write_bytes(self.payload)
         directory = archive.retain(old, self.history, "1.0.0")
         (self.dist / self.name).write_bytes(self.payload + b"new signed bytes")
@@ -76,7 +93,7 @@ class UpdateBaseArchiveTests(unittest.TestCase):
         for version in ("1.8.0", "1.9.0", "2.0.0-preview.9", "2.0.0-preview.10", "2.0.0-preview.11", "3.0.0"):
             directory = self.root / version
             directory.mkdir()
-            (directory / f"operit2-app-windows-x86_64-{version}.zip").write_bytes(b"PK\x03\x04old signed bytes")
+            (directory / f"operit2-cli-windows-x86_64-{version}.zip").write_bytes(b"PK\x03\x04old signed bytes")
             archive.retain(directory, self.history, version)
         selected = archive.history(self.history, "2.0.0-preview.12", count=1)
         self.assertEqual([directory.name for directory in selected], ["2.0.0-preview.11", "1.9.0"])

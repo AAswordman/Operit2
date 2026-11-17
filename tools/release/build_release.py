@@ -1016,8 +1016,8 @@ def build_host_app(build_name, build_number):
                 "--build-number",
                 build_number,
                 "--enforce-lockfile",
-                "--archive-path",
-                DIST_DIR / release_asset_name("app", "windows", current_arch, "zip"),
+                "--installer-path",
+                DIST_DIR / release_asset_name("app", "windows", current_arch, "msi"),
             ]
         )
         return

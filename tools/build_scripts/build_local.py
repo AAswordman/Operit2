@@ -33,10 +33,10 @@ def build_script(name: str, platform_name: str) -> str:
     return os.path.join(BUILD_SCRIPTS_DIR, f"{name}_{platform_name}.py")
 
 
-# Returns the native App archive path under the release dist directory.
+# Returns the native App package path under the release dist directory.
 def local_app_archive_path(platform_name: str, architecture: str, macos_type: str = "sandbox") -> Path:
     if platform_name == "windows":
-        return DIST_DIR / release_asset_name("app", "windows", architecture, "zip")
+        return DIST_DIR / release_asset_name("app", "windows", architecture, "msi")
     if platform_name == "linux":
         return DIST_DIR / release_asset_name("app", "linux", architecture, "tar.gz")
     if platform_name == "macos":
@@ -49,7 +49,7 @@ def build_local_app(platform_name: str, enforce_lockfile: bool, macos_type: str 
     command = [
         sys.executable,
         build_script("build_flutter", platform_name),
-        "--archive-path",
+        "--installer-path" if platform_name == "windows" else "--archive-path",
         local_app_archive_path(platform_name, host_arch(), macos_type),
     ]
     if platform_name == "macos":

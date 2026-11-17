@@ -63,7 +63,7 @@ versionCode 不得降低。增量工具不修改 SemVer 或平台 build number�
 客户端通过 GitHub API 返回的 digest 验证清单，核对清单的目标摘要与 GitHub 完整包
 摘要（发布了完整包时），再验证补丁、基包和重建结果。只发补丁时，目标摘要由经过
 GitHub digest 验证的清单提供，仍完整验证重建结果。所有下载 URL 都限于上述两个仓库对应 release
-的 HTTPS 资产。平台、ABI、macOS sandbox/unsandbox、Windows ZIP/MSI 各自独立。
+的 HTTPS 资产。平台、ABI、macOS sandbox/unsandbox 各自独立。Windows App 仅分发 MSI。
 
 补丁重建的是原发布安装包的原始字节，包括 APK 签名块、MSI 内容、macOS PKG
 签名与其他元数据。重建后进入既有 `SystemOperationHost::installApp`，没有热替换
@@ -75,7 +75,6 @@ Dart/Rust 运行代码的新通道。
 | --- | --- | --- |
 | Android 单 APK | Android Host 读取当前 `applicationInfo.sourceDir` | 既有 APK 安装器和授权流程 |
 | Android split APK | 不声明单包基包能力 | 完整 APK 下载后走系统安装器 |
-| Windows 便携版 | 已校验、保留的 ZIP | 既有等待退出、替换、重新启动助手 |
 | Windows MSI | 已校验、保留的 MSI | 既有产品族校验和 MSI 升级助手 |
 | macOS unsandbox / sandbox | 已校验、保留的对应 PKG | 既有系统 Installer，保留系统确认 |
 | Linux App | 已校验、保留的 tar.gz | 既有等待退出的安装助手 |
@@ -85,7 +84,7 @@ iOS 不具备任意自安装能力，不启用应用内增量安装。模块 ZIP
 生成字节补丁，但这不等于已经增加其系统级应用内安装能力。
 
 Windows 安装后的目录或 Windows Installer 缓存、macOS 已安装的 App 都不能可靠还原
-原始签名 MSI/PKG/ZIP，因此不重新打包安装目录作为基准。
+原始签名 MSI/PKG，因此不重新打包安装目录作为基准。
 
 应用不常驻显示“从安装包更新”。发现新版后，侧栏或关于页的 Operit Logo、关于页更新按钮
 进入同一个弹窗。用户点击更新时，Core 统一获取并验证更新清单，计算完整包、当前版本

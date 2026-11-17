@@ -33,8 +33,6 @@ import download_action_artifacts
 import publish_dist
 
 TARGETS = (
-    ("app", "windows", "x86_64", "zip"),
-    ("app", "windows", "aarch64", "zip"),
     ("app", "windows", "x86_64", "msi"),
     ("app", "linux", "x86_64", "tar.gz"),
     ("app", "linux", "aarch64", "tar.gz"),
@@ -116,7 +114,7 @@ class ReleaseArtifactTests(unittest.TestCase):
         (source / "payload.txt").write_text("release payload", encoding="utf-8")
         for index, writer in enumerate((common.compress_zip, release_build.compress_zip)):
             for version in ("2.0.0", "2.0.0-preview.16"):
-                destination = self.root / f"operit2-app-windows-x86_64-{version}-{index}.zip"
+                destination = self.root / f"operit2-cli-windows-x86_64-{version}-{index}.zip"
                 with self.subTest(writer=writer.__module__, version=version):
                     writer(source, destination)
                     self.assertTrue(destination.is_file())
@@ -142,7 +140,7 @@ class ReleaseArtifactTests(unittest.TestCase):
     # Keeps local App paths and mobile argument defaults on the shared scheme.
     def test_app_entry_points_share_versioned_default_names(self):
         for platform, arch, extension in (
-            ("windows", "x86_64", "zip"), ("linux", "aarch64", "tar.gz"),
+            ("windows", "x86_64", "msi"), ("linux", "aarch64", "tar.gz"),
             ("macos", "universal", "zip"),
         ):
             self.assertEqual(
@@ -171,6 +169,34 @@ class ReleaseArtifactTests(unittest.TestCase):
                 copy.call_args.args[1].name,
                 release_artifacts.release_asset_name("app", "ohos", "arm64", "hap"),
             )
+
+    def test_windows_app_entry_points_request_only_msi(self):
+        """Keep local and release builds on the MSI-only Windows packaging interface."""
+        with patch.object(build_local, "run") as run:
+            build_local.build_local_app("windows", True)
+        command = run.call_args.args[0]
+        self.assertIn("--installer-path", command)
+        self.assertNotIn("--archive-path", command)
+        self.assertTrue(str(command[command.index("--installer-path") + 1]).endswith(".msi"))
+        with (
+            patch.object(release_build, "host_platform", return_value=release_build.HostPlatform.WINDOWS),
+            patch.object(release_build, "host_arch", return_value="x86_64"),
+            patch.object(release_build, "run") as run,
+        ):
+            release_build.build_host_app("2.0.0", "46")
+        command = run.call_args.args[0]
+        self.assertIn("--installer-path", command)
+        self.assertNotIn("--archive-path", command)
+
+    def test_rejects_windows_app_zip_distribution(self):
+        """Reject Windows App ZIP packages and their sidecars at the publication boundary."""
+        for architecture in ("x86_64", "aarch64"):
+            name = release_artifacts.release_asset_name("app", "windows", architecture, "zip")
+            for suffix in ("", ".update.json", ".from-" + "a" * 64 + ".patch.gz"):
+                artifact = self.root / (name + suffix)
+                artifact.write_bytes(b"obsolete Windows App distribution")
+                with self.subTest(architecture=architecture, suffix=suffix), self.assertRaises(RuntimeError):
+                    release_artifacts.validate_release_assets([artifact])
 
     # Copies only the requested current-version Apple CLI packages.
     def test_apple_copy_excludes_stale_versions_and_other_architectures(self):
@@ -282,7 +308,6 @@ class ReleaseArtifactTests(unittest.TestCase):
         cases = (
             ("android-flutter-build.yml", "app", "android", "arm64-v8a", "apk"),
             ("android-flutter-build.yml", "module", "android", "arm64-v8a", "zip"),
-            ("windows-release-build.yml", "app", "windows", "x86_64", "zip"),
             ("windows-release-build.yml", "app", "windows", "x86_64", "msi"),
             ("windows-release-build.yml", "cli", "windows", "aarch64", "zip"),
             ("linux-release-build.yml", "app", "linux", "x86_64", "tar.gz"),
