@@ -83,7 +83,12 @@ class _ThemeConfigurationControlState extends State<ThemeConfigurationControl> {
           );
         }
         final state = snapshot.data;
-        if (state == null) return const LinearProgressIndicator();
+        if (state == null) {
+          return const Align(
+            alignment: Alignment.topCenter,
+            child: LinearProgressIndicator(),
+          );
+        }
         final theme = Theme.of(context);
         final activeConfig = state.configs
             .where((config) => config.id == state.activeThemeConfigId)

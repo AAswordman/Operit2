@@ -1,0 +1,6 @@
+mdk-sdk/
+.fvp-mdk-*/
+fvp-deps.lock
+mdk-sdk-*.7z*
+mdk-sdk-*.zip*
+mdk-sdk-*.tar.xz*

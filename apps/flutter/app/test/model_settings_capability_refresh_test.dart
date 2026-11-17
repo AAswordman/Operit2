@@ -18,6 +18,14 @@ import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/features/settings/model/ProviderLogo.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
+/// Describes one authenticated model participant for the Core bridge fixture.
+Map<String, Object?> _participantModel({required bool followsGlobal}) => {
+  'id': 'role',
+  'name': 'Fixed role',
+  'followsGlobal': followsGlobal,
+  'binding': {'providerId': 'test-provider', 'modelId': 'test-model'},
+};
+
 void main() {
   for (final missingProvider in [true, false]) {
     testWidgets(
@@ -60,6 +68,169 @@ void main() {
       },
     );
   }
+  testWidgets(
+    'fixed conversation shows its actual model and prevents a global switch',
+    (tester) async {
+      final bridge = _ModelSettingsBridge()
+        ..chatBinding = const core.FunctionModelBinding(
+          providerId: 'other-provider',
+          modelId: 'expensive-global-model',
+          followsChat: false,
+        )
+        ..participantModels = [_participantModel(followsGlobal: false)];
+      await tester.pumpWidget(
+        _themed(
+          Center(
+            child: AgentModelSelectorPopup(
+              viewModel: ChatViewModel(bridge: bridge),
+              currentChatId: 'fixed-chat',
+              onDismiss: () {},
+              onModelChanged: (id, {providerTypeId, providerName}) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(bridge.requestedModelChatId, 'fixed-chat');
+      expect(find.text('test-model'), findsOneWidget);
+      expect(find.text('expensive-global-model'), findsNothing);
+      expect(find.textContaining('固定模型'), findsWidgets);
+      expect(bridge.thinkingCalls, 1);
+      expect(bridge.modelSelectionWrites, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'model selection rechecks fixed binding before applying a stale global picker choice',
+    (tester) async {
+      final bridge = _ModelSettingsBridge()
+        ..participantModels = [_participantModel(followsGlobal: true)];
+      await tester.pumpWidget(
+        _themed(
+          Center(
+            child: AgentModelSelectorPopup(
+              viewModel: ChatViewModel(bridge: bridge),
+              currentChatId: 'changed-chat',
+              onDismiss: () {},
+              onModelChanged: (id, {providerTypeId, providerName}) {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Test Provider').first);
+      await tester.pumpAndSettle();
+      bridge.participantModels = [_participantModel(followsGlobal: false)];
+      await tester.tap(find.text('test-model').last);
+      await tester.pumpAndSettle();
+      expect(bridge.modelSelectionWrites, 0);
+      expect(find.textContaining('当前会话包含固定模型'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'mixed group lists all sender models without choosing one or editing global thinking',
+    (tester) async {
+      final bridge = _ModelSettingsBridge()
+        ..participantModels = [
+          _participantModel(followsGlobal: true),
+          {
+            'id': 'second',
+            'name': 'Second role',
+            'followsGlobal': false,
+            'binding': {
+              'providerId': 'second-provider',
+              'modelId': 'second-model',
+            },
+          },
+        ];
+      await tester.pumpWidget(
+        _themed(
+          Center(
+            child: AgentModelMenuSection(
+              viewModel: ChatViewModel(bridge: bridge),
+              currentChatId: 'group-chat',
+              onDismiss: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('test-model'), findsOneWidget);
+      expect(find.text('second-model'), findsOneWidget);
+      expect(bridge.thinkingCalls, 0);
+      expect(bridge.modelSelectionWrites, 0);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'composer changes actual models when switching between fixed and global chats',
+    (tester) async {
+      final bridge = _ObservableModelSettingsBridge()
+        ..chatBinding = const core.FunctionModelBinding(
+          providerId: 'global-provider',
+          modelId: 'global-model',
+          followsChat: false,
+        )
+        ..participantModels = [_participantModel(followsGlobal: false)];
+      addTearDown(bridge.close);
+      final controller = TextEditingController();
+      final focus = FocusNode();
+      addTearDown(controller.dispose);
+      addTearDown(focus.dispose);
+      final viewModel = ChatViewModel(bridge: bridge);
+      var chatId = 'fixed-chat';
+      late StateSetter update;
+      await tester.pumpWidget(
+        _themed(
+          StatefulBuilder(
+            builder: (context, setState) {
+              update = setState;
+              return AgentChatInputSection(
+                controller: controller,
+                focusNode: focus,
+                isLoading: false,
+                inputState: core.InputProcessingState.idle(),
+                viewModel: viewModel,
+                currentChatId: chatId,
+                onSendMessage: () {},
+                onQueueMessage: () {},
+                onCancelMessage: () {},
+                isSpeechRecording: false,
+                isSpeechTranscribing: false,
+                onSpeechInput: () {},
+              );
+            },
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('固定 · test-model'), findsOneWidget);
+      expect(find.text('global-model'), findsNothing);
+      bridge.participantModels = [
+        {
+          'id': 'model:chat',
+          'name': 'Only model',
+          'followsGlobal': true,
+          'binding': {
+            'providerId': 'global-provider',
+            'modelId': 'global-model',
+          },
+        },
+      ];
+      update(() => chatId = 'global-chat');
+      await tester.pumpAndSettle();
+      expect(find.text('global-model'), findsOneWidget);
+      expect(find.text('固定 · test-model'), findsNothing);
+      expect(bridge.requestedModelChatId, 'global-chat');
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   setUp(ClientLogger.initialize);
   testWidgets(
     'provider editor persists the pool and imported identities through Core',
@@ -442,7 +613,8 @@ void main() {
       bridge.emitBindings(const {});
       await tester.pumpAndSettle();
       expect(find.text('deepseek-flash'), findsNothing);
-      expect(find.byType(ProviderLogo), findsNothing);
+      expect(find.text('模型配置不可用'), findsOneWidget);
+      expect(logo().providerTypeId, isEmpty);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
       await tester.pumpAndSettle();
@@ -480,6 +652,10 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   String? resolutionError;
   int resolutionCalls = 0;
   int thinkingCalls = 0;
+  int modelSelectionWrites = 0;
+  bool missingChatBinding = false;
+  List<Map<String, Object?>>? participantModels;
+  String? requestedModelChatId;
   int? catalogUpdatedAt;
   int catalogRefreshCalls = 0;
   bool connectionTestSucceeds = true;
@@ -598,6 +774,21 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     final Object? result;
     switch (request.methodName) {
+      case 'getToolPkgPublicApiOwners':
+        result = participantModels == null
+            ? []
+            : [
+                core.ToolPkgPublicApiOwner(
+                  containerPackageName: 'model-owner',
+                  apiName: 'chat.configuration.resolve',
+                ).toJson(),
+              ];
+      case 'getToolPkgPublicApis':
+        result = ['chat.model.selection'];
+      case 'invokeToolPkgPublicApi':
+        final payload = (request.args as Map)['payload'] as Map;
+        requestedModelChatId = payload['chatId'] as String?;
+        result = {'participants': participantModels};
       case 'getAvailableProviderModels':
         result = [
           core.AvailableProviderModel(
@@ -622,8 +813,10 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
           lastError: 'fixture catalog offline',
         ).toJson();
       case 'getModelBindingForFunction':
+        if (missingChatBinding) throw StateError('No chat model binding');
         result = chatBinding.toJson();
       case 'setModelForFunction':
+        modelSelectionWrites++;
         final args = request.args as Map;
         chatBinding = core.FunctionModelBinding(
           providerId: args['providerId'] as String,
@@ -831,10 +1024,15 @@ class _ObservableModelSettingsBridge extends _ModelSettingsBridge {
   bool get hasListeners => _bindings.hasListener || _profiles.hasListener;
   void emitBindings(
     Map<core.FunctionType, core.FunctionModelBinding> bindings,
-  ) => _bindings.add({
-    for (final entry in bindings.entries)
-      entry.key.toJson(): entry.value.toJson(),
-  });
+  ) {
+    missingChatBinding = !bindings.containsKey(core.FunctionType.chat);
+    if (!missingChatBinding) chatBinding = bindings[core.FunctionType.chat]!;
+    _bindings.add({
+      for (final entry in bindings.entries)
+        entry.key.toJson(): entry.value.toJson(),
+    });
+  }
+
   void emitProfiles() => _profiles.add([provider.toJson()]);
   Future<void> close() async {
     await _bindings.close();

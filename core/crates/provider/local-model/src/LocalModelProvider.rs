@@ -132,8 +132,13 @@ impl LocalModelProvider {
             })?;
         let modelDirectory = self.runtimeLayoutPath(&model.storagePath)?;
         let engineDirectory = self.runtimeLayoutPath(&engine.storagePath)?;
+        // The archive root marker denotes the installation directory, not a VFS segment.
+        let archiveRoot = match engine.artifact.archiveRoot.as_str() {
+            "." => "",
+            relative => relative,
+        };
         let engineRuntimeDirectory =
-            operit_vfs::VfsPath::joinVfsPath(&engineDirectory, &engine.artifact.archiveRoot)
+            operit_vfs::VfsPath::joinVfsPath(&engineDirectory, archiveRoot)
                 .map_err(LocalModelProviderError::Storage)?;
         Ok(ResolvedLocalModelRuntime {
             model,
@@ -179,4 +184,132 @@ pub fn localDriverOptions(
         .iter()
         .map(|(key, value)| (key.clone(), value.clone()))
         .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::LocalEngineCatalog::LocalEngineCatalog;
+    use crate::LocalModelCatalog::LocalModelCatalog;
+    use crate::LocalModelManifest::LocalModelManifest;
+    use crate::LocalModelRegistry::LocalModelRegistrySnapshot;
+    use crate::LocalModelRegistryStore::testRuntimeStorageHost;
+    use crate::LocalModelStorage::{buildLocalEngineStoragePath, buildLocalModelStoragePath};
+
+    /// Resolves an installed model through a persisted registry without loading model weights.
+    fn resolveInstalledRuntime(
+        manifest: LocalModelManifest,
+        engineManifest: crate::LocalEngineManifest::LocalEngineManifest,
+        archiveRoot: &str,
+    ) -> Result<ResolvedLocalModelRuntime, LocalModelProviderError> {
+        let root = std::env::temp_dir().join(format!(
+            "operit-local-provider-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let storage = testRuntimeStorageHost(root.clone());
+        let target = LocalPlatformTarget::current().unwrap();
+        let mut artifact = engineManifest.artifactForTarget(&target).unwrap().clone();
+        artifact.archiveRoot = archiveRoot.to_string();
+        let selection = LocalModelSelection {
+            modelId: manifest.id.clone(),
+            version: manifest.version.clone(),
+        };
+        let kind = manifest.kind.clone();
+        let mut registry = LocalModelRegistrySnapshot::empty();
+        registry.upsert(InstalledLocalModel {
+            storagePath: buildLocalModelStoragePath(
+                &kind,
+                &manifest.engine,
+                &manifest.id,
+                &manifest.version,
+            )
+            .unwrap(),
+            manifest,
+            installedAtMs: 1,
+            verifiedAtMs: Some(1),
+        });
+        registry.upsertEngine(InstalledLocalEngine {
+            storagePath: buildLocalEngineStoragePath(
+                &engineManifest.id,
+                &engineManifest.version,
+                &target,
+            )
+            .unwrap(),
+            manifest: engineManifest,
+            artifact,
+            installedAtMs: 1,
+            verifiedAtMs: Some(1),
+        });
+        LocalModelRegistryStore::forRuntimeStorage(storage.clone())
+            .write(&registry)
+            .unwrap();
+        let result = LocalModelProvider::forRuntimeStorage(storage)
+            .unwrap()
+            .resolve(&selection, kind);
+        std::fs::remove_dir_all(root).unwrap();
+        result
+    }
+
+    /// Keeps embedded llama.cpp and MNN roots resolvable before native inference starts.
+    #[test]
+    fn installedChatEnginesResolveInstallationRoot() {
+        let qwen = LocalModelCatalog::manifests()
+            .into_iter()
+            .find(|model| model.id == "qwen3.5-2b-gguf")
+            .unwrap();
+        for (model, engine) in [
+            (qwen, LocalEngineCatalog::llamaCpp()),
+            (LocalModelCatalog::qwen3Mnn(), LocalEngineCatalog::mnn()),
+        ] {
+            let target = LocalPlatformTarget::current().unwrap();
+            let archiveRoot = engine
+                .artifactForTarget(&target)
+                .unwrap()
+                .archiveRoot
+                .clone();
+            assert_eq!(archiveRoot, ".");
+            let runtime = resolveInstalledRuntime(model, engine, &archiveRoot).unwrap();
+            assert_eq!(runtime.engineRuntimeDirectory, runtime.engineDirectory);
+            assert!(runtime.modelDirectory.starts_with("/operitapp/data/"));
+        }
+    }
+
+    /// Preserves both installation-root and nested archive layouts in the VFS namespace.
+    #[test]
+    fn installedEngineArchiveDirectoriesStayWithinVfs() {
+        for archiveRoot in ["", ".", "sherpa-onnx/lib"] {
+            let runtime = resolveInstalledRuntime(
+                LocalModelCatalog::qwen3LlamaCpp(),
+                LocalEngineCatalog::llamaCpp(),
+                archiveRoot,
+            )
+            .unwrap();
+            let expected = match archiveRoot {
+                "" | "." => runtime.engineDirectory.clone(),
+                _ => format!("{}/{archiveRoot}", runtime.engineDirectory),
+            };
+            assert_eq!(runtime.engineRuntimeDirectory, expected);
+        }
+    }
+
+    /// Rejects traversal and embedded dot segments rather than weakening shared VFS validation.
+    #[test]
+    fn installedEngineArchiveDirectoriesRejectInvalidSegments() {
+        for archiveRoot in ["..", "../outside", "lib/../../outside", "lib/./nested"] {
+            let error = resolveInstalledRuntime(
+                LocalModelCatalog::qwen3LlamaCpp(),
+                LocalEngineCatalog::llamaCpp(),
+                archiveRoot,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(error, LocalModelProviderError::Storage(_)),
+                "{archiveRoot}: {error}"
+            );
+        }
+    }
 }

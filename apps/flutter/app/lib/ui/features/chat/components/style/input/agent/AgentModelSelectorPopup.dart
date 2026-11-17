@@ -12,6 +12,8 @@ import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../../common/ThinkingLevelText.dart';
+import '../../../../../../common/contributions/ChatModelSelection.dart';
+import '../../../../../../common/contributions/ToolPkgChatUiCatalog.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../../../settings/model/ProviderLogo.dart';
 
@@ -19,12 +21,14 @@ class AgentModelSelectorPopup extends StatefulWidget {
   const AgentModelSelectorPopup({
     super.key,
     required this.viewModel,
+    this.currentChatId,
     required this.onDismiss,
     required this.onModelChanged,
     this.onThinkingChanged,
   });
 
   final ChatViewModel viewModel;
+  final String? currentChatId;
   final VoidCallback onDismiss;
   final void Function(
     String modelId, {
@@ -61,7 +65,18 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
 
   /// Loads model, context, and thinking settings for the popup.
   Future<_AgentModelSelectorData> _loadSettings() {
-    return _loadAgentModelSelectorData(_clients);
+    return _loadAgentModelSelectorData(_clients, widget.currentChatId);
+  }
+
+  /// Discards model-specific settings when the popup receives a different chat.
+  @override
+  void didUpdateWidget(covariant AgentModelSelectorPopup oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _thinking = null;
+      _settingsFuture = _loadSettings();
+    }
   }
 
   /// Applies a provider model as the chat model.
@@ -77,11 +92,22 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
       );
       return;
     }
+    final selection = await ToolPkgChatUiCatalog(
+      clients: _clients,
+    ).loadModelSelection(chatId: widget.currentChatId);
+    if (!mounted) return;
+    if (!selection.canSelectGlobal) {
+      setState(() {
+        _settingsFuture = _loadSettings();
+      });
+      return;
+    }
     await _clients.preferencesFunctionalConfigManager.setModelForFunction(
       functionType: core_proxy.FunctionType.chat,
       providerId: provider.id,
       modelId: model.id,
     );
+    if (!mounted) return;
     widget.onModelChanged(
       model.id,
       providerTypeId: provider.providerTypeId,
@@ -100,6 +126,7 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
       _clients,
       data,
       level,
+      widget.currentChatId,
     );
     if (!mounted) {
       return;
@@ -147,9 +174,9 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
             future: _settingsFuture,
             builder: (context, snapshot) {
               if (snapshot.hasError) {
-                Error.throwWithStackTrace(
-                  snapshot.error!,
-                  snapshot.stackTrace!,
+                return const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: Text('模型配置不可用，请检查当前会话的模型绑定。'),
                 );
               }
               final data = snapshot.data;
@@ -170,35 +197,41 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
                         settings: settings,
                         onChanged: (level) => _setThinkingLevel(data, level),
                       ),
-                    _ModelSelectorItem(
-                      popupContainerColor: popupContainerColor,
-                      providers: data.providers,
-                      summaries: data.summaries,
-                      currentBinding: data.currentBinding,
-                      expanded: true,
-                      expandedProviderId: _expandedProviderId,
-                      expandedFamilyKey: _expandedFamilyKey,
-                      onExpandedChanged: (_) {},
-                      onExpandedProviderChanged: (providerId) {
-                        setState(() {
-                          _expandedProviderId = providerId;
-                          if (providerId == null) {
-                            _expandedFamilyKey = null;
-                          }
-                        });
-                      },
-                      onFamilyExpandedChanged: (familyKey) {
-                        setState(() {
-                          _expandedFamilyKey = familyKey;
-                        });
-                      },
-                      onSelectModel: _selectModel,
-                      onManageClick: _openModelSettings,
-                      onInfoClick: () {},
-                      showChevron: false,
-                      showInfoButton: false,
-                      manageInHeader: true,
-                    ),
+                    if (!data.selection.canSelectGlobal)
+                      _BoundModelSelection(
+                        selection: data.selection,
+                        providers: data.providers,
+                      ),
+                    if (data.selection.canSelectGlobal)
+                      _ModelSelectorItem(
+                        popupContainerColor: popupContainerColor,
+                        providers: data.providers,
+                        summaries: data.summaries,
+                        currentBinding: data.currentBinding,
+                        expanded: true,
+                        expandedProviderId: _expandedProviderId,
+                        expandedFamilyKey: _expandedFamilyKey,
+                        onExpandedChanged: (_) {},
+                        onExpandedProviderChanged: (providerId) {
+                          setState(() {
+                            _expandedProviderId = providerId;
+                            if (providerId == null) {
+                              _expandedFamilyKey = null;
+                            }
+                          });
+                        },
+                        onFamilyExpandedChanged: (familyKey) {
+                          setState(() {
+                            _expandedFamilyKey = familyKey;
+                          });
+                        },
+                        onSelectModel: _selectModel,
+                        onManageClick: _openModelSettings,
+                        onInfoClick: () {},
+                        showChevron: false,
+                        showInfoButton: false,
+                        manageInHeader: true,
+                      ),
                   ],
                 ),
               );
@@ -214,10 +247,12 @@ class AgentModelMenuSection extends StatefulWidget {
   const AgentModelMenuSection({
     super.key,
     required this.viewModel,
+    this.currentChatId,
     required this.onDismiss,
   });
 
   final ChatViewModel viewModel;
+  final String? currentChatId;
   final VoidCallback onDismiss;
 
   /// Creates the mutable state for the embedded model menu section.
@@ -246,7 +281,18 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
 
   /// Loads model selector state for the embedded input menu section.
   Future<_AgentModelSelectorData> _loadSettings() {
-    return _loadAgentModelSelectorData(_clients);
+    return _loadAgentModelSelectorData(_clients, widget.currentChatId);
+  }
+
+  /// Discards model-specific settings when the menu receives a different chat.
+  @override
+  void didUpdateWidget(covariant AgentModelMenuSection oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.currentChatId != widget.currentChatId ||
+        oldWidget.viewModel != widget.viewModel) {
+      _thinking = null;
+      _settingsFuture = _loadSettings();
+    }
   }
 
   /// Selects one configured model for chat from the embedded menu.
@@ -262,11 +308,22 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
       );
       return;
     }
+    final selection = await ToolPkgChatUiCatalog(
+      clients: _clients,
+    ).loadModelSelection(chatId: widget.currentChatId);
+    if (!mounted) return;
+    if (!selection.canSelectGlobal) {
+      setState(() {
+        _settingsFuture = _loadSettings();
+      });
+      return;
+    }
     await _clients.preferencesFunctionalConfigManager.setModelForFunction(
       functionType: core_proxy.FunctionType.chat,
       providerId: provider.id,
       modelId: model.id,
     );
+    if (!mounted) return;
     widget.onDismiss();
   }
 
@@ -280,6 +337,7 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
       _clients,
       data,
       level,
+      widget.currentChatId,
     );
     if (!mounted) {
       return;
@@ -313,7 +371,10 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
       future: _settingsFuture,
       builder: (context, snapshot) {
         if (snapshot.hasError) {
-          Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
+          return const Padding(
+            padding: EdgeInsets.all(12),
+            child: Text('模型配置不可用，请检查当前会话的模型绑定。'),
+          );
         }
         final data = snapshot.data;
         if (data == null) {
@@ -329,6 +390,22 @@ class _AgentModelMenuSectionState extends State<AgentModelMenuSection> {
             },
             onInfoClick: () {},
             showInfoButton: false,
+          );
+        }
+        if (!data.selection.canSelectGlobal) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _BoundModelSelection(
+                selection: data.selection,
+                providers: data.providers,
+              ),
+              if (_thinking ?? data.thinkingSettings case final settings?)
+                AgentThinkingLevelRow(
+                  settings: settings,
+                  onChanged: (level) => _setThinkingLevel(data, level),
+                ),
+            ],
           );
         }
         final embeddedPanelColor = colorScheme.surface.withValues(alpha: 0.42);
@@ -818,19 +895,70 @@ class _AgentThinkingSliderRowState extends State<AgentThinkingSliderRow>
   }
 }
 
+/// Displays all actual sender models and explains where fixed selections are edited.
+class _BoundModelSelection extends StatelessWidget {
+  /// Creates a read-only model projection for a bound conversation.
+  const _BoundModelSelection({
+    required this.selection,
+    required this.providers,
+  });
+
+  final ChatModelSelection selection;
+  final List<core_proxy.ProviderProfile> providers;
+
+  /// Shows provider-scoped bindings without offering an ineffective global switch.
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Text('当前会话模型', style: TextStyle(fontWeight: FontWeight.w600)),
+          for (final participant in selection.participants) ...[
+            const SizedBox(height: 8),
+            Text(
+              '${participant.name} · ${participant.followsGlobal ? '跟随全局' : '固定模型'}',
+            ),
+            Text(participant.binding.modelId),
+            Text(
+              providers
+                      .where(
+                        (provider) =>
+                            provider.id == participant.binding.providerId,
+                      )
+                      .singleOrNull
+                      ?.name ??
+                  participant.binding.providerId,
+            ),
+          ],
+          const SizedBox(height: 8),
+          const Text('当前会话包含固定模型。请在角色卡设置中修改绑定，或改为“跟随全局模型”。'),
+        ],
+      ),
+    );
+  }
+}
+
 class _AgentModelSelectorData {
   const _AgentModelSelectorData({
     required this.providers,
     required this.summaries,
-    required this.currentBinding,
     required this.thinkingSettings,
+    required this.selection,
   });
 
+  final ChatModelSelection selection;
   final List<core_proxy.ProviderProfile> providers;
 
   /// Settings each configured model runs with, catalog values included.
   final List<core_proxy.ProviderModelSummary> summaries;
-  final core_proxy.FunctionModelBinding currentBinding;
+
+  /// Requires an actual single model before exposing controls for that model.
+  core_proxy.FunctionModelBinding get currentBinding =>
+      selection.singleBinding ??
+      (throw StateError('Conversation uses multiple models.'));
 
   /// The chat model's thinking levels and the level it uses.
   final core_proxy.ModelThinkingSettings? thinkingSettings;
@@ -928,10 +1056,20 @@ Future<core_proxy.ModelThinkingSettings?> _setChatThinkingLevel(
   GeneratedCoreProxyClients clients,
   _AgentModelSelectorData data,
   core_proxy.ThinkingLevel level,
+  String? chatId,
 ) async {
   final messenger = ScaffoldMessenger.of(context);
   final failed = AppLocalizations.of(context)!.failed;
   try {
+    final current = await ToolPkgChatUiCatalog(
+      clients: clients,
+    ).loadModelSelection(chatId: chatId);
+    final binding = current.singleBinding;
+    if (binding == null ||
+        binding.providerId != data.currentBinding.providerId ||
+        binding.modelId != data.currentBinding.modelId) {
+      throw StateError('当前会话模型已更改，请重新选择思考等级。');
+    }
     return await clients.preferencesModelConfigManager.setThinkingLevelForModel(
       providerId: data.currentBinding.providerId,
       modelId: data.currentBinding.modelId,
@@ -1750,19 +1888,22 @@ class _InfoIconButton extends StatelessWidget {
 /// Loads selectable models even when the current binding no longer exists.
 Future<_AgentModelSelectorData> _loadAgentModelSelectorData(
   GeneratedCoreProxyClients clients,
+  String? chatId,
 ) async {
-  final binding = await clients.preferencesFunctionalConfigManager
-      .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
+  final selection = await ToolPkgChatUiCatalog(
+    clients: clients,
+  ).loadModelSelection(chatId: chatId);
+  final binding = selection.singleBinding;
   final providers = await clients.preferencesModelConfigManager
       .getProviderProfiles();
   final summaries = await clients.preferencesModelConfigManager
       .getAllModelSummaries();
   final currentModelExists = providers.any(
     (provider) =>
-        provider.id == binding.providerId &&
-        provider.models.any((model) => model.id == binding.modelId),
+        provider.id == binding?.providerId &&
+        provider.models.any((model) => model.id == binding?.modelId),
   );
-  final thinkingSettings = currentModelExists
+  final thinkingSettings = binding != null && currentModelExists
       ? await clients.preferencesModelConfigManager.getThinkingSettingsForModel(
           providerId: binding.providerId,
           modelId: binding.modelId,
@@ -1771,8 +1912,8 @@ Future<_AgentModelSelectorData> _loadAgentModelSelectorData(
   return _AgentModelSelectorData(
     providers: providers,
     summaries: summaries,
-    currentBinding: binding,
     thinkingSettings: thinkingSettings,
+    selection: selection,
   );
 }
 

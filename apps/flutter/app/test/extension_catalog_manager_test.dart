@@ -507,6 +507,38 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('failed external imports can be cleared from diagnostics', (
+    tester,
+  ) async {
+    const path = '/storage/emulated/0/Download/Apktool-3.0.3-Operit.toolpkg';
+    final bridge = _CatalogBridge();
+    bridge.diagnostics.add(
+      const core_proxy.ExtensionCatalogDiagnostic(
+        sourcePath: path,
+        packageId: null,
+        displayName: path,
+        code: 'import_failed',
+        message: 'Cannot access file at path: $path',
+        packageKind: 'package',
+        canDelete: true,
+      ),
+    );
+    await tester.pumpWidget(_manager(bridge));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('1 条加载诊断'));
+    await tester.pumpAndSettle();
+
+    expect(find.byTooltip('删除失败记录'), findsOneWidget);
+    await tester.tap(find.byTooltip('删除失败记录'));
+    await tester.pumpAndSettle();
+
+    expect(bridge.deletedDiagnostics, <String>[path]);
+    expect(find.text(path), findsNothing);
+    expect(find.text('已经全部处理完了。'), findsOneWidget);
+    expect(find.text('1 条加载诊断'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('location grouping separates shared and device-only extensions', (
     tester,
   ) async {

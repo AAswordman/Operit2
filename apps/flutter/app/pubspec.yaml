@@ -56,7 +56,8 @@ dependencies:
   audioplayers: ^6.7.0
   video_player: ^2.11.1
   # Uses the same native video backend for runtime asset data URIs on every OS.
-  fvp: ^0.40.0
+  fvp:
+    path: ../thirdparty/fvp
   path_provider: ^2.1.5
   path_provider_ohos:
     git:

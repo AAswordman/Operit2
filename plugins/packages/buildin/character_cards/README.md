@@ -159,6 +159,21 @@ input-submit hook. Installed production archives also remain different from
 current source until packaging is explicitly performed. Neither gap is described
 as completed integration.
 
+## Composer model selection
+
+The host-only `chat.model.selection` API accepts `{ chatId, defaultModelBinding }`
+and returns `{ participants: [{ id, name, binding: { providerId, modelId }, followsGlobal }] }`.
+It reads the same persisted conversation selection and character model-binding rule
+as execution. A null chat ID projects the active draft selection. Conversations
+without a role association use the existing ordinary model mode. Invalid stored
+bindings remain errors; presentation does not select another model.
+
+Flutter shows the actual bound model and marks fixed roles. Fixed or mixed groups
+list every sender's model and direct edits to character settings. The global picker
+is available when all senders follow global selection, and checks that rule again
+before saving. Thinking controls use the actual single model and are omitted for
+groups with different models. Presentation reads no voice, memory or tool catalogs.
+
 ## Plugin-owned group prompts and configuration deletion
 
 Group execution adds identity constraints and the saved ordered member names to each

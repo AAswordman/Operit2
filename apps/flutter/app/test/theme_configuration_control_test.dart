@@ -26,6 +26,28 @@ import 'package:operit_ui/operit_ui.dart' show buildOperitThemeData;
 /// Verifies the real named-theme selector and generated proxy calls without a platform runtime.
 void main() {
   setUp(ClientLogger.initialize);
+  for (final size in [const Size(390, 844), const Size(1000, 600)]) {
+    testWidgets('initial loading stays a thin top bar at $size', (
+      tester,
+    ) async {
+      final bridge = _ThemeBridge()..publishInitialCatalog = false;
+      await _mount(tester, bridge, size: size, waitForCatalog: false);
+      await tester.pump(const Duration(seconds: 1));
+
+      final progress = find.byType(LinearProgressIndicator);
+      expect(progress, findsOneWidget);
+      expect(tester.getSize(progress), Size(size.width, 4));
+      expect(tester.getTopLeft(progress), Offset.zero);
+      expect(find.byKey(const ValueKey('theme-card:day')), findsNothing);
+
+      bridge._publish();
+      await tester.pumpAndSettle();
+      expect(progress, findsNothing);
+      expect(find.byKey(const ValueKey('theme-card:day')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   testWidgets(
     'creation exposes grouped sources and changes the explicit selection',
     (tester) async {
@@ -920,6 +942,7 @@ Future<void> _mount(
   Future<void> Function(String)? onEdit,
   ThemePreferenceSnapshot? currentSnapshot,
   double textScale = 1,
+  bool waitForCatalog = true,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -946,16 +969,18 @@ Future<void> _mount(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
-        body: StatefulBuilder(
-          builder: (context, update) => ThemeConfigurationControl(
-            clients: GeneratedCoreProxyClients(bridge),
-            onEdit: onEdit,
+        body: SizedBox.expand(
+          child: StatefulBuilder(
+            builder: (context, update) => ThemeConfigurationControl(
+              clients: GeneratedCoreProxyClients(bridge),
+              onEdit: onEdit,
+            ),
           ),
         ),
       ),
     ),
   );
-  await tester.pumpAndSettle();
+  if (waitForCatalog) await tester.pumpAndSettle();
   expect(tester.takeException(), isNull);
 }
 
@@ -972,6 +997,7 @@ class _ThemeBridge extends OperitRuntimeBridge {
   final Map<CoreWatchRequest, StreamController<CoreEvent>> watches = {};
   String? active = 'day';
   Object? failure;
+  bool publishInitialCatalog = true;
 
   /// Encodes only supported owner operations and publishes committed state after acknowledgements.
   @override
@@ -1060,7 +1086,9 @@ class _ThemeBridge extends OperitRuntimeBridge {
     }
     late StreamController<CoreEvent> controller;
     controller = StreamController<CoreEvent>(
-      onListen: () => controller.add(_event(request)),
+      onListen: () {
+        if (publishInitialCatalog) controller.add(_event(request));
+      },
       onCancel: () => watches.remove(request),
     );
     watches[request] = controller;

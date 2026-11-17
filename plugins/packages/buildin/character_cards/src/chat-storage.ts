@@ -39,3 +39,8 @@ export async function readMessageAuthor(chatId: string, messageTimestamp: number
   if (Object.keys(identity).length !== 1) throw new Error("Invalid message author identity");
   return requireId(identity.participantId, "message author participant id");
 }
+/** Shares ordinary model mode for conversations with no role association across execution and presentation. */
+export async function chatSelection(chatId: string): Promise<string> {
+  const binding = await findChatBinding(chatId);
+  return binding === null ? "model:chat" : binding.selection;
+}

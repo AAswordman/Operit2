@@ -214,6 +214,18 @@ function readCharacter(value, id2 = "") {
 }
 
 // src/model-binding.ts
+function characterModelBinding(card, global) {
+  switch (characterModelBindingMode(card.chatModelBindingMode)) {
+    case "FOLLOW_GLOBAL":
+      return { ...global };
+    case "FIXED_MODEL":
+      if (card.chatModelId === null || card.chatModelId.trim() === "") throw new Error("profile.fixedModelId must be nonblank");
+      if (card.chatProviderId === null || card.chatProviderId.trim() === "") throw new Error("Fixed model provider must be explicitly selected");
+      return { providerId: card.chatProviderId, modelId: card.chatModelId };
+    default:
+      throw new Error("\u89D2\u8272\u5361\u201C" + card.name + "\u201D\u7684\u6A21\u578B\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548\uFF0C\u8BF7\u91CD\u65B0\u7ED1\u5B9A\uFF1A" + card.chatModelBindingMode);
+  }
+}
 function characterModelBindingMode(mode) {
   return mode === "FIXED_CONFIG" ? "FIXED_MODEL" : mode;
 }
@@ -1043,27 +1055,7 @@ function chatRecord(records2, id2, kind) {
 async function chatParticipant(card, request, service2) {
   nonblank(card.name, "profile.name");
   const models = await service2.listModels();
-  let modelBinding;
-  switch (characterModelBindingMode(card.chatModelBindingMode)) {
-    case "FOLLOW_GLOBAL":
-      modelBinding = { ...request.defaultModelBinding };
-      break;
-    case "FIXED_MODEL": {
-      nonblank(card.chatModelId, "profile.fixedModelId");
-      nonblank(card.chatProviderId, "Fixed model provider must be explicitly selected");
-      const candidates = models.filter(
-        /** Resolves the exact provider-scoped model selected by the user. */
-        (model) => model.providerId === card.chatProviderId && model.modelId === card.chatModelId
-      );
-      if (candidates.length !== 1) throw new Error(
-        candidates.length === 0 ? "Fixed model unavailable: " + card.chatModelId : "Fixed model ambiguous: " + card.chatModelId
-      );
-      modelBinding = { providerId: candidates[0].providerId, modelId: candidates[0].modelId };
-      break;
-    }
-    default:
-      throw new Error("\u89D2\u8272\u5361\u201C" + card.name + "\u201D\u7684\u6A21\u578B\u7ED1\u5B9A\u6A21\u5F0F\u65E0\u6548\uFF0C\u8BF7\u5728\u89D2\u8272\u5361\u8BBE\u7F6E\u4E2D\u91CD\u65B0\u7ED1\u5B9A\u6A21\u578B\uFF1A" + card.chatModelBindingMode);
-  }
+  const modelBinding = characterModelBinding(card, request.defaultModelBinding);
   const resolvedModels = models.filter(
     /** Requires the actual configured provider/model pair. */
     (model) => model.providerId === modelBinding.providerId && model.modelId === modelBinding.modelId
@@ -4965,6 +4957,10 @@ async function readMessageAuthor(chatId, messageTimestamp, variantIndex) {
   if (Object.keys(identity3).length !== 1) throw new Error("Invalid message author identity");
   return requireId(identity3.participantId, "message author participant id");
 }
+async function chatSelection(chatId) {
+  const binding = await findChatBinding(chatId);
+  return binding === null ? "model:chat" : binding.selection;
+}
 
 // src/memory-jobs/chat.ts
 function assertChat(value) {
@@ -7842,6 +7838,41 @@ var chatUiRoutes = {
 };
 
 // src/ui-contributions.ts
+async function modelSelection(selection, service2, global) {
+  const selected = parseChatSelection(selection);
+  if (selected.kind === "model") return { participants: [{ id: "model:chat", name: "\u4EC5\u4F7F\u7528\u6A21\u578B", binding: { ...global }, followsGlobal: true }] };
+  let ids;
+  if (selected.kind === "card") ids = [selected.id];
+  else {
+    const group = await service2.getGroup(selected.id);
+    if (group.id !== selected.id || group.members.length === 0) throw new Error("\u7FA4\u7EC4\u4E0D\u5B58\u5728\u6216\u6CA1\u6709\u6210\u5458\uFF1A" + selected.id);
+    ids = [...group.members].sort(
+      /** Preserves saved sender order without planning an execution. */
+      (left, right) => left.orderIndex - right.orderIndex
+    ).map(
+      /** Retains the exact member identity for the role read. */
+      (member2) => member2.characterCardId
+    );
+    if (new Set(ids).size !== ids.length) throw new Error("\u7FA4\u7EC4\u5305\u542B\u91CD\u590D\u6210\u5458");
+  }
+  const participants = [];
+  for (const id2 of ids) {
+    const card = await service2.getCharacter(id2);
+    if (card.id !== id2) throw new Error("\u89D2\u8272\u8BFB\u53D6\u8FD4\u56DE\u4E86\u4E0D\u540C\u7684\u6807\u8BC6\uFF1A" + id2);
+    participants.push({ id: id2, name: card.name, binding: characterModelBinding(card, global), followsGlobal: characterModelBindingMode(card.chatModelBindingMode) === "FOLLOW_GLOBAL" });
+  }
+  return { participants };
+}
+async function chatModelSelectionApi(event) {
+  requireUiCaller(event.callerPackage);
+  const input = fields(event.payload, ["chatId", "defaultModelBinding"], "chat model selection");
+  const chatId = nullableString(input.chatId, "chatId");
+  const binding = fields(input.defaultModelBinding, ["providerId", "modelId"], "default model binding");
+  const global = { providerId: chatIdentity(binding.providerId, "providerId"), modelId: chatIdentity(binding.modelId, "modelId") };
+  const service2 = await getService();
+  const selection = chatId === null ? encodeSelection(await service2.dispatchDomain("activePrompt.get", {})) : await chatSelection(chatId);
+  return modelSelection(selection, service2, global);
+}
 function parseDomainMessage(value) {
   const envelope = record(value, "character-memory.domain"), keys = Object.keys(envelope);
   if (keys.length !== 2 || !keys.every(
@@ -7981,6 +8012,7 @@ async function chatListSectionsApi(event) {
   ));
 }
 function registerUiContributionApis() {
+  ToolPkg.registerApi({ name: "chat.model.selection", function: chatModelSelectionApi });
   ToolPkg.registerApi({ name: "chat.context.actions", function: chatContextActionsApi });
   ToolPkg.registerApi({ name: "chat.list.sections", function: chatListSectionsApi });
 }
@@ -9340,8 +9372,7 @@ async function chatConfigurationResolveApi(event) {
   if (event.callerPackage !== "host") throw new Error("chat.configuration.resolve requires an authenticated host caller");
   const request = parseDomainPayload("chat.configuration.resolve", event.payload);
   if (request.chatId !== null) {
-    const binding = await findChatBinding(request.chatId);
-    request.chatExtension = { version: 1, selection: binding === null ? "model:chat" : binding.selection };
+    request.chatExtension = { version: 1, selection: await chatSelection(request.chatId) };
   }
   return dispatchDomain("chat.configuration.resolve", request);
 }

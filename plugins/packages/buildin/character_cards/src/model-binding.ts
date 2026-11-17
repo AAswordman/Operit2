@@ -1,4 +1,17 @@
 import type { Card, ModelSummary } from "./model";
+import type { ChatModelBinding } from "./api";
+
+/** Resolves the exact stored model rule shared by execution and composer presentation. */
+export function characterModelBinding(card: Card, global: ChatModelBinding): ChatModelBinding {
+  switch (characterModelBindingMode(card.chatModelBindingMode)) {
+    case "FOLLOW_GLOBAL": return { ...global };
+    case "FIXED_MODEL":
+      if (card.chatModelId === null || card.chatModelId.trim() === "") throw new Error("profile.fixedModelId must be nonblank");
+      if (card.chatProviderId === null || card.chatProviderId.trim() === "") throw new Error("Fixed model provider must be explicitly selected");
+      return { providerId: card.chatProviderId, modelId: card.chatModelId };
+    default: throw new Error("角色卡“" + card.name + "”的模型绑定模式无效，请重新绑定：" + card.chatModelBindingMode);
+  }
+}
 
 /** Interprets the documented legacy fixed-mode name without changing unknown stored values. */
 export function characterModelBindingMode(mode: string): string {

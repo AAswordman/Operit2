@@ -4,8 +4,53 @@ import { parseDomainPayload, record } from "./domain";
 import { parseChatSelection, selectionForActive } from "./chat-bindings";
 import { type EntityKind, type PresentationCancel, type PresentationComplete, type ScreenSession, type ScreenPresentation, type PresentedScreen, type SelectScreen, type ScreenResult, createScreenSession, parseScreenResult } from "./presentation";
 import { getService } from "./service-runtime";
-import { findChatBinding, bindingsForChats } from "./chat-storage";
+import { findChatBinding, bindingsForChats, chatSelection } from "./chat-storage";
 import { chatUiRoutes } from "./definition";
+import { characterModelBinding, characterModelBindingMode } from "./model-binding";
+import type { ChatModelBinding } from "./api";
+import type { ChatConfigurationService } from "./domain";
+
+/** Describes every possible sender's model without choosing a group executor. */
+export interface ModelSelection { participants: { id: string; name: string; binding: ChatModelBinding; followsGlobal: boolean }[] }
+
+/** Projects the same model binding rules used for actual requests from an explicit selection. */
+export async function modelSelection(selection: string, service: Pick<ChatConfigurationService, "getCharacter" | "getGroup">, global: ChatModelBinding): Promise<ModelSelection> {
+  const selected = parseChatSelection(selection);
+  if (selected.kind === "model") return { participants: [{ id: "model:chat", name: "仅使用模型", binding: { ...global }, followsGlobal: true }] };
+  let ids: string[];
+  if (selected.kind === "card") ids = [selected.id];
+  else {
+    const group = await service.getGroup(selected.id);
+    if (group.id !== selected.id || group.members.length === 0) throw new Error("群组不存在或没有成员：" + selected.id);
+    ids = [...group.members].sort(
+      /** Preserves saved sender order without planning an execution. */
+      (left, right) => left.orderIndex - right.orderIndex,
+    ).map(
+      /** Retains the exact member identity for the role read. */
+      member => member.characterCardId,
+    );
+    if (new Set(ids).size !== ids.length) throw new Error("群组包含重复成员");
+  }
+  const participants: ModelSelection["participants"] = [];
+  for (const id of ids) {
+    const card = await service.getCharacter(id);
+    if (card.id !== id) throw new Error("角色读取返回了不同的标识：" + id);
+    participants.push({ id, name: card.name, binding: characterModelBinding(card, global), followsGlobal: characterModelBindingMode(card.chatModelBindingMode) === "FOLLOW_GLOBAL" });
+  }
+  return { participants };
+}
+
+/** Reads a real chat's binding or the explicit draft selection without resolving voice, memory or prompts. */
+export async function chatModelSelectionApi(event: ToolPkg.PublicApiEvent<{ chatId: string | null; defaultModelBinding: ChatModelBinding }>): Promise<ModelSelection> {
+  requireUiCaller(event.callerPackage);
+  const input = fields(event.payload, ["chatId", "defaultModelBinding"], "chat model selection");
+  const chatId = nullableString(input.chatId, "chatId");
+  const binding = fields(input.defaultModelBinding, ["providerId", "modelId"], "default model binding");
+  const global = { providerId: chatIdentity(binding.providerId, "providerId"), modelId: chatIdentity(binding.modelId, "modelId") };
+  const service = await getService();
+  const selection = chatId === null ? encodeSelection(await service.dispatchDomain("activePrompt.get", {})) : await chatSelection(chatId);
+  return modelSelection(selection, service, global);
+}
 
 /** Separates the actual native selector from the large Web editor route without exposing either mode to the host. */
 export interface ChatUiRoutes { readonly editor: string; readonly selection: string; readonly execution: string }
@@ -208,6 +253,7 @@ export async function chatListSectionsApi(event: ToolPkg.PublicApiEvent<{ chats:
 
 /** Registers the context and sidebar presentation contracts without opening storage or reading directories. */
 export function registerUiContributionApis(): void {
+  ToolPkg.registerApi({ name: "chat.model.selection", function: chatModelSelectionApi });
   ToolPkg.registerApi({ name: "chat.context.actions", function: chatContextActionsApi });
   ToolPkg.registerApi({ name: "chat.list.sections", function: chatListSectionsApi });
 }

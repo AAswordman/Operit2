@@ -252,7 +252,7 @@ struct LocalToolPkgUpdateTarget {
 }
 
 /// Describes one package load or import failure shown by the package manager UI.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct ToolPkgLoadIssue {
     pub sourcePath: String,
@@ -1510,10 +1510,18 @@ impl RuntimePackageManager {
         Ok(FailedPackageDeletionTarget { owner, sourcePath })
     }
 
-    /// Reports deletion eligibility using the same installed targets as the delete operation.
+    /// Identifies a failed import operation whose diagnostic can be cleared independently.
+    #[allow(non_snake_case)]
+    fn isManualImportFailure(&self, issue: &ToolPkgLoadIssue) -> bool {
+        issue.code == "import_failed"
+            && self.manualToolPkgLoadIssues.iter().any(|current| current == issue)
+    }
+
+    /// Reports whether a failed import record or installed failure source can be removed.
     #[allow(non_snake_case)]
     pub fn canDeleteToolPkgLoadIssue(&self, issue: &ToolPkgLoadIssue) -> Result<bool, String> {
         if issue.code == "duplicate_scope" { return Ok(false); }
+        if self.isManualImportFailure(issue) { return Ok(true); }
         if issue.packageKind == "a2a" {
             return Ok(ExtensionStore::default().records("a2a")?.iter().any(|record| Some(&record.id) == issue.packageName.as_ref()));
         }
@@ -1521,7 +1529,7 @@ impl RuntimePackageManager {
         Ok(target.owner.is_some() || target.sourcePath.is_some())
     }
 
-    /// Deletes the persisted source of a current load failure without requiring a loaded package.
+    /// Clears a failed import record or deletes the installed source of a current load failure.
     #[allow(non_snake_case)]
     pub fn deleteToolPkgLoadIssue(&mut self, issue: ToolPkgLoadIssue) -> Result<(), String> {
         let issue = self
@@ -1534,6 +1542,11 @@ impl RuntimePackageManager {
                     && current.packageKind == issue.packageKind
             })
             .ok_or("Package load issue is no longer present; refresh the package list")?;
+        if self.isManualImportFailure(&issue) {
+            Arc::make_mut(&mut self.manualToolPkgLoadIssues).retain(|current| current != &issue);
+            operit_store::ExtensionStore::notifyCatalogChanged();
+            return Ok(());
+        }
         if issue.packageKind == "a2a" {
             let id = issue.packageName.as_deref().ok_or("A2A load issue has no installation identity")?;
             crate::tools::a2a::A2ARepository::A2ARepository::new(self.context.as_ref().clone())?.delete(id)?;

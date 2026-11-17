@@ -2,7 +2,7 @@ import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, C
 import { parseDomainPayload, parseMemoryQueryRequest } from "./domain";
 import { MemoryTools } from "./runtime-tools/memory";
 import { dispatchDomain } from "./service-runtime";
-import { findChatBinding, readDraftBinding, commitDraftBinding, abortDraftBinding } from "./chat-storage";
+import { findChatBinding, chatSelection, readDraftBinding, commitDraftBinding, abortDraftBinding } from "./chat-storage";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
 const memoryQueries = new MemoryTools(dispatchDomain);
@@ -12,9 +12,7 @@ export async function chatConfigurationResolveApi(event: ToolPkg.PublicApiEvent<
   if (event.callerPackage !== "host") throw new Error("chat.configuration.resolve requires an authenticated host caller");
   const request = parseDomainPayload("chat.configuration.resolve", event.payload);
   if (request.chatId !== null) {
-    const binding = await findChatBinding(request.chatId);
-    // A conversation without a role association explicitly uses the ordinary model mode.
-    request.chatExtension = { version: 1, selection: binding === null ? "model:chat" : binding.selection };
+    request.chatExtension = { version: 1, selection: await chatSelection(request.chatId) };
   }
   return dispatchDomain("chat.configuration.resolve", request);
 }

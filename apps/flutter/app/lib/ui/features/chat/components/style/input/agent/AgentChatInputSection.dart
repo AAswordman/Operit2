@@ -7,6 +7,9 @@ import 'package:flutter/material.dart';
 import 'package:operit_ui/operit_ui.dart';
 
 import '../../../../../../../core/logging/ClientLogger.dart';
+import '../../../../../../../core/application/PluginHotReload.dart';
+import '../../../../../../common/contributions/ToolPkgChatUiCatalog.dart';
+import '../../../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../../l10n/generated/app_localizations.dart';
@@ -137,7 +140,8 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   _modelBindingSubscription;
   StreamSubscription<List<core_proxy.ProviderProfile>>?
   _modelProfilesSubscription;
-  core_proxy.FunctionModelBinding? _currentModelBinding;
+  StreamSubscription<void>? _modelCatalogSubscription;
+  int _modelLabelGeneration = 0;
   List<core_proxy.ProviderProfile> _modelProfiles = const [];
   bool _draggingFiles = false;
   bool _inputExpanded = false;
@@ -152,6 +156,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_handleInputChanged);
     _watchCurrentModelLabel();
+    PluginHotReload.revision.addListener(_requestModelRefresh);
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _syncMentionSuggestionPopup();
     });
@@ -165,6 +170,14 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
         oldWidget.viewModel != widget.viewModel) {
       _inputMenuContextGeneration++;
       _dismissInputMenuPopup();
+      _dismissModelSettingsPopup();
+      if (oldWidget.viewModel != widget.viewModel) {
+        _modelBindingSubscription?.cancel();
+        _modelProfilesSubscription?.cancel();
+        _modelCatalogSubscription?.cancel();
+        _watchCurrentModelLabel();
+      }
+      _requestModelRefresh();
     }
     if (oldWidget.controller != widget.controller) {
       oldWidget.controller.removeListener(_handleInputChanged);
@@ -327,6 +340,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                   child: AgentModelSelectorPopup(
                     key: _modelPopupWidgetKey,
                     viewModel: widget.viewModel,
+                    currentChatId: widget.currentChatId,
                     onDismiss: _dismissModelSettingsPopup,
                     onModelChanged: _handleModelChanged,
                   ),
@@ -468,18 +482,27 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
       _modelBindingSubscription = clients.preferencesFunctionalConfigManager
           .functionModelBindingFlow()
           .listen((bindings) {
-            _currentModelBinding = bindings[core_proxy.FunctionType.chat];
-            _refreshCurrentModelLabel();
+            _requestModelRefresh();
           }, onError: _logModelLabelError);
       _modelProfilesSubscription = clients.preferencesModelConfigManager
           .getProviderProfilesFlow()
           .listen((profiles) {
             _modelProfiles = profiles;
-            _refreshCurrentModelLabel();
+            _requestModelRefresh();
           }, onError: _logModelLabelError);
+      _modelCatalogSubscription = ToolPkgCatalogChangeBus.listen(
+        _requestModelRefresh,
+      );
+      _requestModelRefresh();
     } catch (error, stackTrace) {
       _logModelLabelError(error, stackTrace);
     }
+  }
+
+  /// Invalidates open model controls and reloads the actual chat binding.
+  void _requestModelRefresh() {
+    _dismissModelSettingsPopup();
+    unawaited(_refreshCurrentModelLabel());
   }
 
   void _logModelLabelError(Object error, StackTrace stackTrace) {
@@ -491,49 +514,52 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     );
   }
 
-  /// Derives cosmetic metadata from snapshots rather than resolving a runtime
-  /// config. A binding may temporarily precede its provider during sync.
-  void _refreshCurrentModelLabel() {
-    if (!mounted) {
-      return;
-    }
-    final binding = _currentModelBinding;
-    core_proxy.ProviderProfile? boundProvider;
-    if (binding != null) {
+  /// Resolves display metadata from the same owner and model rule as execution.
+  Future<void> _refreshCurrentModelLabel() async {
+    final generation = ++_modelLabelGeneration;
+    if (!mounted) return;
+    setState(() {
+      _modelLabel = '加载中...';
+      _modelProviderTypeId = '';
+      _modelProviderName = '';
+    });
+    try {
+      final selection = await ToolPkgChatUiCatalog(
+        clients: widget.viewModel.clients,
+      ).loadModelSelection(chatId: widget.currentChatId);
+      if (!mounted || generation != _modelLabelGeneration) return;
+      final binding = selection.singleBinding;
+      core_proxy.ProviderProfile? boundProvider;
       for (final provider in _modelProfiles) {
-        if (provider.id == binding.providerId &&
-            provider.models.any((model) => model.id == binding.modelId)) {
+        if (provider.id == binding?.providerId &&
+            provider.models.any((model) => model.id == binding?.modelId)) {
           boundProvider = provider;
           break;
         }
       }
+      setState(() {
+        _modelLabel = selection.label;
+        _modelProviderTypeId = boundProvider?.providerTypeId ?? '';
+        _modelProviderName = boundProvider?.name ?? '';
+      });
+    } catch (error, stackTrace) {
+      if (!mounted || generation != _modelLabelGeneration) return;
+      setState(() {
+        _modelLabel = '模型配置不可用';
+        _modelProviderTypeId = '';
+        _modelProviderName = '';
+      });
+      _logModelLabelError(error, stackTrace);
     }
-    setState(() {
-      // Keep the original model ID visible; never silently choose a fallback.
-      _modelLabel = _formatModelLabel(binding?.modelId ?? '');
-      _modelProviderTypeId = boundProvider?.providerTypeId ?? '';
-      _modelProviderName = boundProvider?.name ?? '';
-    });
   }
 
+  /// Reloads authoritative selection after the global model changes.
   void _handleModelChanged(
     String modelId, {
     String? providerTypeId,
     String? providerName,
   }) {
-    setState(() {
-      _modelLabel = _formatModelLabel(modelId);
-      if (providerTypeId != null) {
-        _modelProviderTypeId = providerTypeId;
-      }
-      if (providerName != null) {
-        _modelProviderName = providerName;
-      }
-    });
-  }
-
-  String _formatModelLabel(String modelId) {
-    return modelId.length > 26 ? '${modelId.substring(0, 26)}...' : modelId;
+    _requestModelRefresh();
   }
 
   VoidCallback? _runAttachmentAction(VoidCallback? action) {
@@ -636,6 +662,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     widget.controller.removeListener(_handleInputChanged);
     _modelBindingSubscription?.cancel();
     _modelProfilesSubscription?.cancel();
+    _modelCatalogSubscription?.cancel();
+    PluginHotReload.revision.removeListener(_requestModelRefresh);
+    _modelLabelGeneration++;
     _dismissModelSettingsPopup();
     _dismissInputMenuPopup();
     _dismissMentionSuggestionPopup();

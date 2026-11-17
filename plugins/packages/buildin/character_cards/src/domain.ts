@@ -1,4 +1,4 @@
-import { characterModelBindingMode } from "./model-binding";
+import { characterModelBinding } from "./model-binding";
 import { parseChatSelection } from "./chat-bindings";
 import type { CharacterRepository } from "./canonical";
 import { configurationReadScope } from "./configuration-reads";
@@ -324,24 +324,7 @@ async function chatParticipant(
 ): Promise<ChatParticipantProfile> {
   nonblank(card.name, "profile.name");
   const models = await service.listModels();
-  let modelBinding: ChatConfigurationRequest["defaultModelBinding"];
-  switch (characterModelBindingMode(card.chatModelBindingMode)) {
-    case "FOLLOW_GLOBAL": modelBinding = { ...request.defaultModelBinding }; break;
-    case "FIXED_MODEL": {
-      nonblank(card.chatModelId, "profile.fixedModelId");
-      nonblank(card.chatProviderId, "Fixed model provider must be explicitly selected");
-      const candidates = models.filter(
-        /** Resolves the exact provider-scoped model selected by the user. */
-        model => model.providerId === card.chatProviderId && model.modelId === card.chatModelId,
-      );
-      if (candidates.length !== 1) throw new Error(
-        candidates.length === 0 ? "Fixed model unavailable: " + card.chatModelId : "Fixed model ambiguous: " + card.chatModelId,
-      );
-      modelBinding = { providerId: candidates[0].providerId, modelId: candidates[0].modelId };
-      break;
-    }
-    default: throw new Error("角色卡“" + card.name + "”的模型绑定模式无效，请在角色卡设置中重新绑定模型：" + card.chatModelBindingMode);
-  }
+  const modelBinding = characterModelBinding(card, request.defaultModelBinding);
   const resolvedModels = models.filter(
     /** Requires the actual configured provider/model pair. */
     model => model.providerId === modelBinding.providerId && model.modelId === modelBinding.modelId,

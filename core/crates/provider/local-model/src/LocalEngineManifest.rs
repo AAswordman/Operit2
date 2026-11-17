@@ -126,6 +126,7 @@ pub struct LocalEngineArtifact {
     pub sha256: String,
     pub byteSize: u64,
     pub archiveFormat: LocalEngineArchiveFormat,
+    /// Directory within the installation; "." denotes the installation root itself.
     pub archiveRoot: String,
     pub sttExecutable: Option<String>,
     pub ttsExecutable: Option<String>,
