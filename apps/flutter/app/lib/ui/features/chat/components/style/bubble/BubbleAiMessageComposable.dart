@@ -6,6 +6,11 @@ import 'package:flutter/material.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     show MessagePartKind;
 import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit_ui/operit_ui.dart'
+    show
+        resolveThemeBubbleMaxWidth,
+        themeBubbleAvatarGap,
+        themeBubbleAvatarSize;
 
 import '../../../../../common/ChatAvatarImage.dart';
 import '../../../../../common/markdown/MarkdownImageRenderer.dart';
@@ -30,8 +35,8 @@ class BubbleAiMessageComposable extends StatefulWidget {
     this.transparentSurface = false,
     this.bubbleImageStyle,
     this.bubbleRoundedCornersEnabled = true,
-    this.bubbleContentPaddingLeft = 12,
-    this.bubbleContentPaddingRight = 12,
+    this.bubbleContentPaddingLeft = 8,
+    this.bubbleContentPaddingRight = 8,
     this.avatarImagePath,
     this.initialThinkingExpanded = false,
     this.allowExpandedThinkingFullHeight = false,
@@ -371,7 +376,7 @@ class _WideAiBubbleLayout extends StatelessWidget {
   Widget build(BuildContext context) {
     final headerVisible = bubbleShowAvatar || roleNameText.isNotEmpty;
     return Padding(
-      padding: EdgeInsets.fromLTRB(bubbleShowAvatar ? 0 : 8, 4, 0, 4),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: <Widget>[
@@ -387,7 +392,7 @@ class _WideAiBubbleLayout extends StatelessWidget {
                     onLongPress: onAvatarLongPress,
                     onTap: onIdentityTap,
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: themeBubbleAvatarGap),
                 ],
                 Flexible(
                   child: Column(
@@ -417,17 +422,21 @@ class _WideAiBubbleLayout extends StatelessWidget {
           ],
           LayoutBuilder(
             builder: (context, constraints) {
+              final maxBubbleWidth = resolveThemeBubbleMaxWidth(
+                constraints.maxWidth,
+                wideLayout: true,
+              );
               if (imageMarkdown != null) {
                 return _AiImageOnlyBubble(
                   imageMarkdown: imageMarkdown!,
                   textColor: textColor,
                   enablePreview: enableImagePreview,
-                  maxWidth: constraints.maxWidth,
+                  maxWidth: maxBubbleWidth,
                 );
               }
               return ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxWidth: constraints.maxWidth,
+                  maxWidth: maxBubbleWidth,
                   minHeight: 44,
                 ),
                 child: _AiBubbleBody(
@@ -516,17 +525,20 @@ class _NormalAiBubbleLayout extends StatelessWidget {
               onLongPress: onAvatarLongPress,
               onTap: onIdentityTap,
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: themeBubbleAvatarGap),
           ],
           Expanded(
             child: Padding(
-              padding: EdgeInsets.only(left: bubbleShowAvatar ? 0 : 8),
+              padding: EdgeInsets.zero,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final maxBubbleWidth = constraints.maxWidth * 0.85;
+                      final maxBubbleWidth = resolveThemeBubbleMaxWidth(
+                        constraints.maxWidth,
+                        wideLayout: false,
+                      );
                       if (imageMarkdown != null) {
                         return _AiImageOnlyBubble(
                           imageMarkdown: imageMarkdown!,
@@ -668,8 +680,8 @@ class _MessageAvatar extends StatelessWidget {
       onLongPress: onLongPress,
       onTap: onTap,
       child: Container(
-        width: 32,
-        height: 32,
+        width: themeBubbleAvatarSize,
+        height: themeBubbleAvatarSize,
         decoration: BoxDecoration(
           shape: square ? BoxShape.rectangle : BoxShape.circle,
           borderRadius: square ? BorderRadius.circular(cornerRadius) : null,

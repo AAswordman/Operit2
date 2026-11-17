@@ -12,6 +12,8 @@ import 'package:operit2/ui/features/chat/components/style/MessageHeaderMetadata.
 import 'package:operit2/ui/features/chat/components/style/ThemedChatMessage.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleStyleChatMessage.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleSurface.dart';
+import 'package:operit2/ui/features/chat/components/style/bubble/BubbleAiMessageComposable.dart';
+import 'package:operit2/ui/features/chat/components/style/bubble/BubbleUserMessageComposable.dart';
 import 'package:operit2/ui/features/chat/components/style/cursor/CursorStyleChatMessage.dart';
 import 'package:operit2/ui/features/chat/components/style/cursor/AiMessageComposable.dart';
 import 'package:operit2/ui/common/ChatAvatarImage.dart';
@@ -91,6 +93,24 @@ void main() {
             );
             expect(surfaces.first.borderRadius, BorderRadius.zero);
             expect(surfaces.last.borderRadius, BorderRadius.circular(16));
+            _expectSurfaceInsets(
+              tester,
+              find.descendant(
+                of: find.byType(BubbleUserMessageComposable),
+                matching: find.byType(BubbleSurface),
+              ),
+              left: 0,
+              right: 32,
+            );
+            _expectSurfaceInsets(
+              tester,
+              find.descendant(
+                of: find.byType(BubbleAiMessageComposable),
+                matching: find.byType(BubbleSurface),
+              ),
+              left: 30,
+              right: 2,
+            );
           }
           final input = tester.widget<TextField>(find.byType(TextField).first);
           await tester.tap(find.byType(TextField).first, warnIfMissed: false);
@@ -102,6 +122,162 @@ void main() {
       }
     }
   }
+
+  for (final wide in [false, true]) {
+    for (final avatar in [false, true]) {
+      for (final padding in [8.0, 12.0]) {
+        testWidgets(
+          'preview uses local geometry, wide=$wide, avatar=$avatar, '
+          'padding=$padding',
+          (
+          tester,
+        ) async {
+          await _pumpPreview(
+            tester,
+            _snapshot({
+              'userChatStyle': 'bubble',
+              'aiChatStyle': 'bubble',
+              'bubbleWideLayoutEnabled': wide,
+              'bubbleShowAvatar': avatar,
+              'bubbleUserContentPaddingLeft': padding,
+              'bubbleUserContentPaddingRight': padding,
+              'bubbleAiContentPaddingLeft': padding,
+              'bubbleAiContentPaddingRight': padding,
+            }),
+            width: 320,
+          );
+          await tester.pumpAndSettle();
+          final preview = tester.getRect(find.byType(ChatAppearancePreview));
+          final ai = find.descendant(
+            of: find.byType(BubbleAiMessageComposable),
+            matching: find.byType(BubbleSurface),
+          );
+          final user = find.descendant(
+            of: find.byType(BubbleUserMessageComposable),
+            matching: find.byType(BubbleSurface),
+          );
+          final expectedMaximum = wide
+              ? 288.0
+              : avatar
+              ? 210.8
+              : 244.8;
+          for (final surface in [ai, user]) {
+            expect(
+              _bubbleMaximumWidth(tester, surface),
+              closeTo(expectedMaximum, 0.01),
+            );
+            _expectSurfaceInsets(tester, surface, left: padding, right: padding);
+          }
+          final horizontalSlot = !wide && avatar ? 40.0 : 0.0;
+          expect(
+            tester.getTopLeft(ai).dx,
+            closeTo(preview.left + 16 + horizontalSlot, 0.01),
+          );
+          expect(
+            tester.getRect(user).right,
+            closeTo(preview.right - 16 - horizontalSlot, 0.01),
+          );
+          if (wide && avatar) {
+            final avatarRect = tester.getRect(find.byType(ChatAvatarImage));
+            expect(avatarRect.size, const Size(32, 32));
+            expect(tester.getRect(ai).top - avatarRect.bottom, closeTo(6, 0.01));
+          }
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+        });
+      }
+    }
+  }
+
+  testWidgets('live density changes move the content without replacing its renderer', (
+    tester,
+  ) async {
+    await _pumpPreview(
+      tester,
+      _snapshot({
+        'userChatStyle': 'bubble',
+        'aiChatStyle': 'bubble',
+        'bubbleShowAvatar': false,
+        'bubbleUserContentPaddingLeft': 12.0,
+        'bubbleUserContentPaddingRight': 12.0,
+        'bubbleAiContentPaddingLeft': 12.0,
+        'bubbleAiContentPaddingRight': 12.0,
+      }),
+      width: 320,
+    );
+    await tester.pumpAndSettle();
+    final renderer = find.byType(StreamingStructuredMessageRenderer);
+    final state = tester.state(renderer);
+    final previousLeft = tester.getTopLeft(renderer).dx;
+    final controller = OperitTheme.of(
+      tester.element(find.byType(ChatAppearancePreview)),
+    );
+    controller.setInitialThemePreferenceSnapshot(
+      _snapshot({
+        ...controller.themePreferenceSnapshot.toJson(),
+        'bubbleUserContentPaddingLeft': 8.0,
+        'bubbleUserContentPaddingRight': 8.0,
+        'bubbleAiContentPaddingLeft': 8.0,
+        'bubbleAiContentPaddingRight': 8.0,
+      }),
+    );
+    controller.previewThemeSettings();
+    await tester.pumpAndSettle();
+    expect(tester.state(renderer), same(state));
+    expect(tester.getTopLeft(renderer).dx, closeTo(previousLeft - 4, 0.01));
+    for (final surface in find.byType(BubbleSurface).evaluate()) {
+      _expectSurfaceInsets(
+        tester,
+        find.byWidget(surface.widget),
+        left: 8,
+        right: 8,
+      );
+    }
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('both density values leave cursor message geometry unchanged', (
+    tester,
+  ) async {
+    for (final padding in [8.0, 12.0]) {
+      await _pumpPreview(
+        tester,
+        _snapshot({
+          'userChatStyle': 'cursor',
+          'aiChatStyle': 'cursor',
+          'bubbleUserContentPaddingLeft': padding,
+          'bubbleUserContentPaddingRight': padding,
+          'bubbleAiContentPaddingLeft': padding,
+          'bubbleAiContentPaddingRight': padding,
+        }),
+        width: 320,
+      );
+      await tester.pumpAndSettle();
+      final user = find.byType(UserMessageComposable);
+      final ai = find.byType(AiMessageComposable);
+      final userBody = find.descendant(
+        of: user,
+        matching: find.byType(BubbleSurface),
+      );
+      final aiBody = find.descendant(
+        of: ai,
+        matching: find.byType(StreamingStructuredMessageRenderer),
+      );
+      expect(
+        tester.getTopLeft(userBody).dx - tester.getTopLeft(user).dx,
+        closeTo(16, 0.01),
+      );
+      expect(
+        tester.getTopLeft(aiBody).dx - tester.getTopLeft(ai).dx,
+        closeTo(16, 0.01),
+      );
+      _expectSurfaceInsets(tester, userBody, left: 16, right: 16, vertical: 16);
+      expect(find.byType(ChatAvatarImage), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    }
+  });
 
   for (final width in <double>[280, 760]) {
     for (final showAvatar in <bool>[false, true]) {
@@ -364,6 +540,37 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+}
+
+double _bubbleMaximumWidth(WidgetTester tester, Finder surface) {
+  double? result;
+  tester.element(surface).visitAncestorElements((element) {
+    final widget = element.widget;
+    if (widget is ConstrainedBox && widget.constraints.minHeight == 44) {
+      result = widget.constraints.maxWidth;
+      return false;
+    }
+    return true;
+  });
+  expect(result, isNotNull);
+  return result!;
+}
+
+void _expectSurfaceInsets(
+  WidgetTester tester,
+  Finder surface, {
+  required double left,
+  required double right,
+  double vertical = 12,
+}) {
+  final padding = tester.widget<BubbleSurface>(surface).child as Padding;
+  expect(padding.padding, EdgeInsets.fromLTRB(left, vertical, right, vertical));
+  final frame = tester.getRect(find.byWidget(padding));
+  final content = tester.getRect(find.byWidget(padding.child!));
+  expect(content.left - frame.left, closeTo(left, 0.01));
+  expect(frame.right - content.right, closeTo(right, 0.01));
+  expect(content.top - frame.top, closeTo(vertical, 0.01));
+  expect(frame.bottom - content.bottom, closeTo(vertical, 0.01));
 }
 
 ThemePreferenceSnapshot _snapshot(Map<String, Object?> overrides) =>

@@ -3,6 +3,11 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:operit_ui/operit_ui.dart'
+    show
+        resolveThemeBubbleMaxWidth,
+        themeBubbleAvatarGap,
+        themeBubbleAvatarSize;
 
 import '../../../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../../../data/preferences/UserPreferencesManager.dart';
@@ -27,8 +32,8 @@ class BubbleUserMessageComposable extends StatefulWidget {
     this.transparentSurface = false,
     this.bubbleImageStyle,
     this.bubbleRoundedCornersEnabled = true,
-    this.bubbleContentPaddingLeft = 12,
-    this.bubbleContentPaddingRight = 12,
+    this.bubbleContentPaddingLeft = 8,
+    this.bubbleContentPaddingRight = 8,
     this.proxyAvatarImagePath,
     this.enableDialogs = true,
   });
@@ -388,7 +393,7 @@ class _WideUserBubbleLayout extends StatelessWidget {
                     ),
                   ),
                 if (shouldShowAvatar && shouldShowResolvedName)
-                  const SizedBox(width: 8),
+                  const SizedBox(width: themeBubbleAvatarGap),
                 if (shouldShowAvatar)
                   _MessageAvatar(
                     imagePath: avatarImagePath,
@@ -402,7 +407,10 @@ class _WideUserBubbleLayout extends StatelessWidget {
           ],
           LayoutBuilder(
             builder: (context, constraints) {
-              final maxBubbleWidth = constraints.maxWidth;
+              final maxBubbleWidth = resolveThemeBubbleMaxWidth(
+                constraints.maxWidth,
+                wideLayout: true,
+              );
               return Align(
                 alignment: Alignment.centerRight,
                 child: _UserBubbleWithAttachments(
@@ -473,10 +481,7 @@ class _NormalUserBubbleLayout extends StatelessWidget {
         children: <Widget>[
           Expanded(
             child: Padding(
-              padding: EdgeInsets.only(
-                left: 32,
-                right: shouldShowAvatar ? 0 : 8,
-              ),
+              padding: EdgeInsets.zero,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: <Widget>[
@@ -496,7 +501,10 @@ class _NormalUserBubbleLayout extends StatelessWidget {
                     ),
                   LayoutBuilder(
                     builder: (context, constraints) {
-                      final maxBubbleWidth = constraints.maxWidth * 0.85;
+                      final maxBubbleWidth = resolveThemeBubbleMaxWidth(
+                        constraints.maxWidth,
+                        wideLayout: false,
+                      );
                       return Align(
                         alignment: Alignment.centerRight,
                         child: _UserBubbleWithAttachments(
@@ -519,7 +527,7 @@ class _NormalUserBubbleLayout extends StatelessWidget {
             ),
           ),
           if (shouldShowAvatar) ...<Widget>[
-            const SizedBox(width: 8),
+            const SizedBox(width: themeBubbleAvatarGap),
             _MessageAvatar(
               imagePath: avatarImagePath,
               isProxySender: isProxySender,
@@ -599,8 +607,8 @@ class _MessageAvatar extends StatelessWidget {
         ? colorScheme.onSecondaryContainer
         : colorScheme.onPrimaryContainer;
     return Container(
-      width: 32,
-      height: 32,
+      width: themeBubbleAvatarSize,
+      height: themeBubbleAvatarSize,
       decoration: BoxDecoration(
         color: backgroundColor,
         shape: square ? BoxShape.rectangle : BoxShape.circle,
