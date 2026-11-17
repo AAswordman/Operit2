@@ -57,7 +57,7 @@ test("author ID stays exact when other roles share its display name or the curre
 test("model-only and missing-author messages never inherit another role's memory grants", async t => {
   const h = await environment(t);
   h.setAuthor("model:chat");
-  assert.deepEqual(plain(await h.chat.currentMessageMemoryAccess("chat", h.message, h.repository)), { primaryOwnerKey: "", resources: [] });
+  assert.deepEqual(plain(await h.chat.currentMessageMemoryAccess("chat", h.message, h.repository)), { primaryOwnerKey: "", resources: [], authorMissing: false });
   h.setAuthor(null);
-  await assert.rejects(() => h.chat.currentMessageMemoryAccess("chat", h.message, h.repository), /no character author identity/);
+  assert.deepEqual(plain(await h.chat.currentMessageMemoryAccess("chat", h.message, h.repository)), { primaryOwnerKey: "", resources: [], authorMissing: true });
 });

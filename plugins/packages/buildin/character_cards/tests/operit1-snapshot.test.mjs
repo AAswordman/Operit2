@@ -115,19 +115,22 @@ test("full importer keeps model speech preferences chat token and resources with
   const restore = rustFunction(importer, "importSnapshotSourceInner");
   let position = restore.indexOf("ParsedOperit1Snapshot::fromSource(source)?");
   assert.ok(position >= 0);
-  for (const method of ["importModelConfigFromParsed", "importSpeechPreferences", "importDataStorePreferences", "importSnapshotFiles", "importChatDatabase", "importTokenStatistics"]) {
+  for (const method of ["importAllModelConfigsFromParsed", "importSpeechPreferences", "importDataStorePreferences", "importSnapshotFiles", "importChatDatabase", "importTokenStatistics"]) {
     const next = restore.indexOf("self." + method + "(");
     assert.ok(next > position, `Restore must preserve the actual ordered call: ${method}`);
     position = next;
-    rustFunction(importer, method);
+    rustFunction(importer + source(backup + "operit1/Operit1ModelMigration.rs"), method);
   }
   assert.doesNotMatch(importer, /\b(?:CharacterCardManager|CharacterGroupCardManager|SharedMemoryStoreManager|MemoryRepository)\b|importUserMarkdownPreferences\(|importObjectBoxMemoryStore\(/);
   assert.doesNotMatch(restore, /buildOperit2CharacterCards|buildOperit2CharacterGroups|buildOperit2PromptTags|validateOperit1MemorySpaces|registerApi|ToolPkg/);
   const models = rustFunction(importer, "importModelConfigFromParsed");
-  assert.match(models, /ModelConfigManager::new\(self\.paths\.runtime_dir\(\)\.to_path_buf\(\)\)/);
+  assert.match(models, /ModelConfigManager::default\(\)/);
   assert.match(models, /replaceDefaultProviderProfile\(provider\.clone\(\)\)[\s\S]*?\.map_err\([\s\S]*?\)\?/);
-  assert.match(models, /FunctionalConfigManager::new/);
+  assert.match(models, /FunctionalConfigManager::default/);
   assert.match(models, /setModelForFunction\([\s\S]*?FunctionType::CHAT/);
+  const allModels = rustFunction(source(backup + "operit1/Operit1ModelMigration.rs"), "importAllModelConfigsFromParsed");
+  assert.match(allModels, /importAllProvidersFromBackupContent\(&content\)\?/);
+  assert.match(allModels, /saveFunctionModelBinding\(bindings\)/);
   const speech = rustFunction(importer, "importSpeechPreferences");
   assert.match(speech, /buildOperit2TtsConfig\(parsed\)\?/);
   assert.match(speech, /importOperit1TtsConfig\(&manager, config\)\?/);
@@ -138,7 +141,7 @@ test("full importer keeps model speech preferences chat token and resources with
   const stats = rustFunction(importer, "importTokenStatistics");
   assert.match(stats, /UsageStatisticsStore::new\(\)/);
   assert.match(stats, /upsertTokenStatsModel\(TokenStatsModel/);
-  assert.match(stats, /Operit1RoomV21ToOperit2SqliteV28/);
+  assert.match(stats, /Operit1RoomV21ToOperit2SqliteV30/);
   const files = rustFunction(importer, "importSnapshotFiles");
   assert.match(files, /buildSnapshotFileCopyPlan\(parsed\)\?/);
   assert.match(files, /\.copyEntriesTo\(&sourceEntries/);
@@ -153,7 +156,8 @@ test("archive source format still enumerates and decodes all legacy data without
   const archive = source(backup + "operit1/Operit1SnapshotArchive.rs");
   const reader = rustFunction(archive, "fromSource");
   assert.match(reader, /for index in 0\.\.archive\.len\(\)/);
-  assert.match(reader, /validateSnapshotEntryPath\(&name\)\?/);
+  assert.match(reader, /if let Err\(error\) = validateSnapshotEntryPath\(&name\)/);
+  assert.match(reader, /AppLogger::w\([\s\S]*?continue;/);
   assert.match(reader, /datastorePreferences\.insert\(name\.clone\(\), decodeDataStorePreferences\(&bytes\)\?\)/);
   assert.match(reader, /entries\.insert\(name\.clone\(\), entry\)/);
   assert.doesNotMatch(reader, /character_cards|character_groups|prompt_tags|objectbox|memory-space-profiles|isOperit1UnadoptedPreferenceKey/);
@@ -190,7 +194,7 @@ test("file copy plan excludes legacy memory storage but still streams workspace 
   assert.match(exclusion, /relative\.split_once\('\/'\)/);
   assert.match(exclusion, /directory == "objectbox"/);
   assert.match(exclusion, /directory\.starts_with\("objectbox_"\)/);
-  assert.match(exclusion, /directory == "memory-space-profiles"/);
+  assert.match(exclusion, /matches!\(directory, "memory-space-profiles" \| "\.vector_index"\)/);
   assert.doesNotMatch(exclusion, /USER\.md|user\.md|\.contains\(/);
   const selected = rustFunction(storage, "entryMatchesCopyPrefix");
   assert.match(selected, /!entry\.starts_with\(ENTRY_DATASTORE_PREFIX\)/);
@@ -201,13 +205,13 @@ test("file copy plan excludes legacy memory storage but still streams workspace 
 });
 
 /** Keeps the explicit target bridge strict and up to date without rewriting or rejecting the supported original Room source versions. */
-test("Room 10 20 and 21 bridge targets match current SQLite 28 without source-schema mutation", () => {
+test("Room 10 20 and 21 bridge targets match current SQLite 30 without source-schema mutation", () => {
   const schema = source(backup + "Operit1RoomSchemaMigration.rs");
   const version = source("core/crates/persistence/store/src/db/AppDatabase.rs").match(/pub const DATABASE_VERSION: i32 = (\d+);/);
   assert.ok(version);
-  assert.equal(Number(version[1]), 28);
+  assert.equal(Number(version[1]), 30);
   for (const room of [10, 20, 21]) {
-    assert.match(schema, new RegExp(`Self::Operit1RoomV${room}ToOperit2SqliteV28 => 28`));
+    assert.match(schema, new RegExp(`Self::Operit1RoomV${room}ToOperit2SqliteV30 => 30`));
     assert.match(schema, new RegExp(`${room} => Operit1RoomSchemaVersion::V${room}`));
   }
   const select = rustFunction(schema, "selectOperit1ToOperit2ChatArchiveBridge");

@@ -54,5 +54,6 @@ test("actual main uniquely registers lazy memory enqueue and 60000ms interval ho
   assert.equal(plugin.main[captured.chatMessageHooks[0].function], message.function);
   assert.equal(plugin.main[captured.hostEventHooks[0].function], interval.function);
   assert.equal(disk.calls.length, 0, "Registering and resolving callback exports must not initialize storage or execute memory jobs");
-  assert.deepEqual(await disk.entries(), [], "Real plugin registration must leave the new plugin directory empty");
+  assert.deepEqual(await disk.entries(), ["local"], "Real plugin registration must leave the new plugin directory empty");
+  assert.deepEqual((await disk.files.list(disk.directory + "/local")).entries, []);
 });

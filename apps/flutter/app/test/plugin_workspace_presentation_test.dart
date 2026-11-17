@@ -100,6 +100,9 @@ class CatalogBridge extends OperitRuntimeBridge {
 /// Provides complete runtime metadata using the same public proxy model as production.
 core.ToolPkgContainerRuntime runtime(String owner) =>
     core.ToolPkgContainerRuntime(
+      optionalRequires: const [],
+      messageStreamTransforms: const [],
+      messageTransformHooks: const [],
       packageName: owner,
       displayName: const core.LocalizedText(values: {'en': 'Owner'}),
       description: const core.LocalizedText(values: {'en': 'Test'}),

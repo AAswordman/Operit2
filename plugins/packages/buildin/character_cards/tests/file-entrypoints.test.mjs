@@ -245,7 +245,8 @@ test("explicit host directory test inputs preserve values and reject undeclared 
   assert.deepEqual(await api.Catalog.readToolSources(), directoryInput.toolCatalog);
   assertDirectoryCalls(settings, [...snapshotDirectoryMethods, ...snapshotDirectoryMethods]);
   assert.equal(disk.calls.length, 0, "Directory test inputs must not initialize or manufacture plugin records");
-  assert.deepEqual(await disk.entries(), []);
+  assert.deepEqual(await disk.entries(), ["local"]);
+  assert.deepEqual((await disk.files.list(disk.directory + "/local")).entries, []);
 });
 
 for (const method of snapshotDirectoryMethods) {

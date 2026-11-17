@@ -49,5 +49,6 @@ test("Core configuration deletion does not invoke plugin binding business APIs",
   const support = readFileSync(new URL("../../../../../core/crates/runtime/application/src/services/ProviderRuntimeSupportService.rs", import.meta.url), "utf8");
   assert.doesNotMatch(support, /chat\.configuration\.binding/);
   assert.match(support, /"chat\.configuration\.delete"/);
-  assert.match(support, /json!\(\{"deleted":true\}\)/);
+  assert.match(support, /updateBinding\(chatId, "chat\.configuration\.delete", "deleted"\)/);
+  assert.match(support, /value != serde_json::json!\(\{\(acknowledgement\):true\}\)/);
 });

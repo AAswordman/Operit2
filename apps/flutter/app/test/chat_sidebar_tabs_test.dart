@@ -2573,6 +2573,9 @@ String _render(Map<String, Object?> state, {Object? result}) => jsonEncode({
 /// Supplies complete real runtime metadata for the registered embedded Compose route.
 core.ToolPkgContainerRuntime _runtime(String owner) =>
     core.ToolPkgContainerRuntime(
+      optionalRequires: const [],
+      messageStreamTransforms: const [],
+      messageTransformHooks: const [],
       chatLifecycleHooks: const [],
       packageName: owner,
       displayName: const core.LocalizedText(

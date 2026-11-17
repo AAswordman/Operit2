@@ -108,10 +108,22 @@ function calls(raw, symbol) {
 function methodBody(raw, name) {
   const text = semanticCode(raw), bodies = [];
   for (const call of calls(raw, name)) {
-    const rest = text.slice(call.end + 1), prefix = /^\s*(?:async\s*)?\{/.exec(rest);
+    const rest = text.slice(call.end + 1), prefix = /^\s*(?:async\s*)?(\{|=>)/.exec(rest);
     if (prefix === null) continue;
-    const opening = call.end + prefix[0].length, end = closingDelimiter(text, opening, "{", "}");
-    bodies.push(raw.slice(opening + 1, end));
+    if (prefix[1] === "=>") {
+      const start = call.end + 1 + prefix[0].length;
+      let depth = 0, end = start;
+      for (; end < text.length; end += 1) {
+        if ("([{".includes(text[end])) depth += 1;
+        else if (")]}".includes(text[end])) depth -= 1;
+        else if (text[end] === ";" && depth === 0) break;
+      }
+      if (end === text.length) throw new Error("Unterminated Dart expression body for " + name);
+      bodies.push(raw.slice(start, end));
+    } else {
+      const opening = call.end + prefix[0].length, end = closingDelimiter(text, opening, "{", "}");
+      bodies.push(raw.slice(opening + 1, end));
+    }
   }
   if (bodies.length !== 1) throw new Error("Expected one actual Dart method body for " + name + ", found " + bodies.length);
   return bodies[0];
@@ -172,9 +184,10 @@ export function sidebarViolationsFromSources(readSource) {
     return violations;
   }
   const liveReference = "[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)*";
-  if (!imports(main.raw, "AdaptiveMainLayout") || !wiredCall(mainBuild, "AdaptiveMainLayout", [
-    ["drawerConversationState", liveReference], ["onConversationActivated", "_activateConversationRoute"],
-  ])) violations.push(main.file + ": actual build must mount AdaptiveMainLayout with conversation state and activation callback");
+  const mainWiring = [["drawerConversationState", liveReference], ["onConversationActivated", "_activateConversationRoute"]];
+  const adaptiveMounted = imports(main.raw, "AdaptiveMainLayout") && wiredCall(mainBuild, "AdaptiveMainLayout", mainWiring);
+  const layoutsMounted = ["PhoneLayout", "TabletLayout"].every(widget => imports(main.raw, widget) && wiredCall(mainBuild, widget, mainWiring));
+  if (!adaptiveMounted && !layoutsMounted) violations.push(main.file + ": actual build must mount AdaptiveMainLayout or both phone/tablet layouts with conversation state and activation callback");
   for (const [role, widget] of [["phone", "PhoneLayout"], ["tablet", "TabletLayout"]]) {
     const layout = files.get(role);
     if (!imports(adaptive.raw, widget) || !wiredCall(adaptiveBuild, widget, [["drawerConversationState", "widget\\.drawerConversationState"], ["onConversationActivated", "widget\\.onConversationActivated"]])) {
@@ -183,6 +196,9 @@ export function sidebarViolationsFromSources(readSource) {
     let layoutBuild;
     try { layoutBuild = methodBody(classBody(layout.raw, role === "phone" ? "_PhoneLayoutState" : "_TabletLayoutState"), "build"); }
     catch (error) { violations.push(layout.file + ": " + error.message); continue; }
+    if (role === "tablet" && /\b_conversationSidebar\s*\(/.test(semanticCode(layoutBuild))) {
+      layoutBuild += methodBody(classBody(layout.raw, "_TabletLayoutState"), "_conversationSidebar");
+    }
     if (!imports(layout.raw, "DrawerContent") || !wiredCall(layoutBuild, "DrawerContent", [
       ["histories", "drawerState\\.histories"], ["currentChatId", "drawerState\\.currentChatId"],
       ["activeStreamingChatIds", "drawerState\\.activeStreamingChatIds"], ["onConversationActivated", role === "phone" ? "_handleConversationActivated" : "widget\\.onConversationActivated"],

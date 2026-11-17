@@ -2723,6 +2723,9 @@ class _RetainedSettingsScreen extends OperitScreen {
 /// Builds the route fixture with all fields required by the current runtime model.
 core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
+    optionalRequires: [],
+    messageStreamTransforms: [],
+    messageTransformHooks: [],
     chatLifecycleHooks: [],
     packageName: 'demo_toolpkg',
     displayName: core_proxy.LocalizedText(
@@ -2809,6 +2812,9 @@ core_proxy.ToolPkgContainerRuntime _pluginRuntime() {
 /// Builds the module-only fixture using the same current runtime schema.
 core_proxy.ToolPkgContainerRuntime _moduleOnlyPluginRuntime() {
   return const core_proxy.ToolPkgContainerRuntime(
+    optionalRequires: [],
+    messageStreamTransforms: [],
+    messageTransformHooks: [],
     chatLifecycleHooks: [],
     packageName: 'module_only_toolpkg',
     displayName: core_proxy.LocalizedText(
@@ -2954,6 +2960,8 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   Future<Object?> call(CoreCallRequest request) async {
     calls.add(request);
     switch (request.methodName) {
+      case 'getToolPkgNavigationEntries':
+        return <Object?>[];
       case 'getToolPkgChatMessageMenuItems':
         return [
           const core_proxy.ToolPkgChatMessageMenuItem(

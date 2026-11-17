@@ -1389,6 +1389,8 @@ export interface ModelConfigResultItem {
     enableMaxContextMode: boolean;
     summaryTokenThreshold: number;
     enableSummary: boolean;
+    enableSummaryByMessageCount: boolean;
+    summaryMessageCountThreshold: number;
     mnnForwardType: number;
     mnnThreadCount: number;
     llamaThreadCount: number;

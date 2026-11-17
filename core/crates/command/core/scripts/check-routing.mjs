@@ -60,7 +60,7 @@ assert.ok(builtinBlock, "Core must declare one directory containing only its inh
 const builtins = [...builtinBlock[1].matchAll(/\("([a-z-]+)", BuiltinRoot::([A-Za-z]+)\)/g)]
   .map(([, name, handler]) => ({ name, handler }));
 const builtinNames = new Set(builtins.map(({ name }) => name));
-assert.equal(builtins.length, 19, "All 19 existing inherent Core command families must remain mounted");
+assert.equal(builtins.length, 20, "All 20 existing inherent Core command families must remain mounted");
 assert.equal(builtinNames.size, builtins.length, "Inherent Core directory entries must be unique");
 
 assert.match(router, /^mod catalog;$/m);
@@ -158,11 +158,12 @@ const coreRoutes = new Map([
   ["Prefs", /prefs::run_prefs_command\(application\.hostManager\.clone\(\), args, output\)/],
   ["Approval", /approval::run_approval_command\(application\.hostManager\.clone\(\), args, output\)/],
   ["Model", /model::run_model_command\(application\.hostManager\.clone\(\), args, output\)/],
-  ["Chat", /chat::run_chat_command\(application, args, output\)/],
+  ["Chat", /chat::run_chat_command\(application, args, output\)\.await/],
   ["Workspace", /workspace::run_workspace_command\(application, args, output\)\.await/],
   ["Storage", /storage::run_storage_command\(application, args, output\)/],
   ["Stt", /stt::run_stt_command\(application, args, output\)/],
-  ["Update", /update::run_update_command\(args, output\)/],
+  ["Sync", /sync::run_sync_command\(application, args, output\)/],
+  ["Update", /update::run_update_command\(&application\.hostManager, args, output\)\.await/],
   ["Usage", /usage::run_usage_command\(application, args, output\)/],
 ]);
 for (const { name, handler } of builtins) {
@@ -182,7 +183,7 @@ assert.match(help, /command\.usage, command\.description, command\.containerPack
 assert.match(help, /"registeredCommands": commands/);
 assert.doesNotMatch(help, /operit2 <[a-z-]+\|[^\"]*>"/);
 assert.match(list, /command\.usage, command\.description, command\.containerPackageName/);
-assert.match(entry, /commands::run_core_command\(application, &commandArgs, &mut output\)\.await\?;\s*output\.finalizeJson\(\)\?/);
+assert.match(entry, /commands::run_core_command\(application, &commandArgs, &mut output\)\.await\?;\s*\}\s*output\.finalizeJson\(\)\?/);
 assert.match(output, /\.jsonStdoutDocument\s*\.take\(\)\s*\.ok_or_else\(/);
 assert.match(output, /self\.stdout = serde_json::to_string\(&stdout\)/);
 assert.match(output, /self\.stderr\.clear\(\)/);

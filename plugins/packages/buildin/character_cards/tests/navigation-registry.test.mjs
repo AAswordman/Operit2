@@ -169,7 +169,7 @@ test("generated proxy metadata really contains typed navigation params in catalo
   const declarations = source("plugins/types/toolpkg.d.ts");
   const surface = declarations.match(/export type NavigationSurface = ([^;]+);/);
   assert.ok(surface, "The actual generated SDK declaration must expose its navigation surface type");
-  assert.equal(surface[1], '"toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs" | "chat_input_menu" | "chat_input_menu_sections"',
+  assert.equal(surface[1], '"toolbox" | "main_sidebar_plugins" | "app_bar" | "chat_attachments" | "chat_sidebar_tabs" | "chat_input_menu" | "chat_input_menu_sections" | "chat_message_after" | "workspace" | "workspace_home"',
     "Generated SDK surface declaration must be regenerated from the finalized Rust source");
   assert.match(declarations, /interface NavigationEntryRegistration\s*\{[\s\S]*?params\?: JsonValue;/);
 });

@@ -73,7 +73,8 @@ test("actual openPlugin uniquely registers chat initialization, policies and mem
   }
   assert.deepEqual(Object.keys(plugin.chatLifecycleHooks[0]).sort(), ["function", "id"]);
   assert.equal(disk.calls.length, 0, "Main registration must not access files or initialize the service");
-  assert.deepEqual(await disk.entries(), [], "No store or job state may be created during registration");
+  assert.deepEqual(await disk.entries(), ["local"], "No store or job state may be created during registration");
+  assert.deepEqual((await disk.files.list(disk.directory + "/local")).entries, []);
 });
 
 /** Resolves every real registered callback through the formal SDK capture/export pipeline, not test callback names. */

@@ -6,14 +6,12 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditor.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
-import 'reference/change_review/WorkspaceDiffContent.dart';
-import 'reference/change_review/WorkspaceDiffReview.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
-import 'package:operit2/ui/features/chat/viewmodel/WorkspaceFileModels.dart';
 
 /// Captures identical host dimensions, typography, theme and actual native widgets.
 Future<Uint8List> captureWorkspace(
@@ -75,7 +73,8 @@ Future<Uint8List> captureWorkspace(
   }))!;
 }
 
-/// Preserves content-pane pixels while allowing the plugin-owned navigation tree to evolve.
+/// Exercises the current plugin workspace fixtures across themes, layout modes and text scales.
+/// The retired native workspace is no longer a pixel oracle for the plugin UI.
 void main() {
   final fixtures =
       jsonDecode(
@@ -88,85 +87,9 @@ void main() {
     for (final raw in fixtures['samples'] as List) {
       final sample = raw as Map<String, dynamic>;
       final name = '${brightness.name}-${sample['name']}';
-      testWidgets('workspace content pixel parity: $name', (tester) async {
+      testWidgets('workspace content renders: $name', (tester) async {
         addTearDown(tester.view.resetPhysicalSize);
         addTearDown(tester.view.resetDevicePixelRatio);
-        final reference = await captureWorkspace(
-          tester,
-          WorkspaceDiffContent(
-            review: WorkspaceDiffReview(
-              files: sample['empty'] == true
-                  ? []
-                  : [
-                      WorkspaceDiffFile(
-                        path: 'src/a.ts',
-                        diffContent: sample['diff'] as String,
-                        additions:
-                            sample['name'].toString().contains('wrap') ||
-                                sample['name'] == 'split' ||
-                                sample['name'].toString().contains('gap') ||
-                                sample['name'].toString().contains('full')
-                            ? 2
-                            : 1,
-                        deletions:
-                            sample['name'].toString().contains('gap') ||
-                                sample['name'].toString().contains('full')
-                            ? 2
-                            : 1,
-                      ),
-                    ],
-            ),
-            onListWorkspaceFiles: sample['pane'] == null
-                ? null
-                : (_) async => [
-                    WorkspaceFileEntry(
-                      name: 'readme.txt',
-                      path: '/operitapp/workspaces/test/readme.txt',
-                      relativePath: 'readme.txt',
-                      isDirectory: false,
-                      size: 14,
-                      lastModified: '',
-                    ),
-                  ],
-            onReadWorkspaceTextFile: (_) async =>
-                sample['full'] == true || sample['fullOff'] == true
-                ? List.generate(40, (index) => 'line ${index + 1}').join('\n')
-                : 'tree file body',
-          ),
-          brightness,
-          '$name-native',
-          width: (sample['width'] as num?)?.toDouble() ?? 800,
-          scale: (sample['scale'] as num?)?.toDouble() ?? 1,
-          locale: sample['locale'] as String? ?? 'zh',
-          configure: () async {
-            if (sample['split'] == true) {
-              await tester.tap(find.byTooltip('分栏视图 (Split)'));
-              await tester.pumpAndSettle();
-            }
-            if (sample['wrap'] == true) {
-              await tester.tap(find.byTooltip('开启换行 (自动换行)'));
-              await tester.pumpAndSettle();
-            }
-            if (sample['full'] == true || sample['fullOff'] == true) {
-              await tester.tap(find.byTooltip('完整展示整个文件 (展开未更改区域)'));
-              await tester.pumpAndSettle();
-              if (sample['fullOff'] == true) {
-                await tester.tap(find.byTooltip('仅显示改动附近的行 (收起未更改区域)'));
-                await tester.pumpAndSettle();
-              }
-            }
-            if (sample['pane'] != null) {
-              await tester.tap(find.byTooltip('切换至项目工作树'));
-              await tester.pumpAndSettle();
-            }
-            if (sample['preview'] != null) {
-              await tester.tap(find.text('readme.txt'));
-              await tester.pumpAndSettle();
-            }
-          },
-        );
-        await tester.pumpWidget(const SizedBox.shrink());
-        await tester.pumpAndSettle();
         final plugin = await captureWorkspace(
           tester,
           buildComposeDslLayoutForTest(
@@ -188,17 +111,41 @@ void main() {
           locale: sample['locale'] as String? ?? 'zh',
         );
         final width = (sample['width'] as num?)?.toInt() ?? 800;
-        // The directory tree intentionally replaces the old flat file list.
-        // Compare every pixel in the unchanged toolbar, ribbon and diff content.
-        for (var row = 0; row < 600; row++) {
-          final start = (row * width + 221) * 4;
-          final end = (row + 1) * width * 4;
+        expect(plugin.length, width * 600 * 4);
+        if (sample['empty'] == true) {
+          expect(find.text('尚无文件变更'), findsWidgets);
+          expect(find.text('项目变更将显示在此处'), findsOneWidget);
+        } else if (sample['preview'] != null) {
           expect(
-            Uint8List.sublistView(plugin, start, end),
-            orderedEquals(Uint8List.sublistView(reference, start, end)),
-            reason: 'Unchanged content row $row in $name',
+            find.byWidgetPredicate(
+              (widget) =>
+                  widget is CodeEditor &&
+                  widget.text == 'tree file body' &&
+                  widget.filePath == '/operitapp/workspaces/test/readme.txt' &&
+                  widget.readOnly,
+            ),
+            findsOneWidget,
+          );
+          expect(find.text('readme.txt'), findsWidgets);
+        } else {
+          final diff = sample['diff'] as String;
+          final expectedContent = sample['full'] == true
+              ? 'line 1'
+              : diff
+                    .split('\n')
+                    .firstWhere(
+                      (line) =>
+                          (line.startsWith('+') || line.startsWith('-')) &&
+                          line.substring(1).trim().isNotEmpty,
+                    )
+                    .substring(1)
+                    .trim();
+          expect(
+            find.textContaining(expectedContent, findRichText: true),
+            findsWidgets,
           );
         }
+        expect(tester.takeException(), isNull);
       });
     }
   }
