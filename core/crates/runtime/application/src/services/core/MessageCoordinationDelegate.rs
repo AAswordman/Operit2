@@ -29,6 +29,7 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::ModelConfigData::ModelSummarySettings;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use operit_providers::chat::enhance::ConversationService::{SummaryTriggerContext, SummaryTriggerPoint};
 use operit_providers::runtime_support::ChatConfigurationResult;
 use operit_util::AppLogger::AppLogger;
 use operit_util::ChainLogger::{self, SEND_CHAIN};
@@ -55,7 +56,7 @@ struct ConversationSummaryRequest {
     chatModelIdOverride: Option<String>,
     autoContinue: bool,
     requireCurrentChat: bool,
-    trigger: Option<operit_providers::chat::enhance::ConversationService::SummaryTriggerContext>,
+    trigger: Option<SummaryTriggerContext>,
 }
 
 /// Separates optional history scheduling from the token guard needed during every persisted tool loop.
@@ -838,12 +839,11 @@ impl MessageCoordinationDelegate {
                         chatModelIdOverride: Some(modelId),
                         autoContinue: false,
                         requireCurrentChat: true,
-                        trigger: Some(operit_providers::chat::enhance::ConversationService::SummaryTriggerContext {
+                        trigger: Some(SummaryTriggerContext {
                             current_tokens: chat.currentWindowSize,
                             max_tokens: maxTokens,
                             token_usage_threshold: policy.tokenUsageThreshold,
-                            usage_ratio: if maxTokens > 0 { chat.currentWindowSize as f64 / f64::from(maxTokens) } else { 0.0 },
-                            trigger_point: "before_send".to_string(),
+                            trigger_point: SummaryTriggerPoint::BeforeSend,
                         }),
                     },
                 )?;
@@ -880,15 +880,11 @@ impl MessageCoordinationDelegate {
                     configuration: configuration.clone(), promptFunctionType: PromptFunctionType::CHAT,
                     chatProviderIdOverride: None, chatModelIdOverride: None,
                     autoContinue: false, requireCurrentChat: false,
-                    trigger: Some(operit_providers::chat::enhance::ConversationService::SummaryTriggerContext {
+                    trigger: Some(SummaryTriggerContext {
                         current_tokens: window,
                         max_tokens: settings.context.maxContextTokens(),
                         token_usage_threshold: settings.summary.tokenThresholdRatio(),
-                        usage_ratio: {
-                            let max = settings.context.maxContextTokens();
-                            if max > 0 { window as f64 / f64::from(max) } else { 0.0 }
-                        },
-                        trigger_point: "after_reply".to_string(),
+                        trigger_point: SummaryTriggerPoint::AfterReply,
                     }),
                 })?.await;
             }
@@ -1031,7 +1027,7 @@ impl MessageCoordinationDelegate {
             .map(|message| message.timestamp);
         let summary =
             AIMessageManager::summarizeMemory(
-                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger.clone(),
+                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger,
             )
                 .await
                 .map_err(|error| error.to_string())?

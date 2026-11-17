@@ -1070,7 +1070,7 @@ impl EnhancedAIService {
         configuration: &ChatConfigurationResult,
         progress: Option<crate::chat::enhance::ConversationService::SummaryProgressCallback>,
         trigger: Option<crate::chat::enhance::ConversationService::SummaryTriggerContext>,
-    ) -> Result<crate::chat::enhance::ConversationService::SummaryGenerationResult, AiServiceError> {
+    ) -> Result<(String, TokenCounts), AiServiceError> {
         let context = toolRuntimeContextForConfiguration(
             configuration, Some(chatId), None, Vec::new(), &ToolExposureMode::Full,
         )?;

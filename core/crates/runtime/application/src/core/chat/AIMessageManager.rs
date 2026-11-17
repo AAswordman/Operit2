@@ -576,14 +576,10 @@ impl AIMessageManager {
         }).collect::<Vec<_>>();
 
         let startTime = ChatMessageTimestampAllocator::currentTimeMillis();
-        let generation = enhancedAiService
+        let (summary, usage) = enhancedAiService
             .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, progress, trigger)
             .await?;
         let endTime = ChatMessageTimestampAllocator::currentTimeMillis();
-        let summaryInputTokens = generation.input_tokens;
-        let summaryOutputTokens = generation.output_tokens;
-        let summaryCachedInputTokens = generation.cached_input_tokens;
-        let summary = generation.content;
         if summary.trim().is_empty() {
             return Ok(None);
         }
@@ -610,9 +606,9 @@ impl AIMessageManager {
             )],
             timestamp: ChatMessageTimestampAllocator::next(),
             roleName: "system".to_string(),
-            inputTokens: summaryInputTokens,
-            outputTokens: summaryOutputTokens,
-            cachedInputTokens: summaryCachedInputTokens,
+            inputTokens: usage.input,
+            outputTokens: usage.output,
+            cachedInputTokens: usage.cached_input,
             waitDurationMs: (endTime - startTime).max(1),
             sentAt: startTime,
             completedAt: endTime,
