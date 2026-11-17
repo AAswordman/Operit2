@@ -1069,7 +1069,8 @@ impl EnhancedAIService {
         chatId: String,
         configuration: &ChatConfigurationResult,
         progress: Option<crate::chat::enhance::ConversationService::SummaryProgressCallback>,
-    ) -> Result<String, AiServiceError> {
+        trigger: Option<crate::chat::enhance::ConversationService::SummaryTriggerContext>,
+    ) -> Result<crate::chat::enhance::ConversationService::SummaryGenerationResult, AiServiceError> {
         let context = toolRuntimeContextForConfiguration(
             configuration, Some(chatId), None, Vec::new(), &ToolExposureMode::Full,
         )?;
@@ -1078,7 +1079,7 @@ impl EnhancedAIService {
             PromptTurn::new(PromptTurnKind::from_role(&role), content)
         ).collect();
         ToolExecutionManager::scopeToolRuntimeContext(context,
-            self.conversation_service.generateSummaryWithProgress(turns, previousSummary, &mut manager, progress),
+            self.conversation_service.generateSummaryWithProgress(turns, previousSummary, &mut manager, progress, trigger),
         ).await
     }
 

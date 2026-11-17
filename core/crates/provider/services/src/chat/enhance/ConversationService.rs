@@ -25,6 +25,25 @@ use crate::chat::llmprovider::MediaLinkParser::unescape_xml_attribute;
 const APPLY_FILE_TOOL_NAME: &str = "apply_file";
 pub type SummaryProgressCallback = Arc<dyn Fn(&'static str) + Send + Sync>;
 
+/// Token-window measurements captured at the moment threshold-based compaction fired.
+#[derive(Clone, Debug)]
+pub struct SummaryTriggerContext {
+    pub current_tokens: i64,
+    pub max_tokens: i32,
+    pub token_usage_threshold: f64,
+    pub usage_ratio: f64,
+    pub trigger_point: String,
+}
+
+/// Generated summary content together with the summarization call's settled token usage.
+#[derive(Clone, Debug)]
+pub struct SummaryGenerationResult {
+    pub content: String,
+    pub input_tokens: i64,
+    pub cached_input_tokens: i64,
+    pub output_tokens: i64,
+}
+
 /// Controls how much tool metadata is exposed in prompt history.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ToolExposureMode {
@@ -420,7 +439,7 @@ impl ConversationService {
         previousSummary: Option<String>,
         multiServiceManager: &mut MultiServiceManager,
     ) -> Result<String, AiServiceError> {
-        self.generateSummaryWithProgress(messages, previousSummary, multiServiceManager, None).await
+        self.generateSummaryWithProgress(messages, previousSummary, multiServiceManager, None, None).await.map(|result| result.content)
     }
 
     pub async fn generateSummaryWithProgress(
@@ -429,7 +448,8 @@ impl ConversationService {
         previousSummary: Option<String>,
         multiServiceManager: &mut MultiServiceManager,
         progress: Option<SummaryProgressCallback>,
-    ) -> Result<String, AiServiceError> {
+        trigger: Option<SummaryTriggerContext>,
+    ) -> Result<SummaryGenerationResult, AiServiceError> {
         let useEnglish = false;
         let previousSummary = previousSummary.map(|summary| ChatMarkupRegex::remove_meta_tags(&summary));
         let mut systemPrompt =
@@ -458,6 +478,15 @@ impl ConversationService {
             baseSummaryMetadata.insert("executionContext".to_string(), json!({
                 "chatId": context.callerChatId,
                 "participantId": context.callerParticipantId,
+            }));
+        }
+        if let Some(trigger) = &trigger {
+            baseSummaryMetadata.insert("trigger".to_string(), json!({
+                "currentTokens": trigger.current_tokens,
+                "maxTokens": trigger.max_tokens,
+                "tokenUsageThreshold": trigger.token_usage_threshold,
+                "usageRatio": trigger.usage_ratio,
+                "triggerPoint": trigger.trigger_point,
             }));
         }
 
@@ -607,7 +636,12 @@ impl ConversationService {
                 summaryCachedInputTokens,
             )
             .map_err(AiServiceError::RequestFailed)?;
-        Ok(summaryContent)
+        Ok(SummaryGenerationResult {
+            content: summaryContent,
+            input_tokens: summaryInputTokens,
+            cached_input_tokens: summaryCachedInputTokens,
+            output_tokens: summaryOutputTokens,
+        })
     }
 
     /// Generates a concise title from the first user message and attachment names.
