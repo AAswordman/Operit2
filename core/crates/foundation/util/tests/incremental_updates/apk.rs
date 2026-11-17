@@ -1,52 +1,33 @@
 use super::*;
 use operit_host_api::*;
-use std::path::Path;
+use super::flutter_system_operation::{FlutterSystemBindings, FlutterSystemOperationBridge};
 
-struct ApkHost;
-
-/// Defines unused system operations without introducing test implementations of unrelated behavior.
-macro_rules! unused {
-    ($($name:ident($($arg:ident: $ty:ty),*) -> $out:ty;)*) => {$ (
-        #[doc = "Rejects unrelated system operations in the APK reconstruction fixture."]
-        fn $name(&self, $(_: $ty),*) -> HostResult<$out> { panic!(stringify!($name)) }
-    )*};
-}
-
-impl SystemOperationHost for ApkHost {
-    /// Exercises the production Android transform over the same VFS files used by the updater.
-    fn transformApplicationUpdate(
-        &self,
-        source: &dyn FileSource,
-        target: &dyn FileTarget,
-        transform: ApplicationUpdateTransform,
-        control: &HttpDownloadControl,
-    ) -> HostResult<()> {
-        apk_host::transform(
-            Path::new(&source.nativePath()?),
-            Path::new(&target.nativePath()?),
-            transform,
-            control,
-        )
-        .map_err(|e| HostError::new(e.to_string()))
-    }
-
-    unused! {
-        getSystemLanguageCode() -> String;
-        sendNotification(request: &SystemNotificationRequest) -> ();
-        modifySystemSetting(namespace: &str, setting: &str, value: &str) -> SystemSettingData;
-        getSystemSetting(namespace: &str, setting: &str) -> SystemSettingData;
-        installApp(source: &dyn FileSource, timing: AppInstallTiming) -> AppOperationData;
-        uninstallApp(packageName: &str) -> AppOperationData;
-        listInstalledApps(includeSystemApps: bool) -> AppListData;
-        startApp(packageName: &str) -> AppOperationData;
-        stopApp(packageName: &str) -> AppOperationData;
-        getNotifications(limit: i32, includeOngoing: bool) -> NotificationData;
-        getAppUsageTime(packageName: &str, sinceHours: i32, limit: i32, includeSystemApps: bool) -> AppUsageTimeResultData;
-        getDeviceLocation(timeout: i32, highAccuracy: bool, includeAddress: bool) -> LocationData;
-        getDeviceInfo() -> DeviceInfoData;
-        captureScreenshot() -> String;
-        recognizeText(imagePath: &dyn FileSource, language: OCRLanguage, quality: OCRQuality) -> String;
-    }
+/// Assembles the production Android system host behind the same Flutter decorator used by the app.
+fn application_host(path: String) -> Arc<dyn SystemOperationHost> {
+    let host = android_system_operation::AndroidSystemOperationHost::new(
+        Arc::new(|_, _| panic!("unexpected settings read")),
+        Arc::new(|_, _, _| panic!("unexpected settings write")),
+        Arc::new(move |operation, params| match operation {
+            "application_update_base" => Ok(serde_json::json!({"path": path})),
+            "install_app" => {
+                assert!(std::path::Path::new(params["path"].as_str().unwrap()).is_file());
+                Ok(serde_json::json!({
+                    "operationType": "install_app", "packageName": "app.operit",
+                    "success": true, "details": "Installer opened by fixture owner",
+                    "installState": "installer_opened",
+                }))
+            }
+            _ => panic!("Unexpected Android owner operation: {operation}"),
+        }),
+    );
+    Arc::new(FlutterSystemOperationBridge::new(Arc::new(host), FlutterSystemBindings {
+        notificationSender: Arc::new(|_| panic!("unexpected notification")),
+        notifications: Arc::new(|_, _| panic!("unexpected notifications read")),
+        location: Arc::new(|_, _, _| panic!("unexpected location")),
+        deviceInfo: Arc::new(|| panic!("unexpected device info")),
+        screenshot: Arc::new(|| panic!("unexpected screenshot")),
+        recognition: Arc::new(|_, _, _| panic!("unexpected OCR")),
+    }))
 }
 
 /// Loads an independently Python-generated APK delta through real Android compression and shared VFS.
@@ -61,7 +42,6 @@ fn fixture() -> Fixture {
     };
     fixture.manifest = serde_json::from_value(data["manifest"].clone()).unwrap();
     fixture.target = bytes("target");
-    fixture.context.systemOperationHost = Some(Arc::new(ApkHost));
     let storage = fixture.context.runtimeStorageHost.as_ref().unwrap();
     storage
         .writeBytes(
@@ -75,6 +55,7 @@ fn fixture() -> Fixture {
             &bytes("patch"),
         )
         .unwrap();
+    fixture.context.systemOperationHost = Some(application_host(FileSource::nativePath(&fixture.base).unwrap()));
     fixture
 }
 
@@ -82,7 +63,13 @@ fn fixture() -> Fixture {
 #[test]
 fn apk_python_delta_reconstructs_exact_original_through_android_host() {
     let fixture = fixture();
-    fixture.apply(&HttpDownloadControl::new()).unwrap();
+    let host = fixture.context.systemOperationHost.as_ref().unwrap();
+    let ApplicationUpdateBase::InstalledPackage(base) = host.applicationUpdateBase().unwrap() else {
+        panic!("Android must expose its installed APK");
+    };
+    assert!(base.nativePath().is_err(), "Installed APK must remain a read-only capability");
+    applyPatch(base.as_ref(), &fixture.patch, &fixture.manifest, &fixture.manifest.patches[0],
+        &fixture.context, "runtime/temp/application_updates/test/output.apk", &HttpDownloadControl::new()).unwrap();
     assert_eq!(fixture.output(), fixture.target);
     assert!(fixture.manifest.patches[0].size < fixture.manifest.size / 3);
     let storage = fixture.context.runtimeStorageHost.as_ref().unwrap();
@@ -93,18 +80,60 @@ fn apk_python_delta_reconstructs_exact_original_through_android_host() {
         .all(|entry| entry.path.ends_with("/test")));
 }
 
+/// Plans and executes a patch-only update from the installed APK through the real Flutter Host chain.
+#[tokio::test]
+async fn apk_patch_only_update_reaches_installer_through_flutter_bridge() {
+    let mut fixture = fixture();
+    let (mut release, http, current) = fixture.network(true, false);
+    release.fullPackageAvailable = false;
+    release.packageSha256 = None;
+    removeRetainedBase(&fixture, &release, &current);
+    let target = fixture.context.systemOperationHost.as_ref().unwrap().applicationUpdateTarget().unwrap().unwrap();
+    assert_eq!(target.package, ApplicationUpdatePackage::AndroidApk);
+    let control = HttpDownloadControl::new();
+    let plan = planUpdate(release.clone(), current, &fixture.context, control.clone()).await.unwrap();
+    assert_eq!(plan.mode, UpdateMode::Incremental);
+    assert!(!plan.fullAvailable);
+    let path = executeUpdate(plan, &fixture.context, control, |_| {}).await.unwrap();
+    assert_eq!(fixture.context.runtimeStorageHost.as_ref().unwrap().readBytes(&path).unwrap(), fixture.target);
+    assert!(!http.requests.lock().unwrap().contains(&release.downloadUrl));
+    let source = fixture.context.vfs().unwrap().file(&operit_vfs::VisualFileSystem::VisualFileSystem::runtimePath(&path).unwrap()).unwrap();
+    let result = fixture.context.systemOperationHost.as_ref().unwrap().installApp(&source, target.installTiming).unwrap();
+    assert!(result.success);
+    assert_eq!(result.installState, Some(AppInstallState::InstallerOpened));
+}
+
+/// Cancellation and an invalid recipe must leave no output even when routed through the Flutter decorator.
+#[test]
+fn apk_flutter_bridge_preserves_transform_failures_and_cancellation() {
+    let fixture = fixture();
+    let host = fixture.context.systemOperationHost.as_ref().unwrap();
+    let target = fixture.context.vfs().unwrap().file("/operitapp/data/temp/application_updates/test/rejected").unwrap();
+    let target_path = FileTarget::nativePath(&target).unwrap();
+    let control = HttpDownloadControl::new();
+    control.cancel();
+    let error = host.transformApplicationUpdate(&fixture.base, &target,
+        ApplicationUpdateTransform::ExpandApkEntries { recipe: b"{}".to_vec() }, &control).unwrap_err();
+    assert!(error.to_string().contains("UPDATE_CANCELLED"));
+    assert!(!std::path::Path::new(&target_path).exists());
+    assert!(host.transformApplicationUpdate(&fixture.base, &target,
+        ApplicationUpdateTransform::ExpandApkEntries { recipe: b"{}".to_vec() }, &HttpDownloadControl::new()).is_err());
+    assert!(!std::path::Path::new(&target_path).exists());
+}
+
 /// A signed recipe cannot request overlapping ranges or compression outside the supported codec.
 #[test]
 fn apk_host_rejects_invalid_recipe_without_retaining_output() {
     let fixture = fixture();
-    let target = fixture.root.join("invalid-expanded");
+    let target = fixture.context.vfs().unwrap().file("/operitapp/data/temp/application_updates/test/invalid-expanded").unwrap();
+    let target_path = FileTarget::nativePath(&target).unwrap();
     for recipe in [
         serde_json::json!({"size": 100, "entries": [{"offset": 99,"compressed": 2,"size": 1,"level":6}]}),
         serde_json::json!({"size": 100, "entries": [{"offset": 0,"compressed": 10,"size": 1,"level":9}]}),
         serde_json::json!({"size": 0, "entries": []}),
     ] {
-        assert!(apk_host::transform(
-            Path::new(&FileSource::nativePath(&fixture.base).unwrap()),
+        assert!(update_apk::transform(
+            &fixture.base,
             &target,
             ApplicationUpdateTransform::ExpandApkEntries {
                 recipe: serde_json::to_vec(&recipe).unwrap()
@@ -112,7 +141,7 @@ fn apk_host_rejects_invalid_recipe_without_retaining_output() {
             &HttpDownloadControl::new()
         )
         .is_err());
-        assert!(!target.exists());
+        assert!(!std::path::Path::new(&target_path).exists());
     }
 }
 
@@ -150,7 +179,13 @@ fn apk_real_release_round_trip() {
         FileSource::nativePath(&fixture.patch).unwrap(),
     )
     .unwrap();
-    fixture.apply(&HttpDownloadControl::new()).unwrap();
+    let host = fixture.context.systemOperationHost.as_ref().unwrap();
+    let ApplicationUpdateBase::InstalledPackage(base) = host.applicationUpdateBase().unwrap() else {
+        panic!("Android must expose its installed APK");
+    };
+    assert!(base.nativePath().is_err());
+    applyPatch(base.as_ref(), &fixture.patch, &fixture.manifest, &fixture.manifest.patches[0],
+        &fixture.context, "runtime/temp/application_updates/test/output.apk", &HttpDownloadControl::new()).unwrap();
     assert_eq!(
         fixture.output(),
         std::fs::read(std::env::var("OPERIT_APK_TEST_TARGET").unwrap()).unwrap()

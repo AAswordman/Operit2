@@ -1,13 +1,53 @@
 //! Reversible APK entry transforms using the Android Host's standard zlib encoder.
-use operit_host_api::{ApplicationUpdateTransform, HttpDownloadControl};
+use operit_host_api::{ApplicationUpdateTransform, FileSource, FileTarget, HttpDownloadControl};
 use serde::Deserialize;
 use std::fs::{File, OpenOptions};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{self, BufReader, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 
 const MAGIC: &[u8; 8] = b"O2APK1\0\0";
 const BUFFER: usize = 1024 * 1024;
 const LIMIT: u64 = 16 * 1024 * 1024 * 1024;
+
+/// Reads a bounded package capability without requiring access to its native path.
+struct PackageReader<'a> {
+    source: &'a dyn FileSource,
+    size: u64,
+    offset: u64,
+}
+
+impl Read for PackageReader<'_> {
+    /// Copies only the requested range and rejects a source that changes during the transform.
+    fn read(&mut self, output: &mut [u8]) -> io::Result<usize> {
+        let length = (self.size.saturating_sub(self.offset)).min(output.len() as u64) as usize;
+        if length == 0 {
+            return Ok(0);
+        }
+        let bytes = self.source.readBytesRange(self.offset, length).map_err(io::Error::other)?;
+        if bytes.len() != length {
+            return Err(invalid("APK source changed during transformation"));
+        }
+        output[..length].copy_from_slice(&bytes);
+        self.offset += length as u64;
+        Ok(length)
+    }
+}
+
+impl Seek for PackageReader<'_> {
+    /// Seeks within the verified package size without interpreting a platform locator.
+    fn seek(&mut self, position: SeekFrom) -> io::Result<u64> {
+        let offset = match position {
+            SeekFrom::Start(offset) => i128::from(offset),
+            SeekFrom::Current(offset) => i128::from(self.offset) + i128::from(offset),
+            SeekFrom::End(offset) => i128::from(self.size) + i128::from(offset),
+        };
+        if offset < 0 || offset > i128::from(self.size) {
+            return Err(invalid("APK seek exceeds source bounds"));
+        }
+        self.offset = offset as u64;
+        Ok(self.offset)
+    }
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -93,13 +133,14 @@ fn copy(
 
 /// Expands selected raw DEFLATE streams and preserves the untouched signed APK shell.
 fn decode(
-    source: &mut File,
+    source: &mut (impl Read + Seek),
+    source_size: u64,
     output: &mut File,
     metadata: &[u8],
     control: &HttpDownloadControl,
 ) -> io::Result<()> {
     let recipe = recipe(metadata)?;
-    if source.metadata()?.len() != recipe.size {
+    if source_size != recipe.size {
         return Err(invalid("APK recipe does not match original size"));
     }
     output.write_all(MAGIC)?;
@@ -148,7 +189,7 @@ impl Write for EntryWriter<'_> {
 }
 
 /// Recreates each original DEFLATE stream without rewriting APK metadata or signatures.
-fn encode(source: &mut File, output: &mut File, control: &HttpDownloadControl) -> io::Result<()> {
+fn encode(source: &mut impl Read, source_size: u64, output: &mut File, control: &HttpDownloadControl) -> io::Result<()> {
     let mut magic = [0; 8];
     source.read_exact(&mut magic)?;
     if &magic != MAGIC {
@@ -165,7 +206,7 @@ fn encode(source: &mut File, output: &mut File, control: &HttpDownloadControl) -
     let recipe = recipe(&metadata)?;
     let shell = recipe.size - recipe.entries.iter().map(|e| e.compressed).sum::<u64>();
     let expanded = recipe.entries.iter().map(|e| e.size).sum::<u64>();
-    if source.metadata()?.len() != 12 + length as u64 + shell + expanded {
+    if source_size != 12 + length as u64 + shell + expanded {
         return Err(invalid("Expanded APK length mismatch"));
     }
     let mut offset = 0;
@@ -195,13 +236,20 @@ fn encode(source: &mut File, output: &mut File, control: &HttpDownloadControl) -
 
 /// Writes only inside the disposable update job and removes incomplete transforms on all failures.
 pub(super) fn transform(
-    source: &Path,
-    target: &Path,
+    source: &dyn FileSource,
+    target: &dyn FileTarget,
     transform: ApplicationUpdateTransform,
     control: &HttpDownloadControl,
 ) -> io::Result<()> {
     active(control)?;
-    let mut input = File::open(source)?;
+    let size = u64::try_from(source.fileInfo().map_err(io::Error::other)?.size)
+        .map_err(|_| invalid("Invalid APK source size"))?;
+    if size == 0 || size > LIMIT {
+        return Err(invalid("APK source exceeds size limits"));
+    }
+    let mut input = BufReader::with_capacity(BUFFER, PackageReader { source, size, offset: 0 });
+    let target_path = target.nativePath().map_err(io::Error::other)?;
+    let target = Path::new(&target_path);
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -211,9 +259,9 @@ pub(super) fn transform(
         .open(target)?;
     let result = match transform {
         ApplicationUpdateTransform::ExpandApkEntries { recipe } => {
-            decode(&mut input, &mut output, &recipe, control)
+            decode(&mut input, size, &mut output, &recipe, control)
         }
-        ApplicationUpdateTransform::RestoreApkEntries => encode(&mut input, &mut output, control),
+        ApplicationUpdateTransform::RestoreApkEntries => encode(&mut input, size, &mut output, control),
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Unsupported Android installer transform",

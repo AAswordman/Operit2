@@ -8,6 +8,7 @@ mod BridgeRuntime;
 mod BridgeTransport;
 mod FlutterHostAdapters;
 mod FlutterOwnerCapabilities;
+mod FlutterSystemOperationBridge;
 #[cfg(not(target_arch = "wasm32"))]
 mod LocalRuntimeTransport;
 mod PlatformRuntimeAbi;

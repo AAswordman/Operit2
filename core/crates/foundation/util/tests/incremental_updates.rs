@@ -9,7 +9,13 @@ use std::sync::Arc;
 mod chains;
 
 #[path = "../../../../../hosts/android/src/update_apk.rs"]
-mod apk_host;
+mod update_apk;
+#[path = "../../../../../hosts/android/src/update_base.rs"]
+mod update_base;
+#[path = "../../../../../hosts/android/src/system_operation.rs"]
+mod android_system_operation;
+#[path = "../../../../../apps/flutter/native/operit-flutter-bridge/src/FlutterSystemOperationBridge.rs"]
+mod flutter_system_operation;
 #[path = "incremental_updates/apk.rs"]
 mod apk;
 

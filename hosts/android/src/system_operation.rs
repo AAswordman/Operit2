@@ -72,10 +72,8 @@ impl SystemOperationHost for AndroidSystemOperationHost {
         transform: operit_host_api::ApplicationUpdateTransform,
         control: &operit_host_api::HttpDownloadControl,
     ) -> HostResult<()> {
-        crate::update_apk::transform(
-            std::path::Path::new(&source.nativePath()?),
-            std::path::Path::new(&target.nativePath()?), transform, control,
-        ).map_err(|error| HostError::new(error.to_string()))
+        crate::update_apk::transform(source, target, transform, control)
+            .map_err(|error| HostError::new(error.to_string()))
     }
     /// Reads the package owner identity through the existing Android interaction channel.
     fn applicationUpdateBase(&self) -> HostResult<operit_host_api::ApplicationUpdateBase> {
