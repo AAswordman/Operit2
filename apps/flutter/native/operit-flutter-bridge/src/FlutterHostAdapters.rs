@@ -504,7 +504,7 @@ impl operit_host_api::ComposeDslWebViewHost for FlutterComposeDslWebViewBridge {
             request.picker == operit_host_api::ComposeDslFilePickerMode::Directory,
         )
     }
-    /// Saves UTF-8 content through the same Flutter owner as file selection.
+    /// Saves text or binary content through the same Flutter owner as file selection.
     fn saveFile(
         &self,
         request: operit_host_api::ComposeDslFileSaveRequest,

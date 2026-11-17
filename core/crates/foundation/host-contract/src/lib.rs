@@ -1298,12 +1298,16 @@ impl ComposeDslFilePickerRequest {
     }
 }
 
-/// A UTF-8 export saved to a destination selected by the host user.
+/// A text or binary export saved to a destination selected by the host user.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ComposeDslFileSaveOptions {
     pub suggestedName: String,
-    pub content: String,
+    /// Exactly one content representation must be present, including for empty files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub contentBase64: Option<String>,
     pub mimeType: String,
     pub extensions: Vec<String>,
 }
@@ -1324,6 +1328,9 @@ impl ComposeDslFileSaveRequest {
             .map_err(|error| HostError::new(format!("Compose DSL file save request decode failed: {error}")))?;
         if request.executionContextKey.trim().is_empty() {
             return Err(HostError::new("Compose DSL file save executionContextKey is required"));
+        }
+        if request.options.content.is_some() == request.options.contentBase64.is_some() {
+            return Err(HostError::new("Compose DSL file save requires exactly one of content or contentBase64"));
         }
         let name = &request.options.suggestedName;
         if name.trim().is_empty() || name.chars().any(|value| matches!(value, '/' | '\\' | '\0')) {
@@ -3685,6 +3692,58 @@ mod tests {
                 "{}",
                 case["name"]
             );
+        }
+    }
+
+    /// Covers the strict Rust boundary used by AIToolHandler before Flutter sees any export.
+    #[test]
+    fn composeDslFileSavePreservesTextAndBinaryOwnerPayloads() {
+        for content in [
+            serde_json::json!({"content": "混音🌍\n"}),
+            serde_json::json!({"content": ""}),
+            serde_json::json!({"contentBase64": "UklGRgD/gA0K"}),
+            serde_json::json!({"contentBase64": ""}),
+        ] {
+            let mut options = serde_json::json!({
+                "suggestedName": "mix.wav", "mimeType": "audio/wav", "extensions": ["wav"]
+            });
+            options.as_object_mut().unwrap().extend(content.as_object().unwrap().clone());
+            let payload = serde_json::json!({
+                "routeInstanceId": "music-studio", "executionContextKey": "music-owner", "options": options
+            });
+            let request = ComposeDslFileSaveRequest::fromValue(payload.clone()).expect("valid export must reach owner");
+            assert_eq!(serde_json::to_value(request).unwrap(), payload, "owner transport must preserve exact content representation");
+        }
+    }
+
+    #[test]
+    fn composeDslFileSaveRejectsInvalidRepresentationsAndPaths() {
+        let base = serde_json::json!({
+            "routeInstanceId": "music-studio", "executionContextKey": "music-owner",
+            "options": {"suggestedName": "mix.wav", "mimeType": "audio/wav", "extensions": ["wav"]}
+        });
+        for content in [
+            serde_json::json!({}),
+            serde_json::json!({"content": "", "contentBase64": ""}),
+            serde_json::json!({"content": 42}),
+            serde_json::json!({"contentBase64": 42}),
+            serde_json::json!({"contentBase64": null}),
+            serde_json::json!({"content": "", "outputPath": "/unselected/mix.wav"}),
+        ] {
+            let mut payload = base.clone();
+            payload["options"].as_object_mut().unwrap().extend(content.as_object().unwrap().clone());
+            assert!(ComposeDslFileSaveRequest::fromValue(payload).is_err());
+        }
+        for (key, value) in [
+            ("suggestedName", serde_json::json!("../mix.wav")),
+            ("suggestedName", serde_json::json!("")),
+            ("mimeType", serde_json::json!("")),
+            ("extensions", serde_json::json!(["../wav"])),
+        ] {
+            let mut payload = base.clone();
+            payload["options"]["contentBase64"] = serde_json::json!("");
+            payload["options"][key] = value;
+            assert!(ComposeDslFileSaveRequest::fromValue(payload).is_err());
         }
     }
 
