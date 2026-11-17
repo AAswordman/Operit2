@@ -11,7 +11,12 @@ unit vectors, so cosine similarity is `1 - squaredL2 / 2`. Filter callbacks stay
 inside WASM. Selected lexical and graph candidates can be reranked through
 `index_score_keys`, without fetching or scoring every source vector.
 
-Rebuild from the repository root with the installed Emscripten toolchain:
+The standard `pack:toolpkg` commands for both `character_cards` and the USearch
+example build this module before collecting package inputs. A content signature
+covers the pinned revision, adapter and build script, and verifies the output
+bytes before reusing a previous build. The example receives the same binary.
+
+Rebuild manually from the repository root with the installed Emscripten toolchain:
 
 ```sh
 python3 plugins/packages/buildin/character_cards/vendor/usearch/build.py
@@ -23,7 +28,8 @@ The script downloads the pinned source to a temporary build cache, disables
 NumKong and OpenMP, enables WASM SIMD, and also refreshes the exercise module in
 `plugins/packages/examples/toolpkg_usearch_demo/modules/`. The script uses the
 repository's `.ci-tools/emsdk` compiler unless `EMXX` or an `em++` on PATH is set.
-The checked-in binary was built with Emscripten 4.0.14. USearch and Emscripten
+The compiler must be installed before a clean build; the expected version is
+Emscripten 4.0.14. Generated WASM is ignored by Git. USearch and Emscripten
 license notices are included here and shipped in the plugin archive.
 
 The plugin uses `ToolPkg.wasm.open` for a persistent instance and typed byte

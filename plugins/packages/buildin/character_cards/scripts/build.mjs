@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { checkProject } from "./check.mjs";
+import { buildWasm } from "./build-wasm.mjs";
 const require = createRequire(import.meta.url);
 const { build } = require("esbuild");
 const { zipSync } = require("fflate");
@@ -105,6 +106,7 @@ export async function sourceFiles(directory) {
   const result = [];
   const entries = await readdir(path.join(root, directory), { withFileTypes: true });
   for (const entry of entries) {
+    if (entry.name === "__pycache__" || entry.name === ".cache") continue;
     const relative = `${directory}/${entry.name}`;
     if (entry.isDirectory()) result.push(...await sourceFiles(relative));
     else if (entry.isFile()) result.push(relative);
@@ -145,6 +147,7 @@ export async function createPackageArchive(mainScript, toolsScript, htmlDocument
 
 /** Packages one typed character-and-memory provider with the same document exercised by UI tests. */
 export async function buildPackage() {
+  buildWasm();
   const inputs = await captureBuildInputs();
   if (checkProject("tsconfig.json") !== 0) throw new Error("Main-runtime TypeScript diagnostics must be resolved before packaging");
   if (checkProject("tsconfig.web.json") !== 0) throw new Error("Browser TypeScript diagnostics must be resolved before packaging");

@@ -8,6 +8,11 @@ with recall@10 against an exact JavaScript L2 scan on fixed-seed random data.
 The source, pinned revision, build script and license notices are owned by the
 memory plugin in `../../buildin/character_cards/vendor/usearch/`.
 
+`corepack pnpm run pack:toolpkg` builds that pinned module before packaging this
+example. It uses the repository Python environment and installed Emscripten
+toolchain, and reuses the owner build when its inputs and output are unchanged.
+The normal plugin synchronizer invokes the same command for this example.
+
 Run the embedded native V8 integration test from the repository root:
 
 ```sh

@@ -1,0 +1,7 @@
+{
+  "name": "operit-usearch-demo",
+  "private": true,
+  "scripts": { "pack:toolpkg": "node scripts/pack.mjs" },
+  "devDependencies": { "fflate": "0.8.2" },
+  "packageManager": "pnpm@10.7.0"
+}
