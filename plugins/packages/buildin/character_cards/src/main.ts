@@ -29,7 +29,7 @@ export { toolCallPolicy, toolPromptPolicy } from "./runtime-tools/policy";
 export { beforeChatCreate } from "./chat-lifecycle";
 export { onChatViewTheme } from "./chat-view-theme";
 export { onGroupInputSubmit } from "./group-execution/hooks";
-export { chatContextActionsApi, chatListSectionsApi } from "./ui-contributions";
+export { chatContextActionsApi, chatListSectionsApi, chatModelSelectionApi } from "./ui-contributions";
 export { chatSidebarPrepareApi } from "./ui-sidebar";
 import { definition } from "./definition";
 /** Connects lazy directory readers for every evaluated runtime, not just the registration-only module. */

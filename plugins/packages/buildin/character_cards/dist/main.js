@@ -59,6 +59,7 @@ __export(main_exports, {
   chatConfigurationResolveApi: () => chatConfigurationResolveApi,
   chatContextActionsApi: () => chatContextActionsApi,
   chatListSectionsApi: () => chatListSectionsApi,
+  chatModelSelectionApi: () => chatModelSelectionApi,
   chatSidebarPrepareApi: () => chatSidebarPrepareApi,
   groupCreateApi: () => groupCreateApi,
   groupDeleteApi: () => groupDeleteApi,

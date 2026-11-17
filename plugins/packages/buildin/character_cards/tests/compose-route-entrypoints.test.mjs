@@ -26,7 +26,8 @@ function registeredPackage(modules, registrationOnly = false) {
   main = runtime.load("dist/main.js");
   assert.equal(main.registerToolPkg(), true);
   const routes = JSON.parse(vm.runInContext("JSON.stringify(__operitToolPkgRegistrationCapture.uiRoutes.map(JSON.parse))", runtime.context));
-  return { ...runtime, main, routes };
+  const apis = JSON.parse(vm.runInContext("JSON.stringify(__operitToolPkgRegistrationCapture.publicApis.map(JSON.parse))", runtime.context));
+  return { ...runtime, main, routes, apis };
 }
 
 /** Renders a captured path using both actual SDK scripts, not a direct call to a named main export. */
@@ -108,6 +109,8 @@ test("installed and Core production archives contain the executable registered s
   const production = await readFile(new URL("../../../../../core/crates/runtime/application/assets/plugins/buildin/character_cards.toolpkg", import.meta.url));
   assert.equal(Buffer.compare(packaged, production), 0, "Core must install the rebuilt package archive");
   const modules = unzipSync(packaged), plugin = registeredPackage(modules);
+  assert.equal(plugin.apis.find(api => api.id === "chat.model.selection")?.function, "chatModelSelectionApi",
+    "Model selection must register through the exported main handler in the installed archive");
   const currentScreens = await buildUiScreenScripts();
   assert.equal(new Set(plugin.routes.map(route => route.screen )).size, 9);
   for (const route of plugin.routes) {
