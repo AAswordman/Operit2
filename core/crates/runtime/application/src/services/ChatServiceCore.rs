@@ -1545,7 +1545,7 @@ impl ChatServiceCore {
             }
         };
         // Generation must not persist a summary boundary before valid content exists.
-        let summaryMessage = match AIMessageManager::summarizeMemory(
+        let selection = match AIMessageManager::summarizeMemory(
             &mut enhancedAiService,
             messagesToSummarize,
             false,
@@ -1553,12 +1553,13 @@ impl ChatServiceCore {
             &configuration,
             None,
             None,
+            false,
         )
         .await
         .map_err(|error| error.to_string())
         .and_then(|summary| summary.ok_or_else(|| "No valid conversation summary was generated".to_string()))
         {
-            Ok(summaryMessage) => summaryMessage,
+            Ok(selection) => selection,
             Err(error) => {
                 AppLogger::e("ChatSummary", &format!("Summary insertion failed for {currentChatId}: {error}"));
                 return self.summaryInsertionFailed(Some(currentChatId), error);
@@ -1566,7 +1567,7 @@ impl ChatServiceCore {
         };
 
         if self.chatHistoryDelegate.addSummaryMessage(
-            summaryMessage,
+            selection.message,
             beforeTimestamp,
             afterTimestamp,
             Some(currentChatId.clone()),
