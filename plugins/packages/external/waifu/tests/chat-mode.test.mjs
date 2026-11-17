@@ -3,7 +3,7 @@ import test from "node:test";
 import { load, plain, clock, settle } from "./harness.mjs";
 
 /** Boots the actual plugin once with isolated SDK ports and real cross-module handlers. */
-function runtime() {
+function runtime(options = {}) {
   const time = clock(), configs = new Map(), handlers = {}, apis = {}, channels = new Map(), requests = [], toasts = [];
   const bindings = { alice: "card:alice", bob: "card:bob" };
   const ToolPkg = {
@@ -29,6 +29,7 @@ function runtime() {
     const decision = await handlers.input(input(request.input.text, { chatId: request.chatId, source: "Sequence" }));
     assert.equal(decision, undefined, "A native send must not re-enter the merge queue");
     requests.push(plain(request));
+    if (options.send) return options.send(request, requests.length);
     return { outcome: { type: "committed", status: "completed" } };
   } }, System: { async toast(message) { toasts.push(message); } } };
   const PluginConfig = { async use(name, defaults) { if (!configs.has(name)) configs.set(name, defaults); return configs.get(name); }, async flush() {} };
@@ -168,4 +169,57 @@ test("native settings restore role cards, direct switches and sliders without pr
   const emojiNodes = nodes(tree);
   assert.ok(emojiNodes.some(node => node.type === "Image"));
   assert.ok(emojiNodes.some(node => node.props.text === "从设备导入图片"));
+});
+
+
+test("busy native chat retains its guide or interrupt action instead of merging it", async () => {
+  const r = runtime(); await r.enable({ mergeSend: true, mergeDelayMs: 500 });
+  assert.equal(await r.handlers.input(input("等一下，先别改", { isProcessing: true })), undefined);
+  await r.time.advance(600); assert.equal(r.requests.length, 0);
+});
+
+test("one failed queued delivery does not silently discard a later accepted message", async () => {
+  let rejectFirst; const r = runtime({send: (_request, index) => index === 1 ? new Promise((_resolve, reject) => { rejectFirst = reject; }) : Promise.resolve({outcome:{type:"committed",status:"completed"}})});
+  await r.enable({ mergeSend: true, mergeDelayMs: 500 });
+  await r.handlers.input(input("第一句")); await r.time.advance(500);
+  await r.handlers.input(input("第二句")); await r.time.advance(500);
+  rejectFirst(new Error("network lost")); await settle(); await settle();
+  assert.equal(r.requests.length,2); assert.equal(r.requests[1].input.text,"第二句");
+  assert.equal(r.toasts.length,1); assert.match(r.toasts[0],/network lost/);
+});
+
+
+test("public mode status follows role and external session without exposing settings", async () => {
+  const r = runtime();
+  const status = chatId => r.apis["mode.status"]({ callerPackage: "companion", payload: { chatId } });
+  assert.deepEqual(plain(await status("alice")), { enabled: false });
+  await r.enable();
+  assert.deepEqual(plain(await status("alice")), { enabled: true });
+  assert.deepEqual(plain(await status("bob")), { enabled: false });
+  const session = await r.apis["session.open"]({ callerPackage: "qqbot", payload: { chatId: "bob", profile: "default" } });
+  assert.deepEqual(plain(await status("bob")), { enabled: true });
+  await r.apis["session.close"]({ callerPackage: "qqbot", payload: { sessionId: session.sessionId } });
+  assert.deepEqual(plain(await status("bob")), { enabled: false });
+});
+
+test('continuous short messages are sent after a bounded wait in their original order', async () => {
+ const r=runtime();await r.enable({mergeSend:true,mergeDelayMs:5000});
+ for(let i=0;i<5;i++){await r.handlers.input(input(`片段${i}`));await r.time.advance(2900);}
+ assert.equal(r.requests.length,0);await r.time.advance(500);await settle();
+ assert.equal(r.requests.length,1);assert.equal(r.requests[0].input.text,['片段0','片段1','片段2','片段3','片段4'].join('\n'));assert.equal(r.time.pending(),0);
+});
+
+test('a large batch flushes promptly without dropping subsequent messages', async () => {
+ const r=runtime();await r.enable({mergeSend:true,mergeDelayMs:5000});
+ for(let i=0;i<20;i++)await r.handlers.input(input(`消息${i}`));await settle();
+ assert.equal(r.requests.length,1);assert.equal(r.requests[0].input.text.split('\n').length,20);
+ await r.handlers.input(input('下一条'));await r.time.advance(5000);await settle();
+ assert.equal(r.requests.length,2);assert.equal(r.requests[1].input.text,'下一条');assert.equal(r.time.pending(),0);
+});
+
+test("native response hook accepts structured JSON containing arrays", async () => {
+  const r = runtime(); await r.enable(); await r.handlers.response(response("started"));
+  const json = '{"publicQuestions":[],"publicGuidance":["check_extension","reload"]}';
+  const result = await r.handlers.response(response("finished", json));
+  assert.equal(result.bubbles.map(bubble => bubble.parts[0].content).join(""), json);
 });

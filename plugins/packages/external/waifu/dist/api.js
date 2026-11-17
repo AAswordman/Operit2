@@ -1,6 +1,7 @@
 "use strict";
 // Copy this self-contained public client into a dependent package.
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.modeStatus = modeStatus;
 exports.getSettings = getSettings;
 exports.setSettings = setSettings;
 exports.stream = stream;
@@ -8,6 +9,8 @@ exports.stream = stream;
 function call(method, payload) {
     return ToolPkg.callDependency("com.operit.waifu", method, payload);
 }
+/** Reports whether Waifu is active for a conversation. */
+function modeStatus(chatId) { return call("mode.status", { chatId }); }
 /** Reads one explicitly named, persisted waifu profile. */
 function getSettings(profile = "default") { return call("settings.get", { profile }); }
 /** Replaces one explicitly named profile after provider-side validation. */

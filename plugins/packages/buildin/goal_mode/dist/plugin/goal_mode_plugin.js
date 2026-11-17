@@ -9,6 +9,9 @@ exports.onChatViewEvent = onChatViewEvent;
 exports.onInputMenuToggle = onInputMenuToggle;
 exports.onChatInput = onChatInput;
 exports.onPromptFinalize = onPromptFinalize;
+exports.goalRead = goalRead;
+exports.goalCreate = goalCreate;
+exports.goalStatus = goalStatus;
 exports.registerToolPkg = registerToolPkg;
 const index_ui_js_1 = __importDefault(require("../ui/goal_panel/index.ui.js"));
 const goal_mode_ipc_js_1 = require("../shared/goal_mode_ipc.js");
@@ -319,9 +322,33 @@ async function onPromptFinalize(event) {
     }
     return { preparedHistory: history };
 }
+/** Public goal operations use the same routed durable owner as native goal controls. */
+async function goalRead(event) {
+    if (typeof event.payload?.chatId !== "string" || !event.payload.chatId.trim())
+        throw new Error("chatId is required");
+    return goal_mode_ipc_js_1.GoalService.read(event.payload.chatId);
+}
+async function goalCreate(event) {
+    const { chatId, objective } = event.payload ?? {};
+    if (typeof chatId !== "string" || !chatId.trim() || typeof objective !== "string" || !objective.trim() || objective.length > MAX_GOAL_OBJECTIVE_LENGTH)
+        throw new Error("A chatId and objective of at most 4000 characters are required");
+    const existing = await goal_mode_ipc_js_1.GoalService.read(chatId);
+    if (existing !== null && existing.status !== "completed")
+        throw new Error("This chat already has an unfinished goal");
+    return goal_mode_ipc_js_1.GoalService.set(chatId, objective);
+}
+async function goalStatus(event) {
+    const { chatId, status } = event.payload ?? {};
+    if (typeof chatId !== "string" || !chatId.trim() || (status !== "active" && status !== "paused" && status !== "completed"))
+        throw new Error("Invalid goal status request");
+    return goal_mode_ipc_js_1.GoalService.status(chatId, status);
+}
 (0, goal_mode_ipc_js_1.registerGoalModeIpc)();
 /** Registers goal commands, supervision hooks, and the composer panel. */
 function registerToolPkg() {
+    ToolPkg.registerApi({ name: "goal.read", function: goalRead });
+    ToolPkg.registerApi({ name: "goal.create", function: goalCreate });
+    ToolPkg.registerApi({ name: "goal.status", function: goalStatus });
     ToolPkg.registerCoreCommand({
         id: GOAL_COMMAND_ID,
         name: GOAL_COMMAND_NAME,

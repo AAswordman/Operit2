@@ -26,6 +26,7 @@ abstract class OperitScreen {
     this.title,
     this.participatesInCrossfadeTransition = true,
     this.keepAlive = false,
+    this.retainInBackStack = false,
     this.handlesBottomSafeArea = false,
   });
 
@@ -33,6 +34,9 @@ abstract class OperitScreen {
   final String? title;
   final bool participatesInCrossfadeTransition;
   final bool keepAlive;
+
+  /// Retains transient page state only while its route remains in back history.
+  final bool retainInBackStack;
 
   /// Lets a page extend its surfaces while keeping its own controls inset.
   final bool handlesBottomSafeArea;
@@ -115,7 +119,11 @@ class MarketScreenRoute extends OperitScreen {
 
 class ExtensionDetailScreenRoute extends OperitScreen {
   const ExtensionDetailScreenRoute({required this.kind, required this.id})
-    : super(routeTypeName: 'ExtensionDetail', title: '扩展详情');
+    : super(
+        routeTypeName: 'ExtensionDetail',
+        title: '扩展详情',
+        retainInBackStack: true,
+      );
 
   final String kind;
   final String id;

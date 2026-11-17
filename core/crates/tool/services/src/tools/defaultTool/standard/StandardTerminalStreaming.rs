@@ -55,6 +55,7 @@ struct Arguments {
 pub(crate) struct TerminalStreamExecutor {
     tools: StandardTerminalTools,
     managedAdmission: tokio::sync::Mutex<()>,
+    selfRef: std::sync::OnceLock<std::sync::Weak<TerminalStreamExecutor>>,
     host: Option<Arc<dyn TerminalHost>>,
     scheduler: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>,
     observations: Mutex<HashMap<String, Arc<Observation>>>,
@@ -127,6 +128,20 @@ impl TerminalStreamExecutor {
         .await
     }
 
+    /// Reuses admission and observations whenever tool handlers share one terminal host.
+    pub(crate) fn shared(tools: StandardTerminalTools, scheduler: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>) -> Arc<Self> {
+        static EXECUTORS: std::sync::OnceLock<Mutex<HashMap<usize, std::sync::Weak<TerminalStreamExecutor>>>> = std::sync::OnceLock::new();
+        let Some(host) = tools.terminalHost.as_ref() else { return Arc::new(Self::new(tools, scheduler)); };
+        let key = Arc::as_ptr(host) as *const () as usize;
+        let mut executors = EXECUTORS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        executors.retain(|_, executor| executor.strong_count() > 0);
+        if let Some(existing) = executors.get(&key).and_then(std::sync::Weak::upgrade) { return existing; }
+        let executor = Arc::new(Self::new(tools, scheduler));
+        let _ = executor.selfRef.set(Arc::downgrade(&executor));
+        executors.insert(key, Arc::downgrade(&executor));
+        executor
+    }
+
     /// Binds terminal execution to the host-owned blocking task scheduler.
     pub(crate) fn new(
         tools: StandardTerminalTools,
@@ -136,6 +151,7 @@ impl TerminalStreamExecutor {
             host: tools.terminalHost.clone(),
             tools,
             managedAdmission: tokio::sync::Mutex::new(()),
+            selfRef: std::sync::OnceLock::new(),
             scheduler,
             observations: Mutex::new(HashMap::new()),
             workers: Arc::new(AtomicUsize::new(0)),
@@ -318,6 +334,9 @@ impl TerminalStreamExecutor {
                 Ok(())
             }) as operit_host_api::TerminalOutputCallback
         };
+        // A queued host task must retain the shared admission state even if its
+        // originating tool handler is destroyed before the worker starts.
+        let executorLease = self.selfRef.get().and_then(std::sync::Weak::upgrade);
         let scheduled = host.scheduleInSessionStreaming(
             scheduler.clone(),
             request.sessionId,
@@ -325,6 +344,7 @@ impl TerminalStreamExecutor {
             0,
             onOutput,
             Box::new(move |result| {
+                let _executorLease = executorLease;
                 drop(permit);
                 if let Ok(mut inner) = observation.inner.lock() {
                     let result = result.and_then(|receipt| terminalCommandResultData(&receipt));
@@ -644,6 +664,56 @@ impl SharedToolExecutor for TerminalStreamExecutor {
     }
 }
 
+/// Coordinates conditional close with admission so queued executions cannot lose their session.
+pub(crate) struct TerminalCloseExecutor(pub Arc<TerminalStreamExecutor>);
+
+impl TerminalStreamExecutor {
+    async fn closeSession(&self, sessionId: &str, sessionName: &str, idleOnly: bool) -> Result<ToolResultData, String> {
+        let _admission = self.managedAdmission.lock().await;
+        if idleOnly {
+            let registry = self.observations.lock().map_err(|_| "Terminal observation registry is poisoned")?;
+            for observation in registry.values().filter(|value| value.sessionId == sessionId) {
+                if observation.inner.lock().map_err(|_| "Terminal observation is poisoned")?.result.is_none() {
+                    return Err(format!("Error closing terminal session {sessionId}: terminal command is queued or running"));
+                }
+            }
+        }
+        let host = self.host.as_ref().ok_or("Terminal host is unavailable")?;
+        let result = if idleOnly { host.closeSessionIfIdle(sessionId, sessionName) } else { host.closeSession(sessionId) }
+            .map_err(|error| format!("Error closing terminal session {sessionId}: {}", error.message))?;
+        Ok(ToolResultData::TerminalSessionCloseResultData(
+            operit_plugin_sdk::js_sdk::results::TerminalSessionCloseResultData {
+                sessionId: result.sessionId, success: result.success, message: result.message,
+            },
+        ))
+    }
+}
+
+impl SharedToolExecutor for TerminalCloseExecutor {
+    fn prepare<'a>(&'a self, request: &'a ToolCall, _context: &'a ToolInvocationContext, checkAccess: bool) -> Result<PreparedToolInvocation<'a>, String> {
+        let text = |key: &str| -> Result<Option<String>, String> {
+            match request.parameters.get(key) {
+                None | Some(serde_json::Value::Null) => Ok(None),
+                Some(serde_json::Value::String(value)) => Ok(Some(value.clone())),
+                Some(serde_json::Value::Bool(value)) if key == "if_idle" => Ok(Some(value.to_string())),
+                Some(_) => Err(format!("{key} must be text")),
+            }
+        };
+        let sessionId = text("session_id")?.unwrap_or_default();
+        if sessionId.is_empty() { return Err("session_id is required.".into()); }
+        let sessionName = text("session_name")?.unwrap_or_default();
+        let idleOnly = match text("if_idle")?.as_deref() {
+            None | Some("false") => false,
+            Some("true") if !sessionName.is_empty() => true,
+            Some("true") => return Err("session_name is required for idle close.".into()),
+            _ => return Err("if_idle must be true or false.".into()),
+        };
+        Ok(prepareInvocation(request, checkAccess, ToolEffect::WRITE, async move {
+            self.0.closeSession(&sessionId, &sessionName, idleOnly).await
+        }))
+    }
+}
+
 /// Uses the authenticated plugin identity or the host's direct invocation authority.
 fn terminalOwner(context: &ToolInvocationContext) -> Result<String, String> {
     match &context.host().authenticatedExtensionOwner {
@@ -837,6 +907,41 @@ mod tests {
         fn waitForHostRuntimeDelay(&self, delay: u64) -> operit_host_api::HostRuntimeTurnFuture {
             self.clock.waitForHostRuntimeDelay(delay)
         }
+    }
+
+    #[tokio::test]
+    async fn handlers_sharing_a_host_share_terminal_admission() {
+        let host = Arc::new(NativePtyTerminalHost::default());
+        let scheduler = Arc::new(QueuedScheduler::default());
+        let first = TerminalStreamExecutor::shared(StandardTerminalTools::new(Some(host.clone())), Some(scheduler.clone()));
+        let second = TerminalStreamExecutor::shared(StandardTerminalTools::new(Some(host.clone())), Some(scheduler.clone()));
+        assert!(Arc::ptr_eq(&first, &second));
+        let name = uuid::Uuid::new_v4().to_string();
+        let handle = first.startNamed("owner".into(), name.clone(), "bash".into(), "printf queued".into(), 1000, true).await.unwrap();
+        let session = first.owned("owner", &handle).unwrap().sessionId.clone();
+        drop(first);
+        drop(second);
+        let later = TerminalStreamExecutor::shared(StandardTerminalTools::new(Some(host)), Some(scheduler.clone()));
+        assert!(later.closeSession(&session, &name, true).await.is_err());
+        assert!(later.closeSession(&session, "", false).await.is_ok());
+        scheduler.jobs.lock().unwrap().clear();
+    }
+
+    #[tokio::test]
+    async fn idle_close_rejects_queued_execution_and_preserves_force_close() {
+        let host = Arc::new(NativePtyTerminalHost::default());
+        let scheduler = Arc::new(QueuedScheduler::default());
+        let tools = TerminalStreamExecutor::new(StandardTerminalTools::new(Some(host.clone())), Some(scheduler));
+        let name = uuid::Uuid::new_v4().to_string();
+        let handle = tools.startNamed("owner".into(), name.clone(), "bash".into(), "printf queued".into(), 1000, true).await.unwrap();
+        let session = tools.owned("owner", &handle).unwrap().sessionId.clone();
+        let error = match tools.closeSession(&session, &name, true).await { Err(error) => error, Ok(_) => panic!("queued session was closed") };
+        assert!(error.contains("queued or running"));
+        assert!(host.listSessions().unwrap().iter().any(|entry| entry.sessionId == session));
+        assert!(tools.closeSession(&session, "", false).await.is_ok());
+        let idle = host.createOrGetTypedSession(&format!("{name}_idle"), "bash").unwrap();
+        assert!(tools.closeSession(&idle.sessionId, "wrong-owner", true).await.is_err());
+        assert!(tools.closeSession(&idle.sessionId, &idle.sessionName, true).await.is_ok());
     }
 
     /// Queued jobs must return receipts and reserve separate sessions even before Host execution starts.

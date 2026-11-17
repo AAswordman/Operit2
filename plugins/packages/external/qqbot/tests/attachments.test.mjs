@@ -35,3 +35,14 @@ test("messages without attachments perform no filesystem calls", async () => {
   const { attachments } = load("attachments");
   assert.deepEqual(plain(await attachments(load("model").inbound(c2c()))), []);
 });
+
+test("nested voice quotes prefer WAV downloads and expose a standard MIME type to Chat", async () => {
+  const frame = c2c(); frame.d.msg_elements = [{ attachments: [{ url: "https://cdn.example/silk", content_type: "voice", filename: "recording.silk", voice_wav_url: "https://cdn.example/wav", asr_refer_text: "语音" }] }];
+  const calls = [];
+  const { attachments } = load("attachments", { getPluginConfigDir: () => "/plugin", Tools: { Files: {
+    async mkdir() { return { successful: true }; }, async download(url) { calls.push(url); return { successful: true }; }, async info() { return { size: 42 }; },
+  } } });
+  const result = await attachments(load("model").inbound(frame));
+  assert.deepEqual(calls, ["https://cdn.example/wav"]);
+  assert.equal(result[0].mimeType, "audio/wav"); assert.equal(result[0].fileName, "recording.wav");
+});

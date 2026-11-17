@@ -147,8 +147,9 @@ class QQGateway {
     /** Handles exact QQ opcodes and server-directed session negotiation. */
     async dispatch(frame, generation) {
         const op = (0, model_js_1.integer)(frame.op, "gateway.op", 0, 99);
-        if (frame.s !== null && frame.s !== undefined)
-            this.sequence = (0, model_js_1.integer)(frame.s, "gateway.s", 0, Number.MAX_SAFE_INTEGER);
+        const sequence = frame.s !== null && frame.s !== undefined ? (0, model_js_1.integer)(frame.s, "gateway.s", 0, Number.MAX_SAFE_INTEGER) : null;
+        if (op !== 0 && sequence !== null)
+            this.sequence = sequence;
         switch (op) {
             case 10: {
                 const hello = (0, model_js_1.object)(frame.d, "HELLO.d");
@@ -166,16 +167,22 @@ class QQGateway {
             case 0: {
                 const type = (0, model_js_1.nonblank)(frame.t, "dispatch.t");
                 if (type === "READY") {
+                    if (sequence !== null)
+                        this.sequence = sequence;
                     this.sessionId = (0, model_js_1.nonblank)((0, model_js_1.object)(frame.d, "READY.d").session_id, "session_id");
                     this.status = "ready";
                     return;
                 }
                 if (type === "RESUMED") {
+                    if (sequence !== null)
+                        this.sequence = sequence;
                     this.status = "ready";
                     return;
                 }
                 const event = (0, model_js_1.inbound)(frame);
-                this.onEvent(event);
+                await this.onEvent(event);
+                if (sequence !== null)
+                    this.sequence = sequence;
                 this.receivedCount++;
                 return;
             }

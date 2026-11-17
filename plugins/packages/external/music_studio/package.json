@@ -1,0 +1,24 @@
+{
+  "name": "operit-music-studio",
+  "version": "0.1.2",
+  "private": true,
+  "description": "AI-first, sample-free synthesis studio for Operit ToolPkg",
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p web/tsconfig.json",
+    "build": "npm run build:dsp && npm run build:demo && npm run typecheck && npm run build:runtime && node scripts/build.mjs",
+    "pack:toolpkg": "npm run build && node scripts/pack.mjs",
+    "test": "node --test tests/*.test.mjs",
+    "test:browser": "node tests/browser.mjs",
+    "preview": "node scripts/serve.mjs",
+    "build:dsp": "node scripts/build-wasm.mjs",
+    "build:demo": "node scripts/import-demo-midi.mjs",
+    "build:runtime": "node scripts/compile.mjs"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "fflate": "0.8.2",
+    "playwright": "1.55.1",
+    "typescript": "5.9.2"
+  },
+  "packageManager": "pnpm@10.7.0"
+}

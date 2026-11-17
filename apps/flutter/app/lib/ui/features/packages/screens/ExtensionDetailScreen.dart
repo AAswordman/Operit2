@@ -17,6 +17,7 @@ import '../components/ExtensionMotion.dart';
 import '../components/ExtensionTopBar.dart';
 import '../components/StoreDetailKit.dart';
 import '../components/StoreVisuals.dart';
+import '../components/ToolPkgDependencyTree.dart';
 import '../dialogs/MCPConfigDialogs.dart';
 import '../dialogs/A2AImportDialog.dart';
 import '../dialogs/A2ATaskDialog.dart';
@@ -24,6 +25,7 @@ import '../dialogs/MCPToolRunDialog.dart';
 import '../dialogs/PackageToolRunDialog.dart';
 import '../model/DeviceSpaceState.dart';
 import '../model/ExtensionCatalogController.dart';
+import '../model/ToolPkgDependencyGraph.dart';
 import '../utils/MCPCommandRunner.dart';
 import '../utils/PackageDisplayUtils.dart';
 import 'ToolPkgDesktopWidgetsScreen.dart';
@@ -52,10 +54,15 @@ sealed class _KindDetails {
 }
 
 class _ToolPkgDetails extends _KindDetails {
-  const _ToolPkgDetails({required this.runtime, required this.details});
+  const _ToolPkgDetails({
+    required this.runtime,
+    required this.details,
+    required this.runtimes,
+  });
 
   final core_proxy.ToolPkgContainerRuntime runtime;
   final core_proxy.ToolPkgContainerDetails? details;
+  final List<core_proxy.ToolPkgContainerRuntime> runtimes;
 }
 
 class _ScriptDetails extends _KindDetails {
@@ -169,8 +176,11 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     if (entry == null) {
       return;
     }
+    final catalogRevision = widget.kind == 'toolpkg'
+        ? _controller.snapshot?.revision
+        : null;
     final marker =
-        '${entry.activationState}|${entry.runtimeState}|${entry.version}|${entry.scope}';
+        '${entry.activationState}|${entry.runtimeState}|${entry.version}|${entry.scope}|$catalogRevision';
     if (marker == _detailsMarker) {
       return;
     }
@@ -207,7 +217,11 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
           packageName: widget.id,
           useEnglish: _useEnglish,
         );
-        return _ToolPkgDetails(runtime: runtime, details: details);
+        return _ToolPkgDetails(
+          runtime: runtime,
+          details: details,
+          runtimes: runtimes,
+        );
       case 'script':
         final packages = await _clients.application
             .packageManager()
@@ -716,6 +730,11 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
   List<Widget> _toolPkgSections(bool enabled, _ToolPkgDetails data) {
     final runtime = data.runtime;
     final details = data.details;
+    final graph = ToolPkgDependencyGraph(
+      root: runtime,
+      runtimes: data.runtimes,
+      installed: _controller.snapshot?.installed ?? const [],
+    );
     return <Widget>[
       if (runtime.dependencyIssues.isNotEmpty)
         StoreDetailSection(
@@ -781,26 +800,11 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
                   ],
                 ),
         ),
-      if (details != null && details.requires.isNotEmpty)
-        StoreDetailSection(
-          title: '依赖',
-          count: details.requires.length,
-          child: StoreGroupedList(
-            children: <Widget>[
-              for (final requirement in details.requires)
-                StoreListRow(
-                  leading: const StoreRowGlyph(icon: Icons.link_rounded),
-                  title: requirement.id,
-                  subtitle: <String>[
-                    requirement.description,
-                    if (requirement.minVersion != null)
-                      '≥ ${requirement.minVersion}',
-                    if (requirement.maxVersion != null)
-                      '≤ ${requirement.maxVersion}',
-                  ].where((part) => part.trim().isNotEmpty).join(' · '),
-                ),
-            ],
-          ),
+      if (graph.nodes.isNotEmpty)
+        ToolPkgDependencyTree(
+          clients: _clients,
+          rootId: runtime.packageName,
+          nodes: graph.nodes.toList(),
         ),
       if (details != null && details.workspaceTemplates.isNotEmpty)
         StoreDetailSection(

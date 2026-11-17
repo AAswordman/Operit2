@@ -51,6 +51,19 @@ function markdownEnd(source: string, start: number): number | null {
   return null;
 }
 
+/** Distinguishes literal brackets from a link that may still be arriving. */
+function markdownState(source: string, start: number): "literal" | "pending" | "unclosed-link" {
+  const labelStart = source[start] === "!" ? start + 1 : start;
+  let depth = 1, index = labelStart + 1;
+  for (; index < source.length && depth > 0; index++) {
+    if (source[index] === "\\") { index++; continue; }
+    if (source[index] === "[") depth++;
+    if (source[index] === "]") depth--;
+  }
+  if (depth !== 0 || index === source.length) return "pending";
+  return source[index] === "(" ? "unclosed-link" : "literal";
+}
+
 /** Parses stable sentence boundaries and atomic media without splitting protected Markdown entities. */
 export function splitSnapshot(source: string, final: boolean, settings: Settings): RawSegment[] {
   const result: RawSegment[] = [];
@@ -118,7 +131,12 @@ export function splitSnapshot(source: string, final: boolean, settings: Settings
     }
     if (rest.startsWith("![") || rest.startsWith("[")) {
       const end = markdownEnd(source, index);
-      if (end === null) { if (!final) return result; throw new Error("Unclosed Markdown link or image in waifu output"); }
+      if (end === null) {
+        const state = markdownState(source, index);
+        if (state === "unclosed-link") { if (!final) return result; throw new Error("Unclosed Markdown link or image in waifu output"); }
+        if (state === "pending" && !final) return result;
+        index++; continue;
+      }
       if (rest.startsWith("![")) {
         flush(index);
         const image = /^!\[([^\]]*)\]\(([\s\S]+)\)$/.exec(source.slice(index, end))!;

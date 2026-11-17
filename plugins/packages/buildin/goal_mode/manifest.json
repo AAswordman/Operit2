@@ -21,5 +21,6 @@
       "mime": "image/svg+xml"
     }
   ],
-  "installation_scope": "space"
+  "installation_scope": "space",
+  "public_api": "src/api.ts"
 }

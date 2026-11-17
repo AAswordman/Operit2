@@ -233,8 +233,8 @@
           "type": "number",
           "required": false,
           "description": {
-            "zh": "QQ 消息类型，默认 0",
-            "en": "msg_type"
+            "zh": "消息类型；常用 0 文本、2 Markdown、7 媒体、8 图文卡片；可根据显式富消息字段推断",
+            "en": "Message type: 0 text, 2 Markdown, 7 media, 8 card; inferred from rich attributes when omitted"
           }
         },
         {
@@ -271,6 +271,51 @@
           "description": {
             "zh": "额外 QQ 消息字段组成的 JSON 对象文本",
             "en": "payload"
+          }
+        },
+        {
+          "name": "markdown",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "QQ Markdown 对象的 JSON 文本（可省略 msg_type，自动推断为 2）",
+            "en": "QQ Markdown object as JSON; infers msg_type=2"
+          }
+        },
+        {
+          "name": "keyboard",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "QQ 内嵌按钮对象的 JSON 文本",
+            "en": "QQ keyboard object as JSON"
+          }
+        },
+        {
+          "name": "card",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "QQ 图文卡片对象的 JSON 文本（自动推断 msg_type=8）",
+            "en": "QQ card object as JSON; infers msg_type=8"
+          }
+        },
+        {
+          "name": "media",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "已上传媒体对象的 JSON 文本，包含 file_info",
+            "en": "Uploaded media object as JSON with file_info"
+          }
+        },
+        {
+          "name": "message_reference",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "原生引用对象 JSON：message_id 使用事件 referenceIndex（msg_idx），不是内部 Chat ID",
+            "en": "Native reference JSON; message_id uses the event referenceIndex (msg_idx)"
           }
         }
       ]
@@ -305,8 +350,8 @@
           "type": "number",
           "required": false,
           "description": {
-            "zh": "QQ 消息类型，默认 0",
-            "en": "msg_type"
+            "zh": "消息类型；常用 0 文本、2 Markdown、7 媒体、8 图文卡片；可根据显式富消息字段推断",
+            "en": "Message type: 0 text, 2 Markdown, 7 media, 8 card; inferred from rich attributes when omitted"
           }
         },
         {
@@ -343,6 +388,51 @@
           "description": {
             "zh": "额外 QQ 消息字段组成的 JSON 对象文本",
             "en": "payload"
+          }
+        },
+        {
+          "name": "markdown",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "QQ Markdown 对象的 JSON 文本（可省略 msg_type，自动推断为 2）",
+            "en": "QQ Markdown object as JSON; infers msg_type=2"
+          }
+        },
+        {
+          "name": "keyboard",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "QQ 内嵌按钮对象的 JSON 文本",
+            "en": "QQ keyboard object as JSON"
+          }
+        },
+        {
+          "name": "card",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "QQ 图文卡片对象的 JSON 文本（自动推断 msg_type=8）",
+            "en": "QQ card object as JSON; infers msg_type=8"
+          }
+        },
+        {
+          "name": "media",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "已上传媒体对象的 JSON 文本，包含 file_info",
+            "en": "Uploaded media object as JSON with file_info"
+          }
+        },
+        {
+          "name": "message_reference",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "原生引用对象 JSON：message_id 使用事件 referenceIndex（msg_idx），不是内部 Chat ID",
+            "en": "Native reference JSON; message_id uses the event referenceIndex (msg_idx)"
           }
         }
       ]
@@ -433,6 +523,33 @@
           "description": {
             "zh": "Waifu 插件配置名称",
             "en": "Named waifu dependency profile"
+          }
+        },
+        {
+          "name": "group_context",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "shared 默认群共享线性上下文；member 按成员隔离，同群仍串行",
+            "en": "shared 默认群共享线性上下文；member 按成员隔离，同群仍串行"
+          }
+        },
+        {
+          "name": "group_reply_mode",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "mentioned 默认仅被 @ 回复；all 回复所有实际收到的群消息",
+            "en": "mentioned 默认仅被 @ 回复；all 回复所有实际收到的群消息"
+          }
+        },
+        {
+          "name": "listen_group_messages",
+          "type": "boolean",
+          "required": false,
+          "description": {
+            "zh": "是否记录实际收到的普通群消息，默认 true；不改变平台事件权限",
+            "en": "是否记录实际收到的普通群消息，默认 true；不改变平台事件权限"
           }
         }
       ]
@@ -540,6 +657,186 @@
           }
         }
       ]
+    },
+    {
+      "name": "qqbot_upload_media",
+      "description": {
+        "zh": "上传图片、视频、语音或文件并返回 file_info，不发送消息。",
+        "en": "Upload image, video, audio or file and return file_info without sending."
+      },
+      "parameters": [
+        {
+          "name": "scene",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "c2c 或 group",
+            "en": "c2c or group"
+          }
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "目标 user_openid 或 group_openid",
+            "en": "Target openid"
+          }
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "image 图片、video 视频、audio 语音、file 文件",
+            "en": "image, video, audio or file"
+          }
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "HTTP(S) 地址或宿主本地文件路径；本地直传最多 5 MiB",
+            "en": "HTTP(S) URL or host file path; direct local uploads up to 5 MiB"
+          }
+        },
+        {
+          "name": "file_name",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "上传文件名；本地文件默认取路径中的文件名",
+            "en": "Optional upload filename"
+          }
+        }
+      ]
+    },
+    {
+      "name": "qqbot_send_media",
+      "description": {
+        "zh": "上传并发送图片、视频、语音或文件，可携带正文、被动回复 ID 和原生引用。",
+        "en": "Upload and send image, video, audio or file with optional text and native quote."
+      },
+      "parameters": [
+        {
+          "name": "scene",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "c2c 或 group",
+            "en": "c2c or group"
+          }
+        },
+        {
+          "name": "target",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "目标 user_openid 或 group_openid",
+            "en": "Target openid"
+          }
+        },
+        {
+          "name": "kind",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "image 图片、video 视频、audio 语音、file 文件",
+            "en": "image, video, audio or file"
+          }
+        },
+        {
+          "name": "source",
+          "type": "string",
+          "required": true,
+          "description": {
+            "zh": "HTTP(S) 地址或宿主本地文件路径；本地直传最多 5 MiB",
+            "en": "HTTP(S) URL or host file path; direct local uploads up to 5 MiB"
+          }
+        },
+        {
+          "name": "file_name",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "上传文件名；本地文件默认取路径中的文件名",
+            "en": "Optional upload filename"
+          }
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "随媒体发送的正文",
+            "en": "Optional caption"
+          }
+        },
+        {
+          "name": "msg_id",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "被动回复的原始消息 ID",
+            "en": "Passive reply message ID"
+          }
+        },
+        {
+          "name": "event_id",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "被动回复的事件 ID",
+            "en": "Passive reply event ID"
+          }
+        },
+        {
+          "name": "msg_seq",
+          "type": "number",
+          "required": false,
+          "description": {
+            "zh": "发送序号，省略时自动递增",
+            "en": "Optional sequence; automatically incremented"
+          }
+        },
+        {
+          "name": "message_reference",
+          "type": "string",
+          "required": false,
+          "description": {
+            "zh": "原生引用对象 JSON，message_id 为 referenceIndex（msg_idx）",
+            "en": "Native reference object as JSON"
+          }
+        }
+      ]
+    },
+    {
+      "name": "qqbot_chat_context",
+      "description": {
+        "zh": "读取当前 QQ Bot 会话的近期聊天前文，被 @ 时可用来了解群友讨论。默认20条，最多50条和12000字，不消费消息；成员隔离时只返回当前成员消息。只能用于 Bot 绑定聊天。",
+        "en": "Read bounded recent messages for the current QQ Bot chat, scoped to its conversation and member isolation setting."
+      },
+      "parameters": [
+        {
+          "name": "limit",
+          "type": "number",
+          "required": false,
+          "description": {
+            "zh": "返回条数，1..50，默认20",
+            "en": "Message count, 1..50, default 20"
+          }
+        },
+        {
+          "name": "before",
+          "type": "number",
+          "required": false,
+          "description": {
+            "zh": "只读取此接收时间（毫秒）之前的消息",
+            "en": "Only messages received before this epoch millisecond"
+          }
+        }
+      ]
     }
   ],
   "enabled_by_default": true
@@ -549,7 +846,9 @@ import { stream as waifuStream, type Segment } from "./dependencies/waifu/api.js
 import { call } from "./rpc.js";
 import { object, type AutoReplyParams, type ConfigureParams, type ReceiveParams, type Response, type SendParams } from "./model.js";
 
-type ToolSendParams = Omit<SendParams, "payload"> & { payload?: string };
+type JsonField = "payload" | "markdown" | "keyboard" | "card" | "media" | "message_reference";
+type ToolSendParams = Omit<SendParams, JsonField> & Partial<Record<JsonField, string>>;
+type ToolMediaParams = { scene: "c2c" | "group"; target: string; kind: import("./channel-api.js").MediaKind; source: string; file_name?: string };
 
 /** Describes the v2 setup and event-based reply workflow. */
 export function usage_advice(): { advice: string } {
@@ -573,8 +872,12 @@ export function qqbot_receive_events(params: ReceiveParams = {}): Promise<Respon
 export function qqbot_clear_events(): Promise<Response> { return call({ action: "clear" }); }
 /** Parses the explicitly declared JSON payload tool argument. */
 function sendParams(params: ToolSendParams): SendParams {
-  const { payload, ...fields } = params;
-  return payload === undefined ? fields : { ...fields, payload: object(JSON.parse(payload), "payload") };
+  const { payload, markdown, keyboard, card, media, message_reference, ...fields } = params;
+  const result: SendParams = { ...fields };
+  for (const [field, value] of Object.entries({ payload, markdown, keyboard, card, media, message_reference })) {
+    if (value !== undefined) (result as Record<string, unknown>)[field] = object(JSON.parse(value), field);
+  }
+  return result;
 }
 /** Sends one C2C message through the configured QQ application. */
 export function qqbot_send_c2c_message(params: ToolSendParams & { openid: string }): Promise<Response> { return call({ action: "send_c2c", params: { ...sendParams(params), openid: params.openid } }); }
@@ -604,4 +907,22 @@ export async function qqbot_waifu_preview(params: { chat_id: string; message: st
 /** Uploads media through the actual QQ owner runtime without submitting a message. */
 export function qqbot_upload_image(params: { scene: "c2c" | "group"; target: string; source: string }): Promise<Response> {
   return call({ action: "upload_image", ...params });
+}
+
+/** Uploads any supported QQ media type without sending it. */
+export function qqbot_upload_media(params: ToolMediaParams): Promise<Response> {
+  return call({ action: "upload_media", scene: params.scene, target: params.target,
+    media: { kind: params.kind, source: params.source, fileName: params.file_name } });
+}
+/** Sends uploaded media with typed routing, text and quote fields. */
+export function qqbot_send_media(params: ToolMediaParams & ToolSendParams): Promise<Response> {
+  const { scene, target, kind, source, file_name, ...fields } = params;
+  return call({ action: "send_media", scene, target, media: { kind, source, fileName: file_name }, params: sendParams(fields) });
+}
+
+/** Reads history only for the caller's actual Bot chat; no arbitrary group selector. */
+export function qqbot_chat_context(params: { limit?: number; before?: number } = {}): Promise<Response> {
+  const chatId = getChatId();
+  if (!chatId) throw new Error("请在 QQ Bot 绑定的聊天中读取群聊上下文。");
+  return call({ action: "chat_context", chatId, ...params });
 }

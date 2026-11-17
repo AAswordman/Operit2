@@ -3,12 +3,16 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.channelRequest = channelRequest;
 exports.registerToolPkg = registerToolPkg;
 const settings_ui_js_1 = __importDefault(require("./ui/settings.ui.js"));
 const service_js_1 = require("./service.js");
 (0, service_js_1.registerService)();
+/** Public, versioned channel contract for declared dependent plugins. */
+async function channelRequest(event) { return (0, service_js_1.channel)(event.payload); }
 /** Registers WeChat settings and the application-owned Bot lifecycle. */
 function registerToolPkg() {
+    ToolPkg.registerApi({ name: "channel.v1", function: channelRequest });
     ToolPkg.registerToolboxUiModule({
         id: "wechat_settings",
         runtime: "compose_dsl",

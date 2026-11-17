@@ -1,0 +1,35 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {objectStorage} from '../../../external/qqbot/tests/storage.mjs';
+const require=createRequire(import.meta.url),storage=objectStorage();
+globalThis.ToolPkg={getSpaceDataDir:()=>'/status-test'};globalThis.Tools={Storage:{objects:storage}};
+const {Repository}=require('../dist/storage.js'),{CaptureCoordinator}=require('../dist/capture.js');
+const repo=new Repository(), capture=new CaptureCoordinator(repo,{},()=>200,()=>{});
+const id='mwk7ymd6-15754ab8b41b78eeddc61ced9f567d4f';
+const message=(channel,key,author,text,autoReplyEnabled,media=false)=>({key,channel,accountId:'account',messageId:key,conversationId:'group',authorId:author,text,timestamp:'100',autoReplyEnabled,context:channel==='qq'?{raw:{attachments:media?[{filename:'bug.png'}]:[]}}:{items:media?[{type:2,image_item:{}}]:[{type:1,text_item:{text}}]}});
+const record=(m)=>({message:m,parentChatId:'parent',projectPath:'/game',receivedAt:100,ticketId:null});
+for(const channel of ['qq','wechat']) test(`${channel} status questions do not create bugs and never reveal another sender`,async()=>{
+ const ticketId=channel==='qq'?id:'mwk7ymd6-25754ab8b41b78eeddc61ced9f567d4f';
+ const original=message(channel,`${channel}-source`,'alice','按钮坏了',true);await repo.capture(record(original));
+ const row=(await repo.pendingCaptures()).find(x=>x.key===original.key);
+ await repo.publish({schemaVersion:1,id:ticketId,parentChatId:'parent',projectPath:'/game',source:channel,feedback:'private',stage:'review',createdAt:100,updatedAt:101,agentId:null,attempt:0,error:null,notes:[]},[row]);
+ // The query without an ID lists only this sender's own ticket.
+ const q=message(channel,`${channel}-status`,'alice','现在工单进度怎么样？',false);
+ assert.equal((await capture.capture('parent','/game',q)).saved,true);
+ assert.equal((await capture.capture('parent','/game',q)).saved,false);
+ const exact=message(channel,`${channel}-exact`,'alice',`请问工单 ${ticketId} 进度怎么样？`,false);await capture.capture('parent','/game',exact);
+ const auto=message(channel,`${channel}-auto`,'alice','现在工单进度怎么样？',true);await capture.capture('parent','/game',auto);
+ const stranger=message(channel,`${channel}-stranger`,'bob','现在工单进度怎么样？',false);await capture.capture('parent','/game',stranger);
+ const photo=message(channel,`${channel}-photo`,'alice','进度怎么样？',false,true);await capture.capture('parent','/game',photo);
+ const mixed=message(channel,`${channel}-mixed`,'alice','按钮还是坏了，进度怎么样？',false);await capture.capture('parent','/game',mixed);
+ const pending=await repo.pendingCaptures();assert.ok(!pending.some(x=>x.key===q.key || x.key===auto.key || x.key===stranger.key));
+ assert.ok(pending.some(x=>x.key===photo.key));assert.ok(pending.some(x=>x.key===mixed.key));
+ const notices=await repo.channelNotifications(channel,'parent','/game','group',1);
+ const own=notices.find(x=>x.messageKey===q.key), foreign=notices.find(x=>x.messageKey===stranger.key);
+ assert.match(own.text,/正在验收/);assert.match(own.text,new RegExp(ticketId));
+ assert.match(notices.find(x=>x.messageKey===exact.key).text,new RegExp(ticketId));
+ assert.match(foreign.text,/没有找到/);assert.doesNotMatch(foreign.text,new RegExp(ticketId));
+ assert.equal(notices.some(x=>x.messageKey===auto.key),false);
+ assert.doesNotMatch(JSON.stringify(notices),/private/);
+});

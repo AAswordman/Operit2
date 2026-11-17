@@ -336,6 +336,8 @@ pub struct SdkToolPkgContainerRuntime {
     pub publicApis: Vec<SdkToolPkgRegisteredFunctionHook>,
     #[serde(rename = "requires")]
     pub requires: Vec<SdkToolPkgManifestRequirement>,
+    #[serde(rename = "optional_requires")]
+    pub optionalRequires: Vec<SdkToolPkgManifestRequirement>,
     #[serde(rename = "dependencyIssues")]
     pub dependencyIssues: Vec<SdkToolPkgDependencyIssue>,
     #[serde(rename = "manifestExtensions")]

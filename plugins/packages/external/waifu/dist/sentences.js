@@ -70,6 +70,24 @@ function markdownEnd(source, start) {
     }
     return null;
 }
+/** Distinguishes literal brackets from a link that may still be arriving. */
+function markdownState(source, start) {
+    const labelStart = source[start] === "!" ? start + 1 : start;
+    let depth = 1, index = labelStart + 1;
+    for (; index < source.length && depth > 0; index++) {
+        if (source[index] === "\\") {
+            index++;
+            continue;
+        }
+        if (source[index] === "[")
+            depth++;
+        if (source[index] === "]")
+            depth--;
+    }
+    if (depth !== 0 || index === source.length)
+        return "pending";
+    return source[index] === "(" ? "unclosed-link" : "literal";
+}
 /** Parses stable sentence boundaries and atomic media without splitting protected Markdown entities. */
 function splitSnapshot(source, final, settings) {
     const result = [];
@@ -167,9 +185,16 @@ function splitSnapshot(source, final, settings) {
         if (rest.startsWith("![") || rest.startsWith("[")) {
             const end = markdownEnd(source, index);
             if (end === null) {
-                if (!final)
+                const state = markdownState(source, index);
+                if (state === "unclosed-link") {
+                    if (!final)
+                        return result;
+                    throw new Error("Unclosed Markdown link or image in waifu output");
+                }
+                if (state === "pending" && !final)
                     return result;
-                throw new Error("Unclosed Markdown link or image in waifu output");
+                index++;
+                continue;
             }
             if (rest.startsWith("![")) {
                 flush(index);

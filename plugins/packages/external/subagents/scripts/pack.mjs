@@ -26,6 +26,7 @@ async function collect(relative) {
   }
 }
 
+files["src/api.ts"] = new Uint8Array(await readFile(new URL("src/api.ts", root)));
 await collect("dist");
 const manifest = JSON.parse(Buffer.from(files["manifest.json"]).toString("utf8"));
 for (const entry of [manifest.main, ...manifest.subpackages.map(subpackage => subpackage.entry)]) {
@@ -49,6 +50,7 @@ const sandbox = vm.createContext({
     registerChatComposerSlot(slot) { registrations.slots.push(slot); },
     registerUiRoute(route) { registrations.routes.push(route); },
     registerNavigationEntry(entry) { registrations.entries.push(entry); },
+    registerApi() {},
   },
   Tools: new Proxy({}, {
     /** Rejects host work during archive loading and registration. */

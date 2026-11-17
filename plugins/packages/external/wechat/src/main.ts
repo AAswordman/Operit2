@@ -1,10 +1,15 @@
 import settings from "./ui/settings.ui.js";
-import { registerService, restore, terminate } from "./service.js";
+import { channel, registerService, restore, terminate } from "./service.js";
+import type { ChannelRequest } from "./channel-api.js";
 
 registerService();
 
+/** Public, versioned channel contract for declared dependent plugins. */
+export async function channelRequest(event: ToolPkg.PublicApiEvent<ChannelRequest>): Promise<unknown> { return channel(event.payload); }
+
 /** Registers WeChat settings and the application-owned Bot lifecycle. */
 export function registerToolPkg(): boolean {
+  ToolPkg.registerApi({ name: "channel.v1", function: channelRequest });
   ToolPkg.registerToolboxUiModule({
     id: "wechat_settings",
     runtime: "compose_dsl",

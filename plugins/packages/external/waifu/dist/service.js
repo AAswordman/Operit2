@@ -7,6 +7,7 @@ exports.resolveEmotion = resolveEmotion;
 exports.sessionFeed = sessionFeed;
 exports.sessionClose = sessionClose;
 exports.externalSettings = externalSettings;
+exports.modeStatus = modeStatus;
 exports.composePrompt = composePrompt;
 const mode_js_1 = require("./mode.js");
 const sentences_js_1 = require("./sentences.js");
@@ -82,6 +83,11 @@ async function sessionClose(event) {
 function externalSettings(chatId) {
     const active = [...sessions.values()].find(session => session.chatId === chatId);
     return active === undefined ? null : active.settings;
+}
+/** Reports only whether this conversation currently uses Waifu. */
+async function modeStatus(event) {
+    const chatId = (0, settings_js_1.identifier)(event.payload.chatId, "chatId");
+    return { enabled: externalSettings(chatId) !== null || await (0, mode_js_1.modeForChat)(chatId) !== null };
 }
 /** Adds mode rules for ordinary role-bound chat or an explicitly opened dependency session. */
 async function composePrompt(event) {

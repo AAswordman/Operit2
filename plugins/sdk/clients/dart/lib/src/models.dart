@@ -733,6 +733,7 @@ class ToolPkgContainerRuntime {
     required this.publicApi,
     required this.publicApis,
     required this.requires,
+    required this.optionalRequires,
     required this.dependencyIssues,
     required this.manifestExtensions,
     required this.author,
@@ -791,6 +792,7 @@ class ToolPkgContainerRuntime {
     publicApi: value['publicApi'] == null ? null : value['publicApi'] as String,
     publicApis: (value['publicApis'] as List<Object?>).map((item) => ToolPkgRegisteredFunctionHook.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     requires: (value['requires'] as List<Object?>).map((item) => ToolPkgManifestRequirement.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    optionalRequires: (value['optional_requires'] as List<Object?>).map((item) => ToolPkgManifestRequirement.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     dependencyIssues: (value['dependencyIssues'] as List<Object?>).map((item) => ToolPkgDependencyIssue.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     manifestExtensions: (value['manifestExtensions'] as Map).map((key, item) => MapEntry(key as String, item)),
     author: (value['author'] as List<Object?>).map((item) => item as String).toList(growable: false),
@@ -849,6 +851,7 @@ class ToolPkgContainerRuntime {
     'publicApi': publicApi == null ? null : publicApi!,
     'publicApis': publicApis.map((item) => item.toMessagePackValue()).toList(growable: false),
     'requires': requires.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'optional_requires': optionalRequires.map((item) => item.toMessagePackValue()).toList(growable: false),
     'dependencyIssues': dependencyIssues.map((item) => item.toMessagePackValue()).toList(growable: false),
     'manifestExtensions': manifestExtensions.map((key, item) => MapEntry(key, item)),
     'author': author.map((item) => item).toList(growable: false),
@@ -905,6 +908,7 @@ class ToolPkgContainerRuntime {
   final String? publicApi;
   final List<ToolPkgRegisteredFunctionHook> publicApis;
   final List<ToolPkgManifestRequirement> requires;
+  final List<ToolPkgManifestRequirement> optionalRequires;
   final List<ToolPkgDependencyIssue> dependencyIssues;
   final Map<String, Object?> manifestExtensions;
   final List<String> author;

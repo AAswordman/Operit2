@@ -2,6 +2,9 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.mergeInput = mergeInput;
 const mode_js_1 = require("./mode.js");
+const MAX_BATCH_WAIT_MS = 15000;
+const MAX_BATCH_MESSAGES = 20;
+const MAX_BATCH_CHARS = 16000;
 const batches = new Map();
 const operations = new Map();
 const deliveries = new Map();
@@ -9,8 +12,13 @@ const deliveries = new Map();
 async function deliver(request) {
     const previous = deliveries.get(request.chatId);
     const operation = (async () => {
-        if (previous !== undefined)
-            await previous;
+        // A failed earlier send must not discard a later accepted user message.
+        if (previous !== undefined) {
+            try {
+                await previous;
+            }
+            catch { /* prior failure was already reported */ }
+        }
         const receipt = await Tools.Chat.sendMessage(request);
         if (receipt.outcome.type !== "committed" || receipt.outcome.status !== "completed")
             throw new Error(`Waifu queued send did not complete: ${JSON.stringify(receipt.outcome)}`);
@@ -35,6 +43,7 @@ function flush(chatId) {
         return;
     batches.delete(chatId);
     clearTimeout(batch.timer);
+    clearTimeout(batch.deadline);
     submit({ kind: "submit", chatId: batch.chatId, runtime: batch.runtime,
         input: { text: batch.text.join("\n"), attachments: [], replyToMessageTimestamp: null },
         turn: { kind: "execute" }, notifyReply: batch.notifyReply });
@@ -72,18 +81,27 @@ async function accept(event) {
         batch = undefined;
     }
     if (batch === undefined) {
-        batch = { chatId, runtime: payload.runtime, notifyReply: payload.notifyReply, text: [], timer: 0 };
+        batch = { chatId, runtime: payload.runtime, notifyReply: payload.notifyReply, text: [], timer: 0, deadline: 0, size: 0 };
         batches.set(chatId, batch);
+        // A continuous stream of short messages must not postpone the first reply forever.
+        batch.deadline = setTimeout(() => flush(chatId), MAX_BATCH_WAIT_MS);
     }
     clearTimeout(batch.timer);
     batch.text.push(payload.text);
-    batch.timer = setTimeout(() => flush(chatId), mode.mergeDelayMs);
-    return { action: "Consume", clearInput: true, metadata: { waifuMerged: true, queuedMessages: batch.text.length } };
+    batch.size += payload.text.length;
+    const queuedMessages = batch.text.length;
+    if (queuedMessages >= MAX_BATCH_MESSAGES || batch.size >= MAX_BATCH_CHARS)
+        flush(chatId);
+    else
+        batch.timer = setTimeout(() => flush(chatId), mode.mergeDelayMs);
+    return { action: "Consume", clearInput: true, metadata: { waifuMerged: true, queuedMessages } };
 }
 /** Serializes human input edits while native API sends retain their explicit execution contract. */
 async function mergeInput(event) {
-    const { chatId, source } = event.eventPayload;
-    if (chatId === undefined || event.event !== "submit_requested" || source === "Sequence" || source === "Tool")
+    const { chatId, source, isProcessing } = event.eventPayload;
+    // The host owns busy-chat queue, guide and interrupt actions. Consuming here would
+    // convert a user's interruption into a later ordinary turn and hide their intent.
+    if (chatId === undefined || event.event !== "submit_requested" || source === "Sequence" || source === "Tool" || isProcessing === true)
         return;
     const previous = operations.get(chatId);
     const operation = (async () => { if (previous !== undefined)

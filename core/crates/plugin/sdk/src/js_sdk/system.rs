@@ -661,6 +661,9 @@ pub trait SystemTerminalHost: Send + Sync {
     ///@returns Promise resolving to the session close result.
     ///
     fn close(&self, sessionId: String) -> JsFuture<TerminalSessionCloseResultData>;
+    /// Atomically close an idle session only when it belongs to the supplied name.
+    /// Hosts without atomic support reject this operation without closing the session.
+    fn closeIfIdle(&self, sessionId: String, sessionName: String) -> JsFuture<TerminalSessionCloseResultData>;
     ///
     ///Get the current visible terminal screen content for a session (single screen only, no history).
     ///@param sessionId The ID of the session.

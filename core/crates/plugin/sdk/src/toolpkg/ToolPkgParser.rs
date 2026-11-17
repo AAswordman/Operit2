@@ -540,6 +540,9 @@ pub struct ToolPkgContainerRuntime {
     #[serde(rename = "publicApis", default)]
     pub publicApis: Vec<ToolPkgRegisteredFunctionHook>,
     pub requires: Vec<ToolPkgManifestRequirement>,
+    /// Public API providers that may be absent or disabled without blocking this package.
+    #[serde(rename = "optional_requires", default)]
+    pub optionalRequires: Vec<ToolPkgManifestRequirement>,
     #[serde(rename = "dependencyIssues", default)]
     pub dependencyIssues: Vec<ToolPkgDependencyIssue>,
     #[serde(rename = "manifestExtensions", default)]
@@ -664,6 +667,9 @@ pub struct ToolPkgManifest {
     pub publicApi: Option<String>,
     #[serde(default)]
     pub requires: Vec<ToolPkgManifestRequirement>,
+    /// Public API providers that may be absent or disabled without blocking this package.
+    #[serde(rename = "optional_requires", default)]
+    pub optionalRequires: Vec<ToolPkgManifestRequirement>,
     #[serde(default)]
     pub main: String,
     #[serde(rename = "display_name", default)]
@@ -845,6 +851,10 @@ impl ToolPkgArchiveParser {
         }
         let apiVersion = requireSupportedToolPkgApiVersion(&manifest.apiVersion)?;
         let mut requires = normalizeRequirements("manifest.requires", &manifest.requires)?;
+        let optionalRequires = normalizeRequirements("manifest.optional_requires", &manifest.optionalRequires)?;
+        if optionalRequires.iter().any(|optional| requires.iter().any(|required| required.id.eq_ignore_ascii_case(&optional.id))) {
+            return Err("A dependency cannot appear in both requires and optional_requires".to_string());
+        }
         applyCompatibilityRequirements(apiVersion, &manifest.toolpkgId, &mut requires)?;
         let base = entry.rsplit_once('/').map(|(base, _)| base).unwrap_or("");
         let mut subpackagePackages = Vec::new();
@@ -936,7 +946,7 @@ impl ToolPkgArchiveParser {
             subpackagePackages,
             containerRuntime: ToolPkgContainerRuntime {
                 packageName: manifest.toolpkgId, displayName, description,
-                version: manifest.version, apiVersion: apiVersion.to_string(), requires,
+                version: manifest.version, apiVersion: apiVersion.to_string(), requires, optionalRequires,
                 author: manifest.author, sourceType, sourcePath: sourcePath.into(),
                 mainEntry, subpackages, resources, logoResource, manifestExtensions,
                 themes: manifest.themes, license: manifest.license,
@@ -1003,6 +1013,10 @@ impl ToolPkgArchiveParser {
         let apiVersion = requireSupportedToolPkgApiVersion(&manifest.apiVersion)?;
         let apiVersionText = apiVersion.to_string();
         let mut requires = normalizeRequirements("manifest.requires", &manifest.requires)?;
+        let optionalRequires = normalizeRequirements("manifest.optional_requires", &manifest.optionalRequires)?;
+        if optionalRequires.iter().any(|optional| requires.iter().any(|required| required.id.eq_ignore_ascii_case(&optional.id))) {
+            return Err("A dependency cannot appear in both requires and optional_requires".to_string());
+        }
         applyCompatibilityRequirements(apiVersion, &manifest.toolpkgId, &mut requires)?;
         validateProtectedEntryPolicy(
             &manifest,
@@ -1677,6 +1691,7 @@ impl ToolPkgArchiveParser {
             publicApi,
             publicApis: mainRegistration.publicApis.clone(),
             requires,
+            optionalRequires,
             dependencyIssues: Vec::new(),
             manifestExtensions,
             author: manifest.author.clone(),

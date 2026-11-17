@@ -27,12 +27,12 @@ Operit 官方可选插件，包 ID `com.operit.wechat_bot`，ToolPkg API `2.0.0`
 
 ## 交付与生命周期
 
-- 设置页和工具通过包内 IPC 访问唯一 main runtime。每个设备只运行一个监听；一次只处理一条自动回复。
+- 设置页和工具通过包内 IPC 访问唯一 main runtime。每个设备只运行一个监听；自动回复最多并行处理三个用户，同一用户的消息保持顺序。
 - `installation_scope: "device"`。登录凭据、队列、游标、回复配置和会话绑定只保存在本设备，不同步到共享空间。会话绑定包含 Bot ID，切换账号不混用聊天记录。
 - `get_updates_buf`、整批验证后的入站消息、去重标识和回复上下文一起持久化。畸形批次和队列溢出不会部分写入或推进游标。队列容量 200，去重窗口 512，手动读取默认消费，预览请传 `consume: false`。
 - 只有收到成功的 `getupdates` 响应才显示「微信已连接」。服务端给出的长轮询超时用于下一次请求；网络或业务错误停止当前监听并展示错误，不自动重发消息。
 - 停止和退出会先阻止新的回复、取消实际原生 Chat 请求，然后等待已经发出的 HTTP 请求结束。当前网络接口没有单次请求取消句柄，因此停止可能等待本次长轮询到期，不会另开第二个监听绕过它。
-- 每条自动回复在认领前保存交付记录，每段收到发送成功后保存已交付数量。失败、部分交付或应用中断后，保留记录并暂停后续自动回复，等待用户明确选择「重试整个请求」或「跳过」。重试可能重复已交付的内容，设置页会明确提示。
+- 每条自动回复在认领后、开始处理前保存交付记录，每段收到发送成功后保存已交付数量。失败、部分交付或应用中断后，保留记录并暂停该用户的后续自动回复，其他用户可继续按顺序处理。设置页可逐条选择「重试整个请求」或「跳过」；重试可能重复已交付的内容，需先核对。失败与进行中的记录合计达到 200 条时暂停认领新消息，处理记录后恢复。
 - 设置页状态刷新不覆盖未保存的输入；关闭页面会释放状态刷新定时器。保存回复设置不会启动已停止的监听，也不会打断仍启用的当前回复。
 - 应用需保持运行才能接收消息。当前实现不注册普通微信群功能，也不读取个人微信的好友列表或全部聊天记录。
 
@@ -94,3 +94,24 @@ cargo test -p operit-tools binary_body_tests --lib --offline --locked
 
 - 腾讯微信渠道源码与协议：<https://github.com/Tencent/openclaw-weixin>、<https://github.com/Tencent/openclaw-weixin/blob/main/docs/protocol_zh_CN.md>。
 - 包内二维码生成器：`qrcode-generator` 2.0.4，Copyright (c) Kazuhiko Arase，MIT。保留原始文件及声明中的授权说明，完整授权见 `THIRD_PARTY_LICENSES.md`。
+
+## 渠道公开 API
+
+`manifest.public_api` 发布 `src/channel-api.ts`。调用方在 manifest 中声明本 Bot 为依赖后，只需将该文件复制到自己的 `src/dependencies/wechat/api.ts`，即可本地引用。消息、配置、上下文、请求和返回类型均定义在此单文件内；不需要复制收件箱或 Bot 实现。
+
+```ts
+import {request, peek} from "./dependencies/wechat/api";
+const status = await request({action: "status"});
+const {messages} = await peek(20, "实际会话 ID");
+// 消费者持久化处理成功后，再逐条确认。
+for (const message of messages) {
+  // 先由调用方处理并持久化 message。
+  // await request({action: "ack", key: message.key});
+}
+```
+
+`request` 按 `action` 推导返回类型；未安装、停用、版本不符或调用失败时会拒绝 Promise。`reply` 的上游响应保持 `unknown`，不对平台未承诺的字段作类型保证。
+
+## 会话与维护订阅
+
+`channel.v1` 提供 Bot 自己的私聊会话列表、软件聊天绑定、有界近期历史，以及独立消费者订阅。维护中控自动读取这些会话，直接使用其宿主聊天的工作区，无需再填写微信会话 ID 或父聊天。关闭自动回复时，普通事件队列采用最近 200 条滚动记录；已订阅的维护消息独立持久保存。开启自动回复后仍保留队列容量检查，满载时保留服务器游标，避免无声丢失待回复消息。当前微信通道只支持所接接口实际提供的私聊，不宣称支持普通微信群。

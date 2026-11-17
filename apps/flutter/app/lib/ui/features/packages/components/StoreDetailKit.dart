@@ -428,9 +428,14 @@ class _StoreExpandableTextState extends State<StoreExpandableText> {
 /// It keeps the translucent tint but no per-card blur: section switches fade
 /// whole panes, and a faded backdrop blur drops out mid-transition.
 class StoreGroupedList extends StatelessWidget {
-  const StoreGroupedList({super.key, required this.children});
+  const StoreGroupedList({
+    super.key,
+    required this.children,
+    this.showDividers = true,
+  });
 
   final List<Widget> children;
+  final bool showDividers;
 
   @override
   Widget build(BuildContext context) {
@@ -445,7 +450,7 @@ class StoreGroupedList extends StatelessWidget {
       child: Column(
         children: <Widget>[
           for (var index = 0; index < children.length; index += 1) ...<Widget>[
-            if (index > 0)
+            if (showDividers && index > 0)
               Divider(
                 height: 1,
                 thickness: 1,

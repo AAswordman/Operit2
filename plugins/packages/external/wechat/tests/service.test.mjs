@@ -93,8 +93,8 @@ test("a malformed batch does not advance the cursor or partially append its prec
   assert.equal((await f.status()).service.state, "error");
 });
 
-test("queue overflow leaves the entire server batch and cursor uncommitted", async () => {
-  const f = await fixture();
+test("automatic reply queue overflow leaves the server batch and cursor uncommitted", async () => {
+  const f = await fixture({auto:true});
   const model = load("model");
   f.config.queue = Array.from({ length: 199 }, (_, index) =>
     model.inbound(message(index + 1)),
@@ -135,6 +135,33 @@ test("durable queue, cursor and context are committed together and remote IDs de
   await f.stop();
 });
 
+test("manual queue consumption persists without another config change", async () => {
+  const f = await fixture({ trackTopLevel: true });
+  await f.call({ action: "start" });
+  await f.batch([message(1), message(2, "bob@im.wechat")]);
+  await f.call({ action: "receive", params: { user_id: "alice@im.wechat" } });
+  const saved = structuredClone(f.snapshots.at(-1));
+  assert.deepEqual(saved.queue.map((event) => event.messageId), ["2"]);
+  await f.stop();
+  const restored = await fixture({ config: saved });
+  const result = await restored.call({ action: "receive", params: { consume: false } });
+  assert.deepEqual(plain(result.events).map((event) => event.messageId), ["2"]);
+});
+
+test("resetting a binding persists across restart without another config change", async () => {
+  const model = load("model");
+  const config = model.defaultConfig();
+  config.account = { botId: "bot", userId: "owner", token: "secret-token", baseUrl: "https://ilinkai.weixin.qq.com" };
+  config.bindings = { "bot:alice": "old-chat", "bot:bob": "other-chat" };
+  const f = await fixture({ config, trackTopLevel: true });
+  await f.call({ action: "reset_conversation", user_id: "alice" });
+  const saved = structuredClone(f.snapshots.at(-1));
+  assert.deepEqual(saved.bindings, { "bot:bob": "other-chat" });
+  const restored = await fixture({ config: saved });
+  assert.equal(restored.config.bindings["bot:alice"], undefined);
+  assert.equal(restored.config.bindings["bot:bob"], "other-chat");
+});
+
 test("stop fences a late getUpdates response without consuming its messages", async () => {
   const f = await fixture();
   await f.call({ action: "start" });
@@ -158,8 +185,11 @@ test("automatic replies use the real Waifu client and a native conversation for 
   await f.time.advance(1200);
   assert.equal(f.created.length, 2);
   assert.equal(f.submitted.length, 3);
-  assert.equal(f.submitted[0].chatId, f.submitted[1].chatId);
-  assert.notEqual(f.submitted[0].chatId, f.submitted[2].chatId);
+  const alice = f.submitted.filter((item) => item.input.text.includes("微信用户=alice@im.wechat"));
+  const bob = f.submitted.find((item) => item.input.text.includes("微信用户=bob@im.wechat"));
+  assert.equal(alice.length, 2);
+  assert.equal(alice[0].chatId, alice[1].chatId);
+  assert.notEqual(alice[0].chatId, bob.chatId);
   assert.equal(
     f.created[0].input["com.operit.character_cards"].selection,
     "card:alice",
@@ -171,29 +201,123 @@ test("automatic replies use the real Waifu client and a native conversation for 
   await f.stop();
 });
 
-test("failed delivery remains recoverable, blocks later automatic claims and never retries itself", async () => {
-  const f = await fixture({ auto: true, failSendAt: 1 });
+test("different peers reply concurrently with a cap and each peer stays FIFO", async () => {
+  const f = await fixture({ auto: true, deferReply: true, firstPart: "先回复。继续生成" });
+  await f.call({ action: "start" });
+  await f.batch([
+    message(1, "alice", "alice-first"), message(2, "alice", "alice-second"),
+    message(3, "bob", "bob-first"), message(4, "carol", "carol-first"), message(5, "dave", "dave-first"),
+  ]);
+  await f.time.advance(400);
+  assert.equal(f.submitted.length, 3);
+  assert.deepEqual(f.submitted.map((item) => item.input.text.match(/微信用户=([^;]+)/)[1]).sort(), ["alice", "bob", "carol"]);
+  assert.equal(f.config.queue.length, 2);
+  assert.equal(f.config.activeDeliveries.length, 3);
+  const aliceChat = f.submitted.find((item) => item.input.text.includes("alice-first")).chatId;
+  assert.deepEqual(plain(await f.service.channel({action:"active_context",chatId:aliceChat})),
+    {channel:"wechat",chatId:aliceChat,accountId:"bot",conversationId:"alice",authorId:"alice"});
+  assert.equal(await f.service.channel({action:"active_context",chatId:"unrelated"}),null);
+  f.completeReply(aliceChat);
+  await settle();
+  await f.time.advance(400);
+  assert.equal(f.submitted.length, 4);
+  assert.match(f.submitted[3].input.text, /alice-second/);
+  assert.equal(f.submitted[3].chatId, aliceChat);
+  assert.equal(f.config.queue.length, 1);
+  await f.stop();
+  assert.equal(await f.service.channel({action:"active_context",chatId:aliceChat}),null);
+  assert.equal(f.cancelled.length, 3);
+  assert.equal(f.config.activeDeliveries.length, 0);
+  assert.equal(f.config.failedDeliveries.length, 3);
+});
+
+test("a failed completion write retains the sent reply for manual review", async () => {
+  let injected = false;
+  const f = await fixture({ auto: true, failFlush(config, sent) {
+    if (!injected && sent > 0 && config.activeDeliveries.length === 0 && config.failedDeliveries.length === 0) {
+      injected = true;
+      return true;
+    }
+    return false;
+  }});
   await f.call({ action: "start" });
   await f.batch([message(1), message(2)]);
-  await f.time.advance(600);
+  await f.time.advance(1200);
+  assert.equal(injected, true);
   assert.equal(f.sends().length, 1);
-  assert.equal(f.config.delivery.state, "failed");
+  assert.equal(f.config.failedDeliveries[0].delivered, 1);
+  assert.match(f.config.failedDeliveries[0].error, /injected config write failure/);
   assert.equal(f.config.queue.length, 1);
+  assert.equal(f.snapshots.at(-1).failedDeliveries[0].delivered, 1);
+  await f.stop();
+});
+
+test("restart marks every concurrent in-flight reply as failed without replay", async () => {
+  const f = await fixture({ auto: true, deferReply: true, firstPart: "收到。继续" });
+  await f.call({ action: "start" });
+  await f.batch([message(1, "alice"), message(2, "bob")]);
+  await f.time.advance(400);
+  const saved = structuredClone(f.snapshots.at(-1));
+  assert.equal(saved.activeDeliveries.length, 2);
+  await f.stop();
+  const restored = await fixture({ config: saved });
+  const deliveries = (await restored.status()).autoReply.deliveries;
+  assert.equal(deliveries.length, 2);
+  assert.ok(deliveries.every((item) => item.state === "failed"));
+  assert.equal(restored.sends().length, 0);
+});
+
+test("failed delivery blocks only its own user and never retries itself", async () => {
+  const f = await fixture({ auto: true, failSendAt: 1 });
+  await f.call({ action: "start" });
+  await f.batch([message(1), message(2), message(3, "bob@im.wechat")]);
+  await f.time.advance(1000);
+  assert.equal(f.sends().length, 2);
+  assert.equal(f.config.failedDeliveries[0].state, "failed");
+  assert.equal(f.config.queue.length, 1);
+  assert.equal(f.sends()[1].body.msg.to_user_id, "bob@im.wechat");
   await f.time.advance(5000);
-  assert.equal(f.sends().length, 1);
+  assert.equal(f.sends().length, 2);
   await f.call({ action: "delivery_resolve", resolution: "discard" });
   await f.time.advance(400);
-  assert.equal(f.sends().length, 2);
+  assert.equal(f.sends().length, 3);
   assert.equal(f.config.delivery, null);
   await f.stop();
 });
 
+
+test("multiple failures require an exact selection and preserve per-user order", async () => {
+  const model = load("model");
+  const config = model.defaultConfig();
+  config.account = { botId: "bot", userId: "owner@im.wechat", token: "secret-token", baseUrl: "https://ilinkai.weixin.qq.com" };
+  config.autoReply.enabled = true;
+  config.failedDeliveries = ["alice@im.wechat", "bob@im.wechat"].map((user, index) => ({
+    event: model.inbound(message(index + 1, user)), state: "failed", delivered: index, error: "interrupted",
+  }));
+  const f = await fixture({ config, auto: true });
+  await f.call({ action: "start" });
+  await f.batch([message(3), message(4, "bob@im.wechat"), message(5, "carol@im.wechat")]);
+  await f.time.advance(600);
+  assert.equal(f.sends().length, 1);
+  assert.equal(f.sends()[0].body.msg.to_user_id, "carol@im.wechat");
+  assert.equal((await f.status()).autoReply.deliveries.length, 2);
+  await assert.rejects(f.call({ action: "delivery_resolve", resolution: "discard" }), /多条/);
+  await f.call({ action: "delivery_resolve", resolution: "retry", message_id: "2", user_id: "bob@im.wechat" });
+  await f.time.advance(800);
+  assert.equal(f.sends().length, 3);
+  assert.equal(f.config.failedDeliveries.length, 1);
+  assert.equal(f.config.queue.length, 1);
+  await f.stop();
+});
+
 test("explicit retry reclaims the failed message once and retains its existing conversation", async () => {
-  const f = await fixture({ auto: true, failSendAt: 1 });
+  const f = await fixture({ auto: true, failSendAt: 1, trackTopLevel: true });
   await f.call({ action: "start" });
   await f.batch([message(1)]);
   await f.time.advance(400);
   await f.call({ action: "delivery_resolve", resolution: "retry" });
+  assert.equal(f.snapshots.at(-1).failedDeliveries.length, 0);
+  assert.equal(f.snapshots.at(-1).queue[0].messageId, "1");
   await f.time.advance(400);
   assert.equal(f.sends().length, 2);
   assert.equal(f.created.length, 1);
@@ -215,6 +339,24 @@ test("runtime restoration flags an interrupted delivery instead of silently repl
   assert.equal(f.sends().length, 0);
 });
 
+test("failed deliveries survive a restart and continue to isolate their users", async () => {
+  const f = await fixture({ auto: true, failSendAt: 1 });
+  await f.call({ action: "start" });
+  await f.batch([message(1)]);
+  await f.time.advance(400);
+  const saved = structuredClone(f.snapshots.at(-1));
+  await f.stop();
+  const restarted = await fixture({ config: saved });
+  assert.equal((await restarted.status()).autoReply.deliveries[0].messageId, "1");
+  await restarted.call({ action: "start" });
+  await restarted.batch([message(2), message(3, "bob@im.wechat")]);
+  await restarted.time.advance(700);
+  assert.equal(restarted.sends().length, 1);
+  assert.equal(restarted.sends()[0].body.msg.to_user_id, "bob@im.wechat");
+  assert.equal(restarted.config.queue.length, 1);
+  await restarted.stop();
+});
+
 test("stop cancels an active model and records the uncompleted delivery without sending a final receipt", async () => {
   const f = await fixture({ auto: true, deferReply: true });
   await f.call({ action: "start" });
@@ -224,7 +366,7 @@ test("stop cancels an active model and records the uncompleted delivery without 
   await f.stop();
   assert.deepEqual(f.cancelled, ["chat-1"]);
   assert.equal(f.sends().length, 0);
-  assert.equal(f.config.delivery.state, "failed");
+  assert.equal(f.config.failedDeliveries[0].state, "failed");
   assert.equal(f.time.pending(), 0);
 });
 
@@ -235,8 +377,8 @@ test("reply timeout cancels the actual native model and leaves an actionable fai
   await f.batch([message(1)]);
   await f.time.advance(1400);
   assert.deepEqual(f.cancelled, ["chat-1"]);
-  assert.equal(f.config.delivery.state, "failed");
-  assert.match(f.config.delivery.error, /超时/);
+  assert.equal(f.config.failedDeliveries[0].state, "failed");
+  assert.match(f.config.failedDeliveries[0].error, /超时/);
   await f.stop();
 });
 
@@ -244,15 +386,16 @@ test("a partially delivered reply preserves its successful segment count and nev
   const f = await fixture({
     auto: true,
     failSendAt: 2,
+    trackTopLevel: true,
     replyText: "第一句话。第二句话。",
   });
   await f.call({ action: "start" });
   await f.batch([message(1)]);
   await f.time.advance(1000);
   assert.equal(f.sends().length, 2);
-  assert.equal(f.config.delivery.delivered, 1);
-  assert.equal(f.config.delivery.state, "failed");
-  assert.ok(f.snapshots.some((snapshot) => snapshot.delivery?.delivered === 1));
+  assert.equal(f.config.failedDeliveries[0].delivered, 1);
+  assert.equal(f.config.failedDeliveries[0].state, "failed");
+  assert.ok(f.snapshots.some((snapshot) => snapshot.activeDeliveries?.some((item) => item.delivered === 1)));
   await f.time.advance(3000);
   assert.equal(f.sends().length, 2);
   await f.stop();
@@ -270,8 +413,8 @@ test("stable streaming sentences reach WeChat before the model completes and sto
   assert.equal(f.sends().length, 1);
   assert.equal(f.sends()[0].body.msg.item_list[0].text_item.text, "先说一句。");
   await f.stop();
-  assert.equal(f.config.delivery.delivered, 1);
-  assert.equal(f.config.delivery.state, "failed");
+  assert.equal(f.config.failedDeliveries[0].delivered, 1);
+  assert.equal(f.config.failedDeliveries[0].state, "failed");
 });
 
 test("saving enabled reply edits does not cancel the in-flight model", async () => {
@@ -284,7 +427,7 @@ test("saving enabled reply edits does not cancel the in-flight model", async () 
     params: { character_selection: "card:new" },
   });
   assert.equal(f.cancelled.length, 0);
-  assert.equal(f.config.delivery.state, "processing");
+  assert.equal(f.config.activeDeliveries[0].state, "processing");
   await f.stop();
 });
 
@@ -393,4 +536,116 @@ test("logout deletes retained account credentials and contexts and cannot reuse 
     /扫码/,
   );
   assert.equal(f.sends().length, 0);
+});
+
+test("channel inbox survives normal queue consumption and supports exact acknowledgement", async () => {
+  const f = await fixture();
+  await f.service.channel({ action: "configure", capture: true });
+  await f.call({ action: "start" });
+  await f.batch([message(71)], "capture-cursor");
+  const first = await f.service.channel({ action: "peek" });
+  assert.equal(first.messages.length, 1); assert.equal(first.messages[0].channel, "wechat"); assert.equal(first.messages[0].autoReplyEnabled,false);
+  await f.call({ action: "receive", params: {} });
+  assert.equal((await f.service.channel({ action: "peek" })).messages.length, 1);
+  assert.equal((await f.service.channel({ action: "ack", key: first.messages[0].key })).acknowledged, true);
+  assert.equal((await f.service.channel({ action: "ack", key: first.messages[0].key })).acknowledged, false);
+  await f.stop();
+});
+
+test("channel storage failure leaves the WeChat server cursor uncommitted", async () => {
+  const f = await fixture();
+  await f.service.channel({ action: "configure", capture: true });
+  await f.call({ action: "start" });
+  f.storage.fail(true); await f.batch([message(72)], "must-not-commit");
+  assert.equal(f.config.cursor, ""); assert.equal(f.config.queue.length, 0);
+  assert.match((await f.status()).service.error, /disk unavailable/);
+  await f.stop();
+});
+
+test("channel capture filters at the WeChat source without consuming other bot messages", async () => {
+  const f = await fixture();
+  await f.service.channel({action:"configure",capture:true,conversationIds:["alice@im.wechat"]});
+  await f.call({action:"start"});
+  await f.batch([message(81,"alice@im.wechat"),message(82,"bob@im.wechat")],"filter-cursor");
+  assert.deepEqual(plain((await f.service.channel({action:"peek"})).messages.map(x => x.conversationId)), ["alice@im.wechat"]);
+  assert.equal(f.config.queue.length, 2);
+  await f.stop();
+});
+
+
+test("WeChat deduplicates within each conversation rather than suppressing equal IDs from other users", async () => {
+  const f = await fixture(); await f.call({action:"start"});
+  await f.batch([message(31,"alice@im.wechat"), message(31,"bob@im.wechat"), message(31,"alice@im.wechat")], "multi-user");
+  assert.deepEqual(Array.from(f.config.queue, e=>e.userId),["alice@im.wechat","bob@im.wechat"]);
+  await f.stop();
+});
+
+test("legacy WeChat seen IDs are handled conservatively during upgrade", async () => {
+  const f = await fixture(); f.config.seen=["31"]; await f.call({action:"start"});
+  await f.batch([message(31,"alice@im.wechat")],"legacy"); assert.equal(f.config.queue.length,0); await f.stop();
+});
+
+
+test("WeChat maintenance-only routing stores batches beyond normal queue capacity", async () => {
+  const f=await fixture();
+  await f.service.channel({action:"configure",capture:true,conversationIds:["alice@im.wechat"],channelOnlyWhenNoAuto:true});
+  await f.call({action:"start"});
+  await f.batch(Array.from({length:210},(_,i)=>message(i+1000,"alice@im.wechat")),"bulk-cursor");
+  await f.time.advance(1000);
+  assert.equal(f.config.cursor,"bulk-cursor"); assert.equal(f.config.queue.length,0);
+  const first=(await f.service.channel({action:"peek",limit:100})).messages;
+  assert.equal(first.length,100);
+  for (const item of first) await f.service.channel({action:"ack",key:item.key});
+  const second=(await f.service.channel({action:"peek",limit:100})).messages;
+  assert.equal(second.length,100);
+  for (const item of second) await f.service.channel({action:"ack",key:item.key});
+  assert.equal((await f.service.channel({action:"peek",limit:100})).messages.length,10);
+  await f.batch([message(1300,"bob@im.wechat")],"other-cursor");
+  assert.equal(f.config.queue.length,1); assert.equal(f.config.queue[0].userId,"bob@im.wechat");
+  await f.stop();
+});
+
+test("WeChat maintenance routing preserves the automatic reply path when enabled", async () => {
+  const f=await fixture({auto:true});
+  await f.service.channel({action:"configure",capture:true,conversationIds:["alice@im.wechat"],channelOnlyWhenNoAuto:true});
+  await f.call({action:"start"}); await f.batch([message(1400)],"auto-cursor");
+  await f.time.advance(1500);
+  assert.equal(f.submitted.length,1);
+  const captured=await f.service.channel({action:"peek"});
+  assert.equal(captured.messages.length,1); assert.equal(captured.messages[0].autoReplyEnabled,true);
+  await f.stop();
+});
+
+
+test("filtered channel peek scans past unrelated history without acknowledging it", async () => {
+  const f = await fixture();
+  for (let i=0;i<150;i++) {
+    const key=`a-${String(i).padStart(3,"0")}`;
+    await f.storage.db.commit([{op:"put",collection:"pending",key,value:{key,conversationId:"other"},expectedVersion:null}]);
+  }
+  await f.storage.db.commit([{op:"put",collection:"pending",key:"z-target",value:{key:"z-target",conversationId:"target"},expectedVersion:null}]);
+  const result=await f.service.channel({action:"peek",limit:20,conversationId:"target"});
+  assert.equal(result.messages.length,1); assert.equal(result.messages[0].key,"z-target");
+  assert.notEqual(await f.storage.db.collection("pending").get("a-000"),null);
+});
+
+test('WeChat channel can reply to an authenticated captured message after acknowledgement', async () => {
+  const f=await fixture();await f.service.channel({action:'configure',capture:true});await f.call({action:'start'});
+  await f.batch([message(1500)],'reply-cursor');const [captured]=(await f.service.channel({action:'peek'})).messages;
+  await f.service.channel({action:'ack',key:captured.key});
+  f.config.contexts['alice@im.wechat']='current-context';
+  const archived=await f.storage.db.collection('seen').get(captured.key);
+  assert.equal(JSON.stringify(archived).includes('ctx-alice'),false);
+  await f.service.channel({action:'reply',key:captured.key,text:'已收到'});
+  assert.equal(f.sends().length,1);assert.equal(f.sends()[0].body.msg.context_token,'current-context');
+  await f.stop();
+});
+
+test("a quiet bot can listen to busy private chats without filling the automatic reply queue",async()=>{
+ const f=await fixture();await f.call({action:"start"});
+ await f.batch(Array.from({length:240},(_,i)=>message(5000+i)),"busy-cursor");
+ assert.equal(f.config.cursor,"busy-cursor");assert.equal(f.config.queue.length,200);assert.equal((await f.status()).service.state,"ready");
+ const sessions=await f.service.channel({action:"conversations"});assert.equal(sessions.conversations.length,1);
+ const history=await f.service.channel({action:"history",conversationKey:sessions.conversations[0].key});assert.equal(history.messages.length,20);
+ await f.stop();
 });

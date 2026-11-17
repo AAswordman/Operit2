@@ -21,6 +21,7 @@ exports.VERSION = "1.0.0";
 /** Creates one device-local account and its durable receive queue. */
 function defaultConfig() {
     return {
+        channelCapture: false, channelOnlyWhenNoAuto: false, channelConversationIds: null,
         account: null,
         listenerEnabled: false,
         autoReply: {
@@ -38,6 +39,8 @@ function defaultConfig() {
         bindings: {},
         history: [],
         delivery: null,
+        failedDeliveries: [],
+        activeDeliveries: [],
     };
 }
 /** Rejects non-object data at protocol boundaries. */

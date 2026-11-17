@@ -1,4 +1,7 @@
 export {
+  goalRead,
+  goalCreate,
+  goalStatus,
   onChatInput,
   onChatViewEvent,
   onGoalCommand,

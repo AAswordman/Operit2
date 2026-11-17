@@ -1,0 +1,22 @@
+{
+  "name": "@operit/project-maintenance",
+  "version": "0.3.1",
+  "private": true,
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node scripts/build.mjs && node --test tests/*.test.mjs",
+    "test:web": "node tests/web.browser.mjs",
+    "pack:toolpkg": "node scripts/build.mjs"
+  },
+  "devDependencies": {
+    "@types/react": "19.1.16",
+    "@types/react-dom": "19.1.9",
+    "esbuild": "0.25.10",
+    "fflate": "0.8.2",
+    "playwright": "1.55.1",
+    "react": "19.1.1",
+    "react-dom": "19.1.1",
+    "typescript": "5.9.2"
+  },
+  "packageManager": "pnpm@10.7.0"
+}

@@ -205,6 +205,7 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "System.music", method: "status", target: BuiltinToolName::MusicStatus, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.music", method: "stop", target: BuiltinToolName::MusicStop, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "close", target: BuiltinToolName::CloseTerminalSession, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "System.terminal", method: "closeIfIdle", target: BuiltinToolName::CloseTerminalSession, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[("if_idle", "true")] },
     JsToolBinding { namespace: "System.terminal", method: "create", target: BuiltinToolName::CreateTerminalSession, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "exec", target: BuiltinToolName::ExecuteInTerminalSession, strict_arguments: false, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "System.terminal", method: "execStreaming", target: BuiltinToolName::TerminalObserve, strict_arguments: false, facade: JsToolFacade::TerminalCallback, fixed_parameters: &[] },

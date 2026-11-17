@@ -25,7 +25,7 @@ export class QQGateway {
   private gatewayUrl = "";
 
   /** Binds the QQ API and transport to an ordered inbound-event consumer. */
-  constructor(private readonly api: QQOpenApi, private readonly socket: SocketPort, private readonly onEvent: (event: InboundEvent) => void) {}
+  constructor(private readonly api: QQOpenApi, private readonly socket: SocketPort, private readonly onEvent: (event: InboundEvent) => void | Promise<void>) {}
 
   /** Discovers the application gateway and starts a single connection generation. */
   async start(): Promise<void> {
@@ -126,7 +126,8 @@ export class QQGateway {
   /** Handles exact QQ opcodes and server-directed session negotiation. */
   private async dispatch(frame: JsonObject, generation: number): Promise<void> {
     const op = integer(frame.op, "gateway.op", 0, 99);
-    if (frame.s !== null && frame.s !== undefined) this.sequence = integer(frame.s, "gateway.s", 0, Number.MAX_SAFE_INTEGER);
+    const sequence = frame.s !== null && frame.s !== undefined ? integer(frame.s, "gateway.s", 0, Number.MAX_SAFE_INTEGER) : null;
+    if (op !== 0 && sequence !== null) this.sequence = sequence;
     switch (op) {
       case 10: {
         const hello = object(frame.d, "HELLO.d");
@@ -140,10 +141,11 @@ export class QQGateway {
       }
       case 0: {
         const type = nonblank(frame.t, "dispatch.t");
-        if (type === "READY") { this.sessionId = nonblank(object(frame.d, "READY.d").session_id, "session_id"); this.status = "ready"; return; }
-        if (type === "RESUMED") { this.status = "ready"; return; }
+        if (type === "READY") { if (sequence !== null) this.sequence = sequence; this.sessionId = nonblank(object(frame.d, "READY.d").session_id, "session_id"); this.status = "ready"; return; }
+        if (type === "RESUMED") { if (sequence !== null) this.sequence = sequence; this.status = "ready"; return; }
         const event = inbound(frame);
-        this.onEvent(event);
+        await this.onEvent(event);
+        if (sequence !== null) this.sequence = sequence;
         this.receivedCount++;
         return;
       }

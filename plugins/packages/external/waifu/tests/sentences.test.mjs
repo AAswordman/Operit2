@@ -74,3 +74,14 @@ test("protected link targets, URL underscores and inline source retain their lit
   assert.deepEqual(texts('看 https://example.com/my_favorite_file。'), ['看 https://example.com/my_favorite_file。']);
   assert.deepEqual(texts('执行 `const x = a_b_c;`。'), ['执行 const x = a_b_c;。']);
 });
+
+test("JSON arrays and literal brackets survive every streaming prefix", () => {
+  for (const source of ['{"publicQuestions":[],"publicGuidance":["check_extension","reload"]}', '普通 [文字] 和 [ 未闭合。', '请看 [链接](https://example.com/a_(b))。']) {
+    const stream = new SentenceSession(defaults), all = [];
+    for (let end = 0; end <= source.length; end++) all.push(...stream.feed(source.slice(0, end), false));
+    all.push(...stream.feed(source, true));
+    assert.deepEqual(plain(all), plain(splitSnapshot(source, true, defaults)));
+  }
+  assert.deepEqual(texts('{"publicQuestions":[],"publicGuidance":["check_extension","reload"]}'), ['{"publicQuestions":[],"publicGuidance":["check_extension","reload"]}']);
+  assert.throws(() => texts('[链接](https://example.com'), /Unclosed Markdown/);
+});

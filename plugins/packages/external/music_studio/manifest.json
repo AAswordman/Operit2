@@ -1,0 +1,117 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.music_studio",
+  "api_version": "2.0.0",
+  "version": "0.1.2",
+  "main": "dist/main.js",
+  "public_api": "src/api.ts",
+  "display_name": {
+    "zh": "音乐工作台",
+    "en": "Music Studio"
+  },
+  "description": {
+    "zh": "AI优先的纯合成音乐工作台：时间线、钢琴卷帘、鼓机、合成音色、混音与效果器。七组AI子包，离线工程与WAV导出，无音频采样包。",
+    "en": "AI-first sample-free synthesis studio with piano roll, drums, mixer, effects and seven tool subpackages."
+  },
+  "enabled_by_default": false,
+  "subpackages": [
+    {
+      "id": "music_project",
+      "entry": "dist/packages/project.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "工程管理",
+        "en": "music_project"
+      },
+      "description": {
+        "zh": "工程管理",
+        "en": "music_project"
+      }
+    },
+    {
+      "id": "music_tracks",
+      "entry": "dist/packages/tracks.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "轨道与混音",
+        "en": "music_tracks"
+      },
+      "description": {
+        "zh": "轨道与混音",
+        "en": "music_tracks"
+      }
+    },
+    {
+      "id": "music_notes",
+      "entry": "dist/packages/notes.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "音符与钢琴卷帘",
+        "en": "music_notes"
+      },
+      "description": {
+        "zh": "音符与钢琴卷帘",
+        "en": "music_notes"
+      }
+    },
+    {
+      "id": "music_instruments",
+      "entry": "dist/packages/instruments.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "合成器与音色",
+        "en": "music_instruments"
+      },
+      "description": {
+        "zh": "合成器与音色",
+        "en": "music_instruments"
+      }
+    },
+    {
+      "id": "music_effects",
+      "entry": "dist/packages/effects.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "效果器机架",
+        "en": "music_effects"
+      },
+      "description": {
+        "zh": "效果器机架",
+        "en": "music_effects"
+      }
+    },
+    {
+      "id": "music_arrangement",
+      "entry": "dist/packages/arrangement.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "编曲与生成",
+        "en": "music_arrangement"
+      },
+      "description": {
+        "zh": "编曲与生成",
+        "en": "music_arrangement"
+      }
+    },
+    {
+      "id": "music_transport",
+      "entry": "dist/packages/transport.js",
+      "enabled_by_default": true,
+      "display_name": {
+        "zh": "播放与渲染",
+        "en": "music_transport"
+      },
+      "description": {
+        "zh": "播放与渲染",
+        "en": "music_transport"
+      }
+    }
+  ],
+  "resources": [
+    {
+      "key": "music_web",
+      "path": "resources/studio.html",
+      "mime": "text/html"
+    }
+  ]
+}

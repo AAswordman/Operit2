@@ -3,7 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.composePrompt = exports.sessionClose = exports.sessionFeed = exports.sessionOpen = exports.settingsSet = exports.settingsGet = void 0;
+exports.composePrompt = exports.modeStatus = exports.sessionClose = exports.sessionFeed = exports.sessionOpen = exports.settingsSet = exports.settingsGet = void 0;
 exports.registerToolPkg = registerToolPkg;
 const merge_js_1 = require("./merge.js");
 const mode_js_1 = require("./mode.js");
@@ -17,6 +17,7 @@ Object.defineProperty(exports, "settingsSet", { enumerable: true, get: function 
 Object.defineProperty(exports, "sessionOpen", { enumerable: true, get: function () { return service_js_2.sessionOpen; } });
 Object.defineProperty(exports, "sessionFeed", { enumerable: true, get: function () { return service_js_2.sessionFeed; } });
 Object.defineProperty(exports, "sessionClose", { enumerable: true, get: function () { return service_js_2.sessionClose; } });
+Object.defineProperty(exports, "modeStatus", { enumerable: true, get: function () { return service_js_2.modeStatus; } });
 Object.defineProperty(exports, "composePrompt", { enumerable: true, get: function () { return service_js_2.composePrompt; } });
 ToolPkg.ipc.on("waifu.settings", admin_js_1.admin);
 /** Publishes the waifu protocol, prompt hook and native settings surface. */
@@ -29,6 +30,7 @@ function registerToolPkg() {
     ToolPkg.registerApi({ name: "session.open", function: service_js_1.sessionOpen });
     ToolPkg.registerApi({ name: "session.feed", function: service_js_1.sessionFeed });
     ToolPkg.registerApi({ name: "session.close", function: service_js_1.sessionClose });
+    ToolPkg.registerApi({ name: "mode.status", function: service_js_1.modeStatus });
     ToolPkg.registerSystemPromptComposeHook({ id: "waifu_prompt", function: service_js_1.composePrompt });
     ToolPkg.registerToolboxUiModule({ id: "waifu_settings", runtime: "compose_dsl", screen: settings_ui_js_1.default, params: {}, title: { zh: "Waifu 模式", en: "Waifu Mode" } });
     return true;

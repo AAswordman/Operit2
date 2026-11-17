@@ -1,9 +1,12 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.registerToolPkg = exports.onPromptFinalize = exports.onInputMenuToggle = exports.onGoalCommand = exports.onChatViewEvent = exports.onChatInput = void 0;
+exports.registerToolPkg = exports.onPromptFinalize = exports.onInputMenuToggle = exports.onGoalCommand = exports.onChatViewEvent = exports.onChatInput = exports.goalStatus = exports.goalCreate = exports.goalRead = void 0;
 exports.test_connection = test_connection;
 exports.test_tool_call = test_tool_call;
 var goal_mode_plugin_js_1 = require("./plugin/goal_mode_plugin.js");
+Object.defineProperty(exports, "goalRead", { enumerable: true, get: function () { return goal_mode_plugin_js_1.goalRead; } });
+Object.defineProperty(exports, "goalCreate", { enumerable: true, get: function () { return goal_mode_plugin_js_1.goalCreate; } });
+Object.defineProperty(exports, "goalStatus", { enumerable: true, get: function () { return goal_mode_plugin_js_1.goalStatus; } });
 Object.defineProperty(exports, "onChatInput", { enumerable: true, get: function () { return goal_mode_plugin_js_1.onChatInput; } });
 Object.defineProperty(exports, "onChatViewEvent", { enumerable: true, get: function () { return goal_mode_plugin_js_1.onChatViewEvent; } });
 Object.defineProperty(exports, "onGoalCommand", { enumerable: true, get: function () { return goal_mode_plugin_js_1.onGoalCommand; } });

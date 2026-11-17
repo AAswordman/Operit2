@@ -141,7 +141,7 @@ function screen(ctx) {
         card("Face", "Waifu 模式", [description("将 AI 回复按句子分成独立气泡，配合打字节奏和表情包，让对话更自然。")], true),
         card("Link", "绑定到角色卡", [ctx.UI.Text({ text: target.name, style: "titleMedium", color: colors.primary }), description("设置跟随当前角色卡或角色组，在普通聊天中生效。")], true),
         card("ChatBubbleOutline", "聊天模式", [toggle("启用 Waifu 模式", "AI 回复按句子发送，每句显示为独立气泡。", mode.enabled, enabled => update({ enabled }))]),
-        card("Forum", "合并发送", [toggle("合并连续消息", "连续发送短消息时，停顿后合成一条消息交给 AI。", mode.mergeSend, mergeSend => update({ mergeSend })),
+        card("Forum", "合并发送", [toggle("合并连续消息", "连续发送短消息时，停顿后合成一条消息交给 AI；持续发送时最长等待 15 秒。", mode.mergeSend, mergeSend => update({ mergeSend })),
             ...(mode.mergeSend ? [description(`等待 ${(mode.mergeDelayMs / 1000).toFixed(1)} 秒后发送`), ctx.UI.Slider({ min: 500, max: 10000, divisions: 95, value: mode.mergeDelayMs, label: `${mode.mergeDelayMs} ms`, onValueChange: value => update({ mergeDelayMs: Math.round(value) }) })] : []),
         ]),
         card("Speed", "打字速度", [description(`每秒约 ${(1000 / settings.charDelayMs).toFixed(1)} 个字符`),

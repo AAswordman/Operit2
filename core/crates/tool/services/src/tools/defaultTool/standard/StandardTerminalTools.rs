@@ -254,7 +254,12 @@ impl StandardTerminalTools {
     /// Closes an interactive terminal session.
     pub fn closeSession(&self, tool: &AITool) -> ToolResult {
         let sessionId = parameterValue(tool, "session_id");
-        match self.host().and_then(|host| host.closeSession(&sessionId)) {
+        let idleOnly = optionalParameterValue(tool, "if_idle").as_deref() == Some("true");
+        let sessionName = parameterValue(tool, "session_name");
+        match self.host().and_then(|host| {
+            if idleOnly { host.closeSessionIfIdle(&sessionId, &sessionName) }
+            else { host.closeSession(&sessionId) }
+        }) {
             Ok(data) => toolSuccessData(
                 tool,
                 ToolResultData::TerminalSessionCloseResultData(terminalSessionCloseResultData(
@@ -357,6 +362,13 @@ fn validateTerminalTool(operation: TerminalToolOperation, tool: &AITool) -> Tool
         TerminalToolOperation::CloseSession | TerminalToolOperation::GetSessionScreen => {
             if parameterValue(tool, "session_id").is_empty() {
                 return invalid("session_id is required.");
+            }
+            if matches!(operation, TerminalToolOperation::CloseSession) {
+                match optionalParameterValue(tool, "if_idle").as_deref() {
+                    Some("true") if parameterValue(tool, "session_name").is_empty() => return invalid("session_name is required for idle close."),
+                    Some(value) if value != "true" && value != "false" => return invalid("if_idle must be true or false."),
+                    _ => {}
+                }
             }
         }
         TerminalToolOperation::GetTerminalInfo => {}

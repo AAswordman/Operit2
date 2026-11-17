@@ -145,7 +145,7 @@ fn version28_terminal_chat_migration_rolls_back_and_preserves_source_history() {
     assert!(database.store.queryOne("SELECT 1 FROM sqlite_master WHERE name='index_sync_sql_deletions_chat_lifecycle'", Vec::new()).unwrap().is_none());
     database.store.executeBatch("DROP TRIGGER reject_lifecycle_migration").unwrap();
     MIGRATION_28_29(&database).unwrap();
-    assert_eq!(database.store.getUserVersion().unwrap(), DATABASE_VERSION);
+    assert_eq!(database.store.getUserVersion().unwrap(), 29);
     assert!(database.chatDao().getChatById("v27-chat").unwrap().is_none());
     assert!(database.messageDao().getMessagesForChatAsc("v27-chat", 80).unwrap().is_empty());
     assert!(database.chatDao().getChatById("live-chat").unwrap().is_some());
@@ -386,3 +386,51 @@ fn fresh_and_migrated_current_version_have_identical_schema() {
     for (key, expected) in upgraded { assert_eq!(fresh[&key], expected, "schema entry: {key}"); }
 }
 
+/// Upgrade both observed version-29 layouts and preserve existing chat values.
+#[test]
+fn version29_missing_sidebar_groups_are_restored_without_changing_records() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database) = version27Database("database-v29-missing-group");
+    MIGRATION_27_28(&database).unwrap();
+    MIGRATION_28_29(&database).unwrap();
+    database.store.executeBatch("ALTER TABLE chats DROP COLUMN \"group\"; ALTER TABLE sync_sql_chat_rows DROP COLUMN \"group\"").unwrap();
+    let before = tableRows(&database.store);
+    MIGRATION_29_30(&database).unwrap();
+    assert_eq!(database.store.getUserVersion().unwrap(), 30);
+    let mut after = tableRows(&database.store);
+    for table in ["chats", "sync_sql_chat_rows"] {
+        for row in after.get_mut(table).unwrap() {
+            let position = row.columns.iter().position(|name| name == "group").unwrap();
+            assert_eq!(row.values.remove(position), SqliteValue::Null);
+            row.columns.remove(position);
+        }
+    }
+    assert_eq!(after, before);
+    assert!(database.store.queryRows("PRAGMA foreign_key_check", Vec::new()).unwrap().is_empty());
+}
+
+#[test]
+fn version29_existing_sidebar_groups_survive_upgrade() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database) = version27Database("database-v29-existing-group");
+    MIGRATION_27_28(&database).unwrap();
+    MIGRATION_28_29(&database).unwrap();
+    let before = tableRows(&database.store);
+    MIGRATION_29_30(&database).unwrap();
+    assert_eq!(database.store.getUserVersion().unwrap(), 30);
+    assert_eq!(tableRows(&database.store), before);
+    assert_eq!(database.chatDao().getChatById("v27-chat").unwrap().unwrap().group.as_deref(), Some("legacy-sidebar"));
+}
+
+#[test]
+fn version29_group_migration_rolls_back_when_second_table_is_missing() {
+    let _guard = DATABASE_MUTEX.lock().unwrap();
+    let (_, database) = version27Database("database-v29-group-rollback");
+    MIGRATION_27_28(&database).unwrap();
+    MIGRATION_28_29(&database).unwrap();
+    database.store.executeBatch("ALTER TABLE chats DROP COLUMN \"group\"; DROP TABLE sync_sql_chat_rows").unwrap();
+    let before = tableRows(&database.store);
+    assert!(MIGRATION_29_30(&database).is_err());
+    assert_eq!(database.store.getUserVersion().unwrap(), 29);
+    assert_eq!(tableRows(&database.store), before);
+}

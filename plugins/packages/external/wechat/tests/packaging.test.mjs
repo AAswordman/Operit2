@@ -85,6 +85,7 @@ test("main runtime registers one settings screen and all lifecycle hooks", () =>
           channels.push(channel);
         },
       },
+      registerApi() {},
       registerToolboxUiModule(screen) {
         screens.push(screen);
       },

@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_svg/flutter_svg.dart';
 
@@ -114,8 +115,7 @@ String extensionMonogram(String label) {
 String marketEntryAvatarSeed(core_proxy.MarketEntrySummary entry) {
   final kind = StoreKind.of(entry.type);
   final packageId =
-      entry.latestVersion?.runtimePackageId ??
-      entry.artifact?.runtimePackageId;
+      entry.latestVersion?.runtimePackageId ?? entry.artifact?.runtimePackageId;
   return '${kind.id}:${packageId ?? entry.id}';
 }
 
@@ -216,15 +216,15 @@ class ExtensionAvatar extends StatelessWidget {
               duration: motion.standard,
               curve: ExtensionMotion.enter,
               child: face,
-              builder: (context, saturation, child) => saturation >= 1
-                  ? child!
-                  : Opacity(
-                      opacity: 0.5 + 0.5 * saturation,
-                      child: ColorFiltered(
-                        colorFilter: _saturationFilter(saturation),
-                        child: child,
-                      ),
-                    ),
+              // Keep the logo subtree mounted at both ends of the animation.
+              // Removing these wrappers at saturation == 1 reloads SVG pictures.
+              builder: (context, saturation, child) => Opacity(
+                opacity: 0.5 + 0.5 * saturation,
+                child: ColorFiltered(
+                  colorFilter: _saturationFilter(saturation),
+                  child: child,
+                ),
+              ),
             ),
           ),
           if (busy)
@@ -439,8 +439,19 @@ class ExtensionLogoCache {
       packageName: packageName,
     );
     reads[key] = read;
-    // A failed read is retried by the next avatar that asks for it.
-    unawaited(read.then<void>((_) {}, onError: (Object _) => reads.remove(key)));
+    unawaited(
+      read.then<void>(
+        (logo) {
+          // FutureBuilder otherwise shows a waiting frame even for a completed
+          // Future whenever an avatar is remounted (navigation or regrouping).
+          reads[key] = SynchronousFuture<core_proxy.ToolPkgLogoBytes?>(logo);
+        },
+        onError: (Object _) {
+          // Retry next time without returning the failed Future from onError.
+          reads.remove(key);
+        },
+      ),
+    );
     return read;
   }
 }
@@ -509,9 +520,7 @@ class CatalogEntryAvatar extends StatelessWidget {
         final logo = snapshot.data;
         if (snapshot.hasError || logo == null) {
           if (snapshot.hasError) {
-            debugPrint(
-              'Failed to read logo of ${entry.id}: ${snapshot.error}',
-            );
+            debugPrint('Failed to read logo of ${entry.id}: ${snapshot.error}');
           }
           return _avatar(
             Icon(

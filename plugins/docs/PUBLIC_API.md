@@ -137,9 +137,11 @@ A failed execution rejects `trigger`; it is not reported as a successful request
 ```powershell
 tsc -p plugins/packages/buildin/workflow/tsconfig.json --noEmit
 tsc -p core/crates/plugin/sdk/src/compat/v1/tsconfig.json
-node --test tools/tests/toolpkg_public_api.test.mjs
+node --test tools/tests/toolpkg_public_api.test.mjs tools/tests/toolpkg_single_file_clients.test.mjs
 ```
 
 Node contract tests load current workflow TypeScript sources in memory and do not
 write `dist` or archives. Rust manifest and dependency authorization tests are also
 included in source; they require a separate Rust test run.
+
+The single-file client check copies each manifest-declared client to an isolated temporary directory and compiles it with only the standard SDK declarations. It rejects imports and re-exports from other files, checks request/response inference for channel and maintenance clients, and verifies copied Bot clients match their provider sources.

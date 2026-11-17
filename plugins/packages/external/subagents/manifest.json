@@ -1,10 +1,13 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.subagents",
-  "version": "0.1.0",
+  "version": "0.1.4",
   "api_version": "2.0.0",
   "main": "dist/main.js",
-  "display_name": { "zh": "子代理", "en": "Subagents" },
+  "display_name": {
+    "zh": "子代理",
+    "en": "Subagents"
+  },
   "description": {
     "zh": "AI 创建独立执行的子代理，在输入框上方查看任务，在工作区打开子会话，支持等待、打断对话和关闭。",
     "en": "AI-created agents with composer status, reusable workspace conversations, bounded waits, interruption and closure."
@@ -12,6 +15,10 @@
   "enabled_by_default": false,
   "installation_scope": "space",
   "subpackages": [
-    { "id": "subagents", "entry": "dist/tools.js" }
-  ]
+    {
+      "id": "subagents",
+      "entry": "dist/tools.js"
+    }
+  ],
+  "public_api": "src/api.ts"
 }

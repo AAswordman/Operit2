@@ -1,4 +1,0 @@
-Operit Music Studio: original TypeScript UI/scheduler and C/WebAssembly DSP.
-No Tone.js runtime, samples, SoundFonts, fonts, third-party presets or IR recordings are bundled.
-Build/test dependencies: TypeScript (Apache-2.0), esbuild (MIT), fflate (MIT), Playwright (Apache-2.0), LLVM (Apache-2.0 with LLVM exceptions).
-Serum and Kontakt are not included, endorsed or proprietary-compatible products.

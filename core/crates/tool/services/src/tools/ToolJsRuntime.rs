@@ -506,6 +506,7 @@ fn validateDependencyCall(
     let requirement = caller
         .requires
         .iter()
+        .chain(caller.optionalRequires.iter())
         .find(|item| item.id == provider.packageName)
         .ok_or_else(|| {
             format!(

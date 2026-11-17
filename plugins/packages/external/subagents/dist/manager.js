@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.AgentManager = void 0;
+const terminal_cleanup_js_1 = require("./terminal-cleanup.js");
 const model_js_1 = require("./model.js");
 /** Runs one space's child conversations independently of tool invocation and UI lifetimes. */
 class AgentManager {
@@ -47,6 +48,8 @@ class AgentManager {
             case "wait": return this.wait(request.parentChatId, request.agentIds, request.timeoutMs);
             case "send": return this.command(request.parentChatId, request.agentId, () => this.sendInput(request));
             case "close": return this.command(request.parentChatId, request.agentId, () => this.close(request.parentChatId, request.agentId));
+            case "close_if_completed": return this.command(request.parentChatId, request.agentId, () => this.closeIfCompleted(request.parentChatId, request.agentId));
+            case "release_idle_terminals": return this.command(request.parentChatId, request.agentId, () => this.releaseIdleTerminals(request.parentChatId, request.agentId));
             default: throw new Error("Unknown subagent operation");
         }
     }
@@ -83,7 +86,7 @@ class AgentManager {
         if (request.participantId !== null)
             (0, model_js_1.requireText)(request.participantId, "participantId");
         const managedParent = this.agents.get(request.parentChatId);
-        if (managedParent !== undefined && (managedParent.status === "closing" || this.commands.has(managedParent.id)))
+        if (managedParent !== undefined && (managedParent.status === "closing" || managedParent.recoveryFence === true || this.commands.has(managedParent.id)))
             throw new Error("The parent subagent is closing or has a control operation in progress");
         this.reserveStart();
         const creating = this.creatingChildren.get(request.parentChatId);
@@ -303,6 +306,47 @@ class AgentManager {
         finally {
             this.pendingStarts--;
         }
+    }
+    /** Release only observed foreground sessions from a finished, idle child. */
+    async releaseIdleTerminals(parentChatId, agentId) {
+        const agent = this.owned(parentChatId, agentId);
+        if (agent.status !== "completed" && agent.status !== "closed")
+            throw new Error("Subagent is not completed");
+        const execution = this.executions.get(agentId);
+        if (execution !== undefined && !execution.settled)
+            throw new Error("Subagent execution is still settling");
+        if (await this.chat.isProcessing(agent.chatId))
+            throw new Error("Native conversation is still processing");
+        const closed = [], retained = [];
+        for (const session of (0, terminal_cleanup_js_1.ownedForegroundTerminals)(agent)) {
+            try {
+                await this.chat.closeIdleTerminal(session.sessionId, session.sessionName);
+                closed.push(session.sessionId);
+            }
+            catch {
+                retained.push(session.sessionId);
+            }
+        }
+        return { closed, retained };
+    }
+    /** Fences a finished agent without cancelling an active turn or descendant. */
+    async closeIfCompleted(parentChatId, agentId) {
+        const agent = this.owned(parentChatId, agentId);
+        if (agent.status !== "completed" && agent.status !== "closed")
+            throw new Error("Subagent is not completed");
+        if (this.creatingChildren.has(agent.chatId) || [...this.agents.values()].some(child => child.parentChatId === agent.chatId))
+            throw new Error("Subagent has retained children");
+        const execution = this.executions.get(agentId);
+        if (execution !== undefined && !execution.settled)
+            throw new Error("Subagent execution is still settling");
+        if (await this.chat.isProcessing(agent.chatId))
+            throw new Error("Native conversation is still processing");
+        if (agent.status === "closed" && agent.recoveryFence === true)
+            return (0, model_js_1.summary)(agent);
+        const closed = { ...this.current(agentId), status: "closed", recoveryFence: true, updatedAt: this.clock.now() };
+        await this.save(closed);
+        this.publish(closed);
+        return (0, model_js_1.summary)(closed);
     }
     /** Cancels the owned execution before closing the task while retaining its conversation and history. */
     async close(parentChatId, agentId) {

@@ -28,6 +28,9 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
   const [sandbox, setSandbox] = ctx.useState("sandbox", false);
   const [c2c, setC2c] = ctx.useState("c2c", true);
   const [group, setGroup] = ctx.useState("group", true);
+  const [groupContext, setGroupContext] = ctx.useState<"shared" | "member">("groupContext", "shared");
+  const [groupReplyMode, setGroupReplyMode] = ctx.useState<"mentioned" | "all">("groupReplyMode", "mentioned");
+  const [listenGroupMessages, setListenGroupMessages] = ctx.useState("listenGroupMessages", true);
   const [selection, setSelection] = ctx.useState("selection", "");
   const [instruction, setInstruction] = ctx.useState("instruction", "");
   const [chatGroup, setChatGroup] = ctx.useState("chatGroup", "QQ Bot");
@@ -39,6 +42,8 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
   function initialize(value: Status): void {
     setStatus(value); setAppId(value.appId); setSandbox(value.useSandbox);
     setC2c(value.autoReply.config.c2cEnabled); setGroup(value.autoReply.config.groupEnabled);
+    setGroupContext(value.autoReply.config.groupContext); setGroupReplyMode(value.autoReply.config.groupReplyMode);
+    setListenGroupMessages(value.autoReply.config.listenGroupMessages);
     setSelection(value.autoReply.config.characterSelection); setInstruction(value.autoReply.config.assistantInstruction);
     setChatGroup(value.autoReply.config.chatGroup); setDeadline(String(value.autoReply.config.aiTimeoutMs / 1000));
     setWaifuProfile(value.waifuProfile);
@@ -84,7 +89,7 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
     const seconds = Number(deadline);
     if (deadline.trim() === "" || !Number.isFinite(seconds) || !/^\d+(?:\.\d{1,3})?$/.test(deadline.trim()) || seconds < 1 || seconds > 600) throw new Error("回复等待时间请填写 1～600 秒。");
     if (waifuProfile.trim() === "") throw new Error("请填写回复效果配置，默认使用 default。");
-    return { c2c_enabled: c2c, group_enabled: group, character_selection: selection, assistant_instruction: instruction,
+    return { c2c_enabled: c2c, group_enabled: group, group_context: groupContext, group_reply_mode: groupReplyMode, listen_group_messages: listenGroupMessages, character_selection: selection, assistant_instruction: instruction,
       chat_group: chatGroup.trim(), waifu_profile: waifuProfile.trim(), ai_timeout_ms: Math.round(seconds * 1000) };
   }
 
@@ -159,7 +164,7 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
 
   const connectionChanged = status !== null && (appId.trim() !== status.appId || secret !== "" || sandbox !== status.useSandbox);
   const saved = status?.autoReply.config;
-  const replyChanged = saved !== undefined && (c2c !== saved.c2cEnabled || group !== saved.groupEnabled || selection !== saved.characterSelection || instruction !== saved.assistantInstruction
+  const replyChanged = saved !== undefined && (c2c !== saved.c2cEnabled || group !== saved.groupEnabled || groupContext !== saved.groupContext || groupReplyMode !== saved.groupReplyMode || listenGroupMessages !== saved.listenGroupMessages || selection !== saved.characterSelection || instruction !== saved.assistantInstruction
     || chatGroup.trim() !== saved.chatGroup || waifuProfile.trim() !== status?.waifuProfile || Number(deadline) * 1000 !== saved.aiTimeoutMs);
   const active = status !== null && (status.service.status === "ready" || status.service.status === "connecting" || status.autoReply.running);
   const state = status === null ? "正在读取状态…" : !status.configured ? "尚未接入 QQ" : {
@@ -187,6 +192,13 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
     ...(roleError ? [ctx.UI.Text({ text: roleError, color: colors.error }), button("reloadRoles", "重新读取角色", loadRoles)] : []),
     toggle("c2c", "回复私聊消息", c2c, setC2c),
     toggle("group", "回复群消息", group, setGroup),
+    toggle("listenGroupMessages", "记录群友普通消息", listenGroupMessages, setListenGroupMessages),
+    description("记录实际收到的最近 80 条群消息，供 AI 按需读取；普通消息不会默认触发回复。能否收到未 @ 消息取决于 QQ 开放平台授予的事件权限。"),
+    toggle("isolateMembers", "按成员隔离群上下文", groupContext === "member", enabled => setGroupContext(enabled ? "member" : "shared")),
+    description(groupContext === "shared" ? "同群共享一个线性会话，按顺序处理；不同群和私聊互相独立。" : "同群仍按顺序处理，但每位成员使用独立 AI 会话，读取前文也只返回该成员的消息。关闭后恢复原来的群共享会话。"),
+    ctx.UI.DropdownMenu({ key: "groupReplyMode", label: "群消息回复条件", text: groupReplyMode === "mentioned" ? "仅被 @ 时回复" : "回复所有收到的群消息",
+      enabled: busy === "" && status !== null, fillMaxWidth: true, onClick: index => setGroupReplyMode(index === 0 ? "mentioned" : "all") },
+      [ctx.UI.Text({ text: "仅被 @ 时回复", paddingVertical: 8 }), ctx.UI.Text({ text: "回复所有收到的群消息", paddingVertical: 8 })]),
     button("advanced", advanced ? "收起高级设置" : "高级设置", () => setAdvanced(!advanced)),
   ];
   if (advanced) replyFields.push(
@@ -241,6 +253,11 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
     })),
     ...(events === null ? [] : events.length === 0 ? [description("暂无待处理消息。自动回复已处理的消息可在聊天记录中查看。")] : events.map(event =>
       description(`${event.scene === "c2c" ? "私聊" : event.scene === "group" ? "群消息" : event.eventType} · ${event.timestamp || event.receivedAt}\n${event.content || "[非文本消息]"}`))),
+    ...(status?.autoReply.deliveries ?? []).filter(item => item.state === "failed").flatMap(item => [
+      description(`回复未完成 · 已发送 ${item.delivered} 段\n${item.error}\n重试可能重复发送，请先核对 QQ 中的回复。`),
+      button(`retry:${item.key}`, "确认后重试", () => operate("diagnostics", "正在恢复回复…", async () => { await call({ action: "retry_delivery", key: item.key }); return "已加入回复队列。"; })),
+      button(`skip:${item.key}`, "跳过这条回复", () => operate("diagnostics", "正在跳过…", async () => { await call({ action: "retry_delivery", key: item.key, skip: true }); return "已跳过这条回复。"; })),
+    ]),
     ...feedback("diagnostics"),
     button("clearEvents", "清空待处理事件", () => operate("diagnostics", "正在清空事件…", async () => {
       const result = await call({ action: "clear" }); setEvents([]);

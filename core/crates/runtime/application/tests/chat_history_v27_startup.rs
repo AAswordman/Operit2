@@ -32,8 +32,11 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
     setDefaultRuntimeStorageHost(host.clone());
     setDefaultRuntimeSqliteHost(host);
     let paths = RuntimeStorePaths::default();
-    fs::create_dir_all(paths.sqlite_database_path().parent().unwrap()).unwrap();
-    let old = rusqlite::Connection::open(paths.sqlite_database_path()).unwrap();
+    let physical = |path: &std::path::Path| runtimeRoot.join(paths.runtime_storage_key(path).unwrap().strip_prefix("runtime/").unwrap());
+    let databasePath = physical(&paths.sqlite_database_path());
+    let preferencesPath = physical(&paths.current_chat_id_preferences_path());
+    fs::create_dir_all(databasePath.parent().unwrap()).unwrap();
+    let old = rusqlite::Connection::open(databasePath).unwrap();
     old.execute_batch(VERSION_27_FIXTURE).unwrap();
     old.execute("INSERT INTO chats(id,title,createdAt,updatedAt,\"group\",characterCardName,characterGroupId) VALUES('v27-second','Other old history',300,400,'old-folder','old-card','old-role-group')",[]).unwrap();
     assert_eq!(
@@ -51,7 +54,7 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
             values.set(&untouchedKey, "kept-user-setting".to_string());
         })
         .unwrap();
-    let preferenceBytes = fs::read(paths.current_chat_id_preferences_path()).unwrap();
+    let preferenceBytes = fs::read(&preferencesPath).unwrap();
     let journal = operit_store::SyncOperationStore::SyncOperationStore::native(paths.clone());
     let selectionHistory = || journal.preferenceHistory().unwrap().into_iter()
         .filter(|operation| operation.payload["storagePath"] == operit_util::RuntimeStorageLayout::CURRENT_CHAT_ID_PREFERENCES_PATH)
@@ -68,7 +71,7 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
     );
     assert!(delegate.chatConfigurationsFlow.value().is_empty());
     assert_eq!(
-        fs::read(paths.current_chat_id_preferences_path()).unwrap(),
+        fs::read(&preferencesPath).unwrap(),
         preferenceBytes
     );
     let database = AppDatabase::getDatabase(paths.clone()).unwrap();
@@ -111,7 +114,7 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
 
     delegate.initialize().unwrap();
     assert_eq!(
-        fs::read(paths.current_chat_id_preferences_path()).unwrap(),
+        fs::read(&preferencesPath).unwrap(),
         preferenceBytes
     );
     delegate
@@ -124,7 +127,7 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
     assert!(delegate.currentChatMessagesSnapshot().is_empty());
     assert!(delegate.chatConfigurationsFlow.value().is_empty());
     assert_eq!(
-        fs::read(paths.current_chat_id_preferences_path()).unwrap(),
+        fs::read(&preferencesPath).unwrap(),
         preferenceBytes
     );
     delegate
@@ -152,7 +155,7 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
             .and_then(serde_json::Value::as_str),
         Some("kept-user-setting")
     );
-    let beforeInvalid = fs::read(paths.current_chat_id_preferences_path()).unwrap();
+    let beforeInvalid = fs::read(&preferencesPath).unwrap();
     assert_eq!(
         delegate
             .openChatHistory("missing-chat".to_string(), true)
@@ -164,7 +167,7 @@ fn version27_selected_unbound_history_starts_and_remains_browsable() {
         Some("v27-chat")
     );
     assert_eq!(
-        fs::read(paths.current_chat_id_preferences_path()).unwrap(),
+        fs::read(&preferencesPath).unwrap(),
         beforeInvalid
     );
     assert!(!delegate

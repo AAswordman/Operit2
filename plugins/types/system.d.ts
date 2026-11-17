@@ -595,6 +595,11 @@ export namespace System {
      */
     function close(sessionId: string): Promise<TerminalSessionCloseResultData>;
     /**
+     * Atomically close an idle session only when it belongs to the supplied name.
+     * Hosts without atomic support reject this operation without closing the session.
+     */
+    function closeIfIdle(sessionId: string, sessionName: string): Promise<TerminalSessionCloseResultData>;
+    /**
      * Creates or returns an interactive terminal session with the supplied name.
      * @param sessionName Stable name used to identify the terminal session.
      * @param type Exact interpreter type; omission requests the host's configured default terminal.

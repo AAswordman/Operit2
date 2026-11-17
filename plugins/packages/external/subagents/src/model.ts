@@ -32,6 +32,8 @@ export interface AgentSummary {
   task: string;
   participantId: string | null;
   status: AgentStatus;
+  recoveryFence?: boolean;
+  diagnostics?: Array<"terminal_capacity_exhausted">;
   runNumber: number;
   lastInput: string;
   createdAt: number;
@@ -57,14 +59,16 @@ export interface WaitResult {
   agents: AgentSummary[];
 }
 
+export interface TerminalCleanupResult { closed: string[]; retained: string[] }
+
 export type Request =
   | { action: "spawn"; parentChatId: string; task: string; name: string; participantId: string | null }
   | { action: "list"; parentChatId: string }
   | { action: "wait"; parentChatId: string; agentIds: string[]; timeoutMs: number }
   | { action: "send"; parentChatId: string; agentId: string; message: string; interrupt: boolean }
-  | { action: "close"; parentChatId: string; agentId: string };
+  | { action: "close" | "close_if_completed" | "release_idle_terminals"; parentChatId: string; agentId: string };
 
-export type Response = AgentSummary | ParentSnapshot | WaitResult;
+export type Response = AgentSummary | ParentSnapshot | WaitResult | TerminalCleanupResult;
 
 /** Requires authored nonblank text without silently converting or replacing invalid input. */
 export function requireText(value: unknown, label: string): string {
@@ -79,8 +83,17 @@ export function errorText(error: unknown): string {
 
 /** Projects a durable agent into its small composer and tool representation. */
 export function summary(agent: Agent): AgentSummary {
-  const { messages: _messages, ...value } = agent;
-  return value;
+  const { messages, diagnostics: _diagnostics, ...value } = agent;
+  // Derive this from the latest semantic snapshots rather than trusting the
+  // agent's prose or retaining evidence removed by a later message revision.
+  const exhausted = messages.some(message => message.parts.some(part =>
+    part.kind === "tool_result" && part.attributes.status === "error" &&
+    (part.toolName === "super_admin:bash" || part.toolName === "super_admin:zsh" ||
+      part.toolName === "super_admin:shell" || part.toolName === "super_admin:powershell" ||
+      part.toolName === "create_terminal_session") &&
+    /^<error>Host service capacity exhausted: [^<]+<\/error>$/.test(part.content.trim())
+  ));
+  return exhausted ? { ...value, diagnostics: ["terminal_capacity_exhausted"] } : value;
 }
 
 /** Separates terminal task states from execution and cancellation still in progress. */
@@ -93,6 +106,7 @@ export function parseAgent(value: unknown): Agent {
   if (typeof value !== "object" || value === null || Array.isArray(value)) throw new Error("Invalid subagent record");
   const agent = value as Agent;
   if (agent.schemaVersion !== SCHEMA_VERSION) throw new Error("Unsupported subagent schema version");
+  if (agent.recoveryFence !== undefined && typeof agent.recoveryFence !== "boolean") throw new Error("Invalid recovery fence");
   for (const field of ["id", "parentChatId", "chatId", "name", "task", "lastInput"] as const) requireText(agent[field], field);
   const statuses: AgentStatus[] = ["starting", "running", "completed", "cancelled", "failed", "closing", "closed", "interrupted"];
   if (statuses.indexOf(agent.status) === -1) throw new Error("Invalid subagent status");

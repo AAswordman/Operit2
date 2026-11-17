@@ -336,6 +336,14 @@ impl TerminalHost for AppleTerminalHost {
         self.hostForSession(sessionId)?.closeSession(sessionId)
     }
 
+    fn closeSessionIfIdle(&self, sessionId: &str, sessionName: &str) -> HostResult<TerminalCloseOutput> {
+        #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
+        if sessionId.starts_with("macos-arm64-") {
+            return self.arm64.closeSessionIfIdle(sessionId, sessionName);
+        }
+        self.hostForSession(sessionId)?.closeSessionIfIdle(sessionId, sessionName)
+    }
+
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         #[cfg(all(feature = "arm64-runtime", target_arch = "aarch64"))]
         if sessionId.starts_with("macos-arm64-") {

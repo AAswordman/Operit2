@@ -517,6 +517,14 @@ impl TerminalHost for OhosTerminalHost {
         Ok(output)
     }
 
+    /// Atomically close only the named idle session on its owning backend.
+    fn closeSessionIfIdle(&self, sessionId: &str, sessionName: &str) -> HostResult<TerminalCloseOutput> {
+        let backend = self.backendForSession(sessionId)?;
+        let output = self.ptyHost(backend).closeSessionIfIdle(sessionId, sessionName)?;
+        self.removeSession(sessionId)?;
+        Ok(output)
+    }
+
     /// Reads the screen state from a recorded OpenHarmony terminal session.
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         let backend = self.backendForSession(sessionId)?;

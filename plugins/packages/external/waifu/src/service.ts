@@ -76,6 +76,12 @@ export function externalSettings(chatId: string): Settings | null {
   return active === undefined ? null : active.settings;
 }
 
+/** Reports only whether this conversation currently uses Waifu. */
+export async function modeStatus(event: ToolPkg.PublicApiEvent<{ chatId: string }>): Promise<{ enabled: boolean }> {
+  const chatId = identifier(event.payload.chatId, "chatId");
+  return { enabled: externalSettings(chatId) !== null || await modeForChat(chatId) !== null };
+}
+
 /** Adds mode rules for ordinary role-bound chat or an explicitly opened dependency session. */
 export async function composePrompt(event: ToolPkg.SystemPromptComposeHookEvent): Promise<ToolPkg.PromptHookObjectResult | void> {
   const payload = event.eventPayload;

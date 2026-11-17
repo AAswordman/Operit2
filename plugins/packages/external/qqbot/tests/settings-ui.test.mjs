@@ -36,7 +36,7 @@ function fixture(options = {}) {
       running = config.listenerEnabled && config.autoReply.enabled;
     } else if (request.action === "auto_configure") {
       const p = request.params;
-      for (const [source, target] of Object.entries({ enabled: "enabled", c2c_enabled: "c2cEnabled", group_enabled: "groupEnabled", ai_timeout_ms: "aiTimeoutMs", character_selection: "characterSelection", assistant_instruction: "assistantInstruction", chat_group: "chatGroup" })) {
+      for (const [source, target] of Object.entries({ enabled: "enabled", c2c_enabled: "c2cEnabled", group_enabled: "groupEnabled", group_context:"groupContext",group_reply_mode:"groupReplyMode",listen_group_messages:"listenGroupMessages", ai_timeout_ms: "aiTimeoutMs", character_selection: "characterSelection", assistant_instruction: "assistantInstruction", chat_group: "chatGroup" })) {
         if (p[source] !== undefined) config.autoReply[target] = p[source];
       }
       config.waifuProfile = p.waifu_profile ?? config.waifuProfile;
@@ -48,6 +48,7 @@ function fixture(options = {}) {
     return { success: true, status: status() };
   } } } }).default;
   const ctx = {
+    Modifier: { onSizeChanged: callback => ({ callback }) },
     useState(key, initial) {
       if (!state.has(key)) state.set(key, initial);
       return [state.get(key), value => { assert.notEqual(typeof value, "function"); state.set(key, value); }];
@@ -195,4 +196,15 @@ test("fractional seconds preserve valid millisecond timeouts", async () => {
   assert.equal(f.find("deadline").props.value, "1.001");
   f.change("instruction", "updated"); await f.click("saveReplies");
   assert.equal(f.config.autoReply.aiTimeoutMs, 1001);
+});
+
+test("group context, listening and reply trigger controls persist without starting the listener",async()=>{
+ const f=fixture();await f.initialize();
+ assert.equal(f.find("isolateMembers").props.checked,false);
+ f.change("isolateMembers",true);f.change("listenGroupMessages",false);
+ await f.find("groupReplyMode").props.onClick(1);await f.click("saveReplies");
+ const request=f.requests.find(r=>r.action==="auto_configure");
+ assert.equal(request.params.group_context,"member");assert.equal(request.params.group_reply_mode,"all");assert.equal(request.params.listen_group_messages,false);
+ assert.equal(f.config.autoReply.groupContext,"member");assert.equal(f.config.listenerEnabled,false);
+ assert.match(f.text(),/平台.*权限/);
 });

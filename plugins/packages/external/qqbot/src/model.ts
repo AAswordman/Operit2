@@ -1,3 +1,5 @@
+import type { ChannelMessage, MessageReference, OutgoingMedia } from "./channel-api.js";
+import { messageDetails } from "./messages.js";
 export const CHANNEL = "qqbot.service";
 export const MAX_EVENTS = 200;
 export type Scene = "c2c" | "group" | "unknown";
@@ -7,12 +9,18 @@ export interface AutoReplyConfig {
   enabled: boolean;
   c2cEnabled: boolean;
   groupEnabled: boolean;
+  groupContext: "shared" | "member";
+  groupReplyMode: "mentioned" | "all";
+  listenGroupMessages: boolean;
   aiTimeoutMs: number;
   chatGroup: string;
   characterSelection: string;
   assistantInstruction: string;
 }
 export interface Config {
+  channelCapture: boolean;
+  channelOnlyWhenNoAuto: boolean;
+  channelConversationIds: string[] | null;
   waifuProfile: string;
   appId: string;
   appSecret: string;
@@ -21,6 +29,9 @@ export interface Config {
   autoReply: AutoReplyConfig;
   bindings: Record<string, string>;
   processed: string[];
+  bindingsAccountId?: string;
+  memberBindings?: Record<string, string>;
+  deliveries?: {key: string; event: InboundEvent; state: "pending" | "processing" | "failed"; delivered: number; error: string}[];
 }
 export interface InboundEvent {
   scene: Scene;
@@ -33,6 +44,13 @@ export interface InboundEvent {
   receivedAt: string;
   userOpenId: string;
   groupOpenId: string;
+  author?: ChannelMessage["author"];
+  messageType?: number;
+  attachments?: ChannelMessage["attachments"];
+  elements?: ChannelMessage["elements"];
+  card?: JsonObject;
+  referenceIndex?: string;
+  referencedMessageIndex?: string;
   rawPayload?: JsonObject;
   replyHint: { scene: Scene; msg_id: string; event_id: string; openid: string; group_openid: string };
 }
@@ -43,13 +61,20 @@ export interface SendParams {
   event_id?: string;
   msg_seq?: number;
   payload?: JsonObject;
+  markdown?: JsonObject;
+  keyboard?: JsonObject;
+  card?: JsonObject;
+  media?: { file_info: string };
+  message_reference?: MessageReference;
 }
 export interface ConfigureParams { app_id?: string; app_secret?: string; use_sandbox?: boolean; listener_enabled?: boolean; test_connection?: boolean; restart_service?: boolean }
 export interface ReceiveParams { limit?: number; consume?: boolean; scene?: Scene; event_type?: string; include_raw?: boolean; auto_start?: boolean }
-export interface AutoReplyParams { enabled?: boolean; c2c_enabled?: boolean; group_enabled?: boolean; ai_timeout_ms?: number; chat_group?: string; character_selection?: string; assistant_instruction?: string; waifu_profile?: string; start_now?: boolean }
+export interface AutoReplyParams { group_context?: "shared" | "member"; group_reply_mode?: "mentioned" | "all"; listen_group_messages?: boolean; enabled?: boolean; c2c_enabled?: boolean; group_enabled?: boolean; ai_timeout_ms?: number; chat_group?: string; character_selection?: string; assistant_instruction?: string; waifu_profile?: string; start_now?: boolean }
 export type Request =
   | { action: "configure"; params: ConfigureParams }
   | { action: "status" }
+  | { action: "chat_context"; chatId: string; limit?: number; before?: number }
+  | { action: "retry_delivery"; key: string; skip?: boolean }
   | { action: "reply_roles" }
   | { action: "test" }
   | { action: "start"; restart?: boolean }
@@ -58,6 +83,8 @@ export type Request =
   | { action: "clear" }
   | { action: "send_c2c"; params: SendParams & { openid: string } }
   | { action: "send_group"; params: SendParams & { group_openid: string } }
+  | { action: "upload_media"; scene: "c2c" | "group"; target: string; media: OutgoingMedia }
+  | { action: "send_media"; scene: "c2c" | "group"; target: string; media: OutgoingMedia; params?: SendParams }
   | { action: "upload_image"; scene: "c2c" | "group"; target: string; source: string }
   | { action: "auto_configure"; params: AutoReplyParams }
   | { action: "auto_start" }
@@ -72,9 +99,10 @@ export interface Status {
   listenerEnabled: boolean;
   service: { status: "stopped" | "connecting" | "ready" | "error"; sessionId: string; lastError: string; receivedCount: number };
   queue: { size: number; capacity: number };
-  autoReply: { config: AutoReplyConfig; running: boolean; lastError: string; bindings: Record<string, string>; repliedCount: number };
+  autoReply: { config: AutoReplyConfig; running: boolean; lastError: string; bindings: Record<string, string>; repliedCount: number; deliveries: {key: string; state: string; delivered: number; error: string}[] };
 }
 export type Response =
+  | {success: true; context: import("./channel-api.js").ConversationHistory}
   | { success: true; status: Status }
   | { success: true; roles: ReplyRole[] }
   | { success: true; returnedCount: number; remainingCount: number; events: InboundEvent[] }
@@ -83,8 +111,8 @@ export type Response =
 
 /** Creates the authored initial persisted configuration. */
 export function defaultConfig(): Config {
-  return { waifuProfile: "default", appId: "", appSecret: "", useSandbox: false, listenerEnabled: false,
-    autoReply: { enabled: false, c2cEnabled: true, groupEnabled: true, aiTimeoutMs: 120000, chatGroup: "QQ Bot", characterSelection: "", assistantInstruction: "请直接回复 QQ 用户，不要输出内部思考或工具执行过程。" },
+  return { channelCapture: false, channelOnlyWhenNoAuto: false, channelConversationIds: null, waifuProfile: "default", appId: "", appSecret: "", useSandbox: false, listenerEnabled: false,
+    autoReply: { enabled: false, c2cEnabled: true, groupEnabled: true, groupContext: "shared", groupReplyMode: "mentioned", listenGroupMessages: true, aiTimeoutMs: 120000, chatGroup: "QQ Bot", characterSelection: "", assistantInstruction: "请直接回复 QQ 用户，不要输出内部思考或工具执行过程。" },
     bindings: {}, processed: [] };
 }
 
@@ -132,6 +160,6 @@ export function inbound(payload: JsonObject): InboundEvent {
     timestamp = text(body.timestamp, "message.timestamp");
   }
   const eventId = payload.id === undefined ? "" : text(payload.id, "dispatch.id");
-  return { scene, eventType, eventId, seq, messageId, content, timestamp, receivedAt: new Date().toISOString(), userOpenId, groupOpenId, rawPayload: payload,
+  return { scene, eventType, eventId, seq, messageId, content, timestamp, receivedAt: new Date().toISOString(), userOpenId, groupOpenId, rawPayload: payload, ...(scene === "unknown" ? {} : messageDetails(body, userOpenId)),
     replyHint: { scene, msg_id: messageId, event_id: eventId, openid: userOpenId, group_openid: groupOpenId } };
 }

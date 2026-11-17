@@ -130,7 +130,7 @@ test("main evaluation registers IPC and the composer slot without opening a busi
   const handlers = [];
   const slots = [], routes = [], entries = [];
   const runtime = modules({
-    ToolPkg: { ipc: { on(channel, handler) { handlers.push({ channel, handler }); } }, registerChatComposerSlot(slot) { slots.push(slot); }, registerUiRoute(route) { routes.push(route); }, registerNavigationEntry(entry) { entries.push(entry); } },
+    ToolPkg: { ipc: { on(channel, handler) { handlers.push({ channel, handler }); } }, registerChatComposerSlot(slot) { slots.push(slot); }, registerUiRoute(route) { routes.push(route); }, registerNavigationEntry(entry) { entries.push(entry); }, registerApi() {} },
     Tools: new Proxy({}, { get() { throw new Error("registration must not call host tools"); } }),
   });
   const main = runtime.load("./main");
@@ -159,6 +159,8 @@ test("service validates discriminated operations and authored parameter types", 
     assert.throws(() => decodeRequest(value));
   }
   assert.equal(decodeRequest({ action: "list", parentChatId: "parent" }).parentChatId, "parent");
+  assert.equal(decodeRequest({action:"close_if_completed", parentChatId:"parent", agentId:"child"}).action,"close_if_completed");
+  assert.throws(() => decodeRequest({action:"close_if_completed", parentChatId:"parent", agentId:""}));
 });
 
 /** Proves that corrupt native or persisted outcomes cannot become apparently successful agent state. */

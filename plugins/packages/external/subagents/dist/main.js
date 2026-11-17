@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.agentRequest = agentRequest;
 exports.registerToolPkg = registerToolPkg;
 exports.test_connection = test_connection;
 exports.test_tool_call = test_tool_call;
@@ -11,8 +12,11 @@ const conversation_ui_js_1 = __importDefault(require("./ui/conversation.ui.js"))
 const shared_js_1 = require("./ui/shared.js");
 const service_js_1 = require("./service.js");
 (0, service_js_1.registerService)();
+/** Public dependency entry uses the same validated owner as native tools. */
+async function agentRequest(event) { return (0, service_js_1.receive)(event.payload); }
 /** Registers the same platform-independent composer contribution for every supported chat input style. */
 function registerToolPkg() {
+    ToolPkg.registerApi({ name: "agents.request", function: agentRequest });
     ToolPkg.registerUiRoute({ id: "conversation", route: shared_js_1.CONVERSATION_ROUTE, runtime: "compose_dsl", screen: conversation_ui_js_1.default,
         keepAlive: true, title: { zh: "子代理会话", en: "Subagent conversation" } });
     ToolPkg.registerNavigationEntry({ id: "conversation", route: shared_js_1.CONVERSATION_ROUTE, surface: "workspace",

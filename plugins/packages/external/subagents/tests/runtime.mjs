@@ -111,6 +111,12 @@ export class TestChat {
   sends = [];
   cancellations = [];
   processing = new Set();
+  idleTerminalCloses = [];
+  terminalCloseFailures = new Set();
+  async closeIdleTerminal(sessionId, sessionName) {
+    this.idleTerminalCloses.push({sessionId, sessionName});
+    if (this.terminalCloseFailures.has(sessionId)) throw new Error("busy or unsupported");
+  }
   automaticAdmission = true;
   automaticCancellation = false;
   createGate = null;

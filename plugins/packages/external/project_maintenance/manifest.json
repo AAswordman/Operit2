@@ -1,0 +1,47 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.project_maintenance",
+  "version": "0.3.1",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "维护中控",
+    "en": "Maintenance Control"
+  },
+  "description": {
+    "zh": "React 维护中控：复用软件工作区，汇总渠道反馈、工单与后台执行记录。",
+    "en": "Experimental feedback, background diagnosis, implementation and review."
+  },
+  "enabled_by_default": false,
+  "installation_scope": "space",
+  "requires": [
+    {
+      "id": "com.operit.subagents",
+      "min_version": "0.1.4"
+    }
+  ],
+  "subpackages": [
+    {
+      "id": "maintenance",
+      "entry": "dist/tools.js"
+    }
+  ],
+  "public_api": "src/api.ts",
+  "resources": [
+    {
+      "key": "maintenance_web",
+      "path": "resources/control.html",
+      "mime": "text/html"
+    }
+  ],
+  "optional_requires": [
+    {
+      "id": "com.operit.qqbot_bundle",
+      "min_version": "1.3.0"
+    },
+    {
+      "id": "com.operit.wechat_bot",
+      "min_version": "1.1.0"
+    }
+  ]
+}

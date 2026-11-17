@@ -1,8 +1,9 @@
 import type { Chat } from "../../../../types/chat.js";
 import type { AgentRepository } from "./storage.js";
+import { ownedForegroundTerminals } from "./terminal-cleanup.js";
 import {
   MAX_ACTIVE_AGENTS, errorText, isActive, requireText, summary,
-  type Agent, type AgentSummary, type ParentSnapshot, type Request, type Response, type WaitResult,
+  type Agent, type AgentSummary, type ParentSnapshot, type Request, type Response, type WaitResult, type TerminalCleanupResult,
 } from "./model.js";
 
 /** Supplies only current public Chat capabilities; tests control the actual admission and terminal boundaries. */
@@ -15,6 +16,8 @@ export interface ChatPort {
   cancel(chatId: string): Promise<{ chatId: string; cancelRequested: boolean }>;
   /** Reads the host's structured processing state without inferring completion from message text. */
   isProcessing(chatId: string): Promise<boolean>;
+  /** Host atomically checks ownership and idleness before closing. */
+  closeIdleTerminal(sessionId: string, sessionName: string): Promise<void>;
 }
 
 /** Defines removable timers so each wait releases its resources after either completion or timeout. */
@@ -91,6 +94,8 @@ export class AgentManager {
       case "wait": return this.wait(request.parentChatId, request.agentIds, request.timeoutMs);
       case "send": return this.command(request.parentChatId, request.agentId, () => this.sendInput(request));
       case "close": return this.command(request.parentChatId, request.agentId, () => this.close(request.parentChatId, request.agentId));
+      case "close_if_completed": return this.command(request.parentChatId, request.agentId, () => this.closeIfCompleted(request.parentChatId, request.agentId));
+      case "release_idle_terminals": return this.command(request.parentChatId, request.agentId, () => this.releaseIdleTerminals(request.parentChatId, request.agentId));
       default: throw new Error("Unknown subagent operation");
     }
   }
@@ -128,7 +133,7 @@ export class AgentManager {
     requireText(request.name, "name");
     if (request.participantId !== null) requireText(request.participantId, "participantId");
     const managedParent = this.agents.get(request.parentChatId);
-    if (managedParent !== undefined && (managedParent.status === "closing" || this.commands.has(managedParent.id))) throw new Error("The parent subagent is closing or has a control operation in progress");
+    if (managedParent !== undefined && (managedParent.status === "closing" || managedParent.recoveryFence === true || this.commands.has(managedParent.id))) throw new Error("The parent subagent is closing or has a control operation in progress");
     this.reserveStart();
     const creating = this.creatingChildren.get(request.parentChatId);
     this.creatingChildren.set(request.parentChatId, creating === undefined ? 1 : creating + 1);
@@ -161,7 +166,7 @@ export class AgentManager {
   }
 
   /** Prevents competing interrupt and close requests from scheduling overlapping turns. */
-  private async command(parentChatId: string, agentId: string, operation: () => Promise<AgentSummary>): Promise<AgentSummary> {
+  private async command<T>(parentChatId: string, agentId: string, operation: () => Promise<T>): Promise<T> {
     this.owned(parentChatId, agentId);
     if (this.commands.has(agentId)) throw new Error("Another control operation is still in progress for this subagent");
     this.commands.add(agentId);
@@ -306,6 +311,34 @@ export class AgentManager {
       this.launch(next);
       return summary(next);
     } finally { this.pendingStarts--; }
+  }
+
+  /** Release only observed foreground sessions from a finished, idle child. */
+  private async releaseIdleTerminals(parentChatId: string, agentId: string): Promise<TerminalCleanupResult> {
+    const agent = this.owned(parentChatId, agentId);
+    if (agent.status !== "completed" && agent.status !== "closed") throw new Error("Subagent is not completed");
+    const execution = this.executions.get(agentId);
+    if (execution !== undefined && !execution.settled) throw new Error("Subagent execution is still settling");
+    if (await this.chat.isProcessing(agent.chatId)) throw new Error("Native conversation is still processing");
+    const closed: string[] = [], retained: string[] = [];
+    for (const session of ownedForegroundTerminals(agent)) {
+      try { await this.chat.closeIdleTerminal(session.sessionId, session.sessionName); closed.push(session.sessionId); }
+      catch { retained.push(session.sessionId); }
+    }
+    return {closed, retained};
+  }
+
+  /** Fences a finished agent without cancelling an active turn or descendant. */
+  private async closeIfCompleted(parentChatId: string, agentId: string): Promise<AgentSummary> {
+    const agent = this.owned(parentChatId, agentId);
+    if (agent.status !== "completed" && agent.status !== "closed") throw new Error("Subagent is not completed");
+    if (this.creatingChildren.has(agent.chatId) || [...this.agents.values()].some(child => child.parentChatId === agent.chatId)) throw new Error("Subagent has retained children");
+    const execution = this.executions.get(agentId);
+    if (execution !== undefined && !execution.settled) throw new Error("Subagent execution is still settling");
+    if (await this.chat.isProcessing(agent.chatId)) throw new Error("Native conversation is still processing");
+    if (agent.status === "closed" && agent.recoveryFence === true) return summary(agent);
+    const closed: Agent = { ...this.current(agentId), status: "closed", recoveryFence: true, updatedAt: this.clock.now() };
+    await this.save(closed); this.publish(closed); return summary(closed);
   }
 
   /** Cancels the owned execution before closing the task while retaining its conversation and history. */

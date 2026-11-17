@@ -700,6 +700,23 @@ impl TerminalHost for NativePtyTerminalHost {
         })
     }
 
+    fn closeSessionIfIdle(&self, sessionId: &str, sessionName: &str) -> HostResult<TerminalCloseOutput> {
+        let id = nonBlank(sessionId, "session_id")?;
+        let name = nonBlank(sessionName, "session_name")?;
+        let mut state = self.lockState()?;
+        let session = state.ptySessions.get(&id)
+            .ok_or_else(|| HostError::new(format!("Terminal session does not exist: {id}")))?;
+        if !operit_host_api::terminalSessionNameMatches(&session.sessionName, &name) {
+            return Err(HostError::new("Terminal session name does not match"));
+        }
+        if session.commandRunning {
+            return Err(HostError::new("Terminal session has a command in progress"));
+        }
+        state.ptySessions.remove(&id);
+        removeSessionMappings(&mut state, &id);
+        Ok(TerminalCloseOutput { sessionId: id.clone(), success: true, message: format!("Idle terminal session closed: {id}") })
+    }
+
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
         let mut state = self.lockState()?;
@@ -747,12 +764,8 @@ fn hiddenPtySessionId(
 ) -> HostResult<String> {
     {
         let mut state = host.lockState()?;
-        if let Some(sessionId) = state.hiddenExecutorKeyToSessionId.get(executorKey).cloned() {
-            if state.ptySessions.contains_key(&sessionId) {
-                return Ok(sessionId);
-            }
-            state.hiddenExecutorKeyToSessionId.remove(executorKey);
-            removeSessionMappings(&mut state, &sessionId);
+        if let Some(sessionId) = liveHiddenPtySessionId(&mut state, executorKey)? {
+            return Ok(sessionId);
         }
     }
 
@@ -767,11 +780,38 @@ fn hiddenPtySessionId(
     )?;
     let sessionId = nextSessionId();
     let mut state = host.lockState()?;
+    // Another caller may have installed a session while this shell was starting.
+    // Keep one executor per key and drop the unused shell instead of orphaning it.
+    if let Some(existing) = liveHiddenPtySessionId(&mut state, executorKey)? {
+        drop(state);
+        drop(session);
+        return Ok(existing);
+    }
     state
         .hiddenExecutorKeyToSessionId
         .insert(executorKey.to_string(), sessionId.clone());
     state.ptySessions.insert(sessionId.clone(), session);
     Ok(sessionId)
+}
+
+/// Only replace an executor observed to have exited before submitting a command.
+/// Once a command has been submitted its outcome may be unknown, so never replay it.
+#[allow(non_snake_case)]
+fn liveHiddenPtySessionId(state: &mut TerminalState, executorKey: &str) -> HostResult<Option<String>> {
+    let Some(sessionId) = state.hiddenExecutorKeyToSessionId.get(executorKey).cloned() else {
+        return Ok(None);
+    };
+    let alive = match state.ptySessions.get_mut(&sessionId) {
+        Some(session) if session.commandRunning => true,
+        Some(session) => session.pollExitCode()?.is_none(),
+        None => false,
+    };
+    if alive {
+        return Ok(Some(sessionId));
+    }
+    state.ptySessions.remove(&sessionId);
+    removeSessionMappings(state, &sessionId);
+    Ok(None)
 }
 
 struct SessionCommandResult {
@@ -1868,6 +1908,81 @@ fn nextSessionId() -> String {
 mod tests {
     use super::*;
     use operit_host_api::TerminalHost;
+
+    /// An exited hidden shell is replaced before a new command is submitted.
+    #[test]
+    fn hidden_executor_replaces_an_exited_shell() {
+        let host = NativePtyTerminalHost::new();
+        let first = host.executeHiddenCommand("printf 'first\\n'", "recover", 3000).unwrap();
+        assert!(first.output.contains("first"));
+        let key = sessionKey(&host.commandSpec.terminalType, "recover");
+        let old = {
+            let mut state = host.lockState().unwrap();
+            let id = state.hiddenExecutorKeyToSessionId[&key].clone();
+            let process = state.ptySessions.get_mut(&id).unwrap().process.as_mut().unwrap();
+            process.child.kill().unwrap();
+            process.child.wait().unwrap();
+            // Do not discard a shell while its previous command is still being observed.
+            state.ptySessions.get_mut(&id).unwrap().commandRunning = true;
+            assert_eq!(liveHiddenPtySessionId(&mut state, &key).unwrap(), Some(id.clone()));
+            state.ptySessions.get_mut(&id).unwrap().commandRunning = false;
+            id
+        };
+        let second = host.executeHiddenCommand("printf 'second\\n'", "recover", 3000).unwrap();
+        assert!(second.output.contains("second"));
+        let state = host.lockState().unwrap();
+        let new = &state.hiddenExecutorKeyToSessionId[&key];
+        assert_ne!(new, &old);
+        assert!(!state.ptySessions.contains_key(&old));
+    }
+
+    /// Concurrent first use keeps only one mapped shell for the executor key.
+    #[test]
+    fn concurrent_hidden_executor_creation_does_not_orphan_sessions() {
+        let host = NativePtyTerminalHost::new();
+        let barrier = Arc::new(std::sync::Barrier::new(4));
+        let threads: Vec<_> = (0..4).map(|_| {
+            let host = host.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                let kind = &host.commandSpec.terminalType;
+                hiddenPtySessionId(&host, &sessionKey(kind, "concurrent"), "concurrent", kind).unwrap()
+            })
+        }).collect();
+        let ids: Vec<_> = threads.into_iter().map(|thread| thread.join().unwrap()).collect();
+        assert!(ids.iter().all(|id| id == &ids[0]));
+        let state = host.lockState().unwrap();
+        assert_eq!(state.ptySessions.len(), 1);
+        assert_eq!(state.hiddenExecutorKeyToSessionId.len(), 1);
+    }
+
+    /// The name and command state are checked under the same lock as removal.
+    #[test]
+    fn idle_close_rejects_wrong_owner_and_running_command() {
+        let host = NativePtyTerminalHost::new();
+        let name = "maintenance_child";
+        let session = host.createOrGetSession(name).unwrap();
+        assert!(host.closeSessionIfIdle(&session.sessionId, "other_child").is_err());
+        let worker = host.clone();
+        let id = session.sessionId.clone();
+        let thread = std::thread::spawn(move || worker.executeInSession(&id, "sleep 1", 5000));
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            if host.lockState().unwrap().ptySessions[&session.sessionId].commandRunning { break; }
+            assert!(Instant::now() < deadline, "command did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        assert!(host.closeSessionIfIdle(&session.sessionId, name).is_err());
+        assert!(!thread.join().unwrap().unwrap().timedOut);
+        assert!(host.closeSessionIfIdle(&session.sessionId, name).unwrap().success);
+        assert!(!host.ownsSession(&session.sessionId).unwrap());
+        let generated = host.createOrGetSession("maintenance_child_generation_2").unwrap();
+        assert!(host.closeSessionIfIdle(&generated.sessionId, name).unwrap().success);
+        let other = host.createOrGetSession("maintenance_child_generation_2_extra").unwrap();
+        assert!(host.closeSessionIfIdle(&other.sessionId, name).is_err());
+        host.closeSession(&other.sessionId).unwrap();
+    }
 
     /// Runs every statement before completing and keeps changes in the existing shell.
     #[test]

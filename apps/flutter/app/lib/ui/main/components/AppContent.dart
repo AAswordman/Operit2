@@ -67,6 +67,8 @@ class _AppContentState extends State<AppContent> {
 
   final Map<String, Widget> _screenCache = <String, Widget>{};
   final Map<String, bool> _screenKeepAliveCache = <String, bool>{};
+  final Set<String> _backStackRetainedScreens = <String>{};
+  final Map<String, String> _routeScreenKeys = <String, String>{};
 
   String? _lastObservedCurrentKey;
   OperitScreen? _lastObservedScreen;
@@ -144,8 +146,20 @@ class _AppContentState extends State<AppContent> {
   /// Retains each page widget independently of its visibility in the stack.
   void _ensureScreenCached(String screenKey, OperitScreen screen) {
     _screenKeepAliveCache[screenKey] = screen.keepAlive;
+    _routeScreenKeys[widget.currentRouteEntry.instanceId] = screenKey;
+    if (screen.retainInBackStack) {
+      _backStackRetainedScreens.add(screenKey);
+    }
     _screenCache.putIfAbsent(screenKey, () => Builder(builder: screen.build));
   }
+
+  /// Keeps transient detail pages mounted until their history entry is popped.
+  bool _shouldRetainScreen(String screenKey) =>
+      _screenKeepAliveCache[screenKey] == true ||
+      (_backStackRetainedScreens.contains(screenKey) &&
+          widget.routerState.backStack.any(
+            (entry) => _routeScreenKeys[entry.instanceId] == screenKey,
+          ));
 
   /// Starts the current transition and cancels cleanup from its predecessor.
   void _updateTransition(String currentScreenKey, OperitScreen currentScreen) {
@@ -214,9 +228,11 @@ class _AppContentState extends State<AppContent> {
     final keyToRemove = _pendingRemovalKey;
     if (keyToRemove != null &&
         keyToRemove != currentScreenKey &&
-        _screenKeepAliveCache[keyToRemove] != true) {
+        !_shouldRetainScreen(keyToRemove)) {
       _screenCache.remove(keyToRemove);
       _screenKeepAliveCache.remove(keyToRemove);
+      _backStackRetainedScreens.remove(keyToRemove);
+      _routeScreenKeys.removeWhere((_, key) => key == keyToRemove);
     }
     _pendingRemovalKey = null;
   }
@@ -248,7 +264,7 @@ class _AppContentState extends State<AppContent> {
 
     final renderKeys = <String>[
       for (final entry in _screenKeepAliveCache.entries)
-        if (entry.value &&
+        if (_shouldRetainScreen(entry.key) &&
             entry.key != currentScreenKey &&
             entry.key != effectivePreviousKey)
           entry.key,

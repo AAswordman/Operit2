@@ -663,13 +663,13 @@ fn registerSystemOperationTool(
 #[allow(non_snake_case)]
 fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTerminalTools) {
     use operit_tools::tools::defaultTool::standard::StandardTerminalStreaming::{
-        TerminalExecutionExecutor, TerminalStreamExecutor,
+        TerminalCloseExecutor, TerminalExecutionExecutor, TerminalStreamExecutor,
     };
     use operit_tools::ToolExecutionManager::RegisteredToolExecutor;
-    let streams = Arc::new(TerminalStreamExecutor::new(
+    let streams = TerminalStreamExecutor::shared(
         terminalTools.clone(),
         handler.getContext().hostRuntimeTaskSchedulerHost.clone(),
-    ));
+    );
     handler.registerBuiltinTool(
         BuiltinToolName::TerminalObserve,
         RegisteredToolExecutor::Shared(streams.clone()),
@@ -682,7 +682,7 @@ fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTer
     );
     handler.registerBuiltinTool(
         BuiltinToolName::ExecuteInTerminalSessionStreaming,
-        RegisteredToolExecutor::Shared(Arc::new(TerminalExecutionExecutor(streams))),
+        RegisteredToolExecutor::Shared(Arc::new(TerminalExecutionExecutor(streams.clone()))),
         ToolRegistrationVisibility::PUBLIC,
     );
     registerTerminalTool(
@@ -703,11 +703,10 @@ fn registerTerminalTools(handler: &mut AIToolHandler, terminalTools: StandardTer
         BuiltinToolName::ExecuteHiddenTerminalCommand,
         TerminalToolOperation::ExecuteHiddenCommand,
     );
-    registerTerminalTool(
-        handler,
-        &terminalTools,
+    handler.registerBuiltinTool(
         BuiltinToolName::CloseTerminalSession,
-        TerminalToolOperation::CloseSession,
+        RegisteredToolExecutor::Shared(Arc::new(TerminalCloseExecutor(streams))),
+        ToolRegistrationVisibility::PUBLIC,
     );
     registerTerminalTool(
         handler,

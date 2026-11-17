@@ -429,7 +429,9 @@
             "zh": "retry 或 discard。",
             "en": "resolution"
           }
-        }
+        },
+        { "name": "message_id", "type": "string", "required": false, "description": { "zh": "失败消息 ID，多条失败时必填。", "en": "Failed message ID, required when multiple deliveries failed." } },
+        { "name": "user_id", "type": "string", "required": false, "description": { "zh": "失败消息的用户 ID，与 message_id 一同提供。", "en": "User ID, supplied together with message_id." } }
       ]
     },
     {
@@ -579,8 +581,10 @@ export function wechat_auto_reply_stop(): Promise<Response> {
 /** Explicitly retries or discards a failed delivery; retry can repeat delivered segments. */
 export function wechat_delivery_resolve(params: {
   resolution: "retry" | "discard";
+  message_id?: string;
+  user_id?: string;
 }): Promise<Response> {
-  return call({ action: "delivery_resolve", resolution: params.resolution });
+  return call({ action: "delivery_resolve", ...params });
 }
 
 /** Starts a fresh conversation on the next message without deleting the old chat. */

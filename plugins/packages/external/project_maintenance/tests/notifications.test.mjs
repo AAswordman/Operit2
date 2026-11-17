@@ -1,0 +1,44 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {createRequire} from 'node:module';
+import {objectStorage} from '../../../external/qqbot/tests/storage.mjs';
+const require=createRequire(import.meta.url),storage=objectStorage();
+globalThis.ToolPkg={getSpaceDataDir:()=>'/test'};globalThis.Tools={Storage:{objects:storage}};
+const {Repository}=require('../dist/storage.js');
+const repo=new Repository();
+const capture=(id,conversation,receivedAt)=>({parentChatId:'parent',projectPath:'/repo',receivedAt,ticketId:null,message:{key:`source-${id}`,channel:'wechat',accountId:'account',messageId:String(id),conversationId:conversation,authorId:'alice',text:'private user feedback',timestamp:String(id),context:{token:'private'}}});
+const ticket=(id,stage,notes)=>({schemaVersion:1,id,parentChatId:'parent',projectPath:'/repo',source:'wechat',feedback:'private',stage,createdAt:100,updatedAt:200,agentId:null,attempt:1,notes,error:null});
+test('notifications use only exact captured bindings and terminal evidence',async()=>{
+ const first=capture(1,'alice',100),second=capture(2,'alice',101),other=capture(3,'bob',102);
+ for(const c of [first,second,other])await repo.capture(c);
+ const rows=await repo.pendingCaptures();
+ await repo.publish(ticket('one','needs_info',[{kind:'triage',at:110,text:JSON.stringify({decision:'needs_info',reason:'secret internal detail'})}]),rows.filter(r=>r.value.message.conversationId==='alice'));
+ await repo.publish(ticket('two','completed',[{kind:'delivery_verification',at:120,text:'{}'}]),rows.filter(r=>r.value.message.conversationId==='bob'));
+ const alice=await repo.channelNotifications('wechat','parent','/repo','alice',99);
+ assert.equal(alice.length,1);assert.equal(alice[0].messageKey,'source-2');assert.match(alice[0].text,/请补充/);assert.doesNotMatch(JSON.stringify(alice),/secret|private/);
+ assert.equal((await repo.channelNotifications('wechat','parent','/repo','alice',102)).length,0);
+ assert.equal((await repo.channelNotifications('wechat','another','/repo','alice',99)).length,0);
+ assert.equal((await repo.channelNotifications('qq','parent','/repo','alice',99)).length,0);
+ const bob=await repo.channelNotifications('wechat','parent','/repo','bob',99);assert.equal(bob.length,1);assert.match(bob[0].text,/本地提交/);
+ const changed=await repo.get('two');changed.notes=[];await repo.save(changed);
+ assert.equal((await repo.channelNotifications('wechat','parent','/repo','bob',99)).length,0);
+});
+
+test('channel notices use only approved public phrase keys and never internal model text',async()=>{
+ const q=capture(10,'question-peer',120),g=capture(11,'guidance-peer',121),unsafe=capture(12,'unsafe-peer',122), game=capture(13,'game-peer',123);
+ for(const c of [q,g,unsafe,game])await repo.capture(c);
+ const rows=await repo.pendingCaptures();
+ const publish=async(id,stage,chat,report)=>repo.publish(ticket(id,stage,[{kind:'triage',at:130,text:JSON.stringify(report)}]),rows.filter(r=>r.value.message.conversationId===chat));
+ await publish('question','needs_info','question-peer',{decision:'needs_info',reason:'private secret',requirements:'secret code',publicQuestions:['browser','extension','browser','secret internal text','__proto__']});
+ await publish('guidance','not_actionable','guidance-peer',{decision:'not_actionable',reason:'private secret',publicGuidance:['check_extension','allow_javascript','reload','secret code']});
+ await publish('game','not_actionable','game-peer',{decision:'not_actionable',reason:'private secret',publicGuidance:['restart_game']});
+ await publish('unsafe','not_actionable','unsafe-peer',{decision:'not_actionable',publicGuidance:['泄露私人信息','constructor']});
+ const question=(await repo.channelNotifications('wechat','parent','/repo','question-peer',99))[0].text;
+ assert.match(question,/浏览器及版本、相关扩展的名称/);assert.match(question,/工单：question/);assert.doesNotMatch(question,/secret|private|__proto__/);
+ const advice=(await repo.channelNotifications('wechat','parent','/repo','guidance-peer',99))[0].text;
+ assert.match(advice,/检查相关浏览器扩展的设置/);assert.match(advice,/运行 JavaScript/);assert.match(advice,/重新加载页面/);assert.doesNotMatch(advice,/secret|private/);
+ const gameAdvice=(await repo.channelNotifications('wechat','parent','/repo','game-peer',99))[0].text;
+ assert.match(gameAdvice,/点击游戏页面中的重新开始按钮/);assert.doesNotMatch(gameAdvice,/private|secret/);
+ const fallback=(await repo.channelNotifications('wechat','parent','/repo','unsafe-peer',99))[0].text;
+ assert.match(fallback,/无需修改代码/);assert.doesNotMatch(fallback,/泄露|constructor/);
+});

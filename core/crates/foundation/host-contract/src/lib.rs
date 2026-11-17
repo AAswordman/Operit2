@@ -1876,6 +1876,15 @@ pub type TerminalOutputCallback = Box<dyn FnMut(&[u8], bool) -> HostResult<()> +
 /// Receives the original command receipt after its host execution finishes.
 pub type TerminalCompletionCallback = Box<dyn FnOnce(HostResult<TerminalCommandOutput>) + Send>;
 
+/// Whether a host-created session belongs to one managed session name, including
+/// the numbered generations used when a previous command is still running.
+pub fn terminalSessionNameMatches(actual: &str, expected: &str) -> bool {
+    if expected.is_empty() || expected.trim() != expected { return false; }
+    if actual == expected { return true; }
+    actual.strip_prefix(expected).and_then(|suffix| suffix.strip_prefix("_generation_"))
+        .is_some_and(|number| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
+}
+
 pub trait TerminalHost: Send + Sync {
     /// Converts a host filesystem locator to a directory usable by this terminal.
     /// Resource backends require explicit platform support; opaque locators must never reach a shell.
@@ -1969,6 +1978,11 @@ pub trait TerminalHost: Send + Sync {
         control: Option<&str>,
     ) -> HostResult<TerminalInputOutput>;
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput>;
+    /// Close only an idle session belonging to the named session family. Hosts
+    /// without an atomic implementation must fail closed rather than emulate it.
+    fn closeSessionIfIdle(&self, _sessionId: &str, _sessionName: &str) -> HostResult<TerminalCloseOutput> {
+        Err(HostError::new("Atomic idle terminal close is not supported by this host"))
+    }
     fn getSessionScreen(&self, sessionId: &str) -> HostResult<TerminalScreenOutput>;
 }
 

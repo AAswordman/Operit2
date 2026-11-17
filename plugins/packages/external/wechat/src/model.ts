@@ -54,6 +54,9 @@ export interface Delivery {
 }
 
 export interface Config {
+  channelCapture: boolean;
+  channelOnlyWhenNoAuto: boolean;
+  channelConversationIds: string[] | null;
   account: Account | null;
   listenerEnabled: boolean;
   autoReply: AutoReplyConfig;
@@ -64,6 +67,8 @@ export interface Config {
   bindings: Record<string, string>;
   history: InboundEvent[];
   delivery: Delivery | null;
+  failedDeliveries: Delivery[];
+  activeDeliveries: Delivery[];
 }
 
 export interface LoginStatus {
@@ -85,6 +90,7 @@ export interface Status {
     error: string;
     repliedCount: number;
     bindingCount: number;
+    deliveries: Array<{ messageId: string; userId: string; state: string; delivered: number; error: string }>;
     delivery: {
       messageId: string;
       userId: string;
@@ -148,7 +154,7 @@ export type Request =
   | { action: "download_media"; message_id: string }
   | { action: "typing"; user_id: string; active: boolean }
   | { action: "auto_configure"; params: AutoReplyParams }
-  | { action: "delivery_resolve"; resolution: "retry" | "discard" }
+  | { action: "delivery_resolve"; resolution: "retry" | "discard"; message_id?: string; user_id?: string }
   | { action: "reset_conversation"; user_id: string };
 
 export type Response =
@@ -161,6 +167,7 @@ export type Response =
 /** Creates one device-local account and its durable receive queue. */
 export function defaultConfig(): Config {
   return {
+    channelCapture: false, channelOnlyWhenNoAuto: false, channelConversationIds: null,
     account: null,
     listenerEnabled: false,
     autoReply: {
@@ -179,6 +186,8 @@ export function defaultConfig(): Config {
     bindings: {},
     history: [],
     delivery: null,
+    failedDeliveries: [],
+    activeDeliveries: [],
   };
 }
 

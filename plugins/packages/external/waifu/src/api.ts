@@ -23,6 +23,9 @@ function call<T, R>(method: string, payload: T): Promise<R> {
   return ToolPkg.callDependency<T, R>("com.operit.waifu", method, payload);
 }
 
+/** Reports whether Waifu is active for a conversation. */
+export function modeStatus(chatId: string): Promise<{ enabled: boolean }> { return call("mode.status", { chatId }); }
+
 /** Reads one explicitly named, persisted waifu profile. */
 export function getSettings(profile = "default"): Promise<Settings> { return call("settings.get", { profile }); }
 

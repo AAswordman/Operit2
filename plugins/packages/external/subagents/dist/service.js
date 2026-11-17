@@ -17,6 +17,11 @@ const chat = {
     send(request) { return Tools.Chat.sendMessageStreaming(request); },
     /** Uses authenticated package ownership for native cancellation. */
     cancel(chatId) { return Tools.Chat.cancel(chatId); },
+    async closeIdleTerminal(sessionId, sessionName) {
+        const result = await Tools.System.terminal.closeIfIdle(sessionId, sessionName);
+        if (result.sessionId !== sessionId || result.success !== true)
+            throw new Error("Terminal close was not confirmed");
+    },
     /** Reads the structured processing flag without using the visible chat selection. */
     async isProcessing(chatId) {
         const result = await Tools.Chat.agentStatus(chatId);
@@ -66,7 +71,9 @@ function decodeRequest(value) {
                 throw new Error("interrupt must be boolean");
             return { action: "send", parentChatId, agentId: (0, model_js_1.requireText)(input.agentId, "agentId"), message: (0, model_js_1.requireText)(input.message, "message"), interrupt: input.interrupt };
         }
-        case "close": return { action: "close", parentChatId, agentId: (0, model_js_1.requireText)(input.agentId, "agentId") };
+        case "close":
+        case "close_if_completed":
+        case "release_idle_terminals": return { action: input.action, parentChatId, agentId: (0, model_js_1.requireText)(input.agentId, "agentId") };
         default: throw new Error("Unknown subagent operation");
     }
 }

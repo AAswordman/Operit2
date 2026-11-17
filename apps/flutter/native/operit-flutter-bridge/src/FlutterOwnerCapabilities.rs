@@ -843,6 +843,13 @@ impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
         Ok(output)
     }
 
+    /// Publishes the session list only after a successful conditional close.
+    fn closeSessionIfIdle(&self, sessionId: &str, sessionName: &str) -> operit_host_api::HostResult<operit_host_api::TerminalCloseOutput> {
+        let output = self.inner.closeSessionIfIdle(sessionId, sessionName)?;
+        self.publish_sessions()?;
+        Ok(output)
+    }
+
     /// Reads the current terminal screen from the wrapped host.
     fn getSessionScreen(
         &self,

@@ -8,12 +8,13 @@ exports.nonblank = nonblank;
 exports.integer = integer;
 exports.errorText = errorText;
 exports.inbound = inbound;
+const messages_js_1 = require("./messages.js");
 exports.CHANNEL = "qqbot.service";
 exports.MAX_EVENTS = 200;
 /** Creates the authored initial persisted configuration. */
 function defaultConfig() {
-    return { waifuProfile: "default", appId: "", appSecret: "", useSandbox: false, listenerEnabled: false,
-        autoReply: { enabled: false, c2cEnabled: true, groupEnabled: true, aiTimeoutMs: 120000, chatGroup: "QQ Bot", characterSelection: "", assistantInstruction: "请直接回复 QQ 用户，不要输出内部思考或工具执行过程。" },
+    return { channelCapture: false, channelOnlyWhenNoAuto: false, channelConversationIds: null, waifuProfile: "default", appId: "", appSecret: "", useSandbox: false, listenerEnabled: false,
+        autoReply: { enabled: false, c2cEnabled: true, groupEnabled: true, groupContext: "shared", groupReplyMode: "mentioned", listenGroupMessages: true, aiTimeoutMs: 120000, chatGroup: "QQ Bot", characterSelection: "", assistantInstruction: "请直接回复 QQ 用户，不要输出内部思考或工具执行过程。" },
         bindings: {}, processed: [] };
 }
 /** Requires an object received at a JSON protocol boundary. */
@@ -61,6 +62,6 @@ function inbound(payload) {
         timestamp = text(body.timestamp, "message.timestamp");
     }
     const eventId = payload.id === undefined ? "" : text(payload.id, "dispatch.id");
-    return { scene, eventType, eventId, seq, messageId, content, timestamp, receivedAt: new Date().toISOString(), userOpenId, groupOpenId, rawPayload: payload,
+    return { scene, eventType, eventId, seq, messageId, content, timestamp, receivedAt: new Date().toISOString(), userOpenId, groupOpenId, rawPayload: payload, ...(scene === "unknown" ? {} : (0, messages_js_1.messageDetails)(body, userOpenId)),
         replyHint: { scene, msg_id: messageId, event_id: eventId, openid: userOpenId, group_openid: groupOpenId } };
 }

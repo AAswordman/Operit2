@@ -32,6 +32,46 @@ test("semantic revisions replace whole message parts and preserve independent me
   assert.deepEqual(saved.messages.map(message => message.parts.map(value => value.partId)), [["tool"], ["new"]]);
 });
 
+/** Only structured error results for the current snapshot contribute diagnostics. */
+test("terminal capacity diagnostic follows semantic revisions and ignores assistant prose", async () => {
+  const h = harness(); const agent = await h.spawn();
+  const observation = h.chat.latest(agent.id).observation;
+  const failure = {...part("capacity", "tool_result", "<error>Host service capacity exhausted: operit-pty-reader</error>"), toolName: "super_admin:bash", attributes: {status: "error"}};
+  observation.emit({type:"part", chatId:agent.id, messageTimestamp:20, revision:1, parts:[failure]});
+  await flush(); assert.deepEqual(copy((await h.request("list")).agents[0].diagnostics), ["terminal_capacity_exhausted"]);
+  observation.emit({type:"part", chatId:agent.id, messageTimestamp:20, revision:2, parts:[part("text", "markdown", failure.content)]});
+  await flush(); assert.equal((await h.request("list")).agents[0].diagnostics, undefined);
+  observation.emit({type:"part", chatId:agent.id, messageTimestamp:20, revision:3, parts:[failure]});
+  await flush(); h.chat.complete(agent.id); const result=await h.request("wait", {agentIds:[agent.id],timeoutMs:1000});
+  assert.deepEqual(copy(result.agents[0].diagnostics), ["terminal_capacity_exhausted"]);
+});
+
+/** Only completed child-owned foreground sessions may be submitted to atomic host cleanup. */
+test("idle cleanup requires completion and ignores background or untrusted session records", async () => {
+  const h = harness(); const agent = await h.spawn();
+  await assert.rejects(h.request("release_idle_terminals", {agentId:agent.id}), /not completed/);
+  const receipt = (id, background, type="bash") => ({...part(id,"tool_result",JSON.stringify({sessionId:id,terminalType:type,background})),toolName:`super_admin:${type}`,attributes:{status:"success"}});
+  const parts=[receipt("one",false),receipt("two",false,"zsh"),receipt("bg",true),{...receipt("wrong",false),toolName:"read_file"}, {...receipt("bad",false),content:"not json"}];
+  h.chat.latest(agent.id).observation.emit({type:"part",chatId:agent.id,messageTimestamp:20,revision:1,parts}); await flush();
+  h.chat.complete(agent.id); await h.request("wait",{agentIds:[agent.id],timeoutMs:1000}); await flush();
+  h.chat.terminalCloseFailures.add("two");
+  const result=await h.request("release_idle_terminals",{agentId:agent.id});
+  assert.deepEqual(copy(result),{closed:["one"],retained:["two"]});
+  assert.deepEqual(h.chat.idleTerminalCloses,[{sessionId:"one",sessionName:`super_admin_default_session_bash_${agent.id}`},{sessionId:"two",sessionName:`super_admin_default_session_zsh_${agent.id}`}]);
+  await assert.rejects(h.request("release_idle_terminals",{agentId:agent.id},"foreign"),/does not belong/);
+});
+
+test("idle cleanup ignores a session already closed by the agent", async () => {
+  const h=harness(); const agent=await h.spawn();
+  const result=(id,tool,value)=>({...part(id,"tool_result",JSON.stringify(value)),toolName:tool,attributes:{status:"success"}});
+  const parts=[result("first","super_admin:bash",{sessionId:"old",terminalType:"bash",background:false}),
+    result("closed","super_admin:close",{__type:"TerminalSessionCloseResultData",sessionId:"old",success:true}),
+    result("last","super_admin:bash",{sessionId:"new",terminalType:"bash",background:false})];
+  h.chat.latest(agent.id).observation.emit({type:"part",chatId:agent.id,messageTimestamp:20,revision:1,parts});await flush();
+  h.chat.complete(agent.id);await h.request("wait",{agentIds:[agent.id],timeoutMs:1000});await flush();
+  assert.deepEqual(copy(await h.request("release_idle_terminals",{agentId:agent.id})),{closed:["new"],retained:[]});
+});
+
 /** Exercises repeated wait deadlines without wall-clock delays or additional sends. */
 test("30-second timeout only ends the wait, and the same agent can be waited again", async () => {
   const h = harness(); const agent = await h.spawn();
@@ -297,4 +337,39 @@ test("failed persistence rejects current and later waits without retrying the wr
   assert.equal(h.clock.timers.size, 0);
   await assert.rejects(h.request("wait", { agentIds: [agent.id], timeoutMs: 30000 }), /storage unavailable/);
   assert.equal(writes, 1);
+});
+
+test('conditional close fences only completed, idle agents without cancelling work', async () => {
+  const h = harness(), agent = await h.spawn();
+  await assert.rejects(h.request('close_if_completed', {agentId: agent.id}), /not completed/);
+  assert.equal(h.chat.cancellations.length, 0);
+  h.chat.complete(agent.id); await flush();
+  assert.equal((await h.request('close_if_completed', {agentId: agent.id})).status, 'closed');
+  await assert.rejects(h.request('send', {agentId:agent.id, message:'later', interrupt:false}), /closed/);
+  await assert.rejects(h.spawn({}, agent.id), /parent subagent/);
+  assert.equal(h.chat.cancellations.length, 0);
+});
+
+test('conditional close refuses unclosed descendants and active native execution', async () => {
+  const h = harness(), parent = await h.spawn(), child = await h.spawn({}, parent.id);
+  h.chat.complete(parent.id); await flush();
+  await assert.rejects(h.request('close_if_completed', {agentId:parent.id}), /retained children/);
+  assert.equal(h.chat.cancellations.length, 0);
+  h.chat.complete(child.id); await flush();
+  await h.request('close_if_completed',{agentId:child.id},parent.id);
+  await assert.rejects(h.request('close_if_completed',{agentId:parent.id}), /retained children/);
+  const lone=await h.spawn(); h.chat.complete(lone.id); await flush();
+  h.chat.processing.add(lone.id);
+  await assert.rejects(h.request('close_if_completed',{agentId:lone.id}), /still processing/);
+  assert.equal(h.chat.cancellations.length, 0);
+  h.chat.processing.delete(lone.id);
+  assert.equal((await h.request('close_if_completed',{agentId:lone.id})).status,'closed');
+});
+
+test('recovery fence persists across a manager restart', async () => {
+  const original=harness(), agent=await original.spawn(); original.chat.complete(agent.id); await flush();
+  await original.request('close_if_completed',{agentId:agent.id});
+  const restarted=harness([...original.repository.records.values()]);
+  await assert.rejects(restarted.spawn({},agent.id),/parent subagent/);
+  await assert.rejects(restarted.request('send',{agentId:agent.id,message:'new work',interrupt:false}),/closed/);
 });

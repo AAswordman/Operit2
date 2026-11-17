@@ -434,44 +434,28 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
     card("connectionCard", "接入微信", connection),
     card("replyCard", "回复设置", reply),
   ];
-  const delivery = status?.autoReply.delivery;
-  if (delivery !== null && delivery !== undefined)
+  const deliveries = status?.autoReply.deliveries ?? (status?.autoReply.delivery ? [status.autoReply.delivery] : []);
+  for (const [index, delivery] of deliveries.entries()) {
     children.push(
-      card("deliveryCard", "需要处理的回复", [
-        description(
-          `消息 ${delivery.messageId} · 已发送 ${delivery.delivered} 段`,
-        ),
-        ctx.UI.Text({
-          text: delivery.error || "正在回复…",
-          color: colors.error,
-        }),
-        ...(delivery.state === "failed"
-          ? [
-              description(
-                "后续自动回复已暂停。重试整个请求可能重复已发送的内容，请先在微信中核对。",
-              ),
-              button("retryDelivery", "重试整个请求", () =>
-                operate("正在安排重试…", async () => {
-                  await call({
-                    action: "delivery_resolve",
-                    resolution: "retry",
-                  });
-                  return "已安排重试。";
-                }),
-              ),
-              button("discardDelivery", "跳过这条回复，继续后续消息", () =>
-                operate("正在跳过…", async () => {
-                  await call({
-                    action: "delivery_resolve",
-                    resolution: "discard",
-                  });
-                  return "已跳过失败回复。";
-                }),
-              ),
-            ]
-          : []),
+      card(`deliveryCard${index}`, "回复状态", [
+        description(`用户 ${delivery.userId} · 消息 ${delivery.messageId} · 已发送 ${delivery.delivered} 段`),
+        ctx.UI.Text({ text: delivery.error || "正在回复…", color: colors.error }),
+        ...(delivery.state === "failed" ? [
+          description("该用户的后续自动回复已暂停，其他用户仍可处理。重试整个请求可能重复已发送的内容，请先在微信中核对。"),
+          button(`retryDelivery${index}`, "重试整个请求", () =>
+            operate("正在安排重试…", async () => {
+              await call({ action: "delivery_resolve", resolution: "retry", message_id: delivery.messageId, user_id: delivery.userId });
+              return "已安排重试。";
+            })),
+          button(`discardDelivery${index}`, "跳过这条回复", () =>
+            operate("正在跳过…", async () => {
+              await call({ action: "delivery_resolve", resolution: "discard", message_id: delivery.messageId, user_id: delivery.userId });
+              return "已跳过失败回复。";
+            })),
+        ] : []),
       ]),
     );
+  }
   children.push(
     button("diagnostics", diagnostics ? "收起诊断信息" : "诊断信息", () =>
       setDiagnostics(!diagnostics),

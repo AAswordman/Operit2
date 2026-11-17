@@ -23,8 +23,15 @@ function errorText(error) {
 }
 /** Projects a durable agent into its small composer and tool representation. */
 function summary(agent) {
-    const { messages: _messages, ...value } = agent;
-    return value;
+    const { messages, diagnostics: _diagnostics, ...value } = agent;
+    // Derive this from the latest semantic snapshots rather than trusting the
+    // agent's prose or retaining evidence removed by a later message revision.
+    const exhausted = messages.some(message => message.parts.some(part => part.kind === "tool_result" && part.attributes.status === "error" &&
+        (part.toolName === "super_admin:bash" || part.toolName === "super_admin:zsh" ||
+            part.toolName === "super_admin:shell" || part.toolName === "super_admin:powershell" ||
+            part.toolName === "create_terminal_session") &&
+        /^<error>Host service capacity exhausted: [^<]+<\/error>$/.test(part.content.trim())));
+    return exhausted ? { ...value, diagnostics: ["terminal_capacity_exhausted"] } : value;
 }
 /** Separates terminal task states from execution and cancellation still in progress. */
 function isActive(status) {
@@ -37,6 +44,8 @@ function parseAgent(value) {
     const agent = value;
     if (agent.schemaVersion !== exports.SCHEMA_VERSION)
         throw new Error("Unsupported subagent schema version");
+    if (agent.recoveryFence !== undefined && typeof agent.recoveryFence !== "boolean")
+        throw new Error("Invalid recovery fence");
     for (const field of ["id", "parentChatId", "chatId", "name", "task", "lastInput"])
         requireText(agent[field], field);
     const statuses = ["starting", "running", "completed", "cancelled", "failed", "closing", "closed", "interrupted"];

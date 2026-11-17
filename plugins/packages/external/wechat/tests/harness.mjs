@@ -8,6 +8,7 @@ import {
 } from "node:crypto";
 import { readFileSync } from "node:fs";
 import vm from "node:vm";
+import { objectStorage } from "../../qqbot/tests/storage.mjs";
 import { provider } from "../../waifu/tests/harness.mjs";
 import { clock, plain, settle } from "../../qqbot/tests/harness.mjs";
 
@@ -120,7 +121,7 @@ export function response(data = { ret: 0 }, extra = {}) {
 
 /** Runs the actual service, dependency client and Waifu provider against controlled host boundaries. */
 export async function fixture(options = {}) {
-  const sourceClock = clock();
+  const sourceClock = clock(), storage = objectStorage();
   const time = {
     ...sourceClock,
     /** Advances real asynchronous chains between timer ticks instead of jumping past their continuations. */
@@ -131,7 +132,7 @@ export async function fixture(options = {}) {
       }
     },
   };
-  const config = options.config ?? load("model").defaultConfig();
+  let config = options.config ?? load("model").defaultConfig();
   if (!options.config) {
     config.account = options.loggedOut
       ? null
@@ -142,6 +143,11 @@ export async function fixture(options = {}) {
           baseUrl: "https://ilinkai.weixin.qq.com",
         };
     config.autoReply.enabled = options.auto === true;
+  }
+  // Model PluginConfig's top-level-only dirty tracking when requested.
+  let configDirty = false;
+  if (options.trackTopLevel) {
+    config = new Proxy(config, { set(target, key, value) { target[key] = value; configDirty = true; return true; } });
   }
   const requests = [],
     snapshots = [],
@@ -163,11 +169,12 @@ export async function fixture(options = {}) {
   });
   let pendingPoll = null,
     pendingQR = null,
-    pendingReply = null,
     sent = 0;
+  const pendingReplies = new Map();
   const batches = [],
     qrStates = [];
   const Tools = {
+    Storage: { objects: storage },
     Net: {
       async http(request) {
         requests.push(plain(request));
@@ -239,12 +246,10 @@ export async function fixture(options = {}) {
       async updateGroup() {},
       async cancel(chatId) {
         cancelled.push(chatId);
-        if (pendingReply !== null) {
-          pendingReply({
-            chatId,
-            outcome: { type: "committed", status: "cancelled" },
-          });
-          pendingReply = null;
+        const resolve = pendingReplies.get(chatId);
+        if (resolve) {
+          pendingReplies.delete(chatId);
+          resolve({ chatId, outcome: { type: "committed", status: "cancelled" } });
         }
         return { chatId, cancelRequested: true };
       },
@@ -258,7 +263,7 @@ export async function fixture(options = {}) {
               parts: [{ kind: "markdown", content: options.firstPart }],
             };
           const result = await new Promise((resolve) => {
-            pendingReply = resolve;
+            pendingReplies.set(input.chatId, resolve);
           });
           yield { type: "completed", result };
           return;
@@ -345,10 +350,15 @@ export async function fixture(options = {}) {
         return config;
       },
       async flush() {
-        snapshots.push(plain(config));
+        if (options.failFlush?.(plain(config), sent)) throw new Error("injected config write failure");
+        if (!options.trackTopLevel || configDirty) {
+          snapshots.push(plain(config));
+          configDirty = false;
+        }
       },
     },
     ToolPkg: {
+      getLocalDataDir: () => "/plugin",
       ipc: { on() {} },
       async callDependency(owner, method, input) {
         if (owner === "com.operit.character_cards")
@@ -375,6 +385,7 @@ export async function fixture(options = {}) {
       resolve(result);
     }
     await settle();
+    await new Promise(resolve => setImmediate(resolve));
   }
   /** Delivers one QR status without inventing account confirmation. */
   async function qr(result) {
@@ -403,9 +414,16 @@ export async function fixture(options = {}) {
     created,
     submitted,
     cancelled,
+    completeReply(chatId) {
+      const resolve = pendingReplies.get(chatId);
+      if (!resolve) throw new Error(`No pending reply: ${chatId}`);
+      pendingReplies.delete(chatId);
+      resolve({ chatId, outcome: { type: "committed", status: "completed" } });
+    },
     uploads,
     files,
     crypto,
+    storage,
     globals,
     service,
     batch,

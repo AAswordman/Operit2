@@ -1,10 +1,14 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.receive = receive;
+exports.channel = channel;
 exports.registerService = registerService;
 exports.restore = restore;
 exports.terminate = terminate;
+const channel_store_js_1 = require("./channel-store.js");
+const channel_inbox_js_1 = require("./channel-inbox.js");
 const api_js_1 = require("./dependencies/waifu/api.js");
+const messages_js_1 = require("./messages.js");
 const attachments_js_1 = require("./attachments.js");
 const gateway_js_1 = require("./gateway.js");
 const openapi_js_1 = require("./openapi.js");
@@ -14,15 +18,24 @@ class QQBotService {
     /** Creates one native network service around a durable plugin configuration. */
     constructor(config) {
         this.config = config;
+        this.sessions = new channel_store_js_1.ChannelStore();
+        this.opening = new Map();
+        this.channelInbox = new channel_inbox_js_1.ChannelInbox();
         this.events = [];
         this.seen = new Set();
         this.autoTimer = null;
-        this.autoTask = null;
+        this.autoTasks = new Map();
         this.autoGeneration = 0;
-        this.activeChat = null;
+        this.activeChats = new Map();
+        this.activeContexts = new Map();
         this.autoRunning = false;
         this.autoError = "";
         this.repliedCount = 0;
+        config.autoReply = { ...config.autoReply, groupContext: config.autoReply.groupContext ?? "shared", groupReplyMode: config.autoReply.groupReplyMode ?? "mentioned", listenGroupMessages: config.autoReply.listenGroupMessages ?? true };
+        config.memberBindings ?? (config.memberBindings = {});
+        config.deliveries ?? (config.deliveries = []);
+        config.bindingsAccountId ?? (config.bindingsAccountId = config.appId);
+        config.deliveries = config.deliveries.map(delivery => delivery.state === "processing" ? { ...delivery, state: "failed", error: "上次回复中断，请确认已发送内容后重试或跳过。" } : delivery);
         this.api = this.createApi();
         this.gateway = this.createGateway();
     }
@@ -37,7 +50,7 @@ class QQBotService {
         return { waifuProfile: this.config.waifuProfile, configured: this.config.appId !== "" && this.config.appSecret !== "", appId: this.config.appId, useSandbox: this.config.useSandbox, listenerEnabled: this.config.listenerEnabled,
             service: { status: this.gateway.status, sessionId: this.gateway.sessionId, lastError: this.gateway.lastError, receivedCount: this.gateway.receivedCount },
             queue: { size: this.events.length, capacity: model_js_1.MAX_EVENTS },
-            autoReply: { config: { ...this.config.autoReply }, running: this.autoRunning, lastError: this.autoError, bindings: { ...this.config.bindings }, repliedCount: this.repliedCount } };
+            autoReply: { config: { ...this.config.autoReply }, running: this.autoRunning, lastError: this.autoError, bindings: { ...this.config.bindings }, repliedCount: this.repliedCount, deliveries: (this.config.deliveries ?? []).filter(item => item.state !== "pending").map(({ key, state, delivered, error }) => ({ key, state, delivered, error })) } };
     }
     /** Restores explicitly enabled services after application creation or foreground entry. */
     async restore() {
@@ -93,6 +106,15 @@ class QQBotService {
         const changed = next.appId !== this.config.appId || next.appSecret !== this.config.appSecret || next.useSandbox !== this.config.useSandbox;
         if (changed || !next.listenerEnabled || params.restart_service === true)
             await this.stopRuntime();
+        if (next.appId !== this.config.appId) {
+            this.events.length = 0;
+            this.seen.clear();
+            this.config.bindings = {};
+            this.config.memberBindings = {};
+            this.config.processed = [];
+            this.config.deliveries = [];
+            this.config.bindingsAccountId = next.appId;
+        }
         Object.assign(this.config, next);
         if (changed) {
             this.api = this.createApi();
@@ -102,17 +124,115 @@ class QQBotService {
         if (next.listenerEnabled)
             await this.start(false);
     }
-    /** Deduplicates actual remote identities and rejects an overfull event queue explicitly. */
-    enqueue(event) {
-        const key = event.messageId === "" ? `${event.eventType}:${event.eventId}:${event.seq}` : `${event.scene}:${event.messageId}`;
+    normalized(event) {
+        const scene = event.scene;
+        if (scene !== "group" && scene !== "c2c")
+            throw Error("Unsupported QQ conversation scene");
+        const accountId = (0, model_js_1.nonblank)(this.config.appId, "AppID"), conversationId = scene === "group" ? event.groupOpenId : event.userOpenId;
+        return { key: (0, channel_inbox_js_1.messageKey)(["qq", accountId, scene, conversationId, event.messageId]), channel: "qq", accountId,
+            messageId: event.messageId, conversationId, authorId: event.userOpenId, text: (0, messages_js_1.chatText)(event), timestamp: event.timestamp,
+            autoReplyEnabled: this.shouldReply(event), author: event.author, messageType: event.messageType, attachments: event.attachments, elements: event.elements,
+            card: event.card, referenceIndex: event.referenceIndex, referencedMessageIndex: event.referencedMessageIndex,
+            context: JSON.parse(JSON.stringify({ scene, replyHint: event.replyHint, raw: event.rawPayload ?? null })) };
+    }
+    shouldReply(event) {
+        const config = this.config.autoReply;
+        return config.enabled && (event.scene === "c2c" ? config.c2cEnabled : event.scene === "group" && config.groupEnabled &&
+            (config.groupReplyMode === "all" || event.eventType === "GROUP_AT_MESSAGE_CREATE"));
+    }
+    /** Stores readable group history separately from model turns and maintenance deliveries. */
+    async enqueue(event) {
+        const key = event.messageId === "" ? `${event.eventType}:${event.eventId}:${event.seq}` : JSON.stringify([this.config.appId, event.scene, event.scene === "group" ? event.groupOpenId : event.userOpenId, event.messageId]);
         if (this.seen.has(key))
             return;
-        if (this.events.length >= model_js_1.MAX_EVENTS)
-            throw new Error("QQ event queue is full; consume or clear events before restarting the listener");
+        const valid = event.messageId !== "" && (event.scene === "c2c" || event.scene === "group");
+        let channelOnly = false;
+        if (valid) {
+            const message = this.normalized(event), binding = `${event.scene}:${message.conversationId}`;
+            if (event.scene !== "group" || this.config.autoReply.listenGroupMessages || this.shouldReply(event))
+                await this.sessions.observe(message, event.scene, `QQ ${event.scene === "group" ? "群聊" : "私聊"} ${message.conversationId}`, this.config.bindings[binding]);
+            const captured = this.config.channelCapture && (!Array.isArray(this.config.channelConversationIds) || this.config.channelConversationIds.includes(message.conversationId));
+            if (captured)
+                await this.channelInbox.record(message);
+            channelOnly = captured && this.config.channelOnlyWhenNoAuto && !this.shouldReply(event);
+            if (this.shouldReply(event) && !this.config.processed.includes(key) && !this.config.processed.includes(`${event.scene}:${event.messageId}`) && !this.config.deliveries.some(item => item.key === key)) {
+                if (this.config.deliveries.length >= 200)
+                    this.autoError = "自动回复积压已达 200 条；新消息仍保存在近期上下文和已订阅反馈入口中，请处理失败回复。";
+                else {
+                    this.config.deliveries = [...this.config.deliveries, { key, event, state: "pending", delivered: 0, error: "" }];
+                    await PluginConfig.flush(this.config);
+                }
+            }
+        }
         this.seen.add(key);
         if (this.seen.size > 512)
             this.seen.delete(this.seen.values().next().value);
-        this.events.push(event);
+        if (!channelOnly) {
+            if (this.events.length >= model_js_1.MAX_EVENTS)
+                this.events.shift();
+            this.events.push(event);
+        }
+    }
+    async conversations() {
+        // Existing Bot-created chats remain the authoritative routing after upgrade.
+        for (const [binding, chatId] of Object.entries(this.config.bindings)) {
+            const separator = binding.indexOf(":"), scene = binding.slice(0, separator), id = binding.slice(separator + 1);
+            if ((scene !== "c2c" && scene !== "group") || !id)
+                continue;
+            await this.sessions.remember({ key: (0, channel_store_js_1.conversationKey)("qq", this.config.appId, scene, id), channel: "qq", accountId: this.config.appId, scene,
+                conversationId: id, title: `QQ ${scene === "group" ? "群聊" : "私聊"} ${id}`, chatId, lastMessageAt: 0 });
+        }
+        return (await this.sessions.conversations("qq", this.config.appId)).map(session => ({ ...session,
+            contextChatIds: Object.entries(this.config.memberBindings ?? {}).filter(([key]) => JSON.parse(key)[0] === session.key).map(([, id]) => id) }));
+    }
+    openChat(key) {
+        const existing = this.opening.get(key);
+        if (existing)
+            return existing;
+        const task = (async () => {
+            const session = await this.sessions.get(key);
+            if (session.accountId !== this.config.appId)
+                throw Error("会话不属于当前 QQ 账号");
+            if (session.chatId)
+                return session;
+            const retained = this.config.bindings[`${session.scene}:${session.conversationId}`];
+            if (retained)
+                return this.sessions.bind(key, retained);
+            const config = this.config.autoReply, input = config.characterSelection === "" ? null : { "com.operit.character_cards": { version: 1, selection: config.characterSelection } };
+            const chatId = (await Tools.Chat.createNew({ setAsCurrentChat: false, input })).chatId;
+            // Publish the identity before presentation updates, so a failed title update cannot create duplicates.
+            this.config.bindings = { ...this.config.bindings, [`${session.scene}:${session.conversationId}`]: chatId };
+            await PluginConfig.flush(this.config);
+            const bound = await this.sessions.bind(key, chatId);
+            await Tools.Chat.updateTitle(chatId, session.title);
+            if (config.chatGroup !== "")
+                await Tools.Chat.updateGroup([chatId], config.chatGroup);
+            return bound;
+        })();
+        this.opening.set(key, task);
+        void task.finally(() => this.opening.delete(key)).catch(() => { });
+        return task;
+    }
+    async chatContext(chatId, limit, before) {
+        const active = [...this.activeContexts.values()].find(context => context.chatId === chatId);
+        const sessions = await this.conversations();
+        let session = sessions.find(item => item.chatId === chatId);
+        let authorId;
+        if (!session) {
+            const member = Object.entries(this.config.memberBindings ?? {}).find(([, id]) => id === chatId);
+            if (member) {
+                const [key, author] = JSON.parse(member[0]);
+                session = sessions.find(item => item.key === key);
+                authorId = author;
+            }
+        }
+        if (!session)
+            throw Error("当前聊天不是此 QQ Bot 的会话");
+        if (this.config.autoReply.groupContext === "member" && session.scene === "group")
+            authorId = authorId ?? active?.authorId;
+        if (this.config.autoReply.groupContext === "member" && session.scene === "group" && !authorId)
+            throw Error("成员隔离模式需要明确的当前发送者");
+        return this.sessions.history(session.key, limit, before, authorId);
     }
     /** Returns and optionally consumes only events matching explicit filters. */
     receive(params) {
@@ -141,6 +261,21 @@ class QQBotService {
                 next[field] = value;
             }
         }
+        if (params.group_context !== undefined) {
+            if (params.group_context !== "shared" && params.group_context !== "member")
+                throw Error("Invalid group context mode");
+            next.groupContext = params.group_context;
+        }
+        if (params.group_reply_mode !== undefined) {
+            if (params.group_reply_mode !== "mentioned" && params.group_reply_mode !== "all")
+                throw Error("Invalid group reply mode");
+            next.groupReplyMode = params.group_reply_mode;
+        }
+        if (params.listen_group_messages !== undefined) {
+            if (typeof params.listen_group_messages !== "boolean")
+                throw Error("Invalid group listening setting");
+            next.listenGroupMessages = params.listen_group_messages;
+        }
         if (params.ai_timeout_ms !== undefined)
             next.aiTimeoutMs = (0, model_js_1.integer)(params.ai_timeout_ms, "ai_timeout_ms", 1000, 600000);
         if (params.chat_group !== undefined)
@@ -162,7 +297,7 @@ class QQBotService {
             await this.start(false);
         }
     }
-    /** Starts one sequential AI consumer without opening a second receive connection. */
+    /** Processes separate QQ conversations concurrently while preserving each conversation's order. */
     startAuto() {
         if (this.autoRunning)
             return;
@@ -170,20 +305,49 @@ class QQBotService {
         this.autoError = "";
         this.scheduleAuto(this.autoGeneration);
     }
-    /** Schedules the next automatic reply after the preceding one has completely settled. */
+    binding(event) {
+        return JSON.stringify([event.scene, event.scene === "group" ? event.groupOpenId : event.userOpenId]);
+    }
+    /** Reserves the next eligible conversation before starting any asynchronous work. */
+    takeEvent() {
+        const delivery = this.config.deliveries.find((item, index) => item.state === "pending" && this.shouldReply(item.event) && !this.autoTasks.has(this.binding(item.event)) && !this.config.deliveries.slice(0, index).some(prior => this.binding(prior.event) === this.binding(item.event)));
+        if (!delivery)
+            return null;
+        delivery.state = "processing";
+        this.config.deliveries = [...this.config.deliveries];
+        const index = this.events.findIndex(item => item === delivery.event || (item.messageId === delivery.event.messageId && this.binding(item) === this.binding(delivery.event)));
+        if (index >= 0)
+            this.events.splice(index, 1);
+        return { event: delivery.event, binding: this.binding(delivery.event) };
+    }
+    launchAuto(generation, item) {
+        const task = this.autoTick(generation, item.event, item.binding);
+        this.autoTasks.set(item.binding, task);
+        void task.then(() => { if (this.autoTasks.get(item.binding) === task)
+            this.autoTasks.delete(item.binding); }, error => { if (this.autoTasks.get(item.binding) === task)
+            this.autoTasks.delete(item.binding); console.error("[qqbot.auto.task]", error); });
+        return task;
+    }
+    /** Keeps a bounded number of unrelated conversations moving independently. */
     scheduleAuto(generation) {
         if (!this.autoRunning || generation !== this.autoGeneration)
             return;
         this.autoTimer = setTimeout(() => {
-            if (this.autoTask !== null) {
-                this.scheduleAuto(generation);
+            this.autoTimer = null;
+            if (this.gateway.status === "error" || this.gateway.status === "stopped") {
+                this.autoRunning = false;
+                this.autoError = `QQ listener is ${this.gateway.status}: ${this.gateway.lastError}`;
                 return;
             }
-            this.autoTask = this.autoTick(generation);
-            void this.autoTask.then(() => { this.autoTask = null; this.scheduleAuto(generation); });
+            if (this.autoTasks.size < 3) {
+                const item = this.takeEvent();
+                if (item !== null)
+                    void this.launchAuto(generation, item);
+            }
+            this.scheduleAuto(generation);
         }, 300);
     }
-    /** Cancels the authenticated in-flight generation before allowing stop or reconfiguration to finish. */
+    /** Cancels every owned generation before allowing stop or reconfiguration to finish. */
     async stopAuto() {
         this.autoRunning = false;
         ++this.autoGeneration;
@@ -191,13 +355,14 @@ class QQBotService {
             clearTimeout(this.autoTimer);
             this.autoTimer = null;
         }
-        if (this.activeChat !== null)
-            await Tools.Chat.cancel(this.activeChat);
-        if (this.autoTask !== null)
-            await this.autoTask;
+        const cancellations = await Promise.allSettled([...this.activeChats.values()].map(chatId => Tools.Chat.cancel(chatId)));
+        const tasks = await Promise.allSettled([...this.autoTasks.values()]);
+        const failure = [...cancellations, ...tasks].find(result => result.status === "rejected");
+        if (failure?.status === "rejected")
+            throw failure.reason;
     }
-    /** Consumes one supported inbound message and records any real delivery or model error. */
-    async autoTick(generation) {
+    /** Consumes one reserved inbound message and records its delivery or model error. */
+    async autoTick(generation, event, taskBinding) {
         try {
             if (generation !== this.autoGeneration)
                 return;
@@ -205,46 +370,47 @@ class QQBotService {
                 this.autoRunning = false;
                 throw new Error(`QQ listener is ${this.gateway.status}: ${this.gateway.lastError}`);
             }
-            const config = this.config.autoReply;
-            const index = this.events.findIndex(event => event.messageId !== "" && ((event.scene === "c2c" && config.c2cEnabled) || (event.scene === "group" && config.groupEnabled)));
-            if (index === -1)
-                return;
-            const event = this.events.splice(index, 1)[0];
-            const key = `${event.scene}:${event.messageId}`;
-            if (this.config.processed.indexOf(key) !== -1)
-                return;
-            this.config.processed = [...this.config.processed, key].slice(-512);
-            await PluginConfig.flush(this.config);
-            const scene = event.scene;
+            const config = this.config.autoReply, message = this.normalized(event), scene = event.scene;
             if (scene !== "c2c" && scene !== "group")
-                throw new Error("Automatic replies require a C2C or group event");
-            const target = scene === "c2c" ? event.userOpenId : event.groupOpenId;
-            const binding = `${scene}:${target}`;
-            let chatId = this.config.bindings[binding];
-            if (chatId === undefined) {
-                const input = config.characterSelection === "" ? null : { "com.operit.character_cards": { version: 1, selection: config.characterSelection } };
-                chatId = (await Tools.Chat.createNew({ setAsCurrentChat: false, input })).chatId;
-                await Tools.Chat.updateTitle(chatId, `QQ ${scene} ${target}`);
-                if (config.chatGroup !== "")
-                    await Tools.Chat.updateGroup([chatId], config.chatGroup);
-                this.config.bindings = { ...this.config.bindings, [binding]: chatId };
-                await PluginConfig.flush(this.config);
+                throw Error("Automatic replies require a QQ conversation");
+            const target = message.conversationId;
+            const delivery = this.config.deliveries.find(item => item.event === event);
+            if (!delivery)
+                throw Error("Automatic reply has no durable delivery");
+            await PluginConfig.flush(this.config);
+            await this.conversations();
+            const session = await this.openChat((0, channel_store_js_1.conversationKey)("qq", this.config.appId, scene, target));
+            let chatId = session.chatId;
+            if (scene === "group" && config.groupContext === "member") {
+                const key = JSON.stringify([session.key, event.userOpenId]);
+                let isolated = this.config.memberBindings[key];
+                if (!isolated) {
+                    isolated = (await Tools.Chat.createNew({ setAsCurrentChat: false, sourceChatId: chatId, parentChatId: chatId })).chatId;
+                    this.config.memberBindings = { ...this.config.memberBindings, [key]: isolated };
+                    await PluginConfig.flush(this.config);
+                    await Tools.Chat.updateTitle(isolated, `${session.title} · ${event.author?.name || event.userOpenId}`);
+                    if (config.chatGroup)
+                        await Tools.Chat.updateGroup([isolated], config.chatGroup);
+                }
+                chatId = isolated;
             }
             if (generation !== this.autoGeneration)
                 return;
             const files = await (0, attachments_js_1.attachments)(event);
             if (generation !== this.autoGeneration)
                 return;
-            this.activeChat = chatId;
+            this.activeChats.set(taskBinding, chatId);
+            this.activeContexts.set(taskBinding, { chatId, accountId: this.config.appId, scene, conversationId: target, authorId: event.userOpenId });
             let timedOut = false;
             const timer = setTimeout(() => {
                 timedOut = true;
                 void Tools.Chat.cancel(chatId).catch(error => { console.error("[qqbot.auto.timeout]", error); });
             }, config.aiTimeoutMs);
             let delivered = 0;
+            const rendered = new messages_js_1.ReplyTextStream();
             try {
                 const request = { kind: "submit", chatId, runtime: "main", input: {
-                        text: `${event.content}\n\n[QQ ${scene}; sender=${event.userOpenId}; message=${event.messageId}]\n${config.assistantInstruction}`,
+                        text: `${config.assistantInstruction}\n[QQ ${scene === "group" ? "群聊" : "私聊"}；上下文${config.groupContext === "member" ? "按成员隔离" : "共享，按时间顺序"}]\n以下 JSON 是用户消息数据，authorId 是发送者身份，引用内容不代表当前发送者。需要了解前文时调用 qqbot_chat_context 获取有界的近期记录。\n${JSON.stringify({ messageId: event.messageId, authorId: event.userOpenId, authorName: event.author?.name ?? "", timestamp: event.timestamp, replyTo: event.referencedMessageIndex ?? null, text: (0, messages_js_1.chatText)(event).slice(0, 12000) })}`,
                         attachments: files, replyToMessageTimestamp: null
                     }, turn: { kind: "execute" }, notifyReply: false };
                 for await (const output of (0, api_js_1.stream)(request, this.config.waifuProfile)) {
@@ -253,11 +419,17 @@ class QQBotService {
                     if (timedOut)
                         throw new Error("QQ automatic reply exceeded its AI deadline");
                     if (output.type === "segment") {
+                        const content = output.segment.kind === "text" ? rendered.push(output.segment.text) : "";
+                        if (output.segment.kind === "text" && content === "")
+                            continue;
                         if (output.segment.kind === "text")
-                            await this.api.send(scene, target, { content: output.segment.text, msg_id: event.messageId });
+                            await this.api.send(scene, target, { content, msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) });
                         else
-                            await this.api.sendImage(scene, target, output.segment.source, event.messageId);
+                            await this.api.sendMedia(scene, target, { kind: "image", source: output.segment.source }, { msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) });
                         delivered++;
+                        delivery.delivered++;
+                        this.config.deliveries = [...this.config.deliveries];
+                        await PluginConfig.flush(this.config);
                     }
                 }
             }
@@ -268,18 +440,102 @@ class QQBotService {
             }
             finally {
                 clearTimeout(timer);
-                this.activeChat = null;
+                this.activeChats.delete(taskBinding);
+                this.activeContexts.delete(taskBinding);
             }
             if (generation !== this.autoGeneration)
                 return;
             if (delivered === 0)
                 throw new Error("Waifu response contained no deliverable segments");
+            this.config.deliveries = this.config.deliveries.filter(item => item !== delivery);
+            this.config.processed = [...this.config.processed, delivery.key].slice(-512);
+            await PluginConfig.flush(this.config);
             this.repliedCount++;
             this.autoError = "";
         }
         catch (error) {
             this.autoError = (0, model_js_1.errorText)(error);
+            const delivery = this.config.deliveries.find(item => item.event === event);
+            if (delivery) {
+                delivery.state = "failed";
+                delivery.error = this.autoError;
+                this.config.deliveries = [...this.config.deliveries];
+                await PluginConfig.flush(this.config);
+            }
             console.error("[qqbot.auto]", error);
+        }
+        finally {
+            const delivery = this.config.deliveries.find(item => item.event === event);
+            if (delivery?.state === "processing") {
+                delivery.state = "failed";
+                delivery.error = "回复被停止；请确认发送情况后重试或跳过。";
+                this.config.deliveries = [...this.config.deliveries];
+                await PluginConfig.flush(this.config);
+            }
+        }
+    }
+    /** Independent public channel contract, separate from the automatic-reply queue. */
+    async channel(request) {
+        if (request === null || typeof request !== "object")
+            throw new Error("Invalid channel request");
+        switch (request.action) {
+            case "conversations": return { conversations: await this.conversations() };
+            case "open_chat": return this.openChat(request.conversationKey);
+            case "history": {
+                const session = await this.sessions.get(request.conversationKey);
+                if (session.accountId !== this.config.appId)
+                    throw Error("会话不属于当前 QQ 账号");
+                return this.sessions.history(session.key, request.limit, request.before);
+            }
+            case "subscribe": return this.sessions.subscribe(request.consumerId, request.routes, "qq", this.config.appId);
+            case "configure": {
+                if (typeof request.capture !== "boolean")
+                    throw new Error("capture must be boolean");
+                if (request.conversationIds !== undefined && request.conversationIds !== null &&
+                    (!Array.isArray(request.conversationIds) || request.conversationIds.some(id => typeof id !== "string" || id.trim() === "")))
+                    throw new Error("conversationIds must be null or an array of non-empty strings");
+                if (request.channelOnlyWhenNoAuto !== undefined && typeof request.channelOnlyWhenNoAuto !== "boolean")
+                    throw new Error("channelOnlyWhenNoAuto must be boolean");
+                const previous = this.config.channelCapture, previousIds = this.config.channelConversationIds, previousOnly = this.config.channelOnlyWhenNoAuto;
+                this.config.channelCapture = request.capture;
+                if (request.channelOnlyWhenNoAuto !== undefined)
+                    this.config.channelOnlyWhenNoAuto = request.channelOnlyWhenNoAuto;
+                if (request.conversationIds !== undefined)
+                    this.config.channelConversationIds = request.conversationIds === null ? null : [...new Set(request.conversationIds)];
+                try {
+                    await PluginConfig.flush(this.config);
+                }
+                catch (error) {
+                    this.config.channelCapture = previous;
+                    this.config.channelConversationIds = previousIds;
+                    this.config.channelOnlyWhenNoAuto = previousOnly;
+                    throw error;
+                }
+                return { capture: this.config.channelCapture, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true };
+            }
+            case "status": return { channel: "qq", capture: this.config.channelCapture === true, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true, service: this.gateway.status };
+            case "active_context": {
+                const chatId = (0, model_js_1.nonblank)(request.chatId, "chatId");
+                const matches = [...this.activeContexts.values()].filter(value => value.chatId === chatId);
+                return matches.length === 1 ? { channel: "qq", ...matches[0] } : null;
+            }
+            case "peek": return { messages: request.consumerId === undefined ? await this.channelInbox.peek(request.limit, request.conversationId) : await this.sessions.peek(request.consumerId, request.limit, request.conversationKey) };
+            case "ack": return { acknowledged: request.consumerId === undefined ? await this.channelInbox.ack(request.key) : await this.sessions.ack(request.consumerId, request.key) };
+            case "reply": {
+                const message = await this.channelInbox.get(request.key) ?? await this.sessions.replyRoute(request.key);
+                if (message === null)
+                    throw new Error("Pending message not found");
+                if (message.accountId !== this.config.appId)
+                    throw new Error("Message belongs to a different QQ account");
+                const scene = message.context.scene;
+                if (scene !== "c2c" && scene !== "group")
+                    throw new Error("Unsupported QQ reply scene");
+                const params = { content: request.text, markdown: request.markdown, keyboard: request.keyboard, card: request.card,
+                    message_reference: request.message_reference ?? (message.referenceIndex ? { message_id: message.referenceIndex } : undefined), msg_id: message.messageId };
+                return { response: request.media === undefined ? await this.api.send(scene, message.conversationId, params)
+                        : await this.api.sendMedia(scene, message.conversationId, request.media, params) };
+            }
+            default: throw new Error("Unknown channel request");
         }
     }
     /** Handles every UI and tool operation in the single package owner. */
@@ -289,6 +545,23 @@ class QQBotService {
                 await this.configure(request.params);
                 break;
             case "status": break;
+            case "chat_context": return { success: true, context: await this.chatContext(request.chatId, request.limit, request.before) };
+            case "retry_delivery": {
+                const delivery = this.config.deliveries.find(item => item.key === request.key);
+                if (!delivery || delivery.state !== "failed")
+                    throw Error("只能处理失败的回复");
+                if (request.skip) {
+                    this.config.deliveries = this.config.deliveries.filter(item => item !== delivery);
+                    this.config.processed = [...this.config.processed, delivery.key].slice(-512);
+                }
+                else {
+                    delivery.state = "pending";
+                    delivery.error = "";
+                    this.config.deliveries = [...this.config.deliveries];
+                }
+                await PluginConfig.flush(this.config);
+                break;
+            }
             case "reply_roles": {
                 const [cards, groups] = await Promise.all([
                     ToolPkg.callDependency("com.operit.character_cards", "character.list", {}),
@@ -324,6 +597,8 @@ class QQBotService {
             }
             case "send_c2c": return { success: true, response: await this.api.send("c2c", request.params.openid, request.params) };
             case "send_group": return { success: true, response: await this.api.send("group", request.params.group_openid, request.params) };
+            case "upload_media": return { success: true, response: await this.api.uploadMedia(request.scene, request.target, request.media) };
+            case "send_media": return { success: true, response: await this.api.sendMedia(request.scene, request.target, request.media, request.params) };
             case "upload_image": return { success: true, response: await this.api.uploadImage(request.scene, request.target, request.source) };
             case "auto_configure":
                 await this.configureAuto(request.params);
@@ -335,18 +610,14 @@ class QQBotService {
                 await this.configureAuto({ enabled: false });
                 break;
             case "auto_once":
-                if (this.autoTask !== null)
+                if (this.autoTasks.size !== 0)
                     throw new Error("An automatic reply is already in progress");
                 if (this.gateway.status !== "ready")
                     throw new Error("The QQ listener must be ready");
                 this.autoError = "";
-                this.autoTask = this.autoTick(this.autoGeneration);
-                try {
-                    await this.autoTask;
-                }
-                finally {
-                    this.autoTask = null;
-                }
+                const item = this.takeEvent();
+                if (item !== null)
+                    await this.launchAuto(this.autoGeneration, item);
                 if (this.autoError !== "")
                     throw new Error(this.autoError);
                 break;
@@ -371,6 +642,7 @@ function command(operation) {
 }
 /** Routes tools and UI commands through the single administrative queue. */
 function receive(request) { return command(owner => owner.request(request)); }
+function channel(request) { return command(owner => owner.channel(request)); }
 /** Registers the authoritative main-runtime IPC channel. */
 function registerService() { ToolPkg.ipc.on(model_js_1.CHANNEL, receive); }
 /** Restores user-enabled networking when the application starts or returns to the foreground. */

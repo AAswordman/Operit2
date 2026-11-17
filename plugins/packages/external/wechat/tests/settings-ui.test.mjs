@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { fixture, load } from "./harness.mjs";
+import { fixture, load, message } from "./harness.mjs";
 
 /** Renders the actual Compose screen with real service requests and controlled host state. */
 async function screenFixture(options = {}) {
@@ -194,5 +194,20 @@ test("logout requires an explicit second action before deleting the account", as
   await f.click("logout");
   await f.click("confirmLogout");
   assert.equal(f.config.account, null);
+  f.dispose();
+});
+
+test("settings screen selects the intended failed delivery", async () => {
+  const model = load("model");
+  const config = model.defaultConfig();
+  config.failedDeliveries = ["alice", "bob"].map((user, index) => ({
+    event: model.inbound(message(index + 1, user)), state: "failed", delivered: index, error: "失败",
+  }));
+  const f = await screenFixture({ config });
+  assert.match(f.text(), /alice/);
+  assert.match(f.text(), /bob/);
+  await f.click("discardDelivery1");
+  assert.equal(f.config.failedDeliveries.length, 1);
+  assert.equal(f.config.failedDeliveries[0].event.userId, "alice");
   f.dispose();
 });

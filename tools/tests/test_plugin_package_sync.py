@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 import zipfile
 
 
@@ -20,6 +21,19 @@ SPEC.loader.exec_module(SYNC)
 
 
 class PluginPackageSyncTests(unittest.TestCase):
+    def test_macos_prebuild_adds_homebrew_without_overriding_caller_tools(self):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.dict(os.environ, {"PATH": "/custom/bin:/usr/bin:/bin"}, clear=True):
+            environment = SYNC._plugin_build_environment()
+            self.assertEqual(environment["PATH"], "/custom/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin")
+            self.assertEqual(os.environ["PATH"], "/custom/bin:/usr/bin:/bin")
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.dict(os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin:/usr/local/bin"}, clear=True):
+            self.assertEqual(SYNC._plugin_build_environment()["PATH"], os.environ["PATH"])
+
+    def test_other_platforms_keep_the_existing_build_environment(self):
+        for platform in ("linux", "win32"):
+            with self.subTest(platform=platform), patch.object(SYNC.sys, "platform", platform), patch.dict(os.environ, {"PATH": "/custom/tools", "BUILD_FLAG": "1"}, clear=True):
+                self.assertEqual(SYNC._plugin_build_environment(), dict(os.environ))
+
     def test_repacking_ignores_timestamps_and_permissions_but_keeps_content_changes(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

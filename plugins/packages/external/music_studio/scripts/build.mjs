@@ -1,0 +1,13 @@
+import { build } from 'esbuild';
+import { mkdir,writeFile } from 'node:fs/promises';
+const bundle=async entry=>(await build({entryPoints:[entry],bundle:true,minify:true,write:false,format:'iife',target:['es2020'],legalComments:'none'})).outputFiles[0].text;
+const worklet=await bundle('web/audio/worklet.ts');
+const worker=await bundle('web/audio/render-worker.ts');
+const result=await build({entryPoints:['web/app.ts'],bundle:true,minify:true,write:false,outfile:'app.js',target:['es2020'],legalComments:'none',metafile:true,define:{__WORKLET_SOURCE__:JSON.stringify(worklet),__RENDER_WORKER_SOURCE__:JSON.stringify(worker)}});
+const js=result.outputFiles.find(f=>f.path.endsWith('.js')).text;
+const css=result.outputFiles.find(f=>f.path.endsWith('.css')).text;
+if(Object.keys(result.metafile.inputs).some(p=>p.includes('node_modules')))throw Error('Unexpected runtime JS dependency');
+const html=`<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline' 'wasm-unsafe-eval' blob:; worker-src blob:; style-src 'unsafe-inline'; img-src data: blob:; connect-src 'none'; media-src blob:; base-uri 'none'; form-action 'none'"><title>Operit Music Studio</title><style>${css.replaceAll('</style','<\\/style')}</style></head><body><div id="app"></div><script>${js.replaceAll('</script','<\\/script')}</script></body></html>`;
+await mkdir('resources',{recursive:true});await writeFile('resources/studio.html',html);
+await writeFile('resources/THIRD_PARTY_NOTICES.txt','Operit Music Studio: original TypeScript UI/scheduler and C/WebAssembly DSP.\nMIDI demos: THE_WORLD_REVOLVING_[Jevil\'s_Battle_Theme]_-_DELTARUNE.mid and The_Field_of_Hopes_and_Dreams_(Deltarune).mid, supplied by the user; preserved verbatim in resources/midi/. Workstation playback uses original synthesis, not source instrument sounds.\nNo Tone.js runtime, samples, SoundFonts, fonts, third-party presets or IR recordings are bundled.\nBuild/test dependencies: TypeScript (Apache-2.0), esbuild (MIT), fflate (MIT), Playwright (Apache-2.0), LLVM (Apache-2.0 with LLVM exceptions).\nSerum and Kontakt are not included, endorsed or proprietary-compatible products.\n');
+console.log(`Built self-contained WASM studio.html: ${(Buffer.byteLength(html)/1024).toFixed(1)} KiB`);

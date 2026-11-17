@@ -1,0 +1,6 @@
+import { trackInk } from "./theme";
+import type { Project } from '../../src/shared/model';
+export function gainLabel(gain: number): string { return gain<=0?'−∞ dB':`${(20*Math.log10(gain)).toFixed(1)} dB`; }
+export function mixerTracks(project: Project,esc: (value: unknown)=>string): string {
+  return `<section class="track-mixer" aria-label="分轨混音"><h3>分轨音量 <span>分轨控制</span></h3>${project.tracks.map((t,i)=>`<div class="mixer-channel" style="--track:${trackInk(t.color)}"><div class="mixer-heading"><button data-device="${t.id}" class="mixer-track-name" title="打开乐器">${String(i+1).padStart(2,'0')} · ${esc(t.name.split(' / ').pop())}</button><button data-mute="${t.id}" class="${t.mute?'active':''}" aria-pressed="${t.mute}" aria-label="静音 ${esc(t.name)}">M</button><button data-solo="${t.id}" class="${t.solo?'active':''}" aria-pressed="${t.solo}" aria-label="独奏 ${esc(t.name)}">S</button></div><div class="mixer-fader"><input id="mix-gain-${t.id}" data-track-gain="${t.id}" type="range" min="0" max="1.5" step=".01" value="${t.gain}" aria-label="${esc(t.name)} 分轨音量" aria-valuetext="${gainLabel(t.gain)}"><output data-gain-output="${t.id}" for="mix-gain-${t.id}">${gainLabel(t.gain)}</output></div><div class="track-meter"><i data-meter="${t.id}"></i></div></div>`).join('')}${project.tracks.length?'':'<p class="small muted">添加乐器后，每条轨道都可以单独调音量。</p>'}</section>`;
+}
