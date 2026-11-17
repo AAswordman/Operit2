@@ -51,6 +51,7 @@ transformation or a message persistence interceptor.
 2. `before_prepare_summary_prompt`
 3. `before_send_to_model`
 4. `after_generate_summary`
+5. `after_finalize_summary`
 
 The payload includes `chatId`, `chatHistory`, `preparedHistory`, `systemPrompt`,
 `summaryPrompt`, `summaryResult`, `previousSummary`, model parameters and metadata.
@@ -74,7 +75,18 @@ keep that many trailing candidate messages verbatim: they are excluded from the
 summarized range and the summary is inserted before them, so they remain in the
 active window. `0` — the default when no handler sets it — summarizes every
 candidate, matching the host's historical boundary. Keeping all candidates
-skips compaction entirely.
+skips compaction entirely. The same stage accepts `metadata.includeReview`
+(boolean, default `true`); setting it to `false` omits the appended conversation
+review from the stored summary, producing a compact summary whose size is
+predictable from the model output alone.
+
+`after_finalize_summary` runs once the stored summary text is final (review
+appended or omitted, continuation suffix added). Its `metadata` reports
+host-estimated sizes: `summaryTokens` (model output), `reviewTokens` (appended
+review), `totalTokens` (final stored text), plus `reviewIncluded` and
+`keptTailCount`; `summaryResult` carries the final text. Policies can use
+`totalTokens` from the previous compaction to reserve space for the next
+summary instead of guessing.
 
 An object result can replace `chatHistory`, `preparedHistory`, `systemPrompt`,
 `summaryPrompt` and `summaryResult`; metadata entries are merged. Every handler

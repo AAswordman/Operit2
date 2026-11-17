@@ -26,6 +26,7 @@ use operit_providers::chat::EnhancedAIService::{
 use operit_providers::runtime_support::ChatConfigurationResult;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
 use operit_store::PreferencesDataStore::FlowLike;
+use operit_util::ChatUtils::ChatUtils;
 use operit_util::stream::RevisableTextStream::with_event_channel_shared;
 use operit_util::stream::Stream::Stream;
 use operit_util::AppLogger::AppLogger;
@@ -583,6 +584,8 @@ impl AIMessageManager {
         }
 
         let mut keptTailCount = 0usize;
+        let mut includeReview = true;
+        let hookChatId = chatId.clone();
         if allowSelectionHook {
             let candidateTurns = messagesToSummarize
                 .iter()
@@ -614,6 +617,11 @@ impl AIMessageManager {
                 .and_then(serde_json::Value::as_i64)
                 .unwrap_or(0)
                 .clamp(0, messagesToSummarize.len() as i64) as usize;
+            includeReview = boundaryContext
+                .metadata
+                .get("includeReview")
+                .and_then(serde_json::Value::as_bool)
+                .unwrap_or(true);
         }
         let splitIndex = messagesToSummarize.len() - keptTailCount;
         let insertBeforeTimestamp = messagesToSummarize[splitIndex..].first().map(|message| message.timestamp);
@@ -646,7 +654,11 @@ impl AIMessageManager {
 
         let mut summaryWithQuotes = summary.trim().to_string();
         // Keep the review in the same language as the summary prompt.
-        appendConversationReview(&mut summaryWithQuotes, &conversationReviewEntries, false);
+        let mut conversationReview = String::new();
+        appendConversationReview(&mut conversationReview, &conversationReviewEntries, false);
+        if includeReview {
+            summaryWithQuotes.push_str(&conversationReview);
+        }
 
         let finalSummary = if autoContinue {
             format!(
@@ -656,6 +668,28 @@ impl AIMessageManager {
         } else {
             summaryWithQuotes.trim_end().to_string()
         };
+
+        let mut finalizeMetadata = HashMap::new();
+        finalizeMetadata.insert("summaryTokens".to_string(), serde_json::json!(ChatUtils::estimate_token_count(summary.trim())));
+        finalizeMetadata.insert("reviewTokens".to_string(), serde_json::json!(ChatUtils::estimate_token_count(&conversationReview)));
+        finalizeMetadata.insert("totalTokens".to_string(), serde_json::json!(ChatUtils::estimate_token_count(&finalSummary)));
+        finalizeMetadata.insert("reviewIncluded".to_string(), serde_json::json!(includeReview));
+        finalizeMetadata.insert("keptTailCount".to_string(), serde_json::json!(keptTailCount));
+        SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
+            stage: "after_finalize_summary".to_string(),
+            chat_id: Some(hookChatId),
+            use_english: None,
+            previous_summary: None,
+            chat_history: Vec::new(),
+            prepared_history: Vec::new(),
+            system_prompt: None,
+            summary_prompt: None,
+            summary_result: Some(finalSummary.clone()),
+            model_parameters: Vec::new(),
+            metadata: finalizeMetadata,
+        })
+        .await
+        .map_err(AiServiceError::RequestFailed)?;
 
         Ok(Some(SummarySelection {
             message: ChatMessage {
