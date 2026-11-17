@@ -2035,6 +2035,25 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     /// Adds, updates, or persists a message for the current or supplied chat.
+    /// Commits completed prepared text with canonical retry detection, including messages hidden by summaries.
+    pub fn commitPreparedAssistantMessage(&mut self, chatId: &str, text: &str, timestamp: i64) -> Result<bool, String> {
+        self.requireChatExists(chatId)?;
+        if self.chatHistoryManager.loadChatMessageIndexPosition(chatId, timestamp).map_err(|error| error.to_string())?.is_some() {
+            let existing = self.chatHistoryManager.loadChatMessageVariant(chatId, timestamp, 0).map_err(|error| error.to_string())?;
+            if existing.sender != "ai" || existing.displayText() != text {
+                return Err("Prepared message timestamp conflicts with an existing message".into());
+            }
+            return Ok(true);
+        }
+        let mut message = ChatMessage::new_with_markdown_timestamp("ai".into(), text.into(), timestamp);
+        message.sentAt = timestamp;
+        message.completedAt = operit_host_api::TimeUtils::currentTimeMillis();
+        let message = self.chatHistoryManager.addMessage(chatId.into(), message).map_err(|error| error.to_string())?;
+        ToolPkgChatMessageHookBridge::dispatchMessagePersisted(chatId, &message);
+        self.publishChatMessage(chatId, message);
+        Ok(false)
+    }
+
     pub fn addMessageToChat(&mut self, message: ChatMessage, chatIdOverride: Option<String>) {
         let Some(targetChatId) = chatIdOverride.or_else(|| self.currentChatIdFlow.value()) else {
             return;

@@ -16,7 +16,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/contributions/ContributionPresentationResult.dart';
-import 'package:operit2/ui/common/contributions/ChatUiContributionModels.dart';
+import 'package:operit2/ui/common/contributions/EmbeddedContributionDialog.dart';
 import 'package:operit2/ui/common/contributions/ToolPkgChatUiCatalog.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentInputMenuPopup.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatSelectionTransition.dart';
@@ -78,10 +78,7 @@ void main() {
     expect(title, contains('return TopBarTitleText('));
     expect(title, isNot(contains('InkWell(')));
     expect(title, isNot(contains('onTap:')));
-    expect(
-      source,
-      contains('data.chatUiContext?.identity?.avatarAction == null'),
-    );
+    expect(source, contains('data.chatUiContext?.avatarAction == null'));
   });
 
   for (final field in ['avatarAction', 'action', null]) {
@@ -94,15 +91,15 @@ void main() {
                 'title': 'Operit',
                 'avatarUri': null,
                 ?field: {
-                    'routeId': 'selector-route',
-                    'input': _opaqueInput('example.selector'),
-                  },
+                  'routeId': 'selector-route',
+                  'input': _opaqueInput('example.selector'),
+                },
               };
         addTearDown(bridge.close);
-        final display = (await ToolPkgChatUiCatalog(
+        final display = await ToolPkgChatUiCatalog(
           clients: GeneratedCoreProxyClients(bridge),
-        ).loadContext(chatId: null)).identity!;
-        expect(display.title, 'Operit');
+        ).loadContext(chatId: null);
+        expect(display.identity!.title, 'Operit');
         if (field == null) {
           expect(display.avatarAction, isNull);
         } else {
@@ -352,10 +349,9 @@ void main() {
                   const Text('Conversation page'),
                   TextButton(
                     onPressed: () async {
-                      await ChatUiAction(
+                      await showEmbeddedContributionDialog(
                         route: _route('example.selector'),
                         input: _opaqueInput('example.selector'),
-                      ).present(
                         context: context,
                         clients: GeneratedCoreProxyClients(bridge),
                       );
@@ -563,6 +559,108 @@ void main() {
     },
   );
 
+  for (final sourceChatId in <String?>['chat-a', null]) {
+    testWidgets(
+      'conversation activation from $sourceChatId opens the returned chat after completion',
+      (tester) async {
+        final bridge =
+            _ContextBridge(currentChatId: sourceChatId, publishIdentity: true)
+              ..completionValue = {
+                'type': 'toolpkg.chat.activate',
+                'chatId': 'role-latest',
+              }
+              ..commitGate = Completer<void>();
+        addTearDown(bridge.close);
+        await _openSelector(tester, bridge);
+        await tester.tap(find.text('Commit choice'));
+        await tester.pump();
+        expect(
+          bridge.calls.where((call) => call.methodName == 'switchChat'),
+          isEmpty,
+        );
+        bridge.commitGate!.complete();
+        await tester.pumpAndSettle();
+        final switches = bridge.calls.where(
+          (call) => call.methodName == 'switchChat',
+        );
+        expect(switches.single.args, {'chatId': 'role-latest'});
+        expect(bridge.currentChatId, 'role-latest');
+        expect(bridge.configurationCalls, isEmpty);
+        expect(bridge.events, ['durable.commit', 'switch:role-latest']);
+        expect(tester.takeException(), isNull);
+        await _removeHost(tester);
+      },
+    );
+  }
+
+  testWidgets(
+    'activation of the current chat does not switch or refresh its role binding',
+    (tester) async {
+      final bridge =
+          _ContextBridge(currentChatId: 'chat-a', publishIdentity: true)
+            ..completionValue = {
+              'type': 'toolpkg.chat.activate',
+              'chatId': 'chat-a',
+            };
+      addTearDown(bridge.close);
+      await _openSelector(tester, bridge);
+      await tester.tap(find.text('Commit choice'));
+      await tester.pumpAndSettle();
+      expect(
+        bridge.calls.where((call) => call.methodName == 'switchChat'),
+        isEmpty,
+      );
+      expect(bridge.configurationCalls, isEmpty);
+      await _removeHost(tester);
+    },
+  );
+
+  testWidgets(
+    'a stale selector completion cannot navigate away from a changed chat',
+    (tester) async {
+      final bridge =
+          _ContextBridge(currentChatId: 'chat-a', publishIdentity: true)
+            ..completionValue = {
+              'type': 'toolpkg.chat.activate',
+              'chatId': 'role-latest',
+            };
+      addTearDown(bridge.close);
+      await _openSelector(tester, bridge);
+      bridge.select('chat-b');
+      bridge.select('chat-a');
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Commit choice'));
+      await tester.pumpAndSettle();
+      expect(
+        bridge.calls.where((call) => call.methodName == 'switchChat'),
+        isEmpty,
+      );
+      expect(bridge.configurationCalls, isEmpty);
+      await _removeHost(tester);
+    },
+  );
+
+  testWidgets(
+    'failed conversation activation keeps the original chat and reports the error',
+    (tester) async {
+      final bridge =
+          _ContextBridge(currentChatId: 'chat-a', publishIdentity: true)
+            ..completionValue = {
+              'type': 'toolpkg.chat.activate',
+              'chatId': 'role-latest',
+            }
+            ..switchError = StateError('Conversation unavailable');
+      addTearDown(bridge.close);
+      await _openSelector(tester, bridge);
+      await tester.tap(find.text('Commit choice'));
+      await tester.pumpAndSettle();
+      expect(bridge.currentChatId, 'chat-a');
+      expect(find.textContaining('Conversation unavailable'), findsOneWidget);
+      expect(bridge.configurationCalls, isEmpty);
+      await _removeHost(tester);
+    },
+  );
+
   testWidgets(
     'disabled registered route is rejected before mounting its selector',
     (tester) async {
@@ -752,6 +850,8 @@ class _ContextBridge extends OperitRuntimeBridge {
   Object? contextError;
   Object? configurationError;
   Object? statisticsError;
+  Object? switchError;
+  Object? completionValue = true;
   bool durableCommitted = false;
   bool alertDialogPresentation = false;
 
@@ -843,6 +943,12 @@ class _ContextBridge extends OperitRuntimeBridge {
         value = 'export default function render() {}';
       case 'openComposeDslSession':
         value = compose.open();
+      case 'switchChat':
+        if (!durableCommitted) throw StateError('Switch before completion');
+        if (switchError case final Object error) throw error;
+        events.add('switch:${args['chatId']}');
+        select(args['chatId'] as String);
+        value = null;
       case 'chatConfiguration':
         if (!durableCommitted) {
           throw StateError('Configuration read before durable commit');
@@ -914,7 +1020,7 @@ class _ContextBridge extends OperitRuntimeBridge {
         return {
           'type': ContributionPresentationResult.completeType,
           'requestId': requestId,
-          'value': true,
+          'value': completionValue,
         };
       case 'cancel':
         return {
@@ -1046,6 +1152,7 @@ core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
       publicApi: null,
       publicApis: const [],
       requires: const [],
+      optionalRequires: const [],
       dependencyIssues: const [],
       manifestExtensions: const {},
       author: const ['Operit'],
@@ -1081,6 +1188,8 @@ core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
       chatInputHooks: const [],
       chatViewHooks: const [],
       chatMessageHooks: const [],
+      messageTransformHooks: const [],
+      messageStreamTransforms: const [],
       chatResponseHooks: const [],
       chatMessageMenuItems: const [],
       chatRuntimeHooks: const [],

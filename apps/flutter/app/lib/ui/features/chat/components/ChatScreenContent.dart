@@ -10,7 +10,6 @@ import 'ChatToolPermissionPanel.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
-import '../../../common/contributions/ChatUiContributionModels.dart';
 import '../../../theme/OperitThemeAssets.dart';
 import '../../../common/interactions/DrawerGestureExclusion.dart';
 import '../../../theme/OperitTheme.dart';
@@ -129,7 +128,7 @@ class ChatScreenContent extends StatelessWidget {
   final ChatViewModel viewModel;
   final String? currentChatId;
   final String? fileDirectory;
-  final ChatUiIdentity? chatIdentity;
+  final core_proxy.ChatDisplayIdentity? chatIdentity;
   final String? backgroundUri;
   final VoidCallback? onIdentityTap;
   final ValueListenable<bool> autoScrollToBottomListenable;

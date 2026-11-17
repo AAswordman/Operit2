@@ -437,18 +437,19 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
         return _dialog(context, type == 'AlertDialog');
       case 'Row':
         final contentNodes = _slotNodes('content', useChildren: true);
+        final arrangement =
+            props['horizontalArrangement'] ?? props['mainAxisAlignment'];
         return _ComposeFlex(
           direction: Axis.horizontal,
           nodes: contentNodes,
-          mainAxisSize: _nodesRequireRowFlex(contentNodes)
+          mainAxisSize:
+              props['mainAxisSize'] == 'max' ||
+                  _nodesRequireRowFlex(contentNodes)
               ? MainAxisSize.max
               : MainAxisSize.min,
           crossAxisAlignment: _crossAxis(props['verticalAlignment']),
-          mainAxisAlignment: _mainAxis(props['horizontalArrangement']),
-          spacing: _flexSpacing(
-            props['horizontalArrangement'],
-            props['spacing'],
-          ),
+          mainAxisAlignment: _mainAxis(arrangement),
+          spacing: _flexSpacing(arrangement, props['spacing']),
           children: _buildRowChildren(
             contentNodes,
             pathPrefix: '$nodePath:content',

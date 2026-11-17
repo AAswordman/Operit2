@@ -46,7 +46,7 @@ class WorkspaceOverviewContributionCatalog extends ChangeNotifier {
     _state = const WorkspaceContributionsLoading();
     notifyListeners();
     try {
-      final sections = await catalog.loadSections(chats: summaries);
+      final sections = await catalog.loadWorkspaceUsages(chats: summaries);
       if (_disposed || generation != _generation) {
         return;
       }

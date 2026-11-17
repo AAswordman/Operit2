@@ -221,6 +221,10 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
     JsToolBinding { namespace: "Chat", method: "sendMessageStreaming", target: BuiltinToolName::ChatObserve, strict_arguments: true, facade: JsToolFacade::AsyncIterator, fixed_parameters: &[] },
     JsToolBinding { namespace: "Chat", method: "cancel", target: BuiltinToolName::ChatCancel, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Chat", method: "readExtension", target: BuiltinToolName::ChatReadExtension, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "Chat", method: "deliverPrepared", target: BuiltinToolName::ChatDeliverPrepared, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "Chat", method: "listScheduledMessages", target: BuiltinToolName::ChatListScheduledMessages, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "Chat", method: "scheduleMessage", target: BuiltinToolName::ChatScheduleMessage, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
+    JsToolBinding { namespace: "Chat", method: "cancelScheduledMessage", target: BuiltinToolName::ChatCancelScheduledMessage, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Chat", method: "writeExtension", target: BuiltinToolName::ChatWriteExtension, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Chat", method: "deleteExtension", target: BuiltinToolName::ChatDeleteExtension, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
     JsToolBinding { namespace: "Models", method: "listSummaries", target: BuiltinToolName::ModelsListSummaries, strict_arguments: true, facade: JsToolFacade::Promise, fixed_parameters: &[] },
@@ -239,6 +243,10 @@ pub const JS_TOOL_BINDINGS: &[JsToolBinding] = &[
 
 /// Contains every versioned implementation applied to generated Tools methods.
 pub const JS_TOOL_API_VARIANTS: &[JsToolApiVariant] = &[
+    JsToolApiVariant { namespace: "Chat", method: "listScheduledMessages", since: "2.0.0", until: None, arguments: None },
+    JsToolApiVariant { namespace: "Chat", method: "cancelScheduledMessage", since: "2.0.0", until: None, arguments: None },
+    JsToolApiVariant { namespace: "Chat", method: "scheduleMessage", since: "2.0.0", until: None, arguments: None },
+    JsToolApiVariant { namespace: "Chat", method: "deliverPrepared", since: "2.0.0", until: None, arguments: None },
     JsToolApiVariant { namespace: "Net", method: "webSocket", since: "2.0.0", until: None, arguments: None },
     JsToolApiVariant { namespace: "Storage", method: "request", since: "2.0.0", until: None, arguments: None },
     JsToolApiVariant { namespace: "Chat", method: "sendMessage", since: "2.0.0", until: None, arguments: None },

@@ -9,7 +9,6 @@ import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../core/application/PluginHotReload.dart';
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../../main/navigation/ToolPkgCatalogChangeBus.dart';
-import 'ChatUiContributionModels.dart';
 
 /// Retains one validated registration and its existing generic Compose container.
 class _EmbeddedMenu {
@@ -37,7 +36,8 @@ class ChatInputMenuHost extends StatefulWidget {
   final GeneratedCoreProxyClients clients;
   final String? chatId;
   final String surface;
-  final Future<void> Function(ChatUiAction) onPresent;
+  final Future<void> Function(core_proxy.ToolPkgUiRoute route, Object? input)
+  onPresent;
 
   /// Creates a catalog lifetime owned by this exact menu surface.
   @override
@@ -193,9 +193,7 @@ class _ChatInputMenuHostState extends State<ChatInputMenuHost> {
       if (matches.length != 1) {
         throw StateError('Unregistered or ambiguous UI presentation route.');
       }
-      await widget.onPresent(
-        ChatUiAction(route: matches.single, input: raw['input']),
-      );
+      await widget.onPresent(matches.single, raw['input']);
     } catch (error) {
       if (mounted && generation == _generation) {
         ScaffoldMessenger.of(

@@ -373,6 +373,25 @@ test('v1 TTS playback reaches the shared host tool with exact utterance override
   }
 });
 
+/** Uses the public configured playback receipt for every synthesis provider. */
+test('v1 TTS playback accepts generated audio providers through the same public tool', async () => {
+  for (const version of ['1.0.0', '1.0.1']) {
+    for (const providerType of ['HTTP_TTS', 'OPENAI_TTS', 'LOCAL_MODEL']) {
+      const { context, tools, calls } = engine(version);
+      context.invokeTool = async (name) => {
+        assert.equal(name, 'tts_speak');
+        return { providerType, started: true, interrupt: true, speed: 1.25, pitch: 1 };
+      };
+      const result = await tools.SoftwareSettings.testTtsPlayback('Configured voice', { speech_rate: 1.25 });
+      assert.equal(result.ttsServiceType, providerType);
+      assert.equal(result.playbackTriggered, true);
+      assert.equal(result.speechRate, 1.25);
+      assert.deepEqual(plain(calls), [{ name: 'tts_speak', args: [{ request: { text: 'Configured voice', speed: 1.25 } }] }]);
+      assert.deepEqual(JSON.parse(result.toString()), plain(result));
+    }
+  }
+});
+
 /** Rejects invalid legacy requests before native speech or settings writes can occur. */
 test('v1 TTS playback rejects malformed options without invoking the host', async () => {
   const { tools, calls } = engine();

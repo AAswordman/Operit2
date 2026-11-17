@@ -51,7 +51,9 @@ impl SharedToolExecutor for TtsToolExecutor {
                     checkAccess,
                     ToolEffect::WRITE,
                     async move {
-                        let result = context.host().runtimeSupport().speakSpeech(args.request)?;
+                        let result = context.host().runtimeSupport()
+                            .speakSpeech(args.request)
+                            .await?;
                         Ok(ToolResultData::TtsSpeakResultData(result))
                     },
                 ))

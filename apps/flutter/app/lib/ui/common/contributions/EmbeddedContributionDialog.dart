@@ -3,40 +3,37 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import 'ContributionPresentationResult.dart';
-
-/// Supplies resolved host render inputs for an already registered plugin route.
-@immutable
-class EmbeddedContributionRoute {
-  /// Creates a route without assuming a particular package or business feature.
-  const EmbeddedContributionRoute({
-    required this.containerPackageName,
-    required this.routeId,
-    required this.screenPath,
-    required this.title,
-    required this.input,
-    required this.moduleSpec,
-    this.initialState = const <String, Object?>{},
-  });
-
-  final String containerPackageName;
-  final String routeId;
-  final String screenPath;
-  final String title;
-  final Object? input;
-  final Map<String, Object?> moduleSpec;
-
-  /// Carries host context separately from the locked presentation envelope.
-  final Map<String, Object?> initialState;
-}
 
 /// Opens an existing Compose host and returns only an explicit presentation result.
 Future<ContributionPresentationResult?> showEmbeddedContributionDialog({
   required BuildContext context,
   required GeneratedCoreProxyClients clients,
-  required EmbeddedContributionRoute route,
+  required core_proxy.ToolPkgUiRoute route,
+  required Object? input,
+  Map<String, Object?> hostState = const <String, Object?>{},
 }) async {
+  final routes = await clients.application.packageManager().getToolPkgUiRoutes(
+    runtime: 'compose_dsl',
+    useEnglish: Localizations.localeOf(context).languageCode == 'en',
+  );
+  final matches = routes.where(
+    (registered) =>
+        registered.containerPackageName == route.containerPackageName &&
+        registered.routeId == route.routeId,
+  );
+  if (matches.length != 1) {
+    throw StateError(
+      'A presentation must resolve to exactly one enabled registered route: ${route.containerPackageName}/${route.routeId}',
+    );
+  }
+  final registered = matches.single;
+  if (registered.runtime != 'compose_dsl') {
+    throw StateError('A presentation requires a registered Compose route.');
+  }
+
   final plugin = await clients.application
       .packageManager()
       .getToolPkgContainerRuntime(
@@ -50,12 +47,10 @@ Future<ContributionPresentationResult?> showEmbeddedContributionDialog({
   if (!context.mounted) {
     return null;
   }
-  if (route.initialState.containsKey('presentation')) {
+  if (hostState.containsKey('presentation')) {
     throw ArgumentError('Host state cannot replace the presentation envelope.');
   }
-  final presentation = ContributionPresentationContext.create(
-    input: route.input,
-  );
+  final presentation = ContributionPresentationContext.create(input: input);
   var completed = false;
   return showDialog<ContributionPresentationResult>(
     context: context,
@@ -65,15 +60,17 @@ Future<ContributionPresentationResult?> showEmbeddedContributionDialog({
       child: ToolPkgUiLauncherScreen(
         clients: clients,
         plugin: plugin,
-        initialRouteId: route.routeId,
-        embeddedScreenPath: route.screenPath,
+        initialRouteId: registered.routeId,
+        embeddedScreenPath: registered.screen,
         showLauncherChrome: false,
-        dialogTitle: route.title,
+        dialogTitle: registered.title,
         initialState: <String, Object?>{
-          ...route.initialState,
+          ...hostState,
           'presentation': presentation.toJson(),
         },
-        initialModuleSpec: Map<String, Object?>.unmodifiable(route.moduleSpec),
+        initialModuleSpec: Map<String, Object?>.unmodifiable(
+          registered.moduleSpec,
+        ),
         onActionResult: (raw) {
           if (completed || !dialogContext.mounted) {
             return;

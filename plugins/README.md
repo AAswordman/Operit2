@@ -13,6 +13,8 @@ This directory contains the Operit2 plugin workspace.
 - `docs/`: plugin authoring notes.
 - `tools/`: development and sync tools.
 
+`packages/external/proactive_messages/` provides optional AI proactive messages with per-chat intervals, random delays and trigger probability. It uses the uniform typed `Tools.Chat.scheduleMessage`, `cancelScheduledMessage` and `listScheduledMessages` APIs; persistence, delivery, notifications and iOS resume reconciliation are owned by the host.
+
 `packages/external/image_workbench/` provides the optional official Image Workbench, available from "more plugins" and disabled by default. It owns the unified image-generation tools and six internal provider adapters.
 
 `packages/buildin/`, `packages/external/`, and `packages/examples/` use the same source layout. The difference is packaging: `buildin` is loaded as current built-in plugins, `external` is bundled as optional official plugins, while `examples` is kept for development samples.

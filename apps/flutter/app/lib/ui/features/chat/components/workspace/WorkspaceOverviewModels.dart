@@ -2,7 +2,6 @@
 
 import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
-import '../../../../common/contributions/ChatUiContributionModels.dart';
 
 class WorkspaceContributionUsage {
   /// Creates a display record retaining the exact owner and opaque section ID.
@@ -12,27 +11,17 @@ class WorkspaceContributionUsage {
     required this.title,
     required this.avatarUri,
     required this.conversationCount,
-    required this.preview,
+    required this.previewRoute,
+    required this.previewInput,
   });
-
-  /// Projects a validated catalog section without decoding its business input.
-  factory WorkspaceContributionUsage.fromSection(ChatUiSection section) {
-    return WorkspaceContributionUsage(
-      ownerPackageName: section.ownerPackageName,
-      sectionId: section.id,
-      title: section.title,
-      avatarUri: section.avatarUri,
-      conversationCount: section.chatIds.length,
-      preview: section.preview,
-    );
-  }
 
   final String ownerPackageName;
   final String sectionId;
   final String title;
   final String? avatarUri;
   final int conversationCount;
-  final ChatUiAction preview;
+  final core_proxy.ToolPkgUiRoute previewRoute;
+  final Object? previewInput;
 
   /// Keeps owner and section identities separate even when they contain delimiters.
   (String, String) get identity => (ownerPackageName, sectionId);
@@ -40,12 +29,11 @@ class WorkspaceContributionUsage {
 
 /// Counts only used sections, preserving catalog order for equal usage counts.
 List<WorkspaceContributionUsage> workspaceContributionUsages(
-  List<ChatUiSection> sections,
+  List<WorkspaceContributionUsage> sections,
 ) {
   final usages = <(int, WorkspaceContributionUsage)>[
     for (final (index, section) in sections.indexed)
-      if (section.chatIds.isNotEmpty)
-        (index, WorkspaceContributionUsage.fromSection(section)),
+      if (section.conversationCount > 0) (index, section),
   ];
   usages.sort((left, right) {
     final countOrder = right.$2.conversationCount.compareTo(

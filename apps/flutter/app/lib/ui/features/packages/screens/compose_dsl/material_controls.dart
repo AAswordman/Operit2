@@ -161,7 +161,24 @@ extension _ComposeMaterialControls on _ComposeProgramExecutorState {
     required Color? contentColor,
     required Object? contentPadding,
   }) {
-    Widget child = _slotOrChildren('content');
+    final content = _slotNodes('content', useChildren: true);
+    final single = content.length == 1 &&
+            content.single.type == 'Row' &&
+            content.single.props['mainAxisSize'] == 'max'
+        ? content.single
+        : null;
+    final weightArgs = single == null
+        ? null
+        : _modifierOpByToken(single.props['modifier'], 'weight')?['args']
+              as List<Object?>?;
+    final weight = single == null
+        ? null
+        : _number(single.props['weight'] ?? weightArgs?.firstOrNull);
+    // Legacy full-size rows need the card's height for cross-axis alignment.
+    // Keep the implicit Column for ordinary content and weighted children.
+    Widget child = single != null && (weight == null || weight <= 0)
+        ? _buildNodeWidgets(content, pathPrefix: '$nodePath:content').single
+        : _slotOrChildren('content');
     if (contentPadding != null) {
       child = Padding(
         padding: _edgeInsetsFromValue(contentPadding),

@@ -129,7 +129,7 @@ impl TtsSynthesisService {
     }
 
     /// Synthesizes cleaned text and writes every generated segment to runtime storage.
-    fn synthesizeWithResolvedConfig(
+    pub(crate) fn synthesizeWithResolvedConfig(
         &self,
         audioNamePrefix: &str,
         config: &TtsConfig,
@@ -142,6 +142,9 @@ impl TtsSynthesisService {
         let mut audioStoragePaths = Vec::new();
         for (index, segment) in segments.iter().enumerate() {
             let bytes = voiceService.synthesize(config, segment)?;
+            if bytes.is_empty() {
+                return Err("TTS provider returned empty audio".into());
+            }
             let extension = voiceService.outputExtension(config)?;
             let fileName = format!(
                 "{}_{}_{}.{}",

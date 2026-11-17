@@ -9,6 +9,8 @@ import { chatUiRoutes } from "./definition";
 import { characterModelBinding, characterModelBindingMode } from "./model-binding";
 import type { ChatModelBinding } from "./api";
 import type { ChatConfigurationService } from "./domain";
+import { uiRequest } from "./ui-controls";
+import { createChatInput } from "./chat-lifecycle";
 
 /** Describes every possible sender's model without choosing a group executor. */
 export interface ModelSelection { participants: { id: string; name: string; binding: ChatModelBinding; followsGlobal: boolean }[] }
@@ -260,7 +262,7 @@ export function registerUiContributionApis(): void {
 
 /** Extends the existing plugin screen session with durable chat binding and generic completion values. */
 /** Adds the explicit selector target to the typed package presentation input. */
-export type UiPresentedScreen = Exclude<PresentedScreen, SelectScreen> | (SelectScreen & { readonly chatId: string | null });
+export type UiPresentedScreen = Exclude<PresentedScreen, SelectScreen> | (SelectScreen & { readonly chatId: string | null; readonly openLatestChat?: true });
 /** Preserves the package input throughout the Compose presentation chain. */
 export type UiPresentation = ScreenPresentation<UiPresentedScreen>;
 
@@ -271,12 +273,13 @@ export interface UiScreenSession extends Omit<ScreenSession, "completeScreen"> {
 
 /** Adapts opaque caller input locally while keeping currentScreen's existing Web contract unchanged. */
 export function createUiScreenSession(presentation: UiPresentation | null): UiScreenSession {
-  let selectorTarget: { chatId: string | null } | null = null;
+  let selectorTarget: { chatId: string | null; openLatestChat: boolean } | null = null;
   let checked: ScreenPresentation | null = presentation;
   if (presentation !== null && presentation.input.mode === "select") {
-    const { chatId, ...screenInput } = presentation.input;
+    const { chatId, openLatestChat, ...screenInput } = presentation.input;
+    if (openLatestChat !== undefined && openLatestChat !== true) throw new Error("presentation.input.openLatestChat must be true when supplied");
     if (chatId !== null) chatIdentity(chatId, "presentation.input.chatId");
-    selectorTarget = { chatId };
+    selectorTarget = { chatId, openLatestChat: openLatestChat === true };
     checked = { requestId: presentation.requestId, input: screenInput };
   }
   const session = createScreenSession(checked);
@@ -298,6 +301,18 @@ export function createUiScreenSession(presentation: UiPresentation | null): UiSc
           case "select": {
             if (selectorTarget === null) throw new Error("Selector has no explicit global or chat target");
             const selection = encodeSelection(result.selection);
+            if (selectorTarget.openLatestChat) {
+              // The shared catalog is sorted by update time and joins only live chats with their saved bindings.
+              const chats = await uiRequest({ action: "listBindableChats" });
+              const latest = chats.find(chat => (chat.selection ?? "model:chat") === selection);
+              const chatId = latest?.id ?? (await Tools.Chat.createNew({
+                setAsCurrentChat: false, sourceChatId: null, input: createChatInput(selection),
+              })).chatId;
+              chatIdentity(chatId, "selected conversation");
+              const complete = session.completeScreen(result);
+              completion = { ...complete, value: { type: "toolpkg.chat.activate", chatId } };
+              break;
+            }
             if (selectorTarget.chatId === null) {
               const identity = parseChatSelection(selection);
               const active = identity.kind === "model"

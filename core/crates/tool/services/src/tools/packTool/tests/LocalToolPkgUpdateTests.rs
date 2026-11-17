@@ -572,7 +572,7 @@ impl ToolRuntimeSupport for TestPackageRuntimeSupport {
     fn bindCoreRouteChangeHandler(&self, handler: CoreRouteChangeHandler) -> Result<(), String> { panic!("Unexpected runtime service: bindCoreRouteChangeHandler") }
     fn requestCoreRouteChange<'a>(&'a self, chatId: String, targetNodeId: String, resumeContext: CoreRouteResumeContext) -> ToolRuntimeSupportFuture<'a, Result<(), String>> { panic!("Unexpected runtime service: requestCoreRouteChange") }
     fn listModelSummaries(&self) -> Result<Vec<operit_plugin_sdk::js_sdk::models::ModelsSummary>, String> { panic!("Unexpected runtime service: listModelSummaries") }
-    fn speakSpeech(&self, _request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest) -> Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String> { panic!("Unexpected runtime service: speakSpeech") }
+    fn speakSpeech(&self, _request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest) -> futures_util::future::BoxFuture<'_, Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>> { panic!("Unexpected runtime service: speakSpeech") }
     fn listTtsConfigs(&self) -> Result<Vec<operit_plugin_sdk::js_sdk::tts::TtsConfig>, String> { panic!("Unexpected runtime service: listTtsConfigs") }
     fn listThemeConfigs(&self) -> Result<Vec<operit_plugin_sdk::js_sdk::theme::ThemeConfig>, String> { panic!("Unexpected runtime service: listThemeConfigs") }
     fn applyThemeConfig(&self, id: String) -> Result<operit_plugin_sdk::js_sdk::theme::ThemeConfig, String> { panic!("Unexpected runtime service: applyThemeConfig") }
@@ -608,6 +608,16 @@ impl ToolRuntimeSupport for TestPackageRuntimeSupport {
     fn isChatProcessing(&self, chatId: &str) -> Result<bool, String> { panic!("Unexpected runtime service: isChatProcessing") }
     fn switchMainChat<'a>(&'a self, chatId: &'a str) -> ToolRuntimeSupportFuture<'a, Result<(), String>> { panic!("Unexpected runtime service: switchMainChat") }
     fn createChatRuntime<'a>(&'a self, setAsCurrentChat: bool, sourceChatId: Option<String>, parentChatId: Option<String>, input: Option<serde_json::Value>) -> ToolRuntimeSupportFuture<'a, Result<String, String>> { panic!("Unexpected runtime service: createChatRuntime") }
+    fn listScheduledChatMessages<'a>(&'a self, owner: &'a str)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatScheduledMessagesResultData, String>> { panic!("Unexpected scheduled chat runtime access") }
+    fn setScheduledChatForeground(&self, _: bool) {}
+    fn deliverPreparedChatMessage<'a>(&'a self, request: operit_plugin_sdk::js_sdk::chat::ChatPreparedMessageRequest)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatPreparedDeliveryResultData, String>> { panic!("Unexpected prepared chat runtime access") }
+    fn scheduleChatMessage<'a>(&'a self, owner: &'a str, request: operit_plugin_sdk::js_sdk::chat::ChatScheduledMessageRequest)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatScheduleMessageResultData, String>> { panic!("Unexpected prepared chat runtime access") }
+    fn cancelScheduledChatMessage<'a>(&'a self, owner: &'a str, id: String)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatCancelScheduledMessageResultData, String>> { panic!("Unexpected prepared chat runtime access") }
+
     fn readChatExtension(&self, owner: &str, target: &operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget) -> Result<Option<operit_plugin_sdk::js_sdk::core::JsonObject>, String> { panic!("Unexpected runtime service: readChatExtension") }
     fn writeChatExtension(&self, owner: &str, target: &operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget, value: operit_plugin_sdk::js_sdk::core::JsonObject) -> Result<operit_plugin_sdk::js_sdk::core::JsonObject, String> { panic!("Unexpected runtime service: writeChatExtension") }
     fn deleteChatExtension(&self, owner: &str, target: &operit_plugin_sdk::js_sdk::chat::ChatExtensionTarget) -> Result<bool, String> { panic!("Unexpected runtime service: deleteChatExtension") }

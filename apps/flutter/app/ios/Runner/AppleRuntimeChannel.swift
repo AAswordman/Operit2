@@ -826,6 +826,73 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
     completion(response)
   }
 
+  /// Stores already prepared chat text with iOS; no plugin or model runs at fire time.
+  private func ownerScheduledNotification(operation: String, paramsJson: String, result: @escaping FlutterResult) {
+    guard let data = paramsJson.data(using: .utf8),
+          let params = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+          let id = params["id"] as? String, !id.isEmpty, id.utf8.count <= 200 else {
+      result(FlutterError(code: "INVALID_ARGS", message: "Scheduled notification requires a nonempty id (at most 200 bytes)", details: nil))
+      return
+    }
+    let center = UNUserNotificationCenter.current()
+    let identifier = "operit.prepared-chat." + id
+    if operation == "cancel_scheduled_notification" {
+      center.removePendingNotificationRequests(withIdentifiers: [identifier])
+      center.removeDeliveredNotifications(withIdentifiers: [identifier])
+      result(["resultJson": "{\"success\":true}"])
+      return
+    }
+    guard let title = params["title"] as? String,
+          let text = params["text"] as? String, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+          text.utf8.count <= 65536,
+          let chatId = params["chatId"] as? String, !chatId.isEmpty,
+          let timestamp = params["timestamp"] as? NSNumber else {
+      result(FlutterError(code: "INVALID_ARGS", message: "Scheduled notification requires title, text, chatId and timestamp", details: nil))
+      return
+    }
+    let seconds = timestamp.doubleValue / 1000 - Date().timeIntervalSince1970
+    guard seconds.isFinite, seconds >= 1, seconds <= 30 * 24 * 60 * 60 else {
+      result(FlutterError(code: "INVALID_ARGS", message: "Notification time must be between one second and 30 days in the future", details: nil))
+      return
+    }
+    center.requestAuthorization(options: [.alert, .badge, .sound]) { granted, error in
+      guard granted, error == nil else {
+        DispatchQueue.main.async {
+          result(FlutterError(code: "OWNER_SYSTEM_OPERATION_ERROR", message: error?.localizedDescription ?? "iOS notification permission is not granted", details: nil))
+        }
+        return
+      }
+      center.getPendingNotificationRequests { pending in
+        guard pending.count < 60 || pending.contains(where: { $0.identifier == identifier }) else {
+          DispatchQueue.main.async {
+            result(FlutterError(code: "OWNER_SYSTEM_OPERATION_ERROR", message: "iOS pending notification capacity is full", details: nil))
+          }
+          return
+        }
+        // Recompute after authorization so the requested absolute time is preserved.
+        let remaining = timestamp.doubleValue / 1000 - Date().timeIntervalSince1970
+        guard remaining >= 1 else {
+          DispatchQueue.main.async { result(FlutterError(code: "INVALID_ARGS", message: "Scheduled time has passed during authorization", details: nil)) }
+          return
+        }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = text
+        content.sound = .default
+        content.userInfo = ["operitNotificationActivation": ["type": "open_chat", "chatId": chatId]]
+        let request = UNNotificationRequest(identifier: identifier, content: content,
+          trigger: UNTimeIntervalNotificationTrigger(timeInterval: remaining, repeats: false))
+        center.add(request) { error in
+          DispatchQueue.main.async {
+            if let error {
+              result(FlutterError(code: "OWNER_SYSTEM_OPERATION_ERROR", message: error.localizedDescription, details: nil))
+            } else { result(["resultJson": "{\"success\":true}"]) }
+          }
+        }
+      }
+    }
+  }
+
   /// Dispatches owner operations using their typed operation identifiers.
   private func ownerSystemOperation(call: FlutterMethodCall, result: @escaping FlutterResult) {
     guard let payload = call.arguments as? [String: Any],
@@ -836,6 +903,10 @@ final class AppleRuntimeChannel: NSObject, UIDocumentInteractionControllerDelega
     }
     if operation == "get_device_location" {
       ownerDeviceLocation(paramsJson: paramsJson, result: result)
+      return
+    }
+    if operation == "schedule_notification" || operation == "cancel_scheduled_notification" {
+      ownerScheduledNotification(operation: operation, paramsJson: paramsJson, result: result)
       return
     }
     guard operation == "send_notification" else {

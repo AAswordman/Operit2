@@ -8,6 +8,7 @@ import 'package:flutter/foundation.dart';
 import '../../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../common/ChatAvatarImage.dart';
+import '../../../../common/contributions/EmbeddedContributionDialog.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
 import 'WorkspaceOverviewModels.dart';
@@ -1105,7 +1106,12 @@ class _WorkspaceContributionAvatarState
     }
     setState(() => _presenting = true);
     try {
-      await widget.usage.preview.present(context: context, clients: _clients);
+      await showEmbeddedContributionDialog(
+        route: widget.usage.previewRoute,
+        input: widget.usage.previewInput,
+        context: context,
+        clients: _clients,
+      );
     } catch (error) {
       if (!mounted) {
         return;

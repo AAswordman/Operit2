@@ -1,7 +1,7 @@
 // Generated from operit-plugin-sdk Rust declarations.
 
 import type { JsonObject } from "./core";
-import type { AgentStatusResultData, ChatCallResultData, ChatCancelResultData, ChatCreationResultData, ChatDeleteExtensionResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatReadExtensionResultData, ChatSendMessageResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, ChatWriteExtensionResultData, MessageSendResultData } from "./results";
+import type { AgentStatusResultData, ChatCallResultData, ChatCancelResultData, ChatCancelScheduledMessageResultData, ChatCreationResultData, ChatDeleteExtensionResultData, ChatDeleteResultData, ChatFindResultData, ChatListResultData, ChatMessagesResultData, ChatPreparedDeliveryResultData, ChatReadExtensionResultData, ChatScheduleMessageResultData, ChatScheduledMessagesResultData, ChatSendMessageResultData, ChatServiceStartResultData, ChatSwitchResultData, ChatTitleUpdateResultData, ChatWriteExtensionResultData, MessageSendResultData } from "./results";
 
 /**
  * Starts the chat service and manages generic conversations and execution participants.
@@ -246,6 +246,36 @@ export namespace Chat {
   }
 
   /**
+   * Publishes already generated assistant text to one existing conversation on any platform.
+   */
+  export interface PreparedMessageRequest {
+    chatId: string;
+    text: string;
+    /**
+     * Positive Unix milliseconds; must have reached this time before committing.
+     */
+    timestamp: number;
+    notify: boolean;
+  }
+
+  /**
+   * Schedules prepared assistant text; the host owns persistence, delivery, notifications and resume recovery.
+   */
+  export interface ScheduledMessageRequest {
+    /**
+     * Scoped automatically to the authenticated plugin. Identical retries are idempotent.
+     */
+    id: string;
+    chatId: string;
+    title: string;
+    text: string;
+    /**
+     * Absolute Unix milliseconds, from one second to 30 days ahead.
+     */
+    timestamp: number;
+  }
+
+  /**
    * Check chat input processing status
    */
   function agentStatus(chatId: string): Promise<AgentStatusResultData>;
@@ -258,6 +288,10 @@ export namespace Chat {
    * Cancels only the calling plugin's execution captured in the specified conversation.
    */
   function cancel(chatId: string): Promise<ChatCancelResultData>;
+  /**
+   * Cancels this plugin's scheduled message and any associated system notification.
+   */
+  function cancelScheduledMessage(id: string): Promise<ChatCancelScheduledMessageResultData>;
   /**
    * Creates a workspace conversation through the registered creation hooks.
    * @param options - Current-chat control, an explicit source chat, and opaque plugin input.
@@ -272,6 +306,10 @@ export namespace Chat {
    * Deletes only the authenticated executing package's extension on an existing target.
    */
   function deleteExtension(target: ExtensionTarget): Promise<ChatDeleteExtensionResultData>;
+  /**
+   * Commits prepared assistant text once by chat ID and timestamp, without changing the selected chat.
+   */
+  function deliverPrepared(request: PreparedMessageRequest): Promise<ChatPreparedDeliveryResultData>;
   /**
    * Find a chat by title or id
    */
@@ -298,6 +336,10 @@ export namespace Chat {
    */
   function listChats(params?: HostListChatsParams): Promise<ChatListResultData>;
   /**
+   * Lists this plugin's scheduled messages and delivery outcomes without platform-specific handling.
+   */
+  function listScheduledMessages(): Promise<ChatScheduledMessagesResultData>;
+  /**
    * Clears the parent relationship while preserving the conversation and its children.
    */
   function promoteToRoot(chatId: string): Promise<string>;
@@ -309,6 +351,10 @@ export namespace Chat {
    * Persists the supplied unique existing chat identifiers in display order.
    */
   function reorder(chatIds: string[]): Promise<string>;
+  /**
+   * Durably schedules prepared assistant text for a chat. The host handles delivery and platform restrictions.
+   */
+  function scheduleMessage(request: ScheduledMessageRequest): Promise<ChatScheduleMessageResultData>;
   /**
    * Sends one request and resolves only after its real receipt and native cleanup are complete.
    */

@@ -7,7 +7,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
-import '../../../../../../common/contributions/ChatUiContributionModels.dart';
+import '../../../../../../common/contributions/EmbeddedContributionDialog.dart';
 import '../../../../../../common/contributions/ContributionPresentationResult.dart';
 import '../../../../../../common/contributions/ChatInputMenuHost.dart';
 import '../../../../../../common/icons/MaterialIconNameResolver.dart';
@@ -167,7 +167,10 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
   }
 
   /// Presents a registered section action through the root overlay's lifetime.
-  Future<void> _presentSectionAction(ChatUiAction action) async {
+  Future<void> _presentSectionAction(
+    core_proxy.ToolPkgUiRoute route,
+    Object? input,
+  ) async {
     if (!widget.isChatContextCurrent()) return;
     final clients = widget.viewModel.clients;
     final chatId = widget.currentChatId;
@@ -178,7 +181,9 @@ class _AgentInputMenuPopupState extends State<AgentInputMenuPopup> {
     ).overlay!.context;
     widget.onDismiss();
     if (!isCurrent() || !presentationContext.mounted) return;
-    await action.present(
+    await showEmbeddedContributionDialog(
+      route: route,
+      input: input,
       context: presentationContext,
       clients: clients,
       hostState: <String, Object?>{'chatId': chatId},
@@ -397,7 +402,10 @@ class _ChatSessionSummarySectionState
   }
 
   /// Refreshes the captured runtime descriptor only after its own valid completion.
-  Future<void> _presentChatUiAction(ChatUiAction action) async {
+  Future<void> _presentChatUiAction(
+    core_proxy.ToolPkgUiRoute route,
+    Object? input,
+  ) async {
     if (_presentingContextAction || !widget.isChatContextCurrent()) return;
     final viewModel = widget.viewModel;
     final clients = viewModel.clients;
@@ -465,7 +473,9 @@ class _ChatSessionSummarySectionState
       await initialChatId.future;
       requireSelectionObservation();
       if (!ownsCurrentContext() || !presentationContext.mounted) return;
-      final result = await action.present(
+      final result = await showEmbeddedContributionDialog(
+        route: route,
+        input: input,
         context: presentationContext,
         clients: clients,
         hostState: <String, Object?>{'chatId': chatId},
@@ -478,6 +488,21 @@ class _ChatSessionSummarySectionState
       final currentChatId = await chatCore.currentChatIdFlow().first;
       if (currentChatId != chatId || !ownsCurrentContext()) return;
       requireSelectionObservation();
+      final value = result!.value;
+      if (value is Map && value['type'] == 'toolpkg.chat.activate') {
+        final targetChatId = value['chatId'];
+        if (value.length != 2 ||
+            targetChatId is! String ||
+            targetChatId.trim().isEmpty) {
+          throw const FormatException(
+            'Chat activation requires exactly type and a nonblank chatId.',
+          );
+        }
+        if (targetChatId != chatId) {
+          await chatCore.switchChat(chatId: targetChatId);
+        }
+        return;
+      }
       // A new-session active choice has no existing runtime descriptor to publish.
       if (chatId != null) {
         await chatCore.chatConfiguration(chatId: chatId);

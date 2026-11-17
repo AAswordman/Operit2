@@ -50,7 +50,7 @@ pub struct TtsSynthesizeRequest {
     /// Uses the selected host configuration when omitted.
     pub configId: Option<String>,
 }
-/// Starts system speech on this host using one configured voice.
+/// Starts speech on this host using the configured system voice or generated audio.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 #[serde(deny_unknown_fields)]
@@ -62,13 +62,13 @@ pub struct TtsSpeakRequest {
     pub interrupt: Option<bool>,
     /// Overrides the configured speed for this utterance only.
     pub speed: Option<f64>,
-    /// Overrides the unit pitch for this utterance only.
+    /// Overrides the system voice pitch for this utterance only; generated audio requires 1.0.
     pub pitch: Option<f64>,
 }
 /// Reads and selects speech configurations through the canonical host manager.
 pub trait TtsHost: Send + Sync {
     fn synthesize(&self, request: TtsSynthesizeRequest) -> JsFuture<TtsSynthesizeResultData>;
-    /// Starts system speech through the shared host playback capability.
+    /// Starts configured speech through the shared host playback capability.
     fn speak(&self, request: TtsSpeakRequest) -> JsFuture<TtsSpeakResultData>;
     /// Returns complete configured speech records.
     fn listConfigs(&self) -> JsFuture<TtsListConfigsResultData>;

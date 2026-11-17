@@ -93,6 +93,12 @@ impl RuntimeEventIngressService {
                 Self::updateNetworkFlow().set_value(updateNetwork(&network));
             }
         }
+        match event.topic {
+            RuntimeEventTopic::AppLifecycleResumed => self.toolpkg_runtime.tool_handler().runtimeSupport().setScheduledChatForeground(true),
+            RuntimeEventTopic::AppLifecycleInactive | RuntimeEventTopic::AppLifecyclePaused |
+            RuntimeEventTopic::AppLifecycleHidden | RuntimeEventTopic::AppLifecycleDetached => self.toolpkg_runtime.tool_handler().runtimeSupport().setScheduledChatForeground(false),
+            _ => {},
+        }
         dispatchAppLifecycleEvent(&self.toolpkg_runtime, &event, payload.clone());
         ToolPkgHostEventHookBridge::dispatchHostEvent(&self.toolpkg_runtime, "broadcast", payload);
         serde_json::json!({

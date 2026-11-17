@@ -485,6 +485,10 @@ class _MessageVoiceBridge extends OperitRuntimeBridge {
         }
         value = {
           'contextKey': 'opaque-unused-by-speech',
+          'historyPolicy': const core.ChatHistoryPolicy(
+            isolateParticipants: false,
+            labelUserMessages: false,
+          ).toJson(),
           'executionData': {'current': true},
           'profile': profile.toJson(),
           'participants': [profile.toJson()],

@@ -35,13 +35,13 @@ test("registered TS input menu reproduces one avatar and two-line character row 
   assert.equal(avatars[0].props.uri, card.avatarUri); assert.equal(avatars[0].props.contentScale, "crop");
   const response = await ui.dispatch(keyedNode(tree, "current-character").props.onClick);
   assert.deepEqual(plain(response.actionResult), { type: "toolpkg.ui.present", routeId: "toolpkg:com.operit.character_cards:ui:selection",
-    input: { mode: "select", chatId: "selector-chat", kind: "card", selected: { CharacterCard: { id: card.id } } } });
+    input: { mode: "select", chatId: "selector-chat", openLatestChat: true, kind: "card", selected: { CharacterCard: { id: card.id } } } });
   const selector = mountRegisteredSelector(runtime, { requestId: "menu-click", input: response.actionResult.input }); await selector.load();
   assert.equal(selector.render().tree.type, "Dialog");
 });
 
 /** Keeps an unbound chat explicit and commits only after the user selects an actual record in the TS dialog. */
-test("unbound TS menu shows its original row and opens a real selector without borrowing global active", async t => {
+test("unbound TS menu opens a separate role conversation without rebinding its history", async t => {
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "User-selected role" } });
   const ui = menu(runtime, "selector-chat"); await ui.load(); const tree = ui.render().tree;
   assert.deepEqual(texts(tree), ["当前角色卡", "仅使用模型"]);
@@ -49,8 +49,10 @@ test("unbound TS menu shows its original row and opens a real selector without b
   const response = await ui.dispatch(keyedNode(tree, "current-character").props.onClick);
   assert.deepEqual(plain(response.actionResult.input.selected), { Model: { id: "chat" } });
   const selector = mountRegisteredSelector(runtime, { requestId: "menu-bind", input: response.actionResult.input }); await selector.load();
-  await selector.dispatch(keyedNode(selector.render().tree, "card:" + card.id).props.onClick);
-  assert.equal((await runtime.binding("selector-chat")).selection, "card:" + card.id);
+  const completion = await selector.dispatch(keyedNode(selector.render().tree, "card:" + card.id).props.onClick);
+  assert.deepEqual(plain(completion.actionResult.value), { type: "toolpkg.chat.activate", chatId: "created-chat-1" });
+  assert.equal(await runtime.binding("selector-chat"), null);
+  assert.equal((await runtime.binding("created-chat-1")).selection, "card:" + card.id);
 });
 
 /** Ensures a group binding never expands the single original menu slot into extra group controls. */

@@ -57,7 +57,7 @@ export namespace Tts {
   }
 
   /**
-   * Starts system speech on this host using one configured voice.
+   * Starts speech on this host using the configured system voice or generated audio.
    */
   export interface SpeakRequest {
     text: string;
@@ -74,7 +74,7 @@ export namespace Tts {
      */
     speed?: number;
     /**
-     * Overrides the unit pitch for this utterance only.
+     * Overrides the system voice pitch for this utterance only; generated audio requires 1.0.
      */
     pitch?: number;
   }
@@ -92,7 +92,7 @@ export namespace Tts {
    */
   function setCurrentConfigId(id: string): Promise<TtsSetCurrentConfigIdResultData>;
   /**
-   * Starts system speech through the shared host playback capability.
+   * Starts configured speech through the shared host playback capability.
    */
   function speak(request: SpeakRequest): Promise<TtsSpeakResultData>;
   function synthesize(request: SynthesizeRequest): Promise<TtsSynthesizeResultData>;

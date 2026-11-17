@@ -326,8 +326,68 @@ pub enum ChatSendEvent {
 #[allow(non_snake_case)]
 pub struct ChatCancelResult { pub chatId: String, pub cancelRequested: bool }
 
+/// Publishes already generated assistant text to one existing conversation on any platform.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatPreparedMessageRequest {
+    pub chatId: String,
+    pub text: String,
+    /// Positive Unix milliseconds; must have reached this time before committing.
+    pub timestamp: i64,
+    #[serde(default)]
+    pub notify: bool,
+}
+pub fn validatePreparedMessageRequest(request: &ChatPreparedMessageRequest, now: i64) -> Result<(), String> {
+        validatePreparedChatText(&request.chatId, &request.text)?;
+        if request.timestamp <= 0 || request.timestamp > now {
+            return Err("Prepared message timestamp must be positive and already due".into());
+        }
+        Ok(())
+    }
+
+/// Schedules prepared assistant text; the host owns persistence, delivery, notifications and resume recovery.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatScheduledMessageRequest {
+    /// Scoped automatically to the authenticated plugin. Identical retries are idempotent.
+    pub id: String,
+    pub chatId: String,
+    pub title: String,
+    pub text: String,
+    /// Absolute Unix milliseconds, from one second to 30 days ahead.
+    pub timestamp: i64,
+}
+pub fn validateChatScheduledMessageRequest(request: &ChatScheduledMessageRequest, now: i64) -> Result<(), String> {
+        validatePreparedNotificationId(&request.id)?;
+        validatePreparedChatText(&request.chatId, &request.text)?;
+        if request.title.len() > 1024 { return Err("Notification title exceeds 1024 bytes".into()); }
+        let delay = request.timestamp.saturating_sub(now);
+        if !(1000..=2_592_000_000).contains(&delay) {
+            return Err("Notification time must be from one second to 30 days in the future".into());
+        }
+        Ok(())
+    }
+
+pub fn validatePreparedNotificationId(id: &str) -> Result<(), String> {
+    if id.trim().is_empty() || id.len() > 200 { return Err("Notification ID requires 1 to 200 bytes".into()); }
+    Ok(())
+}
+fn validatePreparedChatText(chatId: &str, text: &str) -> Result<(), String> {
+    if chatId.trim().is_empty() || chatId.trim() != chatId { return Err("A nonempty exact chatId is required".into()); }
+    if text.trim().is_empty() || text.len() > 65536 { return Err("Prepared text requires 1 to 65536 bytes".into()); }
+    Ok(())
+}
+
 /// Starts the chat service and manages generic conversations and execution participants.
 pub trait ChatHost: Send + Sync {
+    /// Commits prepared assistant text once by chat ID and timestamp, without changing the selected chat.
+    fn deliverPrepared(&self, request: ChatPreparedMessageRequest) -> JsFuture<ChatPreparedDeliveryResultData>;
+    /// Durably schedules prepared assistant text for a chat. The host handles delivery and platform restrictions.
+    fn scheduleMessage(&self, request: ChatScheduledMessageRequest) -> JsFuture<ChatScheduleMessageResultData>;
+    /// Cancels this plugin's scheduled message and any associated system notification.
+    fn cancelScheduledMessage(&self, id: String) -> JsFuture<ChatCancelScheduledMessageResultData>;
+    /// Lists this plugin's scheduled messages and delivery outcomes without platform-specific handling.
+    fn listScheduledMessages(&self) -> JsFuture<ChatScheduledMessagesResultData>;
     ///
     ///Start the chat service (floating window)
     ///@param options - Optional service startup options
@@ -602,5 +662,35 @@ mod chat_extension_contract_tests {
         for value in [json!(null), json!([]), json!("not-an-object")] {
             assert!(serde_json::from_value::<JsonObject>(value).is_err());
         }
+    }
+}
+
+#[cfg(test)]
+mod prepared_delivery_tests {
+    use super::*;
+    #[test]
+    fn prepared_requests_reject_future_blank_oversized_and_unknown_fields() {
+        let mut request = ChatPreparedMessageRequest { chatId: "chat".into(), text: "hello".into(), timestamp: 1, notify: false };
+        assert!(validatePreparedMessageRequest(&request, 1000).is_ok());
+        request.timestamp = 1001;
+        assert!(validatePreparedMessageRequest(&request, 1000).is_err());
+        request.timestamp = 1; request.text = " ".into();
+        assert!(validatePreparedMessageRequest(&request, 1000).is_err());
+        request.text = "x".repeat(65537);
+        assert!(validatePreparedMessageRequest(&request, 1000).is_err());
+        assert!(serde_json::from_value::<ChatPreparedMessageRequest>(serde_json::json!({"chatId":"chat","text":"hello","timestamp":1,"extra":true})).is_err());
+    }
+    #[test]
+    fn notification_requests_enforce_identical_time_and_identity_bounds_on_every_platform() {
+        let mut request = ChatScheduledMessageRequest { id: "slot".into(), chatId: "chat".into(), title: "Title".into(), text: "Text".into(), timestamp: 2000 };
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_ok());
+        request.timestamp = 1999;
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_err());
+        request.timestamp = 1000 + 2_592_000_000;
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_ok());
+        request.timestamp += 1;
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_err());
+        assert!(validatePreparedNotificationId("").is_err());
+        assert!(validatePreparedNotificationId(&"x".repeat(201)).is_err());
     }
 }

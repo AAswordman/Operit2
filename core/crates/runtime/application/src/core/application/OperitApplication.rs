@@ -217,6 +217,9 @@ impl OperitApplication {
         *chatRuntimeHolder
             .try_lock()
             .expect("new chat runtime holder must be unlocked") = initializedChatRuntimeHolder;
+        if let Err(error) = runtimeToolSupport.startScheduledChatDelivery() {
+            operit_util::AppLogger::AppLogger::e("ScheduledChatMessages", &error);
+        }
         Self {
             applicationUpdate: super::ApplicationUpdate::ApplicationUpdateManager::new(),
             appStartupTimeMs: 0,

@@ -149,7 +149,7 @@ extension _ComposeRendererSlots on _ComposeProgramExecutorState {
         .map((entry) {
           final child = entry.value;
           if ((child.type == 'Text' || child.type == 'BasicText') &&
-              _rowFlexSpec(child.props) == null) {
+              _rowFlexSpec(child.props, nodeType: child.type) == null) {
             return Flexible(fit: FlexFit.loose, child: widgets[entry.key]);
           }
           return widgets[entry.key];
@@ -159,7 +159,9 @@ extension _ComposeRendererSlots on _ComposeProgramExecutorState {
 
   /// Evaluates nodes require row flex for the Compose DSL renderer.
   bool _nodesRequireRowFlex(List<_ComposeProgramNode> nodes) {
-    return nodes.any((child) => _rowFlexSpec(child.props) != null);
+    return nodes.any(
+      (child) => _rowFlexSpec(child.props, nodeType: child.type) != null,
+    );
   }
 
   /// Lets slot children request their own widths through explicit modifiers.

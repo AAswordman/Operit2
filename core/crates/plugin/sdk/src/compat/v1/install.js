@@ -18,7 +18,7 @@ function __operitCreateV1SoftwareSettings(current, packageName) {
 }
 
 /**
- * Adapts historical one-shot system speech to the canonical playback request.
+ * Adapts historical one-shot speech to the configured host playback request.
  * @param {(request: import('../../../../../../../plugins/types/tts').Tts.SpeakRequest) => Promise<import('../../../../../../../plugins/types/results').TtsSpeakResultData>} speak
  * @returns {typeof import('../../../../../../../plugins/types-v1/software_settings').SoftwareSettings.testTtsPlayback}
  */
@@ -57,11 +57,8 @@ function __operitCreateV1TtsPlayback(speak) {
             }
         }
         var result = await speak(request);
-        if (result.providerType !== 'SYSTEM_TTS') {
-            throw new Error('Unsupported v1 system speech provider: ' + result.providerType);
-        }
         return {
-            ttsServiceType: 'SIMPLE_TTS',
+            ttsServiceType: result.providerType === 'SYSTEM_TTS' ? 'SIMPLE_TTS' : result.providerType,
             providerClass: 'TtsPlaybackHost',
             initialized: true,
             playbackTriggered: result.started,

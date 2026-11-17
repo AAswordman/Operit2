@@ -2,6 +2,10 @@
 
 use std::sync::Arc;
 
+#[path = "ConfiguredTtsPlayback.rs"]
+mod configured_playback;
+use configured_playback::{replace_playback, start_configured_speech, SpeechStart};
+
 use operit_host_api::{TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
@@ -38,8 +42,10 @@ impl TtsPlaybackService {
             return Err("audio path is empty".to_string());
         }
         let file = self.filesystem.fileResource(None, path)?;
-        let status = self.ttsPlaybackHost()?.playFile(&file)
-            .map_err(|error| error.to_string())?;
+        let host = self.ttsPlaybackHost()?;
+        let status = replace_playback(&host, || {
+            host.playFile(&file).map_err(|error| error.to_string())
+        })?;
         Ok(TtsPlaybackResult {
             path: status.path,
             started: status.active,
@@ -77,15 +83,7 @@ impl TtsPlaybackService {
         interrupt: bool,
         pitch: f64,
     ) -> Result<TtsHostPlaybackResult, String> {
-        if cleanedText.is_empty() {
-            return Err("tts text is empty".to_string());
-        }
-        if !config.speed.is_finite() || config.speed <= 0.0 {
-            return Err("tts speech rate must be a finite positive number".to_string());
-        }
-        if !pitch.is_finite() || pitch <= 0.0 {
-            return Err("tts pitch must be a finite positive number".to_string());
-        }
+        validateSpeech(&cleanedText, config.speed, pitch)?;
         let providerType = TtsProviderType::normalize(&config.providerType);
         if providerType != TtsProviderType::SYSTEM_TTS {
             return Err(format!(
@@ -93,16 +91,66 @@ impl TtsPlaybackService {
             ));
         }
         let host = self.ttsPlaybackHost()?;
-        let status = host
-            .speakText(TtsPlaybackRequest {
-                text: cleanedText,
-                voice: config.voice,
-                locale: config.model,
-                speed: config.speed,
-                pitch,
-                interrupt,
-            })
-            .map_err(|error| error.to_string())?;
+        let request = systemSpeechRequest(config, cleanedText, interrupt, pitch);
+        let speak = || host.speakText(request).map_err(|error| error.to_string());
+        let status = if interrupt {
+            replace_playback(&host, speak)?
+        } else {
+            speak()?
+        };
+        Ok(ttsHostPlaybackResult(status))
+    }
+
+    /// Starts configured speech using system voices or generated audio in order.
+    pub(crate) async fn speakConfigured(
+        context: &HostManager,
+        config: TtsConfig,
+        text: String,
+        interrupt: bool,
+        pitch: f64,
+    ) -> Result<TtsHostPlaybackResult, String> {
+        let text = TtsCleaner::clean(&text);
+        validateSpeech(&text, config.speed, pitch)?;
+        let playback = Self::getInstance(context)?;
+        let host = playback.ttsPlaybackHost()?;
+        let system =
+            TtsProviderType::normalize(&config.providerType) == TtsProviderType::SYSTEM_TTS;
+        if !system && pitch != 1.0 {
+            return Err("Pitch overrides are only supported by system TTS voices".into());
+        }
+        if system && !host.supportsSystemSpeech() {
+            return Err("System TTS playback is not supported by this host".into());
+        }
+        let scheduler = context
+            .hostRuntimeTaskSchedulerHost
+            .clone()
+            .ok_or("HostRuntimeTaskSchedulerHost is required for configured TTS playback")?;
+        let synthesis = super::TtsSynthesisService::TtsSynthesisService::getInstance(context);
+        let status = start_configured_speech(
+            host,
+            scheduler,
+            interrupt,
+            Box::new(move || {
+                if system {
+                    let request = systemSpeechRequest(config, text, interrupt, pitch);
+                    return Ok(vec![Box::new(move |host: &dyn TtsPlaybackHost| {
+                        host.speakText(request).map_err(|error| error.to_string())
+                    }) as SpeechStart]);
+                }
+                let audio = synthesis.synthesizeWithResolvedConfig(&config.id, &config, &text)?;
+                audio
+                    .audioPaths
+                    .into_iter()
+                    .map(|path| {
+                        let file = playback.filesystem.fileResource(None, &path)?;
+                        Ok(Box::new(move |host: &dyn TtsPlaybackHost| {
+                            host.playFile(&file).map_err(|error| error.to_string())
+                        }) as SpeechStart)
+                    })
+                    .collect()
+            }),
+        )
+        .await?;
         Ok(ttsHostPlaybackResult(status))
     }
 
@@ -124,10 +172,11 @@ impl TtsPlaybackService {
 
     /// Stops host speech playback.
     pub fn stopSpeech(&self) -> Result<TtsHostPlaybackResult, String> {
-        self.ttsPlaybackHost()?
-            .stopSpeech()
-            .map(ttsHostPlaybackResult)
-            .map_err(|error| error.to_string())
+        let host = self.ttsPlaybackHost()?;
+        replace_playback(&host, || {
+            host.stopSpeech().map_err(|error| error.to_string())
+        })
+        .map(ttsHostPlaybackResult)
     }
 
     /// Reads current host speech playback state.
@@ -153,5 +202,36 @@ fn ttsHostPlaybackResult(status: TtsPlaybackStatus) -> TtsHostPlaybackResult {
         active: status.active,
         paused: status.paused,
         details: status.details,
+    }
+}
+
+/// Validates shared utterance controls before synthesis or playback changes host state.
+fn validateSpeech(text: &str, speed: f64, pitch: f64) -> Result<(), String> {
+    if text.is_empty() {
+        return Err("tts text is empty".into());
+    }
+    if !speed.is_finite() || speed <= 0.0 {
+        return Err("tts speech rate must be a finite positive number".into());
+    }
+    if !pitch.is_finite() || pitch <= 0.0 {
+        return Err("tts pitch must be a finite positive number".into());
+    }
+    Ok(())
+}
+
+/// Converts one resolved system voice to the shared host request.
+fn systemSpeechRequest(
+    config: TtsConfig,
+    text: String,
+    interrupt: bool,
+    pitch: f64,
+) -> TtsPlaybackRequest {
+    TtsPlaybackRequest {
+        text,
+        voice: config.voice,
+        locale: config.model,
+        speed: config.speed,
+        pitch,
+        interrupt,
     }
 }

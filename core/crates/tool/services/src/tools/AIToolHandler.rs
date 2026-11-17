@@ -1931,7 +1931,7 @@ mod tests {
     ) -> Result<Vec<operit_plugin_sdk::js_sdk::models::ModelsSummary>, String> { panic!("Unexpected runtime service: listModelSummaries") }
         /// Rejects unexpected application service access in execution pipeline tests.
     fn speakSpeech(&self, _request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest)
-        -> Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String> {
+        -> futures_util::future::BoxFuture<'_, Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>> {
         panic!("Unexpected runtime service: speakSpeech")
     }
         /// Rejects unexpected application service access in execution pipeline tests.
@@ -2042,6 +2042,16 @@ mod tests {
         input: Option<serde_json::Value>,
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>> { panic!("Unexpected runtime service: createChatRuntime") }
         /// Rejects unexpected application service access in execution pipeline tests.
+    fn listScheduledChatMessages<'a>(&'a self, owner: &'a str)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatScheduledMessagesResultData, String>> { panic!("Unexpected scheduled chat runtime access") }
+    fn setScheduledChatForeground(&self, _: bool) {}
+    fn deliverPreparedChatMessage<'a>(&'a self, request: operit_plugin_sdk::js_sdk::chat::ChatPreparedMessageRequest)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatPreparedDeliveryResultData, String>> { panic!("Unexpected prepared chat runtime access") }
+    fn scheduleChatMessage<'a>(&'a self, owner: &'a str, request: operit_plugin_sdk::js_sdk::chat::ChatScheduledMessageRequest)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatScheduleMessageResultData, String>> { panic!("Unexpected prepared chat runtime access") }
+    fn cancelScheduledChatMessage<'a>(&'a self, owner: &'a str, id: String)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatCancelScheduledMessageResultData, String>> { panic!("Unexpected prepared chat runtime access") }
+
     fn readChatExtension(
         &self,
         owner: &str,

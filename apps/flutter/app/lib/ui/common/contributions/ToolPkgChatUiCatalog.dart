@@ -2,7 +2,7 @@
 
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
-import 'ChatUiContributionModels.dart';
+import '../../features/chat/components/workspace/WorkspaceOverviewModels.dart';
 import 'ChatModelSelection.dart';
 
 /// Reads registered display contracts without retaining plugin business records.
@@ -96,11 +96,19 @@ class ToolPkgChatUiCatalog {
   }
 
   /// Resolves selector, identity, and background display data from actual owners.
-  Future<ChatUiContext> loadContext({required String? chatId}) async {
+  Future<
+    ({
+      core_proxy.ChatDisplayIdentity? identity,
+      ({core_proxy.ToolPkgUiRoute route, Object? input})? avatarAction,
+      String? backgroundUri,
+    })
+  >
+  loadContext({required String? chatId}) async {
     const api = 'chat.context.actions';
     final owners = await _owners(api);
     final routes = await _routes();
-    ChatUiIdentity? identity;
+    core_proxy.ChatDisplayIdentity? identity;
+    ({core_proxy.ToolPkgUiRoute route, Object? input})? resolvedAvatarAction;
     String? backgroundUri;
     for (final owner in owners) {
       final data = _object(
@@ -130,13 +138,10 @@ class ToolPkgChatUiCatalog {
           );
         }
         final avatarAction = display['avatarAction'] ?? display['action'];
-        identity = ChatUiIdentity(
-          title: _text(display['title'], 'identity.title'),
-          avatarUri: _nullableText(display['avatarUri'], 'identity.avatarUri'),
-          avatarAction: avatarAction == null
-              ? null
-              : _action(avatarAction, owner, routes),
-        );
+        identity = core_proxy.ChatDisplayIdentity.fromJson(display);
+        resolvedAvatarAction = avatarAction == null
+            ? null
+            : _action(avatarAction, owner, routes);
       }
       final background = _nullableText(data['backgroundUri'], 'backgroundUri');
       if (background != null) {
@@ -146,20 +151,30 @@ class ToolPkgChatUiCatalog {
         backgroundUri = background;
       }
     }
-    return ChatUiContext(identity: identity, backgroundUri: backgroundUri);
+    return (
+      identity: identity,
+      avatarAction: resolvedAvatarAction,
+      backgroundUri: backgroundUri,
+    );
   }
 
-  /// Projects only the provided generic history summaries into owner sections.
-  Future<List<ChatUiSection>> loadSections({
+  /// Reads owner sections directly into the workspace's display records.
+  Future<List<WorkspaceContributionUsage>> loadWorkspaceUsages({
     required List<core_proxy.ChatHistoryListItem> chats,
   }) async {
     const api = 'chat.list.sections';
     final owners = await _owners(api);
     final routes = await _routes();
     final knownChatIds = chats.map((chat) => chat.id).toSet();
-    final sections = <ChatUiSection>[];
+    final sections = <WorkspaceContributionUsage>[];
     final payload = <String, Object?>{
-      'chats': chats.map(chatUiHistorySummary).toList(growable: false),
+      'chats': chats
+          .map(
+            (chat) => chat.toJson()
+              ..remove('group')
+              ..remove('parentChatId'),
+          )
+          .toList(growable: false),
     };
     for (final owner in owners) {
       final data = _object(await _invoke(owner, api, payload), 'chat sections');
@@ -187,20 +202,21 @@ class ToolPkgChatUiCatalog {
             'A section contains duplicate or unknown chat IDs.',
           );
         }
+        final preview = _action(section['preview'], owner, routes);
         sections.add(
-          ChatUiSection(
+          WorkspaceContributionUsage(
             ownerPackageName: owner,
-            id: id,
+            sectionId: id,
             title: _text(section['title'], 'section.title'),
             avatarUri: _nullableText(section['avatarUri'], 'section.avatarUri'),
-            chatIds: List<String>.unmodifiable(chatIds),
-            selection: section['selection'],
-            preview: _action(section['preview'], owner, routes),
+            conversationCount: chatIds.length,
+            previewRoute: preview.route,
+            previewInput: preview.input,
           ),
         );
       }
     }
-    return List<ChatUiSection>.unmodifiable(sections);
+    return List<WorkspaceContributionUsage>.unmodifiable(sections);
   }
 
   /// Invokes the same section owner's binding API only after a chat exists.
@@ -252,7 +268,7 @@ class ToolPkgChatUiCatalog {
       );
 
   /// Accepts only the generic route and input fields of a declared presentation.
-  ChatUiAction _action(
+  ({core_proxy.ToolPkgUiRoute route, Object? input}) _action(
     Object? raw,
     String owner,
     List<core_proxy.ToolPkgUiRoute> routes,
@@ -263,7 +279,7 @@ class ToolPkgChatUiCatalog {
   }
 
   /// Requires exactly one route belonging to the actual publishing package.
-  ChatUiAction _resolveAction(
+  ({core_proxy.ToolPkgUiRoute route, Object? input}) _resolveAction(
     String owner,
     Object? routeId,
     Object? input,
@@ -276,7 +292,7 @@ class ToolPkgChatUiCatalog {
     if (matches.length != 1) {
       throw StateError('Unregistered or ambiguous owner route: $owner/$id');
     }
-    return ChatUiAction(route: matches.single, input: input);
+    return (route: matches.single, input: input);
   }
 
   /// Requires a JSON object without guessing field aliases or serializing DTOs.

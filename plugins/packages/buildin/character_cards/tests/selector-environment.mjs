@@ -13,6 +13,28 @@ export async function selectorEnvironment(t, configurationSettings = {}, runtime
   const native = createNativeChatHost(records), { calls } = native, directoryCalls = [];
   const chat = {
     ...native.chat,
+    /** Exposes real host summaries; production joins and sorts their persisted plugin bindings. */
+    async listAll() {
+      native.observe("listAll");
+      const chats = [...records].map(([id, record]) => ({
+        id, title: id, messageCount: 0, createdAt: "2026-10-08T12:00:00Z",
+        updatedAt: "2026-10-08T12:00:00Z", isCurrent: id === "selector-chat",
+        inputTokens: 0, outputTokens: 0, ...record.summary,
+      }));
+      return { totalCount: chats.length, currentChatId: "selector-chat", chats };
+    },
+    /** Exercises the genuine before-create hook and draft publication at the native creation boundary. */
+    async createNew(options) {
+      native.observe("createNew", options);
+      const chatId = "created-chat-" + records.size;
+      const result = await plugin.chatLifecycleHooks[0].function({ eventName: "before_create", eventPayload: {
+        eventName: "before_create", creationKind: "new", chat: { id: chatId, title: "New chat", workspaceId: null, parentChatId: null },
+        sourceChatId: options.sourceChatId ?? null, sourceMessageTimestamp: null, input: options.input ?? null, sourceExtension: null,
+      } });
+      records.set(chatId, { extension: result.extension });
+      await plugin.api("chat.configuration.draft.commit", { chatId });
+      return { chatId, title: "New chat", createdAt: Date.now() };
+    },
     /** Implements only the declared exact generic lookup used by the real backend to validate a chat target. */
     async findChat(options) {
       native.observe("findChat", options); assert.deepEqual(plain(options), { query: "selector-chat", match: "exact", index: 0 });

@@ -9,7 +9,7 @@ import '../../../../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../../../l10n/generated/app_localizations.dart';
-import '../../../../../../common/contributions/ChatUiContributionModels.dart';
+import '../../../../../../common/contributions/EmbeddedContributionDialog.dart';
 import '../../../../../../common/contributions/ContributionPresentationResult.dart';
 import '../../../../../../common/icons/MaterialIconNameResolver.dart';
 import '../../../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
@@ -55,7 +55,8 @@ class ChatAttachmentMenuPopup extends StatefulWidget {
 }
 
 class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
-  Future<List<ChatUiChoice>>? _entriesFuture;
+  Future<List<core_proxy.ToolPkgNavigationEntry>>? _entriesFuture;
+  List<core_proxy.ToolPkgUiRoute> _registeredRoutes = const [];
   String? _languageCode;
   StreamSubscription<void>? _catalogSubscription;
   bool _opening = false;
@@ -95,7 +96,9 @@ class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
   }
 
   /// Reads only the navigation registry's chat_attachments surface.
-  Future<List<ChatUiChoice>> _loadEntries(String languageCode) async {
+  Future<List<core_proxy.ToolPkgNavigationEntry>> _loadEntries(
+    String languageCode,
+  ) async {
     final manager = widget.clients.application.packageManager();
     final results = await Future.wait<Object>(<Future<Object>>[
       manager.getToolPkgNavigationEntries(useEnglish: languageCode == 'en'),
@@ -106,15 +109,18 @@ class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
     ]);
     final entries = results[0] as List<core_proxy.ToolPkgNavigationEntry>;
     final routes = results[1] as List<core_proxy.ToolPkgUiRoute>;
-    return List<ChatUiChoice>.unmodifiable(<ChatUiChoice>[
-      for (final entry in entries)
-        if (entry.surface == 'chat_attachments')
-          _registeredChoice(entry, routes),
-    ]);
+    _registeredRoutes = routes;
+    return List<core_proxy.ToolPkgNavigationEntry>.unmodifiable(
+      <core_proxy.ToolPkgNavigationEntry>[
+        for (final entry in entries)
+          if (entry.surface == 'chat_attachments')
+            _registeredEntry(entry, routes),
+      ],
+    );
   }
 
   /// Resolves an entry only against the exact owning package's registered route.
-  ChatUiChoice _registeredChoice(
+  core_proxy.ToolPkgNavigationEntry _registeredEntry(
     core_proxy.ToolPkgNavigationEntry entry,
     List<core_proxy.ToolPkgUiRoute> routes,
   ) {
@@ -129,12 +135,7 @@ class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
         '${entry.containerPackageName}/${entry.entryId}',
       );
     }
-    return ChatUiChoice(
-      id: '${entry.containerPackageName}::${entry.entryId}',
-      title: entry.title,
-      icon: entry.icon,
-      action: ChatUiAction(route: matches.single, input: entry.params),
-    );
+    return entry;
   }
 
   /// Re-reads registration metadata after an explicit catalog change.
@@ -146,7 +147,7 @@ class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
   }
 
   /// Opens the exact registered route and forwards only explicit V1 completion.
-  Future<void> _presentEntry(ChatUiChoice entry) async {
+  Future<void> _presentEntry(core_proxy.ToolPkgNavigationEntry entry) async {
     final receiver = widget.onAttachmentResult;
     if (_opening || receiver == null) return;
     final chatId = widget.chatId;
@@ -157,7 +158,15 @@ class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
     setState(() => _opening = true);
     widget.onDismiss();
     try {
-      final result = await entry.action.present(
+      final route = _registeredRoutes.singleWhere(
+        (route) =>
+            route.containerPackageName == entry.containerPackageName &&
+            route.routeId == entry.routeId,
+      );
+      if (!presentationContext.mounted) return;
+      final result = await showEmbeddedContributionDialog(
+        route: route,
+        input: entry.params,
         context: presentationContext,
         clients: clients,
         hostState: <String, Object?>{'chatId': chatId},
@@ -261,7 +270,7 @@ class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
               l10n.attachmentPackage,
               widget.onAttachPackage,
             ),
-            FutureBuilder<List<ChatUiChoice>>(
+            FutureBuilder<List<core_proxy.ToolPkgNavigationEntry>>(
               future: _entriesFuture,
               builder: (context, snapshot) {
                 if (snapshot.hasError) {
@@ -291,7 +300,9 @@ class _ChatAttachmentMenuPopupState extends State<ChatAttachmentMenuPopup> {
                   children: <Widget>[
                     for (final entry in entries)
                       _menuRow(
-                        key: ValueKey<String>(entry.id),
+                        key: ValueKey(
+                          '${entry.containerPackageName}::${entry.entryId}',
+                        ),
                         icon: entry.icon == null
                             ? null
                             : MaterialIconNameResolver.resolve(entry.icon!),

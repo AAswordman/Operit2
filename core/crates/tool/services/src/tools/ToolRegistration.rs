@@ -503,6 +503,26 @@ fn registerChatTools(handler: &mut AIToolHandler, chatTools: StandardChatManager
         ToolRegistrationVisibility::INTERNAL,
     );
     handler.registerBuiltinTool(
+        BuiltinToolName::ChatListScheduledMessages,
+        RegisteredToolExecutor::Shared(Arc::new(PluginChatToolExecutor { operation: PluginChatToolOperation::ListScheduledMessages })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::ChatDeliverPrepared,
+        RegisteredToolExecutor::Shared(Arc::new(PluginChatToolExecutor { operation: PluginChatToolOperation::DeliverPrepared })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::ChatScheduleMessage,
+        RegisteredToolExecutor::Shared(Arc::new(PluginChatToolExecutor { operation: PluginChatToolOperation::ScheduleMessage })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
+        BuiltinToolName::ChatCancelScheduledMessage,
+        RegisteredToolExecutor::Shared(Arc::new(PluginChatToolExecutor { operation: PluginChatToolOperation::CancelScheduledMessage })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
         BuiltinToolName::ChatCancel,
         RegisteredToolExecutor::Shared(Arc::new(PluginChatToolExecutor { operation: PluginChatToolOperation::Cancel })),
         ToolRegistrationVisibility::INTERNAL,

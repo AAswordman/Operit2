@@ -20,7 +20,7 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/contributions/ChatAttachmentResult.dart';
-import '../../../common/contributions/ChatUiContributionModels.dart';
+import '../../../common/contributions/EmbeddedContributionDialog.dart';
 import '../../../common/contributions/ContributionPresentationResult.dart';
 import '../../../common/contributions/ToolPkgChatUiCatalog.dart';
 import '../../../main/navigation/ToolPkgCatalogChangeBus.dart';
@@ -262,7 +262,12 @@ class _ChatContentData {
   final bool isLoadingDisplayWindow;
   final bool isMultiSelectMode;
   final Set<int> selectedMessageTimestamps;
-  final ChatUiContext? chatUiContext;
+  final ({
+    core_proxy.ChatDisplayIdentity? identity,
+    ({core_proxy.ToolPkgUiRoute route, Object? input})? avatarAction,
+    String? backgroundUri,
+  })?
+  chatUiContext;
   final bool isPreparingChatSwitch;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
@@ -326,7 +331,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   late final MainLayoutAttachmentBuilder _workspaceMainLayoutAttachment =
       _buildWorkspaceMainLayoutAttachment;
   String _currentChatTitle = '';
-  ChatUiContext? _chatUiContext;
+  ({
+    core_proxy.ChatDisplayIdentity? identity,
+    ({core_proxy.ToolPkgUiRoute route, Object? input})? avatarAction,
+    String? backgroundUri,
+  })?
+  _chatUiContext;
   int _chatUiContextGeneration = 0;
   StreamSubscription<void>? _chatUiCatalogSubscription;
   String? _currentChatId;
@@ -2613,10 +2623,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
 
   /// Opens only the plugin-provided avatar preview, not the application title.
   Future<void> _showChatAvatarPreview() async {
-    final action = _chatUiContext?.identity?.avatarAction;
+    final action = _chatUiContext?.avatarAction;
     if (action == null) return;
     try {
-      final result = await action.present(
+      final result = await showEmbeddedContributionDialog(
+        route: action.route,
+        input: action.input,
         context: context,
         clients: _viewModel.clients,
         hostState: <String, Object?>{'chatId': _currentChatId},
@@ -2864,7 +2876,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           fileDirectory: _currentFileDirectory,
           chatIdentity: data.chatUiContext?.identity,
           backgroundUri: data.chatUiContext?.backgroundUri,
-          onIdentityTap: data.chatUiContext?.identity?.avatarAction == null
+          onIdentityTap: data.chatUiContext?.avatarAction == null
               ? null
               : _showChatAvatarPreview,
           autoScrollToBottomListenable: _autoScrollToBottomNotifier,

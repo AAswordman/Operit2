@@ -75,6 +75,10 @@ pub enum ToolResultData {
     MessageSendResultData(MessageSendResultData),
     ChatSendMessageResultData(ChatSendMessageResultData),
     ChatObservationResultData(ChatObservationResultData),
+    ChatPreparedDeliveryResultData(ChatPreparedDeliveryResultData),
+    ChatScheduledMessagesResultData(ChatScheduledMessagesResultData),
+    ChatScheduleMessageResultData(ChatScheduleMessageResultData),
+    ChatCancelScheduledMessageResultData(ChatCancelScheduledMessageResultData),
     ChatCancelResultData(ChatCancelResultData),
     ChatReadExtensionResultData(ChatReadExtensionResultData),
     ChatWriteExtensionResultData(ChatWriteExtensionResultData),
@@ -176,6 +180,10 @@ impl ToolResultData {
             Self::MessageSendResultData(data) => data.toString(),
             Self::ChatSendMessageResultData(data) => data.toString(),
             Self::ChatObservationResultData(data) => data.toString(),
+            Self::ChatPreparedDeliveryResultData(data) => data.toString(),
+            Self::ChatScheduledMessagesResultData(data) => data.toString(),
+            Self::ChatScheduleMessageResultData(data) => data.toString(),
+            Self::ChatCancelScheduledMessageResultData(data) => data.toString(),
             Self::ChatCancelResultData(data) => data.toString(),
             Self::ChatReadExtensionResultData(data) => data.toString(),
             Self::ChatWriteExtensionResultData(data) => data.toString(),
@@ -1529,6 +1537,49 @@ impl ChatCancelResultData {
     pub fn toString(&self) -> String {
         serde_json::to_string(self).expect("ChatCancelResultData serialization failed")
     }
+}
+
+/// Reports durable immediate assistant message delivery and optional notification failure.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatPreparedDeliveryResultData {
+    pub chatId: String,
+    pub timestamp: i64,
+    pub duplicate: bool,
+    pub notificationError: JsNullable<String>,
+}
+impl ChatPreparedDeliveryResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("prepared delivery receipt") }
+}
+
+/// Contains the platform-independent outcome of one plugin-owned scheduled message.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatScheduledMessage {
+    pub id: String,
+    pub chatId: String,
+    pub timestamp: i64,
+    /// scheduled, delivered, cancelled, skipped, or failed.
+    pub status: String,
+    pub error: JsNullable<String>,
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatScheduleMessageResultData { pub message: ChatScheduledMessage }
+impl ChatScheduleMessageResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("scheduled message receipt") }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatScheduledMessagesResultData { pub messages: Vec<ChatScheduledMessage> }
+impl ChatScheduledMessagesResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("scheduled messages") }
+}
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatCancelScheduledMessageResultData { pub id: String, pub cancelled: bool }
+impl ChatCancelScheduledMessageResultData {
+    pub fn toString(&self) -> String { serde_json::to_string(self).expect("scheduled message cancellation") }
 }
 
 /// Returns an owner-scoped Chat extension or its explicit absence.

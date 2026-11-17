@@ -13,7 +13,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/ChatAvatarImage.dart';
-import 'package:operit2/ui/common/contributions/ChatUiContributionModels.dart';
+import 'package:operit2/ui/common/contributions/EmbeddedContributionDialog.dart';
 import 'package:operit2/ui/common/contributions/ToolPkgChatUiCatalog.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceHomeContent.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceOverviewContributionCatalog.dart';
@@ -148,7 +148,7 @@ void main() {
       expect(usages[1].identity, isNot(usages[2].identity));
       expect(usages[1].title, first.title);
       expect(usages[1].avatarUri, first.avatarUri);
-      expect(usages[1].preview, same(first.preview));
+      expect(usages[1].previewRoute, same(first.previewRoute));
       expect(() => usages.clear(), throwsUnsupportedError);
     },
   );
@@ -185,14 +185,20 @@ void main() {
         ('owner.second', 'opaque'),
       ]);
       expect(usages.map((usage) => usage.conversationCount), [2, 1]);
-      expect(usages.first.preview.route.containerPackageName, 'owner.first');
-      expect(usages.last.preview.route.containerPackageName, 'owner.second');
-      expect(usages.first.preview.input, _opaqueInput);
+      expect(usages.first.previewRoute.containerPackageName, 'owner.first');
+      expect(usages.last.previewRoute.containerPackageName, 'owner.second');
+      expect(usages.first.previewInput, _opaqueInput);
       for (final payload in bridge.payloads) {
         expect(payload.keys, ['chats']);
         expect(
           payload['chats'],
-          scope.chats.map(chatUiHistorySummary).toList(),
+          scope.chats
+              .map(
+                (chat) => chat.toJson()
+                  ..remove('group')
+                  ..remove('parentChatId'),
+              )
+              .toList(),
         );
       }
       expect(scope.chats.length, 2);
@@ -658,8 +664,8 @@ void main() {
     );
     final sections = await _catalog(
       bridge,
-    ).loadSections(chats: [_chat('a', 'workspace-a')]);
-    final usage = WorkspaceContributionUsage.fromSection(sections.single);
+    ).loadWorkspaceUsages(chats: [_chat('a', 'workspace-a')]);
+    final usage = sections.single;
     late BuildContext presentationContext;
     await tester.pumpWidget(
       MaterialApp(
@@ -674,7 +680,9 @@ void main() {
     bridge.owners.clear();
     bridge.routes.clear();
     await expectLater(
-      usage.preview.present(
+      showEmbeddedContributionDialog(
+        route: usage.previewRoute,
+        input: usage.previewInput,
         context: presentationContext,
         clients: GeneratedCoreProxyClients(bridge),
       ),
@@ -682,7 +690,9 @@ void main() {
     );
     bridge.routes.add(_route('owner.other'));
     await expectLater(
-      usage.preview.present(
+      showEmbeddedContributionDialog(
+        route: usage.previewRoute,
+        input: usage.previewInput,
         context: presentationContext,
         clients: GeneratedCoreProxyClients(bridge),
       ),
@@ -737,19 +747,19 @@ Map<String, Object?> _sectionData(String id, List<String> chatIds) => {
 };
 
 /// Creates an already validated section for display-only aggregation assertions.
-ChatUiSection _section(
+WorkspaceContributionUsage _section(
   String owner,
   String id,
   List<String> chatIds, {
   String? avatarUri,
-}) => ChatUiSection(
+}) => WorkspaceContributionUsage(
   ownerPackageName: owner,
-  id: id,
+  sectionId: id,
   title: 'Same contribution title',
   avatarUri: avatarUri,
-  chatIds: chatIds,
-  selection: _opaqueInput,
-  preview: ChatUiAction(route: _route(owner), input: _opaqueInput),
+  conversationCount: chatIds.length,
+  previewRoute: _route(owner),
+  previewInput: _opaqueInput,
 );
 
 /// Prepares a deterministic public API result while preserving async invocation.

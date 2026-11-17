@@ -428,10 +428,12 @@ pub trait ToolRuntimeSupport: Send + Sync {
         -> Result<operit_plugin_sdk::js_sdk::results::TtsSynthesizeResultData, String> {
         Err("Speech synthesis is unavailable on this host".into())
     }
-    /// Starts system speech through this runtime's shared playback host.
+    /// Starts configured speech through this runtime's shared playback host.
     #[allow(non_snake_case)]
-    fn speakSpeech(&self, request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest)
-        -> Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>;
+    fn speakSpeech(
+        &self,
+        request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest,
+    ) -> futures_util::future::BoxFuture<'_, Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>>;
     /// Recognizes supplied audio through the configured provider on this host.
     fn transcribeSpeech(&self, _request: operit_plugin_sdk::js_sdk::stt::SttTranscribeRequest)
         -> Result<operit_plugin_sdk::js_sdk::results::SttTranscribeResultData, String> {
@@ -584,6 +586,17 @@ pub trait ToolRuntimeSupport: Send + Sync {
         parentChatId: Option<String>,
         input: Option<serde_json::Value>,
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>>;
+
+    /// Lists only the authenticated plugin's durable scheduled message receipts.
+    fn listScheduledChatMessages<'a>(&'a self, owner: &'a str)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatScheduledMessagesResultData, String>>;
+    fn setScheduledChatForeground(&self, foreground: bool);
+    fn deliverPreparedChatMessage<'a>(&'a self, request: operit_plugin_sdk::js_sdk::chat::ChatPreparedMessageRequest)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatPreparedDeliveryResultData, String>>;
+    fn scheduleChatMessage<'a>(&'a self, owner: &'a str, request: operit_plugin_sdk::js_sdk::chat::ChatScheduledMessageRequest)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatScheduleMessageResultData, String>>;
+    fn cancelScheduledChatMessage<'a>(&'a self, owner: &'a str, id: String)
+        -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatCancelScheduledMessageResultData, String>>;
 
     /// Reads one authenticated owner's object extension directly from an existing record.
     fn readChatExtension(

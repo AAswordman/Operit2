@@ -13,7 +13,10 @@ class _RowFlexSpec {
 }
 
 /// Resolves row flex spec for the Compose DSL renderer.
-_RowFlexSpec? _rowFlexSpec(Map<String, Object?> props) {
+_RowFlexSpec? _rowFlexSpec(
+  Map<String, Object?> props, {
+  required String nodeType,
+}) {
   final explicitWeight = _number(props['weight']);
   if (explicitWeight != null && explicitWeight > 0) {
     return _RowFlexSpec(
@@ -36,7 +39,8 @@ _RowFlexSpec? _rowFlexSpec(Map<String, Object?> props) {
     }
   }
 
-  if (_bool(props['fillMaxWidth']) ||
+  if ((nodeType == 'Row' && props['mainAxisSize'] == 'max') ||
+      _bool(props['fillMaxWidth']) ||
       _bool(props['fillMaxSize']) ||
       _hasModifierOp(props['modifier'], 'fillmaxwidth') ||
       _hasModifierOp(props['modifier'], 'fillmaxsize')) {
@@ -445,7 +449,7 @@ Widget _withModifier(
     }
   }
   if (modifierScope == _ComposeDslModifierScope.row) {
-    final rowFlexSpec = _rowFlexSpec(props);
+    final rowFlexSpec = _rowFlexSpec(props, nodeType: nodeType);
     if (rowFlexSpec != null) {
       current = Flexible(
         flex: _flexForWeight(rowFlexSpec.weight),

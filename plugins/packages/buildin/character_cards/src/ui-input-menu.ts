@@ -79,7 +79,7 @@ export function renderChatInputMenu(ctx: ComposeDslContext): ComposeNode {
     onClick: (): JsonValue => {
       assertOwner();
       return { type: "toolpkg.ui.present", routeId: chatUiRoutes.selection,
-        input: { mode: "select", chatId, kind: "card", selected: option !== null && option.kind !== "group" ? option.selection : null } };
+        input: { mode: "select", chatId, openLatestChat: true, kind: "card", selected: option !== null && option.kind !== "group" ? option.selection : null } };
     },
   }, [
     menuAvatar(ctx, option, state.unboundAvatar), ctx.UI.Spacer({ width: 10 }),

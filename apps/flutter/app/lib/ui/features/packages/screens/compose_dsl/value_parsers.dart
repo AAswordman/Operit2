@@ -396,10 +396,17 @@ Color? _colorForScheme(ColorScheme colorScheme, Object? raw) {
     final value = raw.trim();
     if (value.startsWith('#')) {
       final hex = value.substring(1);
-      final parsed = int.tryParse(hex.length == 6 ? 'ff$hex' : hex, radix: 16);
-      return parsed == null ? null : Color(parsed);
+      if (!_composeHexColorPattern.hasMatch(hex)) return null;
+      // Eight digits retain the existing Android-style AARRGGBB contract.
+      final argb = switch (hex.length) {
+        3 => 'ff${hex.split('').map((digit) => '$digit$digit').join()}',
+        6 => 'ff$hex',
+        8 => hex,
+        _ => null,
+      };
+      return argb == null ? null : Color(int.parse(argb, radix: 16));
     }
-    return _colorToken(colorScheme, value);
+    return _rgbColor(value) ?? _colorToken(colorScheme, value);
   }
   if (raw is Map) {
     final color = raw['value'] is String
@@ -417,6 +424,43 @@ Color? _colorForScheme(ColorScheme colorScheme, Object? raw) {
     return Color.alphaBlend(foreground, background);
   }
   return null;
+}
+
+final _composeHexColorPattern = RegExp(r'^[0-9a-fA-F]+$');
+final _composeRgbColorPattern = RegExp(
+  r'^(rgb|rgba)\(([^()]*)\)$',
+  caseSensitive: false,
+);
+
+/// Resolves comma-separated RGB channels and RGBA opacity used by legacy plugins.
+Color? _rgbColor(String value) {
+  final match = _composeRgbColorPattern.firstMatch(value);
+  if (match == null) return null;
+  final hasAlpha = match.group(1)!.toLowerCase() == 'rgba';
+  final parts = match.group(2)!.split(',');
+  if (parts.length != (hasAlpha ? 4 : 3)) return null;
+  final channels = <int>[];
+  for (final part in parts.take(3)) {
+    final channel = _rgbColorComponent(part, 255);
+    if (channel == null) return null;
+    channels.add(channel.round());
+  }
+  final alpha = hasAlpha ? _rgbColorComponent(parts[3], 1) : 1.0;
+  if (alpha == null) return null;
+  return Color.fromRGBO(channels[0], channels[1], channels[2], alpha);
+}
+
+/// Accepts finite numeric or percentage components and clamps their valid range.
+double? _rgbColorComponent(String raw, double maximum) {
+  final value = raw.trim();
+  final percentage = value.endsWith('%');
+  final number = double.tryParse(
+    percentage ? value.substring(0, value.length - 1) : value,
+  );
+  if (number == null || !number.isFinite) return null;
+  return percentage
+      ? number.clamp(0, 100).toDouble() / 100 * maximum
+      : number.clamp(0, maximum).toDouble();
 }
 
 /// Resolves color with alpha for the Compose DSL renderer.
