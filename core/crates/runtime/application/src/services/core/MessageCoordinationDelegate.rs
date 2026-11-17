@@ -892,6 +892,15 @@ impl MessageCoordinationDelegate {
         Ok(())
     }
 
+    /// Reports a summary failure directly to the consumable UI toast flow.
+    fn reportSummaryFailure(processing: &mut MessageProcessingDelegate, error: &str) {
+        AppLogger::e(
+            "MessageCoordinationDelegate",
+            &format!("Conversation summary failed: {error}"),
+        );
+        processing.showToast(format!("上下文压缩失败：{error}"));
+    }
+
     /// Schedules one cancellable summary through the host and shares its actual completion.
     fn launchSummary(
         &self,
@@ -958,14 +967,10 @@ impl MessageCoordinationDelegate {
                     let result = match outcome {
                         Ok(result) => {
                             if let Err(error) = &result {
-                                AppLogger::e(
-                                    "MessageCoordinationDelegate",
-                                    &format!("Conversation summary failed: {error}"),
+                                Self::reportSummaryFailure(
+                                    &mut worker.messageProcessingDelegate,
+                                    error,
                                 );
-                                worker
-                                    .messageProcessingDelegate
-                                    .nonFatalErrorEventFlow
-                                    .set_value(Some(error.clone()));
                             }
                             result
                         }
@@ -1002,7 +1007,9 @@ impl MessageCoordinationDelegate {
         );
         if let Err(error) = scheduled {
             cleanup.finishSummaryTask(&chatId, &taskId);
-            return Err(error.to_string());
+            let error = error.to_string();
+            Self::reportSummaryFailure(&mut cleanup, &error);
+            return Err(error);
         }
         Ok(completion)
     }
@@ -1079,7 +1086,7 @@ impl MessageCoordinationDelegate {
         }).await {
             Ok(configuration) => configuration,
             Err(error) => {
-                self.messageProcessingDelegate.nonFatalErrorEventFlow.set_value(Some(error.to_string()));
+                Self::reportSummaryFailure(&mut self.messageProcessingDelegate, &error.to_string());
                 return false;
             }
         };
@@ -1104,15 +1111,7 @@ impl MessageCoordinationDelegate {
             Ok(completion) => completion.await,
             Err(error) => Err(error),
         };
-        match result {
-            Ok(()) => true,
-            Err(error) => {
-                self.messageProcessingDelegate
-                    .nonFatalErrorEventFlow
-                    .set_value(Some(error));
-                false
-            }
-        }
+        result.is_ok()
     }
 
     /// Starts a user-requested summary and waits for its host-owned task to finish.
