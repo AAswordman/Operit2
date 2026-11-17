@@ -1,8 +1,10 @@
-use std::sync::Arc;
+use std::collections::BTreeSet;
+use std::sync::{Arc, Mutex};
 
 use operit_host_api::{
     HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput, TerminalCommandOutput,
     TerminalHost, TerminalInfo, TerminalScreenOutput, TerminalSessionInfo,
+    TerminalSessionListEntry,
 };
 
 use operit_tools::tools::ToolResultDataClasses::{
@@ -26,6 +28,15 @@ pub struct StandardTerminalTools {
     pub terminalHost: Option<Arc<dyn TerminalHost>>,
     filesystem: Option<VisualFileSystem>,
     storage: Option<Arc<dyn operit_host_api::RuntimeStorageHost>>,
+    /// Session generations created by the managed execution path; only these
+    /// may be retired automatically once their command completed.
+    managedSessions: Arc<Mutex<BTreeSet<String>>>,
+}
+
+/// One session selection carrying whether the managed tool lineage owns it.
+pub(crate) struct ManagedSession {
+    pub session: TerminalSessionInfo,
+    pub toolOwned: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -47,23 +58,59 @@ pub struct TerminalToolExecutor {
 }
 
 impl StandardTerminalTools {
-    /// Acquires the newest idle generation without submitting directory commands to a busy shell.
-    pub(crate) fn availableSession(&self, name: &str, terminalType: &str, reserved: &std::collections::BTreeSet<String>) -> HostResult<TerminalSessionInfo> {
+    /// Acquires the highest idle generation, creating the next one only when every
+    /// candidate is still running or reserved, without submitting directory
+    /// commands to a busy shell. Ownership propagates only to generations this
+    /// managed path creates, so user-held sessions are never auto-retired.
+    pub(crate) fn availableSession(
+        &self,
+        name: &str,
+        terminalType: &str,
+        reserved: &BTreeSet<String>,
+        managed: bool,
+    ) -> HostResult<ManagedSession> {
         let host = self.host()?;
         let prefix = format!("{name}_generation_");
         let sessions = host.listSessions()?;
-        let latest = sessions.iter().filter(|session| session.terminalType == terminalType)
+        {
+            // Sessions that disappeared stop propagating managed ownership.
+            let mut owned = self
+                .managedSessions
+                .lock()
+                .map_err(|_| HostError::new("Terminal session ownership mutex poisoned"))?;
+            owned.retain(|sessionId| {
+                sessions
+                    .iter()
+                    .any(|session| &session.sessionId == sessionId)
+            });
+        }
+        let candidates: Vec<(u64, &TerminalSessionListEntry)> = sessions
+            .iter()
+            .filter(|session| session.terminalType == terminalType)
             .filter_map(|session| {
                 let generation = if session.sessionName == name { 0 }
                     else { session.sessionName.strip_prefix(&prefix)?.parse::<u64>().ok()? };
-                Some((generation, session.commandRunning || reserved.contains(&session.sessionId)))
-            }).max_by_key(|(generation, _)| *generation);
-        let generation = match latest {
-            Some((generation, true)) => generation.checked_add(1).ok_or_else(|| HostError::new("Terminal session generation exhausted"))?,
-            Some((generation, false)) => generation,
-            None => 0,
+                Some((generation, session))
+            })
+            .collect();
+        let sessionName = match candidates
+            .iter()
+            .filter(|(_, session)| {
+                !session.commandRunning && !reserved.contains(&session.sessionId)
+            })
+            .max_by_key(|(generation, _)| *generation)
+        {
+            Some((_, session)) => session.sessionName.clone(),
+            None => {
+                let generation = match candidates.iter().map(|(generation, _)| *generation).max() {
+                    Some(latest) => latest
+                        .checked_add(1)
+                        .ok_or_else(|| HostError::new("Terminal session generation exhausted"))?,
+                    None => 0,
+                };
+                if generation == 0 { name.to_string() } else { format!("{prefix}{generation}") }
+            }
         };
-        let sessionName = if generation == 0 { name.to_string() } else { format!("{prefix}{generation}") };
         let directory = self.fileDirectory()?.map(|workspace| {
             operit_host_api::TerminalWorkingDirectory::resolveSessionDirectory(
                 host, Some(terminalType), &workspace, &|path| {
@@ -80,12 +127,39 @@ impl StandardTerminalTools {
                 return Err(error);
             }
         }
-        Ok(session)
+        let toolOwned = {
+            let mut owned = self
+                .managedSessions
+                .lock()
+                .map_err(|_| HostError::new("Terminal session ownership mutex poisoned"))?;
+            if session.isNewSession {
+                if managed {
+                    owned.insert(session.sessionId.clone());
+                }
+            } else if !managed {
+                // An explicit user acquisition takes over an idle managed generation.
+                owned.remove(&session.sessionId);
+            }
+            managed && owned.contains(&session.sessionId)
+        };
+        Ok(ManagedSession { session, toolOwned })
+    }
+
+    /// Drops the managed ownership mark after a session closed or was taken over.
+    pub(crate) fn releaseManagedSession(&self, sessionId: &str) {
+        if let Ok(mut owned) = self.managedSessions.lock() {
+            owned.remove(sessionId);
+        }
     }
 
     /// Creates terminal tools from an optional host implementation.
     pub fn new(terminalHost: Option<Arc<dyn TerminalHost>>) -> Self {
-        Self { terminalHost, filesystem: None, storage: None }
+        Self {
+            terminalHost,
+            filesystem: None,
+            storage: None,
+            managedSessions: Arc::new(Mutex::new(BTreeSet::new())),
+        }
     }
 
     /// Supplies the runtime VFS for the current chat file directory.
@@ -148,7 +222,8 @@ impl StandardTerminalTools {
         let requestedType = optionalParameterValue(tool, "type");
         let result = self.host().and_then(|host| {
             let terminalType = match requestedType { Some(value) => value, None => host.terminalInfo()?.terminalType };
-            self.availableSession(&sessionName, &terminalType, &Default::default())
+            self.availableSession(&sessionName, &terminalType, &BTreeSet::new(), false)
+                .map(|selection| selection.session)
                 .and_then(|session| terminalSessionCreationResultData(&session))
         });
         match result
