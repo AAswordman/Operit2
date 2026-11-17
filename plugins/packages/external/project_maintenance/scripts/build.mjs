@@ -1,6 +1,7 @@
 import { createRequire } from 'node:module';
 import { readdir, readFile, writeFile, mkdir, rm } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { spawnSync } from 'node:child_process';
 const root = new URL('../', import.meta.url);
 const localRequire = createRequire(new URL('../package.json', import.meta.url));
@@ -34,8 +35,13 @@ for (const name of ['package.json', 'package-lock.json', 'pnpm-lock.yaml', 'tsco
   files[name] = new Uint8Array(await readFile(new URL(name,root)));
 }
 const notices = [];
-for (const dependency of ['react', 'react-dom', 'scheduler']) {
-  const file = fileURLToPath(new URL(`node_modules/${dependency}/LICENSE`, root));
+const reactDomRequire = createRequire(localRequire.resolve('react-dom/package.json'));
+for (const [dependency, resolveFrom] of [
+  ['react', localRequire],
+  ['react-dom', localRequire],
+  ['scheduler', reactDomRequire],
+]) {
+  const file = join(dirname(resolveFrom.resolve(`${dependency}/package.json`)), 'LICENSE');
   notices.push(`${dependency}\n${await readFile(file,'utf8')}`);
 }
 await writeFile(new URL('resources/THIRD_PARTY_NOTICES.txt',root), notices.join('\n\n'));

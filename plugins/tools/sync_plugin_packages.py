@@ -634,6 +634,7 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
         _save_state(state_file, state)
 
 
+# Collects versioned sources and local compiler outputs for the runtime archive.
 def _iter_files_for_pack(repo_root: Path, folder: Path) -> list[Path]:
     folder_rel = folder.relative_to(repo_root).as_posix()
     completed = subprocess.run(
@@ -652,6 +653,16 @@ def _iter_files_for_pack(repo_root: Path, folder: Path) -> list[Path]:
             continue
         file_path = repo_root / Path(raw_path.decode("utf-8"))
         if file_path.is_file() and file_path not in seen:
+            seen.add(file_path)
+            files.append(file_path)
+    # Git ignores compiler outputs; runtime archives still require those files.
+    generated_files = [
+        *(folder / "dist").rglob("*"),
+        *(folder / "resources").rglob("*.wasm"),
+        *(folder / "modules").rglob("*.wasm"),
+    ]
+    for file_path in generated_files:
+        if file_path.is_file() and file_path.suffix != ".toolpkg" and file_path not in seen:
             seen.add(file_path)
             files.append(file_path)
     files.sort(key=lambda path: path.relative_to(folder).as_posix())
