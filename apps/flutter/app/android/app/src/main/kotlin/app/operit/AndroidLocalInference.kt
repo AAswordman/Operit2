@@ -92,7 +92,8 @@ internal object AndroidLocalInference {
         require(speaker in 0 until speakerCount) {
             "LOCAL_MODEL TTS speaker must be between 0 and ${speakerCount - 1}"
         }
-        val outputPath = requiredOutputFile(request.getString("outputPath"))
+        val requestedOutputPath = request.getString("outputPath")
+        val outputPath = requiredOutputFile(requestedOutputPath)
         val tts = OfflineTts(
             config = ttsConfigForDriver(taggedDriver.name, driver, modelDirectory),
         )
@@ -113,8 +114,9 @@ internal object AndroidLocalInference {
             require(outputPath.isFile && outputPath.length() > 44L) {
                 "LOCAL_MODEL TTS output WAV is invalid: ${outputPath.absolutePath}"
             }
+            // Preserve the capability identity; Android may canonicalize /data/data to /data/user/0.
             return JSONObject()
-                .put("audioPath", outputPath.absolutePath)
+                .put("audioPath", requestedOutputPath)
                 .put("outputFormat", "wav")
                 .toString()
         } finally {
