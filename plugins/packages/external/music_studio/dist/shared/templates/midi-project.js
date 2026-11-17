@@ -5,6 +5,7 @@ exports.midiProject = midiProject;
 const model_1 = require("../model");
 const presets_1 = require("../presets");
 const midi_data_1 = require("./midi-data");
+const field_mix_1 = require("./field-mix");
 exports.MIDI_DEMO_DESCRIPTION = '两首用户提供的完整 MIDI；保留旋律、伴奏和鼓轨，使用工作台合成音色试听。';
 const GM_NAMES = { 0: '钢琴', 1: '明亮钢琴', 8: '钢片琴', 9: '钟琴', 10: '八音盒', 12: '马林巴', 21: '手风琴', 33: '指弹贝斯', 40: '小提琴', 41: '中提琴', 42: '大提琴', 44: '拨弦弦乐', 45: '弦乐颤音', 48: '弦乐群', 66: '次中音萨克斯', 72: '短笛', 75: '排箫', 80: '方波主奏', 82: '汽笛主奏', 119: '反向镲片' };
 function presetFor(program, drums) {
@@ -84,5 +85,9 @@ function midiProject(template) {
         start: i * 16 * p.beatsPerBar, length: Math.min(16, p.bars - i * 16) * p.beatsPerBar,
         color: p.tracks[i % p.tracks.length].color,
     }));
+    if (template === 'field-of-hopes-and-dreams') {
+        const notes = new Map(p.tracks.map(track => [track.id, track.notes]));
+        p.tracks = field_mix_1.FIELD_MIX.map(settings => ({ ...JSON.parse(JSON.stringify(settings)), notes: notes.get(settings.id) ?? [] }));
+    }
     return p;
 }

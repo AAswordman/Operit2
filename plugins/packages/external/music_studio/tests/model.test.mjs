@@ -62,7 +62,7 @@ test("only the two supplied MIDIs are built in, without truncating note tracks",
   assert.deepEqual(TEMPLATES, ['the-world-revolving', 'field-of-hopes-and-dreams']);
   for (const [template, title, tracks, notes, bars, tempo] of [
     ['the-world-revolving', 'THE WORLD REVOLVING', 19, 11410, 160, 631580],
-    ['field-of-hopes-and-dreams', 'The Field of Hopes and Dreams', 16, 5275, 168, 480001],
+    ['field-of-hopes-and-dreams', 'The Field of Hopes and Dreams', 17, 5275, 168, 480001],
   ]) {
     const p = parseProject(demoProject(template));
     assert.equal(p.name, title); assert.equal(p.beatsPerBar, 2); assert.equal(p.bars, bars);

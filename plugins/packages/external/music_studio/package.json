@@ -1,6 +1,6 @@
 {
   "name": "operit-music-studio",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "private": true,
   "description": "AI-first, sample-free synthesis studio for Operit ToolPkg",
   "scripts": {

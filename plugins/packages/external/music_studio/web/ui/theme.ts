@@ -1,9 +1,62 @@
-/** Display-only palette. Saved project colors are preserved for imports and AI tools. */
-export const STUDIO_THEME = {
-  paper: '#faf9f5', lane: '#fffefa', soft: '#f0eee6', line: '#e8e6dc',
-  lineStrong: '#d2cec1', ink: '#141413', muted: '#716e64', accent: '#d97757',
-  pianoBlackRow: '#f0eee6', pianoWhiteRow: '#faf9f5', blackKey: '#30302c',
+/** Display-only palette, resolved from the same CSS tokens as the DOM. */
+const canvasTokens = {
+  paper: '--bg', lane: '--panel', soft: '--soft', line: '--line', lineStrong: '--line-strong',
+  ink: '--fg', muted: '--muted', accent: '--accent', green: '--green',
+  pianoBlackRow: '--raised', pianoWhiteRow: '--bg', blackKey: '--key-black', blackKeyInk: '--key-black-ink',
 } as const;
+export const STUDIO_THEME = {} as Record<keyof typeof canvasTokens, string>;
+type Brightness = 'light' | 'dark';
+declare global {
+  interface Window { MusicStudioTheme?: { apply(snapshot: { brightness: string }): void } }
+}
+
+/** The host owns brightness in-app; a standalone preview follows system appearance. */
+export function followStudioTheme(onChange: () => void): () => void {
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  let hostRevision = 0, disposed = false, retry: ReturnType<typeof setTimeout> | undefined;
+  function update(brightness: Brightness): void {
+    document.documentElement.dataset.theme = brightness;
+    const style = getComputedStyle(document.documentElement);
+    for (const key of Object.keys(canvasTokens) as (keyof typeof canvasTokens)[]) STUDIO_THEME[key] = style.getPropertyValue(canvasTokens[key]).trim();
+    onChange();
+  }
+  function apply(snapshot: { brightness: string }): void {
+    if (disposed || !snapshot || (snapshot.brightness !== 'light' && snapshot.brightness !== 'dark')) return;
+    hostRevision++;
+    update(snapshot.brightness);
+  }
+  const endpoint = { apply };
+  window.MusicStudioTheme = endpoint;
+  function systemChanged(): void { if (!hostRevision) update(media.matches ? 'dark' : 'light'); }
+  media.addEventListener('change', systemChanged);
+  // Also refresh Canvas tokens if the user changes contrast accessibility settings.
+  const contrast = window.matchMedia('(prefers-contrast: more)');
+  function contrastChanged(): void { update(document.documentElement.dataset.theme as Brightness); }
+  contrast.addEventListener('change', contrastChanged);
+  systemChanged();
+  async function bootstrap(attempt = 0): Promise<void> {
+    const revision = hostRevision;
+    if (disposed) return;
+    try {
+      if (window.MusicHost?.getTheme) {
+        const theme = await window.MusicHost.getTheme();
+        // A live host update can arrive while this bridge response is in flight.
+        if (!disposed && hostRevision === revision) apply(theme);
+        return;
+      }
+      if (/^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname) && !window.MusicHost) return;
+    } catch { /* The native bridge may still be attaching during the first page load. */ }
+    if (!disposed && attempt < 8) retry = setTimeout(() => void bootstrap(attempt + 1), 400);
+  }
+  void bootstrap();
+  return () => {
+    disposed = true;
+    if (retry) clearTimeout(retry);
+    media.removeEventListener('change', systemChanged);
+    contrast.removeEventListener('change', contrastChanged);
+    if (window.MusicStudioTheme === endpoint) delete window.MusicStudioTheme;
+  };
+}
 
 export function trackInk(color: string): string {
   const match = /^#([\da-f]{6})$/i.exec(color);

@@ -86,7 +86,7 @@ var OperitComposeHost = function () {
           options: OperitComposeNodes.serialize(options === undefined ? {} : options, runtime, [])
         }]);
       },
-      /** Saves UTF-8 content through the owning host's file selector. */
+      /** Saves text or binary bytes through the owning host's file selector. */
       saveFile: function (options) {
         return __operitInvokeHostAsync(__operitNativeComposeFileSaveCommand, [{
           routeInstanceId: runtime.routeInstanceId || '',

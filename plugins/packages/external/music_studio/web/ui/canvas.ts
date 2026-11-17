@@ -26,7 +26,7 @@ export function drawPiano(canvas: HTMLCanvasElement, track: Track, project: Proj
     const y = (top - 1 - pitch) * rowH; const black = [1, 3, 6, 8, 10].includes(pitch % 12);
     ctx.fillStyle = black ? theme.pianoBlackRow : theme.pianoWhiteRow; ctx.fillRect(gutter, y, w - gutter, rowH);
     ctx.fillStyle = black ? theme.blackKey : theme.lane; ctx.fillRect(0, y, gutter - 2, rowH - 1);
-    if (pitch % 12 === 0 || track.synth.engine === "drums") { ctx.fillStyle = black ? theme.paper : theme.muted; ctx.font = "9px monospace"; ctx.fillText(noteName(pitch), 5, y + Math.min(rowH - 1, 10)); }
+    if (pitch % 12 === 0 || track.synth.engine === "drums") { ctx.fillStyle = black ? theme.blackKeyInk : theme.muted; ctx.font = "9px monospace"; ctx.fillText(noteName(pitch), 5, y + Math.min(rowH - 1, 10)); }
   }
   const tickStep = Math.max(1,Math.ceil(total*4/Math.max(1,(w-gutter)/6)));
   for (let tick = Math.ceil(start*4/tickStep)*tickStep; tick <= Math.floor(end*4); tick += tickStep) { ctx.strokeStyle = tick % (project.beatsPerBar*4) === 0 ? theme.lineStrong : tick % 4 === 0 ? theme.line : theme.soft; const x = gutter + (tick/4-start) / total * (w-gutter); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke(); }
@@ -44,6 +44,6 @@ export function drawScope(canvas: HTMLCanvasElement, engine: WasmAudioEngine, mo
   ctx.strokeStyle = theme.line; for (let i = 1; i < 4; i++) { ctx.beginPath(); ctx.moveTo(0, h * i / 4); ctx.lineTo(w, h * i / 4); ctx.stroke(); }
   if (mode === "spectrum") {
     const data = engine.spectrum(); const count = 40; const step = w / count;
-    for (let i = 0; i < count; i++) { const at = Math.floor(Math.pow(i / count, 2) * (data.length - 1)); const height = Math.max(2, data[at] / 255 * (h - 10)); ctx.fillStyle = i > 29 ? "#788c5d" : theme.accent; ctx.globalAlpha = 0.3 + height / h * 0.7; ctx.fillRect(i * step + 1, h - height, Math.max(1, step - 3), height); } ctx.globalAlpha = 1;
+    for (let i = 0; i < count; i++) { const at = Math.floor(Math.pow(i / count, 2) * (data.length - 1)); const height = Math.max(2, data[at] / 255 * (h - 10)); ctx.fillStyle = i > 29 ? theme.green : theme.accent; ctx.globalAlpha = 0.3 + height / h * 0.7; ctx.fillRect(i * step + 1, h - height, Math.max(1, step - 3), height); } ctx.globalAlpha = 1;
   } else { const data = engine.waveform(); ctx.strokeStyle = theme.accent; ctx.lineWidth = 1.5; ctx.beginPath(); for (let i = 0; i < data.length; i += 2) { const x = i / data.length * w; const y = h / 2 - data[i] * h * 0.46; if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y); } ctx.stroke(); }
 }

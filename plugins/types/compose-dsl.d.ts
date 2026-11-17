@@ -4766,7 +4766,7 @@ export interface ComposeFilePickerResult {
 }
 
 /**
- * UTF-8 content and metadata passed to the host file-save selector.
+ * Text or binary content and metadata passed to the host file-save selector.
  */
 export interface ComposeFileSaveOptions {
   /**
@@ -4774,9 +4774,13 @@ export interface ComposeFileSaveOptions {
    */
   suggestedName: string;
   /**
-   * Exact UTF-8 text to save after the user accepts the destination.
+   * Exact UTF-8 text. Supply exactly one of content or contentBase64.
    */
-  content: string;
+  content?: string;
+  /**
+   * Base64-encoded binary bytes, decoded before opening the save selector.
+   */
+  contentBase64?: string;
   /**
    * Media type of the exported file.
    */
@@ -4945,7 +4949,7 @@ export interface ComposeDslContext {
    */
   openFilePicker(options?: ComposeFilePickerOptions): Promise<ComposeFilePickerResult>;
   /**
-   * Saves UTF-8 content to a user-selected destination through the host file selector.
+   * Saves text or binary bytes to a user-selected destination through the host file selector.
    */
   saveFile(options: ComposeFileSaveOptions): Promise<ComposeFileSaveResult>;
   /**

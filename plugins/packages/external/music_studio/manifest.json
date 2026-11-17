@@ -2,7 +2,7 @@
   "schema_version": 1,
   "toolpkg_id": "com.operit.music_studio",
   "api_version": "2.0.0",
-  "version": "0.1.2",
+  "version": "0.1.4",
   "main": "dist/main.js",
   "public_api": "src/api.ts",
   "display_name": {

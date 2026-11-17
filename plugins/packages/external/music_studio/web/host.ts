@@ -5,7 +5,7 @@ import type { Request, Snapshot, Project } from "../src/shared/model";
 declare global {
   interface Window {
     musicStudioControl?: LiveControl;
-    MusicHost?: { request(request: Request): Promise<unknown>; saveFile(name: string, base64: string): Promise<string> };
+    MusicHost?: { getTheme(): Promise<{ brightness: string }>; request(request: Request): Promise<unknown>; saveFile(name: string, base64: string): Promise<unknown> };
     __musicTest?: { audition(): unknown; navigation(): unknown; editor(): unknown; project(): Project; snapshot(): Promise<Snapshot>; request(request: Request): Promise<unknown>; render(includeAudio?: boolean): Promise<{ peak: number; bytes: number; dropped: number; audio?: string }>; play(): Promise<void>; stop(): void; state(): unknown };
   }
 }
@@ -20,7 +20,13 @@ export async function request<T = Snapshot>(value: Request): Promise<T> {
 }
 export function base64(bytes: Uint8Array): string { let result = ""; for (let i = 0; i < bytes.length; i += 8192) result += String.fromCharCode(...bytes.subarray(i, i + 8192)); return btoa(result); }
 export async function saveFile(name: string, bytes: Uint8Array): Promise<string> {
-  if (window.MusicHost) return window.MusicHost.saveFile(name, base64(bytes));
+  if (window.MusicHost) {
+    const result = await window.MusicHost.saveFile(name, base64(bytes)) as { cancelled?: unknown; path?: unknown } | null;
+    if (!result || typeof result.cancelled !== "boolean") throw new Error("宿主未返回有效保存结果，请更新软件并重新打开工作台");
+    if (result.cancelled) throw new Error("已取消导出，未保存文件");
+    if (typeof result.path !== "string" || !result.path.trim()) throw new Error("宿主未返回保存路径，文件导出未确认");
+    return result.path;
+  }
   const url = URL.createObjectURL(new Blob([bytes as Uint8Array<ArrayBuffer>], { type: name.endsWith(".wav") ? "audio/wav" : "application/json" }));
   const a = document.createElement("a"); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 30000); return `浏览器下载：${name}`;
 }

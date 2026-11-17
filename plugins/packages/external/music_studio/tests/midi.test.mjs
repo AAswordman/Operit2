@@ -28,11 +28,27 @@ test('SMF rejects truncated tracks, malformed running status, unsupported timing
 for (const [i, source] of DEMO_SOURCES.entries()) test(`${source.title}: source hash and every note match the published template`, async () => {
   const bytes=await readFile(`resources/midi/${source.filename}`), midi=parseMidi(bytes), data=MIDI_DEMOS[i], p=demoProject(source.id);
   assert.equal(data.sha256,createHash('sha256').update(bytes).digest('hex'));
-  assert.equal(p.tracks.length,midi.tracks.filter(t=>t.notes.length).length);
+  assert.equal(p.tracks.filter(t=>t.notes.length).length,midi.tracks.filter(t=>t.notes.length).length);
   for(const input of midi.tracks.filter(t=>t.notes.length)) {
     const track=p.tracks.find(t=>t.id===`midi_t${input.index}`);
     assert.deepEqual(track.notes.map(n=>[n.pitch,n.start,n.duration,n.velocity]),input.notes.map(n=>[n.pitch,n.tick/midi.division,Math.max(.01,(n.end-n.tick)/midi.division),Math.max(.01,n.velocity/127)]));
     assert.equal(track.synth.engine==='drums',input.notes[0].channel===9);
   }
   const json=JSON.stringify(p,null,2); assert.ok(Buffer.byteLength(json)<LIMITS.jsonBytes,'export must fit the import limit');
+});
+
+test('Field demo includes the authored mixer, sax patch and effects without leaving audition solo enabled', () => {
+  const p=demoProject('field-of-hopes-and-dreams');
+  assert.deepEqual(p.tracks.map(t=>t.gain),[1.42,.52,.66,.32,.52,.53,.38,.44,.32,.58,.32,.88,1.5,.89,.32,1.3,.65]);
+  const sax=p.tracks[0];
+  assert.equal(sax.synth.wave,'square');assert.equal(sax.synth.unison,7);assert.equal(sax.synth.cutoff,2000);
+  assert.equal(sax.synth.oscBOctave,1);assert.equal(sax.synth.detuneB,10.44);
+  assert.equal(sax.effects.find(e=>e.type==='reverb').enabled,false);
+  assert.equal(sax.effects.find(e=>e.type==='chorus').enabled,true);
+  assert.ok(p.tracks.every(t=>!t.solo));
+  assert.equal(p.tracks.at(-1).preset,'haas-bass');assert.equal(p.tracks.at(-1).notes.length,0);
+  const fresh=demoProject('field-of-hopes-and-dreams');
+  p.tracks[0].synth.cutoff=55;p.tracks[0].effects[0].mix=.9;p.tracks[0].gain=0;
+  assert.equal(fresh.tracks[0].synth.cutoff,2000);assert.notEqual(fresh.tracks[0].effects[0].mix,.9);
+  assert.equal(demoProject('field-of-hopes-and-dreams').tracks[0].gain,1.42);
 });

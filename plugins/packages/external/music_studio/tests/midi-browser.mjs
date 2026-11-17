@@ -35,7 +35,7 @@ try {
         await page.waitForFunction(() => window.__musicTest.project().name === 'The Field of Hopes and Dreams');
         assert.equal(await page.locator('.project-menu').count(), 0, 'creating a demo closes the project menu');
         const next = await page.evaluate(() => window.__musicTest.project());
-        assert.equal(next.tracks.length, 16); assert.equal(next.tracks.reduce((n, t) => n + t.notes.length, 0), 5275);
+        assert.equal(next.tracks.length, 17); assert.equal(next.tracks.reduce((n, t) => n + t.notes.length, 0), 5275);
         const snapshot = await page.evaluate(() => window.__musicTest.snapshot());
         assert.equal(snapshot.projects.length, 2); assert.ok(snapshot.projects.some(p => p.id === original.id));
         await page.reload(); await page.waitForFunction(() => window.__musicTest);

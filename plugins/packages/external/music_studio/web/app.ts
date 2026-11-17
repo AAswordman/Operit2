@@ -1,5 +1,6 @@
 import { icon } from "./ui/icons";
 import "./styles.css";
+import { followStudioTheme } from "./ui/theme";
 import { type Project, type Track, type Snapshot, type Operation, type Request, type Command, type PlaybackStatus, copy, uid, LIMITS } from "../src/shared/model";
 import { PRESETS, EFFECTS } from "../src/shared/presets";
 import { TEMPLATES, PATTERNS, generatePattern } from "../src/shared/composition";
@@ -28,6 +29,8 @@ let mutationBusy = false;
 let rendering = false;
 let syncing = false;
 let paintDirty = true;
+const stopFollowingTheme = followStudioTheme(() => { paintDirty = true; });
+window.addEventListener("pagehide", stopFollowingTheme, { once: true });
 let panel: LayoutState["panel"] = null;
 let projectMenuOpen = false;
 let editorOpen = false;

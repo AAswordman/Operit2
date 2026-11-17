@@ -3546,12 +3546,14 @@ pub struct ComposeFilePickerResult {
     /// Files selected by the user; empty when the request was cancelled.
     pub files: Vec<ComposePickedFile>,
 }
-/// UTF-8 content and metadata passed to the host file-save selector.
+/// Text or binary content and metadata passed to the host file-save selector.
 pub struct ComposeFileSaveOptions {
     /// File name suggested in the save dialog, without directory components.
     pub suggestedName: String,
-    /// Exact UTF-8 text to save after the user accepts the destination.
-    pub content: String,
+    /// Exact UTF-8 text. Supply exactly one of content or contentBase64.
+    pub content: Option<String>,
+    /// Base64-encoded binary bytes, decoded before opening the save selector.
+    pub contentBase64: Option<String>,
     /// Media type of the exported file.
     pub mimeType: String,
     /// File extensions accepted by the save dialog, without leading dots.
@@ -3674,7 +3676,7 @@ pub trait ComposeDslContextMethods: Send + Sync {
         &self,
         options: Option<ComposeFilePickerOptions>,
     ) -> JsFuture<ComposeFilePickerResult>;
-    /// Saves UTF-8 content to a user-selected destination through the host file selector.
+    /// Saves text or binary bytes to a user-selected destination through the host file selector.
     fn saveFile(&self, options: ComposeFileSaveOptions) -> JsFuture<ComposeFileSaveResult>;
     /// Returns the registered runtime-module specification decoded as the requested type.
     fn getModuleSpec<TSpec>(&self) -> TSpec;

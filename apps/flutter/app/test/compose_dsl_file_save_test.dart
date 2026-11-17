@@ -42,6 +42,62 @@ void main() {
     },
   );
 
+  test(
+    'Compose export decodes binary bytes before calling the selector',
+    () async {
+      final platform = _ExportPlatform('/chosen/mix.wav');
+      FileSelectorPlatform.instance = platform;
+      final bytes = <int>[82, 73, 70, 70, 0, 255, 128, 13, 10];
+      final result = jsonDecode(
+        await ComposeDslFileSaveService.save(
+          jsonEncode({
+            'options': {
+              'suggestedName': 'mix.wav',
+              'contentBase64': base64Encode(bytes),
+              'mimeType': 'audio/wav',
+              'extensions': ['wav'],
+            },
+          }),
+        ),
+      );
+      expect(result, {'cancelled': false, 'path': '/chosen/mix.wav'});
+      expect(platform.bytes, bytes);
+      expect(platform.mimeType, 'audio/wav');
+      expect(platform.options!.suggestedName, 'mix.wav');
+      expect(platform.groups!.single.extensions, ['wav']);
+    },
+  );
+
+  test(
+    'Compose export rejects ambiguous or malformed content before opening a selector',
+    () async {
+      final platform = _ExportPlatform('/chosen/mix.wav');
+      FileSelectorPlatform.instance = platform;
+      for (final content in <Map<String, Object?>>[
+        {},
+        {'content': '', 'contentBase64': ''},
+        {'content': 42},
+        {'contentBase64': '%%%?'},
+        {'contentBase64': 42},
+      ]) {
+        await expectLater(
+          ComposeDslFileSaveService.save(
+            jsonEncode({
+              'options': {
+                'suggestedName': 'mix.wav',
+                'mimeType': 'audio/wav',
+                'extensions': ['wav'],
+                ...content,
+              },
+            }),
+          ),
+          throwsFormatException,
+        );
+      }
+      expect(platform.calls, 0);
+    },
+  );
+
   /// Reports a cancelled selector without declaring a successful export.
   test('Compose export cancellation remains explicit', () async {
     final platform = _ExportPlatform(null);
