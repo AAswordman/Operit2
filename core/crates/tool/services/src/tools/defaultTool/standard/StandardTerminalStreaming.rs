@@ -58,7 +58,6 @@ pub(crate) struct TerminalStreamExecutor {
     host: Option<Arc<dyn TerminalHost>>,
     scheduler: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>,
     observations: Mutex<HashMap<String, Arc<Observation>>>,
-    receipts: Arc<Mutex<ReceiptLog>>,
     workers: Arc<AtomicUsize>,
 }
 // A disposed handle still counts until its native command actually stops.
@@ -66,43 +65,6 @@ struct WorkerPermit(Arc<AtomicUsize>);
 impl Drop for WorkerPermit {
     fn drop(&mut self) {
         self.0.fetch_sub(1, Ordering::AcqRel);
-    }
-}
-/// Completion receipts retained after their observation or session is retired.
-#[derive(Default)]
-struct ReceiptLog {
-    entries: VecDeque<ReceiptEntry>,
-    evicted: VecDeque<String>,
-}
-struct ReceiptEntry {
-    key: String,
-    receipt: TerminalCommandResultData,
-}
-/// Combines the owner scope with the session a receipt was issued for.
-fn completionKey(owner: &str, sessionId: &str) -> String {
-    format!("{owner}\u{1}{sessionId}")
-}
-/// Stores one completion receipt, evicting the oldest entry beyond the bound.
-fn recordCompletion(
-    log: &Mutex<ReceiptLog>,
-    owner: &str,
-    sessionId: &str,
-    receipt: TerminalCommandResultData,
-) {
-    let Ok(mut log) = log.lock() else {
-        return;
-    };
-    let key = completionKey(owner, sessionId);
-    log.entries.retain(|entry| entry.key != key);
-    log.entries.push_back(ReceiptEntry { key, receipt });
-    while log.entries.len() > MAX_OBSERVATIONS {
-        let Some(evicted) = log.entries.pop_front() else {
-            break;
-        };
-        log.evicted.push_back(evicted.key);
-        while log.evicted.len() > MAX_OBSERVATIONS {
-            log.evicted.pop_front();
-        }
     }
 }
 fn chunkCost(event: &TerminalExecEvent) -> usize {
@@ -126,12 +88,9 @@ fn chunkCost(event: &TerminalExecEvent) -> usize {
 struct Observation {
     owner: String,
     sessionId: String,
-    /// The managed tool lineage created this session generation and may retire it once idle.
-    autoOwned: bool,
     detached: AtomicBool,
     deadline: Option<u64>,
     metadata: TerminalCommandResultData,
-    yielded: AtomicBool,
     pulling: AtomicBool,
     ready: tokio::sync::Notify,
     inner: Mutex<ObservationState>,
@@ -179,13 +138,12 @@ impl TerminalStreamExecutor {
             managedAdmission: tokio::sync::Mutex::new(()),
             scheduler,
             observations: Mutex::new(HashMap::new()),
-            receipts: Arc::new(Mutex::new(ReceiptLog::default())),
             workers: Arc::new(AtomicUsize::new(0)),
         }
     }
     /// Validates one observation and schedules its command through the registered host.
     fn open(&self, owner: String, request: TerminalExecRequest) -> Result<String, String> {
-        self.openExecution(owner, request, false, false)
+        self.openExecution(owner, request, false)
     }
 
     /// Schedules either a disposable stream or a command whose lifetime belongs to its session.
@@ -194,7 +152,6 @@ impl TerminalStreamExecutor {
         owner: String,
         request: TerminalExecRequest,
         receiptOnly: bool,
-        autoOwned: bool,
     ) -> Result<String, String> {
         if request.sessionId.trim().is_empty()
             || request.sessionId.trim() != request.sessionId
@@ -221,7 +178,6 @@ impl TerminalStreamExecutor {
         let observation = Arc::new(Observation {
             owner,
             sessionId: request.sessionId.clone(),
-            autoOwned,
             detached: AtomicBool::new(false),
             deadline: if receiptOnly {
                 None
@@ -244,7 +200,6 @@ impl TerminalStreamExecutor {
                 exitCode: -1,
                 timedOut: true,
             },
-            yielded: AtomicBool::new(false),
             pulling: AtomicBool::new(false),
             ready: tokio::sync::Notify::new(),
             inner: Mutex::new(ObservationState {
@@ -363,7 +318,6 @@ impl TerminalStreamExecutor {
                 Ok(())
             }) as operit_host_api::TerminalOutputCallback
         };
-        let completionReceipts = self.receipts.clone();
         let scheduled = host.scheduleInSessionStreaming(
             scheduler.clone(),
             request.sessionId,
@@ -376,14 +330,6 @@ impl TerminalStreamExecutor {
                     let result = result.and_then(|receipt| terminalCommandResultData(&receipt));
                     inner.result = Some(match result {
                         Ok(receipt) => {
-                            // The bounded cache keeps this receipt retrievable after the
-                            // observation or its whole session generation is retired.
-                            recordCompletion(
-                                &completionReceipts,
-                                &observation.owner,
-                                &observation.sessionId,
-                                receipt.clone(),
-                            );
                             inner.receipt = Some(receipt.clone());
                             inner
                                 .events
@@ -425,42 +371,6 @@ impl TerminalStreamExecutor {
             .await
     }
 
-    /// Retires tool-created generations whose command completed after the caller
-    /// yielded or detached. Their receipts stay available through the bounded cache,
-    /// while running commands and user-held sessions are never touched here.
-    fn retireCompletedToolSessions(&self) -> Result<(), String> {
-        let retired: Vec<String> = {
-            let mut registry = self
-                .observations
-                .lock()
-                .map_err(|_| "Terminal observation registry is poisoned")?;
-            let mut retired = Vec::new();
-            registry.retain(|_, value| {
-                let stale = value.autoOwned
-                    && (value.yielded.load(Ordering::Acquire)
-                        || value.detached.load(Ordering::Acquire))
-                    && value
-                        .inner
-                        .lock()
-                        .map(|inner| inner.result.is_some())
-                        .unwrap_or(false);
-                if stale {
-                    retired.push(value.sessionId.clone());
-                }
-                !stale
-            });
-            retired
-        };
-        // Closing a session terminates its process; that must stay outside every registry lock.
-        for sessionId in &retired {
-            if let Some(host) = self.host.as_ref() {
-                let _ = host.closeSession(sessionId);
-            }
-            self.tools.releaseManagedSession(sessionId);
-        }
-        Ok(())
-    }
-
     /// Reserves pending and running commands before releasing admission to the next caller.
     async fn startNamed(
         &self,
@@ -472,7 +382,6 @@ impl TerminalStreamExecutor {
         receiptOnly: bool,
     ) -> Result<String, String> {
         let _admission = self.managedAdmission.lock().await;
-        self.retireCompletedToolSessions()?;
         let tools = &self.tools;
         let mut reserved = std::collections::BTreeSet::new();
         for value in self
@@ -481,8 +390,7 @@ impl TerminalStreamExecutor {
             .map_err(|_| "Terminal observation registry is poisoned")?
             .values()
         {
-            // Only a pending or running command keeps its session reserved; a
-            // completed one leaves the generation idle and reusable.
+            // A foreground timeout does not reserve a session after its command completes.
             if value
                 .inner
                 .lock()
@@ -493,10 +401,9 @@ impl TerminalStreamExecutor {
                 reserved.insert(value.sessionId.clone());
             }
         }
-        let selection = tools
-            .availableSession(&name, &terminalType, &reserved, true)
+        let session = tools
+            .availableSession(&name, &terminalType, &reserved)
             .map_err(|error| error.message)?;
-        let session = selection.session;
         let opened = self.openExecution(
             owner.clone(),
             TerminalExecRequest {
@@ -505,7 +412,6 @@ impl TerminalStreamExecutor {
                 timeoutMs: Some(waitMs),
             },
             receiptOnly,
-            selection.toolOwned,
         );
         let handle = match opened {
             Ok(handle) => handle,
@@ -518,7 +424,6 @@ impl TerminalStreamExecutor {
                         .map_err(|close| {
                             format!("{error}; closing unused session failed: {}", close.message)
                         })?;
-                    self.tools.releaseManagedSession(&session.sessionId);
                 }
                 return Err(error);
             }
@@ -564,11 +469,8 @@ impl TerminalStreamExecutor {
             .map_err(|_| "Terminal observation registry is poisoned")?
             .values()
             .find(|value| value.owner == owner && value.sessionId == sessionId)
-            .cloned();
-        let Some(observation) = observation else {
-            // The generation may already be retired; its receipt survives in the cache.
-            return self.cachedReceipt(owner, sessionId);
-        };
+            .cloned()
+            .ok_or("No managed terminal command exists for this session")?;
         let scheduler = self
             .scheduler
             .as_ref()
@@ -598,7 +500,6 @@ impl TerminalStreamExecutor {
                     .map_err(|error| error.message)?
                     >= deadline
                 {
-                    observation.yielded.store(true, Ordering::Release);
                     let mut result = observation.metadata.clone();
                     result.output = inner.output.clone();
                     return Ok(result);
@@ -620,25 +521,6 @@ impl TerminalStreamExecutor {
             .filter(|value| value.owner == owner)
             .ok_or("Unknown terminal observation")?;
         Ok(observation.clone())
-    }
-    /// Returns a retired command's receipt, or a precise error once it is gone.
-    fn cachedReceipt(&self, owner: &str, sessionId: &str) -> Result<TerminalCommandResultData, String> {
-        let key = completionKey(owner, sessionId);
-        let log = self
-            .receipts
-            .lock()
-            .map_err(|_| "Terminal completion log is poisoned")?;
-        if let Some(entry) = log.entries.iter().rev().find(|entry| entry.key == key) {
-            return Ok(entry.receipt.clone());
-        }
-        if log.evicted.iter().any(|evicted| evicted == &key) {
-            return Err(format!(
-                "Terminal result for session {sessionId} has been evicted from the completion cache; only the {MAX_OBSERVATIONS} most recent results are kept. Rerun the command to capture fresh output"
-            ));
-        }
-        Err(format!(
-            "No completed terminal command is recorded for session {sessionId}"
-        ))
     }
     async fn next(&self, owner: &str, handle: &str) -> Result<Option<TerminalExecEvent>, String> {
         let observation = self.owned(owner, handle)?;
@@ -675,7 +557,6 @@ impl TerminalStreamExecutor {
                     .result
                     .is_none()
             {
-                observation.yielded.store(true, Ordering::Release);
                 observation.detached.store(true, Ordering::Release);
                 let result = self.waitManaged(owner, &observation.sessionId, 0).await?;
                 return Ok(Some(TerminalExecEvent::Completed { result }));
@@ -705,15 +586,6 @@ impl TerminalStreamExecutor {
     fn close(&self, owner: &str, handle: &str) -> Result<(), String> {
         let observation = self.owned(owner, handle)?;
         observation.detached.store(true, Ordering::Release);
-        if observation
-            .inner
-            .lock()
-            .map_err(|_| "Terminal observation is poisoned")?
-            .result
-            .is_none()
-        {
-            observation.yielded.store(true, Ordering::Release);
-        }
         observation.ready.notify_waiters();
         Ok(())
     }
@@ -1107,147 +979,60 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(second.sessionId, third.sessionId);
-        // The yielded generation finished before this admission, so the managed
-        // path retired and closed it itself; its receipt survives in the cache.
-        assert!(!host
-            .listSessions()
-            .unwrap()
-            .iter()
-            .any(|session| session.sessionId == first.sessionId));
-        let retired = tools.waitManaged("owner", &first.sessionId, 0).await.unwrap();
-        assert_eq!(retired.exitCode, completed.exitCode);
+        host.closeSession(&first.sessionId).unwrap();
         host.closeSession(&second.sessionId).unwrap();
     }
 
-    /// Repeated foreground yields must not accumulate idle tool generations, while
-    /// retired results stay retrievable through the bounded completion cache.
+    /// Completed foreground yields reuse one shell and preserve its state after explicit acquisition.
     #[tokio::test]
-    async fn repeated_foreground_yields_retire_generations_and_keep_bounded_receipts() {
+    async fn repeated_yields_reuse_sessions_without_closing_acquired_shells() {
         let host = Arc::new(NativePtyTerminalHost::default());
         let tools = TerminalStreamExecutor::new(
             StandardTerminalTools::new(Some(host.clone())),
-            Some(Arc::new(
-                operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new(),
-            )),
+            Some(Arc::new(operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new())),
         );
         let name = uuid::Uuid::new_v4().to_string();
-        let manual = host.createOrGetSession(&format!("{name}-manual")).unwrap();
-        let prefix = format!("{name}_generation_");
-        let mut previous: Option<TerminalCommandResultData> = None;
-        // More rounds than the shared Host service capacity (16) proves retirement,
-        // not an observation bound, keeps the idle generation count flat.
+        let mut sessionId = None;
+        // More than the 16 service slots must reuse one persistent generation.
         for round in 0..20 {
-            let exitCode = (round % 5) as i32;
-            let command = format!("printf round{round}; sleep 0.05; (exit {exitCode})");
-            let yielded = tools
-                .runManaged("owner".into(), name.clone(), "bash".into(), command, 20)
-                .await
-                .unwrap();
-            assert!(yielded.timedOut, "round {round} must yield its foreground wait");
-            tokio::time::timeout(Duration::from_secs(2), async {
-                while !host
-                    .getSessionScreen(&yielded.sessionId)
-                    .unwrap()
-                    .commandRunning
-                {
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            })
-            .await
-            .expect("scheduled command must start before its session is reused");
-            let completed = tools
-                .waitManaged("owner", &yielded.sessionId, 8000)
-                .await
-                .unwrap();
-            assert!(!completed.timedOut);
-            assert_eq!(completed.exitCode, exitCode, "round {round}");
-            if let Some(previous) = &previous {
-                let cached = tools
-                    .waitManaged("owner", &previous.sessionId, 0)
-                    .await
-                    .unwrap();
-                assert_eq!(cached.exitCode, previous.exitCode);
-                let isolated = tools
-                    .waitManaged("other", &previous.sessionId, 0)
-                    .await
-                    .unwrap_err();
-                assert!(
-                    isolated.contains("No completed terminal command"),
-                    "{isolated}"
-                );
+            let command = if round == 0 {
+                "export OPERIT_REUSE_STATE=kept; printf initialized".to_string()
+            } else {
+                "printf 'state:%s' \"$OPERIT_REUSE_STATE\"".to_string()
+            };
+            let yielded = tools.runManaged("owner".into(), name.clone(), "bash".into(), command, 0).await.unwrap();
+            let result = tools.waitManaged("owner", &yielded.sessionId, 8000).await.unwrap();
+            assert!(!result.timedOut);
+            assert_eq!(result.exitCode, 0);
+            if let Some(sessionId) = &sessionId {
+                assert_eq!(&result.sessionId, sessionId);
+                assert!(result.output.contains("state:kept"), "{}", result.output);
             }
-            previous = Some(completed);
-            let generations = host
-                .listSessions()
-                .unwrap()
-                .into_iter()
-                .filter(|session| {
-                    session.sessionName == name || session.sessionName.starts_with(&prefix)
-                })
-                .count();
-            assert!(
-                generations <= 2,
-                "round {round} left {generations} idle generations"
-            );
-            assert!(host
-                .listSessions()
-                .unwrap()
-                .iter()
-                .any(|session| session.sessionId == manual.sessionId));
+            sessionId = Some(result.sessionId.clone());
+            let acquired = tools.tools.availableSession(&name, "bash", &Default::default()).unwrap();
+            assert_eq!(acquired.sessionId, result.sessionId);
+            assert_eq!(host.listSessions().unwrap().len(), 1);
+            assert!(tools.waitManaged("other", &result.sessionId, 0).await.is_err());
         }
-        // A manually held PTY is never auto-managed and must outlive every round.
-        assert!(host
-            .listSessions()
-            .unwrap()
-            .iter()
-            .any(|session| session.sessionId == manual.sessionId));
-        host.closeSession(&manual.sessionId).unwrap();
+        host.closeSession(&sessionId.unwrap()).unwrap();
     }
 
-    /// The completion cache keeps only the newest bounded receipts and reports eviction.
-    #[tokio::test]
-    async fn completion_receipts_are_bounded_owner_scoped_and_report_eviction() {
-        let tools = TerminalStreamExecutor::new(StandardTerminalTools::new(None), None);
-        let terminal = TerminalImplementation::try_from("native").unwrap();
-        let terminalType = TerminalType::try_from("bash").unwrap();
-        for index in 0..(MAX_OBSERVATIONS + 2) {
-            let sessionId = format!("session-{index}");
-            recordCompletion(
-                &tools.receipts,
-                "owner",
-                &sessionId,
-                TerminalCommandResultData {
-                    sessionId: sessionId.clone(),
-                    command: format!("printf {index}"),
-                    platform: "posix".into(),
-                    terminal: terminal.clone(),
-                    terminalType: terminalType.clone(),
-                    output: format!("round {index}"),
-                    exitCode: index as i32,
-                    timedOut: false,
-                },
-            );
-        }
-        let latest = tools
-            .waitManaged("owner", &format!("session-{}", MAX_OBSERVATIONS + 1), 0)
-            .await
-            .unwrap();
-        assert_eq!(latest.exitCode, (MAX_OBSERVATIONS + 1) as i32);
-        let retained = tools
-            .waitManaged("owner", &format!("session-{}", MAX_OBSERVATIONS - 1), 0)
-            .await
-            .unwrap();
-        assert_eq!(retained.exitCode, (MAX_OBSERVATIONS - 1) as i32);
-        let evicted = tools.waitManaged("owner", "session-0", 0).await.unwrap_err();
-        assert!(evicted.contains("evicted"), "{evicted}");
-        let isolated = tools
-            .waitManaged("other", &format!("session-{}", MAX_OBSERVATIONS + 1), 0)
-            .await
-            .unwrap_err();
-        assert!(
-            isolated.contains("No completed terminal command"),
-            "{isolated}"
-        );
+    /// Reuses an older idle generation while the newest one is reserved for queued work.
+    #[test]
+    fn older_idle_generation_is_reused_before_creating_another_shell() {
+        let host = Arc::new(NativePtyTerminalHost::default());
+        let tools = StandardTerminalTools::new(Some(host.clone()));
+        let name = uuid::Uuid::new_v4().to_string();
+        let first = tools.availableSession(&name, "bash", &Default::default()).unwrap();
+        let reserved = std::collections::BTreeSet::from([first.sessionId.clone()]);
+        let second = tools.availableSession(&name, "bash", &reserved).unwrap();
+        assert_ne!(first.sessionId, second.sessionId);
+        let reserved = std::collections::BTreeSet::from([second.sessionId.clone()]);
+        let reused = tools.availableSession(&name, "bash", &reserved).unwrap();
+        assert_eq!(reused.sessionId, first.sessionId);
+        assert!(!reused.isNewSession);
+        host.closeSession(&first.sessionId).unwrap();
+        host.closeSession(&second.sessionId).unwrap();
     }
 
     /// A closed background shell must release its host worker instead of waiting forever on silence.

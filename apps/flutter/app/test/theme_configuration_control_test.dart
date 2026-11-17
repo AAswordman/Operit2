@@ -1347,6 +1347,7 @@ Map<String, Object?> _templatePackage() => <String, Object?>{
     'desktopWidgets',
     'appLifecycleHooks',
     'messageProcessingPlugins',
+    'messageTransformHooks',
     'xmlRenderPlugins',
     'inputMenuTogglePlugins',
     'chatInputHooks',

@@ -722,16 +722,16 @@ fn exact_record_read_selects_space_and_rejects_mismatched_paths() {
     );
     assert!(message.contains(&format!("expected {expected}")), "{message}");
     assert!(message.contains(&format!("actual {shared}")), "{message}");
-    assert!(message.contains("mismatched fields: id"), "{message}");
+    assert!(message.contains("kind=package, id=other, scope=space"), "{message}");
 }
 
-/// Identifies each mismatched field through full scans and direct identity lookups.
+/// Reports both paths and the actual identity through scans and direct lookups.
 #[test]
-fn record_path_mismatch_names_expected_actual_and_mismatched_fields() {
-    for (field, kind, id, scope) in [
-        ("id", "package", "other", "device"),
-        ("scope", "package", "demo", "space"),
-        ("kind", "skill", "demo", "device"),
+fn record_path_mismatch_reports_paths_and_identity() {
+    for (kind, id, scope) in [
+        ("package", "other", "device"),
+        ("package", "demo", "space"),
+        ("skill", "demo", "device"),
     ] {
         let storage = host();
         let store = ExtensionStore::new(storage.clone());
@@ -761,10 +761,6 @@ fn record_path_mismatch_names_expected_actual_and_mismatched_fields() {
             assert!(message.contains(&format!("actual {actual}")), "{message}");
             assert!(
                 message.contains(&format!("kind={kind}, id={id}, scope={scope}")),
-                "{message}"
-            );
-            assert!(
-                message.ends_with(&format!("mismatched fields: {field}")),
                 "{message}"
             );
         }

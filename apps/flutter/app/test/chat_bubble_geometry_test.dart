@@ -368,7 +368,9 @@ void main() {
       final tool = source.startsWith('<tool ');
       if (tool && find.byType(MergedToolCallResultRow).evaluate().isEmpty) {
         await tester.tap(find.byIcon(Icons.keyboard_arrow_right));
-        await tester.pumpAndSettle();
+        // A tool without a result keeps its streaming cursor animated.
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 500));
       }
       final block = find.byType(
         tool ? MergedToolCallResultRow : CustomXmlRenderer,
@@ -378,7 +380,8 @@ void main() {
         'bubbleAiContentPaddingLeft': 12.0,
         'bubbleAiContentPaddingRight': 12.0,
       });
-      await tester.pumpAndSettle();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 500));
       expect(tester.getTopLeft(block).dx, closeTo(before + 4, 0.01));
       _expectInsets(tester, find.byType(BubbleSurface), left: 12, right: 12);
       expect(tester.takeException(), isNull);
@@ -644,6 +647,7 @@ class _GeometryBridge extends OperitRuntimeBridge {
           propertyName: request.propertyName,
           kind: 'Snapshot',
           valueBytes: encodeCoreLink(0),
+          decodeValue: decodeCoreLink<Object?>,
         ),
       );
     }
