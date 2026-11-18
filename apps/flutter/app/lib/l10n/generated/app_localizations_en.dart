@@ -1094,11 +1094,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsCategoryDataTitle => 'Data & Backup';
 
   @override
-  String get settingsCategoryDataSubtitle => 'Backup, restore, stats';
+  String get settingsCategoryDataSubtitle => 'Backup, restore, storage';
 
   @override
   String get settingsCategoryDataDescription =>
-      'Back up chats, plugin data, and model settings, restore backup content, and view data statistics.';
+      'Back up and restore chats, plugin data, and model settings, and manage storage.';
+
+  @override
+  String get settingsUsageReportTitle => 'Token Usage Report';
+
+  @override
+  String get settingsUsageReportSubtitle => 'Model usage, cache, and cost';
 
   @override
   String get settingsCategoryAccessLinksTitle => 'Device Space';
@@ -3496,29 +3502,17 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsDataTokenSection => 'Usage statistics';
-
-  @override
   String get settingsDataInputTokens => 'Input';
 
   @override
   String get settingsDataOutputTokens => 'Output';
 
   @override
-  String get settingsDataOpenDetailedStats => 'View detailed statistics';
-
-  @override
-  String get settingsDataOpenDetailedStatsDescription =>
-      'View the usage heatmap and model usage timeline with minute-level zoom.';
-
-  @override
-  String get settingsDataRefreshTokenStats => 'Refresh statistics';
-
-  @override
   String get settingsDataResetTokenStats => 'Reset statistics';
 
   @override
-  String get settingsDataDetailedStatsTitle => 'Detailed statistics';
+  String get settingsUsageReportResetConfirmation =>
+      'This permanently deletes all saved model usage records. Your conversations are kept.';
 
   @override
   String get settingsDataDetailedStatsDescription =>

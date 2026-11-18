@@ -27,6 +27,7 @@ class SettingsCategoryList extends StatelessWidget {
         categories: const <SettingsCategory>[
           SettingsCategory.model,
           SettingsCategory.localModels,
+          SettingsCategory.usage,
         ],
       ),
       _SettingsCategoryGroup(

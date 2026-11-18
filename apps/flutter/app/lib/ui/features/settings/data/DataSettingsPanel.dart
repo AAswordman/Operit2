@@ -23,7 +23,6 @@ import '../../../common/StorageDirectorySelectionError.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
-import 'UsageStatisticsDetailScreen.dart';
 
 const XTypeGroup _rawSnapshotFileTypeGroup = XTypeGroup(
   label: 'Operit snapshot',
@@ -120,12 +119,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     return _DataSettingsData(
       coreVersion: await widget.clients.application.coreVersion(),
       storagePaths: storagePaths,
-      inputTokens: await widget.clients.chatRuntimeHolderMain
-          .inputTokenCountFlow()
-          .first,
-      outputTokens: await widget.clients.chatRuntimeHolderMain
-          .outputTokenCountFlow()
-          .first,
       chatHistoryCount:
           (await widget.clients.chatRuntimeHolderMain.chatHistoriesFlow().first)
               .length,
@@ -138,27 +131,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     setState(() {
       _future = _load();
     });
-  }
-
-  Future<void> _updateTokenStatistics() async {
-    setState(() => _busy = true);
-    await widget.clients.chatRuntimeHolderMain.updateCumulativeStatistics();
-    setState(() => _busy = false);
-    _reload();
-  }
-
-  Future<void> _resetTokenStatistics() async {
-    setState(() => _busy = true);
-    await widget.clients.chatRuntimeHolderMain.resetTokenStatistics();
-    setState(() => _busy = false);
-    _reload();
-  }
-
-  Future<void> _openDetailedStatistics() {
-    return UsageStatisticsDetailScreen.open(
-      context: context,
-      clients: widget.clients,
-    );
   }
 
   /// Lets the user select and migrate the local storage location.
@@ -918,41 +890,6 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                 ),
               ],
             ),
-            _SectionCard(
-              title: l10n.settingsDataTokenSection,
-              children: <Widget>[
-                _InfoLine(
-                  label: l10n.settingsDataInputTokens,
-                  value: data.inputTokens.toString(),
-                ),
-                _InfoLine(
-                  label: l10n.settingsDataOutputTokens,
-                  value: data.outputTokens.toString(),
-                ),
-                const SizedBox(height: 8),
-                FilledButton.tonalIcon(
-                  onPressed: _busy ? null : _openDetailedStatistics,
-                  icon: const Icon(Icons.query_stats_outlined),
-                  label: Text(l10n.settingsDataOpenDetailedStats),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  l10n.settingsDataOpenDetailedStatsDescription,
-                  style: TextStyle(color: colorScheme.onSurfaceVariant),
-                ),
-                _ActionLine(
-                  icon: Icons.refresh,
-                  title: l10n.settingsDataRefreshTokenStats,
-                  onTap: _busy ? null : _updateTokenStatistics,
-                ),
-                _ActionLine(
-                  icon: Icons.restart_alt,
-                  title: l10n.settingsDataResetTokenStats,
-                  onTap: _busy ? null : _resetTokenStatistics,
-                  destructive: true,
-                ),
-              ],
-            ),
           ],
         );
       },
@@ -965,16 +902,12 @@ class _DataSettingsData {
   const _DataSettingsData({
     required this.coreVersion,
     required this.storagePaths,
-    required this.inputTokens,
-    required this.outputTokens,
     required this.chatHistoryCount,
     required this.modelConfigCount,
   });
 
   final String coreVersion;
   final RuntimeStoragePaths storagePaths;
-  final int inputTokens;
-  final int outputTokens;
   final int chatHistoryCount;
   final int modelConfigCount;
 }
@@ -1649,35 +1582,6 @@ class _Operit1SnapshotImportProgressPanel extends StatelessWidget {
           ),
         ),
       ],
-    );
-  }
-}
-
-class _ActionLine extends StatelessWidget {
-  const _ActionLine({
-    required this.icon,
-    required this.title,
-    required this.onTap,
-    this.destructive = false,
-  });
-
-  final IconData icon;
-  final String title;
-  final VoidCallback? onTap;
-  final bool destructive;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final color = destructive ? colorScheme.error : colorScheme.primary;
-    return ListTile(
-      contentPadding: EdgeInsets.zero,
-      dense: true,
-      visualDensity: VisualDensity.compact,
-      leading: Icon(icon, color: color),
-      title: Text(title, style: TextStyle(color: destructive ? color : null)),
-      trailing: const Icon(Icons.chevron_right),
-      onTap: onTap,
     );
   }
 }

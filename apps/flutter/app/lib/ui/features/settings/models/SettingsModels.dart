@@ -9,6 +9,7 @@ enum SettingsCategory {
   profile,
   model,
   localModels,
+  usage,
   tts,
   tools,
   workspace,
@@ -55,6 +56,12 @@ class SettingsCategorySpec {
         subtitle: l10n.settingsCategoryLocalModelsSubtitle,
         description: l10n.settingsCategoryLocalModelsDescription,
         icon: Icons.memory_outlined,
+      ),
+      SettingsCategory.usage => SettingsCategorySpec(
+        title: l10n.settingsUsageReportTitle,
+        subtitle: l10n.settingsUsageReportSubtitle,
+        description: l10n.settingsDataDetailedStatsDescription,
+        icon: Icons.query_stats_outlined,
       ),
       SettingsCategory.tts => const SettingsCategorySpec(
         title: '语音与识别',

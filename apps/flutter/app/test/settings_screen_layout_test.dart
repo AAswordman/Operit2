@@ -7,6 +7,9 @@ import 'package:operit2/ui/features/settings/components/SettingsCategoryList.dar
 import 'package:operit2/ui/features/settings/models/SettingsModels.dart';
 import 'package:operit2/ui/features/settings/screens/SettingsScreen.dart';
 import 'package:operit2/ui/main/TopBarController.dart';
+import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
+import 'package:operit2/ui/main/screens/OperitScreens.dart';
+import 'package:operit2/ui/main/screens/ScreenRouteRegistry.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -19,6 +22,49 @@ void main() {
       version: '2.0.0',
       buildNumber: '15',
       buildSignature: '',
+    );
+  });
+
+  testWidgets('phone settings link directly to the token usage report', (
+    tester,
+  ) async {
+    RouteEntry? openedRoute;
+    AppRouterGateway.install(
+      handler: (routeId, args, source) {
+        openedRoute = RouteEntry(routeId: routeId, args: args, source: source);
+      },
+      reset: (routeId, args, source) => fail('Unexpected route reset'),
+    );
+    addTearDown(AppRouterGateway.clear);
+
+    final availableWidth = ValueNotifier<double>(390);
+    final hidden = ValueNotifier<bool>(false);
+    final topBar = TopBarController();
+    addTearDown(availableWidth.dispose);
+    addTearDown(hidden.dispose);
+    addTearDown(topBar.dispose);
+    await _pumpSettings(
+      tester,
+      availableWidth,
+      hidden,
+      topBar,
+      initialCategory: null,
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('Token Usage Report'));
+    expect(
+      openedRoute?.routeId,
+      ScreenRouteRegistry.routeIdOf(const SettingsScreenRoute()),
+    );
+    expect(openedRoute?.args['category'], SettingsCategory.usage.name);
+    expect(
+      ScreenRouteRegistry.screenFromEntry(openedRoute!),
+      isA<SettingsScreenRoute>().having(
+        (screen) => screen.category,
+        'category',
+        SettingsCategory.usage,
+      ),
     );
   });
 
@@ -89,8 +135,9 @@ Future<void> _pumpSettings(
   WidgetTester tester,
   ValueNotifier<double> availableWidth,
   ValueNotifier<bool> hidden,
-  TopBarController topBar,
-) async {
+  TopBarController topBar, {
+  SettingsCategory? initialCategory = SettingsCategory.about,
+}) async {
   // A desktop window stays wide while navigation leaves less space for settings.
   tester.view.physicalSize = const Size(1200, 900);
   tester.view.devicePixelRatio = 1;
@@ -112,9 +159,7 @@ Future<void> _pumpSettings(
               valueListenable: availableWidth,
               child: ValueListenableBuilder<bool>(
                 valueListenable: hidden,
-                child: const SettingsScreen(
-                  initialCategory: SettingsCategory.about,
-                ),
+                child: SettingsScreen(initialCategory: initialCategory),
                 builder: (context, offstage, child) =>
                     RetainedPage(active: !offstage, child: child!),
               ),

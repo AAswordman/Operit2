@@ -1055,11 +1055,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryDataTitle => '数据与备份';
 
   @override
-  String get settingsCategoryDataSubtitle => '备份、恢复、统计';
+  String get settingsCategoryDataSubtitle => '备份、恢复、存储';
 
   @override
-  String get settingsCategoryDataDescription =>
-      '备份聊天、插件数据和模型配置，恢复备份内容，并查看数据统计。';
+  String get settingsCategoryDataDescription => '备份和恢复聊天、插件数据及模型配置，并管理存储位置。';
+
+  @override
+  String get settingsUsageReportTitle => 'Token 用量报告';
+
+  @override
+  String get settingsUsageReportSubtitle => '模型用量、缓存与费用';
 
   @override
   String get settingsCategoryAccessLinksTitle => '设备空间';
@@ -3361,29 +3366,17 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsDataTokenSection => '使用统计';
-
-  @override
   String get settingsDataInputTokens => '输入';
 
   @override
   String get settingsDataOutputTokens => '输出';
 
   @override
-  String get settingsDataOpenDetailedStats => '查看详细统计';
-
-  @override
-  String get settingsDataOpenDetailedStatsDescription =>
-      '查看使用热力图，以及可按分钟缩放的各模型用量时间线。';
-
-  @override
-  String get settingsDataRefreshTokenStats => '刷新统计';
-
-  @override
   String get settingsDataResetTokenStats => '重置统计';
 
   @override
-  String get settingsDataDetailedStatsTitle => '详细统计';
+  String get settingsUsageReportResetConfirmation =>
+      '这将永久删除所有已保存的模型用量记录，聊天记录会保留。';
 
   @override
   String get settingsDataDetailedStatsDescription => '统计基于独立保存的模型请求明细计算。';

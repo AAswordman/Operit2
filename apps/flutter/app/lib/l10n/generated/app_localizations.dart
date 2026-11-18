@@ -2075,14 +2075,26 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryDataSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Backup, restore, stats'**
+  /// **'Backup, restore, storage'**
   String get settingsCategoryDataSubtitle;
 
   /// No description provided for @settingsCategoryDataDescription.
   ///
   /// In en, this message translates to:
-  /// **'Back up chats, plugin data, and model settings, restore backup content, and view data statistics.'**
+  /// **'Back up and restore chats, plugin data, and model settings, and manage storage.'**
   String get settingsCategoryDataDescription;
+
+  /// No description provided for @settingsUsageReportTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Token Usage Report'**
+  String get settingsUsageReportTitle;
+
+  /// No description provided for @settingsUsageReportSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model usage, cache, and cost'**
+  String get settingsUsageReportSubtitle;
 
   /// No description provided for @settingsCategoryAccessLinksTitle.
   ///
@@ -6312,12 +6324,6 @@ abstract class AppLocalizations {
   /// **'Storage location change failed: {error}'**
   String settingsDataStorageChangeError(String error);
 
-  /// No description provided for @settingsDataTokenSection.
-  ///
-  /// In en, this message translates to:
-  /// **'Usage statistics'**
-  String get settingsDataTokenSection;
-
   /// No description provided for @settingsDataInputTokens.
   ///
   /// In en, this message translates to:
@@ -6330,35 +6336,17 @@ abstract class AppLocalizations {
   /// **'Output'**
   String get settingsDataOutputTokens;
 
-  /// No description provided for @settingsDataOpenDetailedStats.
-  ///
-  /// In en, this message translates to:
-  /// **'View detailed statistics'**
-  String get settingsDataOpenDetailedStats;
-
-  /// No description provided for @settingsDataOpenDetailedStatsDescription.
-  ///
-  /// In en, this message translates to:
-  /// **'View the usage heatmap and model usage timeline with minute-level zoom.'**
-  String get settingsDataOpenDetailedStatsDescription;
-
-  /// No description provided for @settingsDataRefreshTokenStats.
-  ///
-  /// In en, this message translates to:
-  /// **'Refresh statistics'**
-  String get settingsDataRefreshTokenStats;
-
   /// No description provided for @settingsDataResetTokenStats.
   ///
   /// In en, this message translates to:
   /// **'Reset statistics'**
   String get settingsDataResetTokenStats;
 
-  /// No description provided for @settingsDataDetailedStatsTitle.
+  /// No description provided for @settingsUsageReportResetConfirmation.
   ///
   /// In en, this message translates to:
-  /// **'Detailed statistics'**
-  String get settingsDataDetailedStatsTitle;
+  /// **'This permanently deletes all saved model usage records. Your conversations are kept.'**
+  String get settingsUsageReportResetConfirmation;
 
   /// No description provided for @settingsDataDetailedStatsDescription.
   ///

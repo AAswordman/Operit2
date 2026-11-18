@@ -446,6 +446,28 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets('reset removes saved records only after confirmation', (
+    tester,
+  ) async {
+    final bridge = _UsageStatisticsBridge();
+    await _pumpDashboard(tester, bridge: bridge, size: const Size(390, 844));
+    final reset = find.byTooltip('Reset statistics');
+
+    await tester.tap(reset);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Cancel'));
+    await tester.pumpAndSettle();
+    expect(bridge.resetCount, 0);
+    expect(find.text('Usage heatmap'), findsOneWidget);
+
+    await tester.tap(reset);
+    await tester.pumpAndSettle();
+    await tester.tap(find.widgetWithText(TextButton, 'Reset statistics'));
+    await tester.pumpAndSettle();
+    expect(bridge.resetCount, 1);
+    expect(find.text('No detailed usage records yet'), findsOneWidget);
+  });
 }
 
 Future<void> _scrollToText(WidgetTester tester, String text) async {
@@ -524,6 +546,7 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
   final bool failPricing;
   final List<Map<String, Object?>> extraRecords;
   final double cachePriceMultiplier;
+  int resetCount = 0;
   static final List<Map<String, Object?>> _records = <Map<String, Object?>>[
     <String, Object?>{
       'id': '1',
@@ -579,8 +602,11 @@ class _UsageStatisticsBridge extends OperitRuntimeBridge {
       case 'getAllRequestRecords':
         return encodeCoreLink(<Object?>[
           0,
-          [..._records, ...extraRecords],
+          resetCount == 0 ? [..._records, ...extraRecords] : <Object?>[],
         ]);
+      case 'resetTokenStatistics':
+        resetCount++;
+        return encodeCoreLink(<Object?>[0, null]);
       case 'getAllModelSummaries':
         return encodeCoreLink(<Object?>[0, <Object?>[]]);
       case 'getAllTokenStatsModels':

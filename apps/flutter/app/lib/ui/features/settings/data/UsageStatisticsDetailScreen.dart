@@ -38,17 +38,6 @@ class UsageStatisticsDetailScreen extends StatefulWidget {
 
   final GeneratedCoreProxyClients clients;
 
-  static Future<void> open({
-    required BuildContext context,
-    required GeneratedCoreProxyClients clients,
-  }) {
-    return Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
-        builder: (context) => UsageStatisticsDetailScreen(clients: clients),
-      ),
-    );
-  }
-
   @override
   State<UsageStatisticsDetailScreen> createState() =>
       _UsageStatisticsDetailScreenState();
@@ -70,6 +59,7 @@ class _UsageStatisticsDetailScreenState
   late Future<_UsageStatisticsSnapshot> _future;
   _UsageDateRange _selectedDateRange = _UsageDateRange.lastDay;
   DateTimeRange? _customDateRange;
+  bool _resetting = false;
 
   @override
   void initState() {
@@ -105,6 +95,42 @@ class _UsageStatisticsDetailScreenState
     setState(() {
       _future = _load();
     });
+  }
+
+  /// Confirms deletion of the saved usage records and reloads the report.
+  Future<void> _resetStatistics() async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(l10n.settingsDataResetTokenStats),
+        content: Text(l10n.settingsUsageReportResetConfirmation),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(l10n.cancel),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(l10n.settingsDataResetTokenStats),
+          ),
+        ],
+      ),
+    );
+    if (!mounted || confirmed != true) {
+      return;
+    }
+    setState(() => _resetting = true);
+    try {
+      await widget.clients.chatRuntimeHolderMain.resetTokenStatistics();
+      if (mounted) {
+        _reload();
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _resetting = false);
+      }
+    }
   }
 
   /// Opens a popup dialog and applies the selected date range.
@@ -155,26 +181,44 @@ class _UsageStatisticsDetailScreenState
     );
   }
 
+  /// Embeds the report in settings with actions available in every state.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(l10n.settingsDataDetailedStatsTitle),
-        leading: IconButton(
-          tooltip: l10n.close,
-          onPressed: () => Navigator.of(context).pop(),
-          icon: const Icon(Icons.close),
-        ),
-        actions: <Widget>[
-          IconButton(
-            tooltip: l10n.refresh,
-            onPressed: _reload,
-            icon: const Icon(Icons.refresh),
+    return Column(
+      children: <Widget>[
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: _dashboardCompactPadding,
           ),
-        ],
-      ),
-      body: FutureBuilder<_UsageStatisticsSnapshot>(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: _dashboardMaxWidth),
+            child: Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: <Widget>[
+                IconButton(
+                  tooltip: l10n.refresh,
+                  onPressed: _resetting ? null : _reload,
+                  icon: const Icon(Icons.refresh),
+                ),
+                IconButton(
+                  tooltip: l10n.settingsDataResetTokenStats,
+                  onPressed: _resetting ? null : _resetStatistics,
+                  icon: const Icon(Icons.restart_alt),
+                ),
+              ],
+            ),
+          ),
+        ),
+        _buildReport(l10n),
+      ],
+    );
+  }
+
+  /// Renders saved request totals and trends for the selected time range.
+  Widget _buildReport(AppLocalizations l10n) {
+    return Expanded(
+      child: FutureBuilder<_UsageStatisticsSnapshot>(
         future: _future,
         builder: (context, snapshot) {
           if (snapshot.hasError) {
@@ -210,7 +254,7 @@ class _UsageStatisticsDetailScreenState
                 maxColumns: 6,
               );
               return ListView(
-                padding: EdgeInsets.fromLTRB(pagePadding, 12, pagePadding, 20),
+                padding: EdgeInsets.fromLTRB(pagePadding, 0, pagePadding, 20),
                 children: <Widget>[
                   Align(
                     alignment: Alignment.topCenter,
@@ -220,7 +264,6 @@ class _UsageStatisticsDetailScreenState
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: <Widget>[
                           _UsageStatisticsHeaderBar(
-                            title: l10n.settingsDataDetailedStatsTitle,
                             description:
                                 l10n.settingsDataDetailedStatsDescription,
                             dateLabel: _usageDateRangeSummary(
@@ -557,14 +600,12 @@ class _UsageStatisticsEmptyState extends StatelessWidget {
 
 class _UsageStatisticsHeaderBar extends StatelessWidget {
   const _UsageStatisticsHeaderBar({
-    required this.title,
     required this.description,
     required this.dateLabel,
     required this.sourceLabel,
     required this.onDateRangePressed,
   });
 
-  final String title;
   final String description;
   final String dateLabel;
   final String sourceLabel;
@@ -587,15 +628,6 @@ class _UsageStatisticsHeaderBar extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: textTheme.labelLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 4),
             Text(
               description,
               maxLines: 1,
