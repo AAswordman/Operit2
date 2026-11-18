@@ -1,6 +1,7 @@
 import type { Storage } from "../../../../types/storage.js";
 import type { CaptureRecord, Ticket } from "./model.js";
 import type { Store } from "./engine.js";
+import { CHANNELS, type Channel } from "./dependencies/connector_hub/api.js";
 let database: Promise<Storage.ObjectDatabase> | null = null;
 function open(): Promise<Storage.ObjectDatabase> {
   if (database === null) {
@@ -186,8 +187,8 @@ export class Repository implements Store {
       value: {...item.value, ignored: "acknowledgement"} as unknown as Storage.Value, expectedVersion: item.version})));
   }
   /** Return terminal notices only for captures owned by the exact configured binding. */
-  async channelNotifications(channel: "qq" | "wechat", parentChatId: string, projectPath: string, conversationId: string, since: number): Promise<{eventId: string; messageKey: string; text: string}[]> {
-    if ((channel !== "qq" && channel !== "wechat") || !parentChatId || !projectPath || !conversationId || !Number.isSafeInteger(since) || since <= 0) throw new Error("Invalid channel notification binding");
+  async channelNotifications(channel: Channel, parentChatId: string, projectPath: string, conversationId: string, since: number): Promise<{eventId: string; messageKey: string; text: string}[]> {
+    if (!CHANNELS.includes(channel) || !parentChatId || !projectPath || !conversationId || !Number.isSafeInteger(since) || since <= 0) throw new Error("Invalid channel notification binding");
     const db = await open(), captured = db.collection<CaptureRecord>("captured"), selected = new Map<string, CaptureRecord>(), queries: CaptureRecord[] = [];
     let after: string | null = null;
     while (true) {
@@ -257,7 +258,7 @@ export class Repository implements Store {
   }
 
   /** Only return status for messages from this exact authenticated channel sender. */
-  async channelStatus(scope: {channel: "qq" | "wechat"; parentChatId: string; projectPath: string; accountId: string; conversationId: string; authorId: string}): Promise<{pending: number; ids: string[]}> {
+  async channelStatus(scope: {channel: Channel; parentChatId: string; projectPath: string; accountId: string; conversationId: string; authorId: string}): Promise<{pending: number; ids: string[]}> {
     const rows = (await open()).collection<CaptureRecord>("captured"), ids = new Set<string>();
     let after: string | null = null, pending = 0;
     while (true) {

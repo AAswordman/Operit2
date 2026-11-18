@@ -49,3 +49,16 @@ test('subscription boundaries remove stale deliveries and failed commits can be 
  await f.store.subscribe('maintainer',[{conversationKey:key,since:99999}],'qq','bot');
  assert.equal((await f.store.peek('maintainer')).length,0);
 });
+test('only recent QQ CDN references are retained, scoped to their original conversation',async()=>{
+ const f=fixture(), key=f.conversationKey('qq','bot','group','same-id');
+ const attach=(url)=>({kind:'image',url,fileName:'photo.png',mimeType:'image/png'});
+ await f.store.observe({...f.msg('media'),attachments:[attach('https://gchat.qpic.cn/photo?token=private'),attach('https://qq.com.evil.test/photo')]},'group','Group');
+ const history=await f.store.history(key);
+ assert.deepEqual(plain(history.messages[0].media.map(item=>item.downloadable??false)),[true,false]);
+ assert.doesNotMatch(JSON.stringify(history),/private|evil/);
+ assert.match((await f.store.attachment(key,'media',0)).url,/qpic.cn/);
+ await assert.rejects(f.store.attachment(key,'media',1),/不存在/);
+ await assert.rejects(f.store.attachment(f.conversationKey('qq','other','group','same-id'),'media',0),/不存在/);
+ for(let index=0;index<80;index++) await f.store.observe(f.msg(index),'group','Group');
+ await assert.rejects(f.restart().attachment(key,'media',0),/近期/);
+});

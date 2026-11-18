@@ -171,13 +171,13 @@ export function defaultConfig(): Config {
     account: null,
     listenerEnabled: false,
     autoReply: {
-      enabled: true,
+      enabled: false,
       aiTimeoutMs: 120000,
       chatGroup: "微信 Bot",
       characterSelection: "",
       assistantInstruction:
         "请直接回复微信用户，不要输出内部思考或工具执行过程。",
-      waifuProfile: "default",
+      waifuProfile: "native",
     },
     cursor: "",
     queue: [],

@@ -15,7 +15,7 @@ export class CaptureCoordinator {
 
   async capture(parentChatId: string, projectPath: string, message: CapturedMessage): Promise<{ saved: boolean }> {
     parentChatId = required(parentChatId, "parentChatId"); projectPath = required(projectPath, "projectPath");
-    if (message === null || typeof message !== "object" || (message.channel !== "qq" && message.channel !== "wechat" && message.channel !== "app")) throw new Error("Invalid channel message");
+    if (message === null || typeof message !== "object" || !["qq", "wechat", "feishu", "app"].includes(message.channel)) throw new Error("Invalid channel message");
     for (const [key, value] of Object.entries({ key: message.key, accountId: message.accountId, messageId: message.messageId, conversationId: message.conversationId, authorId: message.authorId })) {
       required(value, key);
       if (value.length > (key === "key" ? 1000 : 500)) throw new Error(key + " is too long");
@@ -121,6 +121,7 @@ function isPlainAcknowledgement(message: CapturedMessage): boolean {
 
 /** Require channel evidence that no attachment accompanies the text. */
 function hasOnlyPlainText(message: CapturedMessage): boolean {
+  if (typeof message.context.plainText === "boolean") return message.context.plainText;
   if (message.channel === "wechat") {
     const items = message.context.items;
     return Array.isArray(items) && items.every(item => item !== null && typeof item === "object" && !Array.isArray(item) && item.type === 1 && Object.keys(item).every(key => key === "type" || key === "text_item"));

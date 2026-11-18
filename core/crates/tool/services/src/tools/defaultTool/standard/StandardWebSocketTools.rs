@@ -1,6 +1,7 @@
 //! Engine-owned WebSocket sessions using the cross-platform networking Host.
 #![allow(non_snake_case)]
 
+use base64::{engine::general_purpose::STANDARD, Engine};
 use std::collections::{BTreeMap, VecDeque};
 use std::sync::{Arc, Mutex};
 
@@ -17,6 +18,20 @@ use operit_plugin_sdk::js_sdk::results::WebSocketResultData;
 const MAX_EVENTS: usize = 256;
 const MAX_BYTES: usize = 4 * 1024 * 1024;
 const MAX_SOCKETS: usize = 16;
+
+fn messageEvent(bytes: Vec<u8>, binary: bool) -> NetWebSocketEvent {
+    if binary {
+        return NetWebSocketEvent::Binary {
+            base64: STANDARD.encode(bytes),
+        };
+    }
+    match String::from_utf8(bytes) {
+        Ok(text) => NetWebSocketEvent::Message { text },
+        Err(error) => NetWebSocketEvent::Error {
+            message: format!("WebSocket text is not UTF-8: {error}"),
+        },
+    }
+}
 
 /// Holds sockets for exactly one authenticated JavaScript engine.
 #[derive(Clone, Default)]
@@ -46,6 +61,7 @@ impl SocketState {
         }
         let size = match &event {
             NetWebSocketEvent::Message { text } => text.len(),
+            NetWebSocketEvent::Binary { base64 } => base64.len(),
             _ => 0,
         };
         if self.events.len() >= MAX_EVENTS || self.bytes + size > MAX_BYTES {
@@ -112,8 +128,13 @@ impl WebSocketSession {
         context: &ToolInvocationContext,
     ) -> Result<WebSocketResultData, String> {
         let mut sockets = self.0.lock().map_err(|error| error.to_string())?;
+        let binary = matches!(&request, NetWebSocketRequest::OpenBinary { .. });
         match request {
             NetWebSocketRequest::Open {
+                url,
+                connect_timeout_seconds,
+            }
+            | NetWebSocketRequest::OpenBinary {
                 url,
                 connect_timeout_seconds,
             } => {
@@ -156,12 +177,7 @@ impl WebSocketSession {
                             .push(NetWebSocketEvent::Opened);
                     }),
                     Arc::new(move |bytes| {
-                        let event = match String::from_utf8(bytes) {
-                            Ok(text) => NetWebSocketEvent::Message { text },
-                            Err(error) => NetWebSocketEvent::Error {
-                                message: format!("WebSocket text is not UTF-8: {error}"),
-                            },
-                        };
+                        let event = messageEvent(bytes, binary);
                         let mustClose = {
                             let mut state = messages.lock().expect("WebSocket state poisoned");
                             state.push(event);
@@ -229,6 +245,30 @@ impl WebSocketSession {
                     .map_err(|error| error.to_string())?;
                 Ok(WebSocketResultData::Send)
             }
+            NetWebSocketRequest::SendBinary { handle, base64 } => {
+                if base64.len() > MAX_BYTES {
+                    return Err("WebSocket binary payload exceeds the encoded size limit".into());
+                }
+                let bytes = STANDARD
+                    .decode(base64)
+                    .map_err(|_| "Invalid WebSocket base64")?;
+                let socket = sockets
+                    .get(&handle)
+                    .ok_or("Unknown WebSocket handle for this engine")?;
+                if socket
+                    .state
+                    .lock()
+                    .map_err(|error| error.to_string())?
+                    .terminal
+                {
+                    return Err("WebSocket is closed".into());
+                }
+                socket
+                    .host
+                    .sendWebSocketMessage(&socket.id, bytes)
+                    .map_err(|error| error.to_string())?;
+                Ok(WebSocketResultData::Send)
+            }
             NetWebSocketRequest::Close { handle } => {
                 let socket = sockets
                     .get(&handle)
@@ -253,5 +293,48 @@ impl WebSocketSession {
                 Ok(WebSocketResultData::Close)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn text_sockets_keep_the_original_message_contract() {
+        let event = messageEvent("文本".as_bytes().to_vec(), false);
+        assert_eq!(
+            serde_json::to_value(event).unwrap(),
+            json!({"type":"message","text":"文本"})
+        );
+        assert!(matches!(
+            messageEvent(vec![255], false),
+            NetWebSocketEvent::Error { .. }
+        ));
+    }
+
+    #[test]
+    fn binary_sockets_expose_lossless_frames_and_share_receive_limits() {
+        let input = vec![0, 128, 255];
+        let request = serde_json::from_value::<NetWebSocketRequest>(
+            json!({"op":"send_binary","handle":"h","base64":"AID/"}),
+        )
+        .unwrap();
+        let NetWebSocketRequest::SendBinary { base64, .. } = request else {
+            panic!("expected a binary write")
+        };
+        assert_eq!(STANDARD.decode(base64).unwrap(), input);
+        assert_eq!(
+            serde_json::to_value(messageEvent(input, true)).unwrap(),
+            json!({"type":"binary","base64":"AID/"})
+        );
+        let mut state = SocketState::default();
+        state.push(messageEvent(vec![0; MAX_BYTES], true));
+        assert!(state.terminal);
+        assert!(matches!(
+            state.events.front(),
+            Some(NetWebSocketEvent::Error { .. })
+        ));
     }
 }

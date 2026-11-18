@@ -10,7 +10,7 @@ function fixture(){
  let workspace='/game',failStatus=false,failCapture=false,peekGate,noticesGate,pending=true,source=message;
  globalThis.Tools={Storage:{objects:storage}};
  globalThis.ToolPkg={getLocalDataDir:()=>'/test-local',async callDependency(provider,method,payload){
-  calls.push({provider,method,payload});if(provider.includes('wechat'))throw Error('WeChat not installed');
+  calls.push({provider,method,payload});if(payload.channel!=='qq')throw Error('Bot not installed');
   switch(payload.action){
    case 'status':if(failStatus)throw Error('provider disabled');return {channel:'qq',service:'ready',capture:false,conversationIds:[],channelOnlyWhenNoAuto:false};
    case 'conversations':return {conversations:[session]};
@@ -36,10 +36,10 @@ function fixture(){
 }
 test('maintenance derives routing from Bot and subscribes without rewriting global capture',async()=>{
  const f=fixture();await f.coordinator.tick('qq');assert.deepEqual(f.events,['capture','ack','reply']);
- assert.ok(f.calls.every(c=>c.provider==='com.operit.qqbot_bundle'&&c.method==='channel.v1'));
+ assert.ok(f.calls.every(c=>c.provider==='com.operit.connector_hub'&&c.method==='connectors.v1'));
  assert.equal(f.calls.some(c=>c.payload.action==='configure'),false);
- assert.deepEqual(f.calls.find(c=>c.payload.action==='subscribe').payload,{action:'subscribe',consumerId:'com.operit.project_maintenance',routes:[{conversationKey:session.key,since:1}]});
- assert.equal(f.calls.find(c=>c.payload.action==='ack').payload.consumerId,'com.operit.project_maintenance');
+ assert.deepEqual(f.calls.find(c=>c.payload.action==='subscribe').payload,{action:'subscribe',channel:'qq',routes:[{conversationKey:session.key,since:1}]});
+ assert.equal(f.calls.find(c=>c.payload.action==='ack').payload.consumerId,undefined);
  const [report]=await f.coordinator.status();assert.equal(report.enabled,true);assert.equal(report.sessions[0].title,'真实 Bot 聊天');
  await f.coordinator.tick('qq');assert.equal(f.events.filter(e=>e==='reply').length,1);
 });

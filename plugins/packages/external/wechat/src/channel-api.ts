@@ -19,12 +19,16 @@ export interface ChannelConversation {
   conversationId: string; title: string; chatId: string | null; contextChatIds?: string[]; lastMessageAt: number;
 }
 export interface ContextMessage {
+  direction?: "outgoing";
+  delivery?: "accepted" | "rejected" | "unknown";
+  media?: { kind: "image" | "audio" | "video" | "file"; name?: string; downloadable?: boolean }[];
   messageId: string; authorId: string; authorName: string; text: string; timestamp: string;
   receivedAt: number; referenceIndex?: string; referencedMessageIndex?: string;
 }
-export interface ConversationHistory { conversation: ChannelConversation; messages: ContextMessage[]; truncated: boolean }
+export interface ConversationHistory { conversation: ChannelConversation; messages: ContextMessage[]; truncated: boolean; latestInboundId?: string }
 export interface ChannelSubscription { conversationKey: string; since: number }
 export type ChannelRequest =
+  | { action: "attachment"; conversationKey: string; messageId: string; index: number }
   | { action: "configure"; capture: boolean; conversationIds?: string[] | null; channelOnlyWhenNoAuto?: boolean }
   | { action: "status" }
   | { action: "conversations" }
@@ -34,7 +38,13 @@ export type ChannelRequest =
   | { action: "active_context"; chatId: string }
   | { action: "peek"; limit?: number; conversationId?: string; consumerId?: string; conversationKey?: string }
   | { action: "ack"; key: string; consumerId?: string }
-  | { action: "reply"; key: string; text: string };
+  | ({ action: "reply"; key: string } & SendFields)
+  | { action: "manage"; command: "start" | "stop" | "test" | "login_start" | "login_cancel" | "login_status" | "logout"; autoReply?: boolean }
+  | { action: "manage"; command: "login_verify"; code: string };
+export interface SendFields {
+  text?: string;
+  media?: { kind: "image" | "audio" | "video" | "file"; source: string; fileName?: string; durationMs?: number; voiceFormat?: number; sampleRate?: number };
+}
 
 export interface ChannelConfiguration {
   capture: boolean;
@@ -42,6 +52,8 @@ export interface ChannelConfiguration {
   channelOnlyWhenNoAuto: boolean;
 }
 export interface ChannelStatus extends ChannelConfiguration {
+  configured?: boolean; listenerEnabled?: boolean; autoReplyEnabled?: boolean; error?: string;
+  login?: { state: string; qrContent: string; expiresAt: number; error: string };
   channel: "qq" | "wechat";
   service: "ready" | "connecting" | "stopped" | "error";
 }
@@ -54,6 +66,8 @@ export interface ActiveContext {
   authorId: string;
 }
 export interface ChannelResponses {
+  attachment: { fileName: string; mimeType: string; contentBase64: string };
+  manage: ChannelStatus;
   conversations: { conversations: ChannelConversation[] };
   open_chat: ChannelConversation;
   history: ConversationHistory;

@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.feishu_bot",
+  "version": "1.0.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "飞书 Bot", "en": "Feishu Bot" },
+  "description": { "zh": "通过长连接接收飞书消息，支持会话、媒体与卡片。使用外部连接器接入。", "en": "Feishu long connection, conversations, media and cards. Managed in External Connectors." },
+  "enabled_by_default": false,
+  "installation_scope": "device",
+  "public_api": "src/channel-api.ts"
+}

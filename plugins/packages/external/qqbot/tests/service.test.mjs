@@ -18,6 +18,7 @@ function fixture(options = {}) {
     Net: {
       async http(request) {
         http.push(request);
+        if (request.url.endsWith('/messages') && options.onSend) await options.onSend(request);
         let response;
         if (request.url === "https://bots.qq.com/app/getAppAccessToken" && request.body.clientSecret === options.rejectSecret) return { statusCode: 401, content: "invalid credentials" };
         if (request.url === "https://bots.qq.com/app/getAppAccessToken") response = { access_token: "token", expires_in: "7200" };
@@ -49,14 +50,14 @@ function fixture(options = {}) {
           yield { type: "completed", result }; return;
         }
         yield { type: "part", messageTimestamp: 1, parts: [{ kind: "markdown", content: options.replyText === undefined ? "actual AI response" : options.replyText }] };
-        yield { type: "completed", result: { chatId: request.chatId, aiResponse: "unrendered final response", outcome: { type: "committed", status: "completed" } } };
+        yield { type: "completed", result: { chatId: request.chatId, aiResponse: options.finalReply ?? "unrendered final response", outcome: { type: "committed", status: "completed" } } };
       },
       async cancel(chatId) { cancelled.push(chatId); if (pendingReplies.has(chatId)) { pendingReplies.get(chatId)({ chatId, outcome: { type: "committed", status: "cancelled" } }); pendingReplies.delete(chatId); } return { chatId, cancelRequested: true }; },
     },
   };
   Tools.Storage = { objects: storage };
   Tools.Files = { async readBinary() { return { contentBase64: "aW1hZ2U=", size: 5 }; } };
-  const service = load("service", { ...time, Tools, PluginConfig: { async use() { return config; }, async flush() { flushes++;if(!options.trackTopLevel||dirty){snapshots.push(plain(config));dirty=false;} } }, ToolPkg: { getLocalDataDir: () => "/plugin", ipc: { on() {} }, async callDependency(packageName, method, payload) { assert.equal(packageName, "com.operit.waifu"); await initialized; return waifu.call(method, payload, "com.operit.qqbot_bundle"); } } });
+  const service = load("service", { ...time, Tools, PluginConfig: { async use() { return config; }, async flush() { flushes++;if(!options.trackTopLevel||dirty){snapshots.push(plain(config));dirty=false;} } }, ToolPkg: { getLocalDataDir: () => "/plugin", ipc: { on() {} }, async callDependency(packageName, method, payload) { assert.equal(packageName, "com.operit.waifu"); if (options.waifuError) throw Error(options.waifuError); await initialized; return waifu.call(method, payload, "com.operit.qqbot_bundle"); } } });
   /** Advances only the Host callbacks needed for a submitted administrative command. */
   async function complete(promise) {
     let completed = false, result, failure;
@@ -121,6 +122,26 @@ test("automatic replies use independent durable chats and authoritative waifu sn
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
+test("the console can start QQ with native replies while optional Waifu is absent", async () => {
+  const f = fixture({ waifuError: "ToolPkg container not found: com.operit.waifu", finalReply: "[[reply_to:internal-123]]您好" });
+  await f.complete(f.service.channel({ action: "manage", command: "start", autoReply: true }));
+  f.socket.frame(c2c("native-id"));
+  await f.time.advance(1500);
+  assert.equal(f.submitted.length, 1);
+  const replies = f.http.filter(request => request.url.endsWith("/messages"));
+  assert.equal(replies.length, 1);
+  assert.equal(replies[0].body.content, "您好");
+  assert.equal(replies[0].body.msg_id, "native-id");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("optional Waifu fallback does not hide errors in a configured profile", async () => {
+  const f = fixture({ waifuError: "Invalid Waifu profile" });
+  await assert.rejects(f.complete(f.service.channel({ action: "manage", command: "start", autoReply: true })), /Invalid Waifu profile/);
+  assert.equal(f.submitted.length, 0);
+  assert.equal(f.config.listenerEnabled, false);
+});
+
 test("different QQ conversations progress concurrently while the same conversation stays ordered", async () => {
   const f = fixture({ deferAlice: true, firstPart: "先回答。" });
   await f.complete(f.service.receive({ action: "start" }));
@@ -149,6 +170,7 @@ test("QQ automatic replies bound concurrent conversations and stop cancels each 
   assert.ok(!Object.hasOwn(f.config.bindings, "c2c:dave"));
   for (const request of f.submitted) {
     const author = Object.entries(f.config.bindings).find(([, chatId]) => chatId === request.chatId)[0].slice("c2c:".length);
+    assert.doesNotMatch(request.input.text, /message-(alice|bob|carol)|"authorId"|"replyTo"/);
     const context = plain(await f.service.channel({action:"active_context",chatId:request.chatId}));
     assert.deepEqual(context, {channel:"qq",chatId:request.chatId,accountId:"app",scene:"c2c",conversationId:author,authorId:author});
     assert.doesNotMatch(JSON.stringify(context), /private-secret|token/);
@@ -296,6 +318,31 @@ test("channel inbox persists independently from QQ automatic reply and deduplica
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
+test("plain QQ messages omit absent rich fields and remain durable for capture and subscribers", async () => {
+  const f = fixture();
+  await f.complete(f.service.channel({ action: "configure", capture: true }));
+  await f.complete(f.service.receive({ action: "start" }));
+  f.socket.frame(c2c("first", "alice")); await f.time.advance(300);
+  assert.equal((await f.service.receive({ action: "status" })).status.service.status, "ready");
+  const conversations = await f.service.channel({ action: "conversations" });
+  await f.service.channel({ action: "subscribe", consumerId: "regression", routes: [{ conversationKey: conversations.conversations[0].key, since: 0 }] });
+  f.socket.frame(c2c("second", "alice")); await f.time.advance(300);
+  const status = await f.service.receive({ action: "status" });
+  assert.equal(status.status.service.status, "ready");
+  assert.equal(status.status.service.lastError, "");
+  const captured = await f.service.channel({ action: "peek" });
+  assert.equal(captured.messages.length, 2);
+  for (const message of captured.messages) {
+    for (const field of ["messageType", "card", "referenceIndex", "referencedMessageIndex"]) assert.equal(Object.hasOwn(message, field), false, field);
+    assert.deepEqual(plain(message.attachments), []);
+    assert.deepEqual(plain(message.elements), []);
+  }
+  const deliveries = await f.service.channel({ action: "peek", consumerId: "regression" });
+  assert.equal(deliveries.messages.length, 1);
+  assert.equal(deliveries.messages[0].messageId, "second");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
 test("QQ capture failure stops the listener instead of accepting the message", async () => {
   const f = fixture();
   await f.complete(f.service.channel({ action: "configure", capture: true }));
@@ -375,7 +422,7 @@ test("filtered channel peek scans past unrelated history without acknowledging i
     const key=`a-${String(i).padStart(3,"0")}`;
     await f.storage.db.commit([{op:"put",collection:"pending",key,value:{key,conversationId:"other"},expectedVersion:null}]);
   }
-  await f.storage.db.commit([{op:"put",collection:"pending",key:"z-target",value:{key:"z-target",conversationId:"target"},expectedVersion:null}]);
+  await f.storage.db.commit([{op:"put",collection:"pending",key:"z-target",value:{key:"z-target",accountId:"app",conversationId:"target"},expectedVersion:null}]);
   const result=await f.service.channel({action:"peek",limit:20,conversationId:"target"});
   assert.equal(result.messages.length,1); assert.equal(result.messages[0].key,"z-target");
   assert.notEqual(await f.storage.db.collection("pending").get("a-000"),null);
@@ -428,7 +475,24 @@ test("automatic replies use readable quote context and native references while s
   assert.equal(sent.length, 1); assert.equal(sent[0].body.content, "收到。");
   assert.equal(sent[0].body.msg_id, "secret-message"); assert.equal(sent[0].body.message_reference.message_id, "REFIDX_own==");
   assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  const [session]=(await f.service.channel({action:"conversations"})).conversations;
+  const history=await f.service.channel({action:"history",conversationKey:session.key});
+  assert.deepEqual(plain(history.messages.filter(m=>m.direction).map(m=>[m.text,m.delivery])),[["收到。","accepted"]]);
   await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test('direct send records a timed-out request as unknown and never repeats it',async()=>{
+  const f=fixture({onSend(){throw Error('socket closed: sensitive detail');}});
+  await f.complete(f.service.receive({action:'start'}));
+  f.socket.frame(c2c('known')); await f.time.advance(300);
+  const [session]=(await f.service.channel({action:'conversations'})).conversations;
+  await assert.rejects(f.service.receive({action:'send_c2c',params:{openid:session.conversationId,content:'direct reply',msg_id:'known'}}),/socket closed/);
+  const history=await f.service.channel({action:'history',conversationKey:session.key});
+  assert.equal(history.messages.at(-1).delivery,'unknown');
+  assert.equal(history.messages.at(-1).text,'direct reply');
+  assert.doesNotMatch(JSON.stringify(history),/sensitive detail/);
+  assert.equal(f.http.filter(r=>r.url.endsWith('/messages')).length,1);
+  await f.complete(f.service.receive({action:'stop'}));
 });
 
 function groupMessage(id, sender = "alice", group = "group-a", mentioned = true, content = "群消息") {
@@ -485,12 +549,12 @@ test("all-message reply mode and listening off are explicit independent controls
 test("delivery reservation survives config persistence and restart never automatically replays uncertain replies",async()=>{
  const f=fixture({deferReply:true,trackTopLevel:true});await f.complete(f.service.receive({action:"start"}));
  await f.complete(f.service.receive({action:"auto_configure",params:{enabled:true}}));
- f.socket.frame(groupMessage("pending-one"));f.socket.frame(groupMessage("pending-two","bob"));await f.time.advance(700);
+ f.socket.frame(groupMessage("pending-one","alice","group-a",true,"第一条反馈"));f.socket.frame(groupMessage("pending-two","bob","group-a",true,"第二条反馈"));await f.time.advance(700);
  assert.equal(f.submitted.length,1);assert.equal(f.snapshots.at(-1).deliveries[0].state,"processing");
  const interrupted=f.snapshots.at(-1);await f.complete(f.service.receive({action:"stop"}));
  const next=fixture({initialConfig:interrupted,trackTopLevel:true});await next.complete(next.service.receive({action:"start"}));await next.time.advance(800);
  assert.equal(next.submitted.length,0);assert.equal(next.config.deliveries[0].state,"failed");
  await next.complete(next.service.receive({action:"retry_delivery",key:next.config.deliveries[0].key,skip:true}));await next.time.advance(800);
- assert.equal(next.submitted.length,1);assert.match(next.submitted[0].input.text,/pending-two/);
+ assert.equal(next.submitted.length,1);assert.match(next.submitted[0].input.text,/第二条反馈/);
  await next.complete(next.service.receive({action:"stop"}));
 });

@@ -87,9 +87,11 @@ test("business and HTTP failures remain explicit and expired sessions retain the
   await assert.rejects(g.api.sendText("peer", "context", "hello"), /401/);
 });
 
-test("a malformed send response cannot masquerade as acknowledged delivery", async () => {
+test("successful JSON replies may omit ret as documented by iLink", async () => {
   const f = apiFixture({});
-  await assert.rejects(f.api.sendText("peer", "context", "hello"), /成功回执/);
+  assert.deepEqual(plain(await f.api.sendText("peer", "context", "hello")), {});
+  const expired = apiFixture({ ret: -1, errcode: -14 });
+  await assert.rejects(expired.api.updates("", 45), (error) => error.code === -14);
 });
 
 test("int64 message identifiers survive JSON parsing without rounding or altering quoted text", () => {

@@ -1,4 +1,5 @@
 import { WeChatApi, encodeAsciiBase64 } from "./api.js";
+import { decodeBase64, isSilkHeader, silkToWav } from "./silk.js";
 import {
   CDN_BASE,
   MAX_MEDIA_BYTES,
@@ -18,14 +19,16 @@ function byteLength(base64: string): number {
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
-/** Selects one explicit CDN media field from an incoming item. */
-export function mediaReference(item: JsonObject): {
+export interface MediaReference {
   kind: MediaKind;
   media: JsonObject;
   key?: string;
   name?: string;
   voiceFormat?: number;
-} | null {
+}
+
+/** Selects one explicit CDN media field from an incoming item. */
+export function mediaReference(item: JsonObject): MediaReference | null {
   if (item.type === 2) {
     const image = object(item.image_item, "image_item");
     return {
@@ -197,6 +200,24 @@ export async function downloadMedia(
 }> {
   const selected = mediaReference(item);
   if (selected === null) throw new Error("消息项目不包含可下载的媒体。");
+  const original = await downloadMediaContent(api, selected, MAX_MEDIA_BYTES);
+  const converted = original.mimeType === "audio/silk" ? await silkToWav(original.contentBase64) : null;
+  const { contentBase64, mimeType, fileName } = converted === null ? original : {
+    contentBase64: converted,
+    mimeType: "audio/wav",
+    fileName: "wechat-voice.wav",
+  };
+  const directory = `${getPluginConfigDir()}/incoming`;
+  const made = await Tools.Files.mkdir(directory, true);
+  if (!made.successful) throw new Error(made.details);
+  const filePath = `${directory}/${encodeURIComponent(messageId)}-${CryptoJS.binary.randomHex(8)}${converted === null ? "" : ".wav"}`;
+  const written = await Tools.Files.writeBinary(filePath, contentBase64);
+  if (!written.successful) throw new Error(written.details);
+  const info = await Tools.Files.info(filePath);
+  return { filePath, fileName, mimeType, fileSize: integer(info.size, "saved media size", 0, MAX_MEDIA_BYTES), content: filePath };
+}
+
+export async function downloadMediaContent(api: WeChatApi, selected: MediaReference, limit: number) {
   const fullUrl =
     selected.media.full_url === undefined
       ? ""
@@ -220,25 +241,14 @@ export async function downloadMedia(
   if (response.statusCode < 200 || response.statusCode >= 300)
     throw new Error(`微信 CDN 下载 HTTP ${response.statusCode}`);
   const encrypted = nonblank(response.contentBase64, "download binary data");
-  if (byteLength(encrypted) > MAX_MEDIA_BYTES + 16)
-    throw new Error("微信媒体下载超过 25 MiB 限制。");
-  const key =
-    selected.key ??
-    decodeUtf8Base64(nonblank(selected.media.aes_key, "media.aes_key"));
-  const plain = CryptoJS.binary.decryptAesEcb(encrypted, key);
-  const directory = `${getPluginConfigDir()}/incoming`;
-  const made = await Tools.Files.mkdir(directory, true);
-  if (!made.successful) throw new Error(made.details);
-  const filePath = `${directory}/${encodeURIComponent(messageId)}-${CryptoJS.binary.randomHex(8)}`;
-  const written = await Tools.Files.writeBinary(filePath, plain);
-  if (!written.successful) throw new Error(written.details);
-  const info = await Tools.Files.info(filePath);
-  const mimeType = mediaMime(
-    selected.kind,
-    plain,
-    selected.voiceFormat,
-    selected.name,
-  );
+  if (byteLength(encrypted) > limit + 16)
+    throw new Error(`微信媒体超过 ${limit / (1024 * 1024)} MiB 限制。`);
+  const encodedKey = selected.media.aes_key;
+  const key = selected.key || (encodedKey ? decodeUtf8Base64(nonblank(encodedKey, "media.aes_key")) : "");
+  if (!key && selected.kind !== "image") throw new Error("微信媒体未提供解密密钥。");
+  const plain = key ? CryptoJS.binary.decryptAesEcb(encrypted, key) : encrypted;
+  if (byteLength(plain) > limit) throw new Error(`微信媒体超过 ${limit / (1024 * 1024)} MiB 限制。`);
+  const mimeType = mediaMime(selected.kind, plain, selected.voiceFormat, selected.name);
   const extensions: Record<string, string> = {
     "image/jpeg": "jpg",
     "image/png": "png",
@@ -248,18 +258,13 @@ export async function downloadMedia(
     "audio/mpeg": "mp3",
     "audio/amr": "amr",
     "audio/ogg": "ogg",
+    "audio/silk": "silk",
   };
   const extension = extensions[mimeType];
   const fileName =
     selected.name ??
-    `${selected.kind}-${messageId}${extension === undefined ? "" : `.${extension}`}`;
-  return {
-    filePath,
-    fileName,
-    mimeType,
-    fileSize: integer(info.size, "saved media size", 0, MAX_MEDIA_BYTES),
-    content: filePath,
-  };
+    `wechat-${selected.kind}${extension === undefined ? "" : `.${extension}`}`;
+  return { fileName, mimeType, contentBase64: plain };
 }
 
 /** Decodes a base64 key representation back into the required hexadecimal form. */
@@ -275,34 +280,7 @@ function decodeUtf8Base64(value: string): string {
     throw new Error(
       "Media key must contain 16 raw bytes or 32 hexadecimal characters",
     );
-  return bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("");
-}
-
-/** Decodes base64 protocol keys into their original byte values. */
-function decodeBase64(value: string): number[] {
-  if (
-    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(
-      value,
-    )
-  )
-    throw new Error("Invalid base64 media key");
-  const alphabet =
-    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-  const clean = value.replace(/=+$/, "");
-  const output: number[] = [];
-  for (let index = 0; index < clean.length; index += 4) {
-    const a = alphabet.indexOf(clean[index]),
-      b = alphabet.indexOf(clean[index + 1] ?? "A");
-    const c = alphabet.indexOf(clean[index + 2] ?? "A"),
-      d = alphabet.indexOf(clean[index + 3] ?? "A");
-    if (a < 0 || b < 0 || c < 0 || d < 0)
-      throw new Error("Invalid base64 media key");
-    const bits = (a << 18) | (b << 12) | (c << 6) | d;
-    output.push((bits >>> 16) & 255);
-    if (index + 2 < clean.length) output.push((bits >>> 8) & 255);
-    if (index + 3 < clean.length) output.push(bits & 255);
-  }
-  return output;
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 /** Identifies supported image signatures and explicit voice formats for native Chat attachments. */
@@ -333,6 +311,7 @@ function mediaMime(
   }
   if (kind === "video") return "video/mp4";
   if (kind === "voice") {
+    if (isSilkHeader(decodeBase64(data.slice(0, 16)))) return "audio/silk";
     const formats: Record<number, string> = {
       1: "audio/L16",
       2: "audio/adpcm",
@@ -345,7 +324,7 @@ function mediaMime(
     };
     return voiceFormat === undefined
       ? "application/octet-stream"
-      : formats[voiceFormat];
+      : formats[voiceFormat] ?? "application/octet-stream";
   }
   const extension = fileName?.split(".").pop()?.toLowerCase();
   const types: Record<string, string> = {

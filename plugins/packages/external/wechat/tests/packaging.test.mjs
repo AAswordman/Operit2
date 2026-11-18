@@ -13,11 +13,11 @@ test("package is an optional device-scoped API v2 plugin with exact public depen
   assert.equal(manifest.api_version, "2.0.0");
   assert.equal(manifest.enabled_by_default, false);
   assert.ok(
-    manifest.requires.some(
+    manifest.optional_requires.some(
       (value) => value.id === "com.operit.character_cards",
     ),
   );
-  assert.ok(manifest.requires.some((value) => value.id === "com.operit.waifu"));
+  assert.ok(manifest.optional_requires.some((value) => value.id === "com.operit.waifu"));
   const publicClient = await readFile(
     new URL("../../waifu/src/api.ts", import.meta.url),
     "utf8",
@@ -116,4 +116,16 @@ test("QR generator retains its upstream MIT license and runs entirely inside the
   assert.match(source, /Copyright \(c\) 2009 Kazuhiko Arase/);
   assert.match(source, /MIT license/);
   assert.doesNotMatch(source, /fetch\(|XMLHttpRequest|child_process/);
+});
+
+test("the packaged SILK decoder is import-free and implements its declared ABI", async () => {
+  const base = new URL("../", import.meta.url);
+  const manifest = JSON.parse(await readFile(new URL("manifest.json", base), "utf8"));
+  const entry = manifest.wasm_modules.find(value => value.id === "silk-decoder");
+  assert.equal(entry.abi, "memory");
+  const module = new WebAssembly.Module(await readFile(new URL(entry.path, base)));
+  assert.deepEqual(WebAssembly.Module.imports(module), []);
+  const exports = new WebAssembly.Instance(module).exports;
+  assert.ok(exports.memory instanceof WebAssembly.Memory);
+  for (const name of entry.exports) assert.equal(typeof exports[name], "function");
 });

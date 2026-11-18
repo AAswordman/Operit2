@@ -1,5 +1,12 @@
 # Third-Party Licenses
 
+## SILK SDK v1.0.9 and Emscripten
+
+`resources/silk-decoder.wasm` bundles the Skype SILK SDK and Emscripten runtime.
+See [provenance and build instructions](vendor/silk/README.md),
+[the SILK SDK license](vendor/silk/LICENSE-SKYPE), and
+[the Emscripten license](vendor/silk/LICENSE-EMSCRIPTEN).
+
 ## qrcode-generator 2.0.4
 
 Source: https://www.npmjs.com/package/qrcode-generator

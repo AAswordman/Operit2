@@ -2,6 +2,7 @@ import { workspaceChats, chatWorkspace } from "./workspaces.js";
 import type { Responses } from "./api.js";
 import { feedbackItem, projectSummaries } from "./dashboard.js";
 import { ChannelCoordinator } from "./channels.js";
+import { CHANNELS } from "./dependencies/connector_hub/api.js";
 import { AppRecovery, appMessage, isStatusQuestion } from "./app-recovery.js";
 import { CaptureCoordinator } from "./capture.js";
 import { MaintenanceEngine, type Agent, type Workers } from "./engine.js";
@@ -90,7 +91,7 @@ export async function receive(request: Request): Promise<Responses[Request["acti
         gitVerified: ticket.notes.some(note => note.kind === "delivery_verification"), verifiedPullRequest: verifiedPullRequest(ticket)})) };
     }
     case "channel_status": {
-      if (request.channel !== "qq" && request.channel !== "wechat") throw new Error("Invalid channel");
+      if (!CHANNELS.includes(request.channel)) throw new Error("Invalid channel");
       const scope = {channel: request.channel, parentChatId: required(request.parentChatId, "parentChatId"), projectPath: required(request.projectPath, "projectPath"),
         accountId: required(request.accountId, "accountId"), conversationId: required(request.conversationId, "conversationId"), authorId: required(request.authorId, "authorId")};
       const source = await repository.channelStatus(scope), ids = new Set(source.ids);

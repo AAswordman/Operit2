@@ -31,21 +31,35 @@ export function load(name, globals = {}) {
   });
   const module = { exports: {} };
   const errors = [];
-  vm.runInNewContext(
-    output.outputFiles[0].text,
-    {
+  const context = vm.createContext({
       module,
       exports: module.exports,
       console: {
         log() {},
+        warn() {},
         error(...args) {
           errors.push(args);
         },
       },
       ...globals,
-    },
-    { filename: file },
-  );
+  });
+  if (globals.ToolPkg?.wasm === "test-bundled-wasm") {
+    const manifest = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+    context.__testWasmEntry = id => {
+      const module = manifest.wasm_modules.find(entry => entry.id === id);
+      return { bytes: readFileSync(new URL(`../${module.path}`, import.meta.url)), metadata: module };
+    };
+    const bridge = readFileSync(new URL("../../../../../core/crates/plugin/sdk/src/toolpkg/ToolPkgWasmApi.js", import.meta.url), "utf8");
+    vm.runInContext(bridge, context);
+    vm.runInContext(`
+      globalThis.__operitNativeLoadToolPkgWasm = (_target, id) => {
+        const entry = __testWasmEntry(id);
+        return { bytes: new Uint8Array(entry.bytes), metadata: entry.metadata };
+      };
+      ToolPkg = { ...ToolPkg, wasm: __operitCreateToolPkgWasmApi(() => "com.operit.wechat_bot", false) };
+    `, context);
+  }
+  vm.runInContext(output.outputFiles[0].text, context, { filename: file });
   return { ...module.exports, errors };
 }
 
@@ -143,6 +157,7 @@ export async function fixture(options = {}) {
           baseUrl: "https://ilinkai.weixin.qq.com",
         };
     config.autoReply.enabled = options.auto === true;
+    config.autoReply.waifuProfile = options.native ? "native" : "default";
   }
   // Model PluginConfig's top-level-only dirty tracking when requested.
   let configDirty = false;
@@ -279,6 +294,7 @@ export async function fixture(options = {}) {
           type: "completed",
           result: {
             chatId: input.chatId,
+            aiResponse: content,
             outcome: { type: "committed", status: "completed" },
           },
         };
@@ -359,6 +375,7 @@ export async function fixture(options = {}) {
     },
     ToolPkg: {
       getLocalDataDir: () => "/plugin",
+      wasm: options.wasm,
       ipc: { on() {} },
       async callDependency(owner, method, input) {
         if (owner === "com.operit.character_cards")
@@ -371,13 +388,13 @@ export async function fixture(options = {}) {
   };
   const service = load("service", globals);
   /** Delivers one exact getUpdates response to the active host request. */
-  async function batch(messages, cursor = "cursor-1", extra = {}) {
+  async function batch(messages, cursor = "cursor-1", extra = {}, statusCode = 200) {
     const result = response({
       ret: 0,
       msgs: messages,
       get_updates_buf: cursor,
       ...extra,
-    });
+    }, { statusCode });
     if (pendingPoll === null) batches.push(result);
     else {
       const resolve = pendingPoll;

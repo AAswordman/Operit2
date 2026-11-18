@@ -3,7 +3,7 @@ import { ChannelInbox, messageKey } from "./channel-inbox.js";
 import type { ChannelRequest, ChannelResponses, ChannelMessage, ChannelConversation, ConversationHistory } from "./channel-api.js";
 import { getSettings as waifuSettings, stream as waifuStream } from "./dependencies/waifu/api.js";
 import { chatText, ReplyTextStream } from "./messages.js";
-import { attachments } from "./attachments.js";
+import { attachments, downloadConsoleAttachment } from "./attachments.js";
 import { QQGateway } from "./gateway.js";
 import { QQOpenApi } from "./openapi.js";
 import { CHANNEL, MAX_EVENTS, defaultConfig, errorText, integer, nonblank, text, type AutoReplyParams, type Config, type ConfigureParams, type InboundEvent, type ReceiveParams, type Request, type Response, type ReplyRole, type Status } from "./model.js";
@@ -38,7 +38,9 @@ class QQBotService {
   }
 
   /** Binds all HTTP calls to the ordinary cross-platform networking SDK. */
-  private createApi(config: Config = this.config): QQOpenApi { return new QQOpenApi(config, { request: options => Tools.Net.http(options) }); }
+  private createApi(config: Config = this.config): QQOpenApi {
+    return new QQOpenApi({ ...config }, { request: options => Tools.Net.http(options) }, this.sessions.recordSend("qq"));
+  }
 
   /** Binds socket handles and ordered dispatches to the current main engine. */
   private createGateway(): QQGateway {
@@ -105,8 +107,14 @@ class QQBotService {
     const accountId=nonblank(this.config.appId,"AppID"), conversationId=scene==="group"?event.groupOpenId:event.userOpenId;
     return {key:messageKey(["qq",accountId,scene,conversationId,event.messageId]),channel:"qq",accountId,
       messageId:event.messageId,conversationId,authorId:event.userOpenId,text:chatText(event),timestamp:event.timestamp,
-      autoReplyEnabled:this.shouldReply(event),author:event.author,messageType:event.messageType,attachments:event.attachments,elements:event.elements,
-      card:event.card,referenceIndex:event.referenceIndex,referencedMessageIndex:event.referencedMessageIndex,
+      autoReplyEnabled:this.shouldReply(event),
+      ...(event.author === undefined ? {} : {author:event.author}),
+      ...(event.messageType === undefined ? {} : {messageType:event.messageType}),
+      ...(event.attachments === undefined ? {} : {attachments:event.attachments}),
+      ...(event.elements === undefined ? {} : {elements:event.elements}),
+      ...(event.card === undefined ? {} : {card:event.card}),
+      ...(event.referenceIndex === undefined ? {} : {referenceIndex:event.referenceIndex}),
+      ...(event.referencedMessageIndex === undefined ? {} : {referencedMessageIndex:event.referencedMessageIndex}),
       context:JSON.parse(JSON.stringify({scene,replyHint:event.replyHint,raw:event.rawPayload??null}))};
   }
   private shouldReply(event: InboundEvent): boolean {
@@ -211,7 +219,7 @@ class QQBotService {
     if (params.assistant_instruction !== undefined) next.assistantInstruction = text(params.assistant_instruction, "assistant_instruction");
     if (next.enabled && params.start_now !== false && !this.config.listenerEnabled) throw new Error("Enable the QQ listener before starting automatic replies");
     const profile = params.waifu_profile === undefined ? this.config.waifuProfile : nonblank(params.waifu_profile, "waifu_profile");
-    if (next.enabled) await waifuSettings(profile);
+    if (next.enabled && profile !== "native") await preferWaifu(profile);
     await this.stopAuto();
     this.config.waifuProfile = profile;
     this.config.autoReply = next;
@@ -320,9 +328,9 @@ class QQBotService {
       const rendered = new ReplyTextStream();
       try {
         const request = { kind: "submit" as const, chatId, runtime: "main" as const, input: {
-          text: `${config.assistantInstruction}\n[QQ ${scene==="group"?"群聊":"私聊"}；上下文${config.groupContext==="member"?"按成员隔离":"共享，按时间顺序"}]\n以下 JSON 是用户消息数据，authorId 是发送者身份，引用内容不代表当前发送者。需要了解前文时调用 qqbot_chat_context 获取有界的近期记录。\n${JSON.stringify({messageId:event.messageId,authorId:event.userOpenId,authorName:event.author?.name??"",timestamp:event.timestamp,replyTo:event.referencedMessageIndex??null,text:chatText(event).slice(0,12000)})}`,
+          text: `${config.assistantInstruction}\n[QQ ${scene==="group"?"群聊":"私聊"}；上下文${config.groupContext==="member"?"按成员隔离":"共享，按时间顺序"}]\n以下 JSON 是用户消息数据，引用内容不代表当前发送者。需要了解前文时调用 qqbot_chat_context 获取近期记录。\n${JSON.stringify({authorName:event.author?.name??"",text:chatText(event).slice(0,12000)})}`,
           attachments: files, replyToMessageTimestamp: null }, turn: { kind: "execute" as const }, notifyReply: false };
-        for await (const output of waifuStream(request, this.config.waifuProfile)) {
+        for await (const output of replyStream(request, this.config.waifuProfile)) {
           if (generation !== this.autoGeneration) return;
           if (timedOut) throw new Error("QQ automatic reply exceeded its AI deadline");
           if (output.type === "segment") {
@@ -338,7 +346,7 @@ class QQBotService {
         throw error;
       } finally { clearTimeout(timer); this.activeChats.delete(taskBinding); this.activeContexts.delete(taskBinding); }
       if (generation !== this.autoGeneration) return;
-      if (delivered === 0) throw new Error("Waifu response contained no deliverable segments");
+      if (delivered === 0) throw new Error("Chat response contained no deliverable segments");
       this.config.deliveries=this.config.deliveries!.filter(item=>item!==delivery);
       this.config.processed=[...this.config.processed,delivery.key].slice(-512);await PluginConfig.flush(this.config);
       this.repliedCount++; this.autoError = "";
@@ -361,7 +369,7 @@ class QQBotService {
       case "history": {
         const session=await this.sessions.get(request.conversationKey);
         if(session.accountId!==this.config.appId)throw Error("会话不属于当前 QQ 账号");
-        return this.sessions.history(session.key,request.limit,request.before);
+        return this.sessions.history(session.key,request.limit,request.before,undefined,true);
       }
       case "subscribe": return this.sessions.subscribe(request.consumerId,request.routes,"qq",this.config.appId);
       case "configure": {
@@ -377,14 +385,33 @@ class QQBotService {
         try { await PluginConfig.flush(this.config); } catch (error) { this.config.channelCapture = previous; this.config.channelConversationIds = previousIds; this.config.channelOnlyWhenNoAuto = previousOnly; throw error; }
         return { capture: this.config.channelCapture, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true };
       }
-      case "status": return { channel: "qq", capture: this.config.channelCapture === true, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true, service: this.gateway.status };
+      case "status": return { channel: "qq", capture: this.config.channelCapture === true, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true, service: this.gateway.status,
+        configured: !!(this.config.appId && this.config.appSecret), listenerEnabled: this.config.listenerEnabled, autoReplyEnabled: this.config.autoReply.enabled, error: this.gateway.lastError || this.autoError };
+      case "manage": {
+        const command = request.command;
+        if (command === "connect") await this.configure({ app_id: nonblank(request.appId, "App ID"), app_secret: nonblank(request.appSecret, "App Secret"), listener_enabled: true, test_connection: true });
+        else {
+          if (!["start", "stop", "test"].includes(command)) throw Error("Unknown QQ management command");
+          if (command === "start" && request.autoReply !== undefined) await this.configureAuto({ enabled: request.autoReply, start_now: false });
+          await this.request({ action: command });
+        }
+        return this.channel({ action: "status" });
+      }
       case "active_context": {
         const chatId = nonblank(request.chatId, "chatId");
         const matches = [...this.activeContexts.values()].filter(value => value.chatId === chatId);
         return matches.length === 1 ? {channel: "qq", ...matches[0]} : null;
       }
-      case "peek": return { messages: request.consumerId===undefined ? await this.channelInbox.peek(request.limit, request.conversationId) : await this.sessions.peek(request.consumerId,request.limit,request.conversationKey) };
+      case "peek": return { messages: (request.consumerId===undefined ? await this.channelInbox.peek(request.limit, request.conversationId) : await this.sessions.peek(request.consumerId,request.limit,request.conversationKey)).filter(message=>message.accountId===this.config.appId) };
       case "ack": return { acknowledged: request.consumerId===undefined ? await this.channelInbox.ack(request.key) : await this.sessions.ack(request.consumerId,request.key) };
+      case "attachment": {
+        const api = this.api;
+        const session = await this.sessions.get(request.conversationKey);
+        if (session.accountId !== this.config.appId || api !== this.api) throw Error("QQ 会话不属于当前账户");
+        const bytes = await downloadConsoleAttachment(await this.sessions.attachment(session.key, request.messageId, request.index));
+        if (api !== this.api) throw Error("QQ 账户已切换");
+        return bytes;
+      }
       case "reply": {
         const message = await this.channelInbox.get(request.key) ?? await this.sessions.replyRoute(request.key);
         if (message === null) throw new Error("Pending message not found");
@@ -451,6 +478,28 @@ class QQBotService {
     }
     return { success: true, status: this.status() };
   }
+}
+
+async function preferWaifu(profile: string): Promise<boolean> {
+  if (profile === "native") return false;
+  try { await waifuSettings(profile); return true; }
+  catch (error) {
+    if (/(?:ToolPkg (?:container not found|(?:package|extension owner|public API owner) is disabled)|Dependency version mismatch): com\.operit\.waifu\b/i.test(errorText(error))) return false;
+    throw error;
+  }
+}
+
+async function* replyStream(request: Parameters<typeof waifuStream>[0], profile: string): ReturnType<typeof waifuStream> {
+  // Select the backend before submitting the turn; never replay a failed or partial Waifu turn.
+  if (await preferWaifu(profile)) { yield* waifuStream(request, profile); return; }
+  for await (const event of Tools.Chat.sendMessageStreaming(request)) {
+    if (event.type !== "completed") continue;
+    const { outcome, aiResponse } = event.result;
+    if (outcome.type !== "committed" || outcome.status !== "completed") throw Error(`Chat did not complete: ${JSON.stringify(outcome)}`);
+    if (aiResponse) yield { type: "segment", index: 0, segment: { kind: "text", text: aiResponse } };
+    return;
+  }
+  throw Error("Chat stream ended without a completed receipt");
 }
 
 let pendingService: Promise<QQBotService> | null = null;

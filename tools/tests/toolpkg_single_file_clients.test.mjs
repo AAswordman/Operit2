@@ -11,6 +11,7 @@ const ts = require('../../plugins/packages/buildin/workflow/node_modules/typescr
 const packages = [
   'buildin/workflow', 'buildin/character_cards', 'buildin/goal_mode',
   'external/subagents', 'external/waifu', 'external/qqbot', 'external/wechat',
+  'external/feishu', 'external/connector_hub',
   'external/music_studio', 'external/project_maintenance',
 ];
 const packageRoot = path.resolve('plugins/packages');
@@ -56,6 +57,15 @@ for (const name of packages) {
           // @ts-expect-error Consumers cannot select an arbitrary response type.
           request<string>({action:'status'});
         `;
+      } else if (name === 'external/connector_hub') {
+        fixture = `import {request, type Dashboard, type History} from './api';
+          const dashboard: Promise<Dashboard> = request({action:'dashboard'});
+          const history: Promise<History> = request({action:'history',channel:'feishu',conversationKey:'conversation'});
+          // @ts-expect-error Attachment export is console-only.
+          request({action:'attachment',channel:'feishu',conversationKey:'conversation',messageId:'id',index:0});
+          // @ts-expect-error Credential management is console-only.
+          request({action:'manage',channel:'feishu',command:'connect',appId:'id',appSecret:'secret'});
+        `;
       } else if (name === 'external/project_maintenance') {
         fixture = `import {request, type Dashboard, type Ticket, type Inspection, type Request, type ChannelReport, type Note, type Stage, type AvailableChat, type CapturedMessage} from './api';
           const dashboard: Promise<Dashboard> = request({action:'dashboard'});
@@ -84,6 +94,8 @@ for (const name of packages) {
 for (const [name, provider, method] of [
   ['external/qqbot', 'com.operit.qqbot_bundle', 'channel.v1'],
   ['external/wechat', 'com.operit.wechat_bot', 'channel.v1'],
+  ['external/feishu', 'com.operit.feishu_bot', 'channel.v1'],
+  ['external/connector_hub', 'com.operit.connector_hub', 'connectors.v1'],
   ['external/project_maintenance', 'com.operit.project_maintenance', 'maintenance.request'],
 ]) {
   test(`${name}: copied wrapper routes once and preserves transport failures`, async () => {
@@ -95,7 +107,7 @@ for (const [name, provider, method] of [
       calls.push(args); return fail ? Promise.reject(failure) : Promise.resolve({sentinel:true});
     }}});
     vm.runInContext(ts.transpileModule(source, {compilerOptions:{module:ts.ModuleKind.CommonJS, target:ts.ScriptTarget.ES2020}}).outputText, context);
-    const payload = {action: name === 'external/project_maintenance' ? 'dashboard' : 'status'};
+    const payload = {action: method === 'channel.v1' ? 'status' : 'dashboard'};
     assert.deepEqual(await context.exports.request(payload), {sentinel:true});
     assert.deepEqual(calls, [[provider, method, payload]]);
     fail = true;
@@ -104,8 +116,7 @@ for (const [name, provider, method] of [
   });
 }
 
-test('maintenance copies the exact published Bot clients', () => {
-  for (const name of ['qqbot','wechat']) assert.equal(
-    readFileSync(path.join(packageRoot, `external/project_maintenance/src/dependencies/${name}/api.ts`), 'utf8'),
-    readFileSync(path.join(packageRoot, `external/${name}/src/channel-api.ts`), 'utf8'));
+test('maintenance copies the exact published connector client', () => {
+  assert.equal(readFileSync(path.join(packageRoot, 'external/project_maintenance/src/dependencies/connector_hub/api.ts'), 'utf8'),
+    readFileSync(path.join(packageRoot, 'external/connector_hub/src/api.ts'), 'utf8'));
 });

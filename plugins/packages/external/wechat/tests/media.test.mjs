@@ -15,6 +15,16 @@ const PNG = Buffer.from(
   "base64",
 );
 const KEY = "000102030405060708090a0b0c0d0e0f";
+// A generated 100 ms, 440 Hz tone encoded by silk-wasm 3.7.1, not user audio.
+const SILK = Buffer.from(
+  "AiMhU0lMS19WMywAx1+xeCLEFacZbGwaOeNFDexZFSa2usNgNPBEE9m4CLbKPe6MSXwkKOPSz/8wAL90PwGOF2KCfmWe7epjyNQxKzqeK1nzEBBh/ekRxGdCj9OSMAS37eOHM1Uff+kkf3EAvuyP7heg4aKRo9iVF9ZugHwleDNvWDQy5IESWDx6c8/XBOUELpzcFtp6Td0W60UIAEmVoiksSwoEstWz8GizLFwcwFZ0G1/DqmoEOMxdi4fMMGJ8t+usQUshz4NzpSuigt3X4Zdp49tqXB5pkEHNzHdcAL7sczWa1PiKj00CZr6jbvQyAnn+oyW2xdS9FRbqUQ8WJ7j8lKAZYNy2myKti1S8+QQt13sBEJ9/GJ+rSBtJ6fZDZmEAJs58nZVifYHDGCjSYYVIVz0n+vMIfMF/awC+7I/wC5DFopGi7Xp4CtuYj06OTFyomBR6Z/LStxQCLfNYllFBbKjm3TxFXzvvRCKNq6eXrtR696ZdoF1VzqUeLWyUBMFOxn1sQSkHDxNDEm5+6M72lrjdVoiM0RmRA31CQJMrxXpL4ewdGA==",
+  "base64",
+);
+const voice = (encode_type) => ({
+  type: 3,
+  voice_item: { encode_type, media: { encrypt_query_param: "query", aes_key: Buffer.from(KEY).toString("base64") } },
+});
+const encrypt = (bytes) => binaryCrypto().binary.encryptAesEcb(bytes.toString("base64"), KEY);
 
 /** Binds actual media code to real cryptography and a bounded in-memory filesystem. */
 function mediaFixture(options = {}) {
@@ -27,6 +37,7 @@ function mediaFixture(options = {}) {
     uploads = [];
   const globals = {
     CryptoJS: crypto,
+    ToolPkg: { wasm: options.wasm },
     getPluginConfigDir: () => "/plugins/wechat",
     Tools: {
       Files: {
@@ -223,6 +234,57 @@ test("a transcribed voice item without media does not pretend to have a download
     f.mediaReference({ type: 3, voice_item: { text: "转写文本" } }),
     null,
   );
+});
+
+test("real Tencent SILK goes to Chat as 24 kHz mono PCM WAV even without codec metadata", async () => {
+  const f = await fixture({ auto: true, downloadData: encrypt(SILK), wasm: "test-bundled-wasm" });
+  const event = message(1);
+  event.item_list.push(voice());
+  await f.call({ action: "start" });
+  await f.batch([event]);
+  await f.time.advance(400);
+  const attachment = f.submitted[0].input.attachments[0];
+  assert.equal(attachment.mimeType, "audio/wav");
+  assert.match(attachment.filePath, /\.wav$/);
+  const wav = f.files.get(attachment.filePath);
+  assert.equal(wav.toString("ascii", 0, 4), "RIFF");
+  assert.equal(wav.readUInt32LE(4), wav.length - 8);
+  assert.equal(wav.toString("ascii", 8, 12), "WAVE");
+  assert.equal(wav.readUInt16LE(20), 1);
+  assert.equal(wav.readUInt16LE(22), 1);
+  assert.equal(wav.readUInt32LE(24), 24000);
+  assert.equal(wav.readUInt16LE(34), 16);
+  assert.equal(wav.readUInt32LE(40), 4800);
+  assert.equal(wav.length, 4844);
+  assert.ok(wav.subarray(44).some(byte => byte !== 0));
+  await f.stop();
+});
+
+test("the console receives the original SILK rather than the Chat WAV", async () => {
+  const f = mediaFixture({ downloadData: encrypt(SILK), wasm: "test-bundled-wasm" });
+  const original = await f.downloadMediaContent(f.api, f.mediaReference(voice(6)), 8 * 1024 * 1024);
+  assert.equal(original.mimeType, "audio/silk");
+  assert.equal(original.fileName, "wechat-voice.silk");
+  assert.deepEqual(Buffer.from(original.contentBase64, "base64"), SILK);
+});
+
+test("SILK decoding falls back to original bytes on truncation or with no WASM host", async () => {
+  for (const [bytes, wasm] of [[SILK.subarray(0, -1), "test-bundled-wasm"], [SILK, undefined]]) {
+    const f = mediaFixture({ downloadData: encrypt(bytes), wasm });
+    const file = await f.downloadMedia(f.api, voice(6), "voice");
+    assert.equal(file.mimeType, "audio/silk");
+    assert.deepEqual(f.files.get(file.filePath), bytes);
+  }
+});
+
+test("SILK decoding rejects oversize packets, oversize input and expanded audio beyond two minutes", async () => {
+  const { silkToWav } = load("silk", { ToolPkg: { wasm: "test-bundled-wasm" } });
+  const header = SILK.subarray(0, 10);
+  for (const bad of [
+    Buffer.concat([header, Buffer.from([1, 4]), Buffer.alloc(1025)]),
+    Buffer.concat([header, Buffer.alloc(2 * 1024 * 1024)]),
+    Buffer.concat([header, Buffer.alloc(2 * 6001)]),
+  ]) assert.equal(await silkToWav(bad.toString("base64")), null);
 });
 
 test("manual media tool uses the host binary body type and exact incoming context", async () => {

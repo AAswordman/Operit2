@@ -60,12 +60,18 @@ export interface ChannelConversation {
   conversationId: string; title: string; chatId: string | null; contextChatIds?: string[]; lastMessageAt: number;
 }
 export interface ContextMessage {
+  direction?: "outgoing";
+  delivery?: "accepted" | "rejected" | "unknown";
+  media?: { kind: MediaKind; name?: string; downloadable?: boolean }[];
   messageId: string; authorId: string; authorName: string; text: string; timestamp: string;
   receivedAt: number; referenceIndex?: string; referencedMessageIndex?: string;
 }
-export interface ConversationHistory { conversation: ChannelConversation; messages: ContextMessage[]; truncated: boolean }
+export interface ConversationHistory { conversation: ChannelConversation; messages: ContextMessage[]; truncated: boolean; latestInboundId?: string }
 export interface ChannelSubscription { conversationKey: string; since: number }
 export type ChannelRequest =
+  | { action: "attachment"; conversationKey: string; messageId: string; index: number }
+  | { action: "manage"; command: "start" | "stop" | "test"; autoReply?: boolean }
+  | { action: "manage"; command: "connect"; appId: string; appSecret: string }
   | { action: "configure"; capture: boolean; conversationIds?: string[] | null; channelOnlyWhenNoAuto?: boolean }
   | { action: "status" }
   | { action: "conversations" }
@@ -83,6 +89,7 @@ export interface ChannelConfiguration {
   channelOnlyWhenNoAuto: boolean;
 }
 export interface ChannelStatus extends ChannelConfiguration {
+  configured?: boolean; listenerEnabled?: boolean; autoReplyEnabled?: boolean; error?: string;
   channel: "qq" | "wechat";
   service: "ready" | "connecting" | "stopped" | "error";
 }
@@ -95,6 +102,8 @@ export interface ActiveContext {
   authorId: string;
 }
 export interface ChannelResponses {
+  attachment: { fileName: string; mimeType: string; contentBase64: string };
+  manage: ChannelStatus;
   conversations: { conversations: ChannelConversation[] };
   open_chat: ChannelConversation;
   history: ConversationHistory;

@@ -5,8 +5,8 @@ import {
   getSettings as waifuSettings,
   stream as waifuStream,
 } from "./dependencies/waifu/api.js";
-import { WeChatApi, hostHttp, WeChatApiError } from "./api.js";
-import { downloadMedia, uploadMedia, mediaReference } from "./media.js";
+import { WeChatApi, hostHttp, WeChatApiError, WeChatTransportError } from "./api.js";
+import { downloadMedia, downloadMediaContent, uploadMedia, mediaReference } from "./media.js";
 import {
   API_BASE,
   CHANNEL,
@@ -52,6 +52,7 @@ class WeChatService {
     qrcode: string;
     baseUrl: string;
     verifyCode: string;
+    startOnConfirm: boolean;
   } | null = null;
   private loginDelay: { timer: number; resolve: () => void } | null = null;
   private pollDelay: { timer: number; resolve: () => void } | null = null;
@@ -71,7 +72,7 @@ class WeChatService {
 
   /** Binds a stored account to the ordinary cross-platform host network port. */
   constructor(private readonly config: Config) {
-    this.api = new WeChatApi(this.http, config.account);
+    this.api = new WeChatApi(this.http, config.account, this.sessions.recordSend("wechat"));
     config.failedDeliveries ??= [];
     config.activeDeliveries ??= [];
     const interrupted = [...config.activeDeliveries, ...(config.delivery ? [config.delivery] : [])];
@@ -126,7 +127,7 @@ class WeChatService {
   }
 
   /** Starts QR acquisition and returns as soon as a displayable QR value exists. */
-  async loginStart(): Promise<void> {
+  async loginStart(startOnConfirm = false): Promise<void> {
     await this.cancelLogin();
     await this.stopRuntime();
     this.config.listenerEnabled = false;
@@ -146,7 +147,7 @@ class WeChatService {
       this.loginSession = {
         qrcode: nonblank(response.qrcode, "qrcode"),
         baseUrl: API_BASE,
-        verifyCode: "",
+        verifyCode: "", startOnConfirm,
       };
       this.loginTask = this.pollLogin(++this.loginGeneration);
     } catch (error) {
@@ -233,11 +234,14 @@ class WeChatService {
             this.config.failedDeliveries = [];
           }
           this.config.account = account;
-          this.api = new WeChatApi(this.http, account);
+          this.api = new WeChatApi(this.http, account, this.sessions.recordSend("wechat"));
           this.login.qrContent = "";
           this.login.error = "扫码登录成功。";
           this.loginSession = null;
           await PluginConfig.flush(this.config);
+          if (session.startOnConfirm && generation === this.loginGeneration) {
+            await this.start().catch(error => { this.lastError = this.diagnostic(error); });
+          }
           return;
         }
         throw new Error(`未知微信二维码状态：${state}`);
@@ -292,16 +296,18 @@ class WeChatService {
       throw new Error("请先扫码登录微信机器人。");
     if (restart) await this.stopRuntime();
     if (this.pollTask !== null) return;
-    if (this.config.autoReply.enabled)
-      await waifuSettings(this.config.autoReply.waifuProfile);
     this.state = "connecting";
     this.lastError = "";
     try {
       await this.api.post("msg/notifystart");
     } catch (error) {
-      this.state = "error";
+      if (error instanceof WeChatApiError && error.code === -14) {
+        this.state = "error";
+        this.lastError = this.diagnostic(error);
+        throw new Error(this.lastError);
+      }
+      // Lifecycle notifications are best-effort in the iLink protocol.
       this.lastError = this.diagnostic(error);
-      throw new Error(this.lastError);
     }
     this.config.listenerEnabled = true;
     await PluginConfig.flush(this.config);
@@ -317,30 +323,39 @@ class WeChatService {
   /** Repeats getUpdates with the server cursor and persists it atomically with events. */
   private async poll(generation: number): Promise<void> {
     try {
-      let timeoutSeconds = 45;
+      let timeoutSeconds = 45, failures = 0;
       while (
         generation === this.pollGeneration &&
         this.config.listenerEnabled
       ) {
-        const response = await this.api.updates(
-          this.config.cursor,
-          timeoutSeconds,
-        );
+        let response: JsonObject;
+        try { response = await this.api.updates(this.config.cursor, timeoutSeconds); }
+        catch (error) {
+          const retryable = error instanceof WeChatTransportError || (error instanceof WeChatApiError && error.code !== -14);
+          if (!retryable || generation !== this.pollGeneration) throw error;
+          this.state = "connecting";
+          this.lastError = `网络中断，正在重连：${this.diagnostic(error)}`;
+          await this.waitPoll(Math.min(30000, 1000 * 2 ** Math.min(failures++, 5)));
+          continue;
+        }
+        failures = 0;
         if (generation !== this.pollGeneration) return;
         const messages = response.msgs === undefined ? [] : response.msgs;
         if (!Array.isArray(messages))
           throw new Error("微信 getUpdates 的 msgs 必须是数组。");
-        const cursor = text(response.get_updates_buf, "get_updates_buf");
+        const cursor = response.get_updates_buf === undefined ? "" : text(response.get_updates_buf, "get_updates_buf");
         const seen = new Set(this.config.seen);
         const incoming: InboundEvent[] = [];
         for (const value of messages) {
-          const raw = object(value, "WeChat message");
-          if (
-            raw.message_type !== 1 ||
-            (raw.message_state !== undefined && raw.message_state !== 2)
-          )
+          let event: InboundEvent;
+          try {
+            const raw = object(value, "WeChat message");
+            if (raw.message_type !== 1 || (raw.message_state !== undefined && raw.message_state !== 2) || (typeof raw.group_id === "string" && raw.group_id)) continue;
+            event = inbound(raw);
+          } catch (error) {
+            console.warn("[wechat.inbound]", this.diagnostic(error));
             continue;
-          const event = inbound(raw);
+          }
           // The same remote message ID in another conversation is a different
           // message. Legacy plain IDs remain conservative during migration.
           const identity = JSON.stringify([this.api.requireAccount().botId, event.userId, event.messageId]);
@@ -377,6 +392,7 @@ class WeChatService {
         this.receivedCount += incoming.length;
         await PluginConfig.flush(this.config);
         this.state = "ready";
+        this.lastError = "";
         if (response.longpolling_timeout_ms !== undefined) {
           const duration = integer(
             response.longpolling_timeout_ms,
@@ -386,13 +402,7 @@ class WeChatService {
           );
           timeoutSeconds = Math.ceil(duration / 1000) + 10;
         }
-        await new Promise<void>((resolve) => {
-          const timer = setTimeout(() => {
-            this.pollDelay = null;
-            resolve();
-          }, 100);
-          this.pollDelay = { timer, resolve };
-        });
+        await this.waitPoll(100);
       }
     } catch (error) {
       if (generation === this.pollGeneration) {
@@ -408,6 +418,13 @@ class WeChatService {
     } finally {
       if (generation === this.pollGeneration) this.pollTask = null;
     }
+  }
+
+  private waitPoll(ms: number): Promise<void> {
+    return new Promise(resolve => {
+      const timer = setTimeout(() => { this.pollDelay = null; resolve(); }, ms);
+      this.pollDelay = { timer, resolve };
+    });
   }
 
   /** Stops the poll, model generation and typing state before releasing the runtime. */
@@ -506,9 +523,18 @@ class WeChatService {
       this.activeChats.set(event.userId, chatId);
       this.activeContexts.set(event.userId, {chatId, accountId: this.api.requireAccount().botId, conversationId: event.userId, authorId: event.userId});
       const attachments = [];
-      for (const item of event.items) {
-        if (mediaReference(item) === null) continue;
-        attachments.push(await downloadMedia(this.api, item, event.messageId));
+      let failedMedia = 0;
+      for (const item of event.items.flatMap(item => {
+        const quote = item.ref_msg as JsonObject | undefined;
+        return quote?.message_item && typeof quote.message_item === "object" ? [item, quote.message_item as JsonObject] : [item];
+      }).slice(0, 20)) {
+        if (generation !== this.autoGeneration) return;
+        try {
+          if (mediaReference(item) !== null) attachments.push(await downloadMedia(this.api, item, event.messageId));
+        } catch (error) {
+          failedMedia++;
+          console.error("[wechat.media]", this.diagnostic(error));
+        }
       }
       if (generation !== this.autoGeneration)
         throw new Error("微信自动回复已停止。");
@@ -524,14 +550,14 @@ class WeChatService {
           chatId,
           runtime: "main" as const,
           input: {
-            text: `${this.messageText(event)}\n\n[微信用户=${event.userId}; message=${event.messageId}]\n${config.assistantInstruction}`,
+            text: `${this.messageText(event)}${failedMedia ? `\n\n[${failedMedia} 个附件暂时无法读取，请勿编造内容]` : ""}\n\n${config.assistantInstruction}`,
             attachments,
             replyToMessageTimestamp: null,
           },
           turn: { kind: "execute" as const },
           notifyReply: false,
         };
-        for await (const output of waifuStream(input, config.waifuProfile)) {
+        for await (const output of replyStream(input, config.waifuProfile)) {
           if (generation !== this.autoGeneration)
             throw new Error("微信自动回复已停止。");
           if (timedOut) throw new Error("微信自动回复已超时。");
@@ -568,7 +594,7 @@ class WeChatService {
         clearTimeout(timer);
       }
       if ((current()?.delivered ?? 0) === 0)
-        throw new Error("Waifu 没有产生可发送的回复。");
+        throw new Error("模型没有产生可发送的回复。");
       finishedDelivery = current();
       this.config.activeDeliveries = this.config.activeDeliveries.filter((item) => item.event !== event);
       await PluginConfig.flush(this.config);
@@ -661,7 +687,7 @@ class WeChatService {
       );
     if (params.waifu_profile !== undefined)
       next.waifuProfile = nonblank(params.waifu_profile, "waifu_profile");
-    if (next.enabled) await waifuSettings(next.waifuProfile);
+    if (next.enabled && next.waifuProfile !== "native") await waifuSettings(next.waifuProfile);
     if (!next.enabled) await this.stopAuto();
     this.config.autoReply = next;
     await PluginConfig.flush(this.config);
@@ -916,11 +942,7 @@ class WeChatService {
         const previous = this.config.history.find(
           (value) => value.messageId === id && value.userId === event.userId,
         );
-        quotes.push(
-          previous === undefined
-            ? `[引用消息 ${id}，本地未保存内容]`
-            : previous.text,
-        );
+        if (previous?.text) quotes.push(previous.text);
       }
       if (ref.title !== undefined)
         quotes.push(text(ref.title, "ref_msg.title"));
@@ -966,7 +988,16 @@ class WeChatService {
       case "history": {
         const session=await this.sessions.get(request.conversationKey);
         if(session.accountId!==this.config.account?.botId)throw Error("会话不属于当前微信账号");
-        return this.sessions.history(session.key,request.limit,request.before);
+        return this.sessions.history(session.key,request.limit,request.before,undefined,true);
+      }
+      case "attachment": {
+        const requestApi = this.api;
+        const session = await this.sessions.get(request.conversationKey);
+        if (session.accountId !== requestApi.requireAccount().botId || requestApi !== this.api) throw Error("微信会话不属于当前账户");
+        const item = await this.sessions.attachment(session.key,request.messageId,request.index);
+        const bytes = await downloadMediaContent(requestApi,item,8 * 1024 * 1024);
+        if (requestApi !== this.api) throw Error("微信账户已切换");
+        return bytes;
       }
       case "subscribe": return this.sessions.subscribe(request.consumerId,request.routes,"wechat",this.config.account?.botId??"");
       case "configure": {
@@ -982,20 +1013,34 @@ class WeChatService {
         try { await PluginConfig.flush(this.config); } catch (error) { this.config.channelCapture = previous; this.config.channelConversationIds = previousIds; this.config.channelOnlyWhenNoAuto = previousOnly; throw error; }
         return { capture: this.config.channelCapture, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true };
       }
-      case "status": return { channel: "wechat", capture: this.config.channelCapture === true, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true, service: this.state };
+      case "status": return { channel: "wechat", capture: this.config.channelCapture === true, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true, service: this.state,
+        configured: this.config.account !== null, listenerEnabled: this.config.listenerEnabled, autoReplyEnabled: this.config.autoReply.enabled, error: this.lastError || this.autoError };
+      case "manage": {
+        const command = request.command;
+        if (!["start", "stop", "test", "login_start", "login_cancel", "login_status", "login_verify", "logout"].includes(command)) throw Error("Unknown WeChat management command");
+        if (command === "start" && "autoReply" in request && request.autoReply !== undefined) await this.configureAuto({ enabled: request.autoReply });
+        if (command === "login_start") await this.loginStart(true);
+        else if (command === "login_verify") await this.request({ action: command, code: request.code });
+        else if (command !== "login_status") await this.request({ action: command });
+        const status = await this.channel({ action: "status" });
+        return { ...status, login: { ...this.login } } as ChannelResponses["manage"];
+      }
       case "active_context": {
         const chatId = nonblank(request.chatId, "chatId");
         const matches = [...this.activeContexts.values()].filter(value => value.chatId === chatId);
         return matches.length === 1 ? {channel: "wechat", ...matches[0]} : null;
       }
-      case "peek": return { messages: request.consumerId===undefined ? await this.channelInbox.peek(request.limit, request.conversationId) : await this.sessions.peek(request.consumerId,request.limit,request.conversationKey) };
+      case "peek": return { messages: (request.consumerId===undefined ? await this.channelInbox.peek(request.limit, request.conversationId) : await this.sessions.peek(request.consumerId,request.limit,request.conversationKey)).filter(message=>message.accountId===this.config.account?.botId) };
       case "ack": return { acknowledged: request.consumerId===undefined ? await this.channelInbox.ack(request.key) : await this.sessions.ack(request.consumerId,request.key) };
       case "reply": {
         const message = await this.channelInbox.get(request.key) ?? await this.sessions.replyRoute(request.key);
         if (message === null) throw new Error("Pending message not found");
         if (message.accountId !== this.config.account?.botId) throw new Error("Message belongs to a different WeChat account");
-        const token = this.replyContext(message.conversationId);
-        return { response: await this.api.sendText(message.conversationId, token, nonblank(request.text, "text")) };
+        const { media } = request;
+        if (media) return { response: await this.sendMedia({ user_id: message.conversationId, source: media.source,
+          kind: media.kind === "audio" ? "voice" : media.kind, file_name: media.fileName,
+          duration_ms: media.durationMs, voice_format: media.voiceFormat, sample_rate: media.sampleRate, text: request.text }) };
+        return { response: await this.api.sendText(message.conversationId, this.replyContext(message.conversationId), nonblank(request.text, "text")) };
       }
       default: throw new Error("Unknown channel request");
     }
@@ -1013,6 +1058,15 @@ class WeChatService {
       secrets.push(request.params.context_token ?? "");
     if (request?.action === "login_verify") secrets.push(request.code);
     return errorText(error, secrets);
+  }
+}
+
+async function* replyStream(input: Parameters<typeof waifuStream>[0], profile: string): ReturnType<typeof waifuStream> {
+  if (profile !== "native") { yield* waifuStream(input, profile); return; }
+  for await (const item of Tools.Chat.sendMessageStreaming(input)) {
+    if (item.type === "completed" && item.result.outcome.type === "committed" && item.result.outcome.status === "completed" && item.result.aiResponse) {
+      yield { type: "segment", index: 0, segment: { kind: "text", text: item.result.aiResponse } };
+    }
   }
 }
 

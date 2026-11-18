@@ -1,4 +1,5 @@
 import type { OutgoingMedia } from "./channel-api.js";
+import type { RecordSend } from "./channel-store.js";
 import { externalText } from "./messages.js";
 import type { Net } from "../../../../types/network";
 import type { Config, JsonObject, SendParams } from "./model.js";
@@ -9,6 +10,10 @@ export interface HttpPort {
   request(options: Net.HostHttpOptions): Promise<{ statusCode: number; content: string }>;
 }
 
+class QQHttpError extends Error {
+  constructor(readonly status: number, content: string) { super(`QQ HTTP ${status}: ${content}`); }
+}
+
 /** Implements QQ token acquisition and exact OpenAPI message endpoints. */
 export class QQOpenApi {
   private token = "";
@@ -17,12 +22,12 @@ export class QQOpenApi {
   private readonly sequences = new Map<string, number>();
 
   /** Binds credentials to one service generation and one networking port. */
-  constructor(private readonly config: Config, private readonly http: HttpPort) {}
+  constructor(private readonly config: Config, private readonly http: HttpPort, private readonly record?: RecordSend) {}
 
   /** Parses one real API response and rejects the original unsuccessful HTTP status. */
   private async json(options: Net.HostHttpOptions): Promise<JsonObject> {
     const response = await this.http.request({ connect_timeout: 20, read_timeout: 20, responseType: "text", follow_redirects: false, ...options });
-    if (response.statusCode < 200 || response.statusCode >= 300) throw new Error(`QQ HTTP ${response.statusCode}: ${response.content}`);
+    if (response.statusCode < 200 || response.statusCode >= 300) throw new QQHttpError(response.statusCode, response.content);
     return object(JSON.parse(response.content), "QQ API response");
   }
 
@@ -50,6 +55,10 @@ export class QQOpenApi {
   /** Sends one authenticated OpenAPI request to the explicitly selected environment. */
   async request(method: "GET" | "POST", path: string, body?: JsonObject): Promise<JsonObject> {
     const token = await this.accessToken();
+    return this.authenticated(token, method, path, body);
+  }
+
+  private authenticated(token: string, method: "GET" | "POST", path: string, body?: JsonObject): Promise<JsonObject> {
     const base = this.config.useSandbox ? "https://sandbox.api.sgroup.qq.com" : "https://api.sgroup.qq.com";
     const options: Net.HostHttpOptions = { url: base + path, method, headers: { Authorization: `QQBot ${token}`, "X-Union-Appid": this.config.appId, "Content-Type": "application/json" } };
     if (body !== undefined) options.body = body;
@@ -101,7 +110,7 @@ export class QQOpenApi {
     // Validate the complete message before uploading bytes or contacting QQ.
     this.messageBody({ ...params, msg_type: 7, media: { file_info: "pending-upload" } });
     const uploaded = await this.uploadMedia(scene, target, media);
-    return this.send(scene, target, { ...params, msg_type: 7, media: { file_info: nonblank(uploaded.file_info, "uploaded media file_info") } });
+    return this.sendMessage(scene, target, { ...params, msg_type: 7, media: { file_info: nonblank(uploaded.file_info, "uploaded media file_info") } }, media);
   }
 
   /** Compatibility wrapper for Waifu's image segments. */
@@ -155,6 +164,10 @@ export class QQOpenApi {
 
   /** Builds one authoritative message body and keeps reply sequences monotonic per source message. */
   async send(scene: "c2c" | "group", target: string, params: SendParams): Promise<JsonObject> {
+    return this.sendMessage(scene, target, params);
+  }
+
+  private async sendMessage(scene: "c2c" | "group", target: string, params: SendParams, media?: OutgoingMedia): Promise<JsonObject> {
     nonblank(target, "QQ target openid");
     if (scene !== "c2c" && scene !== "group") throw new Error("Sending requires a C2C or group scene");
     const body = this.messageBody(params);
@@ -166,6 +179,18 @@ export class QQOpenApi {
     this.sequences.set(key, seq);
     if (this.sequences.size > 512) this.sequences.delete(this.sequences.keys().next().value!);
     const path = scene === "c2c" ? `/v2/users/${encodeURIComponent(target)}/messages` : `/v2/groups/${encodeURIComponent(target)}/messages`;
-    return this.request("POST", path, body);
+    const account = this.config.appId, token = await this.accessToken();
+    if (account !== this.config.appId) throw Error("QQ account changed before sending");
+    const summary = { text: typeof body.content === "string" && body.content ? body.content :
+      body.markdown ? "[Markdown]" : body.card ? "[卡片]" : body.media && !media ? "[媒体]" : "",
+      ...(media ? { media: [{ kind: media.kind, name: media.fileName }] } : {}) };
+    let response: JsonObject;
+    try { response = await this.authenticated(token, "POST", path, body); }
+    catch (error) {
+      await this.record?.(account, scene, target, summary, error instanceof QQHttpError && error.status >= 400 && error.status < 500 && error.status !== 408 ? "rejected" : "unknown");
+      throw error;
+    }
+    await this.record?.(account, scene, target, summary, "accepted");
+    return response;
   }
 }

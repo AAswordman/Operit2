@@ -2,7 +2,7 @@ import React from 'react';
 import type {ChannelReport,Request} from '../src/api';
 import {Icon} from './icons';
 export function ChannelSessions({report,busy,onAction}:{report:ChannelReport|undefined;busy:boolean;onAction:(request:Request)=>void}){
-  if(!report?.sessions.length)return <div className="channel-empty"><strong>还没有发现会话</strong><p>先在对应 Bot 中连接账号，再从群或私聊发一条消息。这里会自动显示 Bot 会话，无需填写群号或会话 ID。</p></div>;
+  if(!report?.sessions.length)return <div className="channel-empty"><strong>还没有发现会话</strong><p>已连接的 Bot 收到消息后，会话会自动出现在这里。</p></div>;
   return <div className="channel-sessions">{report.sessions.map(session=><article className="channel-session" key={session.key}>
     <div className="session-heading"><span className="session-scene">{session.scene==='group'?'群聊':'私聊'}</span><strong>{session.title}</strong><span className={`status ${session.enabled?'complete':'neutral'}`}>{session.enabled?'维护已开启':'维护未开启'}</span></div>
     <p className="session-workspace"><Icon name="folder" size={14}/>{session.workspacePath||'尚未绑定工作区'}</p>

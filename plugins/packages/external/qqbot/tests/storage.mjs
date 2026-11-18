@@ -1,3 +1,11 @@
+import { readFileSync } from "node:fs";
+import vm from "node:vm";
+
+// Exercise the production SDK's value checks before the fake Host accepts a write.
+const runtime = readFileSync(new URL("../../../../../core/crates/plugin/sdk/src/js_sdk/storage_runtime.js", import.meta.url), "utf8");
+const start = runtime.indexOf("function __operitStorageValidate(");
+const validate = vm.compileFunction(runtime.slice(start, runtime.indexOf("\n/**", start)) + "\n__operitStorageValidate(value, []);", ["value"]);
+
 /** Minimal transactional ObjectDatabase host used to exercise the authored inbox. */
 export function objectStorage() {
   const entries = new Map(); let version = 0, failCommit = false;
@@ -13,7 +21,11 @@ export function objectStorage() {
       if (failCommit) throw new Error('disk unavailable');
       for (const guard of guards) { const old = entries.get(id(guard.collection,guard.key)); if ((old?.version ?? null) !== guard.expectedVersion) throw new Error('version conflict'); }
       for (const m of mutations) { const old = entries.get(id(m.collection,m.key)); if (m.expectedVersion !== undefined && (old?.version ?? null) !== m.expectedVersion) throw new Error('version conflict'); }
-      for (const m of mutations) entries.set(id(m.collection,m.key), {value: clone(m.value), version: String(++version)});
+      const values = mutations.map(m => { if (m.op === 'delete') return undefined; const value = clone(m.value); validate(value); return value; });
+      for (const [index, m] of mutations.entries()) {
+        if (m.op === 'delete') entries.delete(id(m.collection,m.key));
+        else entries.set(id(m.collection,m.key), {value: values[index], version: String(++version)});
+      }
     },
   };
   return { db, open: async () => db, fail(value) { failCommit = value; } };

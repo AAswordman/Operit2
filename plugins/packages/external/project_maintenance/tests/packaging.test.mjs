@@ -7,14 +7,16 @@ import path from 'node:path';
 const require = createRequire(import.meta.url);
 const packageRoot = fileURLToPath(new URL('../../../', import.meta.url));
 
-test('the maintenance archive includes the exact self-contained client and Bot copies', () => {
+test('the maintenance archive includes the exact self-contained connector client', () => {
   const {unzipSync} = require('../../../buildin/workflow/node_modules/fflate');
   const archive = unzipSync(readFileSync(path.join(packageRoot, 'external/project_maintenance/dist/project_maintenance.toolpkg')));
   const manifest = JSON.parse(Buffer.from(archive['manifest.json']).toString());
-  for (const file of [manifest.public_api, 'src/dependencies/qqbot/api.ts', 'src/dependencies/wechat/api.ts']) {
+  for (const file of [manifest.public_api, 'src/dependencies/connector_hub/api.ts']) {
     assert.ok(archive[file], `Missing archive source ${file}`);
     assert.equal(Buffer.from(archive[file]).toString(), readFileSync(path.join(packageRoot, 'external/project_maintenance', file), 'utf8'));
   }
+  assert.deepEqual(manifest.optional_requires.map(item=>item.id), ['com.operit.connector_hub']);
+  assert.equal(Object.keys(archive).some(file => /src\/dependencies\/(qqbot|wechat)\//.test(file)), false);
   assert.equal(Object.keys(archive).some(file => /maintenance_(qq|wechat)_bridge/.test(file)), false);
 });
 

@@ -523,10 +523,14 @@ pub enum NetCookieManagerSetCookies {
 pub enum NetWebSocketRequest {
     #[serde(rename = "open")]
     Open { url: String, connect_timeout_seconds: u64 },
+    #[serde(rename = "open_binary")]
+    OpenBinary { url: String, connect_timeout_seconds: u64 },
     #[serde(rename = "read")]
     Read { handle: String },
     #[serde(rename = "send")]
     Send { handle: String, text: String },
+    #[serde(rename = "send_binary")]
+    SendBinary { handle: String, base64: String },
     #[serde(rename = "close")]
     Close { handle: String },
 }
@@ -539,6 +543,8 @@ pub enum NetWebSocketEvent {
     Opened,
     #[serde(rename = "message")]
     Message { text: String },
+    #[serde(rename = "binary")]
+    Binary { base64: String },
     #[serde(rename = "closed")]
     Closed,
     #[serde(rename = "error")]

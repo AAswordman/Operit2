@@ -1,0 +1,8 @@
+{
+  "name": "@operit/subagents",
+  "private": true,
+  "scripts": {
+    "pack:toolpkg": "node scripts/pack.mjs"
+  },
+  "packageManager": "pnpm@10.7.0"
+}

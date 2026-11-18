@@ -7,7 +7,7 @@ export interface Ticket {
   attempt: number; notes: Note[]; error: string | null; autoStart?: boolean; forceTriage?: boolean; autoResumeAfterInfo?: boolean;
 }
 export interface CapturedMessage {
-  key: string; channel: "qq" | "wechat" | "app"; accountId: string; messageId: string;
+  key: string; channel: ExternalChannel | "app"; accountId: string; messageId: string;
   conversationId: string; authorId: string; text: string; timestamp: string; autoReplyEnabled?: boolean;
   context: Record<string, unknown>;
 }
@@ -15,14 +15,14 @@ export interface ChatBinding { chatId: string; projectPath: string | null; since
 export interface AvailableChat { id: string; title: string; workspaceId: string | null; workspacePath: string | null }
 export type Request =
   | { action: "dashboard" }
-  | { action: "prepare_channel_chat"; channel: "qq" | "wechat"; conversationKey: string }
+  | { action: "prepare_channel_chat"; channel: ExternalChannel; conversationKey: string }
   | { action: "list_bindings" }
   | { action: "available_chats" }
   | { action: "conversation_status"; chatId: string }
-  | { action: "channel_status"; channel: "qq" | "wechat"; parentChatId: string; projectPath: string; accountId: string; conversationId: string; authorId: string }
+  | { action: "channel_status"; channel: ExternalChannel; parentChatId: string; projectPath: string; accountId: string; conversationId: string; authorId: string }
   | { action: "bind_chat"; chatId: string; enabled: boolean }
   | { action: "app_message"; chatId: string; timestamp: number; text: string }
-  | { action: "channel_notifications"; channel: "qq" | "wechat"; parentChatId: string; projectPath: string; conversationId: string; since: number }
+  | { action: "channel_notifications"; channel: ExternalChannel; parentChatId: string; projectPath: string; conversationId: string; since: number }
   | { action: "capture"; parentChatId: string; projectPath: string; message: CapturedMessage }
   | { action: "create"; parentChatId: string; projectPath: string; source: string; feedback: string }
   | { action: "create_from_binding"; chatId: string; feedback: string }
@@ -38,21 +38,22 @@ export interface Inspection {
 }
 
 export interface ChannelSession {
-  key: string; channel: "qq" | "wechat"; accountId: string; scene: "c2c" | "group";
+  key: string; channel: ExternalChannel; accountId: string; scene: "c2c" | "group";
   conversationId: string; title: string; chatId: string | null; contextChatIds?: string[]; lastMessageAt: number;
   workspacePath: string | null; enabled: boolean; error: string;
 }
 export interface ChannelReport {
   availability: "available" | "unavailable";
-  channel: "qq" | "wechat"; enabled: boolean; service: "ready" | "connecting" | "stopped" | "error" | "unknown";
+  channel: ExternalChannel; enabled: boolean; service: "ready" | "connecting" | "stopped" | "error" | "unknown";
   sessions: ChannelSession[]; lastError: string; observedAt: number;
 }
 export interface FeedbackItem { key: string; channel: string; authorId: string; conversationId: string; projectPath: string; text: string; receivedAt: number; ticketId: string | null; ignored: string | null }
 
 export interface ProjectSummary {
   path: string; tickets: number; active: number; attention: number; completed: number;
-  updatedAt: number | null; chats: string[]; channels: ("qq" | "wechat")[];
+  updatedAt: number | null; chats: string[]; channels: ExternalChannel[];
 }
+export type ExternalChannel = "qq" | "wechat" | "feishu";
 export interface Dashboard {
   observedAt: number; workspaceChats: AvailableChat[]; tickets: Ticket[]; bindings: ChatBinding[]; channels: ChannelReport[];
   feedbackTotal: number; feedback: FeedbackItem[]; projects: ProjectSummary[];

@@ -1,5 +1,6 @@
 import type { Net } from "../../../../types/network";
 import type { HttpResponseData } from "../../../../types/results";
+import type { RecordSend, SendSummary } from "./channel-store.js";
 import {
   API_BASE,
   VERSION,
@@ -35,12 +36,18 @@ export class WeChatApiError extends Error {
   }
 }
 
+export class WeChatTransportError extends Error {}
+class WeChatHttpError extends Error {
+  constructor(readonly status: number) { super(`微信 HTTP ${status}`); }
+}
+
 /** Implements the official QR, long-poll, message and typing HTTP endpoints. */
 export class WeChatApi {
   /** Binds a host HTTP port and an optional authenticated account. */
   constructor(
     readonly http: HttpPort,
     private readonly account: Account | null = null,
+    private readonly record?: RecordSend,
   ) {}
 
   /** Builds official application headers without reusing tokens on QR requests. */
@@ -77,19 +84,16 @@ export class WeChatApi {
       follow_redirects: false,
       responseType: "text",
       ...options,
-    });
+    }).catch(error => { throw new WeChatTransportError(String(error)); });
+    if (response.statusCode === 429 || response.statusCode >= 500)
+      throw new WeChatTransportError(`微信 HTTP ${response.statusCode}`);
     if (response.statusCode < 200 || response.statusCode >= 300)
-      throw new Error(`微信 HTTP ${response.statusCode}`);
+      throw new WeChatHttpError(response.statusCode);
     const data = parseJson(response.content);
-    for (const field of ["ret", "errcode"]) {
-      if (data[field] === undefined) continue;
-      const code = integer(data[field], field, -2147483648, 2147483647);
-      if (code !== 0)
-        throw new WeChatApiError(
-          code,
-          data.errmsg === undefined ? "请求失败" : text(data.errmsg, "errmsg"),
-        );
-    }
+    const codes = ["ret", "errcode"].filter(field => data[field] !== undefined)
+      .map(field => integer(data[field], field, -2147483648, 2147483647));
+    const code = codes.includes(-14) ? -14 : codes.find(value => value !== 0);
+    if (code !== undefined) throw new WeChatApiError(code, data.errmsg === undefined ? "请求失败" : text(data.errmsg, "errmsg"));
     return data;
   }
 
@@ -144,7 +148,13 @@ export class WeChatApi {
     contextToken: string,
     item: JsonObject,
   ): Promise<JsonObject> {
-    return this.post("sendmessage", {
+    const account = this.requireAccount().botId;
+    const type = integer(item.type, "message item type", 1, 5);
+    const kinds = ["image", "audio", "file", "video"] as const;
+    const summary = type === 1 ? { text: text((item.text_item as JsonObject)?.text, "text") } : {
+      text: "", media: [{ kind: kinds[type - 2]!, name: type === 4 && typeof (item.file_item as JsonObject)?.file_name === "string" ? String((item.file_item as JsonObject).file_name) : undefined }],
+    };
+    const payload = {
       msg: {
         from_user_id: "",
         to_user_id: nonblank(userId, "user_id"),
@@ -154,11 +164,20 @@ export class WeChatApi {
         context_token: nonblank(contextToken, "context_token"),
         item_list: [item],
       },
-    }).then((response) => {
-      if (response.ret !== 0)
-        throw new Error("微信发送接口没有返回明确的成功回执。");
-      return response;
-    });
+    };
+    return this.sendTracked(account, userId, summary, payload);
+  }
+
+  private async sendTracked(account: string, userId: string, summary: SendSummary, payload: JsonObject): Promise<JsonObject> {
+    let response: JsonObject;
+    try { response = await this.post("sendmessage", payload); }
+    catch (error) {
+      const rejected = error instanceof WeChatApiError || (error instanceof WeChatHttpError && error.status >= 400 && error.status < 500 && error.status !== 408);
+      await this.record?.(account, "c2c", userId, summary, rejected ? "rejected" : "unknown");
+      throw error;
+    }
+    await this.record?.(account, "c2c", userId, summary, "accepted");
+    return response;
   }
 
   /** Sends a complete plain text message within the channel text limit. */
@@ -167,6 +186,7 @@ export class WeChatApi {
     contextToken: string,
     content: string,
   ): Promise<JsonObject> {
+    content = content.replace(/\[\[(?:reply_?to|reply_?to_?current)(?::[^\]\r\n]*)?\]\]|\[CQ:reply,[^\]\r\n]*\]|<\/?reply(?:_?to)?\b[^>]*>|\[微信用户=[^\]\r\n]*\]/gi, "").trim();
     nonblank(content, "text");
     if (Array.from(content).length > 4000)
       throw new Error("微信单条文本不能超过 4000 个字符。");

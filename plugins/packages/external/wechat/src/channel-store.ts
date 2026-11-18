@@ -1,10 +1,14 @@
 import type { Storage } from "../../../../types/storage.js";
 import type { ChannelConversation, ChannelMessage, ChannelSubscription, ContextMessage, ConversationHistory } from "./channel-api.js";
+import { mediaReference, type MediaReference } from "./media.js";
 
 export function conversationKey(channel: string, accountId: string, scene: string, conversationId: string): string {
   return JSON.stringify([channel, accountId, scene, conversationId]);
 }
 const value = (data: unknown): Storage.Value => data as Storage.Value;
+export type SendSummary = Pick<ContextMessage, "text" | "media">;
+export type RecordSend = (accountId: string, scene: "c2c" | "group", target: string, content: SendSummary,
+  delivery: NonNullable<ContextMessage["delivery"]>) => Promise<void>;
 const consumerKey = (consumerId: string, key: string): string => JSON.stringify([consumerId, key]);
 export function consumer(value: string): string {
   if (typeof value !== "string" || !/^[a-zA-Z0-9_.-]{1,100}$/.test(value)) throw Error("Invalid channel consumer ID");
@@ -50,10 +54,27 @@ export class ChannelStore {
       const history = await db.collection<ContextMessage[]>("history").get(key);
       const messages = history?.value ?? [];
       if (await db.collection("reply_routes").get(message.key)) return;
-      const at = Date.now();
+      const at = Math.max(Date.now(), (row?.value.lastMessageAt ?? 0) + 1);
       const readable: ContextMessage = {messageId: message.messageId, authorId: message.authorId,
         authorName: message.channel === "qq" && "author" in message ? String((message as {author?: {name: string}}).author?.name ?? "").slice(0,100) : "",
         text: message.text.slice(0,6000), timestamp: message.timestamp, receivedAt: at};
+      const kinds: Record<number, NonNullable<ContextMessage["media"]>[number]["kind"]> = {2:"image",3:"audio",4:"file",5:"video"};
+      const media = Array.isArray(message.context.items) ? message.context.items.flatMap(item=>[item,item?.ref_msg?.message_item])
+        .filter(item=>kinds[item?.type]).slice(0,20) : [];
+      const attachments = media.map(item => {
+          try {
+            const ref = mediaReference(item);
+            if (!ref) return null;
+            const { full_url, encrypt_query_param, aes_key } = ref.media;
+            if ((!full_url && !encrypt_query_param) || [full_url, encrypt_query_param, aes_key].some(value => value !== undefined && (typeof value !== "string" || value.length > 4096))) return null;
+            return {kind:ref.kind, media: Object.fromEntries(Object.entries({full_url,encrypt_query_param,aes_key}).filter(([,field])=>field !== undefined)),
+              ...(ref.key ? { key:ref.key.slice(0,128) } : {}), ...(ref.name ? { name:ref.name.slice(0,150) } : {}),
+              ...(ref.voiceFormat ? { voiceFormat:ref.voiceFormat } : {})};
+          } catch { return null; }
+      });
+      if (media.length) readable.media=media.map((item,index)=>({ kind:kinds[item.type],
+        ...(typeof item.file_item?.file_name==="string"?{name:item.file_item.file_name.slice(0,150)}:{}),
+        ...(attachments[index] ? {downloadable:true} : {}) }));
       for (const field of ["referenceIndex", "referencedMessageIndex"] as const) {
         const reference = (message as unknown as Record<string, unknown>)[field];
         if (typeof reference === "string") readable[field] = reference;
@@ -66,6 +87,8 @@ export class ChannelStore {
         {op:"put", collection:"conversations", key, value:value(conversation), expectedVersion:row?.version ?? null},
         {op:"put", collection:"history", key, value:value([...messages,readable].slice(-80)), expectedVersion:history?.version ?? null},
       ];
+      if (attachments.some(Boolean)) mutations.push({op:"put",collection:"attachment_routes", key:JSON.stringify([key,message.messageId]),value:value(attachments)});
+      if (messages.length >= 80 && messages[0]?.media?.some(item=>item.downloadable)) mutations.push({op:"delete",collection:"attachment_routes",key:JSON.stringify([key,messages[0].messageId])});
       const subscribers: {key:string;value:{routes:ChannelSubscription[]}}[] = [];
       let after: string | null = null;
       do {
@@ -90,14 +113,39 @@ export class ChannelStore {
       return next;
     });
   }
-  async history(key: string, limit = 20, before?: number, authorId?: string): Promise<ConversationHistory> {
+  recordSend(channel: ChannelConversation["channel"]): RecordSend {
+    return (accountId, scene, conversationId, content, delivery) => this.serial(async () => {
+      const db = await this.open(), key = conversationKey(channel, accountId, scene, conversationId);
+      const conversations = db.collection<ChannelConversation>("conversations");
+      const [conversation, outgoing] = await Promise.all([
+        conversations.get(key), db.collection<ContextMessage[]>("outgoing").get(key),
+      ]);
+      if (!conversation && delivery !== "accepted") return;
+      const timestamp = Date.now();
+      const receivedAt = Math.max(timestamp, (conversation?.value.lastMessageAt ?? 0) + 1);
+      const item: ContextMessage = { direction: "outgoing", delivery, messageId: `local-${receivedAt}`,
+        authorName: "机器人", authorId: "", timestamp: String(timestamp), receivedAt, text: content.text.slice(0,6000),
+        ...(content.media ? { media: content.media.slice(0,20).map(({kind,name}) => ({ kind, ...(name ? { name: name.split(/[\\/]/).pop()!.slice(0,150) } : {}) })) } : {}) };
+      const next: ChannelConversation = { key, channel, accountId, scene, conversationId, title: scene === "group" ? "群聊" : "私聊",
+        chatId: null, ...conversation?.value, lastMessageAt: receivedAt };
+      await db.commit([
+        {op:"put", collection:"outgoing", key, value:value([...(outgoing?.value ?? []),item].slice(-80)), expectedVersion:outgoing?.version ?? null},
+        {op:"put", collection:"conversations", key, value:value(next), expectedVersion:conversation?.version ?? null},
+      ]);
+    }).catch(() => { console.error("[connector] Could not save outbound history"); });
+  }
+  async history(key: string, limit = 20, before?: number, authorId?: string, includeOutgoing = false): Promise<ConversationHistory> {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 50 || (before !== undefined && (!Number.isSafeInteger(before) || before < 0))) throw Error("Invalid history bounds");
     const conversation = await this.get(key);
     const all = (await (await this.open()).collection<ContextMessage[]>("history").get(key))?.value ?? [];
-    const filtered = all.filter(item => (before === undefined || item.receivedAt < before) && (authorId === undefined || item.authorId === authorId));
+    const outbound = includeOutgoing ? (await (await this.open()).collection<ContextMessage[]>("outgoing").get(key))?.value ?? [] : [];
+    const filtered = [...all, ...outbound].filter(item => (before === undefined || item.receivedAt < before) && (authorId === undefined || item.authorId === authorId))
+      .sort((a,b) => a.receivedAt - b.receivedAt);
     const messages = filtered.slice(-limit).map(item=>({...item})); let remaining = 12000;
     for (let index=messages.length-1;index>=0;index--) {const item=messages[index]!;const text=item.text.slice(0,remaining);remaining-=text.length;messages[index]={...item,text};}
-    return {conversation,messages:messages.filter(item=>item.text.length>0),truncated:all.length===80 || filtered.length>messages.length || remaining===0};
+    return {conversation, messages:messages.filter(item=>item.direction || item.text.length > 0 || item.media?.length),
+      truncated:filtered.length > messages.length || (!includeOutgoing && (all.length === 80 || remaining === 0)),
+      ...(includeOutgoing ? { latestInboundId: all[all.length - 1]?.messageId } : {})};
   }
   subscribe(consumerId: string, routes: ChannelSubscription[], channel: string, accountId: string): Promise<{subscribed: number}> {
     consumer(consumerId);
@@ -138,6 +186,13 @@ export class ChannelStore {
   }
   async replyRoute(key:string):Promise<ChannelMessage|null>{
     return (await (await this.open()).collection<ChannelMessage>("reply_routes").get(key))?.value??null;
+  }
+  async attachment(key: string, messageId: string, index: number): Promise<MediaReference> {
+    if (typeof messageId !== "string" || !messageId || !Number.isSafeInteger(index) || index < 0 || index >= 20) throw Error("无效的附件编号");
+    const entry = await (await this.open()).collection<(MediaReference | null)[]>("attachment_routes").get(JSON.stringify([key,messageId]));
+    const item = entry?.value[index];
+    if (!item) throw Error("附件不存在或已不在近期记录中");
+    return item;
   }
   async ack(consumerId:string,key:string):Promise<boolean> {
     consumer(consumerId);

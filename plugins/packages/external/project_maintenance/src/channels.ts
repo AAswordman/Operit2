@@ -2,10 +2,9 @@ import type { Storage } from "../../../../types/storage.js";
 import { NotificationOutbox, type Notice } from "./channel-notifications.js";
 import type { CapturedMessage } from "./model.js";
 import type { AvailableChat, ChatBinding, ChannelReport, ChannelSession } from "./api.js";
-import { request as qqRequest } from "./dependencies/qqbot/api.js";
-import { request as wechatRequest, type ChannelRequest, type ChannelResponse } from "./dependencies/wechat/api.js";
-type Channel = "qq" | "wechat";
-const CONSUMER="com.operit.project_maintenance";
+import { CHANNELS, request, type Channel, type RouteRequest, type Responses } from "./dependencies/connector_hub/api.js";
+type WithoutChannel<T> = T extends unknown ? Omit<T, "channel"> : never;
+type ChannelRequest = WithoutChannel<RouteRequest>;
 export interface ChannelConfig {enabled:boolean;projectPath:string;parentChatId:string;conversationId:string;notifySince:number}
 interface Port {
   chats(): Promise<AvailableChat[]>;
@@ -22,13 +21,13 @@ export class ChannelCoordinator {
   private timer:number|null=null;
   private readonly busy=new Map<Channel,Promise<void>>();
   private readonly reports=new Map<Channel,ChannelReport>();
-  private readonly epochs={qq:0,wechat:0};
+  private readonly epochs={qq:0,wechat:0,feishu:0};
   private readonly outbox=new NotificationOutbox();
   private readonly migrated=new Set<Channel>();
   private readonly knownBotChats=new Set<string>();
   constructor(private readonly port:Port){}
-  private bot<R extends ChannelRequest>(channel:Channel,payload:R):Promise<ChannelResponse<R>>{
-    return channel==="qq"?qqRequest(payload):wechatRequest(payload);
+  private bot<R extends ChannelRequest>(channel:Channel,payload:R):Promise<Responses[R["action"]]>{
+    return request({ ...payload, channel } as RouteRequest) as Promise<Responses[R["action"]]>;
   }
   private async observe(channel:Channel):Promise<ChannelReport>{
     try{
@@ -45,28 +44,29 @@ export class ChannelCoordinator {
       const report:ChannelReport={channel,availability:"available",service:state.service,enabled:sessions.some(s=>s.enabled),sessions,lastError:this.reports.get(channel)?.lastError??"",observedAt:Date.now()};
       this.reports.set(channel,report);return report;
     }catch(error){
-      const previous=this.reports.get(channel);
-      const report:ChannelReport={channel,availability:"unavailable",service:"unknown",enabled:previous?.enabled??false,sessions:previous?.sessions??[],lastError:String(error instanceof Error?error.message:error),observedAt:Date.now()};
+      const previous=this.reports.get(channel), diagnostic=String(error instanceof Error?error.message:error);
+      const missingHub=/com\.operit\.connector_hub/i.test(diagnostic);
+      const report:ChannelReport={channel,availability:"unavailable",service:"unknown",enabled:previous?.enabled??false,sessions:previous?.sessions??[],lastError:missingHub?"请先安装并启用「外部连接器」。":diagnostic,observedAt:Date.now()};
       this.reports.set(channel,report);return report;
     }
   }
-  async status():Promise<ChannelReport[]>{return Promise.all((["qq","wechat"]as Channel[]).map(channel=>this.observe(channel)));}
+  async status():Promise<ChannelReport[]>{return Promise.all(CHANNELS.map(channel=>this.observe(channel)));}
   async prepare(channel:Channel,key:string):Promise<{chatId:string}>{
-    if(channel!=="qq"&&channel!=="wechat")throw Error("Invalid channel");
+    if(!CHANNELS.includes(channel))throw Error("Invalid channel");
     const session=await this.bot(channel,{action:"open_chat",conversationKey:key});
     if(!session.chatId||session.channel!==channel)throw Error("Bot 没有返回有效的聊天绑定");
     return {chatId:session.chatId};
   }
   async isBotChat(chatId:string):Promise<boolean>{
     if(this.knownBotChats.has(chatId))return true;
-    const stale=([...this.reports.values()].length<2)||[...this.reports.values()].some(report=>Date.now()-report.observedAt>3000);
+    const stale=(this.reports.size<CHANNELS.length)||[...this.reports.values()].some(report=>Date.now()-report.observedAt>3000);
     if(stale)await this.status();
     if(this.knownBotChats.has(chatId))return true;
     return false;
   }
   /** Removes the old one-channel selector without silently redirecting its work into another chat. */
   private async migrate(channel:Channel):Promise<void>{
-    if(this.migrated.has(channel))return;
+    if(channel==="feishu"||this.migrated.has(channel))return;
     const db=await Tools.Storage.objects.open({path:ToolPkg.getLocalDataDir()+"/channel-connections.sqlite"});
     const old=await db.collection<ChannelConfig>("connections").get(channel);
     if(old?.value.enabled){
@@ -77,7 +77,7 @@ export class ChannelCoordinator {
     }
     this.migrated.add(channel);
   }
-  async sync():Promise<void>{await Promise.all((["qq","wechat"]as Channel[]).map(channel=>this.tick(channel)));}
+  async sync():Promise<void>{await Promise.all(CHANNELS.map(channel=>this.tick(channel)));}
   tick(channel:Channel):Promise<void>{
     const pending=this.busy.get(channel);if(pending)return pending;
     const task=this.collect(channel);this.busy.set(channel,task);void task.finally(()=>{if(this.busy.get(channel)===task)this.busy.delete(channel)}).catch(()=>{});return task;
@@ -99,18 +99,18 @@ export class ChannelCoordinator {
         }catch(error){session.error=String(error instanceof Error?error.message:error);}
       }
       if(epoch!==this.epochs[channel])return;
-      await this.bot(channel,{action:"subscribe",consumerId:CONSUMER,routes:routes.map(({session,since})=>({conversationKey:session.key,since}))});
+      await this.bot(channel,{action:"subscribe",routes:routes.map(({session,since})=>({conversationKey:session.key,since}))});
       for(const {session,config,since}of routes){
-        const inbox=await this.bot(channel,{action:"peek",consumerId:CONSUMER,conversationKey:session.key,limit:100});
+        const inbox=await this.bot(channel,{action:"peek",conversationKey:session.key,limit:100});
         if(!Array.isArray(inbox.messages))throw Error("Invalid Bot inbox");
         for(const message of inbox.messages){
           if(epoch!==this.epochs[channel])return;
           const current=await this.port.binding(config.parentChatId);
           if(current?.projectPath!==config.projectPath||current.since!==since)break;
           if(await this.port.workspace(config.parentChatId)!==config.projectPath)break;
-          if(message.channel!==channel||message.accountId!==session.accountId||message.conversationId!==session.conversationId||message.context.scene!==session.scene&&channel==="qq")throw Error("消息与 Bot 会话来源不一致");
+          if(message.channel!==channel||message.accountId!==session.accountId||message.conversationId!==session.conversationId||message.context.scene!==session.scene)throw Error("消息与 Bot 会话来源不一致");
           await this.port.capture(config.parentChatId,config.projectPath,message);
-          await this.bot(channel,{action:"ack",consumerId:CONSUMER,key:message.key});
+          await this.bot(channel,{action:"ack",key:message.key});
         }
         const current=await this.port.binding(config.parentChatId);
         if(current?.projectPath!==config.projectPath||current.since!==since)continue;
@@ -124,7 +124,7 @@ export class ChannelCoordinator {
     }catch(error){const report=this.reports.get(channel);if(report)report.lastError=String(error instanceof Error?error.message:error);}
   }
   async conversationStatus(chatId:string):Promise<unknown|null>{
-    for(const channel of ["qq","wechat"]as Channel[]){
+    for(const channel of CHANNELS){
       let context;try{context=await this.bot(channel,{action:"active_context",chatId});}catch{continue;}
       if(!context||context.channel!==channel||context.chatId!==chatId)continue;
       const report=await this.observe(channel),session=report.sessions.find(s=>s.enabled&&s.accountId===context.accountId&&s.conversationId===context.conversationId&&(!context.scene||s.scene===context.scene));
@@ -134,5 +134,5 @@ export class ChannelCoordinator {
     }return null;
   }
   start():void{if(this.timer!==null)return;this.timer=setInterval(()=>void this.sync(),3000);void this.sync();}
-  stop():void{this.epochs.qq++;this.epochs.wechat++;if(this.timer!==null)clearInterval(this.timer);this.timer=null;}
+  stop():void{for(const channel of CHANNELS)this.epochs[channel]++;if(this.timer!==null)clearInterval(this.timer);this.timer=null;}
 }

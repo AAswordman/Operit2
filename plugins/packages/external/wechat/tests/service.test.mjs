@@ -82,15 +82,71 @@ test("cancelling a QR session discards a late confirmation instead of replacing 
   assert.equal((await f.status()).login.state, "idle");
 });
 
-test("a malformed batch does not advance the cursor or partially append its preceding messages", async () => {
+test("malformed and unsupported messages do not pin the cursor or discard valid peers", async () => {
   const f = await fixture();
   await f.call({ action: "start" });
   const malformed = message(2);
   delete malformed.context_token;
-  await f.batch([message(1), malformed], "bad-cursor");
-  assert.equal(f.config.cursor, "");
-  assert.equal(f.config.queue.length, 0);
-  assert.equal((await f.status()).service.state, "error");
+  await f.batch([message(1), malformed, {...message(3), group_id: "unsupported"}], "next-cursor");
+  assert.equal(f.config.cursor, "next-cursor");
+  assert.equal(f.config.queue.length, 1);
+  assert.equal((await f.status()).service.state, "ready");
+  await f.stop();
+});
+
+test("a transient HTTP failure backs off and an omitted cursor preserves progress", async () => {
+  const f = await fixture();
+  await f.call({ action: "start" });
+  await f.batch([message(1)], "kept");
+  await f.time.advance(100);
+  await f.batch([], undefined, {}, 503);
+  assert.equal((await f.status()).service.state, "connecting");
+  await f.time.advance(1000);
+  assert.equal(f.requests.filter(r => r.url.endsWith("getupdates")).at(-1).body.get_updates_buf, "kept");
+  await f.batch([message(2)], "", { get_updates_buf: undefined });
+  assert.equal(f.config.cursor, "kept");
+  assert.equal((await f.status()).service.state, "ready");
+  await f.stop();
+});
+
+test("console QR confirmation starts listening but does not enable AI replies", async () => {
+  const f = await fixture({ loggedOut: true });
+  await f.service.channel({ action: "manage", command: "login_start" });
+  await f.qr({ status: "confirmed", bot_token: "confirmed-token", ilink_bot_id: "bot", ilink_user_id: "owner", baseurl: "https://ilinkai.weixin.qq.com" });
+  await settle();
+  assert.equal(f.config.listenerEnabled, true);
+  assert.equal(f.config.autoReply.enabled, false);
+  assert.equal((await f.service.channel({ action: "manage", command: "login_status" })).login.state, "confirmed");
+  await f.stop();
+});
+
+test("native multimodal replies use committed model output without a Waifu profile", async () => {
+  const content = "[[reply_to:opaque-id]]原生回复";
+  const f = await fixture({ auto: true, native: true, replyText: content });
+  await f.call({ action: "start" });
+  await f.batch([message(1, "peer", "请回复我")]);
+  await f.time.advance(400);
+  assert.equal(f.sends().length, 1);
+  assert.equal(f.sends()[0].body.msg.item_list[0].text_item.text, "原生回复");
+  await f.stop();
+});
+
+test('recent WeChat attachments are exported as bytes without exposing CDN parameters',async()=>{
+  const data=Buffer.from('89504e470d0a1a0a','hex').toString('base64');
+  const f=await fixture({downloadData:data});
+  await f.call({action:'start'});
+  const event=message(1);
+  event.item_list=[{type:2,image_item:{media:{encrypt_query_param:'private-cdn-query'}}}];
+  await f.batch([event]);
+  const [session]=(await f.service.channel({action:'conversations'})).conversations;
+  const history=await f.service.channel({action:'history',conversationKey:session.key});
+  const [row]=history.messages;
+  assert.equal(row.media[0].downloadable,true);
+  assert.doesNotMatch(JSON.stringify(history),/private-cdn-query/);
+  assert.deepEqual(plain(await f.service.channel({action:'attachment',conversationKey:session.key,messageId:row.messageId,index:0})),
+    {fileName:'wechat-image.png',mimeType:'image/png',contentBase64:data});
+  await assert.rejects(f.service.channel({action:'attachment',conversationKey:session.key,messageId:row.messageId,index:1}),/不存在/);
+  await f.stop();
 });
 
 test("automatic reply queue overflow leaves the server batch and cursor uncommitted", async () => {
@@ -181,12 +237,13 @@ test("automatic replies use the real Waifu client and a native conversation for 
   const f = await fixture({ auto: true });
   f.config.autoReply.characterSelection = "card:alice";
   await f.call({ action: "start" });
-  await f.batch([message(1), message(2), message(3, "bob@im.wechat")]);
+  await f.batch([message(1, "alice@im.wechat", "first"), message(2, "alice@im.wechat", "second"), message(3, "bob@im.wechat", "third")]);
   await f.time.advance(1200);
   assert.equal(f.created.length, 2);
   assert.equal(f.submitted.length, 3);
-  const alice = f.submitted.filter((item) => item.input.text.includes("微信用户=alice@im.wechat"));
-  const bob = f.submitted.find((item) => item.input.text.includes("微信用户=bob@im.wechat"));
+  const alice = f.submitted.filter((item) => /^(first|second)/.test(item.input.text));
+  const bob = f.submitted.find((item) => item.input.text.startsWith("third"));
+  assert.ok(f.submitted.every(item => !item.input.text.includes("@im.wechat")));
   assert.equal(alice.length, 2);
   assert.equal(alice[0].chatId, alice[1].chatId);
   assert.notEqual(alice[0].chatId, bob.chatId);
@@ -210,7 +267,7 @@ test("different peers reply concurrently with a cap and each peer stays FIFO", a
   ]);
   await f.time.advance(400);
   assert.equal(f.submitted.length, 3);
-  assert.deepEqual(f.submitted.map((item) => item.input.text.match(/微信用户=([^;]+)/)[1]).sort(), ["alice", "bob", "carol"]);
+  assert.deepEqual(f.submitted.map((item) => item.input.text.split("\n")[0]).sort(), ["alice-first", "bob-first", "carol-first"]);
   assert.equal(f.config.queue.length, 2);
   assert.equal(f.config.activeDeliveries.length, 3);
   const aliceChat = f.submitted.find((item) => item.input.text.includes("alice-first")).chatId;
@@ -396,6 +453,10 @@ test("a partially delivered reply preserves its successful segment count and nev
   assert.equal(f.config.failedDeliveries[0].delivered, 1);
   assert.equal(f.config.failedDeliveries[0].state, "failed");
   assert.ok(f.snapshots.some((snapshot) => snapshot.activeDeliveries?.some((item) => item.delivered === 1)));
+  const [session]=(await f.service.channel({action:'conversations'})).conversations;
+  const history=await f.service.channel({action:'history',conversationKey:session.key});
+  assert.deepEqual(plain(history.messages.filter(m=>m.direction==='outgoing').map(m=>m.delivery)),['accepted','rejected']);
+  assert.doesNotMatch(JSON.stringify(history),/delivery denied|secret-token/);
   await f.time.advance(3000);
   assert.equal(f.sends().length, 2);
   await f.stop();
@@ -473,7 +534,7 @@ test("quoted server message IDs resolve only within the originating peer history
   await f.time.advance(1600);
   const input = f.submitted[2].input.text;
   assert.match(input, /old-alice/);
-  assert.match(input, /引用消息 2/);
+  assert.doesNotMatch(input, /引用消息 2/);
   assert.doesNotMatch(input, /private-bob/);
   await f.stop();
 });
@@ -623,7 +684,7 @@ test("filtered channel peek scans past unrelated history without acknowledging i
     const key=`a-${String(i).padStart(3,"0")}`;
     await f.storage.db.commit([{op:"put",collection:"pending",key,value:{key,conversationId:"other"},expectedVersion:null}]);
   }
-  await f.storage.db.commit([{op:"put",collection:"pending",key:"z-target",value:{key:"z-target",conversationId:"target"},expectedVersion:null}]);
+  await f.storage.db.commit([{op:"put",collection:"pending",key:"z-target",value:{key:"z-target",accountId:"bot",conversationId:"target"},expectedVersion:null}]);
   const result=await f.service.channel({action:"peek",limit:20,conversationId:"target"});
   assert.equal(result.messages.length,1); assert.equal(result.messages[0].key,"z-target");
   assert.notEqual(await f.storage.db.collection("pending").get("a-000"),null);

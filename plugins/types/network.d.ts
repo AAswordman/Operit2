@@ -718,12 +718,12 @@ export namespace Net {
   /**
    * Selects an engine-owned text WebSocket operation.
    */
-  export type WebSocketRequest = { op: "open"; url: string; connect_timeout_seconds: number; } | { op: "read"; handle: string; } | { op: "send"; handle: string; text: string; } | { op: "close"; handle: string; };
+  export type WebSocketRequest = { op: "open"; url: string; connect_timeout_seconds: number; } | { op: "open_binary"; url: string; connect_timeout_seconds: number; } | { op: "read"; handle: string; } | { op: "send"; handle: string; text: string; } | { op: "send_binary"; handle: string; base64: string; } | { op: "close"; handle: string; };
 
   /**
    * Preserves ordered WebSocket lifecycle and UTF-8 message events.
    */
-  export type WebSocketEvent = { type: "opened"; } | { type: "message"; text: string; } | { type: "closed"; } | { type: "error"; message: string; };
+  export type WebSocketEvent = { type: "opened"; } | { type: "message"; text: string; } | { type: "binary"; base64: string; } | { type: "closed"; } | { type: "error"; message: string; };
 
   /**
    * Click an element by snapshot ref or selector.

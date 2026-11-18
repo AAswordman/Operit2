@@ -1,0 +1,17 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.connector_hub",
+  "version": "1.0.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "外部连接器", "en": "External Connectors" },
+  "description": { "zh": "统一接入 QQ、微信和飞书，管理 Bot 与会话。", "en": "Connect and manage QQ, WeChat, and Feishu bots and conversations." },
+  "enabled_by_default": false,
+  "installation_scope": "device",
+  "public_api": "src/api.ts",
+  "optional_requires": [
+    { "id": "com.operit.qqbot_bundle", "min_version": "1.4.0" },
+    { "id": "com.operit.wechat_bot", "min_version": "1.2.0" },
+    { "id": "com.operit.feishu_bot", "min_version": "1.0.0" }
+  ]
+}
