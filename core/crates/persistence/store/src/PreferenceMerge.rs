@@ -469,6 +469,39 @@ pub(crate) fn applyDeclaredOperations<F>(
 ) -> Result<BTreeMap<String,String>,PreferencesDataStoreError>
 where F: Fn(&str,&str)->bool {
     let path = store.path().to_str().ok_or_else(||PreferencesDataStoreError::Message("Invalid preference path".into()))?;
+    // A replay with no incoming operations only recomputes canonical values
+    // through identity decisions the dataset has not absorbed yet, and seals
+    // local history its compaction policy accepts. Opaque datasets never seal
+    // (their policy stays unsafe), so when the durable owner state already
+    // covers the whole archived history and every decision relevant to this
+    // dataset, there is nothing to recompute — and replaying covered originals
+    // from the checkpoint view must not re-enter migration: sealed remote
+    // originals predating a runtime upgrade have no covering initialization in
+    // the journal, and their retained migration sources may no longer certify
+    // them against the current view ("Missing source baseline" on every
+    // projection of the dataset).
+    if incoming.is_empty()
+        && store.schema.as_ref().is_some_and(|schema| !schema.migrate.independent)
+    {
+        let declared = schema.stores.iter().find(|owner| owner.path == path);
+        if let Some(declared) = declared {
+            let involved = |alias_path: &str| alias_path == path
+                || declared.merge.references.iter().any(|reference| reference.target == alias_path);
+            if let Ok(snapshot) = store.syncSnapshot() {
+                let decisions_absorbed = externalAliases.iter()
+                    .filter(|(key, _)| key.split_once('\u{1f}').is_some_and(|(alias_path, _)| involved(alias_path)))
+                    .all(|(key, value)| snapshot.data.aliases.get(key).is_some_and(|known| known == value));
+                let history_absorbed = crate::SyncOperationStore::SyncOperationStore::new(
+                        store.storageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH)
+                    .preferenceHistory().map(|history| {
+                        history.iter().all(|op| snapshot.covered.contains(&op.opId))
+                    }).unwrap_or(false);
+                if decisions_absorbed && history_absorbed {
+                    return Ok(snapshot.data.aliases.clone());
+                }
+            }
+        }
+    }
     let encrypted = schema.owner(path).map_err(PreferencesDataStoreError::Message)?.ok_or_else(||PreferencesDataStoreError::Message("Preference owner is not registered".into()))?.encrypted;
     let version = store.syncSchemaVersion()?;
     crate::Transaction::preference::apply(store, incoming,
