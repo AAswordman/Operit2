@@ -488,9 +488,19 @@ where F: Fn(&str,&str)->bool {
             let involved = |alias_path: &str| alias_path == path
                 || declared.merge.references.iter().any(|reference| reference.target == alias_path);
             if let Ok(snapshot) = store.syncSnapshot() {
+                // Serializing the whole value tree keeps the check conservative:
+                // any occurrence of the identity blocks the shortcut.
+                let stored_values = serde_json::to_string(&snapshot.data.values).unwrap_or_default();
                 let decisions_absorbed = externalAliases.iter()
                     .filter(|(key, _)| key.split_once('\u{1f}').is_some_and(|(alias_path, _)| involved(alias_path)))
-                    .all(|(key, value)| snapshot.data.aliases.get(key).is_some_and(|known| known == value));
+                    .all(|(key, value)| {
+                        if snapshot.data.aliases.get(key).is_some_and(|known| known == value) { return true; }
+                        // A decision unknown to this dataset only matters when
+                        // its source or canonical identity appears in the
+                        // stored values; otherwise the rewrite is a no-op.
+                        let source_id = key.split_once('\u{1f}').map(|(_, id)| id).unwrap_or(key);
+                        !stored_values.contains(source_id) && !stored_values.contains(value.as_str())
+                    });
                 let history_absorbed = crate::SyncOperationStore::SyncOperationStore::new(
                         store.storageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH)
                     .preferenceHistory().map(|history| {
