@@ -1213,7 +1213,7 @@ impl SpacePersistenceSyncService {
                     let ops = attribution.get(&reference.contentHash)
                         .map(|ids| ids.join(",")).unwrap_or_else(|| "receipt".to_string());
                     operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
-                        "sync_blobs.required hash={} bytes={} holder={} ops={}",
+                        "sync_blobs.required target={targetNodeId} hash={} bytes={} holder={} ops={}",
                         &reference.contentHash[..12], reference.size, if local {"local"} else {"remote"}, ops));
                     pending.push((reference,local));
                 },
