@@ -58,9 +58,19 @@ impl SpacePersistenceSyncService {
         let correctionCount = plans.len();
         for (a, b, choice) in plans {
             let source = if choice == Source::Local { a } else { b }.expect("source exists");
+            let reason = match (a, b) {
+                (None, Some(_)) => "local-missing",
+                (Some(_), None) => "remote-missing",
+                _ if a.is_some_and(|m|m.damaged) || b.is_some_and(|m|m.damaged) => "damaged",
+                _ if a.and_then(|m|m.revision.as_ref()) == b.and_then(|m|m.revision.as_ref()) => "equal-revision-drift",
+                _ => "revision-drift",
+            };
+            let digest = |m: Option<&operit_store::Transaction::Manifest>| m.map(|m|
+                format!("{}{}", m.digest.get(..12).unwrap_or(&m.digest), if m.damaged {":damaged"} else {""}))
+                .unwrap_or_else(|| "missing".to_string());
             operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
-                "sync_consistency.correct target={target} mode=full_snapshot owner={} source={choice:?} damaged={} localRevision={:?} remoteRevision={:?}",
-                source.owner.path, a.is_some_and(|m|m.damaged) || b.is_some_and(|m|m.damaged), a.and_then(|m|m.revision.as_ref()), b.and_then(|m|m.revision.as_ref())));
+                "sync_consistency.correct target={target} mode=full_snapshot owner={} reason={reason} source={choice:?} localDigest={} remoteDigest={} damaged={} localRevision={:?} remoteRevision={:?}",
+                source.owner.path, digest(a), digest(b), a.is_some_and(|m|m.damaged) || b.is_some_and(|m|m.damaged), a.and_then(|m|m.revision.as_ref()), b.and_then(|m|m.revision.as_ref())));
             let correction: Result<bool, String> = async {
                 let other = if choice == Source::Local { b } else { a };
                 let superseded = match other {
@@ -113,7 +123,7 @@ impl SpacePersistenceSyncService {
         operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
             "sync_consistency.snapshot target={target} owner={} source={} coverageOnly={coverage_only} bytes={} hash={}",
             source.owner.path, if local { "local" } else { "remote" }, reference.size, reference.contentHash));
-        self.synchronizeBlobReferences(target, vec![reference.clone()]).await?;
+        self.synchronizeBlobReferences(target, vec![reference.clone()], &BTreeMap::new()).await?;
         Ok(reference)
     }
 

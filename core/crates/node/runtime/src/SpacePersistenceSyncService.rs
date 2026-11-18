@@ -949,7 +949,7 @@ impl SpacePersistenceSyncService {
                     self.recordPendingWork(targetNodeId, "remote receipt", &remote);
                     let mut blobs: Vec<RuntimeFileSyncReference> = serde_json::from_value(local["pendingBlobs"].clone()).map_err(|e|e.to_string())?;
                     blobs.extend(serde_json::from_value::<Vec<RuntimeFileSyncReference>>(remote["pendingBlobs"].clone()).map_err(|e|e.to_string())?);
-                    if let Err(error) = self.synchronizeBlobReferences(targetNodeId, blobs).await {
+                    if let Err(error) = self.synchronizeBlobReferences(targetNodeId, blobs, &BTreeMap::new()).await {
                         if SYNC_NETWORK_FAILURE.try_with(std::cell::Cell::get).unwrap_or(false) { return Err(error); }
                         self.recordPendingWork(targetNodeId, "pending blobs", &json!({"errors":[error]}));
                     }
@@ -1170,21 +1170,31 @@ impl SpacePersistenceSyncService {
         operations: &[SyncOperation],
     ) -> Result<(), String> {
         let mut errors = Vec::new();
-        let references = operations.iter().filter_map(|value| {
+        let mut references = Vec::new();
+        let mut sources = BTreeMap::<String, Vec<String>>::new();
+        for value in operations {
             match RuntimeFileSyncStore::requiredBlob(value) {
-                Ok(reference) => reference,
-                Err(error) => { errors.push(error); None }
+                Ok(Some(reference)) => {
+                    let ids = sources.entry(reference.contentHash.clone()).or_default();
+                    if ids.len() < 2 { ids.push(value.opId.clone()); }
+                    references.push(reference);
+                }
+                Ok(None) => {}
+                Err(error) => { errors.push(error); }
             }
-        }).collect();
-        if let Err(error) = self.synchronizeBlobReferences(targetNodeId, references).await { errors.push(error); }
+        }
+        if let Err(error) = self.synchronizeBlobReferences(targetNodeId, references, &sources).await { errors.push(error); }
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
 
     /// Overlaps independent blob transfers on the existing multiplexed channel with bounded buffers.
+    /// The attribution map names the operations requiring each hash so a full
+    /// transfer logs which original or correction snapshot demanded it.
     async fn synchronizeBlobReferences(
         &self,
         targetNodeId: &str,
         references: Vec<RuntimeFileSyncReference>,
+        attribution: &BTreeMap<String, Vec<String>>,
     ) -> Result<(), String> {
         let references = references.into_iter()
             .map(|reference|((reference.contentHash.clone(),reference.size),reference))
@@ -1199,7 +1209,14 @@ impl SpacePersistenceSyncService {
             match local.and_then(|local| remote.map(|remote| (local, remote))) {
                 Ok((true,true)) => {},
                 Ok((false,false)) => errors.push(format!("blob {} is missing from both direct peers",reference.contentHash)),
-                Ok((local,_)) => pending.push((reference,local)),
+                Ok((local,_)) => {
+                    let ops = attribution.get(&reference.contentHash)
+                        .map(|ids| ids.join(",")).unwrap_or_else(|| "receipt".to_string());
+                    operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                        "sync_blobs.required hash={} bytes={} holder={} ops={}",
+                        &reference.contentHash[..12], reference.size, if local {"local"} else {"remote"}, ops));
+                    pending.push((reference,local));
+                },
                 Err(error) => errors.push(error),
             }
         }
