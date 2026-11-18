@@ -502,6 +502,7 @@ class _MCPFormConfigPaneState extends State<MCPFormConfigPane> {
   final _commandController = TextEditingController();
   final _argsController = TextEditingController();
   final _urlController = TextEditingController();
+  final _bearerTokenController = TextEditingController();
   final _headersController = TextEditingController();
   final _envController = TextEditingController();
 
@@ -514,6 +515,7 @@ class _MCPFormConfigPaneState extends State<MCPFormConfigPane> {
     _commandController.dispose();
     _argsController.dispose();
     _urlController.dispose();
+    _bearerTokenController.dispose();
     _headersController.dispose();
     _envController.dispose();
     super.dispose();
@@ -534,6 +536,7 @@ class _MCPFormConfigPaneState extends State<MCPFormConfigPane> {
             commandController: _commandController,
             argsController: _argsController,
             urlController: _urlController,
+            bearerTokenController: _bearerTokenController,
             headersController: _headersController,
             envController: _envController,
             onRemoteChanged: (value) {
@@ -557,12 +560,14 @@ class _MCPFormConfigPaneState extends State<MCPFormConfigPane> {
       return;
     }
     final serverId = _serverIdController.text.trim();
+    final bearerToken = _bearerTokenController.text.trim();
     final config = <String, Object?>{
       'mcpServers': <String, Object?>{
         serverId: _remote
             ? <String, Object?>{
                 'url': _urlController.text.trim(),
                 'type': _type,
+                if (bearerToken.isNotEmpty) 'bearerToken': bearerToken,
                 'headers': _parseMapLines(_headersController.text),
                 'disabled': false,
                 'autoApprove': <String>[],
@@ -652,6 +657,7 @@ class _FormConfigPane extends StatelessWidget {
     required this.commandController,
     required this.argsController,
     required this.urlController,
+    required this.bearerTokenController,
     required this.headersController,
     required this.envController,
     required this.onRemoteChanged,
@@ -665,6 +671,7 @@ class _FormConfigPane extends StatelessWidget {
   final TextEditingController commandController;
   final TextEditingController argsController;
   final TextEditingController urlController;
+  final TextEditingController bearerTokenController;
   final TextEditingController headersController;
   final TextEditingController envController;
   final ValueChanged<bool> onRemoteChanged;
@@ -734,6 +741,13 @@ class _FormConfigPane extends StatelessWidget {
                     }
                   }
                 : null,
+          ),
+          const SizedBox(height: 12),
+          TextFormField(
+            controller: bearerTokenController,
+            enabled: enabled,
+            obscureText: true,
+            decoration: const InputDecoration(labelText: 'Bearer Token'),
           ),
           const SizedBox(height: 12),
           TextFormField(

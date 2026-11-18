@@ -174,7 +174,7 @@ impl MCPStarter {
                 endpoint,
                 serverConfig.r#type.clone(),
                 Some(format!("Remote MCP Server: {pluginId}")),
-                None,
+                serverConfig.bearerToken.clone(),
                 serverConfig.headers.clone(),
             )
         } else {

@@ -16,6 +16,15 @@ mod streamable_http;
 
 const REQUEST_TIMEOUT_MS: u64 = 180_000;
 const SPAWN_TIMEOUT_MS: u64 = 180_000;
+const REMOTE_RESULT_TIMEOUT_MS: u64 = 60_000;
+const REMOTE_CONNECT_TIMEOUT_SECONDS: u64 = 15;
+const LATEST_REMOTE_PROTOCOL_VERSION: &str = "2025-11-25";
+const SUPPORTED_REMOTE_PROTOCOL_VERSIONS: &[&str] = &[
+    LATEST_REMOTE_PROTOCOL_VERSION,
+    "2025-06-18",
+    "2025-03-26",
+    "2024-11-05",
+];
 /// Size cap for one service's in-memory diagnostics log.
 const MAX_SERVICE_LOG_BYTES: usize = 256 * 1024;
 /// Newest bytes kept after one service log eviction pass.
@@ -100,16 +109,52 @@ struct ActiveService {
     logs: String,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum RemoteTransport {
+    StreamableHttp,
+    Sse,
+}
+
+impl RemoteTransport {
+    /// Resolves the public configuration name and the Kotlin runtime name.
+    fn from_config(value: Option<&str>) -> Result<Self, String> {
+        match value {
+            None => Ok(Self::StreamableHttp),
+            Some(name) if name.eq_ignore_ascii_case("streamable-http")
+                || name.eq_ignore_ascii_case("httpStream") => Ok(Self::StreamableHttp),
+            Some(name) if name.eq_ignore_ascii_case("sse") => Ok(Self::Sse),
+            Some(name) => Err(format!("Unsupported MCP connection type: {name}")),
+        }
+    }
+}
+
 struct RemoteMcpSession {
     scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     httpHost: Arc<dyn HttpHost>,
     endpoint: String,
-    connectionType: String,
+    transport: RemoteTransport,
     headers: BTreeMap<String, String>,
     sessionId: Option<String>,
-    protocolVersion: String,
+    protocolVersion: Option<String>,
     sseEndpoint: Option<String>,
     sseReader: Option<RemoteSseReader>,
+    pendingServerEvents: Option<Result<streamable_http::ResponseStream, String>>,
+}
+
+struct RemoteSseFrame {
+    name: String,
+    data: String,
+    id: Option<String>,
+}
+
+enum RemoteSseEvent {
+    Frame(RemoteSseFrame),
+    Closed(String),
+}
+
+enum RemoteSseResult {
+    Response(Value),
+    Closed(String),
 }
 
 /// Bridges the host's live byte callbacks to the incremental SSE parser.
@@ -119,22 +164,28 @@ struct RemoteSseReader {
     buffer: Vec<u8>,
     eventName: String,
     eventData: String,
+    eventId: Option<String>,
+    lastEventId: Option<String>,
     skipLf: bool,
-    frames: std::collections::VecDeque<(String, String)>,
+    frames: std::collections::VecDeque<RemoteSseFrame>,
 }
 
 impl RemoteSseReader {
+    /// Creates an event reader for an opened HTTP stream.
     fn new(stream: streamable_http::ResponseStream) -> Self {
         Self {
             stream,
             buffer: Vec::new(),
             eventName: String::new(),
             eventData: String::new(),
+            eventId: None,
+            lastEventId: None,
             skipLf: false,
             frames: std::collections::VecDeque::new(),
         }
     }
 
+    /// Parses complete SSE frames, including MCP priming frames with an ID and no data.
     fn push(&mut self, bytes: &[u8]) -> Result<(), String> {
         let bytes = if self.skipLf && !bytes.is_empty() {
             self.skipLf = false;
@@ -172,8 +223,9 @@ impl RemoteSseReader {
             if line.is_empty() {
                 let data = std::mem::take(&mut self.eventData);
                 let name = std::mem::take(&mut self.eventName);
-                if !data.is_empty() {
-                    self.frames.push_back((name, data));
+                let id = self.eventId.take();
+                if !data.is_empty() || id.is_some() {
+                    self.frames.push_back(RemoteSseFrame { name, data, id });
                 }
             } else if let Some(data) = line.strip_prefix("data:") {
                 if !self.eventData.is_empty() {
@@ -183,24 +235,33 @@ impl RemoteSseReader {
                     .push_str(data.strip_prefix(' ').unwrap_or(data));
             } else if let Some(name) = line.strip_prefix("event:") {
                 self.eventName = name.strip_prefix(' ').unwrap_or(name).to_string();
+            } else if let Some(id) = line.strip_prefix("id:") {
+                let id = id.strip_prefix(' ').unwrap_or(id);
+                if !id.contains('\0') {
+                    self.eventId = Some(id.to_string());
+                }
             }
         }
         self.buffer.drain(..consumed);
         Ok(())
     }
 
-    async fn next(&mut self, deadline: &StartupDeadline) -> Result<(String, String), String> {
+    /// Returns the next frame or terminal transport event within the caller's deadline.
+    async fn next(&mut self, deadline: &StartupDeadline) -> Result<RemoteSseEvent, String> {
         loop {
             deadline.remainingMs()?;
             if let Some(frame) = self.frames.pop_front() {
-                return Ok(frame);
+                if let Some(id) = &frame.id {
+                    self.lastEventId = (!id.is_empty()).then(|| id.clone());
+                }
+                return Ok(RemoteSseEvent::Frame(frame));
             }
             match self.stream.next(deadline).await? {
                 streamable_http::ResponseEvent::Bytes(bytes) => self.push(&bytes)?,
                 streamable_http::ResponseEvent::Closed(result) => {
-                    return Err(result
+                    return Ok(RemoteSseEvent::Closed(result
                         .err()
-                        .unwrap_or_else(|| "Remote MCP SSE stream closed".into()))
+                        .unwrap_or_else(|| "Remote MCP SSE stream closed".into())));
                 }
                 streamable_http::ResponseEvent::Head(_) => {
                     return Err("Remote MCP SSE sent duplicate response headers".into())
@@ -658,7 +719,7 @@ impl MCPBridge {
             biased;
             _ = cancelled.changed() => Err("MCP service stopped".into()),
             result = async {
-                if active.remote.is_some() { callRemoteMcpTool(&mut active, method, params, REQUEST_TIMEOUT_MS).await }
+                if active.remote.is_some() { callRemoteMcpTool(&mut active, method, params, REMOTE_RESULT_TIMEOUT_MS).await }
                 else { callMcpTool(&mut active, method, params, REQUEST_TIMEOUT_MS).await }
             } => result,
         };
@@ -781,38 +842,41 @@ fn createRemoteServiceSession(
     service: &RegisteredService,
     deadline: &StartupDeadline,
 ) -> Result<ActiveService, String> {
-    let connectionType = service.connectionType.as_deref().unwrap_or("httpStream");
+    let transport = RemoteTransport::from_config(service.connectionType.as_deref())?;
     let endpoint = service
         .endpoint
         .clone()
         .ok_or_else(|| "Remote MCP service endpoint is empty".to_string())?;
-    let mut headers = service.headers.clone();
+    let mut headers = BTreeMap::new();
     if let Some(token) = &service.bearerToken {
-        headers.insert("Authorization".to_string(), format!("Bearer {token}"));
+        headers.insert("authorization".to_string(), format!("Bearer {token}"));
     }
-    let mut active = ActiveService {
+    for (name, value) in &service.headers {
+        headers.insert(name.to_ascii_lowercase(), value.clone());
+    }
+    Ok(ActiveService {
         scheduler: deadline.scheduler.clone(),
         process: None,
         remote: Some(RemoteMcpSession {
             scheduler: deadline.scheduler.clone(),
             httpHost,
             endpoint,
-            connectionType: connectionType.to_string(),
+            transport,
             headers,
             sessionId: None,
-            protocolVersion: "2024-11-05".to_string(),
+            protocolVersion: None,
             sseEndpoint: None,
             sseReader: None,
+            pendingServerEvents: None,
         }),
         requestId: 0,
         tools: Vec::new(),
         ready: false,
         logs: String::new(),
-    };
-
-    Ok(active)
+    })
 }
 
+/// Opens the legacy SSE channel and validates its advertised POST endpoint.
 #[allow(non_snake_case)]
 async fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Result<(), String> {
     let deadline = StartupDeadline::new(session.scheduler.clone(), timeoutMs)?;
@@ -836,10 +900,13 @@ async fn connectRemoteSse(session: &mut RemoteMcpSession, timeoutMs: u64) -> Res
     }
     let mut reader = RemoteSseReader::new(stream);
     loop {
-        let (eventName, data) = reader.next(&deadline).await?;
-        if eventName == "endpoint" {
+        let frame = match reader.next(&deadline).await? {
+            RemoteSseEvent::Frame(frame) => frame,
+            RemoteSseEvent::Closed(error) => return Err(error),
+        };
+        if frame.name == "endpoint" {
             let base = Url::parse(&session.endpoint).map_err(|error| error.to_string())?;
-            let endpoint = base.join(data.trim()).map_err(|error| error.to_string())?;
+            let endpoint = base.join(frame.data.trim()).map_err(|error| error.to_string())?;
             if endpoint.origin() != base.origin() {
                 return Err(format!(
                     "Endpoint origin does not match connection origin: {}",
@@ -862,7 +929,7 @@ async fn initializeRemoteService(
     if active
         .remote
         .as_ref()
-        .is_some_and(|session| session.connectionType.eq_ignore_ascii_case("sse"))
+        .is_some_and(|session| session.transport == RemoteTransport::Sse)
     {
         connectRemoteSse(active.remote.as_mut().unwrap(), deadline.remainingMs()?).await?;
     }
@@ -877,7 +944,7 @@ async fn initializeRemoteService(
             "id": initializeId,
             "method": "initialize",
             "params": {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": LATEST_REMOTE_PROTOCOL_VERSION,
                 "capabilities": {},
                 "clientInfo": { "name": "operit2", "version": "1.0.0" }
             }
@@ -891,25 +958,19 @@ async fn initializeRemoteService(
         return Err(format!("MCP initialize failed: {initializeResponse}"));
     }
 
-    if let Some(version) = initializeResponse
+    let version = initializeResponse
         .get("result")
         .and_then(|result| result.get("protocolVersion"))
         .and_then(Value::as_str)
-    {
-        if !version.trim().is_empty() {
-            active
-                .remote
-                .as_mut()
-                .expect("remote session attached")
-                .protocolVersion = version.to_string();
-        }
+        .ok_or("Remote MCP initialize response is missing protocolVersion")?;
+    if !SUPPORTED_REMOTE_PROTOCOL_VERSIONS.contains(&version) {
+        return Err(format!("Unsupported remote MCP protocol version: {version}"));
     }
+    let session = active.remote.as_mut().expect("remote session attached");
+    session.protocolVersion = Some(version.to_string());
 
     let _ = sendRemoteJsonRpc(
-        active
-            .remote
-            .as_mut()
-            .ok_or_else(|| "Remote MCP session is not attached".to_string())?,
+        session,
         json!({
             "jsonrpc": "2.0",
             "method": "notifications/initialized",
@@ -919,10 +980,6 @@ async fn initializeRemoteService(
         deadline.remainingMs()?,
     )
     .await?;
-
-    if active.remote.as_ref().is_some_and(|session| session.connectionType.eq_ignore_ascii_case("httpStream")) {
-        streamable_http::connectServerEvents(active.remote.as_mut().unwrap(), deadline).await?;
-    }
 
     let mut cursor = None;
     let mut seen_cursors = BTreeSet::new();
@@ -1117,6 +1174,7 @@ async fn callRemoteMcpTool(
     Ok(result)
 }
 
+/// Sends JSON-RPC over the configured remote transport.
 #[allow(non_snake_case)]
 async fn sendRemoteJsonRpc(
     session: &mut RemoteMcpSession,
@@ -1124,7 +1182,7 @@ async fn sendRemoteJsonRpc(
     expectedId: Option<u64>,
     _timeoutMs: u64,
 ) -> Result<Option<Value>, String> {
-    if session.connectionType.eq_ignore_ascii_case("sse") {
+    if session.transport == RemoteTransport::Sse {
         return sendRemoteSseJsonRpc(session, payload, expectedId, _timeoutMs).await;
     }
     streamable_http::sendJsonRpc(session, payload, expectedId, _timeoutMs).await
@@ -1147,66 +1205,71 @@ async fn sendRemoteSseJsonRpc(
     let Some(expectedId) = expectedId else {
         return Ok(None);
     };
-    readRemoteSseResponse(session, expectedId, &deadline).await.map(Some)
+    let reader = session.sseReader.as_mut().ok_or("Remote MCP SSE reader is not attached")?;
+    match readRemoteSseResponse(reader, expectedId, &deadline).await? {
+        RemoteSseResult::Response(response) => Ok(Some(response)),
+        RemoteSseResult::Closed(error) => Err(error),
+    }
 }
 
-/// Matches a delayed result on the existing event channel without replaying the request.
+/// Matches a response and reports a disconnected event stream separately from malformed data.
 #[allow(non_snake_case)]
 async fn readRemoteSseResponse(
-    session: &mut RemoteMcpSession,
+    reader: &mut RemoteSseReader,
     expectedId: u64,
     deadline: &StartupDeadline,
-) -> Result<Value, String> {
-    let reader = session
-        .sseReader
-        .as_mut()
-        .ok_or("Remote MCP SSE reader is not attached")?;
+) -> Result<RemoteSseResult, String> {
     loop {
-        let (event, data) = reader.next(deadline).await?;
-        if !event.is_empty() && event != "message" {
+        let frame = match reader.next(deadline).await? {
+            RemoteSseEvent::Frame(frame) => frame,
+            RemoteSseEvent::Closed(error) => return Ok(RemoteSseResult::Closed(error)),
+        };
+        if (!frame.name.is_empty() && frame.name != "message")
+            || frame.data.is_empty() || frame.data.trim() == "[DONE]"
+        {
             continue;
         }
-        if data.trim() == "[DONE]" {
-            continue;
-        }
-        let parsed: Value = serde_json::from_str(&data).map_err(|error| error.to_string())?;
+        let parsed: Value = serde_json::from_str(&frame.data)
+            .map_err(|error| format!("Invalid remote MCP SSE response: {error}"))?;
         if parsed.get("id").and_then(Value::as_u64) == Some(expectedId)
             && (parsed.get("result").is_some() || parsed.get("error").is_some())
         {
-            return Ok(parsed);
+            return Ok(RemoteSseResult::Response(parsed));
         }
     }
 }
 
+/// Builds one case-insensitive set of protocol and configured HTTP headers.
 #[allow(non_snake_case)]
 fn buildRemoteHeaders(
     session: &RemoteMcpSession,
     jsonBody: bool,
 ) -> Result<Vec<(String, String)>, String> {
-    let mut headers = Vec::new();
+    let mut headers = BTreeMap::new();
     if jsonBody {
-        headers.push(("Content-Type".to_string(), "application/json".to_string()));
-        headers.push((
-            "Accept".to_string(),
+        headers.insert("content-type".to_string(), "application/json".to_string());
+        headers.insert(
+            "accept".to_string(),
             "application/json, text/event-stream".to_string(),
-        ));
+        );
     } else {
-        headers.push(("Accept".to_string(), "text/event-stream".to_string()));
+        headers.insert("accept".to_string(), "text/event-stream".to_string());
     }
-    headers.push((
-        "mcp-protocol-version".to_string(),
-        session.protocolVersion.clone(),
-    ));
+    if session.transport == RemoteTransport::StreamableHttp {
+        if let Some(version) = &session.protocolVersion {
+            headers.insert("mcp-protocol-version".to_string(), version.clone());
+        }
+    }
     if let Some(sessionId) = &session.sessionId {
-        headers.push(("mcp-session-id".to_string(), sessionId.to_string()));
+        headers.insert("mcp-session-id".to_string(), sessionId.to_string());
     }
     for (name, value) in &session.headers {
         if name.trim().is_empty() {
             return Err("Invalid MCP remote header: empty name".to_string());
         }
-        headers.push((name.clone(), value.clone()));
+        headers.insert(name.clone(), value.clone());
     }
-    Ok(headers)
+    Ok(headers.into_iter().collect())
 }
 
 #[allow(non_snake_case)]
@@ -1242,7 +1305,7 @@ fn remoteHttpRequest(
         body,
         formFields: Vec::new(),
         fileParts: Vec::new(),
-        connectTimeoutSeconds: timeoutSeconds,
+        connectTimeoutSeconds: timeoutSeconds.min(REMOTE_CONNECT_TIMEOUT_SECONDS),
         readTimeoutSeconds: timeoutSeconds,
         followRedirects: true,
         ignoreSsl: false,

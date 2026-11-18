@@ -204,6 +204,7 @@ class _MCPConfigEditDialogState extends State<MCPConfigEditDialog> {
   late final TextEditingController _commandController;
   late final TextEditingController _argsController;
   late final TextEditingController _urlController;
+  late final TextEditingController _bearerTokenController;
   late String _type;
   late final TextEditingController _headersController;
   late final TextEditingController _envController;
@@ -220,9 +221,12 @@ class _MCPConfigEditDialogState extends State<MCPConfigEditDialog> {
       text: widget.server.args.join('\n'),
     );
     _urlController = TextEditingController(text: widget.server.url ?? '');
-    _type = widget.server.type?.trim().isNotEmpty == true
-        ? widget.server.type!
+    _type = widget.server.type?.toLowerCase() == 'sse'
+        ? 'sse'
         : 'streamable-http';
+    _bearerTokenController = TextEditingController(
+      text: widget.server.bearerToken,
+    );
     _headersController = TextEditingController(
       text: _mapToLines(widget.server.headers),
     );
@@ -239,6 +243,7 @@ class _MCPConfigEditDialogState extends State<MCPConfigEditDialog> {
     _commandController.dispose();
     _argsController.dispose();
     _urlController.dispose();
+    _bearerTokenController.dispose();
     _headersController.dispose();
     _envController.dispose();
     _autoApproveController.dispose();
@@ -319,6 +324,15 @@ class _MCPConfigEditDialogState extends State<MCPConfigEditDialog> {
                         _type = value;
                       });
                     },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _bearerTokenController,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: 'Bearer Token',
+                      border: OutlineInputBorder(),
+                    ),
                   ),
                   const SizedBox(height: 10),
                   TextField(
@@ -415,11 +429,13 @@ class _MCPConfigEditDialogState extends State<MCPConfigEditDialog> {
     try {
       final headers = _parseMapLines(_headersController.text, 'Headers');
       final env = _parseMapLines(_envController.text, '环境变量');
+      final bearerToken = _bearerTokenController.text.trim();
       final server = core_proxy.ServerConfig(
         command: _remote ? '' : _commandController.text.trim(),
         args: _remote ? <String>[] : _lineList(_argsController.text),
         url: _remote ? _urlController.text.trim() : null,
         type: _remote ? _type : null,
+        bearerToken: _remote && bearerToken.isNotEmpty ? bearerToken : null,
         headers: _remote ? headers : <String, String>{},
         disabled: widget.server.disabled,
         autoApprove: _lineList(_autoApproveController.text),

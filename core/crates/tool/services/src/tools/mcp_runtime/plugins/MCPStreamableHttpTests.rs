@@ -122,12 +122,13 @@ fn session(host: Arc<dyn HttpHost>) -> RemoteMcpSession {
         scheduler: testScheduler(),
         httpHost: host,
         endpoint: "https://test.invalid/mcp".into(),
-        connectionType: "httpStream".into(),
+        transport: RemoteTransport::StreamableHttp,
         headers: BTreeMap::new(),
         sessionId: None,
-        protocolVersion: "2024-11-05".into(),
+        protocolVersion: None,
         sseEndpoint: None,
         sseReader: None,
+        pendingServerEvents: None,
     }
 }
 
@@ -202,7 +203,7 @@ async fn notificationNeedsOnlyAcceptedStatusAndStillCancelsBody() {
     assert_eq!(
         sendJsonRpc(
             &mut session(host.clone()),
-            json!({"jsonrpc":"2.0","method":"notifications/initialized"}),
+            json!({"jsonrpc":"2.0","method":"notifications/cancelled"}),
             None,
             1000
         )
@@ -313,7 +314,7 @@ async fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
         args: Vec::new(),
         cwd: None,
         endpoint: Some("https://test.invalid/mcp".into()),
-        connectionType: Some("httpStream".into()),
+        connectionType: Some("streamable-http".into()),
         bearerToken: Some("fixture-token".into()),
         headers: BTreeMap::from([("X-Api-Key".into(), "fixture-key".into())]),
         description: String::new(),
@@ -331,15 +332,19 @@ async fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
     assert_eq!(active.tools[0]["name"], "echo");
     let requests = host.requests.lock().unwrap();
     assert_eq!(requests.len(), 4);
+    assert_eq!(requests[2].method, "GET");
+    let initialize: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(initialize["params"]["protocolVersion"], "2025-11-25");
+    assert!(!requests[0].headers.iter().any(|(key, _)| key == "mcp-protocol-version"));
     for (index, request) in requests.iter().enumerate() {
         assert!(request
             .headers
             .iter()
-            .any(|(key, value)| key == "Authorization" && value == "Bearer fixture-token"));
+            .any(|(key, value)| key == "authorization" && value == "Bearer fixture-token"));
         assert!(request
             .headers
             .iter()
-            .any(|(key, value)| key == "X-Api-Key" && value == "fixture-key"));
+            .any(|(key, value)| key == "x-api-key" && value == "fixture-key"));
         if index > 0 {
             assert!(request
                 .headers
@@ -351,6 +356,7 @@ async fn sessionAndNegotiatedVersionSurviveIncrementalHandshake() {
                 .any(|(key, value)| key == "mcp-protocol-version" && value == "2025-03-26"));
         }
     }
+    drop(active);
     assert_eq!(host.cancelled.lock().unwrap().len(), 4);
 }
 
@@ -370,7 +376,7 @@ async fn acceptedToolResultArrivesOnServerEvents() {
     let host = ResponseHost::with(vec![events, accepted]);
     let mut session = session(host.clone());
     let deadline = StartupDeadline::new(testScheduler(), 1000).unwrap();
-    connectServerEvents(&mut session, &deadline).await.unwrap();
+    connectServerEvents(&mut session, &deadline);
     let result = sendJsonRpc(&mut session, request(7), Some(7), 1000)
         .await
         .unwrap()
@@ -390,6 +396,69 @@ async fn acceptedToolResultArrivesOnServerEvents() {
     assert_eq!(host.cancelled.lock().unwrap().len(), 2);
 }
 
+/// Confirms a priming event resumes POST and GET streams without replaying the tool.
+#[tokio::test]
+async fn disconnectedResultResumesFromEventId() {
+    for accepted in [false, true] {
+        let mut priming = ScriptedResponse::response("text/event-stream", "id: result-cursor\r\ndata:\r\n\r\n");
+        priming.closed = Some(Ok(()));
+        let resumed = ScriptedResponse::response(
+            "text/event-stream", "data: {\"id\":7,\"result\":{\"text\":\"resumed\"}}\n\n",
+        );
+        let responses = if accepted {
+            let mut acknowledgement = ScriptedResponse::response("", "");
+            acknowledgement.head.as_mut().unwrap().statusCode = 202;
+            vec![priming, acknowledgement, resumed]
+        } else {
+            vec![priming, resumed]
+        };
+        let host = ResponseHost::with(responses);
+        let mut session = session(host.clone());
+        session.sessionId = Some("fixture-session".into());
+        session.protocolVersion = Some("2025-11-25".into());
+        session.headers.insert("authorization".into(), "Bearer fixture-token".into());
+        if accepted {
+            connectServerEvents(&mut session, &StartupDeadline::new(testScheduler(), 1000).unwrap());
+        }
+        let response = sendJsonRpc(&mut session, request(7), Some(7), 1000)
+            .await.unwrap().unwrap();
+        assert_eq!(response["result"]["text"], "resumed");
+        let requests = host.requests.lock().unwrap();
+        assert_eq!(requests.iter().filter(|request| request.method == "POST").count(), 1);
+        let resume = requests.last().unwrap();
+        assert_eq!(resume.method, "GET");
+        for (name, value) in [
+            ("last-event-id", "result-cursor"),
+            ("mcp-session-id", "fixture-session"),
+            ("mcp-protocol-version", "2025-11-25"),
+            ("authorization", "Bearer fixture-token"),
+        ] {
+            assert!(resume.headers.iter().any(|(key, header)| key == name && header == value));
+        }
+    }
+}
+
+/// Rejects unsupported or absent protocol versions before sending initialized or listing tools.
+#[tokio::test]
+async fn invalidNegotiationStopsRemoteStartup() {
+    for result in [json!({}), json!({"protocolVersion": "2030-01-01"})] {
+        let body = json!({"id": 1, "result": result}).to_string();
+        let host = ResponseHost::with(vec![ScriptedResponse::response("application/json", &body)]);
+        let mut active = ActiveService {
+            scheduler: testScheduler(),
+            process: None,
+            remote: Some(session(host.clone())),
+            requestId: 0,
+            tools: Vec::new(),
+            ready: false,
+            logs: String::new(),
+        };
+        assert!(initializeRemoteService(&mut active, &StartupDeadline::new(testScheduler(), 1000).unwrap()).await.is_err());
+        assert!(!active.ready);
+        assert_eq!(host.requests.lock().unwrap().len(), 1);
+    }
+}
+
 /// Preserves the deadline and releases both streams when an accepted result never arrives.
 #[tokio::test]
 async fn acceptedResultTimeoutDoesNotReplayTheTool() {
@@ -401,9 +470,7 @@ async fn acceptedResultTimeoutDoesNotReplayTheTool() {
     connectServerEvents(
         &mut session,
         &StartupDeadline::new(testScheduler(), 1000).unwrap(),
-    )
-    .await
-    .unwrap();
+    );
     let error = sendJsonRpc(&mut session, request(7), Some(7), 25)
         .await
         .unwrap_err();
@@ -463,30 +530,28 @@ async fn remoteToolsFollowEveryPage() {
     assert_eq!(last["id"], 3);
 }
 
-#[test]
-fn decoderAcceptsLfCrLfAndCrAcrossChunkBoundaries() {
+/// Verifies the shared SSE parser on POST responses with split multibyte text and delimiters.
+#[tokio::test]
+async fn eventReaderAcceptsLfCrLfAndCrAcrossChunkBoundaries() {
     for newline in ["\n", "\r\n", "\r"] {
         let wire = format!("data: {{\"id\":7,\"result\":{{\"text\":\"中文\"}}}}{newline}{newline}");
-        let mut decoder = ResponseDecoder::new(true, 7);
-        let mut decoded = None;
-        for byte in wire.as_bytes() {
-            if let Some(response) = decoder.push(&[*byte]).unwrap() {
-                decoded = Some(response);
-                break;
-            }
-        }
-        assert_eq!(decoded.unwrap()["result"]["text"], "中文");
+        let mut scripted = ScriptedResponse::response("text/event-stream", "");
+        scripted.chunks = wire.bytes().map(|byte| vec![byte]).collect();
+        let host = ResponseHost::with(vec![scripted]);
+        let result = sendJsonRpc(&mut session(host), request(7), Some(7), 1000)
+            .await.unwrap().unwrap();
+        assert_eq!(result["result"]["text"], "中文");
     }
 }
 
 #[test]
 fn decoderRejectsOversizedOrMismatchedResponses() {
-    let mut decoder = ResponseDecoder::new(false, 7);
+    let mut decoder = ResponseDecoder::new(7);
     assert!(decoder
         .push(&vec![b' '; MAX_RESPONSE_BYTES + 1])
         .unwrap_err()
         .contains("16 MiB"));
-    let mut decoder = ResponseDecoder::new(false, 7);
+    let mut decoder = ResponseDecoder::new(7);
     assert!(decoder
         .push(b"{\"id\":8,\"result\":{}}")
         .unwrap_err()

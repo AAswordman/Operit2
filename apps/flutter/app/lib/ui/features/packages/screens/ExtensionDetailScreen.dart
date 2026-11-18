@@ -63,6 +63,28 @@ class _ToolPkgDetails extends _KindDetails {
   final core_proxy.ToolPkgContainerRuntime runtime;
   final core_proxy.ToolPkgContainerDetails? details;
   final List<core_proxy.ToolPkgContainerRuntime> runtimes;
+
+  /// Excludes routes that are exposed only through a workspace surface.
+  String? get standaloneRouteId {
+    final workspaceRoutes = <String>{};
+    final standaloneRoutes = <String>{};
+    for (final entry in runtime.navigationEntries) {
+      switch (entry.surface) {
+        case 'workspace' || 'workspace_file' || 'workspace_home':
+          workspaceRoutes.add(entry.routeId);
+        case 'toolbox' || 'main_sidebar_plugins' || 'app_bar':
+          if (entry.action == null) standaloneRoutes.add(entry.routeId);
+      }
+    }
+    return runtime.uiRoutes
+        .where(
+          (route) =>
+              !workspaceRoutes.contains(route.routeId) ||
+              standaloneRoutes.contains(route.routeId),
+        )
+        .firstOrNull
+        ?.routeId;
+  }
 }
 
 class _ScriptDetails extends _KindDetails {
@@ -311,7 +333,9 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     final enabled = ExtensionCatalogController.isEnabled(entry);
     final toggleValue = _controller.pendingEnabled(key) ?? enabled;
     final hasUpdate = _controller.hasUpdate(entry);
-    final canOpenUi = entry.kind == 'toolpkg' && entry.hasUi;
+    final details = _details;
+    final toolPkg = details is _ToolPkgDetails ? details : null;
+    final standaloneRouteId = toolPkg?.standaloneRouteId;
     final subtitle = <String>[
       if (entry.authors.isNotEmpty) entry.authors.join('、'),
       storeSourceLabel(entry.source),
@@ -319,7 +343,6 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     final mcpError = entry.runtimeState.startsWith('error:')
         ? entry.runtimeState.substring('error:'.length)
         : null;
-    final details = _details;
     final wide = MediaQuery.sizeOf(context).width >= 600;
     return StoreDetailScaffold(
       header: StoreDetailHeader(
@@ -348,13 +371,15 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
               busy: busy,
               onPressed: () => _run(() => _controller.update(entry)),
             )
-          else if (canOpenUi)
+          else if (toolPkg != null && standaloneRouteId != null)
             StoreGetButton(
               label: '打开',
               icon: Icons.open_in_new_rounded,
               prominent: true,
               large: true,
-              onPressed: enabled ? () => _openUi(null) : null,
+              onPressed: enabled
+                  ? () => _openUi(toolPkg.runtime, standaloneRouteId)
+                  : null,
             ),
           _EnableToggle(
             label: _toggleLabel(entry, toggleValue),
@@ -772,7 +797,9 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
                       : '${module.uiModuleId} · ${module.runtime}',
                   trailing: StoreGetButton(
                     label: '打开',
-                    onPressed: enabled ? () => _openUi(module.routeId) : null,
+                    onPressed: enabled
+                        ? () => _openUi(runtime, module.routeId)
+                        : null,
                   ),
                 ),
             ],
@@ -909,12 +936,9 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     }
   }
 
-  Future<void> _openUi(String? routeId) async {
-    final runtime = await _toolPkgRuntime();
-    if (!mounted) {
-      return;
-    }
-    await Navigator.of(context).push(
+  /// Launches the exact route selected by the detail page.
+  void _openUi(core_proxy.ToolPkgContainerRuntime runtime, String routeId) {
+    Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => ToolPkgUiLauncherScreen(
           clients: _clients,
@@ -923,17 +947,6 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
         ),
       ),
     );
-  }
-
-  Future<core_proxy.ToolPkgContainerRuntime> _toolPkgRuntime() async {
-    final details = _details;
-    if (details is _ToolPkgDetails) {
-      return details.runtime;
-    }
-    final runtimes = await _clients.application
-        .packageManager()
-        .getToolPkgContainerRuntimes();
-    return runtimes.firstWhere((item) => item.packageName == widget.id);
   }
 
   void _openDesktopWidgets(core_proxy.ToolPkgContainerRuntime runtime) {

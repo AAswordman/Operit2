@@ -348,6 +348,67 @@ void main() {
     });
   }
 
+  for (final hasStandaloneRoute in [false, true]) {
+    testWidgets('detail opens only standalone routes ($hasStandaloneRoute)', (
+      tester,
+    ) async {
+      const title = core_proxy.LocalizedText(values: {'en': 'Test UI'});
+      final entries = [
+        (id: 'conversation', surface: 'workspace'),
+        if (hasStandaloneRoute) (id: 'settings', surface: 'toolbox'),
+      ];
+      final bridge = _CatalogBridge()
+        ..enabled = true
+        ..runtime = _toolpkgRuntime(
+          uiRoutes: [
+            for (final entry in entries)
+              core_proxy.ToolPkgUiRouteRuntime(
+                id: entry.id,
+                routeId: 'toolpkg:toolpkg:ui:${entry.id}',
+                runtime: 'compose_dsl',
+                screen: '${entry.id}.ui.js',
+                screenExport: null,
+                title: title,
+                keepAlive: false,
+              ),
+          ],
+          navigationEntries: [
+            for (final entry in entries)
+              core_proxy.ToolPkgNavigationEntryRuntime(
+                id: entry.id,
+                routeId: 'toolpkg:toolpkg:ui:${entry.id}',
+                surface: entry.surface,
+                params: null,
+                title: title,
+                icon: null,
+                action: null,
+                order: 0,
+              ),
+          ],
+        );
+      await tester.pumpWidget(
+        _manager(
+          bridge,
+          child: ExtensionDetailScreen(
+            kind: 'toolpkg',
+            id: 'toolpkg',
+            clients: GeneratedCoreProxyClients(bridge),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final open = find.text('打开');
+      expect(open, hasStandaloneRoute ? findsOneWidget : findsNothing);
+      if (hasStandaloneRoute) {
+        await tester.tap(open);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 400));
+        expect(bridge.requestedUiModules, ['settings']);
+      }
+    });
+  }
+
   for (final hasRequired in <bool>[true, false]) {
     testWidgets('detail shows optional dependencies (required: $hasRequired)', (
       tester,
@@ -1237,6 +1298,7 @@ core_proxy.ExtensionCatalogEntry _entry({
   required String kind,
   required String source,
   bool enabled = false,
+  bool hasUi = false,
   String scope = 'device',
   String version = '1.0.0',
 }) {
@@ -1261,7 +1323,7 @@ core_proxy.ExtensionCatalogEntry _entry({
     toolCount: 0,
     subpackageCount: 0,
     uiModuleCount: 0,
-    hasUi: false,
+    hasUi: hasUi,
     chatSidebarEntryIds: const <String>[],
     dependencyIssueCount: 0,
   );
@@ -1287,6 +1349,7 @@ Map<String, Object?> _fileImportResult({
 
 class _CatalogBridge extends OperitRuntimeBridge {
   core_proxy.ToolPkgContainerRuntime runtime = _toolpkgRuntime();
+  final requestedUiModules = <String>[];
   final dependencyRuntimes = <core_proxy.ToolPkgContainerRuntime>[];
   final dependencyEntries = <core_proxy.ExtensionCatalogEntry>[];
   bool skillDeleted = false;
@@ -1370,6 +1433,15 @@ class _CatalogBridge extends OperitRuntimeBridge {
           for (final item in dependencyRuntimes) item.toJson(),
         ];
       case 'getToolPkgContainerDetails':
+        return null;
+      case 'getToolPkgComposeDslScript':
+        requestedUiModules.add((request.args as Map)['uiModuleId'] as String);
+        return 'module.exports = {};';
+      case 'getToolPkgComposeDslScreenPath':
+        return '${(request.args as Map)['uiModuleId']}.ui.js';
+      case 'acquireToolPkgExecutionEngine':
+        return Completer<Object?>().future;
+      case 'releaseToolPkgExecutionEngine':
         return null;
       case 'deletePackage':
         toolpkgDeleted = true;
@@ -1497,6 +1569,7 @@ class _CatalogBridge extends OperitRuntimeBridge {
       kind: 'toolpkg',
       source: externalToolpkg ? 'manual' : 'builtin',
       enabled: enabled,
+      hasUi: runtime.navigationEntries.isNotEmpty,
     );
     return core_proxy.ExtensionCatalogSnapshot(
       revision: 1,
@@ -1549,6 +1622,8 @@ core_proxy.ToolPkgContainerRuntime _toolpkgRuntime({
   String id = 'toolpkg',
   List<core_proxy.ToolPkgManifestRequirement> requires = const [],
   List<core_proxy.ToolPkgManifestRequirement> optionalRequires = const [],
+  List<core_proxy.ToolPkgUiRouteRuntime> uiRoutes = const [],
+  List<core_proxy.ToolPkgNavigationEntryRuntime> navigationEntries = const [],
 }) => core_proxy.ToolPkgContainerRuntime(
   packageName: id,
   displayName: core_proxy.LocalizedText(values: {'en': 'Demo $id'}),
@@ -1573,9 +1648,9 @@ core_proxy.ToolPkgContainerRuntime _toolpkgRuntime({
   workflowTemplates: [],
   workspaceTemplates: [],
   uiModules: [],
-  uiRoutes: [],
+  uiRoutes: uiRoutes,
   chatComposerSlots: [],
-  navigationEntries: [],
+  navigationEntries: navigationEntries,
   desktopWidgets: [],
   appLifecycleHooks: [],
   messageProcessingPlugins: [],

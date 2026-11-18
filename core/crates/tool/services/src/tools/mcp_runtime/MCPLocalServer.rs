@@ -34,6 +34,8 @@ pub struct ServerConfig {
     pub r#type: Option<String>,
     #[serde(default)]
     pub headers: BTreeMap<String, String>,
+    #[serde(rename = "bearerToken", default)]
+    pub bearerToken: Option<String>,
     #[serde(default)]
     pub disabled: bool,
     #[serde(rename = "autoApprove", default)]
@@ -190,6 +192,7 @@ impl MCPLocalServer {
                 url: None,
                 r#type: None,
                 headers: BTreeMap::new(),
+                bearerToken: None,
                 disabled,
                 autoApprove: autoApprove
                     .into_iter()
@@ -606,6 +609,7 @@ impl MCPLocalServer {
             url,
             r#type: transportType,
             headers: cleanEnv(serverConfig.headers),
+            bearerToken: serverConfig.bearerToken,
             disabled: serverConfig.disabled,
             autoApprove: serverConfig
                 .autoApprove
