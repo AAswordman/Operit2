@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile, unlink } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 await mkdir('resources/dsp', {recursive:true});
 execFileSync('clang', ['--target=wasm32','-O3','-nostdlib','-fno-builtin','-c','dsp/studio.c','-o','resources/dsp/studio.o'], {stdio:'inherit'});
-execFileSync('wasm-ld', ['--no-entry','--export-memory','--initial-memory=50331648','--max-memory=50331648','-z','stack-size=65536','resources/dsp/studio.o','-o','resources/dsp/studio.wasm'], {stdio:'inherit'});
+execFileSync('wasm-ld', ['--no-entry','--initial-memory=50331648','--max-memory=50331648','-z','stack-size=65536','resources/dsp/studio.o','-o','resources/dsp/studio.wasm'], {stdio:'inherit'});
 await unlink('resources/dsp/studio.o');
 const bytes=await readFile('resources/dsp/studio.wasm');
 const module=await WebAssembly.compile(bytes); if(WebAssembly.Module.imports(module).length) throw Error('DSP must not import host functions');
