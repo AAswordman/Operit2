@@ -1679,10 +1679,18 @@ pub fn exportWithBudget<K: SyncOperationKnowledge>(
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? {
                 // Every seal rotates the checkpoint identity; peers that already
                 // cover the sealed history rebuild it from ordinary records.
-                if !clock.containsSequence(&origin,sequence)
-                    && crate::Transaction::compaction::initialization_transfer_required(&store,clock)? {
-                    let size: i64 = store.queryOne("SELECT length(CAST(original AS BLOB)) FROM _operit_transaction_initialization WHERE id=1", vec![])?.ok_or_else(||failure("Missing initialization"))?.get(0)?;
-                    entries.push((0,origin,sequence,stores.len(),usize::try_from(size).map_err(|_|failure("Invalid initialization size"))?));
+                if !clock.containsSequence(&origin,sequence) {
+                    if let Some(reason) = crate::Transaction::compaction::initialization_transfer_reason(&store,clock)? {
+                        let size: i64 = store.queryOne("SELECT length(CAST(original AS BLOB)) FROM _operit_transaction_initialization WHERE id=1", vec![])?.ok_or_else(||failure("Missing initialization"))?.get(0)?;
+                        let shortOrigin = origin.trim_start_matches("~init:").get(..12).unwrap_or(origin.trim_start_matches("~init:"));
+                        operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                            "sync_checkpoint.export path={path} origin={shortOrigin} sequence={sequence} bytes={size} reason={}",
+                            reason.as_str()));
+                        entries.push((0,origin,sequence,stores.len(),usize::try_from(size).map_err(|_|failure("Invalid initialization size"))?));
+                    } else {
+                        operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                            "sync_checkpoint.covered path={path} origin={}", origin.trim_start_matches("~init:")));
+                    }
                 }
             }
             for row in store.queryRows(

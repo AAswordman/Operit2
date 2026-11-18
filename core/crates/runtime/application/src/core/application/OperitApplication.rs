@@ -919,12 +919,21 @@ impl OperitApplication {
         }
         let mut blobs = BTreeMap::new();
         let managedFiles = self.runtimeWorkspaceFileSyncStore()?;
-        for reference in managedFiles.deferredBlobs()? { blobs.insert(reference.contentHash.clone(), reference); }
+        for reference in managedFiles.deferredBlobs()? {
+            operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                "sync_clock.blob hash={} bytes={} source=deferred", &reference.contentHash[..12], reference.size));
+            blobs.insert(reference.contentHash.clone(), reference);
+        }
         for operation in states.into_values() {
             if !store.shouldApplyOperation(operation).map_err(|e|e.to_string())? { continue; }
             if operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore::owns(operation) && !managedFiles.wantsBlob(operation)? { continue; }
             match RuntimeFileSyncStore::requiredBlob(operation) {
-                Ok(Some(reference)) => { blobs.insert(reference.contentHash.clone(), reference); }
+                Ok(Some(reference)) => {
+                    operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                        "sync_clock.blob hash={} bytes={} source=pending-op op={} entity={}",
+                        &reference.contentHash[..12], reference.size, operation.opId, operation.entityId));
+                    blobs.insert(reference.contentHash.clone(), reference);
+                }
                 Ok(None) => {}
                 Err(error) => errors.push(format!("pending blob op={}: {error}", operation.opId)),
             }

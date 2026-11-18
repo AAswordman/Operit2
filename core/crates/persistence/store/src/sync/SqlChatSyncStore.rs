@@ -595,11 +595,27 @@ impl SqlChatSyncStore {
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
                 // Every seal rotates the checkpoint identity; peers that already
                 // cover the sealed history rebuild it from ordinary records.
-                if !clock.containsSequence(&origin,sequence)
-                    && crate::Transaction::compaction::initialization_transfer_required(&self.store,clock)? {
-                    if let Some(initialization) = self.dataset().initialization().map_err(SqlChatSyncStoreError::Message)? {
-                        operations.insert(0,initialization);
-                        operations.truncate(limit);
+                if !clock.containsSequence(&origin,sequence) {
+                    match crate::Transaction::compaction::initialization_transfer_reason(&self.store,clock)
+                        .map_err(SqlChatSyncStoreError::Store)?
+                    {
+                        Some(reason) => {
+                            if let Some(initialization) = self.dataset().initialization().map_err(SqlChatSyncStoreError::Message)? {
+                                let bytes = self.store.queryOne("SELECT length(CAST(original AS BLOB)) FROM _operit_transaction_initialization WHERE id=1", vec![])
+                                    .map_err(SqlChatSyncStoreError::Store)?.and_then(|row| row.get::<_,i64>(0).ok()).unwrap_or_default();
+                                operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
+                                    "sync_checkpoint.export path={} origin={} sequence={sequence} bytes={bytes} reason={}",
+                                    operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH,
+                                    origin.trim_start_matches("~init:").get(..12).unwrap_or(origin.trim_start_matches("~init:")),
+                                    reason.as_str()));
+                                operations.insert(0,initialization);
+                                operations.truncate(limit);
+                            }
+                        },
+                        None => { operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
+                            "sync_checkpoint.covered path={} origin={}",
+                            operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH,
+                            origin.trim_start_matches("~init:"))); },
                     }
                 }
             }
