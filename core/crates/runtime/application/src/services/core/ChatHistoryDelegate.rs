@@ -1886,11 +1886,18 @@ impl ChatHistoryDelegate {
             }
             None => (folderPath, None),
         };
-        let folderPath = VfsPath::normalizeWorkspaceBindingPath(&folderPath)?;
+        let (nodeId, path) = match operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(&folderPath) {
+            Some((owner, path)) => (owner.to_owned(), VfsPath::normalizeVfsPath(path)?),
+            None => (
+                operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::native().initialize()?.nodeId,
+                VfsPath::normalizeWorkspaceBindingPath(&folderPath)?,
+            ),
+        };
         let folderName = match mountedName {
             Some(name) => name,
-            None => operit_model::Workspace::Workspace::folderNameFromPath(&folderPath)?,
+            None => operit_model::Workspace::Workspace::folderNameFromPath(&path)?,
         };
+        let folderPath = operit_util::FileUtils::FileUtils::qualifyVfsPath(&nodeId, &path);
         let workspace = match self
             .chatHistoryManager
             .getWorkspaceForChat(&chatId)
@@ -1943,7 +1950,13 @@ impl ChatHistoryDelegate {
             .getWorkspace(workspaceId)
             .ok()
             .flatten()
-            .map(|workspace| workspace.primaryFolder().path.clone())
+            .map(|workspace| {
+                let path = &workspace.primaryFolder().path;
+                match operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(path) {
+                    Some((owner, localPath)) if Some(owner) == operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::localNodeId().as_deref() => localPath.to_owned(),
+                    _ => path.clone(),
+                }
+            })
     }
 
     /// Returns every mounted folder path for a chat.

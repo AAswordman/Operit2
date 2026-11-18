@@ -3,6 +3,21 @@
 pub struct FileUtils;
 
 impl FileUtils {
+    /// Splits a node-qualified address while preserving Windows drive paths.
+    pub fn splitQualifiedVfsPath(text: &str) -> Option<(&str, &str)> {
+        let (node, path) = text.trim().split_once(':')?;
+        if node.len() <= 1 || node.chars().any(|character| matches!(character, '/' | '\\')) {
+            return None;
+        }
+        let path = if path.starts_with("//") { &path[1..] } else { path };
+        Some((node, path))
+    }
+
+    /// Attaches a stable owning node to an absolute virtual address.
+    pub fn qualifyVfsPath(nodeId: &str, path: &str) -> String {
+        format!("{nodeId}://{}", path.trim_start_matches('/'))
+    }
+
     /// Portable storage components use the common filename subset on all hosts.
     pub fn isPortableFileName(name: &str) -> bool {
         if name.is_empty() || name.len() > 255 || name.ends_with([' ', '.'])

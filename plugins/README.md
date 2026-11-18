@@ -7,6 +7,11 @@ for ToolPkg and in the `METADATA` root object for standalone scripts. Packages
 that omit the field use the `1.0.0` compatibility contract. ToolPkg subpackages
 inherit the contract from their container manifest.
 
+The marketplace and local script details display the same API contract for
+scripts and ToolPkg. API `2.0.0` releases carry an API v2 marker. Publishing
+reads the version from the package metadata; unversioned historical releases
+are displayed as API `1.0.0`.
+
 - `types/`: current v2 TypeScript declarations generated from the Rust SDK.
 - `types-v1/`: the independent handwritten v1 declaration snapshot, with source provenance.
 - `sdk/`: language clients, native carrier, and runnable SDK examples under `sdk/examples/`.

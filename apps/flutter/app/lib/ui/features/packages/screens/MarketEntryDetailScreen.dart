@@ -913,7 +913,10 @@ class _MarketEntryDetailScreenState extends State<MarketEntryDetailScreen> {
       StoreInfoItem('来源', entry.source?.url ?? ''),
       StoreInfoItem('版本', entry.latestVersion?.version ?? ''),
       StoreInfoItem('格式', entry.latestVersion?.formatVer ?? ''),
-      StoreInfoItem('ToolPkg API', entry.latestVersion?.apiVersion ?? ''),
+      if (entry.type == 'script' ||
+          entry.type == 'package' ||
+          entry.type == 'toolpkg')
+        StoreInfoItem('API 版本', entry.latestVersion?.apiVersion ?? '1.0.0'),
       StoreInfoItem(
         '首次发布',
         formatMarketDate(entry.publishedAt ?? entry.createdAt),

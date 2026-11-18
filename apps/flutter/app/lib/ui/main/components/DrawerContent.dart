@@ -179,7 +179,8 @@ class _DrawerContentState extends State<DrawerContent> {
   Future<void> _loadWorkspaces() async {
     final generation = ++_workspaceLoadGeneration;
     try {
-      final workspaces = await _clients.servicesWorkspaceService
+      final workspaces = await _clients.application
+          .workspaceService()
           .listWorkspaces();
       if (!mounted || generation != _workspaceLoadGeneration) return;
       setState(() {

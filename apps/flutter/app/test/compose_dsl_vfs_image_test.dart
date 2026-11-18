@@ -20,25 +20,28 @@ final png = base64Decode(
 
 /// Verifies shared VFS image resolution and the production Markdown rendering path.
 void main() {
-  test(
-    'both VFS image roots pass through without native fallback',
-    () {
-      expect(
-        composeDslVfsImagePath('/app/data/image.png'),
-        '/app/data/image.png',
-      );
-      expect(
-        composeDslVfsImagePath('/mnt/macos/image.png'),
-        '/mnt/macos/image.png',
-      );
-      expect(
-        composeDslVfsImagePath('file:///app/data/image.png'),
-        '/app/data/image.png',
-      );
-      expect(composeDslVfsImagePath('/application/image.png'), isNull);
-      expect(composeDslVfsImagePath('/mnt-other/image.png'), isNull);
-    },
-  );
+  test('both VFS image roots pass through without native fallback', () {
+    expect(
+      composeDslVfsImagePath('/app/data/image.png'),
+      '/app/data/image.png',
+    );
+    expect(
+      composeDslVfsImagePath('/mnt/macos/image.png'),
+      '/mnt/macos/image.png',
+    );
+    expect(
+      composeDslVfsImagePath('file:///app/data/image.png'),
+      '/app/data/image.png',
+    );
+    expect(composeDslVfsImagePath('/application/image.png'), isNull);
+    expect(composeDslVfsImagePath('/mnt-other/image.png'), isNull);
+    for (final path in [
+      'core-mac://virtual/local/folders/mount/image.png',
+      'core-mac:/virtual/local/folders/mount/image.png',
+    ]) {
+      expect(composeDslVfsImagePath(path), path);
+    }
+  });
   testWidgets(
     'Markdown shared images read Core VFS and reuse the decoded image',
     (tester) async {
@@ -103,8 +106,7 @@ void main() {
     await tester.pumpWidget(
       MaterialApp(
         home: MarkdownRemoteImage(
-          url:
-              '/operitapp/outputs/2026-11-04_00-00-00-000/images/missing.png',
+          url: '/operitapp/outputs/2026-11-04_00-00-00-000/images/missing.png',
           clients: GeneratedCoreProxyClients(bridge),
         ),
       ),

@@ -66,9 +66,17 @@ pub(crate) fn deleteWorkspaceFiles(
     let storage = defaultRuntimeStorageHost();
     let registry = operit_vfs::MountRegistry::MountRegistry::withStorage(storage.clone());
     let mounts = registry.list()?;
+    let nodeId = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::localNodeId();
+    let localPath = |folder: &operit_model::Workspace::WorkspaceFolder| {
+        match operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(&folder.path) {
+            Some((owner, path)) if Some(owner) == nodeId.as_deref() => Some(path.to_owned()),
+            Some(_) => None,
+            None => Some(folder.path.clone()),
+        }
+    };
     let otherPaths = others
         .iter()
-        .flat_map(|other| other.folders.iter().map(|folder| folder.path.as_str()))
+        .flat_map(|other| other.folders.iter().filter_map(&localPath))
         .collect::<Vec<_>>();
     let overlaps = |left: &str, right: &str| {
         left == right
@@ -76,9 +84,9 @@ pub(crate) fn deleteWorkspaceFiles(
             || right.starts_with(&format!("{left}/"))
     };
     let mut ownedPaths = std::collections::BTreeSet::new();
-    for folder in &workspace.folders {
+    for folderPath in workspace.folders.iter().filter_map(&localPath) {
         let Some(relative) =
-            VfsPath::relativePath(VfsPath::workspaceCollectionPath(), &folder.path)?
+            VfsPath::relativePath(VfsPath::workspaceCollectionPath(), &folderPath)?
         else {
             continue;
         };
@@ -87,7 +95,7 @@ pub(crate) fn deleteWorkspaceFiles(
             continue;
         }
         VfsPath::workspacePath(&relative)?;
-        if !otherPaths.iter().any(|other| overlaps(&folder.path, other)) {
+        if !otherPaths.iter().any(|other| overlaps(&folderPath, other)) {
             ownedPaths.insert(format!("{WORKSPACE_DIR_PATH}/{relative}"));
         }
     }
@@ -105,7 +113,8 @@ pub(crate) fn deleteWorkspaceFiles(
         if workspace
             .folders
             .iter()
-            .any(|folder| overlaps(&folder.path, &path))
+            .filter_map(&localPath)
+            .any(|folderPath| overlaps(&folderPath, &path))
             && !otherPaths.iter().any(|other| overlaps(other, &path))
         {
             registry.remove(&path)?;

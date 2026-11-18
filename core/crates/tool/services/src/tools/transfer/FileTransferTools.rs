@@ -696,10 +696,11 @@ impl StandardFileSystemTools {
     ) -> Result<Option<(TransferEndpoint, TransferEndpoint)>, String> {
         let mut endpoints: Vec<TransferEndpoint> = Vec::new();
         for name in pathParameters {
-            let value = parameterValue(tool, name);
-            if value.trim().is_empty() {
+            let parameter = parameterValue(tool, name);
+            if parameter.trim().is_empty() {
                 continue;
             }
+            let value = self.transferAddress(&parameter)?;
             if splitQualified(&value) {
                 let state = self.transferRuntimeSupport().coreNodeRouteState().map_err(|error| {
                     format!("Cross-device path '{value}' requires CoreNode routing: {error}")

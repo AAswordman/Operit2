@@ -309,11 +309,7 @@ impl VisualFileSystem {
 
     /// Rejects self/descendant transfers, including aliases of overlapping mounts.
     pub fn validateTransfer(&self, source: &str, destination: &str, directory: bool) -> Result<(), String> {
-        let source = self.resolvePath(source)?.physicalPath;
-        let destination = self.resolvePath(destination)?.physicalPath;
-        let source = source.trim_end_matches('/');
-        let destination = destination.trim_end_matches('/');
-        if source == destination || (directory && destination.starts_with(&format!("{source}/"))) {
+        if self.isWithin(source, destination)? && (directory || self.isWithin(destination, source)?) {
             return Err("Cannot paste an entry onto itself or into its own subfolder".to_string());
         }
         Ok(())
@@ -322,6 +318,7 @@ impl VisualFileSystem {
     /// Moves a file between two mapped host paths.
     #[allow(non_snake_case)]
     pub fn moveFile(&self, source: &str, destination: &str) -> Result<(), String> {
+        self.validateTransfer(source, destination, self.fileExists(source)?.isDirectory)?;
         let source = self.resolvePath(source)?;
         let destination = self.resolvePath(destination)?;
         self.host
@@ -333,6 +330,7 @@ impl VisualFileSystem {
     /// Copies a file or directory between two mapped host paths.
     #[allow(non_snake_case)]
     pub fn copyFile(&self, source: &str, destination: &str, recursive: bool) -> Result<(), String> {
+        self.validateTransfer(source, destination, self.fileExists(source)?.isDirectory)?;
         let source = self.resolvePath(source)?;
         let destination = self.resolvePath(destination)?;
         self.host
@@ -609,6 +607,13 @@ mod tests {
         assert!(vfs.validateTransfer("/app/workspaces/a", "/operitapp/workspaces/a/child", true).is_err());
         assert!(vfs.validateTransfer("/operitapp/workspaces/a", "/operitapp/workspaces/a-copy", true).is_ok());
         assert!(vfs.validateTransfer("/operitapp/workspaces/a", "/operitapp/workspaces/b/a", true).is_ok());
+        vfs.makeDirectory("/operitapp/workspaces/a", true).unwrap();
+        assert!(vfs.copyFile("/operitapp/workspaces/a", "/app/workspaces/a/child", true).is_err());
+        assert!(vfs.moveFile("/operitapp/workspaces/a", "/app/workspaces/a/child").is_err());
+        let storage = Arc::new(NativeRuntimeStorageHost::new(root.clone(), root.join("workspaces")));
+        let mount = crate::MountRegistry::MountRegistry::withStorage(storage)
+            .register("/virtual/test/documents", "test", "opaque-root", "documents").unwrap();
+        assert!(vfs.validateTransfer(&format!("{}/src", mount.vfsPath()), &format!("{}/src/child", mount.vfsPath()), true).is_err());
         if root.exists() { std::fs::remove_dir_all(root).unwrap(); }
     }
 

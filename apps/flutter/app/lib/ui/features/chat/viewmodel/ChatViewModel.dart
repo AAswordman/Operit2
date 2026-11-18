@@ -634,10 +634,9 @@ class ChatViewModel {
     String relativePath,
   ) async {
     final chatId = await _requiredCurrentChatId();
-    final entries = await clients.servicesWorkspaceService.listWorkspaceFiles(
-      chatId: chatId,
-      relativePath: relativePath,
-    );
+    final entries = await clients.application
+        .workspaceService()
+        .listWorkspaceFiles(chatId: chatId, relativePath: relativePath);
     return entries;
   }
 
@@ -647,7 +646,7 @@ class ChatViewModel {
     String? destinationPath,
   ) async {
     final chatId = await _requiredCurrentChatId();
-    await clients.servicesWorkspaceService.mutateWorkspaceFile(
+    await clients.application.workspaceService().mutateWorkspaceFile(
       chatId: chatId,
       operation: operation.name,
       relativePath: path,
@@ -660,7 +659,8 @@ class ChatViewModel {
     String searchQuery,
   ) async {
     final chatId = await _requiredCurrentChatId();
-    final entries = await clients.servicesWorkspaceService
+    final entries = await clients.application
+        .workspaceService()
         .listMentionWorkspaceSuggestions(
           chatId: chatId,
           searchQuery: searchQuery,
@@ -671,14 +671,15 @@ class ChatViewModel {
   Future<List<WorkspaceFileEntry>> listWorkspaceBindingDirectories(
     String path,
   ) async {
-    final entries = await clients.servicesWorkspaceService
+    final entries = await clients.application
+        .workspaceService()
         .listWorkspaceBindingDirectories(path: path);
     return entries;
   }
 
   Future<String> readWorkspaceTextFile(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
-    return clients.servicesWorkspaceService.readWorkspaceTextFile(
+    return clients.application.workspaceService().readWorkspaceTextFile(
       chatId: chatId,
       relativePath: relativePath,
     );
@@ -686,10 +687,9 @@ class ChatViewModel {
 
   Future<Uint8List> readWorkspaceFileBytes(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
-    final bytes = await clients.servicesWorkspaceService.readWorkspaceFileBytes(
-      chatId: chatId,
-      relativePath: relativePath,
-    );
+    final bytes = await clients.application
+        .workspaceService()
+        .readWorkspaceFileBytes(chatId: chatId, relativePath: relativePath);
     return base64Decode(bytes.base64Content);
   }
 
@@ -698,7 +698,7 @@ class ChatViewModel {
     Uint8List bytes,
   ) async {
     final chatId = await _requiredCurrentChatId();
-    await clients.servicesWorkspaceService.writeWorkspaceFileBytes(
+    await clients.application.workspaceService().writeWorkspaceFileBytes(
       chatId: chatId,
       relativePath: relativePath,
       base64Content: base64Encode(bytes),
@@ -707,7 +707,7 @@ class ChatViewModel {
 
   Future<void> openWorkspaceFile(String relativePath) async {
     final chatId = await _requiredCurrentChatId();
-    await clients.servicesWorkspaceService.openWorkspaceFile(
+    await clients.application.workspaceService().openWorkspaceFile(
       chatId: chatId,
       relativePath: relativePath,
     );

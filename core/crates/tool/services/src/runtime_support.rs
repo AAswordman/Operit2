@@ -277,15 +277,7 @@ pub enum QualifiedVfsResolution<'a> {
 /// prefixes, which reserve the Windows drive syntax (`C:/Users`).
 #[allow(non_snake_case)]
 pub fn splitQualifiedVfsPath(text: &str) -> Option<(&str, &str)> {
-    let text = text.trim();
-    let (prefix, innerPath) = text.split_once(':')?;
-    if prefix.is_empty() || prefix.len() == 1 {
-        return None;
-    }
-    if prefix.chars().any(|c| c == '/' || c == '\\') {
-        return None;
-    }
-    Some((prefix, innerPath))
+    operit_util::FileUtils::FileUtils::splitQualifiedVfsPath(text)
 }
 
 /// Formats every space member as a copyable candidate list.
@@ -829,6 +821,7 @@ mod tests {
     #[test]
     fn qualifiedPathSplittingKeepsLocalPathsIntact() {
         assert_eq!(splitQualifiedVfsPath("cas:/virtual/nas/data"), Some(("cas", "/virtual/nas/data")));
+        assert_eq!(splitQualifiedVfsPath("cas://virtual/nas/data"), Some(("cas", "/virtual/nas/data")));
         assert_eq!(splitQualifiedVfsPath("cas:C:/Users/report.docx"), Some(("cas", "C:/Users/report.docx")));
         assert_eq!(splitQualifiedVfsPath("  cas:x/y "), Some(("cas", "x/y")));
         // Display names may contain spaces; the colon split runs first.

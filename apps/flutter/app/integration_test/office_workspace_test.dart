@@ -94,7 +94,7 @@ void main() {
         input: const {},
       );
       await chat.createAndBindWorkspace(chatId: chatId, name: 'Office test');
-      final workspace = clients.servicesWorkspaceService;
+      final workspace = clients.application.workspaceService();
       final mounts = await workspace.listWorkspaceFiles(
         chatId: chatId,
         relativePath: '',

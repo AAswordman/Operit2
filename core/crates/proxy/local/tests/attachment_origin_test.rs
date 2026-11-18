@@ -3,7 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use operit_host_api::HostManager::HostManager;
 use operit_host_native_common::{
-    NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost, NativeRuntimeStorageHost,
+    NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost, NativeRuntimeStorageHost, NativeHttpHost,
     PosixFileSystemHost,
 };
 use operit_link::{
@@ -43,6 +43,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
                 .writeNodeId("core-source-b".into())
                 .unwrap();
             let host_manager = HostManager {
+                httpHost: Some(Arc::new(NativeHttpHost::new())),
                 fileSystemHost: Some(Arc::new(PosixFileSystemHost::new())),
                 runtimeStorageHost: Some(storage.clone()),
                 runtimeStorageWriteHost: Some(storage.clone()),
@@ -217,7 +218,7 @@ async fn imported_attachment_keeps_its_actual_node_and_persistent_storage() {
                 assert_eq!(state.currentFileDirectory.as_deref(), Some(expected.as_str()));
                 expected
             };
-            let workspace_target = LocalCoreProxy::generatedTargetForSchema("services.workspaceService").unwrap();
+            let workspace_target = LocalCoreProxy::generatedTargetForSchema("application.workspaceService").unwrap();
             let entries: serde_json::Value = fromCoreValue(CoreLinkSharedClient::call(&proxy,
                 CoreCallRequest::new("list-outputs", workspace_target, "listWorkspaceFiles", toCoreValue(json!({
                     "chatId": expected_chat_id, "relativePath": "",

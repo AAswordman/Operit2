@@ -515,6 +515,16 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                       },
               ),
               const SizedBox(height: 12),
+              if (source != null) ...<Widget>[
+                InputDecorator(
+                  decoration: const InputDecoration(
+                    labelText: 'API 版本',
+                    border: OutlineInputBorder(),
+                  ),
+                  child: Text(source.apiVersion ?? '1.0.0'),
+                ),
+                const SizedBox(height: 12),
+              ],
               Text('发布资源来源', style: Theme.of(context).textTheme.titleSmall),
               const SizedBox(height: 8),
               SegmentedButton<_ArtifactPublishAssetSource>(
@@ -591,7 +601,10 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                   const SizedBox(height: 12),
                   OperitFormStyles.dropdownButtonFormField<String>(
                     context,
-                    key: ValueKey(('github-release', _selectedGitHubReleaseTag)),
+                    key: ValueKey((
+                      'github-release',
+                      _selectedGitHubReleaseTag,
+                    )),
                     initialValue: _selectedGitHubReleaseTag,
                     isExpanded: true,
                     style: OperitFormStyles.dropdownTextStyle(context),

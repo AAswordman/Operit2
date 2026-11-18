@@ -13,7 +13,7 @@ use operit_host_api::{
     HostRuntimeTask, HostRuntimeTaskSchedulerHost, HostRuntimeTurnFuture,
 };
 use operit_host_native_common::{
-    NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost, NativeRuntimeStorageHost,
+    NativeHostJavaScriptRuntimeHost, NativeHostRuntimeTaskSchedulerHost, NativeRuntimeStorageHost, NativeHttpHost,
     PosixFileSystemHost,
 };
 use operit_link::{
@@ -154,8 +154,12 @@ impl HostRuntimeTaskSchedulerHost for FaultScheduler {
     }
 
     fn scheduleHostRuntimeTask(&self, taskName: &str, task: HostRuntimeTask) -> HostResult<()> {
+        self.inner.scheduleHostRuntimeTask(taskName, task)
+    }
+
+    fn scheduleHostRuntimeBlockingAsyncTask(&self, taskName: &str, task: HostRuntimeAsyncTask) -> HostResult<()> {
         if taskName != "workspace-file-open" {
-            return self.inner.scheduleHostRuntimeTask(taskName, task);
+            return self.inner.scheduleHostRuntimeBlockingAsyncTask(taskName, task);
         }
         match self.fault {
             SchedulerFault::Reject => Err(HostError::new("workspace test scheduler rejected task")),
@@ -194,7 +198,7 @@ impl HostRuntimeTaskSchedulerHost for FaultScheduler {
 fn workspace_request(method: &str, args: Value) -> CoreCallRequest {
     CoreCallRequest::new(
         format!("workspace-external-{method}"),
-        LocalCoreProxy::generatedTargetForSchema("services.workspaceService").unwrap(),
+        LocalCoreProxy::generatedTargetForSchema("application.workspaceService").unwrap(),
         method,
         toCoreValue(args).unwrap(),
     )
@@ -293,6 +297,7 @@ async fn workspace_open_worker() {
         let filesystem = Arc::new(OwnerOpenFileSystem::new());
         let storage = Arc::new(NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
         let context = HostManager {
+            httpHost: Some(Arc::new(NativeHttpHost::new())),
             fileSystemHost: Some(filesystem.clone()),
             runtimeStorageHost: Some(storage.clone()),
             runtimeSqliteHost: Some(storage),
@@ -300,7 +305,9 @@ async fn workspace_open_worker() {
             hostRuntimeTaskSchedulerHost: Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new())),
             ..HostManager::default()
         };
-        let proxy = Arc::new(LocalCoreProxy::new(OperitApplication::newWithContext(context.clone())));
+        let application = OperitApplication::newWithContext(context.clone());
+        let handler = application.aiToolHandler();
+        let proxy = Arc::new(LocalCoreProxy::new(application));
         let chatId = bound_chat(proxy.as_ref()).await;
         let mut events = CoreLinkSharedClient::watch(
             proxy.as_ref(),
@@ -382,7 +389,7 @@ async fn workspace_open_worker() {
 
         let mut noScheduler = context.clone();
         noScheduler.hostRuntimeTaskSchedulerHost = None;
-        let service = WorkspaceService::getInstance(&noScheduler);
+        let service = WorkspaceService::new(&noScheduler, handler.clone());
         let owned = service.openWorkspaceFile(chatId.clone(), format!("project/{SAMPLE_NAME}"));
         drop(service);
         assert_eq!(owned.await.unwrap_err(),
@@ -396,7 +403,7 @@ async fn workspace_open_worker() {
             failingContext.hostRuntimeTaskSchedulerHost = Some(Arc::new(FaultScheduler {
                 inner: NativeHostRuntimeTaskSchedulerHost::new(), fault,
             }));
-            let service = WorkspaceService::getInstance(&failingContext);
+            let service = WorkspaceService::new(&failingContext, handler.clone());
             let owned = service.openWorkspaceFile(chatId.clone(), format!("project/{SAMPLE_NAME}"));
             drop(service);
             let error = tokio::time::timeout(Duration::from_secs(1), owned)

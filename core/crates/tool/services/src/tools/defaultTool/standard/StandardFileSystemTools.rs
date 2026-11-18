@@ -91,6 +91,11 @@ impl StandardFileSystemTools {
         self.fileRouting.resolveLocalPath(path)
     }
 
+    /// Resolves transfer arguments with the same workspace owner as ordinary file calls.
+    pub(crate) fn transferAddress(&self, path: &str) -> Result<String, String> {
+        self.fileRouting.resolveAddress(path)
+    }
+
     /// Transport gateway for the internal cross-node transfer endpoints.
     #[allow(non_snake_case)]
     pub(crate) fn transferRuntimeSupport(

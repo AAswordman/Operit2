@@ -40,7 +40,7 @@ test('workspace binding uses the fallible folder-mount operation', () => {
 
   const mount = section(source(delegatePath), 'pub fn bindChatToFolderPath(', 'pub fn primaryWorkspacePathForChat(');
   assert.match(mount, /VfsPath::normalizeWorkspaceBindingPath\(&folderPath\)\?/);
-  assert.match(mount, /Workspace::folderNameFromPath\(&folderPath\)\?/);
+  assert.match(mount, /Workspace::folderNameFromPath\(&path\)\?/);
   assert.match(mount, /\.getWorkspaceForChat\(&chatId\)\s*\.map_err\(\|error\| error\.to_string\(\)\)\?/);
   assert.doesNotMatch(mount, /\.expect\(|\.unwrap\(|unwrap_or/);
 });

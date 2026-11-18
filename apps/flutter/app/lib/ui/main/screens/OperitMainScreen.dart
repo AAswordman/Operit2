@@ -732,9 +732,13 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
     }
   }
 
+  /// Dismisses visible shell surfaces before navigating or confirming exit.
   void _handleSystemBack(OperitScreen currentScreen) {
     if (_drawerOpenState.value) {
       _drawerOpenState.value = false;
+      return;
+    }
+    if (_mainLayoutController.handleBack()) {
       return;
     }
     if (_routerState.canPop) {
@@ -808,8 +812,11 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
               controller: _mainLayoutController,
               child: TopBarScope(
                 controller: _topBarController,
-                child: ValueListenableBuilder<bool>(
-                  valueListenable: _drawerOpenState,
+                child: ListenableBuilder(
+                  listenable: Listenable.merge(<Listenable>[
+                    _drawerOpenState,
+                    _mainLayoutController,
+                  ]),
                   child: Scaffold(
                     body: useTabletLayout
                         ? TabletLayout(
@@ -857,12 +864,14 @@ class _OperitMainScreenState extends State<OperitMainScreen> {
                             ),
                           ),
                   ),
-                  builder: (context, drawerOpen, child) {
-                    final phoneDrawerOpen = !useTabletLayout && drawerOpen;
+                  builder: (context, child) {
+                    final phoneDrawerOpen =
+                        !useTabletLayout && _drawerOpenState.value;
                     return PopScope(
                       canPop:
                           defaultTargetPlatform != TargetPlatform.android &&
                           !phoneDrawerOpen &&
+                          !_mainLayoutController.hasBackAction &&
                           !_routerState.canPop,
                       onPopInvokedWithResult: (didPop, result) {
                         if (didPop) {

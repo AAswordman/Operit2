@@ -158,7 +158,16 @@ class WorkspaceTabContent extends StatelessWidget {
           },
         );
       case WorkspaceTabKind.files:
-        final rootPath = fileDirectory?.trim() ?? workspacePath?.trim();
+        final initialRelativePath = tab.filePath?.trim() ?? '';
+        final folder = workspaceUsage.mountedFolders
+            .where(
+              (folder) =>
+                  folder.relativePath == initialRelativePath ||
+                  initialRelativePath.startsWith('${folder.relativePath}/'),
+            )
+            .firstOrNull;
+        final rootPath = (folder?.path ?? fileDirectory ?? workspacePath)
+            ?.trim();
         if (rootPath == null || rootPath.isEmpty) {
           return _WorkspaceSimplePane(
             icon: Icons.folder_off_outlined,
@@ -166,11 +175,11 @@ class WorkspaceTabContent extends StatelessWidget {
             subtitle: l10n.noWorkspaceBound,
           );
         }
-        final initialRelativePath = tab.filePath?.trim() ?? '';
         return WorkspaceFileBrowserContent(
           key: ValueKey<String>('$filesListingRevision:${tab.filePath ?? ''}'),
           rootLabel: rootPath,
           rootRelativePath: initialRelativePath,
+          rootLabelRelativePath: folder?.relativePath ?? '',
           onListWorkspaceFiles: onListWorkspaceFiles,
           onMutateWorkspaceFile: onMutateWorkspaceFile,
           fileClipboard: fileClipboard,

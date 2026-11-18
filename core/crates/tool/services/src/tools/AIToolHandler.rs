@@ -961,12 +961,35 @@ impl AIToolHandler {
             ));
         }
 
-        let filesystem = context.ok_or_else(|| WorkspaceBoundaryError::RequiresApproval(
+        let host = context.ok_or_else(|| WorkspaceBoundaryError::RequiresApproval(
             "File tool execution requires its runtime VFS".to_string()
-        ))?.vfs().map_err(WorkspaceBoundaryError::InvalidRequest)?;
-        let path = filesystem.resolveResourcePath(runtimeContext.workspacePath.as_deref(), path)
+        ))?;
+        let filesystem = host.vfs().map_err(WorkspaceBoundaryError::InvalidRequest)?;
+        let qualifiedDirectory = runtimeContext.workspacePath.as_deref().and_then(operit_tools::runtime_support::splitQualifiedVfsPath);
+        let localNode = if qualifiedDirectory.is_some() || workspaceFolders.iter().any(|folder| operit_tools::runtime_support::splitQualifiedVfsPath(folder).is_some()) {
+            let storage = host.runtimeStorageHost.clone().ok_or_else(|| WorkspaceBoundaryError::InvalidRequest("Runtime storage is required for workspace ownership".into()))?;
+            Some(operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage).identity()
+                .map_err(WorkspaceBoundaryError::InvalidRequest)?.nodeId)
+        } else {
+            None
+        };
+        let directory = match qualifiedDirectory {
+            Some((owner, directory)) => {
+                if Some(owner) != localNode.as_deref() && !path.starts_with('/') && path.as_bytes().get(1) != Some(&b':') {
+                    return Ok(());
+                }
+                Some(directory)
+            }
+            None => runtimeContext.workspacePath.as_deref(),
+        };
+        let path = filesystem.resolveResourcePath(directory, path)
             .map_err(WorkspaceBoundaryError::InvalidRequest)?;
         for folder in &workspaceFolders {
+            let folder = match operit_tools::runtime_support::splitQualifiedVfsPath(folder) {
+                Some((owner, path)) if Some(owner) == localNode.as_deref() => path,
+                Some(_) => continue,
+                None => folder.as_str(),
+            };
             if filesystem.isWithin(folder, &path).map_err(WorkspaceBoundaryError::InvalidRequest)? {
                 return Ok(());
             }

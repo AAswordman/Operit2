@@ -2018,9 +2018,7 @@ impl ChatServiceCore {
             .value()
             .into_iter()
             .find(|history| history.id == chatId)?;
-        let workspacePath = currentChat
-            .workspacePrimaryPath
-            .clone()
+        let workspacePath = self.chatHistoryDelegate.primaryWorkspacePathForChat(&currentChat)
             .filter(|value| !value.trim().is_empty())?;
         Some((chatId, workspacePath))
     }
@@ -2088,7 +2086,7 @@ impl ChatServiceCore {
             return;
         }
         if let Some(relativePath) = filePath.strip_prefix(WORKSPACE_MENTION_ATTACHMENT_PREFIX) {
-            match self.attachWorkspaceMentionInternal(relativePath) {
+            match self.attachWorkspaceMentionInternal(relativePath).await {
                 Ok(fileName) => {
                     self.messageProcessingDelegate
                         .showToast(format!("已添加工作区引用: {fileName}"));
@@ -2439,30 +2437,15 @@ impl ChatServiceCore {
 
     /// Adds a workspace mention as an in-memory plain-text attachment.
     #[allow(non_snake_case)]
-    fn attachWorkspaceMentionInternal(&mut self, relativePath: &str) -> Result<String, String> {
+    async fn attachWorkspaceMentionInternal(&mut self, relativePath: &str) -> Result<String, String> {
         let normalizedRelativePath = VfsPath::normalizeRelativePath(relativePath)?;
         if normalizedRelativePath.is_empty() {
             return Err("无法添加工作区引用: 路径为空".to_string());
         }
-        let workspaceRoot = self.currentWorkspaceRoot()?;
-        let vfs = self.vfsForWorkspace()?;
-        let targetPath = VfsPath::joinVfsPath(&workspaceRoot, &normalizedRelativePath)?;
-        let targetInfo = vfs.fileExists(&targetPath)?;
-        if !targetInfo.exists {
-            return Err("工作区路径不存在".to_string());
-        }
-
-        let (mimeType, content) = if targetInfo.isDirectory {
-            (
-                "application/vnd.workspace-directory+plain".to_string(),
-                buildWorkspaceDirectoryMentionContent(&vfs, &targetPath, &normalizedRelativePath)?,
-            )
-        } else {
-            (
-                "text/plain".to_string(),
-                buildWorkspaceFileMentionContent(&vfs, &targetPath, &normalizedRelativePath)?,
-            )
-        };
+        let chatId = self.attachmentChatId()?;
+        let handler = self.runtimeToolHandler();
+        let service = super::WorkspaceService::WorkspaceService::new(&handler.getContext(), handler.clone());
+        let (mimeType, content) = service.workspaceMentionContent(&chatId, &normalizedRelativePath).await?;
         let attachmentInfo = AttachmentInfo {
             vfsPath: None,
             nodeId: None,
@@ -2476,24 +2459,6 @@ impl ChatServiceCore {
             .retain(|attachment| attachment.filePath != attachmentInfo.filePath);
         self.attachments.push(attachmentInfo);
         Ok(normalizedRelativePath)
-    }
-
-    /// Returns the workspace root bound to the currently selected chat.
-    #[allow(non_snake_case)]
-    fn currentWorkspaceRoot(&self) -> Result<String, String> {
-        let chatId = self
-            .chatHistoryDelegate
-            .currentChatIdFlow
-            .value()
-            .ok_or_else(|| "无法添加工作区引用: 当前聊天不存在".to_string())?;
-        self.chatHistoryDelegate
-            .chatHistoriesFlow()
-            .value()
-            .into_iter()
-            .find(|chat| chat.id == chatId)
-            .and_then(|chat| chat.workspacePrimaryPath.clone())
-            .filter(|workspace| !workspace.trim().is_empty())
-            .ok_or_else(|| "当前聊天未绑定工作区".to_string())
     }
 
     /// Creates a VFS instance for chat workspace attachment reads.
@@ -3556,53 +3521,6 @@ fn packageAttachmentDisplayName(packageName: &str) -> String {
 #[allow(non_snake_case)]
 fn workspaceMentionAttachmentPath(relativePath: &str) -> String {
     format!("{WORKSPACE_MENTION_ATTACHMENT_PREFIX}{relativePath}")
-}
-
-/// Builds the prompt content for a workspace file mention.
-#[allow(non_snake_case)]
-fn buildWorkspaceFileMentionContent(
-    vfs: &VisualFileSystem,
-    fullPath: &str,
-    relativePath: &str,
-) -> Result<String, String> {
-    let content = vfs.readFile(fullPath)?;
-    Ok(format!(
-        "Selected workspace file: {relativePath}\nThis file was referenced via @ mention.\n\nFile content:\n{content}"
-    ))
-}
-
-/// Builds the prompt content for a workspace directory mention.
-#[allow(non_snake_case)]
-fn buildWorkspaceDirectoryMentionContent(
-    vfs: &VisualFileSystem,
-    fullPath: &str,
-    relativePath: &str,
-) -> Result<String, String> {
-    let mut entries = vfs.listFiles(fullPath)?;
-    entries.sort_by(|left, right| {
-        (!left.isDirectory)
-            .cmp(&(!right.isDirectory))
-            .then_with(|| {
-                left.name
-                    .to_ascii_lowercase()
-                    .cmp(&right.name.to_ascii_lowercase())
-            })
-    });
-    let entryText = if entries.is_empty() {
-        "(empty)\n".to_string()
-    } else {
-        entries
-            .into_iter()
-            .map(|entry| {
-                let kind = if entry.isDirectory { "[DIR]" } else { "[FILE]" };
-                format!("{kind} {}", entry.name)
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    Ok(format!(
-        "Selected workspace directory: {relativePath}\nThis directory was referenced via @ mention.\n\nDirectory entries:\n{entryText}"
-    ))
 }
 
 #[allow(non_snake_case)]

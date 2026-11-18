@@ -9,8 +9,11 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Verifies path editing keeps the full text height in narrow and scaled layouts.
 void main() {
-  const root = '/operitapp/outputs/2026-11-12_22-34-28-987';
-  for (final width in <double>[360, 800]) {
+  for (final (width, root, relativeRoot) in [
+    (360.0, '/operitapp/outputs/2026-11-12_22-34-28-987', ''),
+    (800.0, '/operitapp/outputs/2026-11-12_22-34-28-987', ''),
+    (800.0, 'core-mac://virtual/local/folders/mount-id', '论文'),
+  ]) {
     for (final scale in <double>[1, 1.5, 2]) {
       testWidgets('path editor fits text at width $width and scale $scale', (
         tester,
@@ -44,7 +47,8 @@ void main() {
               home: Scaffold(
                 body: WorkspaceFileBrowserContent(
                   rootLabel: root,
-                  rootRelativePath: '',
+                  rootRelativePath: relativeRoot,
+                  rootLabelRelativePath: relativeRoot,
                   onListWorkspaceFiles: (path) async {
                     listed.add(path);
                     return const [];
@@ -85,7 +89,10 @@ void main() {
         await tester.enterText(find.byType(TextField), '$root/nested');
         await tester.tap(find.byTooltip('确定'));
         await tester.pumpAndSettle();
-        expect(listed, ['', 'nested']);
+        expect(listed, [
+          relativeRoot,
+          relativeRoot.isEmpty ? 'nested' : '$relativeRoot/nested',
+        ]);
         expect(
           tester.widget<WorkspacePathBar>(find.byType(WorkspacePathBar)).path,
           '$root/nested',

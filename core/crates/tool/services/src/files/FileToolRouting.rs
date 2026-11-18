@@ -42,6 +42,24 @@ pub(crate) struct FileToolRouting {
 }
 
 impl FileToolRouting {
+    /// Retains the workspace owner when resolving an unqualified relative argument.
+    pub(crate) fn resolveAddress(&self, path: &str) -> Result<String, String> {
+        let path = path.trim();
+        if splitQualifiedVfsPath(path).is_some() {
+            return Ok(path.to_owned());
+        }
+        let context = ToolExecutionManager::currentToolRuntimeContext();
+        let directory = context.as_ref().map(|context| context.fileDirectory(self.runtimeStorageHost.clone()))
+            .transpose()?.flatten();
+        if !path.starts_with('/') && path.as_bytes().get(1) != Some(&b':') {
+            if let Some((node, base)) = directory.as_deref().and_then(splitQualifiedVfsPath) {
+                let resolved = self.filesystem.resolveResourcePath(Some(base), path)?;
+                return Ok(operit_util::FileUtils::FileUtils::qualifyVfsPath(node, &resolved));
+            }
+        }
+        self.filesystem.resolveResourcePath(directory.as_deref(), path)
+    }
+
     /// Binds path preparation to the same storage and transport as the owning runtime.
     pub(crate) fn new(
         filesystem: VisualFileSystem,
@@ -75,19 +93,17 @@ impl FileToolRouting {
         let mut remoteTarget: Option<(String, String, String)> = None;
         let mut localPathSeen = false;
         for name in pathParameters {
-            let value = parameterValue(tool, name);
+            let parameter = parameterValue(tool, name);
+            if parameter.trim().is_empty() {
+                continue;
+            }
+            let value = self.resolveAddress(&parameter)?;
             if splitQualifiedVfsPath(&value).is_none() {
-                if !value.trim().is_empty() {
-                    // A bare path always evaluates on this device; combining it
-                    // with a remote parameter would leave it unrewritten on the
-                    // remote, where its mounts do not exist.
-                    if remoteTarget.is_some() {
-                        return Err(CROSS_NODE_TRANSFER_MESSAGE.to_string());
-                    }
-                    localPathSeen = true;
-                    let resolved = self.resolveLocalPath(&value)?;
-                    Self::rewritePathParameter(&mut call, name, &resolved);
+                if remoteTarget.is_some() {
+                    return Err(CROSS_NODE_TRANSFER_MESSAGE.to_string());
                 }
+                localPathSeen = true;
+                Self::rewritePathParameter(&mut call, name, &value);
                 continue;
             }
             let state = self.gateway.routeState().map_err(|error| {

@@ -1402,16 +1402,18 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
       ),
       StoreInfoItem('分类', entry.category),
       if (details is _ToolPkgDetails) ...<StoreInfoItem>[
-        StoreInfoItem('ToolPkg API', details.runtime.apiVersion),
+        StoreInfoItem('API 版本', details.runtime.apiVersion),
         StoreInfoItem('入口', details.runtime.mainEntry),
         StoreInfoItem('路径', details.runtime.sourcePath),
         StoreInfoItem('许可证', details.runtime.license ?? ''),
       ],
-      if (details is _ScriptDetails)
+      if (details is _ScriptDetails) ...<StoreInfoItem>[
+        StoreInfoItem('API 版本', details.package.apiVersion),
         StoreInfoItem(
           '默认状态',
           details.package.enabledByDefault ? '默认启用' : '默认停用',
         ),
+      ],
       if (marketEntryId != null) StoreInfoItem('市场条目', marketEntryId),
     ];
   }

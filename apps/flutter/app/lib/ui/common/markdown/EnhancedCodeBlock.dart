@@ -64,8 +64,6 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
   bool showCopiedToast = false;
   bool showRenderedMermaid = false;
   bool showRenderedHtml = false;
-  bool showFullscreenPreview = false;
-  CodeBlockPreviewType? fullscreenPreviewType;
   Timer? _copiedResetTimer;
   late String _code = sanitizeUtf16(widget.code);
   late List<String> _lines = _code.split('\n');
@@ -83,6 +81,15 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
   void dispose() {
     _copiedResetTimer?.cancel();
     super.dispose();
+  }
+
+  /// Presents the preview in a route with finite viewport constraints.
+  Future<void> _showFullscreenPreview(CodeBlockPreviewType type) {
+    return showDialog<void>(
+      context: context,
+      useSafeArea: false,
+      builder: (_) => _FullscreenPreviewDialog(type: type, code: _code),
+    );
   }
 
   @override
@@ -109,7 +116,7 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
       highlightLine: (line) => _highlightSyntaxLine(line, widget.language),
       autoWrapEnabled: autoWrapEnabled,
     );
-    final block = MessagePressShieldRegion(
+    return MessagePressShieldRegion(
       child: Semantics(
         label: widget.language.isEmpty
             ? 'Code block'
@@ -215,14 +222,11 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
                       if (isPreviewMode) ...<Widget>[
                         MessagePressShieldRegion(
                           child: IconButton(
-                            onPressed: () {
-                              setState(() {
-                                fullscreenPreviewType = showRenderedMermaid
-                                    ? CodeBlockPreviewType.mermaid
-                                    : CodeBlockPreviewType.html;
-                                showFullscreenPreview = true;
-                              });
-                            },
+                            onPressed: () => _showFullscreenPreview(
+                              isMermaid
+                                  ? CodeBlockPreviewType.mermaid
+                                  : CodeBlockPreviewType.html,
+                            ),
                             style: toolbarButtonStyle,
                             iconSize: 13.5,
                             constraints: const BoxConstraints.tightFor(
@@ -331,37 +335,16 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
         ),
       ),
     );
-    if (!showFullscreenPreview) {
-      return block;
-    }
-    return Stack(
-      children: <Widget>[
-        block,
-        _FullscreenPreviewDialog(
-          type: fullscreenPreviewType,
-          code: code,
-          onClose: () {
-            setState(() {
-              showFullscreenPreview = false;
-            });
-          },
-        ),
-      ],
-    );
   }
 }
 
 class _FullscreenPreviewDialog extends StatelessWidget {
-  const _FullscreenPreviewDialog({
-    required this.type,
-    required this.code,
-    required this.onClose,
-  });
+  const _FullscreenPreviewDialog({required this.type, required this.code});
 
-  final CodeBlockPreviewType? type;
+  final CodeBlockPreviewType type;
   final String code;
-  final VoidCallback onClose;
 
+  /// Builds the viewport-sized preview and closes its own dialog route.
   @override
   Widget build(BuildContext context) {
     return Dialog.fullscreen(
@@ -372,22 +355,23 @@ class _FullscreenPreviewDialog extends StatelessWidget {
             child: switch (type) {
               CodeBlockPreviewType.mermaid => MermaidRenderer(code: code),
               CodeBlockPreviewType.html => HtmlPreviewRenderer(code: code),
-              null => const SizedBox.shrink(),
             },
           ),
           Positioned(
             top: 12,
             right: 12,
-            child: MessagePressShieldRegion(
-              child: IconButton(
-                onPressed: onClose,
-                color: Colors.white,
-                icon: const _CodeBlockSvgIcon(
-                  _kSvgClose,
+            child: SafeArea(
+              child: MessagePressShieldRegion(
+                child: IconButton(
+                  onPressed: () => Navigator.of(context).pop(),
                   color: Colors.white,
-                  size: 20,
+                  icon: const _CodeBlockSvgIcon(
+                    _kSvgClose,
+                    color: Colors.white,
+                    size: 20,
+                  ),
+                  tooltip: 'Close',
                 ),
-                tooltip: 'Close',
               ),
             ),
           ),

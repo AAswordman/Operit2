@@ -76,8 +76,11 @@ class _MarketStats extends StatelessWidget {
   }
 }
 
+/// Marks script and ToolPkg releases that declare the supported v2 contract.
 bool _hasMarketV2Api(core_proxy.MarketEntrySummary entry) =>
-    (entry.type == 'package' || entry.type == 'toolpkg') &&
+    (entry.type == 'script' ||
+        entry.type == 'package' ||
+        entry.type == 'toolpkg') &&
     entry.latestVersion?.apiVersion?.trim() == '2.0.0';
 
 /// Keeps the API marker on the avatar without clipping its kind badge.
@@ -132,7 +135,7 @@ class _MarketV2CornerMark extends StatelessWidget {
     final colors = Theme.of(context).colorScheme;
     return IgnorePointer(
       child: Semantics(
-        label: 'ToolPkg API 2.0.0',
+        label: 'API 2.0.0',
         excludeSemantics: true,
         child: ClipPath(
           clipper: const _MarketCornerClipper(),

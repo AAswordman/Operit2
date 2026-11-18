@@ -16,6 +16,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
     required this.rootRelativePath,
     required this.onListWorkspaceFiles,
     required this.onOpenFile,
+    this.rootLabelRelativePath = '',
     this.protectWorkspaceRoots = false,
     this.onMutateWorkspaceFile,
     this.fileClipboard,
@@ -28,6 +29,7 @@ class WorkspaceFileBrowserContent extends StatefulWidget {
   final bool protectWorkspaceRoots;
   final String rootLabel;
   final String rootRelativePath;
+  final String rootLabelRelativePath;
   final Future<List<WorkspaceFileEntry>> Function(String path)
   onListWorkspaceFiles;
   final Future<void> Function(WorkspaceFileEntry entry) onOpenFile;
@@ -70,6 +72,7 @@ class _WorkspaceFileBrowserContentState
   void didUpdateWidget(WorkspaceFileBrowserContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.rootLabel != widget.rootLabel ||
+        oldWidget.rootLabelRelativePath != widget.rootLabelRelativePath ||
         oldWidget.rootRelativePath != widget.rootRelativePath) {
       _history.clear();
       _currentPath = widget.rootRelativePath;
@@ -337,7 +340,12 @@ class _WorkspaceFileBrowserContentState
     if (_currentPath.isEmpty) {
       return widget.rootLabel;
     }
-    return '${widget.rootLabel}/$_currentPath';
+    final anchor = widget.rootLabelRelativePath;
+    if (_currentPath == anchor) return widget.rootLabel;
+    final suffix = anchor.isEmpty
+        ? _currentPath
+        : _currentPath.substring(anchor.length + 1);
+    return '${widget.rootLabel}/$suffix';
   }
 
   /// Converts a displayed workspace path into its relative API path.
@@ -351,11 +359,13 @@ class _WorkspaceFileBrowserContentState
         .replaceAll('\\', '/')
         .replaceFirst(RegExp(r'/+$'), '');
     if (normalizedValue == normalizedRoot) {
-      return '';
+      return widget.rootLabelRelativePath;
     }
     if (normalizedValue.startsWith('$normalizedRoot/')) {
       final relativePath = normalizedValue.substring(normalizedRoot.length + 1);
-      return _isWorkspaceRelativePath(relativePath) ? relativePath : null;
+      if (!_isWorkspaceRelativePath(relativePath)) return null;
+      final anchor = widget.rootLabelRelativePath;
+      return anchor.isEmpty ? relativePath : '$anchor/$relativePath';
     }
     return null;
   }

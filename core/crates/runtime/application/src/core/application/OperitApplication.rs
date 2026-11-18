@@ -498,6 +498,11 @@ impl OperitApplication {
         self.toolHandler.clone()
     }
 
+    /// Creates workspace access using this runtime's existing file-tool routing.
+    pub fn workspaceService(&self) -> crate::services::WorkspaceService::WorkspaceService {
+        crate::services::WorkspaceService::WorkspaceService::new(&self.hostManager, self.toolHandler.clone())
+    }
+
     /// Creates an MCP repository with this runtime's host and tool support.
     #[allow(non_snake_case)]
     pub fn mcpRepository(&self) -> MCPRepository {
