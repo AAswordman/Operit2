@@ -1,5 +1,3 @@
-use crate::process::background_command;
-
 #[path = "../../../../common/terminal_command.rs"]
 mod terminal_command;
 
@@ -102,6 +100,7 @@ impl TerminalHost for WindowsTerminalHost {
     }
 
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
+        let powershell = bundledPowerShellExecutable();
         let bash = bundledBashExecutable();
         Ok(TerminalInfo {
             platform: PLATFORM.to_string(),
@@ -111,11 +110,14 @@ impl TerminalHost for WindowsTerminalHost {
                 TerminalTypeInfo {
                     terminal: TERMINAL.to_string(),
                     terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
-                    available: commandStarts(
-                        "powershell.exe",
-                        &["-NoProfile", "-Command", "$PSVersionTable.PSVersion"],
-                    ),
-                    description: "Windows PowerShell terminal".to_string(),
+                    available: powershell.is_ok(),
+                    description: match powershell {
+                        Ok(_) => "Bundled PowerShell 7 terminal".to_string(),
+                        Err(error) => format!(
+                            "Bundled PowerShell 7 unavailable: {}. Reinstall the complete Operit Windows package.",
+                            error.message,
+                        ),
+                    },
                 },
                 TerminalTypeInfo {
                     terminal: TERMINAL.to_string(),
@@ -670,7 +672,7 @@ fn ptyCommandLine(command: &str, kind: TerminalKind) -> String {
 /// Builds the PTY command for the selected Windows terminal type.
 fn ptyCommand(kind: TerminalKind, workingDir: &str) -> HostResult<CommandBuilder> {
     match kind {
-        TerminalKind::PowerShell => Ok(windowsPtyCommand(workingDir)),
+        TerminalKind::PowerShell => windowsPtyCommand(workingDir),
         TerminalKind::Bash => {
             let executable = bundledBashExecutable()?;
             let root = executable
@@ -718,9 +720,32 @@ fn bundledBashExecutable() -> HostResult<PathBuf> {
 }
 
 #[allow(non_snake_case)]
-/// Builds the Windows PowerShell PTY command.
-fn windowsPtyCommand(workingDir: &str) -> CommandBuilder {
-    let mut command = CommandBuilder::new("powershell.exe");
+/// Resolves the PowerShell 7 runtime shipped beside the running application.
+fn bundledPowerShellExecutable() -> HostResult<PathBuf> {
+    let executable = std::env::current_exe()?;
+    let root = executable
+        .parent()
+        .ok_or_else(|| HostError::new("Operit executable has no parent directory"))?;
+    let powershellExecutable = root.join("powershell/pwsh.exe");
+    if !powershellExecutable.is_file() {
+        return Err(HostError::new(format!(
+            "Bundled PowerShell 7 executable does not exist: {}",
+            powershellExecutable.display()
+        )));
+    }
+    Ok(powershellExecutable)
+}
+
+#[allow(non_snake_case)]
+/// Builds the bundled PowerShell 7 PTY command.
+fn windowsPtyCommand(workingDir: &str) -> HostResult<CommandBuilder> {
+    let executable = bundledPowerShellExecutable()?;
+    let mut paths = vec![executable.parent().unwrap().to_path_buf()];
+    if let Some(inherited) = std::env::var_os("PATH") {
+        paths.extend(std::env::split_paths(&inherited));
+    }
+    let mut command = CommandBuilder::new(&executable);
+    command.env("PATH", std::env::join_paths(paths).map_err(toHostError)?);
     command.arg("-NoLogo");
     command.arg("-NoProfile");
     command.arg("-ExecutionPolicy");
@@ -732,12 +757,13 @@ fn windowsPtyCommand(workingDir: &str) -> CommandBuilder {
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("LANG", "C.UTF-8");
-    command
+    Ok(command)
 }
 
 #[allow(non_snake_case)]
+/// Initializes UTF-8 input/output and the session completion prompt.
 fn powershellPtyInitScript() -> &'static str {
-    "$global:__operit_error_count = $global:error.Count; [Console]::OutputEncoding = [Text.Encoding]::UTF8; $OutputEncoding = [Text.Encoding]::UTF8; function global:prompt { $__operit_success = $?; $__operit_error_changed = $global:error.Count -gt $global:__operit_error_count; $global:__operit_error_count = $global:error.Count; $__operit_location = (Get-Location).Path; $__operit_exit_code = if ($__operit_success -and -not $__operit_error_changed) { 0 } elseif ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } else { 1 }; ([char]27) + ']133;OperitPrompt=' + $__operit_exit_code + ':' + $__operit_location + ([char]7) + 'PS ' + $__operit_location + '> ' }"
+    "$global:__operit_error_count = $global:error.Count; [Console]::InputEncoding = [Text.UTF8Encoding]::new($false); [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false); $OutputEncoding = [Text.UTF8Encoding]::new($false); function global:prompt { $__operit_success = $?; $__operit_error_changed = $global:error.Count -gt $global:__operit_error_count; $global:__operit_error_count = $global:error.Count; $__operit_location = (Get-Location).Path; $__operit_exit_code = if ($__operit_success -and -not $__operit_error_changed) { 0 } elseif ($__operit_error_changed) { 1 } elseif ($LASTEXITCODE -is [int] -and $LASTEXITCODE -ne 0) { [int]$LASTEXITCODE } else { 1 }; ([char]27) + ']133;OperitPrompt=' + $__operit_exit_code + ':' + $__operit_location + ([char]7) + 'PS ' + $__operit_location + '> ' }"
 }
 
 #[allow(non_snake_case)]
@@ -1676,11 +1702,6 @@ fn nonBlank(value: &str, paramName: &str) -> HostResult<String> {
 }
 
 #[allow(non_snake_case)]
-fn commandStarts(program: &str, args: &[&str]) -> bool {
-    background_command(program).args(args).output().is_ok()
-}
-
-#[allow(non_snake_case)]
 fn nextSessionId() -> String {
     Uuid::new_v4().to_string()
 }
@@ -1782,6 +1803,7 @@ mod tests {
         assert_eq!(result.output, "hello");
     }
 
+    /// Rejects malformed syntax on PowerShell 7 without waiting for another input line.
     #[test]
     fn powershell_parse_error_returns_without_timeout() {
         let host = WindowsTerminalHost::new();
@@ -1789,7 +1811,7 @@ mod tests {
             .createOrGetSession("terminal_powershell_parse_error")
             .expect("create terminal session");
         let result = host
-            .executeInSession(&session.sessionId, "date /t && time /t", 3000)
+            .executeInSession(&session.sessionId, "Write-Output hello && && Write-Output world", 3000)
             .expect("execute terminal command");
 
         assert!(!result.timedOut);
@@ -1834,6 +1856,35 @@ mod tests {
         let info = host.terminalInfo().expect("terminal info");
         assert_eq!(info.terminalType, "powershell");
         assert_eq!(info.terminal, "native");
+    }
+
+    /// Runs PowerShell 7 syntax in the packaged interpreter and preserves Unicode output.
+    #[test]
+    fn powershell_7_version_and_pipeline_chains() {
+        let host = WindowsTerminalHost::new();
+        let session = host
+            .createOrGetSession("terminal_powershell_7")
+            .expect("create bundled PowerShell 7 session");
+        let result = host
+            .executeInSession(
+                &session.sessionId,
+                "Write-Output $PSVersionTable.PSVersion.Major; Write-Output $PSVersionTable.PSEdition; Write-Output '中文' && Write-Output 'chain-ok'",
+                5000,
+            )
+            .expect("execute PowerShell 7 pipeline chain");
+        assert!(!result.timedOut);
+        assert_eq!(result.exitCode, 0);
+        assert_eq!(result.output, "7\nCore\n中文\nchain-ok");
+        let nativeError = host
+            .executeInSession(&session.sessionId, "cmd /c exit 7", 3000)
+            .unwrap();
+        assert_eq!(nativeError.exitCode, 7);
+        let parseError = host
+            .executeInSession(&session.sessionId, "Write-Output hello && && Write-Output world", 3000)
+            .unwrap();
+        assert!(!parseError.timedOut);
+        assert_eq!(parseError.exitCode, 1);
+        host.closePtySession(&session.sessionId).unwrap();
     }
 
     /// Verifies that Windows Git Bash sessions execute through the typed host path.

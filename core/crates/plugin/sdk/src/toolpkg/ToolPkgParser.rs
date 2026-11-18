@@ -845,7 +845,7 @@ impl ToolPkgArchiveParser {
         let entry = findManifestEntry(&index.entryNames).ok_or("ToolPkg manifest is missing")?;
         let text = Self::readZipEntryText(&mut archive, &index, &entry)
             .ok_or("Cannot read ToolPkg manifest")?;
-        let manifest = parseToolPkgManifest(&text, &entry)?;
+        let manifest = parseIndexedToolPkgManifest(&text, &entry, &index)?;
         if manifest.toolpkgId.trim().is_empty() {
             return Err("manifest.toolpkg_id is required".into());
         }
@@ -1009,7 +1009,7 @@ impl ToolPkgArchiveParser {
             .ok_or_else(|| "manifest.hjson or manifest.json not found".to_string())?;
         let manifestText = readEntryText(&manifestEntryName)
             .ok_or_else(|| "Failed to read manifest entry".to_string())?;
-        let manifest = parseToolPkgManifest(&manifestText, &manifestEntryName)?;
+        let manifest = parseIndexedToolPkgManifest(&manifestText, &manifestEntryName, entryIndex)?;
         let apiVersion = requireSupportedToolPkgApiVersion(&manifest.apiVersion)?;
         let apiVersionText = apiVersion.to_string();
         let mut requires = normalizeRequirements("manifest.requires", &manifest.requires)?;
@@ -1052,14 +1052,6 @@ impl ToolPkgArchiveParser {
             }
             None => None,
         };
-        if let Some(license) = &manifest.license {
-            validateDeclaredPackagePath(license)?;
-            let entry = Self::resolveManifestRelativeZipEntryPath(&manifestBasePath, license)
-                .ok_or_else(|| "manifest.license must reference a safe package path".to_string())?;
-            if !entryIndex.containsEntry(&entry) {
-                return Err(format!("Cannot find manifest.license entry '{license}'"));
-            }
-        }
         let mut themeIds = BTreeSet::new();
         for theme in &manifest.themes {
             if theme.id.trim().is_empty() || theme.id.contains(':') || !themeIds.insert(theme.id.clone()) {
@@ -1911,7 +1903,7 @@ impl ToolPkgArchiveParser {
     ) -> Option<ToolPkgManifestPreview> {
         let entryName = findManifestEntry(&entryIndex.entryNames)?;
         let manifestText = Self::readZipEntryText(archive, entryIndex, &entryName)?;
-        let manifest = parseToolPkgManifest(&manifestText, &entryName).ok()?;
+        let manifest = parseIndexedToolPkgManifest(&manifestText, &entryName, entryIndex).ok()?;
         Some(ToolPkgManifestPreview {
             entryName,
             manifest,
@@ -2717,9 +2709,27 @@ fn validateDeclaredPackagePath(path: &str) -> Result<(), String> {
 }
 
 #[allow(non_snake_case)]
-/// Parses one ToolPkg manifest and records its source entry path.
+/// Parses the manifest as declared by the author.
 fn parseToolPkgManifest(content: &str, manifestEntryName: &str) -> Result<ToolPkgManifest, String> {
-    serde_json::from_value(parseToolPkgManifestValue(content, manifestEntryName)?).map_err(|error| error.to_string())
+    serde_json::from_value(parseToolPkgManifestValue(content, manifestEntryName)?)
+        .map_err(|error| error.to_string())
+}
+
+#[allow(non_snake_case)]
+/// Exposes optional agreement metadata only when it names a safe file in the package.
+fn parseIndexedToolPkgManifest(
+    content: &str,
+    manifestEntryName: &str,
+    entryIndex: &ToolPkgEntryIndex,
+) -> Result<ToolPkgManifest, String> {
+    let mut manifest = parseToolPkgManifest(content, manifestEntryName)?;
+    let base = manifestEntryName.rsplit_once('/').map_or("", |(base, _)| base);
+    manifest.license = manifest.license.filter(|path| {
+        validateDeclaredPackagePath(path).is_ok()
+            && ToolPkgArchiveParser::resolveManifestRelativeZipEntryPath(base, path)
+                .is_some_and(|entry| entryIndex.containsEntry(&entry))
+    });
+    Ok(manifest)
 }
 
 /// Parses the ordinary manifest syntax while retaining all declared extension fields.
@@ -2983,12 +2993,21 @@ mod api_compatibility_tests {
     /// Loads declarative theme and agreement references without invoking a JavaScript registration callback.
     #[test]
     fn loads_declarative_theme_and_agreement_without_main() {
-        let manifest = serde_json::json!({
+        let mut manifest = serde_json::json!({
             "schema_version": 1, "toolpkg_id": "theme_fixture", "version": "1",
             "license": "licenses/agreement.txt",
             "themes": [{"id":"default", "path":"theme.json", "preview":"preview.png"}]
         });
-        for missing in [None, Some("theme.json"), Some("preview.png"), Some("licenses/agreement.txt")] {
+        for (api, missing, expected_license) in [
+            ("1.0.0", None, Ok(Some("licenses/agreement.txt"))),
+            ("1.0.0", Some("licenses/agreement.txt"), Ok(None)),
+            ("1.0.1", Some("licenses/agreement.txt"), Ok(None)),
+            ("2.0.0", None, Ok(Some("licenses/agreement.txt"))),
+            ("2.0.0", Some("licenses/agreement.txt"), Ok(None)),
+            ("1.0.0", Some("theme.json"), Err("theme.json")),
+            ("1.0.0", Some("preview.png"), Err("preview.png")),
+        ] {
+            manifest["api_version"] = serde_json::json!(api);
             let mut entries = BTreeMap::from([
                 ("manifest.json".to_string(), manifest.to_string()),
                 ("theme.json".to_string(), "{}".to_string()),
@@ -3007,16 +3026,16 @@ mod api_compatibility_tests {
                 |_, _, _, _, _| panic!("declarative theme must not execute registration"),
                 |_, _| panic!("declarative theme has no subpackages"),
             );
-            match missing {
-                None => {
+            match expected_license {
+                Ok(license) => {
                     let loaded = loaded.unwrap();
                     assert!(loaded.containerRuntime.mainEntry.is_empty());
                     assert!(loaded.containerPackage.tools.is_empty());
                     assert_eq!(loaded.containerRuntime.version, "1");
                     assert_eq!(loaded.containerRuntime.themes[0].id, "default");
-                    assert_eq!(loaded.containerRuntime.license.as_deref(), Some("licenses/agreement.txt"));
+                    assert_eq!(loaded.containerRuntime.license.as_deref(), license);
                 }
-                Some(_) => assert!(loaded.is_err()),
+                Err(message) => assert!(loaded.unwrap_err().contains(message)),
             }
         }
     }

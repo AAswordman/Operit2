@@ -767,19 +767,18 @@ fn injectScriptMarketOriginIntoMetadata(
     source: &str,
     marketOrigin: &ToolPkgMarketOrigin,
 ) -> Result<String, String> {
-    let Some((_, body)) = splitLeadingMetadataBlock(source) else {
+    let Some((block, prefix, suffix)) = splitLeadingMetadataBlock(source) else {
         return Err(
             "JavaScript package METADATA block is required for marketplace origin".to_string(),
         );
     };
-    let metadata = JsPackageLoader::extract_metadata(source);
-    let mut metadata = JsPackageLoader::parse_metadata_object(&metadata)?;
+    let mut metadata = JsPackageLoader::parse_metadata_object(&JsPackageLoader::extract_metadata(block))?;
     metadata.insert(
         SCRIPT_MARKET_ORIGIN_METADATA_KEY.to_string(),
         serde_json::Value::String(encodeMarketOriginForMetadata(marketOrigin)?),
     );
     let serialized = serde_json::to_string(&metadata).map_err(|error| error.to_string())?;
-    Ok(format!("/* METADATA\n{serialized}\n*/{body}"))
+    Ok(format!("{prefix}/* METADATA\n{serialized}\n*/{suffix}"))
 }
 
 /// Serializes a market-origin record as the shared ASCII XOR byte payload.
@@ -1396,7 +1395,8 @@ fn astMinifySourcePreservingMetadata(
     entryName: &str,
     minifier: &mut ToolPkgJsAstMinifier,
 ) -> Result<String, String> {
-    if let Some((metadataBlock, body)) = splitLeadingMetadataBlock(source) {
+    if let Some((metadataBlock, prefix, suffix)) = splitLeadingMetadataBlock(source) {
+        let body = format!("{prefix}\n{suffix}");
         let body = body.trim();
         if body.is_empty() {
             return Err(format!(
@@ -1410,33 +1410,14 @@ fn astMinifySourcePreservingMetadata(
 }
 
 #[allow(non_snake_case)]
-/// Splits one leading standalone package metadata block from its executable body.
-fn splitLeadingMetadataBlock(source: &str) -> Option<(&str, &str)> {
-    let trimmed = source.trim_start();
-    let leadingWhitespaceSize = source.len() - trimmed.len();
-    if !trimmed.starts_with("/*") {
-        return None;
-    }
-    let commentBody = &trimmed[2..];
-    let label = commentBody.trim_start();
-    if !startsWithMetadataLabel(label) {
-        return None;
-    }
-    let commentEnd = trimmed.find("*/")? + 2;
-    let metadataEnd = leadingWhitespaceSize + commentEnd;
-    Some((&source[..metadataEnd], &source[metadataEnd..]))
-}
-
-#[allow(non_snake_case)]
-/// Returns whether the comment body starts with the exact METADATA marker.
-fn startsWithMetadataLabel(commentBody: &str) -> bool {
-    let Some(afterLabel) = commentBody.strip_prefix("METADATA") else {
-        return false;
-    };
-    match afterLabel.chars().next() {
-        Some(ch) => ch.is_whitespace() || ch == '*',
-        None => true,
-    }
+/// Splits a package metadata header, including when a strict directive precedes it.
+fn splitLeadingMetadataBlock(source: &str) -> Option<(&str, &str, &str)> {
+    static HEADER: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+        Regex::new(r#"\A\s*(?:(?:"use strict"|'use strict')[^\S\r\n]*(?:;|\r\n|\n|\r)\s*)?(/\*\s*METADATA(?:\s[\s\S]*?)?\*/)"#)
+            .expect("valid package metadata header pattern")
+    });
+    let block = HEADER.captures(source)?.get(1)?;
+    Some((block.as_str(), &source[..block.start()], &source[block.end()..]))
 }
 
 struct ToolPkgJsAstMinifier {

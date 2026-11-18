@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock, RwLock};
 
+#[path = "compat/v1/ChatArchive.rs"]
+mod v1_chat_archive;
+
 use operit_host_api::HostEnvironmentDescriptor;
 use operit_model::FunctionType::FunctionType;
 use operit_model::PromptFunctionType::PromptFunctionType;
@@ -154,6 +157,11 @@ impl RuntimeToolSupport {
 }
 
 impl ToolRuntimeSupport for RuntimeToolSupport {
+    /// Imports the v1 migrator's archive through the runtime's bound chat store.
+    fn importV1MigratorArchive(&self, path: String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send + '_>> {
+        Box::pin(v1_chat_archive::import(self, path))
+    }
+
     fn bindDeviceToolRuntime(&self, runtime: Arc<dyn operit_tools::tools::DeviceTools::DeviceToolRuntime>) -> Result<(), String> {
         self.deviceToolRuntime.set(runtime).map_err(|_| "Device tool routing is already initialized".into())
     }

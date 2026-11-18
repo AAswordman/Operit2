@@ -41,6 +41,8 @@ fn catalog_requests_preserve_text_and_provider_fields() {
         ),
         ("RIME_TTS", "/text", "/modelId", "/speaker"),
         ("ELEVENLABS_TTS", "/text", "/model_id", ""),
+        ("ZHIPU_TTS", "/input", "/model", "/voice"),
+        ("STEPFUN_TTS", "/input", "/model", "/voice"),
     ] {
         let config = catalog_config(provider);
         let values = placeholders(&config, text);
@@ -82,6 +84,8 @@ fn catalog_requests_preserve_text_and_provider_fields() {
         ("INWORLD_TTS", "/audioConfig/speakingRate"),
         ("HUME_TTS", "/utterances/0/speed"),
         ("ELEVENLABS_TTS", "/voice_settings/speed"),
+        ("ZHIPU_TTS", "/speed"),
+        ("STEPFUN_TTS", "/speed"),
     ] {
         let config = catalog_config(provider);
         let rendered = replacePlaceholders(
@@ -99,6 +103,35 @@ fn catalog_requests_preserve_text_and_provider_fields() {
     }
 }
 
+/// Renders DeepSeek's model-free request using each bundled voice and escaped text.
+#[test]
+fn deepseek_request_uses_voice_without_model_or_speed() {
+    let mut config = catalog_config("DEEPSEEK_TTS");
+    let voices = TtsCatalog::voicesForProvider("DEEPSEEK_TTS", "", "wav", 1.0).unwrap();
+    assert_eq!(voices.len(), 2);
+    for voice in voices {
+        config.voice = voice.voice;
+        assert!(config.model.is_empty());
+        let text = "你好，\"DeepSeek\"。\n下一行";
+        let body: Value = serde_json::from_str(
+            &replacePlaceholders(
+                &config.requestBody,
+                &placeholders(&config, text),
+                PlaceholderMode::JsonBody,
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            body,
+            serde_json::json!({
+                "text": text, "voice_id": config.voice,
+                "format": "wav", "filter_markdown": true,
+            })
+        );
+    }
+}
+
 /// Renders each provider's declared authentication through the shared HTTP header path.
 #[test]
 fn catalog_requests_use_provider_authentication() {
@@ -112,6 +145,9 @@ fn catalog_requests_use_provider_authentication() {
         ("RIME_TTS", "Authorization", "Bearer fixture-key"),
         ("RIME_TTS", "Accept", "audio/mpeg"),
         ("ELEVENLABS_TTS", "xi-api-key", "fixture-key"),
+        ("DEEPSEEK_TTS", "Authorization", "Bearer fixture-key"),
+        ("ZHIPU_TTS", "Authorization", "Bearer fixture-key"),
+        ("STEPFUN_TTS", "Authorization", "Bearer fixture-key"),
     ] {
         let config = catalog_config(provider);
         let headers = replaceHeaders(&config.headers, &placeholders(&config, "text")).unwrap();
@@ -166,7 +202,15 @@ fn catalog_base64_audio_responses_use_shared_pipeline() {
 /// Preserves binary speech responses without requiring provider-specific processing.
 #[test]
 fn catalog_binary_audio_responses_preserve_bytes() {
-    for provider in ["CARTESIA_TTS", "HUME_TTS", "RIME_TTS", "ELEVENLABS_TTS"] {
+    for provider in [
+        "CARTESIA_TTS",
+        "HUME_TTS",
+        "RIME_TTS",
+        "ELEVENLABS_TTS",
+        "DEEPSEEK_TTS",
+        "ZHIPU_TTS",
+        "STEPFUN_TTS",
+    ] {
         let config = catalog_config(provider);
         let audio = resolvePipelineAudio(
             BinaryPayload {

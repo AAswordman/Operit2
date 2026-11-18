@@ -278,6 +278,20 @@ mod tests {
         }
     }
 
+    /// Resolves persisted legacy AISHELL-3 metadata through the shared registry migration.
+    #[test]
+    fn installedAishell3UsesTheModelSpeakerCount() {
+        let expected = LocalModelCatalog::sherpaOnnxVitsTts();
+        let mut legacy = expected.clone();
+        let Some(LocalModelDriver::SherpaOnnxVits { speakerCount, .. }) = &mut legacy.driver else {
+            panic!("AISHELL-3 must use the VITS driver");
+        };
+        *speakerCount = 175;
+        let runtime =
+            resolveInstalledRuntime(legacy, LocalEngineCatalog::sherpaOnnx(), "lib").unwrap();
+        assert_eq!(runtime.model.manifest, expected);
+    }
+
     /// Preserves both installation-root and nested archive layouts in the VFS namespace.
     #[test]
     fn installedEngineArchiveDirectoriesStayWithinVfs() {

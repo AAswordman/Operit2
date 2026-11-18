@@ -387,6 +387,11 @@ pub trait CoreNodeToolRuntime: Send + Sync {
 
 /// Provides runtime-owned services that the tools crate must not own.
 pub trait ToolRuntimeSupport: Send + Sync {
+    /// Runs the v1 migrator import with the current runtime's file and chat services.
+    fn importV1MigratorArchive(&self, _path: String) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, String>> + Send + '_>> {
+        Box::pin(async { Err("The v1 chat archive importer is unavailable in this runtime".into()) })
+    }
+
     fn bindDeviceToolRuntime(&self, _runtime: Arc<dyn crate::tools::DeviceTools::DeviceToolRuntime>) -> Result<(), String> {
         Err("Device tool routing is not supported by this runtime".into())
     }

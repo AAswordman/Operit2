@@ -1,6 +1,7 @@
 """Verify ToolPkg identity depends on file contents rather than filesystem metadata."""
 
 import importlib.util
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -21,6 +22,72 @@ SPEC.loader.exec_module(SYNC)
 
 
 class PluginPackageSyncTests(unittest.TestCase):
+    # Rebuilds cleaned, partial, or modified outputs while reusing an intact build.
+    def test_child_prebuild_cache_requires_the_complete_generated_tree(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "plugins/packages/buildin"
+            child = source / "daily_life"
+            (child / "src").mkdir(parents=True)
+            (child / "manifest.json").write_text('{"main":"dist/main.js"}', encoding="utf-8")
+            (child / "tsconfig.json").write_text('{"compilerOptions":{"outDir":"dist"}}', encoding="utf-8")
+            (child / "src/main.ts").write_text('export const main = 1;', encoding="utf-8")
+            main = child / "dist/main.js"
+            dependency = child / "dist/reminders.js"
+
+            # Emulates the compiler emitting both the entry and its imported module.
+            def compile_outputs(*args, **kwargs):
+                if kwargs["dry_run"]:
+                    return
+                main.parent.mkdir(exist_ok=True)
+                main.write_text('exports.main = 1;', encoding="utf-8")
+                dependency.write_text('exports.reminder = 1;', encoding="utf-8")
+
+            with patch.object(SYNC, "_plugins_root", return_value=root / "plugins"), \
+                    patch.object(SYNC, "_typescript_command", return_value="tsc"), \
+                    patch.object(SYNC, "_run_checked_command", side_effect=compile_outputs) as compiler:
+                signature = SYNC._compute_paths_signature(root, SYNC._collect_prebuild_inputs(source, child))
+                state_file = source / ".sync_state.json"
+                state_file.write_text(json.dumps({"prebuild:daily_life": signature}), encoding="utf-8")
+                plans = SYNC._collect_sync_plan(source)
+                SYNC._prebuild_plans(root, source, plans, dry_run=False)
+                self.assertEqual(compiler.call_count, 1, "Legacy input-only cache must rebuild missing outputs")
+                SYNC._prebuild_plans(root, source, plans, dry_run=False)
+                self.assertEqual(compiler.call_count, 1, "Intact outputs should reuse the build")
+                dependency.unlink()
+                SYNC._prebuild_plans(root, source, plans, dry_run=False)
+                self.assertEqual(compiler.call_count, 2, "Missing imports must rebuild even with main.js present")
+                dependency.write_text('damaged output', encoding="utf-8")
+                SYNC._prebuild_plans(root, source, plans, dry_run=False)
+                self.assertEqual(compiler.call_count, 3, "Modified outputs must rebuild")
+                main.unlink()
+                dependency.unlink()
+                main.parent.rmdir()
+                state_before = state_file.read_bytes()
+                SYNC._prebuild_plans(root, source, plans, dry_run=True)
+                self.assertEqual(state_file.read_bytes(), state_before, "Dry runs must not cache builds")
+                compiler.reset_mock()
+                SYNC._prebuild_plans(root, source, plans, dry_run=False)
+                compiler.assert_called_once()
+                self.assertTrue(main.is_file())
+                self.assertTrue(dependency.is_file())
+
+    # Rejects a successful compiler process that failed to produce runtime files.
+    def test_child_prebuild_does_not_cache_an_empty_compiler_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "plugins/packages/buildin"
+            child = source / "daily_life"
+            child.mkdir(parents=True)
+            (child / "manifest.json").write_text('{"main":"dist/main.js"}', encoding="utf-8")
+            (child / "tsconfig.json").write_text('{}', encoding="utf-8")
+            with patch.object(SYNC, "_plugins_root", return_value=root / "plugins"), \
+                    patch.object(SYNC, "_typescript_command", return_value="tsc"), \
+                    patch.object(SYNC, "_run_checked_command"):
+                with self.assertRaisesRegex(RuntimeError, "produced no ToolPkg JavaScript"):
+                    SYNC._prebuild_plans(root, source, SYNC._collect_sync_plan(source), dry_run=False)
+            self.assertFalse((source / ".sync_state.json").exists())
+
     # Requires ignored compiler outputs in archives without bundling old packages.
     def test_repacking_includes_ignored_dist_outputs_without_nested_archives(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -31,7 +98,10 @@ class PluginPackageSyncTests(unittest.TestCase):
             (source / "dist/ui").mkdir(parents=True)
             (source / "resources/dsp").mkdir(parents=True)
             (source / "modules").mkdir()
-            (source / "manifest.json").write_text('{"main":"dist/main.js"}', encoding="utf-8")
+            (source / "manifest.json").write_text(
+                '{"main":"dist/main.js","subpackages":[{"entry":"dist/ui/screen.js"}]}',
+                encoding="utf-8",
+            )
             (source / "dist/main.js").write_bytes(b"compiled entry")
             (source / "dist/ui/screen.js").write_bytes(b"compiled screen")
             (source / "resources/dsp/runtime.wasm").write_bytes(b"wasm resource")
@@ -47,6 +117,18 @@ class PluginPackageSyncTests(unittest.TestCase):
                 })
                 self.assertEqual(archive.read("dist/main.js"), b"compiled entry")
                 self.assertEqual(archive.read("dist/ui/screen.js"), b"compiled screen")
+            original = output.read_bytes()
+            for path, field in [("dist/main.js", "manifest.main"),
+                                ("dist/ui/screen.js", "manifest.subpackages[0].entry")]:
+                entry = source / path
+                contents = entry.read_bytes()
+                entry.unlink()
+                with self.assertRaises(ValueError) as error:
+                    SYNC._pack_toolpkg_folder(root, source, output)
+                self.assertIn(field, str(error.exception))
+                self.assertIn(path, str(error.exception))
+                self.assertEqual(output.read_bytes(), original)
+                entry.write_bytes(contents)
 
     def test_macos_prebuild_adds_homebrew_without_overriding_caller_tools(self):
         with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.dict(os.environ, {"PATH": "/custom/bin:/usr/bin:/bin"}, clear=True):

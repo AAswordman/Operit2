@@ -574,23 +574,6 @@ impl NativeRuntimeStorageHost {
         Ok(resolved)
     }
 
-    fn storagePathForPhysical(&self, path: &Path) -> HostResult<String> {
-        if let Ok(relative) = path.strip_prefix(&self.runtimeRoot) {
-            return Ok(prefixedPath("runtime", relative));
-        }
-        if let Ok(relative) = path.strip_prefix(&self.workspaceRoot) {
-            return Ok(prefixedPath("workspaces", relative));
-        }
-        let secureRoot = legacySecurePath(&self.runtimeRoot, &[])?;
-        if let Ok(relative) = path.strip_prefix(&secureRoot) {
-            return Ok(prefixedPath("secure", relative));
-        }
-        Err(HostError::new(format!(
-            "Physical path is outside configured runtime and workspace roots: {}",
-            path.display()
-        )))
-    }
-
     /// Opens a staging writer, optionally retaining identity-private catalog permissions.
     fn createWriteSessionInternal(
         &self,
@@ -773,7 +756,9 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
         resolved.try_exists().map_err(|error| storageIoError("Inspect storage path", &resolved, error))
     }
 
+    /// Lists children in the requested namespace, including overlapping physical roots.
     fn list(&self, prefix: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+        let storagePrefix = normalizeStoragePath(prefix)?.join("/");
         let directory = self.resolve(prefix)?;
         let mut entries = Vec::new();
         let managedRoot = self.managedRoot(prefix)?;
@@ -825,7 +810,7 @@ impl RuntimeStorageHost for NativeRuntimeStorageHost {
                 entry.metadata().map_err(|error| storageIoError("Inspect storage entry", &entry.path(), error))?
             };
             entries.push(RuntimeStorageEntry {
-                path: self.storagePathForPhysical(&entry.path())?,
+                path: prefixedPath(&storagePrefix, Path::new(&name)),
                 isDirectory: metadata.is_dir(),
                 size: metadata.len() as i64,
             });
@@ -1203,6 +1188,38 @@ mod tests {
     use operit_host_contract::{ArchiveStagingHost, RuntimeStorageHost, RuntimeStorageWriteHost};
 
     use super::{NativeArchiveStagingHost, NativeRuntimeStorageHost};
+
+    /// Listings retain the requested namespace when physical storage roots overlap.
+    #[test]
+    fn listings_preserve_namespaces_for_overlapping_roots() {
+        let root = std::env::temp_dir().join(format!("operit-storage-roots-{}", uuid::Uuid::new_v4()));
+        for (name, runtime, workspace) in [
+            ("equal", "shared", "shared"),
+            ("workspace-in-runtime", "shared", "shared/workspaces"),
+            ("runtime-in-workspace", "shared/runtime", "shared"),
+            ("secure-is-workspace", "runtime", "secure"),
+        ] {
+            let base = root.join(name);
+            let host = NativeRuntimeStorageHost::new(base.join(runtime), base.join(workspace));
+            for namespace in ["runtime", "workspaces", "secure"] {
+                host.writeBytes(&format!("{namespace}/project/{namespace}.txt"), namespace.as_bytes()).unwrap();
+            }
+            for namespace in ["runtime", "workspaces", "secure"] {
+                let directories = host.list(namespace).unwrap();
+                assert!(directories.iter().any(|entry| entry.path == format!("{namespace}/project")), "{name}: {directories:?}");
+                assert!(directories.iter().all(|entry| entry.path.starts_with(&format!("{namespace}/"))), "{name}: {directories:?}");
+                let prefix = format!("{namespace}/project");
+                let files = host.list(&format!("./{prefix}//")).unwrap();
+                assert!(!files.is_empty());
+                for entry in files {
+                    assert!(entry.path.starts_with(&format!("{prefix}/")), "{name}: {}", entry.path);
+                    let file = Path::new(&entry.path).file_stem().unwrap().to_str().unwrap();
+                    assert_eq!(host.readBytes(&entry.path).unwrap(), file.as_bytes(), "{name}: {}", entry.path);
+                }
+            }
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
 
     /// Literal POSIX backslashes stay filename characters outside the portable sync tree.
     #[cfg(unix)]

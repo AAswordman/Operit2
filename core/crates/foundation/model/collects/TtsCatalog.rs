@@ -1,5 +1,18 @@
 pub const TTS_CATALOG_VOICE_ROWS: &str = r#"
 SYSTEM_TTS|||系统默认音色|使用系统默认语言与默认声音
+DEEPSEEK_TTS||stella|Stella|DeepSeek 女声，自动识别语言
+DEEPSEEK_TTS||tide|Tide|DeepSeek 男声，自动识别语言
+ZHIPU_TTS||tongtong|彤彤|GLM-TTS 默认音色
+ZHIPU_TTS||chuichui|锤锤|GLM-TTS 系统音色
+ZHIPU_TTS||xiaochen|小陈|GLM-TTS 系统音色
+ZHIPU_TTS||jam|Jam|GLM-TTS 动动动物圈音色
+ZHIPU_TTS||kazi|Kazi|GLM-TTS 动动动物圈音色
+ZHIPU_TTS||douji|Douji|GLM-TTS 动动动物圈音色
+ZHIPU_TTS||luodo|Luodo|GLM-TTS 动动动物圈音色
+STEPFUN_TTS||cixingnansheng|磁性男声|阶跃星辰中文男声
+STEPFUN_TTS||linjiameimei|邻家妹妹|阶跃星辰中文女声
+STEPFUN_TTS||wenrounvsheng|温柔女声|阶跃星辰中文女声
+STEPFUN_TTS||yuanqishaonv|元气少女|阶跃星辰中文女声
 OPENAI_COMPATIBLE||alloy|Alloy|中性均衡音色
 OPENAI_COMPATIBLE||ash|Ash|低沉自然音色
 OPENAI_COMPATIBLE||ballad|Ballad|叙事感音色

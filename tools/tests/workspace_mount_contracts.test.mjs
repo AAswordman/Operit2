@@ -25,7 +25,7 @@ function section(text, start, end) {
 test('Android workspace paths map directly to the shared-storage mount', () => {
   const mapper = source(mapperPath);
   const binding = section(mapper, 'fn normalizeWorkspaceBindingVfsPath(', 'fn normalizeWindowsHostWorkspacePath(');
-  const android = section(binding, '[ROOT_SDCARD,', '[ROOT_DATA,');
+  const android = section(binding, '[ROOT_SDCARD,', '["workspace",');
   assert.match(android, /\[ROOT_SDCARD, rest @ \.\.\] \| \["storage", "emulated", "0", rest @ \.\.\]/);
   assert.match(android, /Ok\(Some\(joinNormalizedSegments\(\s*&\[ROOT_VIRTUAL, MNT_ANDROID, MNT_ANDROID_SDCARD\],\s*rest,/);
   assert.doesNotMatch(binding, /canonicalizeVfsPath|EXTENSIONS_PLUGIN_|#\[cfg\(/);
@@ -49,7 +49,7 @@ test('workspace binding uses the fallible folder-mount operation', () => {
 test('shared-storage workspace mounts resolve through the host filesystem', () => {
   const mapper = source(mapperPath);
   const resolve = section(mapper, 'pub fn resolve(', 'pub fn mapPhysicalChildToVfs(');
-  const android = section(resolve, '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_SDCARD,', '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX,');
+  const android = section(resolve, '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_SDCARD,', '[root @ (ROOT_MNT | ROOT_VIRTUAL), platform,');
   assert.match(android, /physicalPath: physicalPathString\(joinUnixPhysical\("\/sdcard", rest\)\)/);
   const vfs = source('core/crates/foundation/vfs/src/VisualFileSystem.rs');
   const list = section(vfs, 'pub fn listFiles(', 'pub fn readFile(');
@@ -77,8 +77,8 @@ test('Rust regression cases cover picker paths and repeated normalization', () =
 /** Root is an explicit Android OS path, not the VFS root or a plugin alias. */
 test('Android root is mapped to slash and remains bindable', () => {
   const mapper = source(mapperPath);
-  const resolve = section(mapper, '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => {', '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX, rest @ ..] => {');
-  assert.match(resolve, /androidRootMounted\(\)/);
+  const resolve = section(mapper, '[root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => {', '[root @ (ROOT_MNT | ROOT_VIRTUAL), platform,');
+  assert.match(resolve, /self\.hostRoots\.androidPathExists\("\/"\)/);
   assert.match(resolve, /joinUnixPhysical\("\/", rest\)/);
   assert.match(mapper, /directoryEntry\(MNT_ANDROID_ROOT\)/);
   const binding = section(mapper, 'fn normalizeWorkspaceBindingVfsPath(', 'fn normalizeWindowsHostWorkspacePath(');

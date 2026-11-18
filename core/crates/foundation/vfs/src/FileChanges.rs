@@ -50,13 +50,6 @@ fn contains(root: &str, path: &str) -> Result<bool, String> {
         (Some(root), Some(path)) if root.backend == path.backend && root.root == path.root =>
             Ok(PathMapper::relativePath(&format!("/{}", root.path), &format!("/{}", path.path))?.is_some()),
         (Some(_), _) | (_, Some(_)) => Ok(false),
-        (None, None) => {
-            let root = PathMapper::resolveFileResourcePath(None, root)?;
-            let path = PathMapper::resolveFileResourcePath(None, path)?;
-            let (root, path) = if root.starts_with("/virtual/windows/") && path.starts_with("/virtual/windows/") {
-                (root.to_lowercase(), path.to_lowercase())
-            } else { (root, path) };
-            Ok(PathMapper::relativePath(&root, &path)?.is_some())
-        }
+        (None, None) => Ok(PathMapper::physicalPathWithin(root, path)),
     }
 }

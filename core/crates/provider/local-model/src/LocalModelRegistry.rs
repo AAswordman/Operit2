@@ -54,6 +54,32 @@ pub struct LocalModelRegistrySnapshot {
 }
 
 impl LocalModelRegistrySnapshot {
+    /// Corrects the legacy AISHELL-3 speaker count for the exact pinned model files.
+    pub(crate) fn migrateAishell3SpeakerCount(&mut self) {
+        let manifest = crate::LocalModelCatalog::LocalModelCatalog::sherpaOnnxVitsTts();
+        let mut legacyDriver = manifest.driver.clone();
+        if let Some(crate::LocalModelManifest::LocalModelDriver::SherpaOnnxVits {
+            speakerCount, ..
+        }) = &mut legacyDriver
+        {
+            *speakerCount = 175;
+        }
+        for installed in self
+            .installedModels
+            .iter_mut()
+            .map(|model| &mut model.manifest)
+            .chain(self.customModels.iter_mut())
+        {
+            if installed.id == manifest.id
+                && installed.version == manifest.version
+                && installed.files == manifest.files
+                && installed.driver == legacyDriver
+            {
+                installed.driver = manifest.driver.clone();
+            }
+        }
+    }
+
     /// Creates an empty local model registry snapshot.
     pub fn empty() -> Self {
         Self {
@@ -185,11 +211,62 @@ impl LocalModelRegistrySnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LocalModelCatalog::LocalModelCatalog;
     use crate::LocalModelManifest::{
-        LocalEngineKind, LocalModelFile, LocalModelKind, LocalModelManifest, LocalModelSource,
-        LocalModelSourceKind,
+        LocalEngineKind, LocalModelDriver, LocalModelFile, LocalModelKind, LocalModelManifest,
+        LocalModelSource, LocalModelSourceKind,
     };
     use operit_util::RuntimeStorageLayout::RUNTIME_LOCAL_MODELS_DIR_PATH;
+
+    /// Reproduces installed and imported manifests saved before the AISHELL-3 correction.
+    fn legacyAishell3Manifest() -> LocalModelManifest {
+        let mut manifest = LocalModelCatalog::sherpaOnnxVitsTts();
+        let Some(LocalModelDriver::SherpaOnnxVits { speakerCount, .. }) = &mut manifest.driver
+        else {
+            panic!("AISHELL-3 must use the VITS driver");
+        };
+        *speakerCount = 175;
+        manifest
+    }
+
+    /// Migrates legacy metadata without reinstalling files or changing installation state.
+    #[test]
+    fn aishell3MigrationCorrectsInstalledAndCustomManifests() {
+        let mut registry = LocalModelRegistrySnapshot::empty();
+        let mut installed = installedModel("aishell3", "legacy", 100);
+        installed.manifest = legacyAishell3Manifest();
+        installed.verifiedAtMs = Some(200);
+        registry.upsert(installed.clone());
+        registry.upsertCustomModel(installed.manifest.clone());
+
+        registry.migrateAishell3SpeakerCount();
+        installed.manifest = LocalModelCatalog::sherpaOnnxVitsTts();
+        assert!(matches!(
+            installed.manifest.driver,
+            Some(LocalModelDriver::SherpaOnnxVits { speakerCount: 174, .. })
+        ));
+        assert_eq!(registry.installedModels, vec![installed.clone()]);
+        assert_eq!(registry.customModels, vec![installed.manifest]);
+        let migrated = registry.clone();
+        registry.migrateAishell3SpeakerCount();
+        assert_eq!(registry, migrated);
+    }
+
+    /// Leaves different model identities, files, and explicit speaker metadata untouched.
+    #[test]
+    fn aishell3MigrationOnlyChangesTheKnownLegacyManifest() {
+        let legacy = legacyAishell3Manifest();
+        let mut manifests = vec![legacy; 5];
+        manifests[0].id.push_str("-custom");
+        manifests[1].version.push_str("-custom");
+        manifests[2].files[0].sha256 = "0".repeat(64);
+        manifests[3].driver = LocalModelCatalog::sherpaOnnxVitsTts().driver;
+        manifests[4].driver = None;
+        let mut registry = LocalModelRegistrySnapshot::empty();
+        registry.customModels = manifests.clone();
+        registry.migrateAishell3SpeakerCount();
+        assert_eq!(registry.customModels, manifests);
+    }
 
     /// Verifies registry records are replaced by model id and version.
     #[test]

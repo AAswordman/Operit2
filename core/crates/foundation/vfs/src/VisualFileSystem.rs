@@ -131,18 +131,7 @@ impl VisualFileSystem {
                 .is_some())
             }
             (Some(_), _) | (_, Some(_)) => Ok(false),
-            (None, None) => {
-                let root = PathMapper::resolveFileResourcePath(None, &root.physicalPath)?;
-                let path = PathMapper::resolveFileResourcePath(None, &path.physicalPath)?;
-                let (root, path) = if root.starts_with("/virtual/windows/")
-                    && path.starts_with("/virtual/windows/")
-                {
-                    (root.to_lowercase(), path.to_lowercase())
-                } else {
-                    (root, path)
-                };
-                Ok(PathMapper::relativePath(&root, &path)?.is_some())
-            }
+            (None, None) => Ok(PathMapper::physicalPathWithin(&root.physicalPath, &path.physicalPath)),
         }
     }
 
@@ -885,25 +874,19 @@ mod tests {
 
     /// Mounted platform roots resolve through the same VFS surface on their host.
     #[test]
-    #[cfg(target_os = "linux")]
-    fn fileInfoResolvesThroughTheLinuxMountRoot() {
+    fn fileInfoResolvesThroughTheActiveHostMountRoot() {
         let (vfs, root) = vfs();
-        // Address the real temp directory through the /virtual/linux mount root so
-        // the physical target stays writable regardless of the active TMPDIR.
-        // Some sandboxes refuse file creation directly inside the temp root,
-        // so keep the marker inside a directory the host can create.
-        let marker = format!(
-            "/virtual/linux{}",
-            std::env::temp_dir()
+        let directory = crate::VfsPath::storageLocationPath(
+            &std::env::temp_dir()
                 .join(format!("operit-vfs-check-{}", uuid::Uuid::new_v4()))
-                .join("marker.txt")
-                .display()
-        );
+                .to_string_lossy(),
+        ).unwrap();
+        let marker = crate::VfsPath::joinVfsPath(&directory, "marker.txt").unwrap();
         vfs.writeFile(&marker, "mounted", false).unwrap();
         let info = vfs.fileInfo(&marker).unwrap();
         assert!(info.exists);
         assert_eq!(info.path, marker);
-        vfs.deleteFile(&marker, false).unwrap();
+        vfs.deleteFile(&directory, true).unwrap();
         // The mount-root write never touches the runtime root, so it may not exist.
         drop(std::fs::remove_dir_all(root));
     }

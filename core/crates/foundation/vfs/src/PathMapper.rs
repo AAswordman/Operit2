@@ -3,6 +3,7 @@ use std::sync::Arc;
 
 use operit_host_contract::{FileEntry, RuntimeStorageHost};
 use operit_host_contract::FileSystemResource::FileSystemResource;
+use operit_host_contract::HostFileSystemRoots::HostFileSystemRoots;
 use super::MountRegistry::{mountRelativePath, MountRegistry};
 use operit_host_contract::RuntimeStorageLayout::{
     EXTENSIONS_PLUGIN_CONFIGS_DIR_PATH, EXTENSIONS_PLUGIN_DATA_DIR_PATH,
@@ -37,8 +38,6 @@ const APP_OUTPUTS: &str = "outputs";
 
 const MNT_WINDOWS: &str = "windows";
 const MNT_ANDROID: &str = "android";
-const MNT_LINUX: &str = "linux";
-const MNT_MACOS: &str = "macos";
 const MNT_ANDROID_SDCARD: &str = "sdcard";
 const MNT_ANDROID_ROOT: &str = "root";
 
@@ -73,6 +72,7 @@ pub struct PathMapper {
     runtimeStoreRoot: PathBuf,
     workspaceCollectionRoot: PathBuf,
     mountRegistry: MountRegistry,
+    hostRoots: HostFileSystemRoots,
 }
 
 impl PathMapper {
@@ -108,14 +108,16 @@ impl PathMapper {
         Self::fromRegistry(runtimeStoreRoot, workspaceCollectionRoot, mountRegistry)
     }
 
+    /// Binds persistent mounts and platform roots to one mapper instance.
     fn fromRegistry(
         runtimeStoreRoot: PathBuf,
         workspaceCollectionRoot: PathBuf,
         mountRegistry: MountRegistry,
     ) -> Self {
-        Self { runtimeStoreRoot, workspaceCollectionRoot, mountRegistry }
+        Self { runtimeStoreRoot, workspaceCollectionRoot, mountRegistry, hostRoots: HostFileSystemRoots::current() }
     }
 
+    /// Loads mounts from this runtime's owning storage host.
     fn mounts(&self) -> Result<Vec<super::MountRegistry::VfsMount>, String> {
         self.mountRegistry.list()
     }
@@ -174,16 +176,21 @@ impl PathMapper {
     /// Normalizes a user-selected workspace binding path.
     #[allow(non_snake_case)]
     pub fn normalizeWorkspaceBindingPath(path: &str) -> Result<String, String> {
+        Self::normalizeWorkspaceBindingPathForHost(path, HostFileSystemRoots::current())
+    }
+
+    /// Applies native workspace ingress under the same host layout as storage selection.
+    fn normalizeWorkspaceBindingPathForHost(path: &str, hostRoots: HostFileSystemRoots) -> Result<String, String> {
         let text = path.trim().replace('\\', "/");
         if text.is_empty() {
             return Err("workspace path is required".to_string());
         }
         if text.starts_with('/') {
             let normalizedPath = normalizeAbsoluteVfsPath(&text)?;
-            if let Some(vfsPath) = normalizeWorkspaceBindingVfsPath(&normalizedPath)? {
+            if let Some(vfsPath) = normalizeWorkspaceBindingVfsPath(&normalizedPath, hostRoots)? {
                 return Ok(vfsPath);
             }
-            return normalizeAbsoluteHostWorkspacePath(&normalizedPath);
+            return normalizeAbsoluteHostPath(&normalizedPath, hostRoots);
         }
         if let Some(vfsPath) = normalizeWindowsHostWorkspacePath(&text)? {
             return Ok(vfsPath);
@@ -191,6 +198,27 @@ impl PathMapper {
         Err(format!(
             "Workspace binding must use a VFS path or an absolute host path: {path}"
         ))
+    }
+
+    /// Converts a selected native directory using the active host's filesystem layout.
+    pub(crate) fn storageLocationPath(path: &str) -> Result<String, String> {
+        Self::storageLocationPathForHost(path, HostFileSystemRoots::current())
+    }
+
+    /// Keeps explicit VFS addresses separate from native picker paths and plugin aliases.
+    fn storageLocationPathForHost(path: &str, hostRoots: HostFileSystemRoots) -> Result<String, String> {
+        let path = path.trim().replace('\\', "/");
+        if path.starts_with('/') {
+            let normalized = normalizeAbsoluteVfsPath(&path)?;
+            match normalized.split('/').nth(1) {
+                Some(ROOT_OPERITAPP | ROOT_APP | ROOT_VIRTUAL | ROOT_MNT) => Self::canonicalizeVfsPath(&normalized),
+                _ => normalizeAbsoluteHostPath(&normalized, hostRoots),
+            }
+        } else if let Some(path) = normalizeWindowsHostWorkspacePath(&path)? {
+            Ok(path)
+        } else {
+            Err("Storage location must be an absolute native path or a VFS path".into())
+        }
     }
 
     /// Resolves an absolute resource locator or a path relative to a bound workspace.
@@ -240,7 +268,9 @@ impl PathMapper {
         // Apply legacy plugin storage aliases before interpreting native host paths.
         let path = Self::canonicalizeVfsPath(&path)?;
         let root = path.split('/').find(|part| !part.is_empty());
-        if root.is_none() || VFS_ROOTS.iter().any(|entry| Some(entry.name) == root) {
+        let nativeDataPath = root == Some(ROOT_DATA)
+            && HostFileSystemRoots::current() != HostFileSystemRoots::Android;
+        if !nativeDataPath && (root.is_none() || VFS_ROOTS.iter().any(|entry| Some(entry.name) == root)) {
             Ok(path)
         } else {
             normalizeAbsoluteHostWorkspacePath(&path)
@@ -289,6 +319,14 @@ impl PathMapper {
         Ok(Some(fullSegments[rootSegments.len()..].join("/")))
     }
 
+    /// Compares resolved host paths without reinterpreting native or browser locations as VFS input.
+    pub(crate) fn physicalPathWithin(root: &str, path: &str) -> bool {
+        let roots = HostFileSystemRoots::current();
+        let root = normalizePhysicalText(root, roots);
+        let path = normalizePhysicalText(path, roots);
+        root == path || path.starts_with(&format!("{}/", root.trim_end_matches('/')))
+    }
+
     /// Expresses a stable VFS locator from the current file directory, including sibling paths.
     /// Root aliases are compared using the same mount identities as path resolution.
     #[allow(non_snake_case)]
@@ -320,7 +358,7 @@ impl PathMapper {
         } else { Vec::new() };
         let mut entries = match segments.as_slice() {
             [] => {
-                let hasPlatformMounts = !mntMountEntries().is_empty() || !mounts.is_empty();
+                let hasPlatformMounts = !mntMountEntries(self.hostRoots).is_empty() || !mounts.is_empty();
                 Some(VFS_ROOTS.iter()
                     .filter(|root| !root.hidden)
                     .filter(|root| root.name != ROOT_VIRTUAL || hasPlatformMounts)
@@ -328,13 +366,13 @@ impl PathMapper {
                     .collect())
             }
             [ROOT_APP | ROOT_OPERITAPP] => Some(vec![directoryEntry(APP_DATA), directoryEntry(APP_WORKSPACES), directoryEntry(APP_OUTPUTS)]),
-            [ROOT_MNT | ROOT_VIRTUAL] => { let entries = mntMountEntries(); if entries.is_empty() { None } else { Some(entries) } }
-            [ROOT_MNT | ROOT_VIRTUAL, MNT_ANDROID] if androidRootMounted() => {
+            [ROOT_MNT | ROOT_VIRTUAL] => { let entries = mntMountEntries(self.hostRoots); if entries.is_empty() { None } else { Some(entries) } }
+            [ROOT_MNT | ROOT_VIRTUAL, MNT_ANDROID] if self.hostRoots.androidPathExists("/") => {
                 let mut entries = vec![directoryEntry(MNT_ANDROID_ROOT)];
-                if androidSdcardMounted() { entries.push(directoryEntry(MNT_ANDROID_SDCARD)); }
+                if self.hostRoots.androidPathExists("/sdcard") { entries.push(directoryEntry(MNT_ANDROID_SDCARD)); }
                 Some(entries)
             }
-            [ROOT_MNT | ROOT_VIRTUAL, MNT_WINDOWS] if windowsMounted() => Some(windowsDriveEntries()),
+            [ROOT_MNT | ROOT_VIRTUAL, MNT_WINDOWS] if self.hostRoots == HostFileSystemRoots::Windows => Some(windowsDriveEntries(self.hostRoots)),
             _ => None,
         };
         if let Some(mountPath) = mountPath {
@@ -389,7 +427,7 @@ impl PathMapper {
             }),
             [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_WINDOWS, drive, rest @ ..] => {
                 let driveLetter = normalizeDriveLetter(drive)?;
-                if !windowsDriveRootExists(&driveLetter) {
+                if !self.hostRoots.windowsDriveExists(&driveLetter) {
                     return Err(format!(
                         "Windows drive is not mounted under /virtual/windows: {driveLetter}"
                     ));
@@ -404,7 +442,7 @@ impl PathMapper {
                 })
             }
             [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_SDCARD, rest @ ..] => {
-                if !androidSdcardMounted() {
+                if !self.hostRoots.androidPathExists("/sdcard") {
                     return Err("/virtual/android/sdcard is not mounted".to_string());
                 }
                 Ok(ResolvedVfsPath {
@@ -416,32 +454,23 @@ impl PathMapper {
                 })
             }
             [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => {
-                if !androidRootMounted() { return Err("/virtual/android/root is not mounted".into()); }
+                if !self.hostRoots.androidPathExists("/") { return Err("/virtual/android/root is not mounted".into()); }
                 Ok(ResolvedVfsPath {
                     vfsPath: joinNormalizedSegments(&[root, MNT_ANDROID, MNT_ANDROID_ROOT], rest),
                     physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
                 })
             }
-            [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX, rest @ ..] => {
-                if !linuxRootMounted() {
-                    return Err("/virtual/linux is not mounted".to_string());
+            [root @ (ROOT_MNT | ROOT_VIRTUAL), platform, rest @ ..] if HostFileSystemRoots::isPosixMountName(platform) => {
+                if self.hostRoots.posixMountName() != Some(*platform) {
+                    return Err(format!("/virtual/{platform} is not mounted"));
                 }
                 Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[root, MNT_LINUX], rest),
-                    physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
-                })
-            }
-            [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_MACOS, rest @ ..] => {
-                if !macosRootMounted() {
-                    return Err("/virtual/macos is not mounted".to_string());
-                }
-                Ok(ResolvedVfsPath {
-                    vfsPath: joinNormalizedSegments(&[root, MNT_MACOS], rest),
+                    vfsPath: joinNormalizedSegments(&[root, platform], rest),
                     physicalPath: physicalPathString(joinUnixPhysical("/", rest)),
                 })
             }
             [ROOT_DATA, rest @ ..] => {
-                if !androidDataMounted() {
+                if !self.hostRoots.androidPathExists("/data") {
                     return Err("/data is not mounted".to_string());
                 }
                 Ok(ResolvedVfsPath {
@@ -471,8 +500,8 @@ impl PathMapper {
                 else { child.path.strip_prefix(&format!("{}/", baseResource.path)).ok_or("Host returned a path outside the resource search root")? };
             return Self::joinVfsPath(&base.vfsPath, relative);
         }
-        let basePhysical = normalizePhysicalText(&base.physicalPath);
-        let childPhysical = normalizePhysicalText(physicalChildPath);
+        let basePhysical = normalizePhysicalText(&base.physicalPath, self.hostRoots);
+        let childPhysical = normalizePhysicalText(physicalChildPath, self.hostRoots);
         if childPhysical == basePhysical {
             return Ok(base.vfsPath.clone());
         }
@@ -562,7 +591,7 @@ fn pathSegments(path: &str) -> Vec<&str> {
 
 /// Maps selected shared-storage folders to host mounts, not legacy plugin aliases.
 #[allow(non_snake_case)]
-fn normalizeWorkspaceBindingVfsPath(path: &str) -> Result<Option<String>, String> {
+fn normalizeWorkspaceBindingVfsPath(path: &str, hostRoots: HostFileSystemRoots) -> Result<Option<String>, String> {
     let segments = pathSegments(path);
     match segments.as_slice() {
         [root @ (ROOT_APP | ROOT_OPERITAPP), APP_WORKSPACES, workspaceId, rest @ ..] => Ok(Some(joinNormalizedSegments(
@@ -583,19 +612,15 @@ fn normalizeWorkspaceBindingVfsPath(path: &str) -> Result<Option<String>, String
         [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_ANDROID, MNT_ANDROID_ROOT, rest @ ..] => Ok(Some(joinNormalizedSegments(
             &[root, MNT_ANDROID, MNT_ANDROID_ROOT], rest,
         ))),
-        [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_LINUX, rest @ ..] => {
-            Ok(Some(joinNormalizedSegments(&[root, MNT_LINUX], rest)))
+        [root @ (ROOT_MNT | ROOT_VIRTUAL), platform, rest @ ..] if HostFileSystemRoots::isPosixMountName(platform) => {
+            Ok(Some(joinNormalizedSegments(&[root, platform], rest)))
         }
-        [root @ (ROOT_MNT | ROOT_VIRTUAL), MNT_MACOS, rest @ ..] => {
-            Ok(Some(joinNormalizedSegments(&[root, MNT_MACOS], rest)))
-        }
-        [ROOT_SDCARD, rest @ ..] | ["storage", "emulated", "0", rest @ ..] => {
+        [ROOT_SDCARD, rest @ ..] | ["storage", "emulated", "0", rest @ ..] if hostRoots == HostFileSystemRoots::Android => {
             Ok(Some(joinNormalizedSegments(
                 &[ROOT_VIRTUAL, MNT_ANDROID, MNT_ANDROID_SDCARD],
                 rest,
             )))
         }
-        [ROOT_DATA, rest @ ..] => Ok(Some(joinNormalizedSegments(&[ROOT_DATA], rest))),
         ["workspace", ..] => Err("Workspace binding cannot use /workspace".to_string()),
         [root @ (ROOT_MNT | ROOT_VIRTUAL), platform, kind, id, rest @ ..] => Ok(Some(joinNormalizedSegments(
             &[root, platform, kind, id], rest,
@@ -607,11 +632,16 @@ fn normalizeWorkspaceBindingVfsPath(path: &str) -> Result<Option<String>, String
     }
 }
 
+/// Accepts drive-absolute Windows paths with either native separator spelling.
 #[allow(non_snake_case)]
 fn normalizeWindowsHostWorkspacePath(path: &str) -> Result<Option<String>, String> {
+    let path = path.replace('\\', "/");
     let bytes = path.as_bytes();
     if bytes.len() < 2 || !bytes[0].is_ascii_alphabetic() || bytes[1] != b':' {
         return Ok(None);
+    }
+    if bytes.get(2) != Some(&b'/') {
+        return Err("Native Windows paths must include an absolute drive".into());
     }
     let driveLetter = (bytes[0] as char).to_ascii_lowercase().to_string();
     let rest = normalizeRelativePath(path[2..].trim_start_matches('/'))?;
@@ -625,6 +655,12 @@ fn normalizeWindowsHostWorkspacePath(path: &str) -> Result<Option<String>, Strin
 /// Maps an absolute host workspace path outside the recognized VFS roots.
 #[allow(non_snake_case)]
 fn normalizeAbsoluteHostWorkspacePath(path: &str) -> Result<String, String> {
+    normalizeAbsoluteHostPath(path, HostFileSystemRoots::current())
+}
+
+/// Converts a native absolute path using the same host declaration that resolves its mount.
+#[allow(non_snake_case)]
+fn normalizeAbsoluteHostPath(path: &str, hostRoots: HostFileSystemRoots) -> Result<String, String> {
     let segments = pathSegments(path);
     match segments.as_slice() {
         [] => Err("Workspace binding cannot use VFS root".to_string()),
@@ -632,12 +668,10 @@ fn normalizeAbsoluteHostWorkspacePath(path: &str) -> Result<String, String> {
         [ROOT_APP | ROOT_OPERITAPP, ..] | [ROOT_MNT | ROOT_VIRTUAL, ..] => Err(format!(
             "Workspace binding must use /operitapp/workspaces/<id> or a mounted VFS path: {path}"
         )),
-        #[cfg(target_os = "macos")]
-        _ => Ok(joinNormalizedSegments(&[ROOT_VIRTUAL, MNT_MACOS], &segments)),
-        #[cfg(target_os = "android")]
-        _ => Ok(joinNormalizedSegments(&[ROOT_VIRTUAL, MNT_ANDROID, MNT_ANDROID_ROOT], &segments)),
-        #[cfg(not(any(target_os = "macos", target_os = "android")))]
-        _ => Ok(joinNormalizedSegments(&[ROOT_VIRTUAL, MNT_LINUX], &segments)),
+        _ => {
+            let (mount, consumed) = hostRoots.nativePosixMount(&segments)?;
+            Ok(joinNormalizedSegments(&pathSegments(mount), &segments[consumed..]))
+        }
     }
 }
 
@@ -674,15 +708,15 @@ fn physicalPathString(path: PathBuf) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
 
+/// Normalizes comparison text according to the owning host's case rules.
 #[allow(non_snake_case)]
-fn normalizePhysicalText(path: &str) -> String {
+fn normalizePhysicalText(path: &str, hostRoots: HostFileSystemRoots) -> String {
     let mut normalized = path.trim().replace('\\', "/");
     while normalized.len() > 1 && normalized.ends_with('/') {
         normalized.pop();
     }
-    #[cfg(windows)]
-    {
-        normalized = normalized.to_ascii_lowercase();
+    if hostRoots == HostFileSystemRoots::Windows {
+        normalized = normalized.to_lowercase();
     }
     normalized
 }
@@ -710,101 +744,33 @@ fn directoryEntry(name: &str) -> FileEntry {
     }
 }
 
+/// Discovers roots from the same platform declaration used by native ingress.
 #[allow(non_snake_case)]
-fn mntMountEntries() -> Vec<FileEntry> {
+fn mntMountEntries(hostRoots: HostFileSystemRoots) -> Vec<FileEntry> {
     let mut entries = Vec::new();
-    if windowsMounted() {
+    if !windowsDriveEntries(hostRoots).is_empty() {
         entries.push(directoryEntry(MNT_WINDOWS));
     }
-    if androidRootMounted() {
+    if hostRoots.androidPathExists("/") {
         entries.push(directoryEntry(MNT_ANDROID));
     }
-    if linuxRootMounted() {
-        entries.push(directoryEntry(MNT_LINUX));
-    }
-    if macosRootMounted() {
-        entries.push(directoryEntry(MNT_MACOS));
+    if let Some(name) = hostRoots.posixMountName() {
+        entries.push(directoryEntry(name));
     }
     entries
 }
 
+/// Lists drive roots declared by the active filesystem host.
 #[allow(non_snake_case)]
-fn windowsMounted() -> bool {
-    !windowsDriveEntries().is_empty()
-}
-
-#[allow(non_snake_case)]
-fn windowsDriveEntries() -> Vec<FileEntry> {
+fn windowsDriveEntries(hostRoots: HostFileSystemRoots) -> Vec<FileEntry> {
     let mut entries = Vec::new();
     for letter in 'a'..='z' {
         let driveLetter = letter.to_string();
-        if windowsDriveRootExists(&driveLetter) {
+        if hostRoots.windowsDriveExists(&driveLetter) {
             entries.push(directoryEntry(&letter.to_string()));
         }
     }
     entries
-}
-
-#[allow(non_snake_case)]
-#[cfg(windows)]
-fn windowsDriveRootExists(driveLetter: &str) -> bool {
-    let path = format!("{}:/", driveLetter.to_ascii_uppercase());
-    Path::new(&path).exists()
-}
-
-#[allow(non_snake_case)]
-#[cfg(not(windows))]
-fn windowsDriveRootExists(_driveLetter: &str) -> bool {
-    false
-}
-
-#[allow(non_snake_case)]
-fn androidRootMounted() -> bool { androidPathMounted("/") }
-
-#[allow(non_snake_case)]
-fn androidSdcardMounted() -> bool {
-    androidPathMounted("/sdcard")
-}
-
-#[allow(non_snake_case)]
-fn androidDataMounted() -> bool {
-    androidPathMounted("/data")
-}
-
-#[allow(non_snake_case)]
-#[cfg(target_os = "android")]
-fn androidPathMounted(path: &str) -> bool {
-    Path::new(path).exists()
-}
-
-#[allow(non_snake_case)]
-#[cfg(not(target_os = "android"))]
-fn androidPathMounted(_path: &str) -> bool {
-    false
-}
-
-#[allow(non_snake_case)]
-#[cfg(target_os = "linux")]
-fn linuxRootMounted() -> bool {
-    Path::new("/").exists()
-}
-
-#[allow(non_snake_case)]
-#[cfg(not(target_os = "linux"))]
-fn linuxRootMounted() -> bool {
-    false
-}
-
-#[allow(non_snake_case)]
-#[cfg(target_os = "macos")]
-fn macosRootMounted() -> bool {
-    Path::new("/").exists()
-}
-
-#[allow(non_snake_case)]
-#[cfg(not(target_os = "macos"))]
-fn macosRootMounted() -> bool {
-    false
 }
 
 #[cfg(test)]
@@ -944,7 +910,7 @@ mod tests {
     #[test]
     fn rootListShowsVisibleRootsOnly() {
         let mut expected = vec!["operitapp".to_string()];
-        if !mntMountEntries().is_empty() {
+        if !mntMountEntries(HostFileSystemRoots::current()).is_empty() {
             expected.push("virtual".to_string());
         }
         let names = mapper()
@@ -973,7 +939,7 @@ mod tests {
     fn mountsResolveToPhysicalTargets() {
         #[cfg(windows)]
         {
-            let driveEntry = windowsDriveEntries().into_iter().next().unwrap();
+            let driveEntry = windowsDriveEntries(HostFileSystemRoots::current()).into_iter().next().unwrap();
             let resolved = mapper()
                 .resolve(&format!("/virtual/windows/{}", driveEntry.name))
                 .unwrap();
@@ -989,7 +955,7 @@ mod tests {
                 "/sdcard/Download/Operit"
             );
         }
-        #[cfg(target_os = "linux")]
+        #[cfg(all(target_os = "linux", not(target_env = "ohos")))]
         {
             assert_eq!(
                 mapper()
@@ -1021,7 +987,7 @@ mod tests {
         {
             assert!(mapper().resolve("/virtual/android/sdcard/Download").is_err());
         }
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(all(target_os = "linux", not(target_env = "ohos"))))]
         {
             assert!(mapper().resolve("/virtual/linux/home/user").is_err());
         }
@@ -1091,22 +1057,91 @@ mod tests {
             PathMapper::normalizeWorkspaceBindingPath("D:/code").unwrap(),
             "/virtual/windows/d/code"
         );
-        #[cfg(target_os = "macos")]
+        let normalized = PathMapper::normalizeWorkspaceBindingPath("/home/user/project");
+        match HostFileSystemRoots::current().posixVfsRoot() {
+            Ok(root) => assert_eq!(normalized.unwrap(), format!("{root}/home/user/project")),
+            Err(_) => assert!(normalized.is_err()),
+        }
         assert_eq!(
-            PathMapper::normalizeWorkspaceBindingPath("/Users/user/project").unwrap(),
-            "/virtual/macos/Users/user/project"
-        );
-        #[cfg(not(target_os = "macos"))]
-        assert_eq!(
-            PathMapper::normalizeWorkspaceBindingPath("/home/user/project").unwrap(),
-            "/virtual/linux/home/user/project"
-        );
-        assert_eq!(
-            PathMapper::normalizeWorkspaceBindingPath("/storage/emulated/0/Download").unwrap(),
+            PathMapper::normalizeWorkspaceBindingPathForHost("/storage/emulated/0/Download", HostFileSystemRoots::Android).unwrap(),
             "/virtual/android/sdcard/Download"
         );
         assert!(PathMapper::normalizeWorkspaceBindingPath("/workspace").is_err());
         assert!(PathMapper::normalizeWorkspaceBindingPath("relative/path").is_err());
+    }
+
+    /// Exercises native picker ingress, both mount aliases, discovery and foreign-root rejection.
+    #[test]
+    fn everyNativePlatformRoundTripsSelectedStorageLocations() {
+        use operit_host_contract::HostPlatform;
+        for (platform, native, expected) in [
+            (HostPlatform::Android, "/data/user/0/app.operit/files/runtime", "/virtual/android/root/data/user/0/app.operit/files/runtime"),
+            (HostPlatform::Linux, "/home/user/Operit data/runtime", "/virtual/linux/home/user/Operit data/runtime"),
+            (HostPlatform::Macos, "/Users/user/Library/Application Support/Operit2/runtime", "/virtual/macos/Users/user/Library/Application Support/Operit2/runtime"),
+            (HostPlatform::Ios, "/var/mobile/Containers/Data/Application/UUID/Library/Application Support/Operit2/runtime", "/virtual/ios/var/mobile/Containers/Data/Application/UUID/Library/Application Support/Operit2/runtime"),
+            (HostPlatform::Ios, "/private/var/mobile/Containers/Shared/AppGroup/UUID/运行时", "/virtual/ios/private/var/mobile/Containers/Shared/AppGroup/UUID/运行时"),
+            (HostPlatform::Ohos, "/data/storage/el2/base/files/Operit2/runtime", "/virtual/ohos/data/storage/el2/base/files/Operit2/runtime"),
+            (HostPlatform::Esp32, "/sdcard/operit/runtime", "/virtual/esp32/sdcard/operit/runtime"),
+            (HostPlatform::Linux, "/sdcard/Operit/runtime", "/virtual/linux/sdcard/Operit/runtime"),
+        ] {
+            let roots = HostFileSystemRoots::forPlatform(&platform);
+            let mut mapper = mapper();
+            mapper.hostRoots = roots;
+            let selected = PathMapper::storageLocationPathForHost(native, roots).unwrap();
+            assert_eq!(selected, expected, "{platform:?}");
+            let binding = PathMapper::normalizeWorkspaceBindingPathForHost(native, roots).unwrap();
+            assert_eq!(mapper.resolve(&binding).unwrap().nativePath().unwrap(), native, "{platform:?}");
+            for path in [selected.clone(), selected.replacen("/virtual/", "/mnt/", 1)] {
+                assert_eq!(mapper.resolve(&path).unwrap().nativePath().unwrap(), native, "{platform:?}");
+                assert_eq!(PathMapper::storageLocationPathForHost(&path, roots).unwrap(), path);
+                assert_eq!(PathMapper::normalizeWorkspaceBindingPath(&path).unwrap(), path);
+            }
+            let entries = mapper.virtualDirectoryEntries("/virtual").unwrap().unwrap();
+            let name = expected.split('/').nth(2).unwrap();
+            assert_eq!(entries.iter().map(|entry| entry.name.as_str()).collect::<Vec<_>>(), vec![name]);
+            for foreign in ["linux", "macos", "ios", "ohos", "esp32"] {
+                if foreign != name {
+                    assert!(mapper.resolve(&format!("/virtual/{foreign}/data")).is_err(), "{platform:?}: {foreign}");
+                }
+            }
+        }
+    }
+
+    /// Requires drive-absolute Windows inputs and preserves explicit VFS addresses on private hosts.
+    #[test]
+    fn nativeStorageIngressRejectsUnsupportedPathModels() {
+        use operit_host_contract::HostPlatform;
+        let windows = HostFileSystemRoots::forPlatform(&HostPlatform::Windows);
+        assert_eq!(PathMapper::storageLocationPathForHost("D:\\用户目录\\Operit data", windows).unwrap(), "/virtual/windows/d/用户目录/Operit data");
+        for roots in [windows, HostFileSystemRoots::forPlatform(&HostPlatform::Web), HostFileSystemRoots::forPlatform(&HostPlatform::Other)] {
+            for path in ["/var/mobile/runtime", "/data/storage/runtime", "relative", "D:relative", "D:"] {
+                assert!(PathMapper::storageLocationPathForHost(path, roots).is_err(), "{roots:?}: {path}");
+            }
+            let mut mapper = mapper();
+            mapper.hostRoots = roots;
+            assert!(mapper.resolve("/virtual/linux/var/mobile/runtime").is_err());
+            for path in ["/operitapp/data", "/operitapp/workspaces", "/virtual/web/resources/id"] {
+                assert_eq!(PathMapper::storageLocationPathForHost(path, roots).unwrap(), path);
+            }
+            assert!(mapper.resolve("/operitapp/data").is_ok());
+        }
+    }
+
+    /// Keeps backend containment independent of VFS aliases and accepts browser-private roots.
+    #[test]
+    fn physicalContainmentDoesNotReenterTheVfsNamespace() {
+        for (root, child, expected) in [
+            ("runtime", "runtime/config/preferences.json", true),
+            ("runtime", "runtime-other/config/preferences.json", false),
+            ("/data/storage/runtime", "/data/storage/runtime/config/settings.json", true),
+            ("/sdcard/Download/Operit", "/sdcard/Download/Operit/project", true),
+            ("/sdcard/Download/Operit", "/other/runtime/extensions/device/plugins/data", false),
+            ("/", "/var/mobile/runtime", true),
+        ] {
+            assert_eq!(PathMapper::physicalPathWithin(root, child), expected, "{root}: {child}");
+        }
+        assert_eq!(normalizePhysicalText("/Runtime/File", HostFileSystemRoots::Ios), "/Runtime/File");
+        assert_eq!(normalizePhysicalText("D:\\Runtime\\File", HostFileSystemRoots::Windows), "d:/runtime/file");
     }
 
     /// Preserves local Android directories across repeated workspace normalization.
@@ -1137,7 +1172,7 @@ mod tests {
                 "/virtual/android/sdcard/Download/Operit/project",
             ),
         ] {
-            let normalized = PathMapper::normalizeWorkspaceBindingPath(input).unwrap();
+            let normalized = PathMapper::normalizeWorkspaceBindingPathForHost(input, HostFileSystemRoots::Android).unwrap();
             assert_eq!(normalized, expected, "incorrect workspace mount for {input}");
             assert_eq!(
                 PathMapper::normalizeWorkspaceBindingPath(&normalized).unwrap(),

@@ -37,7 +37,13 @@ impl SpeechToTextService for HttpSpeechToTextProvider {
         if contentType.is_empty() {
             return Err("STT audio content type is empty".to_string());
         }
-        let mut formFields = vec![(config.modelFieldName.clone(), config.model.clone())];
+        let mut formFields = Vec::new();
+        if !config.modelFieldName.trim().is_empty() {
+            if config.model.trim().is_empty() {
+                return Err("STT model is empty".to_string());
+            }
+            formFields.push((config.modelFieldName.clone(), config.model.clone()));
+        }
         if let Some(language) = language {
             let language = language.trim();
             if !language.is_empty() {
@@ -281,5 +287,42 @@ mod tests {
         assert_eq!(file.fileName, "voice.wav");
         assert_eq!(file.contentType, "audio/wav");
         assert_eq!(file.content, vec![0x52, 0x49, 0x46, 0x46]);
+
+        for provider in ["DEEPSEEK_STT", "SILICONFLOW_STT", "ZHIPU_STT"] {
+            let catalog = operit_model::SttCatalog::SttCatalog::provider(provider).unwrap();
+            let config = SttConfig {
+                providerType: catalog.providerTypeId,
+                endpoint: catalog.defaultEndpoint,
+                model: catalog.defaultModel,
+                fileFieldName: catalog.defaultFileFieldName,
+                modelFieldName: catalog.defaultModelFieldName,
+                languageFieldName: catalog.defaultLanguageFieldName,
+                responseTextJsonPath: catalog.defaultResponseTextJsonPath,
+                headers: catalog.defaultHeaders,
+                ..testConfig()
+            };
+            let result = HttpSpeechToTextProvider::new()
+                .transcribe(&config, b"audio", "voice.wav", "audio/wav", None)
+                .unwrap();
+            assert_eq!(result.text, "recognized");
+            let request = captured.lock().unwrap().take().unwrap();
+            assert_eq!(request.url, config.endpoint);
+            assert_eq!(request.fileParts[0].fieldName, "file");
+            assert_eq!(
+                request.headers,
+                vec![("Authorization".into(), "Bearer secret".into())]
+            );
+            let expectedFields = if provider == "DEEPSEEK_STT" {
+                Vec::new()
+            } else {
+                vec![("model".to_string(), config.model.clone())]
+            };
+            assert_eq!(request.formFields, expectedFields, "{provider}");
+            let error = HttpSpeechToTextProvider::new()
+                .transcribe(&config, b"audio", "voice.wav", "audio/wav", Some("zh"))
+                .unwrap_err();
+            assert_eq!(error, "STT provider does not declare a language field");
+            assert!(captured.lock().unwrap().is_none());
+        }
     }
 }

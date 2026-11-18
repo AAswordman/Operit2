@@ -4,6 +4,9 @@ const STT_PROVIDER_ROWS: &str = r#"
 LOCAL_MODEL|本地模型||||||$.text|[]
 OPENAI_COMPATIBLE|OpenAI 兼容|https://api.openai.com/v1/audio/transcriptions|whisper-1|file|model|language|$.text|[{"name":"Authorization","value":"Bearer {apiKey}"}]
 HTTP_STT|HTTP STT|||file|model|language|$.text|[]
+DEEPSEEK_STT|DeepSeek|https://api.deepseek.com/v1/tools/asr||file|||$.text|[{"name":"Authorization","value":"Bearer {apiKey}"}]
+SILICONFLOW_STT|硅基流动 SiliconFlow|https://api.siliconflow.cn/v1/audio/transcriptions|FunAudioLLM/SenseVoiceSmall|file|model||$.text|[{"name":"Authorization","value":"Bearer {apiKey}"}]
+ZHIPU_STT|智谱 GLM|https://open.bigmodel.cn/api/paas/v4/audio/transcriptions|glm-asr-2512|file|model||$.text|[{"name":"Authorization","value":"Bearer {apiKey}"}]
 GROQ_STT|Groq|https://api.groq.com/openai/v1/audio/transcriptions|whisper-large-v3-turbo|file|model|language|$.text|[{"name":"Authorization","value":"Bearer {apiKey}"}]
 "#;
 
@@ -13,6 +16,9 @@ OPENAI_COMPATIBLE|gpt-4o-transcribe|GPT-4o Transcribe|OpenAI speech recognition|
 OPENAI_COMPATIBLE|gpt-4o-mini-transcribe|GPT-4o Mini Transcribe|OpenAI compact speech recognition|multilingual
 GROQ_STT|whisper-large-v3-turbo|Whisper Large V3 Turbo|Groq multilingual speech recognition|multilingual
 GROQ_STT|whisper-large-v3|Whisper Large V3|Groq multilingual speech recognition|multilingual
+SILICONFLOW_STT|FunAudioLLM/SenseVoiceSmall|SenseVoice Small|硅基流动多语言语音识别，自动检测语言|multilingual
+SILICONFLOW_STT|TeleAI/TeleSpeechASR|TeleSpeech ASR|硅基流动语音识别|multilingual
+ZHIPU_STT|glm-asr-2512|GLM-ASR-2512|智谱语音识别，支持 WAV、MP3，最长 30 秒|multilingual
 "#;
 
 pub struct SttCatalog;

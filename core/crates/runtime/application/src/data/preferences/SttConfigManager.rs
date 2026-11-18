@@ -287,7 +287,13 @@ fn normalizeConfig(config: SttConfig) -> Result<SttConfig, String> {
     let providerType = SttProviderType::normalize(&config.providerType);
     SttCatalog::provider(&providerType)?;
     let name = requiredText(&config.name, "STT config name")?;
-    let model = requiredText(&config.model, "STT model")?;
+    let model = if providerType == SttProviderType::LOCAL_MODEL
+        || !config.modelFieldName.trim().is_empty()
+    {
+        requiredText(&config.model, "STT model")?
+    } else {
+        config.model.trim().to_string()
+    };
     if providerType == SttProviderType::LOCAL_MODEL {
         if !config.endpoint.trim().is_empty() {
             return Err("LOCAL_MODEL STT endpoint must be empty".to_string());
@@ -331,7 +337,6 @@ fn validateRemoteConfig(config: &SttConfig) -> Result<(), String> {
         scheme => return Err(format!("unsupported STT endpoint scheme: {scheme}")),
     }
     requiredText(&config.fileFieldName, "STT file field name")?;
-    requiredText(&config.modelFieldName, "STT model field name")?;
     requiredText(&config.responseTextJsonPath, "STT response text JSON path")?;
     Ok(())
 }
@@ -409,4 +414,50 @@ fn writeConfig(
 ) -> Result<(), PreferencesDataStoreError> {
     preferences.set(&configKey(&config.id), serde_json::to_value(config)?);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Creates an unsaved STT configuration from its production catalog entry.
+    fn catalogConfig(provider: &str) -> SttConfig {
+        let entry = SttCatalog::provider(provider).unwrap();
+        SttConfig {
+            id: String::new(),
+            name: entry.displayName,
+            providerType: entry.providerTypeId,
+            endpoint: entry.defaultEndpoint,
+            apiKey: "test-key".into(),
+            model: entry.defaultModel,
+            fileFieldName: entry.defaultFileFieldName,
+            modelFieldName: entry.defaultModelFieldName,
+            languageFieldName: entry.defaultLanguageFieldName,
+            responseTextJsonPath: entry.defaultResponseTextJsonPath,
+            headers: entry.defaultHeaders,
+            createdAt: 0,
+            updatedAt: 0,
+        }
+    }
+
+    /// Accepts file-only recognition while retaining required models for other providers.
+    #[test]
+    fn validatesModelAccordingToDeclaredMultipartField() {
+        let deepseek = normalizeConfig(catalogConfig("DEEPSEEK_STT")).unwrap();
+        assert!(deepseek.model.is_empty());
+        assert!(deepseek.modelFieldName.is_empty());
+        assert!(deepseek.languageFieldName.is_empty());
+        for provider in [
+            "OPENAI_COMPATIBLE", "GROQ_STT", "SILICONFLOW_STT", "ZHIPU_STT",
+        ] {
+            let mut config = catalogConfig(provider);
+            assert!(normalizeConfig(config.clone()).is_ok(), "{provider}");
+            config.model.clear();
+            assert_eq!(
+                normalizeConfig(config).unwrap_err(),
+                "STT model is empty",
+                "{provider}"
+            );
+        }
+    }
 }

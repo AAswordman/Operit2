@@ -442,6 +442,7 @@ fn needs_comma_between(previous: &str, current: &str) -> bool {
         || previous.ends_with(',')
         || previous.ends_with('{')
         || previous.ends_with('[')
+        || current.starts_with(',')
         || current.starts_with('}')
         || current.starts_with(']'))
 }
@@ -449,6 +450,25 @@ fn needs_comma_between(previous: &str, current: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::JsPackageLoader;
+
+    /// Keeps a JSON separator on its own line between tool declarations.
+    #[test]
+    fn parses_metadata_with_comma_on_its_own_line() {
+        let metadata = r#"{
+            "name": "demo_package",
+            "tools": [
+                { "name": "first" }
+                ,
+                { "name": "second" }
+            ]
+        }"#;
+
+        let package = JsPackageLoader::parse_metadata(metadata, "").unwrap();
+
+        assert_eq!(package.tools.len(), 2);
+        assert_eq!(package.tools[0].name, "first");
+        assert_eq!(package.tools[1].name, "second");
+    }
 
     /// Verifies standalone JavaScript package metadata parsing.
     #[test]

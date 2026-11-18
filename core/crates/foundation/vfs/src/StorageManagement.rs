@@ -17,13 +17,7 @@ pub struct StorageLocation {
 impl VfsPath {
     /// Converts a user-selected storage directory without applying plugin compatibility aliases.
     pub fn storageLocationPath(path: &str) -> Result<String, String> {
-        let path = path.trim().replace('\\', "/");
-        match path.split('/').nth(1) {
-            Some("operitapp" | "app" | "virtual" | "mnt") if path.starts_with('/') => {
-                Self::canonicalizeVfsPath(&path)
-            }
-            _ => Self::normalizeWorkspaceBindingPath(&path),
-        }
+        crate::PathMapper::PathMapper::storageLocationPath(path)
     }
 }
 
@@ -52,14 +46,18 @@ mod tests {
     /// Keeps selected shared-storage folders at their actual location instead of plugin storage.
     #[test]
     fn selected_shared_storage_preserves_its_physical_location() {
+        use operit_host_contract::HostFileSystemRoots::HostFileSystemRoots;
         for path in [
             "/sdcard/Download/Operit",
             "/storage/emulated/0/Download/Operit",
         ] {
-            assert_eq!(
-                VfsPath::storageLocationPath(path).unwrap(),
-                "/virtual/android/sdcard/Download/Operit"
-            );
+            let selected = VfsPath::storageLocationPath(path);
+            let roots = HostFileSystemRoots::current();
+            match roots {
+                HostFileSystemRoots::Android => assert_eq!(selected.unwrap(), "/virtual/android/sdcard/Download/Operit"),
+                HostFileSystemRoots::Windows | HostFileSystemRoots::Browser | HostFileSystemRoots::Unsupported => assert!(selected.is_err()),
+                _ => assert_eq!(selected.unwrap(), format!("{}{path}", roots.posixVfsRoot().unwrap())),
+            }
         }
         assert_eq!(
             VfsPath::storageLocationPath("/operitapp/data").unwrap(),

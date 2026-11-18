@@ -2094,6 +2094,18 @@ impl JsEngineState {
                 .registerHostJavaScriptAsyncJsonFunction(name, callback)
                 .map_err(|error| error.to_string())?;
         }
+        let migratorBinding = self.packageBinding.clone();
+        self.registerCoreRoute("__operitNativeImportV1MigratorArchive", asyncCallbackSink.clone(), move |host, [path]| {
+            let binding = migratorBinding.get().filter(|binding| {
+                binding.context.container_package_name == "com.operit.chathistory_migrator"
+                    && matches!(binding.context.api_version.as_str(), "1.0.0" | "1.0.1")
+            }).ok_or_else(|| HostError::new("Chat archive import requires the installed v1 migrator"))?;
+            if !Arc::ptr_eq(&host, &binding.executionHost) {
+                return Err(HostError::new("Chat archive import requires the package execution host"));
+            }
+            let path = hostJavaScriptStringArgument(path)?;
+            Ok(Box::new(move || host.import_v1_migrator_archive(path)))
+        })?;
         self.registerCoreRoute("__operitNativeCallCoreRoute", asyncCallbackSink.clone(), |host, [target, method, args]| {
             let target = hostJavaScriptStringArgument(target)?;
             let method = hostJavaScriptStringArgument(method)?;

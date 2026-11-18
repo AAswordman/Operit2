@@ -38,6 +38,23 @@ Compose DSL 文件选择器返回的 `path` 和 `uri` 都是同一个规范 VFS 
 
 ## 跨平台扩展
 
+本机绝对路径的转换、内置挂载解析和目录展示共用 host 契约 `HostFileSystemRoots`，目标平台选择集中在该契约的分发模块中。各平台的原生根目录为：
+
+| 平台 | VFS 根目录 | Host 位置 |
+| --- | --- | --- |
+| Windows | `/virtual/windows/<drive>` | 对应盘符根目录 |
+| Android | `/virtual/android/root`、`/virtual/android/sdcard` | `/`、`/sdcard` |
+| Linux | `/virtual/linux` | `/` |
+| macOS | `/virtual/macos` | `/` |
+| iOS | `/virtual/ios` | `/`，访问受应用沙箱及已有授权限制 |
+| 鸿蒙 | `/virtual/ohos` | `/`，访问受应用沙箱及已有授权限制 |
+| ESP32 | `/virtual/esp32` | 固件文件系统的 `/` |
+| Web | 应用 VFS 根目录及已注册资源挂载 | 浏览器私有存储及授权资源 |
+
+`/mnt` 对上述 `/virtual` 路径保持同等解析能力。鸿蒙的 Linux 内核不改变其 host 命名空间。Web 不接受本机 POSIX 目录；未声明文件系统的平台明确报错，不生成 Linux 路径。只有当前 host 声明的内置根目录才可访问。
+
+设置中的原生存储位置与工作区绑定都按当前 host 转换。`/data/...` 在鸿蒙上属于其原生文件系统，`/sdcard/...` 在 ESP32 上属于固件文件系统；它们不会被当成 Android 的目录。插件的旧共享存储别名仍在独立的兼容入口处理。目录包含关系和文件变更通知直接比较已解析的后端位置，浏览器的相对私有存储位置也不再进入原生路径转换。
+
 通用挂载目录记录 `namespace`、`backend`、`root`、`name` 和稳定 ID。原生目录使用 `native` 后端；平台文档资源使用专属后端。新增非原生后端还需要实现对应宿主文件操作，注册名称本身不会产生访问能力。
 
 命令接口：

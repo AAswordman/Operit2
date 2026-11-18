@@ -83,8 +83,10 @@ impl LocalModelRegistryStore {
             .map_err(|error| LocalModelRegistryStoreError::Storage(error.to_string()))?;
         let content = String::from_utf8(bytes)
             .map_err(|error| LocalModelRegistryStoreError::Storage(error.to_string()))?;
-        serde_json::from_str(&content)
-            .map_err(|error| LocalModelRegistryStoreError::Json(error.to_string()))
+        let mut snapshot: LocalModelRegistrySnapshot = serde_json::from_str(&content)
+            .map_err(|error| LocalModelRegistryStoreError::Json(error.to_string()))?;
+        snapshot.migrateAishell3SpeakerCount();
+        Ok(snapshot)
     }
 
     /// Writes the installed model and engine registry snapshot.

@@ -67,10 +67,12 @@ try {
     await delay(250);
   }
   assert.equal(ready, true, 'The isolated CLI daemon must be ready before terminal acceptance');
-  const first = run('powershell-normal', 'powershell', "$env:OPERIT_TERMINAL_TEST = 'kept'; Write-Output 'NORMAL_中文'");
+  const first = run('powershell-normal', 'powershell', "$env:OPERIT_TERMINAL_TEST = 'kept'; Write-Output $PSVersionTable.PSVersion.Major; Write-Output $PSVersionTable.PSEdition; Write-Output 'NORMAL_中文' && Write-Output 'CHAIN_OK'");
   assert.equal(first.timedOut, false);
   assert.equal(first.exitCode, 0);
   assert.match(first.output, /NORMAL_中文/);
+  assert.match(first.output, /7\r?\nCore/);
+  assert.match(first.output, /CHAIN_OK/);
   const reused = run('powershell-normal', 'powershell', 'Write-Output $env:OPERIT_TERMINAL_TEST');
   assert.equal(reused.sessionId, first.sessionId);
   assert.match(reused.output, /kept/);

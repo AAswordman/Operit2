@@ -211,6 +211,11 @@ impl JsEnvironmentOwner {
 
 /// Defines the fixed Rust execution contract required by package JavaScript.
 pub trait JsExecutionHost: Send + Sync {
+    /// Imports an archive through the authenticated v1 chat history migrator bridge.
+    fn import_v1_migrator_archive(&self, _path: String) -> JsExecutionCompletion<Result<Value, String>> {
+        Box::pin(async { Err("The v1 chat archive importer is unavailable on this host".into()) })
+    }
+
     /// Captures immutable native caller state before crossing the JavaScript runtime scheduler.
     fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost>;
 

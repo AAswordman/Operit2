@@ -432,7 +432,8 @@ static NSDictionary<NSString *, id> *synthesizeLocalSpeech(NSDictionary<NSString
   if ([attributes[NSFileSize] unsignedLongLongValue] <= 44) {
     raiseInferenceError(@"Apple local TTS output WAV is invalid");
   }
-  return @{@"audioPath" : outputPath, @"outputFormat" : @"wav"};
+  // Return the selected capability identity, even when validation standardizes its path.
+  return @{@"audioPath" : requiredString(request, @"outputPath"), @"outputFormat" : @"wav"};
 }
 
 // Runs one Apple local inference command through the linked Sherpa C API.

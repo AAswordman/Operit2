@@ -50,6 +50,22 @@ To build only the module release using the current version sources:
 The same Android signing material and build prerequisites as the ordinary APK
 are required. This command builds packages without installing them on a phone.
 
+## Windows PowerShell 7 runtime
+
+Windows App MSI and CLI ZIP packages include the self-contained PowerShell
+7.6.10 distribution under `powershell/`, pinned by SHA-256 for x86_64 and
+aarch64. The default `powershell` terminal starts only the adjacent
+`powershell/pwsh.exe`; users do not need to install PowerShell or configure
+PATH. Windows PowerShell 5.1 remains in use for internal Windows system
+integration scripts. The terminal runtime ships the upstream modules, .NET
+runtime and licenses in full.
+
+Flutter's Windows CMake build stages PowerShell for Debug, Profile and Release
+with an independent incremental target. For standalone development binaries
+(including Rust terminal tests), run
+`.venv/Scripts/python.exe tools/build_scripts/windows_powershell.py --destination <binary-directory>`.
+Rust test executables run from `target/debug/deps`, so stage their runtime there.
+
 ## Windows Bash runtime
 
 Windows App MSI and CLI ZIP packages include Bash and common Unix commands

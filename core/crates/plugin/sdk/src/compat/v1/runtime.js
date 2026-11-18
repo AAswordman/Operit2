@@ -5,6 +5,65 @@ function __operitInstallV1Runtime(runtime) {
     var originalToolCall = runtime.toolCall;
     var internal = runtime.__operitV1InternalRuntime;
     if (!internal) throw new Error('Internal V1 runtime implementation is unavailable');
+    var migratorOwner = 'com.operit.chathistory_migrator';
+
+    /** Identifies the migrator's v1 page and tool invocations. */
+    function isLegacyMigrator() {
+        var version = api.currentVersion();
+        return (version === '1.0.0' || version === '1.0.1') &&
+            runtime.__operitGetCallState(api.currentCallId()).params.__operit_ui_package_name === migratorOwner;
+    }
+
+    if (runtime.Java) __operitInstallV1MigratorChat(runtime.Java, isLegacyMigrator, originalToolCall,
+        /** Retains the owning call until the native import has delivered its receipt. @param {string} path */
+        function(path) {
+            return runtime.__operitInvokeHostAsync(runtime.__operitNativeImportV1MigratorArchive, [path]);
+        },
+    );
+    if (runtime.OperitComposeDslRuntime) {
+        var createComposeContext = runtime.OperitComposeDslRuntime.createContext;
+        /**
+         * Translates the migrator page's calls to the arguments its v1.20.2 tool metadata declares.
+         * @param {...any} args
+         */
+        function composeToolCall(...args) {
+            var [name, params, options] = args;
+            if (isLegacyMigrator() && typeof name === 'string') {
+                var qualifiedPrefix = migratorOwner + ':chathistory_migrator_tools:';
+                var childPrefix = 'chathistory_migrator_tools:';
+                var shortName = name.startsWith(qualifiedPrefix) ? name.slice(migratorOwner.length + 1) : name;
+                if (shortName.startsWith(childPrefix) && args.length === 3 && params &&
+                    options && typeof options.onIntermediateResult === 'function') {
+                    var operation = shortName.slice(childPrefix.length);
+                    if (operation.startsWith('convert_')) {
+                        var {progress_path, summary_mode, ...conversionParams} = params;
+                        return runtime.toolCall(shortName, conversionParams);
+                    }
+                    if (operation === 'generate_empty_summary' || operation === 'generate_real_summary') {
+                        var {summary_mode_id, ...summaryParams} = params;
+                        return runtime.toolCall(shortName, summaryParams);
+                    }
+                }
+                args[0] = shortName;
+            }
+            return runtime.toolCall.apply(runtime, args);
+        }
+        var legacyComposeToolCall = api.method()
+            .between('1.0.0', '2.0.0', composeToolCall)
+            .build('ComposeContext.toolCall');
+        /** Adds the historical UI bridge to the v1 context. @param {Record<string, any>} options */
+        runtime.OperitComposeDslRuntime.createContext = function(options) {
+            var bundle = createComposeContext(options);
+            Object.defineProperty(bundle.ctx, 'toolCall', {
+                /** Checks the active contract even when a page retains its context. */
+                get: function() {
+                    var version = api.currentVersion();
+                    return version === '1.0.0' || version === '1.0.1' ? legacyComposeToolCall : undefined;
+                },
+            });
+            return bundle;
+        };
+    }
     runtime.__operitV1CanonicalTools = canonical;
     var routes = Object.freeze({
         'super_admin:terminal': 'terminal',

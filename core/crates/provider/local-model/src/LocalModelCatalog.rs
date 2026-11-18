@@ -177,7 +177,8 @@ LocalModelFile { relativePath: "tokenizer.txt".to_string(), sha256: "77009625db0
                 tokens: "tokens.txt".to_string(),
                 ruleFsts: Vec::new(),
                 ruleFars: Vec::new(),
-                speakerCount: 175,
+                // The pinned ONNX model declares n_speakers=174 (IDs 0 through 173).
+                speakerCount: 174,
             }),
             sources: vec![
                 huggingFaceSource(

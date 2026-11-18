@@ -556,6 +556,15 @@ def _maybe_hot_reload_output(
     print(f"HOT-RELOAD-DONE: {label} application acknowledged reload")
 
 
+def _toolpkg_output_signature(folder: Path) -> str | None:
+    """Fingerprints the complete generated tree required by a directory ToolPkg."""
+    outputs = [path for path in (folder / "dist").rglob("*")
+               if path.is_file() and path.suffix != ".toolpkg"]
+    if not any(path.suffix == ".js" for path in outputs):
+        return None
+    return _compute_paths_signature(folder, outputs)
+
+
 # Builds ToolPkg sources before their synchronization operations run.
 def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem], *, dry_run: bool) -> None:
     state_file = source_dir / ".sync_state.json"
@@ -563,6 +572,7 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
     changed = False
     typescript_command: str | None = None
 
+    # Compiles one TypeScript project using the repository toolchain.
     def run_typescript(tsconfig: Path) -> None:
         nonlocal typescript_command
         if typescript_command is None:
@@ -623,11 +633,20 @@ def _prebuild_plans(repo_root: Path, source_dir: Path, plans: list[SyncPlanItem]
             continue
         signature = _compute_paths_signature(repo_root, _collect_prebuild_inputs(source_dir, child_dir))
         key = f"prebuild:{child_dir.relative_to(source_dir).as_posix()}"
-        if state.get(key) == signature:
+        output_key = f"{key}:outputs"
+        output_signature = _toolpkg_output_signature(child_dir)
+        if (state.get(key) == signature and output_signature is not None
+                and state.get(output_key) == output_signature):
             print(f"SKIP-PREBUILD: {child_dir}")
         else:
             run_typescript(tsconfig)
+            if dry_run:
+                continue
+            output_signature = _toolpkg_output_signature(child_dir)
+            if output_signature is None:
+                raise RuntimeError(f"TypeScript build produced no ToolPkg JavaScript under {child_dir / 'dist'}")
             state[key] = signature
+            state[output_key] = output_signature
             changed = True
 
     if changed and not dry_run:
@@ -669,14 +688,31 @@ def _iter_files_for_pack(repo_root: Path, folder: Path) -> list[Path]:
     return files
 
 
+# Packs a directory ToolPkg after checking the JavaScript entries declared in its JSON manifest.
 def _pack_toolpkg_folder(repo_root: Path, source_folder: Path, destination_file: Path) -> None:
-    if _find_manifest_file(source_folder) is None:
+    manifest_file = _find_manifest_file(source_folder)
+    if manifest_file is None:
         raise ValueError(f"Missing manifest.hjson or manifest.json: {source_folder}")
+    entries = {file.relative_to(source_folder).as_posix(): file
+               for file in _iter_files_for_pack(repo_root, source_folder)}
+    if manifest_file.name not in entries:
+        raise ValueError(f"{manifest_file} is missing from the package file list")
+    if manifest_file.suffix == ".json":
+        manifest = json.loads(manifest_file.read_text(encoding="utf-8"))
+        main = manifest.get("main", "")
+        required = [("manifest.main", main)] if main else []
+        required.extend(
+            (f"manifest.subpackages[{index}].entry", subpackage["entry"])
+            for index, subpackage in enumerate(manifest.get("subpackages", []))
+        )
+        for field, path in required:
+            if path not in entries:
+                raise ValueError(f"{manifest_file}: missing {field} {path!r}; package files: {', '.join(entries)}")
     destination_file.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination_file, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
-        for file_path in _iter_files_for_pack(repo_root, source_folder):
+        for name, file_path in entries.items():
             # Source timestamps and permissions must not change the bundled package identity.
-            entry = zipfile.ZipInfo(file_path.relative_to(source_folder).as_posix())
+            entry = zipfile.ZipInfo(name)
             entry.compress_type = zipfile.ZIP_DEFLATED
             entry.create_system = 3
             entry.external_attr = 0o100644 << 16

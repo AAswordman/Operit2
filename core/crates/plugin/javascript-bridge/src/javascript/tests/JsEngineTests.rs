@@ -3649,6 +3649,7 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
         );
         let script = r#"
             const directory = ToolPkg.getConfigDir();
+            const legacyDirectory = getPluginConfigDir('first_import');
             const localDirectory = ToolPkg.getLocalDataDir();
             const sharedDirectory = ToolPkg.getSpaceDataDir();
             exports.registerToolPkg = function() {
@@ -3656,6 +3657,7 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
                     id: 'config-check',
                     surface: 'toolbox',
                     directory: directory,
+                    legacyDirectory: legacyDirectory,
                     localDirectory: localDirectory,
                     sharedDirectory: sharedDirectory,
                     localAgain: ToolPkg.getLocalDataDir(),
@@ -3673,6 +3675,7 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
             scope.as_str()
         );
         assert_eq!(entry["directory"], root);
+        assert_eq!(entry["legacyDirectory"], entry["directory"]);
         assert_eq!(entry["localDirectory"], "/operitapp/data/plugin_data/device/first_import");
         assert_eq!(entry["localAgain"], entry["localDirectory"]);
         assert_eq!(entry["sharedDirectory"], "/operitapp/data/plugin_data/space/first_import");
@@ -3680,7 +3683,7 @@ fn registration_config_directory_works_before_installation_without_reentering_ma
             entry["aliasDirectory"],
             format!("{root}/namespaces/named_alias")
         );
-        assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 2);
+        assert_eq!(host.registrationConfigReads.load(Ordering::Relaxed), 3);
     }
 }
 

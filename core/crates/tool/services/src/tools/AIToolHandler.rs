@@ -1142,6 +1142,18 @@ impl AIToolHandlerState {
 
 
 impl JsExecutionHost for AIToolHandler {
+    /// Delegates the v1 migrator request to this runtime's chat import service.
+    fn import_v1_migrator_archive(&self, path: String)
+        -> operit_plugin_sdk::javascript::JsExecutionCompletion<Result<Value, String>> {
+        let host = self.clone();
+        Box::pin(async move {
+            if host.authenticatedExtensionOwner.as_deref() != Some("com.operit.chathistory_migrator") {
+                return Err("Chat archive import requires the authenticated migrator".into());
+            }
+            host.runtimeSupport().importV1MigratorArchive(path).await
+        })
+    }
+
     /// Captures native turn and hook scopes before JavaScript execution crosses its Host scheduler.
     fn capture_tool_invocation_host(&self) -> Arc<dyn JsExecutionHost> {
         let mut host = self.clone();
