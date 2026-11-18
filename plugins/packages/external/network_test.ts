@@ -1,6 +1,7 @@
 /*
 METADATA
 {
+    "api_version": "2.0.0",
     "name": "network_test",
 
     "display_name": {

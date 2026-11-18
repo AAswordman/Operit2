@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "music_effects",
   "display_name": {
     "zh": "效果器机架",

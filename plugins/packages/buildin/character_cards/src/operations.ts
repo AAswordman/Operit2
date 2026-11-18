@@ -18,6 +18,7 @@ import { independentConfigurations } from "./selection-settings";
 import { uuid } from "./identity";
 import { autoCategorizeMemory, updateChatMemory } from "./memory-jobs/analysis";
 import { rebuildMemoryEmbeddings } from "./memory-jobs/embeddings";
+import { MEMORY_SEARCH_THRESHOLD } from "./memory-search";
 import { decodeCharacterBackup, decodeGroupBackup, decodeMemoryBackup, exportCharacterBackup, exportGroupBackup, exportMemoryBackup } from "./backup";
 
 interface TagPlan {
@@ -601,6 +602,14 @@ export async function dispatch(
       return host.readMemoryRecallSettings();
     case "writeMemoryRecallSettings":
       return host.writeMemoryRecallSettings(request.settings);
+    case "previewMemorySearch": {
+      await requireOwner(request.ownerKey, host);
+      const [config, recall] = await Promise.all([host.readMemorySearchConfig(request.ownerKey), host.readMemoryRecallSettings()]);
+      const result = await host.searchMemoryDebug({ ownerKey: request.ownerKey, query: request.query,
+        folderPath: request.folderPath, relevanceThreshold: MEMORY_SEARCH_THRESHOLD,
+        createdAtStartMs: null, createdAtEndMs: null, limit: recall.limit }, config, false);
+      return { ...result, candidates: result.candidates.filter(hit => hit.passedThreshold) };
+    }
     case "searchMemoryDebug": {
       await requireOwner(request.ownerKey, host);
       assertSearchConfig(request.config);

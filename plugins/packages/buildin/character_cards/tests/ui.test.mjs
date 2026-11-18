@@ -9,7 +9,7 @@ const require = createRequire(import.meta.url);
 const browserType = require("playwright")[process.env.CHARACTER_CARDS_UI_BROWSER ?? "chromium"];
 const html = await createHtmlDocument();
 let browser, server, origin;
-const output = "D:/Code/prog/assistance2/target/character-dialog-device-test";
+const output = process.env.OPERIT_GRAPH_SCREENSHOTS ?? "/tmp/operit-memory-graph-tests";
 
 /** Serves only the actual offline graph artifact for browser verification. */
 test.before(async () => {
@@ -123,4 +123,19 @@ test("two-pointer pinch changes camera without changing node positions or select
   await svg.dispatchEvent("pointermove", { pointerId: 12, pointerType: "touch", clientX: 260, clientY: 100 });
   await svg.dispatchEvent("pointerup", { pointerId: 12, pointerType: "touch", clientX: 260, clientY: 100 }); await svg.dispatchEvent("pointerup", { pointerId: 11, pointerType: "touch", clientX: 100, clientY: 100 });
   assert.notEqual(await p.locator("svg > g").getAttribute("transform"), camera); assert.equal(await p.locator('.node').first().getAttribute("transform"), node); assert.deepEqual(await p.evaluate(() => window.selections), []);
+});
+
+
+test("selection and dragging retain SVG elements and unrelated geometry", async t => {
+  const p = await page(t, 1100);
+  await p.evaluate(() => { window.savedNode = document.querySelector('[data-memory="memory-one"]'); window.savedOtherNode = document.querySelector('[data-memory="memory-two"]'); window.savedEdge = document.querySelector('.edge'); });
+  const data = fixture();
+  await p.evaluate(value => window.updateMemoryGraph(value), { data: data.graph, selected: "memory-one", selectedEdge: "1", theme: data.theme });
+  assert.equal(await p.evaluate(() => window.savedNode === document.querySelector('[data-memory="memory-one"]') && window.savedOtherNode === document.querySelector('[data-memory="memory-two"]') && window.savedEdge === document.querySelector('.edge')), true);
+  const node = p.locator('[data-memory="memory-one"]'), box = await node.boundingBox();
+  const other = await p.locator('[data-memory="memory-two"]').getAttribute("transform"), edgeBefore = await p.locator('.edge').getAttribute('x1');
+  await p.mouse.move(box.x + box.width / 2, box.y + box.height / 2); await p.mouse.down(); await p.mouse.move(box.x + box.width / 2 + 50, box.y + box.height / 2 + 30, { steps: 5 }); await p.mouse.up();
+  assert.equal(await p.evaluate(() => window.savedNode === document.querySelector('[data-memory="memory-one"]') && window.savedEdge === document.querySelector('.edge')), true);
+  assert.equal(await p.locator('[data-memory="memory-two"]').getAttribute('transform'), other);
+  assert.notEqual(await p.locator('.edge').getAttribute('x1'), edgeBefore);
 });

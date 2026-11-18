@@ -2,6 +2,7 @@ import { channel, natural, record, text, type Command } from "./protocol";
 
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "office",
   "enabled_by_default": true,
   "display_name": {"zh":"Office 文档","en":"Office documents"},

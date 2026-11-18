@@ -484,6 +484,8 @@ pub struct JsPackageToolCallResult {
 /// Captures an exact executable declaration together with its immutable runtime selection.
 #[derive(Clone, Debug)]
 pub struct JsPackageToolSelection {
+    /// Contains the registered package API contract, including the v1 default for legacy metadata.
+    pub api_version: String,
     /// Contains the selected registered declaration, including its authoritative script and parameter schema.
     pub definition: crate::package::PackageTool,
     /// Contains the selected conditional state when the registered package uses one.

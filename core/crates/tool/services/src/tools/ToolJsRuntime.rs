@@ -79,6 +79,8 @@ impl JsPackageRuntime for PackageManagerJsRuntime {
         }
         let definition = manager.selectPackageTool(package_name, function_name)?;
         Ok(operit_plugin_sdk::javascript::JsPackageToolSelection {
+            api_version: manager.packageApiVersion(package_name)
+                .ok_or_else(|| format!("Package not registered: {package_name}"))?.to_string(),
             definition,
             active_state_id: manager.getActivePackageStateId(package_name),
             toolpkg_runtime: manager.resolveToolPkgSubpackageRuntimeInternal(package_name),

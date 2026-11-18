@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "extended_file_tools",
     "display_name": {"zh":"增强文件工具","en":"Extended File Tools"},
     "description": {

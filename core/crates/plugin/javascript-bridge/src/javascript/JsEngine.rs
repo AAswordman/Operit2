@@ -1041,6 +1041,33 @@ fn javaScriptSourceFingerprint(source: &str) -> String {
 }
 
 impl JsEngineState {
+    /// Uses the owning manifest or registered script contract for each call on a pooled engine.
+    fn scriptApiVersion(&self, script: &str, params: &BTreeMap<String, Value>) -> JsExecutionResult<String> {
+        use operit_plugin_sdk::toolpkg::ToolPkgApiVersion::{
+            CURRENT_TOOLPKG_API_VERSION, requireSupportedToolPkgApiVersion,
+        };
+        use operit_plugin_sdk::JsPackageLoader::JsPackageLoader;
+        if let Some(context) = &self.toolPkgContext {
+            return Ok(context.api_version.clone());
+        }
+        if let Some(version) = params.get("__operit_package_api_version") {
+            let version = version.as_str().ok_or_else(|| {
+                JsExecutionError::invalid_request("Package API version must be a string")
+            })?;
+            return requireSupportedToolPkgApiVersion(version)
+                .map(|version| version.to_string())
+                .map_err(JsExecutionError::invalid_request);
+        }
+        let metadata = JsPackageLoader::extract_metadata(script);
+        if metadata != "{}" {
+            let object = JsPackageLoader::parse_metadata_object(&metadata)
+                .map_err(JsExecutionError::invalid_request)?;
+            return JsPackageLoader::parse_api_version(&object).map_err(JsExecutionError::invalid_request);
+        }
+        // Internal host scripts have no package metadata and use the current SDK.
+        Ok(CURRENT_TOOLPKG_API_VERSION.to_string())
+    }
+
     /// Creates a JavaScript runtime state from a Host-owned runtime instance.
     fn newWithRuntime(
         runtime: Box<dyn HostJavaScriptRuntime>,
@@ -1184,6 +1211,7 @@ impl JsEngineState {
             deadlineMillis,
             ipcTiming,
         } = request;
+        let apiVersion = self.scriptApiVersion(&script, &params)?;
         let textResources = if useComposeDslTextResources {
             if let Some(textResources) = textResources {
                 self.composeDslTextResources = Some(textResources);
@@ -1222,12 +1250,6 @@ impl JsEngineState {
         let started = (|| {
             let mut effectiveParams = params;
             bindEnvironmentOwner(&mut effectiveParams, context.environmentOwner.as_ref());
-            // Async Compose renders and actions need the same API contract as synchronous calls.
-            let apiVersion = match self.toolPkgContext.as_ref() {
-                Some(context) => context.api_version.clone(),
-                None => operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
-                    .to_string(),
-            };
             bindCallerContext(&mut effectiveParams, context.executionHost.as_deref());
             effectiveParams.insert(
                 "__operit_toolpkg_api_version".to_string(),
@@ -1305,6 +1327,7 @@ impl JsEngineState {
         timeoutSec: u64,
         executionListener: Option<JsExecutionListenerRef>,
     ) -> JsExecutionResult<Option<String>> {
+        let apiVersion = self.scriptApiVersion(script, params)?;
         let context = JsCallContext {
             interrupt: HostJavaScriptExecutionInterrupt::unlimited(),
             executionHost: self.executionHost.clone(),
@@ -1318,12 +1341,6 @@ impl JsEngineState {
         installThreadLocalCallContext(&context);
         let mut effectiveParams = params.clone();
         bindEnvironmentOwner(&mut effectiveParams, context.environmentOwner.as_ref());
-        // Standalone scripts use the current SDK contract; ToolPkg engines retain their manifest contract.
-        let apiVersion = match self.toolPkgContext.as_ref() {
-            Some(context) => context.api_version.clone(),
-            None => operit_plugin_sdk::toolpkg::ToolPkgApiVersion::CURRENT_TOOLPKG_API_VERSION
-                .to_string(),
-        };
         bindCallerContext(&mut effectiveParams, context.executionHost.as_deref());
         effectiveParams.insert(
             "__operit_toolpkg_api_version".to_string(),

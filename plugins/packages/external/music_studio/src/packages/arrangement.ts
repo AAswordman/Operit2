@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "music_arrangement",
   "display_name": {
     "zh": "编曲与生成",

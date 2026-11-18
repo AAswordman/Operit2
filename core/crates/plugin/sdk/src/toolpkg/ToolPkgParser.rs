@@ -868,7 +868,7 @@ impl ToolPkgArchiveParser {
             let source = Self::readZipEntryText(&mut archive, &index, &path)
                 .ok_or_else(|| format!("Cannot read subpackage entry: {}", child.entry))?;
             let metadata = crate::JsPackageLoader::JsPackageLoader::extract_metadata(&source);
-            let package = crate::JsPackageLoader::JsPackageLoader::parse_metadata(&metadata, "")?;
+            let package = crate::JsPackageLoader::JsPackageLoader::parse_metadata_with_default_api_version(&metadata, "", &apiVersion.to_string())?;
             let displayName = if hasLocalizedTextContent(&package.display_name) {
                 package.display_name.clone()
             } else {
@@ -885,7 +885,7 @@ impl ToolPkgArchiveParser {
                 toolCount: package.tools.len(),
             });
             subpackagePackages.push(ToolPackage {
-                name: child.id.trim().into(), is_built_in: isBuiltIn, ..package
+                name: child.id.trim().into(), api_version: apiVersion.to_string(), is_built_in: isBuiltIn, ..package
             });
         }
         let resources = manifest.resources.iter().map(|resource| {
@@ -938,6 +938,7 @@ impl ToolPkgArchiveParser {
         }
         Ok(ToolPkgLoadResult {
             containerPackage: ToolPackage {
+                api_version: apiVersion.to_string(),
                 name: manifest.toolpkgId.clone(), display_name: displayName.clone(),
                 description: description.clone(), author: manifest.author.clone(),
                 enabled_by_default: manifest.enabledByDefault, is_built_in: isBuiltIn,
@@ -1001,7 +1002,7 @@ impl ToolPkgArchiveParser {
     where
         FReadEntryText: FnMut(&str) -> Option<String>,
         FReadEntryProtectionHeader: FnMut(&str) -> Option<Vec<u8>>,
-        FParseJsPackage: FnMut(&str, &mut dyn FnMut(String, String)) -> Option<ToolPackage>,
+        FParseJsPackage: FnMut(&str, &str, &mut dyn FnMut(String, String)) -> Option<ToolPackage>,
         FParseMainRegistration: FnMut(&str, &str, &str, &str, &[String]) -> ToolPkgMainRegistrationParseResult,
         FReportPackageLoadError: FnMut(String, String),
     {
@@ -1124,7 +1125,7 @@ impl ToolPkgArchiveParser {
                         format!("{sourcePath}:{}: {error}", subpackage.entry),
                     );
                 };
-                let parsedPackage = parseJsPackage(&jsContent, &mut parserErrorReporter)
+                let parsedPackage = parseJsPackage(&jsContent, &apiVersionText, &mut parserErrorReporter)
                     .ok_or_else(|| {
                         format!("Failed to parse subpackage script '{}'", subpackage.entry)
                     })?;
@@ -1135,6 +1136,7 @@ impl ToolPkgArchiveParser {
                     localizedTextOf(&parsedPackage.name)
                 };
                 let normalizedPackage = ToolPackage {
+                    api_version: apiVersionText.clone(),
                     name: packageName.clone(),
                     is_built_in: isBuiltIn,
                     ..parsedPackage
@@ -1664,6 +1666,7 @@ impl ToolPkgArchiveParser {
             localizedTextOf(&manifest.toolpkgId)
         };
         let containerPackage = ToolPackage {
+            api_version: apiVersionText.clone(),
             name: manifest.toolpkgId.clone(),
             description: containerDescription.clone(),
             tools: Vec::new(),
@@ -2854,7 +2857,7 @@ mod module_export_tests {
         let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
             &index, |name| entries.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "exports_fixture.toolpkg", false,
-            |_, _| panic!("fixture does not contain subpackages"),
+            |_, _, _| panic!("fixture does not contain subpackages"),
             |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success {
                 registration: serde_json::from_value(serde_json::json!({
                     "chatComposerSlots": [{"id": "composer", "slot": "above_input", "screen": "screen.ui.js", "screenExport": "Composer"}],
@@ -2888,7 +2891,8 @@ mod api_compatibility_tests {
             let mut manifest = serde_json::json!({
                 "schema_version": 1,
                 "toolpkg_id": "compat_fixture",
-                "main": "main.js"
+                "main": "main.js",
+                "subpackages": [{"id": "child", "entry": "sub.js"}]
             });
             if let Some(declared) = declared {
                 manifest["api_version"] = serde_json::json!(declared);
@@ -2897,6 +2901,7 @@ mod api_compatibility_tests {
             let entries = BTreeMap::from([
                 ("manifest.json".to_string(), manifest),
                 ("main.js".to_string(), "exports.registerToolPkg = function() {};".to_string()),
+                ("sub.js".to_string(), "/* METADATA {name: child, tools: [{name: run}]} */ exports.run = function() {};".to_string()),
             ]);
             let index = ToolPkgEntryIndex {
                 entryNames: entries.keys().cloned().collect(),
@@ -2909,7 +2914,12 @@ mod api_compatibility_tests {
                 ToolPkgSourceType::EXTERNAL,
                 "compat_fixture.toolpkg",
                 false,
-                |_, _| panic!("fixture does not contain subpackages"),
+                |script, inherited, _| {
+                    assert_eq!(inherited, version);
+                    let package = crate::JsPackageLoader::JsPackageLoader::parse_with_default_api_version(script, inherited).unwrap();
+                    assert_eq!(package.api_version, version);
+                    Some(package)
+                },
                 |_, id, path, declared, _environment| {
                     assert_eq!(id, "compat_fixture");
                     assert_eq!(path, "main.js");
@@ -2922,6 +2932,18 @@ mod api_compatibility_tests {
             )
             .expect("supported manifest must load");
             assert_eq!(loaded.containerRuntime.apiVersion, version);
+            assert_eq!(loaded.containerPackage.api_version, version);
+            assert_eq!(loaded.subpackagePackages[0].api_version, version);
+            // The catalog path parses metadata without executing registration.
+            use std::io::Write;
+            let mut writer = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            for (name, source) in &entries {
+                writer.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+                writer.write_all(source.as_bytes()).unwrap();
+            }
+            let archive = writer.finish().unwrap().into_inner();
+            let catalog = ToolPkgArchiveParser::readToolPkgCatalog(&archive, ToolPkgSourceType::EXTERNAL, "compat_fixture.toolpkg", false).unwrap();
+            assert_eq!(catalog.subpackagePackages[0].api_version, version);
             let requirements = &loaded.containerRuntime.requires;
             if version == "2.0.0" {
                 assert!(requirements.is_empty());
@@ -3022,7 +3044,7 @@ mod api_compatibility_tests {
             let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
                 &index, |name| entries.get(name).cloned(), |_| None,
                 ToolPkgSourceType::EXTERNAL, "theme_fixture.toolpkg", false,
-                |_, _| panic!("declarative theme has no scripts"),
+                |_, _, _| panic!("declarative theme has no scripts"),
                 |_, _, _, _, _| panic!("declarative theme must not execute registration"),
                 |_, _| panic!("declarative theme has no subpackages"),
             );
@@ -3056,7 +3078,7 @@ mod api_compatibility_tests {
         let loaded = ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
             &index, |name| entries.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "resource_fixture.toolpkg", false,
-            |_, _| panic!("no executable declarations"), |_, _, _, _, _| panic!("no main entry"),
+            |_, _, _| panic!("no executable declarations"), |_, _, _, _, _| panic!("no main entry"),
             |_, _| panic!("resource declarations must load"),
         ).unwrap();
         assert!(loaded.containerRuntime.mainEntry.is_empty());
@@ -3147,7 +3169,7 @@ mod public_api_tests {
         ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
             &index, |name| entries.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "public_fixture.toolpkg", false,
-            |_, _| panic!("fixture has no subpackages"),
+            |_, _, _| panic!("fixture has no subpackages"),
             |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success {
                 registration: ToolPkgMainRegistration {
                     publicApis: (0..methods).map(|_| ToolPkgRegisteredFunctionHook {
@@ -3213,7 +3235,7 @@ mod navigation_registration_tests {
         ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
             &index, |name| sources.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
-            |_, _| panic!("navigation unit input has no subpackages"),
+            |_, _, _| panic!("navigation unit input has no subpackages"),
             |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
             |name, message| panic!("unexpected package error {name}: {message}"),
         )
@@ -3277,7 +3299,7 @@ mod navigation_registration_tests {
         ToolPkgArchiveParser::parseToolPkgFromIndexedEntries(
             &index, |name| sources.get(name).cloned(), |_| None,
             ToolPkgSourceType::EXTERNAL, "arbitrary_package.toolpkg", false,
-            |_, _| panic!("sidebar archive input declares no subpackages"),
+            |_, _, _| panic!("sidebar archive input declares no subpackages"),
             |_, _, _, _, _| ToolPkgMainRegistrationParseResult::Success { registration: registration.clone() },
             |name, message| panic!("unexpected package error {name}: {message}"),
         )

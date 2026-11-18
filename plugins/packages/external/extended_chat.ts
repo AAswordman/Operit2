@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "extended_chat",
     "display_name": {
         "zh": "增强对话",

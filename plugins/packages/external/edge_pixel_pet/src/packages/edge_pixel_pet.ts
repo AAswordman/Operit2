@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "edge_pixel_pet",
   "display_name": "像素桌宠设备配置器",
   "description": "读取设备能力、上传资源并保存显示配置；显示和点击由设备本地处理。",

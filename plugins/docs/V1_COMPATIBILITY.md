@@ -33,6 +33,14 @@ No Flutter branches or alternative platform runtimes are introduced.
 
 ## Loading and dispatch
 
+Standalone script packages declare the same `api_version` field at the root of
+their `METADATA` block (or JSON/HJSON metadata object). Omitted versions default
+to `1.0.0`, including v1 SDK dispatch during execution. Explicit `1.0.0`, `1.0.1`,
+and `2.0.0` are accepted; unsupported versions and non-string declarations are
+rejected. ToolPkg subpackages inherit their container manifest's API contract.
+The version travels with each registered execution so pooled engines can safely
+execute packages from different API families.
+
 The archive parser accepts explicitly declared `api_version` values `1.0.0`,
 `1.0.1`, and `2.0.0`. The original version is retained for registration and execution.
 Unknown releases remain rejected until admitted explicitly.

@@ -153,7 +153,7 @@ impl ToolPkgLoader {
             sourceType,
             sourcePath,
             isBuiltIn,
-            |jsContent, reportPackageLoadError| match JsPackageLoader::parse(jsContent) {
+            |jsContent, apiVersion, reportPackageLoadError| match JsPackageLoader::parse_with_default_api_version(jsContent, apiVersion) {
                 Ok(package) => Some(package),
                 Err(error) => {
                     reportPackageLoadError(String::new(), error);

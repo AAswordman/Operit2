@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "music_instruments",
   "display_name": {
     "zh": "合成器与音色",

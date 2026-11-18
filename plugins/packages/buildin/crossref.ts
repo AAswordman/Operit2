@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "crossref",
     "display_name": {
         "zh": "Crossref 学术文献查询",

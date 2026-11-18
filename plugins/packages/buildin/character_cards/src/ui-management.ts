@@ -179,7 +179,11 @@ export function renderManagement(ctx: ComposeDslContext, view: "characters" | "m
       : ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [ctx.UI.Box({ weight: 1 }, status!), cancel, submit])];
     overlays.push(ui.dialog("management-dialog", title, body, footer, close, panel.type === "binding" || panel.type === "import" ? "large" : "compact"));
   }
-  if (state.memory !== null) overlays.push(renderMemoryWorkspace(ctx, state.memory, () => update({ memory: null }), "management-memory:" + state.navigation));
+  if (state.memory !== null) {
+    const workspace = renderMemoryWorkspace(ctx, state.memory, () => update({ memory: null }), "management-memory:" + state.navigation);
+    if (state.memory.initial === "browse") return ctx.UI.Box({ key: "management-memory-page", fillMaxSize: true, modifier: ui.measure }, workspace);
+    overlays.push(workspace);
+  }
   if (managed !== null) overlays.push(renderManagedEntityScreen(ctx, managed, finishEntity));
   return ctx.UI.Box({ key: "management-root", fillMaxSize: true, modifier: ui.measure, onLoad: load }, [ctx.UI.Column({ fillMaxSize: true }, [ctx.UI.LazyColumn({ key: "management-list", weight: 1, fillMaxWidth: true, paddingHorizontal: ui.size.width <= 600 ? 12 : 16, paddingTop: 12, paddingBottom: 20 }, children)]), ...overlays]);
 }

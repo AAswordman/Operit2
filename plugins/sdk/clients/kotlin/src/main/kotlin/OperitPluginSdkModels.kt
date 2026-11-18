@@ -152,6 +152,7 @@ fun PackageToolParameter.toMessagePackValue(): Map<String, Any?> = mapOf(
 
 data class ToolPackage(
     val name: String,
+    val api_version: String,
     val description: LocalizedText,
     val tools: List<PackageTool>,
     val states: List<ToolPackageState>,
@@ -167,6 +168,7 @@ fun decodeToolPackage(value: Any?): ToolPackage {
     val input = value as Map<*, *>
     return ToolPackage(
         name = input["name"] as String as String,
+        api_version = input["api_version"] as String as String,
         description = decodeLocalizedText(input["description"]) as LocalizedText,
         tools = (input["tools"] as List<*>).map { item -> decodePackageTool(item) } as List<PackageTool>,
         states = (input["states"] as List<*>).map { item -> decodeToolPackageState(item) } as List<ToolPackageState>,
@@ -182,6 +184,7 @@ fun decodeToolPackage(value: Any?): ToolPackage {
 /** Encodes a typed SDK model into its Link argument representation. */
 fun ToolPackage.toMessagePackValue(): Map<String, Any?> = mapOf(
     "name" to this.name,
+    "api_version" to this.api_version,
     "description" to this.description.toMessagePackValue(),
     "tools" to this.tools.map { item -> item.toMessagePackValue() },
     "states" to this.states.map { item -> item.toMessagePackValue() },

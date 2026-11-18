@@ -2402,6 +2402,12 @@ impl RuntimePackageManager {
         self.pluginPackageManager.effectiveTool(packageName, functionName)
     }
 
+    /// Reads the package contract without cloning its tool scripts.
+    pub(crate) fn packageApiVersion(&self, packageName: &str) -> Option<&str> {
+        self.availablePackages().get(&self.normalizePackageName(packageName))
+            .map(|package| package.api_version.as_str())
+    }
+
     /// Returns raw package tool metadata by package name.
     #[operit_route_macros::operit_plugin_sdk_expose]
     pub fn getPackageTools(&self, packageName: &str) -> Option<ToolPackage> {
@@ -2834,7 +2840,7 @@ impl RuntimePackageManager {
                     .unwrap_or_default(),
                 isToolPkg: false,
                 inferredVersion: None,
-                apiVersion: None,
+                apiVersion: Some(toolPackage.api_version),
             });
         }
 

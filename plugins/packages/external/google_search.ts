@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "google_search",
 
     "display_name": {

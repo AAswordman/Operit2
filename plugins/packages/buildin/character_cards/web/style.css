@@ -10,3 +10,5 @@ svg { display: block; width: 100%; height: 100%; touch-action: none; user-select
 .node.selected rect, .node:focus rect { stroke: var(--primary); stroke-width: 2.2; }
 .node text { fill: var(--onSurface); text-anchor: middle; font-size: 12px; pointer-events: none; }
 #status { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); pointer-events: none; }
+
+svg.labels-hidden .edge-label { display: none; }

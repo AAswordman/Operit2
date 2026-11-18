@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "music_tracks",
   "display_name": {
     "zh": "轨道与混音",

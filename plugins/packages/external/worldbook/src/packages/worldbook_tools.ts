@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "worldbook_tools",
   "display_name": {
     "zh": "世界书工具",

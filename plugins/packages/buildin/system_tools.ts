@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "system_tools",
     "display_name": { "zh": "系统工具", "en": "System Tools" },
     "description": {

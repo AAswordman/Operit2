@@ -445,6 +445,9 @@ extension _ComposeInteractiveNodes on _ComposeProgramExecutorState {
       readOnly: props['readOnly'] == true,
       obscureText: props['isPassword'] == true,
       singleLine: isSingleLine,
+      expandToFill:
+          !isSingleLine &&
+          (props['fillMaxSize'] == true || props['fillMaxHeight'] == true),
       minLines: isSingleLine ? null : (_int(props['minLines']) ?? 1),
       maxLines: isSingleLine ? 1 : _int(props['maxLines']),
       keyboardType: _textInputType(props['keyboardType']),
@@ -492,6 +495,12 @@ extension _ComposeInteractiveNodes on _ComposeProgramExecutorState {
         _requiredActionId(props['onValueChange'], 'onValueChange'),
         value,
       ),
+      onSubmitted: _actionId(props['onSubmitted']) == null
+          ? null
+          : (value) => onAction(
+              _requiredActionId(props['onSubmitted'], 'onSubmitted'),
+              value,
+            ),
     );
   }
 

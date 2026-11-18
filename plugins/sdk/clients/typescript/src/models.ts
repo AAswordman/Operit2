@@ -140,6 +140,7 @@ export function encodePackageToolParameter(value: PackageToolParameter): Record<
 
 export interface ToolPackage {
   readonly name: string;
+  readonly api_version: string;
   readonly description: LocalizedText;
   readonly tools: Array<PackageTool>;
   readonly states: Array<ToolPackageState>;
@@ -155,6 +156,7 @@ export function decodeToolPackage(value: unknown): ToolPackage {
   const input = value as Record<string, unknown>;
   return {
     name: input['name'] as string,
+    api_version: input['api_version'] as string,
     description: decodeLocalizedText(input['description']) as LocalizedText,
     tools: (input['tools'] as unknown[]).map((item) => decodePackageTool(item)) as Array<PackageTool>,
     states: (input['states'] as unknown[]).map((item) => decodeToolPackageState(item)) as Array<ToolPackageState>,
@@ -171,6 +173,7 @@ export function decodeToolPackage(value: unknown): ToolPackage {
 export function encodeToolPackage(value: ToolPackage): Record<string, unknown> {
   return {
     'name': value.name,
+    'api_version': value.api_version,
     'description': encodeLocalizedText(value.description),
     'tools': value.tools.map(item => encodePackageTool(item)),
     'states': value.states.map(item => encodeToolPackageState(item)),

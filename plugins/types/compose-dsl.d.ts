@@ -3439,6 +3439,14 @@ export interface TextFieldProps extends ComposeCommonProps {
    */
   onValueChange: (arg0: string) => void;
   /**
+   * Receives the current text when Enter or the keyboard action submits the field.
+   */
+  onSubmitted?: (arg0: string) => ComposeInteractionOutput;
+  /**
+   * Native keyboard action, such as search, done, send or next.
+   */
+  imeAction?: string;
+  /**
    * Restricts input and layout to one visual line.
    */
   singleLine?: boolean;

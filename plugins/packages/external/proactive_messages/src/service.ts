@@ -149,10 +149,10 @@ export function setForeground(value: boolean): Promise<void> {
   foreground = value;
   return value ? tick() : Promise.resolve();
 }
-export function snapshot(): Promise<Snapshot> {
+export function snapshot(includeChats = true): Promise<Snapshot> {
   return serial(async () => {
     await open();
-    const chats = (await Tools.Chat.listAll()).chats.map(chat => ({ id: chat.id, title: chat.title }));
+    const chats = includeChats ? (await Tools.Chat.listAll()).chats.map(chat => ({ id: chat.id, title: chat.title })) : [];
     return { state: clone(liveState()), foreground, chats };
   });
 }

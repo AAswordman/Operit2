@@ -2,6 +2,11 @@
 
 This directory contains the Operit2 plugin workspace.
 
+Current packages explicitly declare `"api_version": "2.0.0"`: in `manifest.json`
+for ToolPkg and in the `METADATA` root object for standalone scripts. Packages
+that omit the field use the `1.0.0` compatibility contract. ToolPkg subpackages
+inherit the contract from their container manifest.
+
 - `types/`: current v2 TypeScript declarations generated from the Rust SDK.
 - `types-v1/`: the independent handwritten v1 declaration snapshot, with source provenance.
 - `sdk/`: language clients, native carrier, and runnable SDK examples under `sdk/examples/`.

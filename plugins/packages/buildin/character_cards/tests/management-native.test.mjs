@@ -3,7 +3,7 @@ import test from "node:test";
 import { selectorEnvironment } from "./selector-environment.mjs";
 import { mountRegisteredComposeRoute, composeNodes, keyedNode } from "./selector-render.mjs";
 import { buildUiScreenScripts } from "../scripts/build.mjs";
-import { plain } from "./runtime.mjs";
+import { loadModule, plain } from "./runtime.mjs";
 import { fixture } from "./fixtures.mjs";
 const modules = await buildUiScreenScripts();
 
@@ -142,10 +142,13 @@ test("attachment owner/folder selection uses exact persisted records and emits t
 });
 
 
-test("graph keeps the original modal, toolbar and inspector; forms unmount its platform view", async t => {
+test("graph opens as a separate page with toolbar and inspector; forms unmount its platform view", async t => {
   const plugin = await environment(t), ownerKey = "character:default"; await seed(plugin, ownerKey, "图谱源"); await seed(plugin, ownerKey, "图谱目标");
   const ui = await memory(t, plugin); await action(ui, "memory-graph-loader", "onLoad");
   assert.equal(composeNodes(ui.render().tree, node => node.type === "WebView").length, 1);
+  keyedNode(ui.render().tree, "memory-graph-page");
+  assert.equal(composeNodes(ui.render().tree, node => node.type === "Dialog").length, 0);
+  assert.equal(composeNodes(ui.render().tree, node => node.props.key === "management-list").length, 0);
   const bridge = ui.graphBridge(); assert.deepEqual(Object.keys(bridge).sort(), ["load", "select"]);
   const loaded = await ui.dispatch(bridge.load, []), graph = loaded.actionResult.data; assert.equal(graph.items.length, 2);
   assert.throws(() => ui.dispatch(bridge.select, ["memory", "nonexistent"]), /no longer exists/);
@@ -219,4 +222,56 @@ test("original action catalog retains independent owner entries, dialog forms an
   assert.equal(keyedNode(ui.render().tree, "memory-credibility").type, "Slider");
   assert.equal(keyedNode(ui.render().tree, "memory-importance").type, "Slider");
   nativeOnly(ui); await action(ui, "memory-form-cancel");
+});
+
+
+test("search preview preserves production ranking, scores, threshold and folder scope in both graph and list", async t => {
+  const plugin = await environment(t), ownerKey = "character:default";
+  for (const [title, importance, folderPath] of [["ranked weaker", 0.5, "work"], ["ranked strongest", 1, "work"], ["unrelated neighbor", 0.8, "work"], ["ranked other folder", 1, "other"]]) {
+    await plugin.web({ action: "saveMemory", ownerKey, originalTitle: null, title, content: title, folderPath, importance, tags: "", contentType: "text/plain", source: "manual", credibility: 1 });
+  }
+  await plugin.web({ action: "writeMemorySearchConfig", ownerKey, config: { scoreMode: "BALANCED", keywordWeight: 3, tagWeight: 0, vectorWeight: 0, edgeWeight: 0 } });
+  await plugin.web({ action: "writeMemoryRecallSettings", settings: { enabled: true, limit: 2, allowRepeated: false } });
+  await plugin.web({ action: "createLink", ownerKey, sourceTitle: "ranked strongest", targetTitle: "unrelated neighbor", linkType: "related", weight: 1, description: "" });
+  const ui = await memory(t, plugin);
+  await action(ui, "memory-folder-filter", "onSelect", 3); // all, root, other, work
+  await action(ui, "memory-search-query", "onValueChange", "ranked");
+  assert.equal(keyedNode(ui.render().tree, "memory-search-query").props.imeAction, "search");
+  assert.equal(keyedNode(ui.render().tree, "memory-create").props.shape.cornerRadius, 16);
+  // Submit the latest native text, even when no change callback has reached DSL yet.
+  await action(ui, "memory-search-query", "onValueChange", "stale-query");
+  await action(ui, "memory-search-query", "onSubmitted", "ranked"); await action(ui, "memory-graph-loader", "onLoad");
+  const preview = plain(await plugin.web({ action: "previewMemorySearch", ownerKey, query: "ranked", folderPath: "work" }));
+  const production = plain(await plugin.web({ action: "searchMemories", options: { ownerKey, query: "ranked", folderPath: "work", relevanceThreshold: 0.025, createdAtStartMs: null, createdAtEndMs: null, limit: 2 } }));
+  assert.deepEqual(preview.candidates.map(hit => hit.memory.id), production.map(item => item.id));
+  assert.deepEqual(preview.candidates.map(hit => hit.memory.title), ["ranked strongest", "ranked weaker"]);
+  assert.ok(preview.candidates.every(hit => hit.passedThreshold && hit.score >= 0.025));
+  const displayed = plain((await ui.dispatch(ui.graphBridge().load, [])).actionResult.data);
+  assert.deepEqual(displayed.items.map(item => item.uuid), preview.candidates.map(hit => hit.memory.uuid));
+  assert.deepEqual(displayed.graph.nodes.map(node => node.id).sort(), displayed.items.map(item => item.uuid).sort());
+  assert.equal(displayed.graph.edges.length, 0);
+  const rows = composeNodes(ui.render().tree, node => String(node.props.key).startsWith("memory-select:"));
+  assert.deepEqual(rows.map(row => row.props.key), preview.candidates.map(hit => "memory-select:" + hit.memory.uuid));
+  assert.ok(composeNodes(ui.render().tree, node => node.type === "Text").some(node => String(node.props.text).includes("相关性 " + preview.candidates[0].score.toFixed(4))));
+  await action(ui, "memory-search-query", "onSubmitted", "no-match");
+  assert.equal(composeNodes(ui.render().tree, node => String(node.props.key).startsWith("memory-select:")).length, 0);
+  await action(ui, "memory-search-clear");
+  assert.equal(composeNodes(ui.render().tree, node => String(node.props.key).startsWith("memory-select:")).length, 3);
+  await action(ui, "memory-workspace-back"); keyedNode(ui.render().tree, "management-list");
+});
+
+test("large-library projections bound each page and do not add unmatched neighbors", () => {
+  const { memoryGraphPage, filteredMemoryGraph, MEMORY_GRAPH_PAGE_SIZE, MEMORY_GRAPH_EDGE_LIMIT } = loadModule("src/ui-memory-workspace.ts");
+  const base = fixture().graph.items[0];
+  const items = Array.from({ length: 10000 }, (_, index) => ({ ...base, id: String(index), uuid: "large-" + index }));
+  const data = { items, graph: { nodes: items.map(item => ({ id: item.uuid, label: item.title, color: 0, metadata: {} })), edges: Array.from({ length: 1500 }, (_, index) => ({ id: String(index), sourceId: "large-0", targetId: "large-" + (index % 199 + 1), weight: 1, metadata: {}, isCrossFolderLink: false, label: "related" })) } };
+  const first = memoryGraphPage(data, 0), last = memoryGraphPage(data, 49);
+  assert.equal(first.items.length, MEMORY_GRAPH_PAGE_SIZE); assert.equal(first.graph.nodes.length, MEMORY_GRAPH_PAGE_SIZE);
+  assert.equal(first.graph.edges.length, MEMORY_GRAPH_EDGE_LIMIT);
+  assert.equal(last.items.length, MEMORY_GRAPH_PAGE_SIZE); assert.equal(last.items[0].uuid, "large-9800");
+  assert.equal(last.graph.edges.length, 0);
+  const filtered = filteredMemoryGraph(data, "*", ["large-3", "large-0"]);
+  assert.deepEqual(plain(filtered.items.map(item => item.uuid)), ["large-3", "large-0"]);
+  assert.equal(filtered.graph.nodes.length, 2);
+  assert.ok(filtered.graph.edges.every(edge => edge.targetId === "large-3"));
 });

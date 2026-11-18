@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "wechat",
   "display_name": {
     "zh": "微信 Bot",

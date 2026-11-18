@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "plan_mode_tools",
     "display_name": {
         "zh": "计划模式工具",

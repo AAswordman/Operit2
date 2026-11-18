@@ -1,6 +1,7 @@
 /*
 METADATA
 {
+    "api_version": "2.0.0",
     "name": "douyin_download",
 
     "display_name": {

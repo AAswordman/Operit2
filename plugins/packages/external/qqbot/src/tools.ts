@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "qqbot",
   "display_name": {
     "zh": "QQ Bot",

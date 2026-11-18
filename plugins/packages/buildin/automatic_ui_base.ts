@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "Automatic_ui_base",
     "display_name": {
         "zh": "自动化基础工具",

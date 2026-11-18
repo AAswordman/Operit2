@@ -22,8 +22,13 @@ impl JsPackageLoader {
 
     /// Parses a JavaScript package and attaches its script to every declared tool.
     pub fn parse(js_content: &str) -> Result<ToolPackage, String> {
+        Self::parse_with_default_api_version(js_content, crate::toolpkg::ToolPkgApiVersion::TOOLPKG_API_VERSION_1_0_0)
+    }
+
+    /// Parses a subpackage with its container's API contract as the omitted-version default.
+    pub fn parse_with_default_api_version(js_content: &str, default_api_version: &str) -> Result<ToolPackage, String> {
         let metadata_string = Self::extract_metadata(js_content);
-        let package_metadata = Self::parse_metadata(&metadata_string, js_content)?;
+        let package_metadata = Self::parse_metadata_with_default_api_version(&metadata_string, js_content, default_api_version)?;
         let tools = package_metadata
             .tools
             .into_iter()
@@ -56,6 +61,11 @@ impl JsPackageLoader {
 
     /// Parses package metadata represented as JSON, JSON5, or the supported HJSON-like form.
     pub fn parse_metadata(metadata_string: &str, script: &str) -> Result<ToolPackage, String> {
+        Self::parse_metadata_with_default_api_version(metadata_string, script, crate::toolpkg::ToolPkgApiVersion::TOOLPKG_API_VERSION_1_0_0)
+    }
+
+    /// Applies the supplied container contract only when metadata omits api_version.
+    pub fn parse_metadata_with_default_api_version(metadata_string: &str, script: &str, default_api_version: &str) -> Result<ToolPackage, String> {
         let object = Self::parse_metadata_object(metadata_string)?;
 
         let name = string_field(&object, "name");
@@ -90,6 +100,7 @@ impl JsPackageLoader {
 
         Ok(ToolPackage {
             name,
+            api_version: Self::parse_api_version_with_default(&object, default_api_version)?,
             description: localized_text_field(object.get("description")),
             tools,
             states,
@@ -105,6 +116,27 @@ impl JsPackageLoader {
             category: non_empty_or(string_field(&object, "category"), "Other"),
             author: string_list_field(object.get("author")),
         })
+    }
+
+    /// Validates the same API contracts as ToolPkg, defaulting omitted versions to v1.
+    pub fn parse_api_version(
+        object: &serde_json::Map<String, serde_json::Value>,
+    ) -> Result<String, String> {
+        Self::parse_api_version_with_default(object, crate::toolpkg::ToolPkgApiVersion::TOOLPKG_API_VERSION_1_0_0)
+    }
+
+    fn parse_api_version_with_default(object: &serde_json::Map<String, serde_json::Value>, default_api_version: &str) -> Result<String, String> {
+        use crate::toolpkg::ToolPkgApiVersion::{
+            requireSupportedToolPkgApiVersion,
+        };
+        let version = match object.get("api_version") {
+            Some(value) => value.as_str()
+                .ok_or("Script package metadata.api_version must be a string")?,
+            None => default_api_version,
+        };
+        requireSupportedToolPkgApiVersion(version)
+            .map(|version| version.to_string())
+            .map_err(|error| format!("Script package metadata.api_version: {error}"))
     }
 
     /// Parses standalone package metadata into its structured JSON object representation.
@@ -450,6 +482,63 @@ fn needs_comma_between(previous: &str, current: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::JsPackageLoader;
+
+    #[test]
+    fn script_package_api_versions_are_validated_and_default_to_v1() {
+        for (declaration, expected) in [
+            ("", "1.0.0"),
+            (r#", api_version: "1.0.0""#, "1.0.0"),
+            (r#", api_version: "1.0.1""#, "1.0.1"),
+            (r#", api_version: " 2.0.0 ""#, "2.0.0"),
+        ] {
+            let source = format!("/* METADATA {{name: versioned{declaration}, tools: [{{name: run}}]}} */ exports.run = function() {{}};");
+            let package = JsPackageLoader::parse(&source).unwrap();
+            assert_eq!(package.api_version, expected);
+            assert_eq!(package.tools[0].script, source);
+            let restored: crate::package::ToolPackage = serde_json::from_value(serde_json::to_value(&package).unwrap()).unwrap();
+            assert_eq!(restored.api_version, expected);
+        }
+        for declaration in ["null", "2", "true", "{}", r#""""#, r#""v1""#, r#""2.0.1""#, r#""3.0.0""#] {
+            let metadata = format!("{{name: invalid, api_version: {declaration}}}");
+            assert!(JsPackageLoader::parse_metadata(&metadata, "").is_err(), "{declaration}");
+        }
+        let legacy = JsPackageLoader::parse_metadata("{name: legacy}", "").unwrap();
+        let mut stored = serde_json::to_value(legacy).unwrap();
+        stored.as_object_mut().unwrap().remove("api_version");
+        let restored: crate::package::ToolPackage = serde_json::from_value(stored).unwrap();
+        assert_eq!(restored.api_version, "1.0.0");
+        assert_eq!(crate::package::ToolPackage::default().api_version, "1.0.0");
+    }
+
+    /// Checks real bundled scripts with the production JSON/JSON5/HJSON metadata parser.
+    #[test]
+    fn bundled_script_packages_explicitly_use_current_api_version() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(4).unwrap();
+        let mut directories = vec![root.join("plugins/packages")];
+        let mut count = 0;
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(directory).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if entry.file_type().unwrap().is_dir() {
+                    if !matches!(entry.file_name().to_str(), Some("node_modules" | "dist" | "tests-dist" | ".out" | ".git")) {
+                        directories.push(path);
+                    }
+                    continue;
+                }
+                if !matches!(path.extension().and_then(|ext| ext.to_str()), Some("ts" | "js")) { continue; }
+                let script = std::fs::read_to_string(&path).unwrap();
+                let metadata = JsPackageLoader::extract_metadata(&script);
+                if metadata == "{}" { continue; }
+                let object = JsPackageLoader::parse_metadata_object(&metadata).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                assert_eq!(object.get("api_version").and_then(serde_json::Value::as_str), Some("2.0.0"), "{}", path.display());
+                let package = JsPackageLoader::parse(&script).unwrap_or_else(|error| panic!("{}: {error}", path.display()));
+                assert_eq!(package.api_version, "2.0.0");
+                count += 1;
+            }
+        }
+        assert!(count > 0, "Must check real plugin scripts");
+    }
 
     /// Keeps a JSON separator on its own line between tool declarations.
     #[test]

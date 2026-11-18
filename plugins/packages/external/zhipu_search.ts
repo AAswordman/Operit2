@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "zhipu_search",
   "display_name": {
     "zh": "智谱搜索",

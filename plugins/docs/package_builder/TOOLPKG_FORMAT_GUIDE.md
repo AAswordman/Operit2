@@ -839,6 +839,7 @@ python plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload
 /* METADATA
 {
     "name": "windows_control",
+    "api_version": "2.0.0",
     "description": {
         "zh": "通过 HTTP 调用 Operit PC Agent 控制 Windows 电脑",
         "en": "Control a Windows PC through Operit PC Agent over HTTP"

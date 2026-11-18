@@ -41,6 +41,7 @@ export interface CharacterRepository {
   searchMemoryDebug(
     options: MemorySearchOptions,
     config: MemorySearchConfig,
+    includeBelowThreshold?: boolean,
   ): Promise<import("./model").MemorySearchDebug>;
   /** Losslessly preserves legacy folder sidecars in old backups; live folders belong to native chats. */
   readConversationGroupsForBackup(): Promise<ConversationGroupRecord[]>;

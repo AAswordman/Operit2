@@ -296,6 +296,7 @@ fn applyPackageState(package: &ToolPackage, stateId: Option<&str>) -> ToolPackag
     ToolPackage {
         tools,
         name: package.name.clone(), description: package.description.clone(),
+        api_version: package.api_version.clone(),
         states: package.states.clone(), env: package.env.clone(),
         is_built_in: package.is_built_in, enabled_by_default: package.enabled_by_default,
         display_name: package.display_name.clone(), category: package.category.clone(),
@@ -679,6 +680,7 @@ mod tests {
         let mut manager = packageManager();
         manager.registerPackage(ToolPackage {
             name: "demo".into(), tools: vec![tool("run", "base"), tool("hidden", "hidden")],
+            api_version: "2.0.0".into(),
             states: vec![ToolPackageState {
                 id: "state".into(), inherit_tools: true, exclude_tools: vec!["hidden".into()],
                 tools: vec![tool("run", "override"), tool("added", "added")], ..Default::default()
@@ -687,6 +689,7 @@ mod tests {
         assert_eq!(manager.effectiveTool("demo", "run").unwrap().script, "override");
         assert_eq!(manager.effectiveTool("demo", "added").unwrap().script, "added");
         assert!(manager.effectiveTool("demo", "hidden").is_err());
+        assert_eq!(manager.effectivePackage("demo").unwrap().api_version, "2.0.0");
         for tool in manager.effectivePackage("demo").unwrap().tools {
             assert_eq!(manager.effectiveTool("demo", &tool.name).unwrap().script, tool.script);
         }

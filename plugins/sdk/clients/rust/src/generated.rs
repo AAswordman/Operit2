@@ -81,6 +81,8 @@ pub struct SdkPackageToolParameter {
 pub struct SdkToolPackage {
     #[serde(rename = "name")]
     pub name: String,
+    #[serde(rename = "api_version")]
+    pub api_version: String,
     #[serde(rename = "description")]
     pub description: SdkLocalizedText,
     #[serde(rename = "tools")]

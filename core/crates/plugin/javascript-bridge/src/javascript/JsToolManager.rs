@@ -180,6 +180,10 @@ impl JsToolManager {
             Value::String(packageName.to_string()),
         );
         runtimeParams.insert(
+            "__operit_package_api_version".to_string(),
+            Value::String(selection.api_version.clone()),
+        );
+        runtimeParams.insert(
             "__operit_toolpkg_runtime_kind".to_string(),
             Value::String("sandbox".to_string()),
         );
@@ -679,6 +683,8 @@ mod tests {
         /// Creates a generic isolated JavaScript engine for manager tests.
         #[allow(non_snake_case)]
         fn createExecutionEngine(&self) -> Result<Arc<dyn JsExecutionEngine>, String> {
+            operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new()));
+            operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new()));
             JsEngine::new(Arc::new(TestJsExecutionHost)).map(|engine| Arc::new(engine) as Arc<dyn JsExecutionEngine>).map_err(|error| error.to_string())
         }
 
@@ -1332,6 +1338,7 @@ mod tests {
                 .package(package_name)
                 .ok_or_else(|| format!("Package not registered: {package_name}"))?;
             Ok(JsPackageToolSelection {
+                api_version: package.api_version.clone(),
                 definition: operit_plugin_sdk::javascript::select_registered_package_tool(
                     package,
                     function_name,
@@ -1512,6 +1519,8 @@ mod tests {
     #[tokio::test(flavor = "current_thread")]
     /// Verifies a minified standalone script downloads and executes without encryption.
     async fn minified_standalone_download_executes_registered_tool() {
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new()));
+        operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new()));
         register_test_runtime_storage("js-tool-manager-standalone-marketplace-flow");
         let upload_source_bytes = build_standalone_js_bytes();
         assert!(contains_bytes(
@@ -1547,6 +1556,32 @@ mod tests {
         );
 
         assert_eq!(output, "\"standalone-protected:downloaded\"");
+    }
+
+    /// Reuses one engine across contracts and checks actual SDK adapter dispatch for both call routes.
+    #[tokio::test(flavor = "current_thread")]
+    async fn standalone_package_api_versions_select_compatibility_on_pooled_engines() {
+        register_test_runtime_storage("standalone-package-api-versions");
+        let runtime = TestPackageRuntime::new_with_package(ToolPackage::default());
+        let manager = JsToolManager::new(runtime.clone(), Arc::new(TestExecutionEngineFactory));
+        for (declaration, expected) in [("", "1.0.0"), (r#", api_version: "2.0.0""#, "2.0.0"), (r#", api_version: "1.0.1""#, "1.0.1"), ("", "1.0.0")] {
+            // HJSON packages can hold scripts without an embedded METADATA block.
+            let package = JsPackageLoader::parse_metadata(
+                &format!("{{name: versions{declaration}, tools: [{{name: inspect}}]}}"),
+                "exports.inspect = async function() { await Promise.resolve(); return {version: __operitToolPkgApi.currentVersion(), ffmpeg: typeof Tools.FFmpeg}; };",
+            ).unwrap();
+            runtime.package_manager.lock().unwrap().registerPackage(package);
+            let output = manager.executeScriptByName("versions.inspect", BTreeMap::new()).await.unwrap().unwrap();
+            let value: Value = serde_json::from_str(&output).unwrap();
+            assert_eq!(value["version"], expected);
+            assert_eq!(value["ffmpeg"], if expected == "2.0.0" { "undefined" } else { "object" });
+            let result = manager.executeScript(&operit_plugin_sdk::javascript::JsPackageToolCallRequest {
+                tool_name: "versions:inspect".into(), parameters: BTreeMap::new(),
+            }).await;
+            assert!(result.success, "{:?}", result.error);
+            assert_eq!(serde_json::from_str::<Value>(&result.result).unwrap(), value);
+        }
+        manager.destroy();
     }
 
     #[tokio::test(flavor = "current_thread")]

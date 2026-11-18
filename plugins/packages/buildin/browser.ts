@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "browser",
     "display_name": {
         "zh": "Browser 自动化操作",

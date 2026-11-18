@@ -30,6 +30,26 @@ use std::sync::OnceLock;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
+/// Direct package script calls read metadata while the bound ToolPkg manifest remains authoritative.
+#[tokio::test(flavor = "current_thread")]
+async fn standalone_metadata_selects_api_contract_for_each_execution() {
+    ensure_test_runtime_root();
+    let engine = newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    for (declaration, version) in [("", "1.0.0"), (r#", api_version: "2.0.0""#, "2.0.0"), (r#", api_version: "1.0.1""#, "1.0.1")] {
+        let script = format!("/* METADATA {{name: direct{declaration}}} */ exports.run = async function() {{ await Promise.resolve(); return __operitToolPkgApi.currentVersion(); }};");
+        let result = engine.execute_script_function(&script, "run", &testParams(), &BTreeMap::new(), None, true, None).await.unwrap().unwrap();
+        assert_eq!(serde_json::from_str::<String>(&result).unwrap(), version);
+    }
+    let error = engine.execute_script_function("/* METADATA {name: invalid, api_version: '3.0.0'} */ exports.run = function() { throw new Error('must not execute'); };", "run", &testParams(), &BTreeMap::new(), None, true, None).await.unwrap_err();
+    assert_eq!(error.kind, JsExecutionErrorKind::InvalidRequest);
+    assert!(error.to_string().contains("not supported"));
+    engine.destroy();
+    let bound = newTestIpcEngine(Arc::new(TestPluginConfigExecutionHost::default()));
+    let result = bound.execute_script_function("/* METADATA {name: legacy} */ exports.run = function() { return __operitToolPkgApi.currentVersion(); };", "run", &testParams(), &BTreeMap::new(), None, true, None).await.unwrap().unwrap();
+    assert_eq!(result, "\"2.0.0\"");
+    bound.destroy();
+}
+
 #[path = "../../../../../tool/services/src/tools/packTool/ToolPkgComposeDslProtocol.rs"]
 mod ToolPkgComposeDslProtocol;
 #[path = "../../../../../tool/services/src/tools/packTool/ToolPkgComposeDslProgramStore.rs"]

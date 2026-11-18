@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "music_project",
   "display_name": {
     "zh": "工程管理",

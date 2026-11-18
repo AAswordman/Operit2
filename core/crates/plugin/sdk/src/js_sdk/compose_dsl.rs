@@ -2709,6 +2709,10 @@ pub struct TextFieldProps {
     pub value: String,
     /// Receives each user-proposed value for controlled-state updates.
     pub onValueChange: Arc<dyn Fn(String) -> () + Send + Sync>,
+    /// Receives the current text when Enter or the keyboard action submits the field.
+    pub onSubmitted: Option<Arc<dyn Fn(String) -> ComposeInteractionOutput + Send + Sync>>,
+    /// Native keyboard action, such as search, done, send or next.
+    pub imeAction: Option<String>,
     /// Restricts input and layout to one visual line.
     pub singleLine: Option<bool>,
     /// Minimum visible line count reserved by the field.

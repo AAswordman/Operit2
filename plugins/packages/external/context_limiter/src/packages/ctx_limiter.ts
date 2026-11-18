@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "ctx_limiter",
     "display_name": {
         "zh": "楼层限制器",

@@ -41,6 +41,7 @@ type PersistedTerminalOutput = {
 
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "super_admin",
 
     "display_name": {

@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "waifu",
   "display_name": {
     "zh": "Waifu 模式",

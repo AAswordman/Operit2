@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "operit_editor",
     "display_name": {
         "zh": "Operit 平台编辑器",

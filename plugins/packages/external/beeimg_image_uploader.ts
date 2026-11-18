@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
     "name": "beeimg_image_uploader_v2",
 
     "display_name": {

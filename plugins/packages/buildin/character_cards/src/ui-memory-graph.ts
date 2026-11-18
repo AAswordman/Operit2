@@ -1,13 +1,16 @@
 import type { ComposeDslContext, ComposeNode, ComposeThemeSnapshot } from "../../../../types/compose-dsl";
-import type { MemoryGraphResult } from "./model";
+import type { MemoryGraph } from "./model";
 
-export interface MemoryGraphDisplay { data: MemoryGraphResult; selected: string | null; selectedEdge: string | null; theme: ComposeThemeSnapshot }
+export interface MemoryGraphDisplay { data: { graph: MemoryGraph; items: { uuid: string }[] }; selected: string | null; selectedEdge: string | null; theme: ComposeThemeSnapshot }
 
 /** Hosts only the graph canvas; all persistence, forms and navigation stay in DSL. */
 export function renderMemoryGraph(ctx: ComposeDslContext, key: string, display: MemoryGraphDisplay, select: (kind: "memory" | "edge", id: string) => void, fail: (error: string) => void): ComposeNode {
   const controller = ctx.createWebViewController(key + ":controller");
   const [path, setPath] = ctx.useState(key + ":path", "");
-  const current = ctx.useRef(key + ":display", display); current.current = display;
+  // The canvas needs identities and geometry, never complete memory bodies.
+  const data = ctx.useMemo(key + ":canvas-data", () => ({ graph: display.data.graph, items: display.data.items.map(item => ({ uuid: item.uuid })) }), [display.data]);
+  const projection = { ...display, data };
+  const current = ctx.useRef(key + ":display", projection); current.current = projection;
   const ready = ctx.useRef(key + ":ready", false);
   const active = ctx.useRef(key + ":active", true);
   const selectLive = ctx.useRef(key + ":select", select); selectLive.current = select;
@@ -36,9 +39,9 @@ export function renderMemoryGraph(ctx: ComposeDslContext, key: string, display: 
     } catch (error) { fail(String(error)); }
   }
   ctx.useEffect(key + ":projection", () => {
-    if (ready.current) void controller.evaluateJavascript("window.updateMemoryGraph(" + JSON.stringify(display) + ");").catch(error => fail(String(error)));
+    if (ready.current) void controller.evaluateJavascript("window.updateMemoryGraph(" + JSON.stringify(projection) + ");").catch(error => fail(String(error)));
     return () => {};
-  }, [JSON.stringify(display)]);
+  }, [JSON.stringify(projection)]);
   /** Sends canvas-only camera commands from native toolbar buttons. */
   async function camera(command: "in" | "out" | "fit"): Promise<void> {
     if (!ready.current) return;

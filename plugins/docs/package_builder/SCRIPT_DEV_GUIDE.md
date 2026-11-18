@@ -10,7 +10,7 @@
 
 Operit2 的 ToolPkg API 支持版本为 `2.0.0`；对 `1.0.0` 和 `1.0.1` 的加载支持并不完整。Operit1 完整支持 ToolPkg API `1.0.0` 和 `1.0.1`，这两个版本主要面向 Android，是旧版 API 形式。
 
-在 Operit2 创建 ToolPkg 时显式填写 `"api_version": "2.0.0"`，接口以随 Operit 插件开发套件 携带的当前版本类型为准。不能通过仅改 manifest 版本号把旧 Android 插件视为已完成迁移；需要检查实际接口与平台行为。`api_version` 是 ToolPkg 清单字段，不是单文件脚本的元数据字段。
+在 Operit2 创建插件时显式填写 `"api_version": "2.0.0"`：ToolPkg 写在 manifest 中，独立脚本包写在 `METADATA` 根对象中（JSON/HJSON 脚本包写在元数据根对象中）。接口以随 Operit 插件开发套件携带的当前版本类型为准。省略该字段的脚本包与 ToolPkg 一律按 `1.0.0` 兼容契约解析和执行；支持显式声明 `1.0.0`、`1.0.1`、`2.0.0`，其他版本或非字符串值会被拒绝。ToolPkg 内的子包使用所属 manifest 的版本。不能仅改版本号就把旧 Android 插件视为已完成迁移；需要检查实际接口与平台行为。
 
 ToolPkg API `2.0.0` 面向多平台开发，基本所有公共接口都通过统一 host 能力提供跨平台兼容。常规功能直接使用当前版本接口即可，不必为每个平台重复实现。作者仍需注重跨平台兼容性：遇到平台特异接口时，明确其适用范围，考虑并验证其他平台的安装、界面与核心功能；不能把某个平台的专用能力当作所有平台都具备的接口。
 
@@ -124,6 +124,7 @@ ToolPkg API `2.0.0` 面向多平台开发，基本所有公共接口都通过统
 METADATA
 {
     "name": "Automatic_bilibili_assistant",
+    "api_version": "2.0.0",
     "display_name": {
         "zh": "B站智能助手",
         "en": "Bilibili Assistant"
@@ -153,6 +154,7 @@ METADATA
 ```
 
 -   `name`: 脚本的唯一标识符。
+-   `api_version`: 脚本包 API 契约版本。新建脚本包填写 `"2.0.0"`；省略时默认 `"1.0.0"` 并启用 v1 兼容适配。不要与插件自身的发布版本混用。
 -   `display_name`: （可选，推荐）用于界面显示的名称。不会影响脚本 ID；脚本 ID 仍由 `name` 决定。支持字符串或多语言对象（见 3.1.2）。
 -   `description`: 对脚本功能的详细描述。
 -   `author`: （可选）作者信息，支持单个字符串或字符串数组。
@@ -266,6 +268,7 @@ METADATA
 METADATA
 {
   "name": "MyBilingualPackage",
+  "api_version": "2.0.0",
   "category": "Utility",
   "display_name": {
     "zh": "双语示例包",
@@ -492,6 +495,7 @@ const service = await EnhancedAIService.callSuspend(
 METADATA
 {
     "name": "MyNewScript",
+    "api_version": "2.0.0",
     "description": "一个用于演示脚本开发的新脚本。",
     "category": "Utility",
     "tools": [

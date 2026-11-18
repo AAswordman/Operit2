@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "music_notes",
   "display_name": {
     "zh": "音符与钢琴卷帘",

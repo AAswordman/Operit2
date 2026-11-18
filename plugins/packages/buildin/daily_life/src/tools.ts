@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "daily_life",
   "display_name": {
     "zh": "日常生活工具包",

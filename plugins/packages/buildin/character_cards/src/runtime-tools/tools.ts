@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "character_memory",
   "display_name": {
     "zh": "角色记忆",

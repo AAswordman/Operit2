@@ -179,6 +179,7 @@ class PackageToolParameter {
 class ToolPackage {
   const ToolPackage({
     required this.name,
+    required this.api_version,
     required this.description,
     required this.tools,
     required this.states,
@@ -193,6 +194,7 @@ class ToolPackage {
   /// Decodes `operit_plugin_sdk::package::ToolPackage` from a MessagePack value map.
   factory ToolPackage.fromMessagePackValue(Map<String, Object?> value) => ToolPackage(
     name: value['name'] as String,
+    api_version: value['api_version'] as String,
     description: LocalizedText.fromMessagePackValue(value['description'] as Map<String, Object?>),
     tools: (value['tools'] as List<Object?>).map((item) => PackageTool.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     states: (value['states'] as List<Object?>).map((item) => ToolPackageState.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
@@ -207,6 +209,7 @@ class ToolPackage {
   /// Encodes this model into a MessagePack-compatible value map.
   Map<String, Object?> toMessagePackValue() => <String, Object?>{
     'name': name,
+    'api_version': api_version,
     'description': description.toMessagePackValue(),
     'tools': tools.map((item) => item.toMessagePackValue()).toList(growable: false),
     'states': states.map((item) => item.toMessagePackValue()).toList(growable: false),
@@ -219,6 +222,7 @@ class ToolPackage {
   };
 
   final String name;
+  final String api_version;
   final LocalizedText description;
   final List<PackageTool> tools;
   final List<ToolPackageState> states;

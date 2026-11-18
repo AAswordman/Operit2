@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "subagents",
   "enabled_by_default": true,
   "display_name": { "zh": "子代理", "en": "Subagents" },

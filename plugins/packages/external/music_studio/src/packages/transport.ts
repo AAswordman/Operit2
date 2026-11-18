@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "music_transport",
   "display_name": {
     "zh": "播放与渲染",

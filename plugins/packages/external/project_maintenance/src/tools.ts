@@ -1,5 +1,6 @@
 /* METADATA
 {
+    "api_version": "2.0.0",
  "name":"maintenance", "enabled_by_default":true,
  "display_name":{"zh":"项目维护","en":"Project maintenance"},
  "description":{"zh":"将用户反馈登记为后台维护工单，并查询实际进度。","en":"Record feedback and inspect background maintenance."},

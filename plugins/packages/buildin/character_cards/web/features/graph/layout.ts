@@ -13,12 +13,11 @@ export function graphEntry<T>(map: ReadonlyMap<string, T>, id: string): T {
   return value;
 }
 
-"use strict";
+let measurementContext: CanvasRenderingContext2D | null = null;
 
 /** Measures native-sized graph node labels with the document's actual typeface. */
 export function measureMemoryNode(label: string): NodeSize {
-  const canvas = document.createElement("canvas");
-  const context = canvas.getContext("2d");
+  const context = measurementContext ?? (measurementContext = document.createElement("canvas").getContext("2d"));
   if (context === null) throw new Error("Graph text measurement is unavailable");
   context.font = `12px ${getComputedStyle(document.body).fontFamily}`;
   const lines = [""];

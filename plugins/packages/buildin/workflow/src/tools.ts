@@ -2,6 +2,7 @@ import { object, parseWorkflow } from "./validation";
 
 /* METADATA
 {
+    "api_version": "2.0.0",
   "name": "workflow",
   "display_name": {"zh":"工作流","en":"Workflow"},
   "description": {"zh":"管理和执行可视化工作流。工作流保存在当前插件中。","en":"Manage and execute plugin-owned visual workflows."},

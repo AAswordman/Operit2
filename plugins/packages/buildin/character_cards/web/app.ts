@@ -20,10 +20,14 @@ let camera: GraphCamera = { x: 0, y: 0, scale: 1 };
 let signature = "";
 const pointers = new Map<number, { x: number; y: number }>();
 let moved = false;
-let display: MemoryGraphDisplay | null = null;
 let down = { x: 0, y: 0 };
 let dragged: string | null = null;
 let pressed: { kind: "memory" | "edge"; id: string } | null = null;
+const nodeElements = new Map<string, SVGGElement>();
+const edgeElements = new Map<string, { line: SVGLineElement; hit: SVGLineElement; label: SVGTextElement }>();
+const incidentEdges = new Map<string, MemoryGraphDisplay["data"]["graph"]["edges"]>();
+let selectedNode: string | null = null, selectedEdge: string | null = null;
+let dragFrame = 0;
 let viewport = { width: 0, height: 0 };
 
 /** Creates SVG content without interpreting user labels as HTML. */
@@ -34,7 +38,7 @@ function svg<K extends keyof SVGElementTagNameMap>(tag: K, attributes: Record<st
   return element;
 }
 /** Applies the camera transform to the existing geometry. */
-function paintCamera(): void { surface.querySelector("g")?.setAttribute("transform", `translate(${camera.x} ${camera.y}) scale(${camera.scale})`); surface.querySelectorAll<SVGTextElement>(".edge-label").forEach(label => { label.style.display = camera.scale >= 0.55 ? "" : "none"; }); }
+function paintCamera(): void { surface.querySelector("g")?.setAttribute("transform", `translate(${camera.x} ${camera.y}) scale(${camera.scale})`); surface.classList.toggle("labels-hidden", camera.scale < 0.55); }
 /** Fits the current graph using the actual canvas size. */
 function fit(): void { if (scene === null) return; camera = fitMemoryGraph(memoryGraphBounds(scene.positions, scene.sizes), surface.clientWidth, surface.clientHeight); paintCamera(); }
 /** Reports display bridge failures without exposing mutation APIs. */
@@ -44,7 +48,6 @@ function point(event: { clientX: number; clientY: number }): { x: number; y: num
 /** Replaces only display geometry and retains the camera when topology is unchanged. */
 window.updateMemoryGraph = function updateMemoryGraph(value: MemoryGraphDisplay): void {
 
-  display = value;
   const palette = value.theme.colors;
   document.documentElement.style.colorScheme = value.theme.brightness;
   for (const role of ["surface", "onSurface", "primary", "onPrimary", "outline", "primaryContainer", "onPrimaryContainer", "surfaceContainerHigh", "onSurfaceVariant", "error"]) document.documentElement.style.setProperty("--" + role, palette[role]);
@@ -52,25 +55,66 @@ window.updateMemoryGraph = function updateMemoryGraph(value: MemoryGraphDisplay)
   const changed = nextSignature !== signature;
   if (changed) { signature = nextSignature; scene = layoutMemoryGraph(value.data.graph.nodes, value.data.graph.edges, measureMemoryNode); }
   if (scene === null) throw new Error("Graph layout was not initialized");
+  if (!changed) {
+    updateSelection(value);
+    paintCamera();
+    return;
+  }
+  nodeElements.clear(); edgeElements.clear(); incidentEdges.clear();
   const group = svg("g", {});
   for (const edge of value.data.graph.edges) {
     const source = graphEntry(scene.positions, edge.sourceId), target = graphEntry(scene.positions, edge.targetId);
     const line = svg("line", { x1: String(source.x), y1: String(source.y), x2: String(target.x), y2: String(target.y), class: "edge" + (value.selectedEdge === edge.id ? " selected" : ""), "stroke-width": String(Math.max(0.7, Math.min(4, edge.weight * (edge.isCrossFolderLink ? 1.6 : 2.4)))), ...(edge.isCrossFolderLink ? { "stroke-dasharray": "8 6" } : {}) });
     const hit = svg("line", { x1: String(source.x), y1: String(source.y), x2: String(target.x), y2: String(target.y), class: "edge-hit", "data-edge": edge.id, tabindex: "0", role: "button", "aria-label": "关系 " + (edge.label ?? "") });
     group.append(line, hit);
+    for (const id of new Set([edge.sourceId, edge.targetId])) {
+      const links = incidentEdges.get(id) ?? []; links.push(edge); incidentEdges.set(id, links);
+    }
     const label = svg("text", { x: String((source.x + target.x) / 2), y: String((source.y + target.y) / 2 - 8), class: "edge-label" }, edge.label ?? ""); group.append(label);
+    edgeElements.set(edge.id, { line, hit, label });
   }
   for (const node of value.data.graph.nodes) {
     const location = graphEntry(scene.positions, node.id), size = graphEntry(scene.sizes, node.id);
     const element = svg("g", { transform: `translate(${location.x} ${location.y})`, class: "node" + (value.selected === node.id ? " selected" : ""), "data-memory": node.id, tabindex: "0", role: "button", "aria-label": node.label });
     element.append(svg("rect", { x: String(-size.width / 2), y: String(-size.height / 2), width: String(size.width), height: String(size.height), rx: String(Math.min(14, size.height / 2)), style: "fill:color-mix(in srgb,#" + (node.color >>> 0).toString(16).padStart(8, "0").slice(2) + " 18%,var(--surfaceContainerHigh))" }));
     size.lines.forEach((line, index) => element.append(svg("text", { x: "0", y: String((index - (size.lines.length - 1) / 2) * 14.4 + 4) }, line)));
-    group.append(element);
+    group.append(element); nodeElements.set(node.id, element);
   }
   surface.replaceChildren(group);
+  selectedNode = value.selected; selectedEdge = value.selectedEdge;
   const status = document.getElementById("status"); if (status !== null) status.textContent = value.data.items.length === 0 ? "暂无记忆" : "";
   if (changed) fit(); else paintCamera();
 };
+/** Changes selection styling without recreating geometry or losing keyboard focus. */
+function updateSelection(value: MemoryGraphDisplay): void {
+  if (selectedNode !== value.selected) {
+    if (selectedNode !== null) nodeElements.get(selectedNode)?.classList.remove("selected");
+    if (value.selected !== null) nodeElements.get(value.selected)?.classList.add("selected");
+    selectedNode = value.selected;
+  }
+  if (selectedEdge !== value.selectedEdge) {
+    if (selectedEdge !== null) edgeElements.get(selectedEdge)?.line.classList.remove("selected");
+    if (value.selectedEdge !== null) edgeElements.get(value.selectedEdge)?.line.classList.add("selected");
+    selectedEdge = value.selectedEdge;
+  }
+}
+
+/** Updates just a dragged node and its incident relationships once per frame. */
+function paintDraggedNode(id: string): void {
+  if (scene === null) return;
+  const location = scene.positions.get(id); if (!location) return;
+  nodeElements.get(id)?.setAttribute("transform", `translate(${location.x} ${location.y})`);
+  for (const edge of incidentEdges.get(id) ?? []) {
+    const elements = edgeElements.get(edge.id); if (!elements) continue;
+    const source = graphEntry(scene.positions, edge.sourceId), target = graphEntry(scene.positions, edge.targetId);
+    for (const line of [elements.line, elements.hit]) {
+      line.setAttribute("x1", String(source.x)); line.setAttribute("y1", String(source.y));
+      line.setAttribute("x2", String(target.x)); line.setAttribute("y2", String(target.y));
+    }
+    elements.label.setAttribute("x", String((source.x + target.x) / 2));
+    elements.label.setAttribute("y", String((source.y + target.y) / 2 - 8));
+  }
+}
 /** Accepts only the three camera operations emitted by native toolbar controls. */
 window.memoryGraphCamera = function memoryGraphCamera(command): void {
   if (command === "fit") { fit(); return; }
@@ -100,12 +144,16 @@ surface.addEventListener("pointermove", event => {
   } else if (dragged !== null && scene !== null && moved) {
     const position = graphEntry(scene.positions, dragged);
     scene.positions.set(dragged, { x: position.x + (current.x - previous.x) / camera.scale, y: position.y + (current.y - previous.y) / camera.scale });
-    if (display !== null) window.updateMemoryGraph(display);
+    if (!dragFrame) {
+      const id = dragged;
+      dragFrame = requestAnimationFrame(() => { dragFrame = 0; paintDraggedNode(id); });
+    }
   } else if (dragged === null) camera = { ...camera, x: camera.x + current.x - previous.x, y: camera.y + current.y - previous.y };
   pointers.set(event.pointerId, current); paintCamera();
 });
 surface.addEventListener("pointerup", event => {
   if (!moved && pointers.size === 1 && pressed !== null) void window.MemoryGraphHost.select(pressed.kind, pressed.id).catch(failure);
+  if (dragged !== null) { if (dragFrame) cancelAnimationFrame(dragFrame); dragFrame = 0; paintDraggedNode(dragged); }
   pointers.delete(event.pointerId); dragged = null; pressed = null;
   if (surface.hasPointerCapture(event.pointerId)) surface.releasePointerCapture(event.pointerId);
 });

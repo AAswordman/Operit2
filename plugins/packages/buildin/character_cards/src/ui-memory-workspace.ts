@@ -1,5 +1,5 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
-import type { Memory, MemoryGraphResult, MemoryLink } from "./model";
+import type { Memory, MemoryGraphResult, MemoryLink, MemorySearchDebug } from "./model";
 import { nativeUi, readUiJson, uiNumber, uiRequest, uiState } from "./ui-controls";
 import { renderMemoryGraph } from "./ui-memory-graph";
 import { renderMemorySettings } from "./ui-memory-settings";
@@ -12,26 +12,31 @@ type MemoryPanel = { type: "memory"; draft: MemoryDraft } | { type: "link"; draf
   | { type: "import"; strategy: "SKIP" | "UPDATE" | "CREATE_NEW"; content: string }
   | { type: "export"; content: string; name: string }
   | { type: "delete-memory"; title: string } | { type: "delete-link"; id: string }  | { type: "settings" };
-interface WorkspaceState { data: MemoryGraphResult | null; panel: MemoryPanel | null; busy: boolean; error: string; notice: string; query: string; appliedQuery: string; searchIds: string[] | null; folder: string; inspectorExpanded: boolean; selected: string | null; selectedEdge: string | null; linkSource: string | null; linking: boolean; panelSequence: number }
+interface WorkspaceState { data: MemoryGraphResult | null; panel: MemoryPanel | null; busy: boolean; error: string; notice: string; query: string; appliedQuery: string; searchIds: string[] | null; folder: string; page: number; searchResult: MemorySearchDebug | null; selected: string | null; selectedEdge: string | null; linkSource: string | null; linking: boolean; panelSequence: number }
 
-/** Keeps the exact-folder inspector list and the original search-neighbor context on the canvas. */
+export const MEMORY_GRAPH_PAGE_SIZE = 200;
+export const MEMORY_GRAPH_EDGE_LIMIT = 1000;
+
+/** Preserves retrieval rank and shows exactly the nodes admitted by both filters. */
 export function filteredMemoryGraph(data: MemoryGraphResult, folder: string, searchIds: readonly string[] | null): MemoryGraphResult {
-  const items = data.items.filter(item => (folder === "*" || (item.folderPath ?? "") === folder) && (searchIds === null || searchIds.includes(item.uuid)));
+  const byId = new Map(data.items.map(item => [item.uuid, item]));
+  const ordered = searchIds === null ? data.items : searchIds.flatMap(id => { const item = byId.get(id); return item ? [item] : []; });
+  const items = ordered.filter(item => folder === "*" || (item.folderPath ?? "") === folder);
   const ids = new Set(items.map(item => item.uuid));
-  if (searchIds !== null) {
-    const matches = new Set(ids);
-    for (const edge of data.graph.edges) {
-      if (matches.has(edge.sourceId)) ids.add(edge.targetId);
-      if (matches.has(edge.targetId)) ids.add(edge.sourceId);
-    }
-  }
   return { items, graph: { nodes: data.graph.nodes.filter(node => ids.has(node.id)), edges: data.graph.edges.filter(edge => ids.has(edge.sourceId) && ids.has(edge.targetId)) } };
+}
+
+/** Bounds native serialization, label measurement and SVG size for large libraries. */
+export function memoryGraphPage(data: MemoryGraphResult, page: number): MemoryGraphResult {
+  const items = data.items.slice(page * MEMORY_GRAPH_PAGE_SIZE, (page + 1) * MEMORY_GRAPH_PAGE_SIZE);
+  const ids = new Set(items.map(item => item.uuid));
+  return { items, graph: { nodes: data.graph.nodes.filter(node => ids.has(node.id)), edges: data.graph.edges.filter(edge => ids.has(edge.sourceId) && ids.has(edge.targetId)).slice(0, MEMORY_GRAPH_EDGE_LIMIT) } };
 }
 
 /** Provides native memory browsing, editing and tools with an optional read-only web canvas. */
 export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarget, close: () => void, instance: string): ComposeNode {
   const key = instance + ":" + target.ownerKey;
-  const { state, live, update } = uiState<WorkspaceState>(ctx, key, { data: null, panel: target.initial === "settings" ? { type: "settings" } : target.initial === "profile" ? { type: "profile", content: "", loaded: false } : null, busy: false, error: "", notice: "", query: "", appliedQuery: "", searchIds: null, folder: "*", inspectorExpanded: false, selected: null, selectedEdge: null, linkSource: null, linking: false, panelSequence: 0 });
+  const { state, live, update } = uiState<WorkspaceState>(ctx, key, { data: null, panel: target.initial === "settings" ? { type: "settings" } : target.initial === "profile" ? { type: "profile", content: "", loaded: false } : null, busy: false, error: "", notice: "", query: "", appliedQuery: "", searchIds: null, folder: "*", page: 0, searchResult: null, selected: null, selectedEdge: null, linkSource: null, linking: false, panelSequence: 0 });
   const ui = nativeUi(ctx, !state.busy), ownerKey = target.ownerKey;
   const alive = ctx.useRef(key + ":alive", true);
   ctx.useEffect(key + ":lifetime", () => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -49,7 +54,7 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
   /** Refreshes the complete graph, clearing any obsolete selection or search projection. */
   async function refresh(): Promise<void> {
     const data = await uiRequest({ action: "graph", ownerKey });
-    if (alive.current) update({ data, searchIds: null, query: "", appliedQuery: "", selected: null, selectedEdge: null, linkSource: null });
+    if (alive.current) update({ data, page: 0, searchResult: null, searchIds: null, query: "", appliedQuery: "", selected: null, selectedEdge: null, linkSource: null });
   }
   /** Loads profile content before it can be written, never saving an unread empty draft. */
   async function profile(): Promise<void> {
@@ -94,7 +99,7 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
   async function saveMemory(): Promise<void> {
     await act(async () => { const panel = live.current.panel; if (panel?.type !== "memory") return; const draft = panel.draft;
       const data = await uiRequest({ action: "saveMemory", ownerKey, ...draft, credibility: uiNumber(draft.credibility, "可信度", 0, 1), importance: uiNumber(draft.importance, "重要性", 0, 1) });
-      if (alive.current) update({ data, panel: null, searchIds: null, query: "", appliedQuery: "", selected: null, notice: "记忆已保存" });
+      if (alive.current) update({ data, panel: null, page: 0, searchResult: null, searchIds: null, query: "", appliedQuery: "", selected: null, notice: "记忆已保存" });
     });
   }
   /** Commits a complete relationship and preserves service-assigned identities. */
@@ -117,17 +122,17 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
         const draft = panel.draft, options = (state.data?.items ?? []).map(item => ({ id: item.title, label: item.title }));
         return [ui.text(draft.id === null ? "创建记忆关系" : "编辑记忆关系", true), ...(draft.id === null ? [ui.choose("link-source", "源记忆", draft.sourceTitle, options, sourceTitle => linkChange({ sourceTitle })), ui.choose("link-target", "目标记忆", draft.targetTitle, options, targetTitle => linkChange({ targetTitle }))] : [ui.text(draft.sourceTitle + " → " + draft.targetTitle)]), ui.field("link-type", "关系类型", draft.linkType, linkType => linkChange({ linkType })), ui.field("link-weight", "强度（0–1）", draft.weight, weight => linkChange({ weight })), ui.field("link-description", "描述", draft.description, description => linkChange({ description }), 3), ui.primary("link-save", "保存", saveLink)];
       }
-      case "profile": return [ui.text("用户资料 · USER.md", true), ...(panel.loaded ? [ui.field("memory-profile", "用户资料", panel.content, content => update({ panel: { ...panel, content } }), 12), ui.primary("memory-profile-save", "保存", () => act(async () => { const current = live.current.panel; if (current?.type !== "profile" || !current.loaded) throw new Error("用户资料尚未读取成功"); await uiRequest({ action: "writeUser", ownerKey, content: current.content }); if (alive.current) { if (live.current.data === null) close(); else update({ panel: null, notice: "用户资料已保存" }); } }))] : [ui.text(state.busy ? "正在读取用户资料…" : "用户资料读取失败"), ui.button("memory-profile-retry", "重试", profile)])];
+      case "profile": return [ui.text("用户资料 · USER.md", true), ...(panel.loaded ? [ui.primary("memory-profile-save", "保存", () => act(async () => { const current = live.current.panel; if (current?.type !== "profile" || !current.loaded) throw new Error("用户资料尚未读取成功"); await uiRequest({ action: "writeUser", ownerKey, content: current.content }); if (alive.current) { if (live.current.data === null) close(); else update({ panel: null, notice: "用户资料已保存" }); } }))] : [ui.text(state.busy ? "正在读取用户资料…" : "用户资料读取失败"), ui.button("memory-profile-retry", "重试", profile)])];
       case "import": return [ui.text("导入记忆 JSON", true), ui.choose("memory-import-strategy", "相同 UUID 记忆处理", panel.strategy, [{ id: "SKIP", label: "跳过" }, { id: "UPDATE", label: "更新" }, { id: "CREATE_NEW", label: "创建新记忆" }], strategy => update({ panel: { ...panel, strategy: strategy as "SKIP" | "UPDATE" | "CREATE_NEW" } })), ui.text("选择记忆库导出的 JSON 备份文件，导入完整记忆、关系、文档分块及 USER.md。导入前建议先导出备份；只修改当前记忆库。"), ui.primary("memory-import-submit", "选择 JSON 文件并导入", () => act(async () => { const current = live.current.panel; if (current?.type !== "import") return; const content = await readUiJson(ctx); if (content === null) return; const result = await uiRequest({ action: "importMemory", ownerKey, content, strategy: current.strategy }); await refresh(); if (alive.current) update({ panel: null, notice: `新增 ${result.result.newMemories} · 更新 ${result.result.updatedMemories} · 跳过 ${result.result.skippedMemories} · 关系 ${result.result.newLinks}` }); }))];
       case "export": return [ui.text("导出 JSON", true), ctx.UI.TextField({ key: "memory-export-content", label: "JSON 内容", value: panel.content, readOnly: true, onValueChange: () => {}, fillMaxWidth: true, minLines: 16, maxLines: 24 }), ui.text("包含当前记忆库的完整记录与 USER.md。点击保存文件选择保存位置。"), ui.primary("memory-export-save", "保存文件", () => act(async () => { const current = live.current.panel; if (current?.type !== "export") return; const result = await ctx.saveFile({ suggestedName: current.name, content: current.content, mimeType: "application/json", extensions: ["json"] }); if (!result.cancelled && alive.current) update({ panel: null, notice: "文件已导出" }); }))];
-      case "delete-memory": return [ui.text("确定删除记忆「" + panel.title + "」及关联关系？"), ui.primary("memory-delete-confirm", "确认删除", () => act(async () => { const data = await uiRequest({ action: "deleteMemory", ownerKey, title: panel.title }); if (alive.current) update({ data, panel: null, selected: null, selectedEdge: null, searchIds: null, notice: "记忆已删除" }); }))];
+      case "delete-memory": return [ui.text("确定删除记忆「" + panel.title + "」及关联关系？"), ui.primary("memory-delete-confirm", "确认删除", () => act(async () => { const data = await uiRequest({ action: "deleteMemory", ownerKey, title: panel.title }); if (alive.current) update({ data, panel: null, selected: null, selectedEdge: null, page: 0, searchResult: null, searchIds: null, notice: "记忆已删除" }); }))];
       case "delete-link": return [ui.text("确定删除这条记忆关系？"), ui.primary("link-delete-confirm", "确认删除", () => act(async () => { const data = await uiRequest({ action: "deleteLink", ownerKey, linkId: panel.id }); if (alive.current) update({ data, panel: null, selectedEdge: null, notice: "关系已删除" }); }))];
 
     }
   }
   /** Executes search with native controls and the production retrieval service. */
   async function search(): Promise<void> {
-    await act(async () => { const query = live.current.query.trim(); const hits = query === "" ? null : await uiRequest({ action: "searchMemory", ownerKey, query }); if (alive.current) update({ searchIds: hits?.map(item => item.uuid) ?? null, appliedQuery: query, selected: null, selectedEdge: null }); });
+    await act(async () => { const query = live.current.query.trim(); const result = query === "" ? null : await uiRequest({ action: "previewMemorySearch", ownerKey, query, folderPath: live.current.folder === "*" ? null : live.current.folder }); if (alive.current) update({ searchResult: result, searchIds: result?.candidates.map(hit => hit.memory.uuid) ?? null, appliedQuery: query, page: 0, selected: null, selectedEdge: null, linkSource: null }); });
   }
   const messages: ComposeNode[] = [];
   if (state.error !== "") messages.push(ctx.UI.Text({ key: "memory-workspace-error", text: state.error, color: ctx.MaterialTheme.colorScheme.error }));
@@ -135,8 +140,10 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
   const layers: ComposeNode[] = [];
   const direct = target.initial !== undefined && target.initial !== "browse" && state.data === null;
   if (!direct) {
-    const data = state.data, narrow = ui.size.width <= 840;
-    const projection = data === null ? null : filteredMemoryGraph(data, state.folder, state.searchIds);
+    const data = state.data;
+    const filtered = ctx.useMemo(key + ":filtered", () => data === null ? null : filteredMemoryGraph(data, state.folder, state.searchIds), [data, state.folder, state.searchIds]);
+    const page = Math.min(state.page, Math.max(0, Math.ceil((filtered?.items.length ?? 0) / MEMORY_GRAPH_PAGE_SIZE) - 1));
+    const projection = ctx.useMemo(key + ":page", () => filtered === null ? null : memoryGraphPage(filtered, page), [filtered, page]);
     const selected = data?.items.find(item => item.uuid === state.selected), edge = data?.graph.edges.find(item => item.id === state.selectedEdge);
     const header = ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 8, spacing: 8, verticalAlignment: "center" }, [
       ui.iconButton("memory-workspace-back", "关闭", "ArrowBack", close), ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: "记忆图谱", fontSize: 18, fontWeight: "600" }), ctx.UI.Text({ text: target.name, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant, maxLines: 1, overflow: "ellipsis" })]),
@@ -150,10 +157,11 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
     let body: ComposeNode;
     if (data === null || projection === null) body = ui.list("memory-loading", [...messages, ui.text(state.busy ? "正在读取记忆图谱…" : "记忆图谱未加载成功，未开放写入。"), ui.button("memory-load-retry", "重试", () => act(refresh))]);
     else {
-      const folders = [...new Set(["", ...data.items.map(item => item.folderPath ?? "")])].sort();
+      const folders = ctx.useMemo(key + ":folders", () => [...new Set(["", ...data.items.map(item => item.folderPath ?? "")])].sort(), [data]);
       const filters = ctx.UI.Column({ fillMaxWidth: true, paddingHorizontal: 12, paddingBottom: 10, spacing: 8 }, [
-        ctx.UI.Row({ fillMaxWidth: true, height: 40, verticalAlignment: "center", spacing: 4, modifier: ctx.Modifier.clip({ cornerRadius: 12 }).background(ctx.MaterialTheme.colorScheme.surfaceContainerHigh) }, [ui.iconButton("memory-search", "搜索", "Search", search), ctx.UI.TextField({ key: "memory-search-query", placeholder: "搜索记忆…", decoration: { borderless: true, isDense: true, contentPadding: { horizontal: 4, vertical: 8 } }, style: { fontSize: 14 }, value: state.query, readOnly: state.busy, singleLine: true, weight: 1, onValueChange: query => update({ query }) }), ui.iconButton("memory-search-clear", "清除搜索", "Close", () => update({ query: "", appliedQuery: "", searchIds: null }))]),
-        ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12 }, [ui.choose("memory-folder-filter", "文件夹", state.folder, [{ id: "*", label: "全部文件夹" }, ...folders.map(folder => ({ id: folder, label: folder === "" ? "根目录" : folder }))], folder => update({ folder, selected: null, selectedEdge: null }), true), ctx.UI.FilterChip({ key: "memory-graph-link-mode", selected: state.linking, enabled: !state.busy && data.items.length > 1, label: ctx.UI.Text({ text: "链接" }), onClick: () => update({ linking: !live.current.linking, linkSource: null }) })]),
+        ctx.UI.Row({ fillMaxWidth: true, height: 40, verticalAlignment: "center", spacing: 4, modifier: ctx.Modifier.clip({ cornerRadius: 12 }).background(ctx.MaterialTheme.colorScheme.surfaceContainerHigh) }, [ui.iconButton("memory-search", "搜索", "Search", search), ctx.UI.TextField({ key: "memory-search-query", placeholder: "搜索记忆…", decoration: { borderless: true, isDense: true, contentPadding: { horizontal: 4, vertical: 8 } }, style: { fontSize: 14 }, value: state.query, readOnly: state.busy, singleLine: true, imeAction: "search", weight: 1, onValueChange: query => update({ query }), onSubmitted: query => { if (live.current.busy) return; update({ query }); return search(); } }), ui.iconButton("memory-search-clear", "清除搜索", "Close", () => update({ query: "", appliedQuery: "", searchIds: null, searchResult: null, page: 0, selected: null, selectedEdge: null, linkSource: null }))]),
+        ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12 }, [ui.choose("memory-folder-filter", "文件夹", state.folder, [{ id: "*", label: "全部文件夹" }, ...folders.map(folder => ({ id: folder, label: folder === "" ? "根目录" : folder }))], folder => { update({ folder, page: 0, selected: null, selectedEdge: null, linkSource: null }); if (live.current.appliedQuery !== "") void search(); }, true), ctx.UI.FilterChip({ key: "memory-graph-link-mode", selected: state.linking, enabled: !state.busy && data.items.length > 1, label: ctx.UI.Text({ text: "链接" }), onClick: () => update({ linking: !live.current.linking, linkSource: null }) })]),
+        ...(state.searchResult ? [ctx.UI.Text({ text: `模拟聊天检索 · 阈值 ${state.searchResult.relevanceThreshold} · 使用记忆注入条数限制`, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })] : []),
         ...(state.linking ? [ui.text(state.linkSource === null ? "选择两条记忆以建立链接 · 请选择源记忆" : "请选择目标记忆")] : []),
         ...(state.panel === null ? messages : []),
       ]);
@@ -162,18 +170,27 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
         details.push(ui.text("记忆详情"), ui.text(selected.title, true), ui.text(`${selected.contentType === "text/plain" ? "文本" : selected.contentType} · ${selected.source === "manual" ? "手动记录" : selected.source} · 可信度 ${selected.credibility.toFixed(2)} · 重要性 ${selected.importance.toFixed(2)}`), ui.text(selected.content), ui.actions([ui.button("memory-edit-selected", "编辑", () => editMemory(selected)), ui.button("memory-delete-selected", "删除", () => open({ type: "delete-memory", title: selected.title }))]));
         for (const relation of data.graph.edges.filter(item => item.sourceId === selected.uuid || item.targetId === selected.uuid)) details.push(ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center" }, [ctx.UI.Text({ text: `${relation.label ?? ""} · ${relation.weight.toFixed(2)}`, weight: 1 }), ui.iconButton("link-delete:" + relation.id, "删除关系", "DeleteOutline", () => open({ type: "delete-link", id: relation.id }))]));
       } else if (edge !== undefined) details.push(ui.text("关系详情"), ui.text("记忆关系", true), ui.text(edge.label ?? ""), ui.text("强度 " + edge.weight.toFixed(2)), ui.text(String(edge.metadata.description ?? "")), ui.actions([ui.button("link-edit-selected", "编辑关系", () => editLink(edge.id)), ui.button("link-delete-selected", "删除关系", () => open({ type: "delete-link", id: edge.id }))]));
-      const items = projection.items.map(item => ctx.UI.Row({ key: "memory-select:" + item.uuid, fillMaxWidth: true, verticalAlignment: "center", spacing: 10, padding: 10, onClick: () => select("memory", item.uuid) }, [ctx.UI.Icon({ name: selected?.uuid === item.uuid ? "Check" : "PsychologyOutlined", size: 22 }), ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: item.title, fontSize: 13, fontWeight: "500" }), ctx.UI.Text({ text: item.content.slice(0, 70), fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant, maxLines: 2, overflow: "ellipsis" })])]));
-      const inspector = ctx.UI.Column({ key: "memory-inspector", ...(narrow ? { weight: state.inspectorExpanded ? 1 : 2 } : { width: 304, fillMaxHeight: true }), modifier: ctx.Modifier.background(ctx.MaterialTheme.colorScheme.surfaceContainer) }, [ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 16, paddingVertical: 8, verticalAlignment: "center" }, [ctx.UI.Icon({ name: "PsychologyOutlined", size: 18 }), ctx.UI.Text({ text: `记忆库 ${projection.items.length}`, fontSize: 14, fontWeight: "600", weight: 1 }), ...(narrow ? [ui.button("memory-inspector-toggle", state.inspectorExpanded ? "收起" : "展开", () => update({ inspectorExpanded: !live.current.inspectorExpanded }))] : [])]), ui.list("memory-inspector-list", [...details, ...items, ...(items.length === 0 ? [ui.text("没有匹配的记忆")] : [])])]);
-      const canvas = ctx.UI.Box({ key: "memory-canvas", weight: narrow ? 3 : 1, fillMaxWidth: narrow, fillMaxHeight: !narrow }, [
-        ...(state.panel === null ? [renderMemoryGraph(ctx, key + ":canvas", { data: projection, selected: state.linkSource ?? state.selected, selectedEdge: state.selectedEdge, theme: ctx.Theme.getCurrent() }, select, error => update({ error }))] : []),
-        ctx.UI.Box({ modifier: ctx.Modifier.align("bottomEnd"), padding: 16 }, ctx.UI.FloatingActionButton({ key: "memory-create", icon: "Add", text: "创建记忆", onClick: () => editMemory(null) })),
+      const scores = new Map(state.searchResult?.candidates.map(hit => [hit.memory.uuid, hit]) ?? []);
+      const items = projection.items.map((item, index) => {
+        const hit = scores.get(item.uuid);
+        return ctx.UI.Row({ key: "memory-select:" + item.uuid, fillMaxWidth: true, verticalAlignment: "center", spacing: 10, padding: 10, onClick: () => select("memory", item.uuid) }, [ctx.UI.Icon({ name: selected?.uuid === item.uuid ? "Check" : "PsychologyOutlined", size: 22 }), ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: (hit ? `${index + 1}. ` : "") + item.title, fontSize: 13, fontWeight: "500" }), ctx.UI.Text({ text: item.content.slice(0, 160), fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant, maxLines: 2, overflow: "ellipsis" }), ...(hit ? [ctx.UI.Text({ text: `相关性 ${hit.score.toFixed(4)} · 关键词 ${hit.keywordScore.toFixed(4)} · 标签 ${hit.tagScore.toFixed(4)} · 语义 ${hit.vectorScore.toFixed(4)} · 关系 ${hit.edgeScore.toFixed(4)}`, fontSize: 11, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })] : [])])]);
+      });
+      const total = filtered!.items.length, pages = Math.max(1, Math.ceil(total / MEMORY_GRAPH_PAGE_SIZE));
+      function changePage(next: number): void { update({ page: next, selected: null, selectedEdge: null, linkSource: null }); }
+      const inspector = ctx.UI.Column({ key: "memory-inspector", weight: 2, fillMaxWidth: true, modifier: ctx.Modifier.background(ctx.MaterialTheme.colorScheme.surfaceContainer) }, [
+        ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 16, paddingVertical: 6, verticalAlignment: "center", spacing: 6 }, [ctx.UI.Text({ text: state.searchResult ? `搜索结果 ${total} · 按相关性排序` : `记忆库 ${total}`, fontSize: 14, fontWeight: "600", weight: 1 }), ...(pages > 1 ? [ui.button("memory-page-previous", "上一页", () => changePage(page - 1), page > 0), ui.text(`${page + 1}/${pages}`), ui.button("memory-page-next", "下一页", () => changePage(page + 1), page + 1 < pages)] : [])]),
+        ...(total > MEMORY_GRAPH_PAGE_SIZE ? [ctx.UI.Text({ text: `图谱与列表显示第 ${page * MEMORY_GRAPH_PAGE_SIZE + 1}–${Math.min(total, (page + 1) * MEMORY_GRAPH_PAGE_SIZE)} 条，切换页码查看更多记忆`, fontSize: 12, paddingHorizontal: 16 })] : []),
+        ...(projection.graph.edges.length === MEMORY_GRAPH_EDGE_LIMIT ? [ui.text(`当前页最多展示 ${MEMORY_GRAPH_EDGE_LIMIT} 条关系；选择记忆可查看其全部关系`)] : []),
+        ui.list("memory-inspector-list", [...details, ...items, ...(items.length === 0 ? [ui.text(state.searchResult ? "没有达到聊天检索阈值的记忆" : "没有匹配的记忆")] : [])]),
       ]);
-      body = ctx.UI.Column({ fillMaxSize: true }, [filters, ctx.UI.Box({ weight: 1, fillMaxWidth: true }, [
-        (narrow ? ctx.UI.Column : ctx.UI.Row)({ fillMaxSize: true }, [...(narrow && state.inspectorExpanded ? [] : [canvas]), inspector]),
-
-      ])]);
+      const canvas = ctx.UI.Box({ key: "memory-canvas", weight: 3, fillMaxWidth: true }, [
+        ...(state.panel === null ? [renderMemoryGraph(ctx, key + ":canvas", { data: projection, selected: state.linkSource ?? state.selected, selectedEdge: state.selectedEdge, theme: ctx.Theme.getCurrent() }, select, error => update({ error }))] : []),
+        ctx.UI.Box({ modifier: ctx.Modifier.align("bottomEnd"), padding: 16 }, ctx.UI.FloatingActionButton({ key: "memory-create", shape: { cornerRadius: 16 }, icon: "Add", text: "创建记忆", onClick: () => editMemory(null) })),
+      ]);
+      body = ctx.UI.Column({ fillMaxSize: true }, [filters, ...(state.busy ? [ctx.UI.LinearProgressIndicator({ fillMaxWidth: true })] : []), canvas, inspector]);
     }
-    layers.push(ui.dialog("memory-graph-dialog", "记忆图谱", body, [], close, "graph", undefined, header));
+    layers.push(ctx.UI.Surface({ key: "memory-graph-page", fillMaxSize: true, color: ctx.MaterialTheme.colorScheme.surface }, ctx.UI.Column({ fillMaxSize: true }, [header, ctx.UI.Box({ weight: 1, fillMaxWidth: true }, body)])));
+
   }
   if (state.panel?.type === "settings") layers.push(renderMemorySettings(ctx, target, back, key + ":settings:" + state.panelSequence));
   else if (state.panel !== null) {
@@ -181,7 +198,16 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
     const submit = fields.pop()!;
     const title = panel.type === "memory" ? panel.draft.originalTitle === null ? "创建记忆" : "编辑记忆" : panel.type === "link" ? panel.draft.id === null ? "创建记忆关系" : "编辑记忆关系" : panel.type === "profile" ? "用户资料 · USER.md" : panel.type === "import" ? "导入记忆 JSON" : panel.type === "export" ? "导出 JSON" : panel.type === "delete-memory" ? "删除记忆" : "删除关系";
     const confirmation = panel.type === "delete-memory" || panel.type === "delete-link";
-    layers.push(ui.dialog("memory-form-dialog", title, ui.list("memory-native-form", [...messages, ...(confirmation && titleNode ? [titleNode] : []), ...fields]), [ui.button("memory-form-cancel", "取消", back), submit], back, panel.type === "memory" || panel.type === "profile" || panel.type === "export" ? "large" : confirmation || panel.type === "import" ? "compact" : "normal", undefined, undefined, panel.type === "import" ? 360 : undefined));
+    const formBody = panel.type === "profile" && panel.loaded
+      ? ctx.UI.Column({ key: "memory-profile-body", fillMaxSize: true, paddingHorizontal: 18, paddingBottom: 8, spacing: 8 }, [
+        ...messages,
+        ctx.UI.TextField({ key: "memory-profile", label: "用户资料", value: panel.content, readOnly: state.busy, singleLine: false, fillMaxSize: true, weight: 1,
+          decoration: { filled: false, contentPadding: { horizontal: 12, vertical: 14 }, borderColor: ctx.MaterialTheme.colorScheme.outline, cornerRadius: 8 },
+          onValueChange: content => { const current = live.current.panel; if (!live.current.busy && current?.type === "profile") update({ panel: { ...current, content } }); },
+        }),
+      ])
+      : ui.list("memory-native-form", [...messages, ...(confirmation && titleNode ? [titleNode] : []), ...fields]);
+    layers.push(ui.dialog("memory-form-dialog", title, formBody, [ui.button("memory-form-cancel", "取消", back), submit], back, panel.type === "memory" || panel.type === "profile" || panel.type === "export" ? "large" : confirmation || panel.type === "import" ? "compact" : "normal", undefined, undefined, panel.type === "import" ? 360 : undefined));
   }
-  return ctx.UI.Box({ key: "memory-workspace-root", fillMaxSize: true, onLoad: load }, layers);
+  return ctx.UI.Box({ key: "memory-workspace-root", fillMaxSize: true, modifier: ui.measure, onLoad: load }, layers);
 }

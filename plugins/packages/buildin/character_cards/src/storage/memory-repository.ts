@@ -143,11 +143,11 @@ export class DatabaseMemoryRepository {
   }
 
   /** Returns bounded score explanations from the same database query used by recall. */
-  async searchMemoryDebug(options: MemorySearchOptions, config: MemorySearchConfig): Promise<MemorySearchDebug> {
+  async searchMemoryDebug(options: MemorySearchOptions, config: MemorySearchConfig, includeBelowThreshold = true): Promise<MemorySearchDebug> {
     assertSearchOptions(options); assertSearchConfig(config);
     const owner = await this.findOwner(options.ownerKey);
     if (owner === null) return { query: options.query, config, relevanceThreshold: options.relevanceThreshold ?? 0, memoriesInScopeCount: 0, candidates: [], excludedBySnapshotCount: 0 };
-    return (await searchMemoryDatabase(this.memoryDatabase, owner.value.settings, options, config, true)).result;
+    return (await searchMemoryDatabase(this.memoryDatabase, owner.value.settings, options, config, includeBelowThreshold)).result;
   }
 
   /** Lists an explicitly requested owner library without loading other owners. */
