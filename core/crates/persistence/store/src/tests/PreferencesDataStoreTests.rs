@@ -3489,3 +3489,65 @@ fn preferences_concurrent_first_writes_share_one_host_key() {
         assert_eq!(encryption.decrypt(&path, &bytes).unwrap(), b"correct value");
     }
 }
+
+/// A replay whose archived history the durable owner state already covers
+/// must not re-enter migration. Sealed remote originals that predate a runtime
+/// upgrade have no covering initialization in the journal, so replaying them
+/// used to re-migrate them on every projection and fail with "Missing source
+/// baseline" once the retained sources stopped certifying them.
+#[test]
+fn replay_skips_remigration_when_owner_state_covers_history() {
+    use std::cell::Cell;
+    thread_local! { static MIGRATIONS: Cell<usize> = const { Cell::new(0) }; }
+    let count = || MIGRATIONS.with(|calls| calls.get());
+    // References only the thread-local, so the schema opener stays a fn pointer.
+    fn counted_migrations(version: u32, _preferences: &mut Preferences) -> Result<(), PreferencesDataStoreError> {
+        let _ = version;
+        MIGRATIONS.with(|calls| calls.set(calls.get() + 1));
+        Ok(())
+    }
+    let path = "runtime/config/preferences/state-seeded-replay.preferences.json";
+    let host = Arc::new(MemoryStorageHost::default());
+    // Format-8 era: a peer at 8 applies a format-8 original natively and seals
+    // it. Remote originals are never compacted out of the replay history.
+    let mut old = nativePreferenceOperation(path, vec![("provider_p", json!({"name":"FromPeer"}))], 1);
+    old.payload["schemaVersion"] = json!(8);
+    let era_schema = crate::PreferenceMerge::PreferenceMergeSchema {
+        stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false,
+            move |storage, path| PreferencesDataStore::newWithStorage(storage, path)
+                .withSchema(8, counted_migrations))],
+    };
+    crate::PreferenceMerge::applyOperations(host.clone(), &era_schema, &[], &[old.clone()], |_, _| true).unwrap();
+    assert!(SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH)
+        .preferenceHistory().unwrap().iter().any(|op| op.opId == old.opId),
+        "sealed original stays in the replay history");
+
+    // The runtime upgrade to 9 migrates the owner state in place; no
+    // replacement initialization covers the sealed original.
+    let upgraded_schema = crate::PreferenceMerge::PreferenceMergeSchema {
+        stores: vec![crate::PreferenceMerge::PreferenceMergeStore::values(path, false,
+            move |storage, path| PreferencesDataStore::newWithStorage(storage, path)
+                .withSchema(9, counted_migrations))],
+    };
+
+    // The first replay performs the one-time file/owner-state format upgrade.
+    crate::PreferenceMerge::applyOperations(host.clone(), &upgraded_schema, &[old.clone()], &[], |_, _| true).unwrap();
+
+    // Current-format edits still merge on top of the state-seeded replay and
+    // persist the upgraded file.
+    let mut new = nativePreferenceOperation(path, vec![("provider_p", json!({"name":"Current"}))], 2);
+    new.payload["schemaVersion"] = json!(9);
+    crate::PreferenceMerge::applyOperations(host.clone(), &upgraded_schema, &[], &[new], |_, _| true).unwrap();
+
+    // A steady-state replay must not re-enter migration for covered history:
+    // the durable owner state already absorbed its effect.
+    let migrations_before = count();
+    crate::PreferenceMerge::applyOperations(host.clone(), &upgraded_schema, &[old.clone()], &[], |_, _| true).unwrap();
+    assert_eq!(count(), migrations_before, "covered history must not re-enter migration during replay");
+    assert!(SyncOperationStore::new(host.clone(), RUNTIME_SYNC_DIR_PATH)
+        .preferenceHistory().unwrap().iter().any(|op| op.opId == old.opId),
+        "coverage through the owner state keeps the receipt history intact");
+    let value = PreferencesDataStore::newWithStorage(host.clone(), path).withSchema(9, counted_migrations)
+        .data().unwrap().get(&stringPreferencesKey("provider_p")).cloned();
+    assert_eq!(value, Some(json!({"name":"Current"})));
+}
