@@ -9,6 +9,15 @@ namespace webview_all_windows {
 inline LRESULT CALLBACK FlutterViewFocusProc(
     HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam, UINT_PTR subclass_id,
     DWORD_PTR) {
+  if (message == WM_LBUTTONDOWN || message == WM_RBUTTONDOWN ||
+      message == WM_MBUTTONDOWN || message == WM_XBUTTONDOWN ||
+      message == WM_POINTERDOWN) {
+    // Composition WebViews receive forwarded pointer events, while the HWND
+    // receiving this click is Flutter's. Reclaim keyboard/IME synchronously:
+    // Dart's focus node may already be focused and emit no focus change.
+    const HWND current = GetFocus();
+    if (IsChild(hwnd, current)) SetFocus(hwnd);
+  }
   if (message == WM_KILLFOCUS &&
       IsChild(hwnd, reinterpret_cast<HWND>(wparam))) {
     // Flutter must retain its focus scope while WebView2 owns keyboard input.

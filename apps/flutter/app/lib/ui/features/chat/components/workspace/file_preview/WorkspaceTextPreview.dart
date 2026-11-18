@@ -55,7 +55,6 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
   final CodeEditorScrollController _previewScroll =
       CodeEditorScrollController();
   GlobalKey<CodeEditorState> _editorKey = GlobalKey<CodeEditorState>();
-  final GlobalKey _previewKey = GlobalKey();
   final _viewportKey = GlobalKey<CodeEditorState>();
   bool _showMarkdown = false;
 
@@ -156,6 +155,24 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
     setState(() {
       _showMarkdown = !_showMarkdown;
     });
+  }
+
+  /// Keeps the preview's link handler stable while its viewport zooms.
+  void _openMarkdownLink(String url) {
+    final path = markdownFileLinkPath(url);
+    if (path == null) {
+      widget.onOpenBrowser(url: url);
+      return;
+    }
+    final file = widget.tab.absolutePath ?? widget.tab.filePath!;
+    final separator = file.lastIndexOf('/');
+    final base = separator < 0 ? null : file.substring(0, separator + 1);
+    openMarkdownFileLink(
+      url,
+      null,
+      basePath: base,
+      onOpenFile: MarkdownLinkScope.maybeOf(context)?.onOpenFile,
+    );
   }
 
   /// Finds the full-document native input client retained by this editor.
@@ -425,42 +442,18 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
                           readOnly: true,
                           panEnabled: false,
                           wrapToViewport: false,
-                          contentBuilder: (context) => SingleChildScrollView(
-                            key: _previewKey,
-                            controller: _previewScroll,
-                            physics: CodeEditorViewportScope.maybeOf(
+                          contentBuilder: (context) => StreamMarkdownRenderer(
+                            scrollController: _previewScroll,
+                            scrollPhysics: CodeEditorViewportScope.maybeOf(
                               context,
                             )?.physics,
-                            padding: const EdgeInsets.all(12),
-                            child: StreamMarkdownRenderer(
-                              content: _document.text,
-                              isStreaming: false,
-                              textColor: theme.colorScheme.onSurface,
-                              backgroundColor: Colors.transparent,
-                              onLinkClick: (url) {
-                                final path = markdownFileLinkPath(url);
-                                if (path == null) {
-                                  widget.onOpenBrowser(url: url);
-                                  return;
-                                }
-                                final file =
-                                    widget.tab.absolutePath ??
-                                    widget.tab.filePath!;
-                                final separator = file.lastIndexOf('/');
-                                final base = separator < 0
-                                    ? null
-                                    : file.substring(0, separator + 1);
-                                openMarkdownFileLink(
-                                  url,
-                                  null,
-                                  basePath: base,
-                                  onOpenFile: MarkdownLinkScope.maybeOf(
-                                    context,
-                                  )?.onOpenFile,
-                                );
-                              },
-                              splitMarkdownContent: widget.splitMarkdownContent,
-                            ),
+                            scrollPadding: const EdgeInsets.all(12),
+                            content: _document.text,
+                            isStreaming: false,
+                            textColor: theme.colorScheme.onSurface,
+                            backgroundColor: Colors.transparent,
+                            onLinkClick: _openMarkdownLink,
+                            splitMarkdownContent: widget.splitMarkdownContent,
                           ),
                         )
                       else

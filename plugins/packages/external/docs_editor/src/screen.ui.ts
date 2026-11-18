@@ -33,7 +33,27 @@ export default function screen(ctx: ComposeDslContext): ComposeNode {
     let writing = false;
     let commandInFlight = false;
     let sequence = 0;
+    const quotedRequests = new Set<string>();
     let unregister: (() => void) | undefined;
+    async function readWorkingCopy(): Promise<string> {
+      const file = await Tools.Files.readBinary(path);
+      if (!active) throw new Error(locale.startsWith("zh") ? "文档已关闭，请重新打开。" : "The document was closed. Reopen it.");
+      if (!file || typeof file.contentBase64 !== "string") {
+        const failure = file as unknown as { error?: string; details?: string; message?: string } | string | null;
+        const details = typeof failure === "string" ? failure : failure?.error || failure?.details || failure?.message;
+        throw new Error(locale.startsWith("zh")
+          ? `无法读取文档 ${input!.name}：${details || "未返回文件内容，请检查文件是否存在及读取权限。"}`
+          : `Could not read ${input!.name}: ${details || "No file content returned. Check that the file exists and is readable."}`);
+      }
+      if (file.size > maxBytes || file.contentBase64.length > maxBase64) {
+        const size = (file.size / 1024 / 1024).toFixed(1);
+        throw new Error(locale.startsWith("zh")
+          ? `文档大小为 ${size} MiB，超过 128 MiB 限制。`
+          : `The document is ${size} MiB; the limit is 128 MiB.`);
+      }
+      if (!file.contentBase64.length) throw new Error(locale.startsWith("zh") ? "文档为空，请先写入文件内容再打开。" : "The document is empty. Write the file before opening it.");
+      return file.contentBase64;
+    }
     lifecycle.current.stop = () => {
       active = false;
       original = undefined;
@@ -69,9 +89,7 @@ export default function screen(ctx: ComposeDslContext): ComposeNode {
       });
       controller.addJavascriptInterface("OfficeHost", {
         async bootstrap() {
-          const file = await Tools.Files.readBinary(path);
-          if (!active || typeof file.contentBase64 !== "string" || file.size > maxBytes || file.contentBase64.length > maxBase64) throw new Error("Could not open file (maximum 24 MiB)");
-          original = file.contentBase64;
+          original = await readWorkingCopy();
           return { info, locale, length: original.length, chunkSize };
         },
         readPart(...args: unknown[]) {
@@ -106,8 +124,8 @@ export default function screen(ctx: ComposeDslContext): ComposeNode {
           pending = undefined;
           writing = true;
           try {
-            const current = await Tools.Files.readBinary(path);
-            if (!active || current.contentBase64 !== original) throw new Error("The workspace file changed outside this editor. Reopen it before saving.");
+            const current = await readWorkingCopy();
+            if (current !== original) throw new Error("The workspace file changed outside this editor. Reopen it before saving.");
             const result = await Tools.Files.writeBinary(path, snapshot);
             if (!result.successful) throw new Error(result.details || "Could not save workspace file");
             original = snapshot;
@@ -117,8 +135,14 @@ export default function screen(ctx: ComposeDslContext): ComposeNode {
           }
         },
         quote(...args: unknown[]) {
-          const value = Array.isArray(args[0]) ? args[0][0] : undefined;
+          const [value, requestId] = Array.isArray(args[0]) ? args[0] : [];
           if (!active || typeof value !== "string" || value.length > 12000 || !value.trim()) return null;
+          // A bridge retry must not attach the same explicit quote twice.
+          if (typeof requestId === "string") {
+            if (quotedRequests.has(requestId)) return null;
+            quotedRequests.add(requestId);
+            if (quotedRequests.size > 128) quotedRequests.delete(quotedRequests.values().next().value!);
+          }
           return { workspaceFileAction: "quote", text: value };
         },
         dirty(...args: unknown[]) {

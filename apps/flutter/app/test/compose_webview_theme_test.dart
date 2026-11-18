@@ -12,6 +12,8 @@ import 'package:webview_all/webview_all.dart';
 import 'package:webview_all_linux/webview_all_linux.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
+import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebViewBridgeRuntime.dart'
+    show composeDslWebViewBridgeChannelName;
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 
@@ -25,6 +27,122 @@ void main() {
   test('Linux registers into the shared browser interface', () {
     LinuxWebViewPlatform.registerWith();
     expect(WebViewPlatform.instance, isA<LinuxWebViewPlatform>());
+  });
+
+  testWidgets('one Office quote adds exactly one draft attachment', (
+    tester,
+  ) async {
+    final previousPlatform = WebViewPlatform.instance;
+    final platform = _ThemeTestPlatform();
+    WebViewPlatform.instance = platform;
+    if (previousPlatform != null) {
+      addTearDown(() => WebViewPlatform.instance = previousPlatform);
+    }
+    const themeChannel = MethodChannel('operit/webview_theme');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      themeChannel,
+      (_) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        themeChannel,
+        null,
+      ),
+    );
+    final drafts = <String>[];
+    final calls = <String>[];
+    void attach(Object? result) {
+      if (result case {
+        'workspaceFileAction': 'quote',
+        'text': final String text,
+      }) {
+        drafts.add(text);
+      }
+    }
+
+    Future<Object?> execute(String id, [Object? payload]) async {
+      calls.add(id);
+      return {'workspaceFileAction': 'quote', 'text': (payload as List).first};
+    }
+
+    final host = ComposeDslWebViewHostContext(
+      packageName: 'com.operit.office',
+      routeInstanceId: 'office',
+      executionContextKey: 'office-quote-test',
+      dispatchAction: execute,
+      runtimeOptionsProvider: () => {},
+      onActionResultDelivered: attach,
+    );
+    late VoidCallback dispose;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: buildComposeProgramLayoutForTest(
+            update: composeTestTransaction(
+              reset: true,
+              revision: 1,
+              rootInstanceId: 'office',
+              instances: [
+                composeTestInstance(
+                  id: 'office',
+                  nodeType: 'WebView',
+                  props: {
+                    'html': '<html><body>Office</body></html>',
+                    'controller': {
+                      '__composeWebViewController': true,
+                      'key': 'office',
+                    },
+                  },
+                ),
+              ],
+            ),
+            hostContext: host,
+            // Native controls notify directly; WebView RPC notifies after its response.
+            onAction: (id, [payload]) async {
+              final result = await execute(id, payload);
+              attach(result);
+              return result;
+            },
+            registerDispose: (callback) => dispose = callback,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    ComposeDslWebViewHostRegistry.registerJavascriptInterface(
+      executionContextKey: host.executionContextKey,
+      controllerKey: 'office',
+      interfaceName: 'OfficeHost',
+      methodActionIds: {'quote': 'office:quote'},
+    );
+    final bridge =
+        platform.controller.channels[composeDslWebViewBridgeChannelName]!;
+    for (var click = 1; click <= 2; click++) {
+      bridge.onMessageReceived(
+        JavaScriptMessage(
+          message: jsonEncode({
+            'id': 'quote-$click',
+            'type': 'invoke',
+            'payload': {
+              'interfaceName': 'OfficeHost',
+              'methodName': 'quote',
+              'args': ['Selected Word text', 'quote-$click'],
+            },
+          }),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(calls, List.filled(click, 'office:quote'));
+      expect(
+        drafts,
+        List.filled(click, 'Selected Word text'),
+        reason: 'each explicit click must append only one draft attachment',
+      );
+    }
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+    dispose();
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(
@@ -570,6 +688,7 @@ class _ThemeTestController extends PlatformWebViewController {
   WebViewLocalResourceHandler? resourceHandler;
   String? html;
   String? htmlBaseUrl;
+  final channels = <String, JavaScriptChannelParams>{};
 
   /// Exposes the shared resource-handler contract without creating a native browser.
   @override
@@ -637,8 +756,10 @@ class _ThemeTestController extends PlatformWebViewController {
 
   /// Accepts the page bridge channel.
   @override
-  Future<void> addJavaScriptChannel(JavaScriptChannelParams params) =>
-      channelRegistration;
+  Future<void> addJavaScriptChannel(JavaScriptChannelParams params) {
+    channels[params.name] = params;
+    return channelRegistration;
+  }
 
   /// Accepts console observation.
   @override

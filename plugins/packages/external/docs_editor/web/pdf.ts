@@ -1,4 +1,4 @@
-import EmbedPDF, { PdfAnnotationIcon, PdfAnnotationSubtype, type AnnotationPlugin, type DocumentManagerPlugin, type ExportPlugin, type FormPlugin, type SelectionPlugin } from '@embedpdf/snippet';
+import EmbedPDF, { PdfAnnotationIcon, PdfAnnotationSubtype, ZoomMode, type ZoomPlugin, type AnnotationPlugin, type DocumentManagerPlugin, type ExportPlugin, type FormPlugin, type SelectionPlugin } from '@embedpdf/snippet';
 import { natural, text } from '../src/protocol';
 import { pageText, type Editor, type EditorOptions } from './editor';
 
@@ -21,6 +21,7 @@ export async function mountPdf(options: EditorOptions): Promise<Editor> {
   const textSelection = selectionApi.forDocument(document.id);
   const annotation = annotations.forDocument(document.id);
   const save = exporter.forDocument(document.id);
+  const zoom = registry.getPlugin<ZoomPlugin>('zoom')?.provides().forDocument(document.id);
   annotation.onAnnotationEvent(event => { if (event.type !== 'loaded' && !event.committed) options.changed(); });
   form?.forDocument(document.id).onFieldValueChange(options.changed);
   async function selection() {
@@ -28,6 +29,11 @@ export async function mountPdf(options: EditorOptions): Promise<Editor> {
     return (await textSelection.getSelectedText().toPromise()).join('\n');
   }
   return {
+    zoom: zoom && {
+      get: () => zoom.getState().currentZoomLevel * 100,
+      set: percent => zoom.requestZoom(percent / 100),
+      fit: () => zoom.requestZoom(ZoomMode.FitWidth),
+    },
     selection,
     async snapshot() {
       await annotation.commit().toPromise();

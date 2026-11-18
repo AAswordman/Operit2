@@ -17,6 +17,7 @@ export async function mountDocx(options: EditorOptions): Promise<Editor> {
       selector: options.root,
       documents: [{ id: options.info.id, type: 'docx', data: new File([options.bytes], options.info.name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }) }],
       documentMode: 'editing', contained: true, telemetry: { enabled: false },
+      zoom: { mode: 'fit-width', fitWidth: { min: 10, max: 100, padding: 24 } },
       user: { name: 'Operit', email: 'workspace@operit.local' },
       toolbar: '#toolbar',
       onReady: () => resolve(),
@@ -35,6 +36,11 @@ export async function mountDocx(options: EditorOptions): Promise<Editor> {
     return (await api().selection.current({ includeText: true })).text ?? '';
   }
   return {
+    zoom: {
+      get: () => instance.getZoom(),
+      set: percent => instance.setZoom(percent),
+      fit: () => instance.setZoomMode('fit-width'),
+    },
     selection, snapshot,
     async read(section, offset) {
       if (section === 'body') return pageText(await api().getText({}), offset);

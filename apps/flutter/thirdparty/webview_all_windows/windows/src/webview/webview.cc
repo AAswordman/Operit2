@@ -1333,6 +1333,7 @@ void Webview::SetPointerUpdate(int32_t pointer,
     event = COREWEBVIEW2_POINTER_EVENT_KIND_ACTIVATE;
     break;
   case WebviewPointerEventKind::Down:
+    SetNativeFocus(true);
     event = COREWEBVIEW2_POINTER_EVENT_KIND_DOWN;
     pointerFlags =
         POINTER_FLAG_DOWN | POINTER_FLAG_INRANGE | POINTER_FLAG_INCONTACT;
@@ -1389,6 +1390,10 @@ void Webview::SetPointerButtonState(WebviewPointerButton button, bool is_down) {
   if (!IsValid()) {
     return;
   }
+  // The Flutter HWND reclaims focus before hit testing every click. Transfer it
+  // back only when that click is actually forwarded to this browser, even if
+  // Flutter's existing WebView FocusNode did not change.
+  if (is_down && button != WebviewPointerButton::None) SetNativeFocus(true);
 
   COREWEBVIEW2_MOUSE_EVENT_KIND kind;
   switch (button) {

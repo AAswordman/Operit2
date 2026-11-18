@@ -5,6 +5,7 @@ import 'package:flutter_math_fork/flutter_math.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/common/components/RetainedPage.dart';
 import 'package:operit2/ui/common/markdown/EnhancedTableBlock.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
@@ -12,6 +13,70 @@ import 'support/semantic_markdown_fixture.dart';
 
 /// Verifies table sizing with indivisible math and wrapping prose.
 void main() {
+  testWidgets(
+    'table parsing and shape changes survive page sleep and wake',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final ready = Completer<void>();
+      Future<List<MarkdownStreamEvent>> split(String source) async {
+        await ready.future;
+        return _splitCell(source);
+      }
+
+      await _pumpTable(tester, '| A | B |', retained: true, split: split);
+      await _pumpTable(
+        tester,
+        '| A | B |',
+        retained: true,
+        active: false,
+        split: split,
+      );
+      ready.complete();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      for (var cycle = 0; cycle < 3; cycle++) {
+        await _pumpTable(
+          tester,
+          '| A | B | C |\n|---|---|---|\n| one | two | three |',
+          retained: true,
+        );
+        expect(find.text('three', findRichText: true), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await _pumpTable(tester, '| A |', retained: true, active: false);
+        expect(tester.takeException(), isNull);
+      }
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(tester.takeException(), isNull);
+      semantics.dispose();
+    },
+    variant: TargetPlatformVariant.desktop(),
+  );
+
+  for (final retained in [false, true]) {
+    testWidgets(
+      'streaming table changes shape with retained=$retained',
+      (tester) async {
+        const sources = [
+          '| A |',
+          '| A | B |',
+          '| A | B |\n|---|---|\n| one | two |',
+          '| A | B |\n|---|---|\n| ${r'$\frac{x_i^2+y_i^2}{1+z_i^2}$'} | a longer table value that changes column widths |',
+          '| A | B |\n|---|---|\n| short | ${r'$x$'} |',
+          '| A | B | C |\n|---|---|---|\n| one | two | three |',
+          '| A | B |\n|---|---|\n| one | two |',
+          '| A |\n|---|\n| one |',
+          '| A |',
+        ];
+        for (final source in sources) {
+          await _pumpTable(tester, source, retained: retained);
+          expect(tester.takeException(), isNull);
+          expect(find.text('A', findRichText: true), findsOneWidget);
+        }
+      },
+      variant: TargetPlatformVariant.all(),
+    );
+  }
+
   testWidgets('does not reuse empty cell results for incoming table content', (
     tester,
   ) async {
@@ -97,7 +162,12 @@ void main() {
     expect(scrollable.position.maxScrollExtent, greaterThan(0));
     scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
     await tester.pump();
-    final viewport = tester.getRect(find.byType(SingleChildScrollView));
+    final viewport = tester.getRect(
+      find.descendant(
+        of: find.byType(EnhancedTableBlock),
+        matching: find.byType(SingleChildScrollView),
+      ),
+    );
     final finalCell = tester.getRect(find.text('★★★★★', findRichText: true));
     expect(finalCell.left, greaterThanOrEqualTo(viewport.left));
     expect(finalCell.right, lessThanOrEqualTo(viewport.right));
@@ -124,7 +194,14 @@ Future<void> _pumpTable(
   WidgetTester tester,
   String table, {
   Future<List<MarkdownStreamEvent>> Function(String)? split,
+  bool retained = false,
+  bool active = true,
 }) async {
+  final tableBlock = EnhancedTableBlock(
+    tableText: table,
+    textColor: Colors.black,
+    splitMarkdownContent: split ?? _splitCell,
+  );
   await tester.pumpWidget(
     OperitTheme(
       initialThemePreferenceSnapshot:
@@ -137,11 +214,12 @@ Future<void> _pumpTable(
           alignment: Alignment.topLeft,
           child: SizedBox(
             width: 400,
-            child: EnhancedTableBlock(
-              tableText: table,
-              textColor: Colors.black,
-              splitMarkdownContent: split ?? _splitCell,
-            ),
+            child: retained
+                ? RetainedPage(
+                    active: active,
+                    child: SingleChildScrollView(child: tableBlock),
+                  )
+                : SingleChildScrollView(child: tableBlock),
           ),
         ),
       ),

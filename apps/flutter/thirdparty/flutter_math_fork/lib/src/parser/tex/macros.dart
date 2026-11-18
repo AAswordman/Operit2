@@ -54,10 +54,12 @@ class MacroExpansion {
   const MacroExpansion({
     required this.tokens,
     required this.numArgs,
+    this.argDelimiters,
     this.unexpandable = false,
   });
   final List<Token> tokens;
   final int numArgs;
+  final List<List<String>>? argDelimiters;
 
   final bool unexpandable;
 
@@ -155,6 +157,68 @@ String newcommand(MacroContext context, bool existsOK, bool nonexistsOK) {
   return '';
 }
 
+MacroExpansion _globalDefinition(MacroContext context) {
+  final name = context.popToken();
+  if (!name.text.startsWith('\\') || name.text.length < 2) {
+    throw ParseException(r'Expected a control sequence after \gdef', name);
+  }
+
+  final delimiters = <List<String>>[[]];
+  Token? trailingBrace;
+  while (context.future().text != '{') {
+    final token = context.popToken();
+    if (token.text == 'EOF' || token.text == '}') {
+      throw ParseException(r'Expected a macro body for \gdef', token);
+    }
+    if (token.text == '#') {
+      final parameter = context.future();
+      if (parameter.text == '{') {
+        delimiters.last.add('{');
+        trailingBrace = parameter;
+        break;
+      }
+      if (delimiters.length > 9 ||
+          context.popToken().text != '${delimiters.length}') {
+        throw ParseException(
+            'Expected consecutive macro parameters', parameter);
+      }
+      delimiters.add([]);
+    } else {
+      delimiters.last.add(token.text);
+    }
+  }
+
+  final body = context.consumeArgs(1).single;
+  final numArgs = delimiters.length - 1;
+  for (var index = body.length - 1; index >= 0; index--) {
+    if (body[index].text != '#') {
+      continue;
+    }
+    if (index == 0) {
+      throw ParseException(
+          'Incomplete placeholder at end of macro body', body[index]);
+    }
+    final parameter = body[--index];
+    if (parameter.text != '#') {
+      final number = digitToNumber[parameter.text];
+      if (number == null || number < 1 || number > numArgs) {
+        throw ParseException('Not a valid argument number', parameter);
+      }
+    }
+  }
+
+  context.macros.set(
+    name.text,
+    MacroDefinition.fromMacroExpansion(MacroExpansion(
+      tokens: [if (trailingBrace != null) trailingBrace, ...body],
+      numArgs: numArgs,
+      argDelimiters: delimiters,
+    )),
+    global: true,
+  );
+  return const MacroExpansion(tokens: [], numArgs: 0);
+}
+
 final latexRaiseA =
     '${fontMetricsData['Main-Regular']!["T".codeUnitAt(0)]!.height - 0.7 * fontMetricsData['Main-Regular']!["A".codeUnitAt(0)]!.height}em';
 
@@ -234,6 +298,7 @@ const dotsByToken = {
 /// defineMacro\([\s\n]*"([^"]*)", -> '$1':
 
 final Map<String, MacroDefinition> builtinMacros = {
+  '\\gdef': MacroDefinition(_globalDefinition, unexpandable: true),
   '\\noexpand': MacroDefinition((context) {
     // The expansion is the token itself; but that token is interpreted
     // as if its meaning were ‘\relax’ if it is a control sequence that

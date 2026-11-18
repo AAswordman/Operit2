@@ -85,7 +85,12 @@ class MacroExpander implements MacroContext {
   Token? expandOnce([bool expandableOnly = false]) {
     final topToken = this.popToken();
     final name = topToken.text;
-    final expansion = !topToken.noexpand ? this._getExpansion(name) : null;
+    final definition = topToken.noexpand ? null : this.macros.get(name);
+    if (expandableOnly && definition?.unexpandable == true) {
+      this.pushToken(topToken);
+      return topToken;
+    }
+    final expansion = definition?.expand(this);
     if (expansion == null || (expandableOnly && expansion.unexpandable)) {
       if (expandableOnly &&
           expansion == null &&
@@ -102,8 +107,11 @@ class MacroExpander implements MacroContext {
           'need to increase maxExpand setting');
     }
     var tokens = expansion.tokens;
-    if (expansion.numArgs != 0) {
-      final args = this.consumeArgs(expansion.numArgs);
+    final delimiters = expansion.argDelimiters;
+    if (expansion.numArgs != 0 || delimiters != null) {
+      final args = delimiters == null
+          ? this.consumeArgs(expansion.numArgs)
+          : this._consumeDelimitedArgs(delimiters);
       // Make a copy to avoid modify to be sure.
       // Actually not needed with current implementation.
       // But who knows for the future?
@@ -153,12 +161,65 @@ class MacroExpander implements MacroContext {
     return this.stack.last;
   }
 
-  MacroExpansion? _getExpansion(String name) {
-    final definition = this.macros.get(name);
-    if (definition == null) {
-      return null;
+  List<List<Token>> _consumeDelimitedArgs(List<List<String>> delimiters) {
+    for (final expected in delimiters.first) {
+      final token = this.popToken();
+      if (token.text != expected) {
+        throw ParseException(
+            'Macro invocation does not match its definition', token);
+      }
     }
-    return definition.expand(this);
+    return [
+      for (final delimiter in delimiters.skip(1))
+        if (delimiter.isEmpty)
+          this.consumeArgs(1).single
+        else
+          this._consumeDelimitedArg(delimiter),
+    ];
+  }
+
+  List<Token> _consumeDelimitedArg(List<String> delimiter) {
+    final argument = <Token>[];
+    var depth = 0;
+    var topLevelTokens = 0;
+    while (true) {
+      final token = this.popToken();
+      if (depth == 0) {
+        if (token.text == delimiter.first) {
+          final matched = <Token>[];
+          for (final expected in delimiter.skip(1)) {
+            if (this.future().text != expected) {
+              break;
+            }
+            matched.add(this.popToken());
+          }
+          if (matched.length + 1 == delimiter.length) {
+            if (topLevelTokens == 1 && argument.first.text == '{') {
+              argument.removeLast();
+              argument.removeAt(0);
+            }
+            return argument.reversed.toList();
+          }
+          this.pushTokens(matched.reversed.toList());
+        }
+        topLevelTokens++;
+      }
+      switch (token.text) {
+        case '{':
+          depth++;
+          break;
+        case '}':
+          if (depth == 0) {
+            throw ParseException(
+                'Unexpected end of group in macro argument', token);
+          }
+          depth--;
+          break;
+        case 'EOF':
+          throw ParseException('End of input in macro argument', token);
+      }
+      argument.add(token);
+    }
   }
 
   List<List<Token>> consumeArgs(int numArgs) {

@@ -12,6 +12,7 @@ import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
 import 'package:operit2/ui/common/markdown/MarkdownLink.dart';
+import 'package:operit2/ui/common/markdown/MarkdownLatexBlock.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceFilePreviewContent.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceTabModels.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceTabStrip.dart';
@@ -1459,6 +1460,140 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('long Markdown previews only mount visible paragraphs and math', (
+    tester,
+  ) async {
+    final paragraphs = List.generate(
+      1000,
+      (i) => 'Preview paragraph $i 中文 ${'document content ' * 8}',
+    );
+    final document = WorkspaceTextDocument(paragraphs.join('\n\n'));
+    var parseCount = 0;
+    core_proxy.MarkdownStreamEvent event(
+      String type, {
+      int? blockId,
+      int? inlineId,
+      String? value,
+      String? nodeType,
+    }) => core_proxy.MarkdownStreamEvent(
+      chatId: 'workspace-lazy-preview',
+      eventType: type,
+      value: value,
+      id: null,
+      blockId: blockId,
+      inlineId: inlineId,
+      parentBlockId: null,
+      nodeType: nodeType,
+      headerLevel: null,
+      xml: null,
+    );
+    await tester.pumpWidget(
+      _app(
+        WorkspaceTextPreview(
+          tab: _textTab(document, kind: WorkspaceFilePreviewKind.markdown),
+          onWriteWorkspaceFileBytes: (_, _) async {},
+          onOpenBrowser: ({url, localFilePath, workspaceHtmlPath}) {},
+          splitMarkdownContent: (_) async {
+            parseCount++;
+            return [
+              for (var i = 0; i < paragraphs.length; i++) ...[
+                event('markdownBlockStart', blockId: i),
+                event('markdownInlineStart', blockId: i, inlineId: 0),
+                event(
+                  'markdownInlineChunk',
+                  blockId: i,
+                  inlineId: 0,
+                  value: paragraphs[i],
+                ),
+                event(
+                  'markdownInlineStart',
+                  blockId: i,
+                  inlineId: 1,
+                  nodeType: 'InlineLatex',
+                ),
+                event(
+                  'markdownInlineChunk',
+                  blockId: i,
+                  inlineId: 1,
+                  value: r'\frac{x_i^2}{1 + x_i}',
+                ),
+                event('markdownBlockEnd', blockId: i),
+              ],
+              event('completed'),
+            ];
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('Markdown 预览'));
+    await tester.pumpAndSettle();
+    final preview = tester.widget<StreamMarkdownRenderer>(
+      find.byType(StreamMarkdownRenderer),
+    );
+    final scroll = preview.scrollController!;
+
+    void expectBoundedWork() {
+      final count = find.byType(CanvasMarkdownNodeRenderer).evaluate().length;
+      expect(count, inExclusiveRange(0, 40));
+      expect(find.byType(MarkdownInlineLatex), findsNWidgets(count));
+      expect(parseCount, 1);
+      expect(tester.takeException(), isNull);
+    }
+
+    expectBoundedWork();
+    final previousRebuild = debugOnRebuildDirtyWidget;
+    var mathBuildsDuringZoom = 0;
+    debugOnRebuildDirtyWidget = (element, builtOnce) {
+      previousRebuild?.call(element, builtOnce);
+      if (element.widget is MarkdownInlineLatex) mathBuildsDuringZoom++;
+    };
+    try {
+      document.updateScale(1.2);
+      await tester.pumpAndSettle();
+    } finally {
+      debugOnRebuildDirtyWidget = previousRebuild;
+    }
+    expect(
+      mathBuildsDuringZoom,
+      0,
+      reason: 'Zoom must reuse unchanged visible formulas',
+    );
+    expect(
+      find.textContaining('Preview paragraph 0 中文', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Preview paragraph 999 中文', findRichText: true),
+      findsNothing,
+    );
+    for (final scale in [0.6, 1.2, 2.5, 1.0]) {
+      document.updateScale(scale);
+      await tester.pumpAndSettle();
+      scroll.jumpTo(scroll.position.maxScrollExtent / 2);
+      await tester.pumpAndSettle();
+      expectBoundedWork();
+    }
+    scroll.jumpTo(scroll.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expectBoundedWork();
+    expect(
+      find.textContaining('Preview paragraph 999 中文', findRichText: true),
+      findsOneWidget,
+    );
+    expect(
+      find.textContaining('Preview paragraph 0 中文', findRichText: true),
+      findsNothing,
+    );
+    scroll.jumpTo(0);
+    await tester.pumpAndSettle();
+    expectBoundedWork();
+    expect(
+      find.textContaining('Preview paragraph 0 中文', findRichText: true),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('Markdown zoom corrects the scroll viewport before painting', (
     tester,
   ) async {
@@ -1523,21 +1658,26 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('Markdown 预览'));
     await tester.pumpAndSettle();
-    final scrollView = tester.widget<SingleChildScrollView>(
-      find.ancestor(
+    final scrollView = tester.widget<ListView>(
+      find.descendant(
         of: find.byType(StreamMarkdownRenderer),
-        matching: find.byType(SingleChildScrollView),
+        matching: find.byType(ListView),
       ),
     );
     final scroll = scrollView.controller!;
     expect(scroll.position.maxScrollExtent, greaterThan(1000));
     scroll.jumpTo(800);
     await tester.pump();
-    contentBox = tester.renderObject(find.byType(StreamMarkdownRenderer));
-    final extent =
-        scroll.position.maxScrollExtent + scroll.position.viewportDimension;
     final focal =
         tester.getTopLeft(find.byWidget(scrollView)) + const Offset(160, 230);
+    final anchorNode = find
+        .byType(CanvasMarkdownNodeRenderer)
+        .evaluate()
+        .singleWhere((element) {
+          final box = element.renderObject! as RenderBox;
+          return (box.localToGlobal(Offset.zero) & box.size).contains(focal);
+        });
+    contentBox = anchorNode.renderObject! as RenderBox;
     scenePoint = contentBox.globalToLocal(focal);
     tester.binding.handlePointerEvent(
       PointerPanZoomStartEvent(pointer: 60, position: focal),
@@ -1568,8 +1708,8 @@ void main() {
         );
       }
       expect(
-        scroll.position.maxScrollExtent + scroll.position.viewportDimension,
-        closeTo(extent, 0.01),
+        find.byType(CanvasMarkdownNodeRenderer).evaluate().length,
+        lessThan(40),
       );
     }
     final releasePoint = painted.last;
@@ -1586,9 +1726,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester
-          .widget<CodeEditorInput>(
-            find.byType(CodeEditorInput),
-          )
+          .widget<CodeEditorInput>(find.byType(CodeEditorInput))
           .controller
           .text,
       document.text,

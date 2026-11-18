@@ -59,6 +59,9 @@ class StreamMarkdownRenderer extends StatefulWidget {
     this.onContentReady,
     this.onStreamDone,
     this.onStreamError,
+    this.scrollController,
+    this.scrollPhysics,
+    this.scrollPadding = EdgeInsets.zero,
     required this.splitMarkdownContent,
   });
 
@@ -79,6 +82,12 @@ class StreamMarkdownRenderer extends StatefulWidget {
   final VoidCallback? onContentReady;
   final VoidCallback? onStreamDone;
   final VoidCallback? onStreamError;
+
+  /// When supplied, owns a bounded, lazy viewport instead of a node column.
+  /// Do not wrap this mode in another vertical scroll view.
+  final ScrollController? scrollController;
+  final ScrollPhysics? scrollPhysics;
+  final EdgeInsetsGeometry scrollPadding;
   final MarkdownContentSplitter splitMarkdownContent;
 
   @override
@@ -414,6 +423,9 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
       initialThinkingExpanded: widget.initialThinkingExpanded,
       allowExpandedThinkingFullHeight: widget.allowExpandedThinkingFullHeight,
       splitMarkdownContent: widget.splitMarkdownContent,
+      scrollController: widget.scrollController,
+      scrollPhysics: widget.scrollPhysics,
+      scrollPadding: widget.scrollPadding,
     );
     final inheritedFootnotes = MarkdownFootnoteScope.maybeOf(context);
     final scopedContent = MarkdownFootnoteScope(
@@ -444,6 +456,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
 const double _markdownParagraphBreakHeight = 4;
 const double _markdownParagraphBottomPadding = 6;
 const double _markdownListItemBottomPadding = 2;
+const int _markdownViewportWidgetCacheLimit = 128;
 final _StaticMarkdownNodeCache _staticMarkdownNodeCache =
     _StaticMarkdownNodeCache(maxEntries: 48);
 
@@ -486,6 +499,9 @@ class _MarkdownNodeColumn extends StatefulWidget {
     required this.initialThinkingExpanded,
     required this.allowExpandedThinkingFullHeight,
     required this.splitMarkdownContent,
+    required this.scrollController,
+    required this.scrollPhysics,
+    required this.scrollPadding,
     this.nodeAnimationStates,
     this.onLinkClick,
   });
@@ -502,6 +518,9 @@ class _MarkdownNodeColumn extends StatefulWidget {
   final bool initialThinkingExpanded;
   final bool allowExpandedThinkingFullHeight;
   final MarkdownContentSplitter splitMarkdownContent;
+  final ScrollController? scrollController;
+  final ScrollPhysics? scrollPhysics;
+  final EdgeInsetsGeometry scrollPadding;
   final Map<String, bool>? nodeAnimationStates;
   final void Function(String url)? onLinkClick;
 
@@ -637,6 +656,12 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         xmlMarkdownEventStream: xmlMarkdownEventStream,
         widget: rendered,
       );
+      // Reuse visible widgets during zoom without retaining the whole file as
+      // the user scrolls. Slivers still dispose offscreen elements and states.
+      while (widget.scrollController != null &&
+          _singleNodeCache.length > _markdownViewportWidgetCacheLimit) {
+        _singleNodeCache.remove(_singleNodeCache.keys.first);
+      }
       return rendered;
     }
 
@@ -670,13 +695,12 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
     }
 
     /// Renders a source range after applying the configured merge strategy.
-    List<Widget> renderMergedRange({
+    Iterable<Widget Function()> mergedRangeBuilders({
       required int startIndex,
       required int endIndexInclusive,
       required String renderInstanceKeyPrefix,
       required MarkdownNodePredicate shouldRenderNode,
-    }) {
-      final rendered = <Widget>[];
+    }) sync* {
       var index = startIndex;
       while (index <= endIndexInclusive) {
         final match = widget.mergeRender.match(
@@ -686,17 +710,32 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         );
         if (match != null) {
           _validateMarkdownMergeMatch(match, index, endIndexInclusive);
-          rendered.add(renderMergeMatch(match, renderInstanceKeyPrefix));
+          yield () => renderMergeMatch(match, renderInstanceKeyPrefix);
           index = match.endIndexInclusive + 1;
           continue;
         }
         if (shouldRenderNode(widget.nodes[index])) {
-          rendered.add(renderAnimatedNodeAt(index));
+          final nodeIndex = index;
+          yield () => renderAnimatedNodeAt(nodeIndex);
         }
         index += 1;
       }
-      return rendered;
     }
+
+    List<Widget> renderMergedRange({
+      required int startIndex,
+      required int endIndexInclusive,
+      required String renderInstanceKeyPrefix,
+      required MarkdownNodePredicate shouldRenderNode,
+    }) => [
+      for (final build in mergedRangeBuilders(
+        startIndex: startIndex,
+        endIndexInclusive: endIndexInclusive,
+        renderInstanceKeyPrefix: renderInstanceKeyPrefix,
+        shouldRenderNode: shouldRenderNode,
+      ))
+        build(),
+    ];
 
     Widget renderGroupItem(MarkdownGroupItem group) {
       final cacheKey = 'group-${widget.rendererId}-${group.stableKey}';
@@ -779,15 +818,19 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         nodeVisibilities: List<bool>.unmodifiable(nodeVisibilities),
         widget: rendered,
       );
+      while (widget.scrollController != null &&
+          _groupCache.length > _markdownViewportWidgetCacheLimit) {
+        _groupCache.remove(_groupCache.keys.first);
+      }
       return rendered;
     }
 
-    final children = <Widget>[];
+    final builders = <Widget Function()>[];
     var itemOffset = 0;
     while (itemOffset < groupedItems.length) {
       final item = groupedItems[itemOffset];
       if (item is MarkdownGroupItem) {
-        children.add(renderGroupItem(item));
+        builders.add(() => renderGroupItem(item));
         itemOffset += 1;
         continue;
       }
@@ -803,8 +846,8 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
         rangeEnd = next.index;
         itemOffset += 1;
       }
-      children.addAll(
-        renderMergedRange(
+      builders.addAll(
+        mergedRangeBuilders(
           startIndex: rangeStart,
           endIndexInclusive: rangeEnd,
           renderInstanceKeyPrefix: 'root-$rangeStart',
@@ -813,6 +856,17 @@ class _MarkdownNodeColumnState extends State<_MarkdownNodeColumn> {
       );
     }
 
+    if (widget.scrollController != null) {
+      return ListView.builder(
+        controller: widget.scrollController,
+        physics: widget.scrollPhysics,
+        padding: widget.scrollPadding,
+        itemCount: builders.length,
+        itemBuilder: (context, index) => builders[index](),
+      );
+    }
+
+    final children = [for (final build in builders) build()];
     _singleNodeCache.removeWhere((key, value) => !liveSingleKeys.contains(key));
     _groupCache.removeWhere((key, value) => !liveGroupKeys.contains(key));
 

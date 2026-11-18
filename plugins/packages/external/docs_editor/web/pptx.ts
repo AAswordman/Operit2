@@ -6,6 +6,16 @@ export async function mountPptx(options: EditorOptions): Promise<Editor> {
   const deck = mountEditor(options.root, { source: options.bytes, fileName: options.info.name, locale: 'en', compact: true, onSave: async bytes => options.saveBytes(new Uint8Array(bytes)) });
   await deck.ready;
   deck.on('change', options.changed);
+  // The pinned editor exposes zoom through its accessible status-bar controls.
+  // Driving those controls uses its own layout and pointer-coordinate pipeline.
+  const surface = options.root.firstElementChild!.shadowRoot!;
+  const zoomSlider = () => surface.querySelector<HTMLInputElement>('input[type="range"][aria-label="Zoom percentage"]');
+  let lastZoom = 100;
+  const zoomValue = () => {
+    const percent = Number.parseFloat(zoomSlider()?.getAttribute('aria-valuetext') ?? '');
+    if (Number.isFinite(percent)) lastZoom = percent;
+    return lastZoom;
+  };
   const inspect = new Set(['listSlides', 'listShapes', 'listLayouts', 'listComments']);
   type ShapeSummary = { shape: { shapeId: number }; text?: string; cells?: string[][]; chart?: { title?: string } };
   async function selection() {
@@ -22,6 +32,21 @@ export async function mountPptx(options: EditorOptions): Promise<Editor> {
     }).join('\n\n');
   }
   return {
+    zoom: {
+      get: zoomValue,
+      set: percent => {
+        const slider = zoomSlider();
+        if (!slider) return;
+        const sorting = surface.querySelector('button[aria-label="Slide Sorter"][aria-pressed="true"]');
+        const min = sorting ? 20 : 10;
+        const max = sorting ? 200 : 400;
+        percent = Math.max(min, Math.min(max, percent));
+        // Each half of the slider spans the active view's limit to/from 100%.
+        slider.value = String(percent <= 100 ? (percent - min) / (100 - min) * 1000 : 1000 + (percent - 100) / (max - 100) * 1000);
+        slider.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+      },
+      fit: () => surface.querySelector<HTMLButtonElement>('button[aria-label="Fit slide to current window"]')?.click(),
+    },
     selection,
     snapshot: async () => new Uint8Array(await deck.snapshot()),
     async read(section, offset) {

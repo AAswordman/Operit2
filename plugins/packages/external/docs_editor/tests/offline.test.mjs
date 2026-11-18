@@ -94,6 +94,9 @@ test('Office bridge ignores empty quotes and returns the exact selected text', a
   assert.equal(quote([' \r\n\t']), null);
   const text = '  Selected <text> & punctuation.\nNext line  ';
   assert.deepEqual({ ...quote([text]) }, { workspaceFileAction: 'quote', text });
+  assert.deepEqual({ ...quote([text, 'quote-1']) }, { workspaceFileAction: 'quote', text });
+  assert.equal(quote([text, 'quote-1']), null, 'a retried request cannot create a second attachment');
+  assert.deepEqual({ ...quote([text, 'quote-2']) }, { workspaceFileAction: 'quote', text }, 'an explicit new quote is allowed');
 });
 
 test('offline DOCX, PPTX and PDF editor/tool round trips', { skip: !require && 'Set OFFICE_TEST_NODE_MODULES to the bundled workspace dependencies', timeout: 100000 }, async () => {
@@ -129,7 +132,11 @@ test('offline DOCX, PPTX and PDF editor/tool round trips', { skip: !require && '
           readPart: async offset => data.slice(offset, offset + 1024),
           editorReady: async () => true,
           dirty: async () => true,
-          quote: async quote => { window.lastOfficeQuote = quote; },
+          quote: async (quote, requestId) => {
+            window.officeQuoteCount = (window.officeQuoteCount ?? 0) + 1;
+            window.lastOfficeQuote = quote;
+            if (typeof requestId !== 'string') throw new Error('Quote request must have an identity');
+          },
           beginSave: async () => { buffer = ''; return true; },
           appendSave: async chunk => { buffer += chunk; return true; },
           commitSave: async () => { await window.writeOfficeTestFile(buffer); return true; },
@@ -152,6 +159,8 @@ test('offline DOCX, PPTX and PDF editor/tool round trips', { skip: !require && '
         return reply.ok ? reply.value : reply.error;
       };
       const first = await command({ kind: 'read' });
+      await testZoom(page, format);
+      assert.equal((await command({ kind: 'read' })).revision, first.revision, 'zoom does not edit the document');
       const quote = page.getByRole('button', { name: 'Quote selection in chat' });
       await testEmptyQuote(page, quote, format);
       let edit;
@@ -184,8 +193,13 @@ test('offline DOCX, PPTX and PDF editor/tool round trips', { skip: !require && '
         await visible.click();
         await page.keyboard.press('Home');
         await page.keyboard.press('Shift+End');
-        await quote.click();
+        await page.evaluate(() => {
+          const quote = document.querySelector('#quote');
+          quote.click();
+          quote.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+        });
         await page.waitForFunction(() => window.lastOfficeQuote === 'Updated live by the Office tool.');
+        assert.equal(await page.evaluate(() => window.officeQuoteCount), 1, 'one click attaches one selection');
         assert.equal(await page.getByText('No text selected', { exact: true }).isVisible(), false);
         const formatted = await command({ kind: 'edit', revision: changed.revision, change: {
           op: 'format', expected: 'Updated live by the Office tool.', italic: true,
@@ -235,6 +249,105 @@ test('offline DOCX, PPTX and PDF editor/tool round trips', { skip: !require && '
     server.close();
   }
 });
+
+test('Office opens documents over 24 MiB and reports read failures separately from size limits', async () => {
+  const archive = unzipSync(await readFile(new URL('../dist/docs_editor.toolpkg', import.meta.url)));
+  const module = { exports: {} };
+  let file;
+  let host;
+  runInNewContext(strFromU8(archive['dist/screen.ui.js']), {
+    module,
+    getLang: () => 'en',
+    Tools: { Files: { readBinary: async () => file } },
+    ToolPkg: { ipc: { on() {} }, readResource: async () => '/asset' },
+  });
+  const state = { input: { path: '/workspace/large.docx', name: 'large.docx' } };
+  const initialize = module.exports.default({
+    useState: (key, fallback) => [state[key] ?? fallback, () => {}],
+    useRef: (_, current) => ({ current }),
+    useEffect() {},
+    createWebViewController: () => ({ addJavascriptInterface: (_, methods) => { host = methods; } }),
+    UI: { Box: props => props.onLoad, Text() {} },
+  });
+  await initialize();
+  const size = 25 * 1024 * 1024;
+  file = { size, contentBase64: Buffer.alloc(size).toString('base64') };
+  const info = await host.bootstrap();
+  assert.equal(info.length, file.contentBase64.length);
+  assert.equal(host.readPart([0]).length, info.chunkSize);
+  file = { size: 129 * 1024 * 1024, contentBase64: 'AA==' };
+  await assert.rejects(host.bootstrap(), /129\.0 MiB; the limit is 128 MiB/);
+  file = { successful: false, details: 'File not found' };
+  await assert.rejects(host.bootstrap(), /Could not read large.docx: File not found/);
+  file = { size: 0, contentBase64: '' };
+  await assert.rejects(host.bootstrap(), /document is empty/);
+});
+
+async function testZoom(page, format) {
+  // Read each editor's visible native zoom control, including shadow DOM controls.
+  const control = format === 'docx' ? page.locator('[aria-label="Zoom"] .sd-button-label')
+    : format === 'pptx' ? page.getByRole('slider', { name: 'Zoom percentage' })
+    : page.getByRole('textbox', { name: 'Set zoom' });
+  await control.waitFor();
+  assert.equal(await page.locator('#zoom').count(), 0, 'no duplicate plugin zoom bar');
+  assert.equal(await control.count(), 1, `${format} has one native zoom control`);
+  const percent = () => control.evaluate(node => Number.parseFloat(node.getAttribute('aria-valuetext') ?? node.value ?? node.textContent));
+  async function until(predicate) {
+    const deadline = Date.now() + 5000;
+    while (Date.now() < deadline) {
+      if (predicate(await percent())) return;
+      await page.waitForTimeout(25);
+    }
+    assert.ok(predicate(await percent()), `${format}: unexpected native zoom ${await percent()}`);
+  }
+  await until(value => value > 0);
+  if (format === 'docx') {
+    await page.setViewportSize({ width: 520, height: 760 });
+    await page.waitForFunction(() => {
+      const viewport = document.querySelector('#editor').getBoundingClientRect();
+      const paper = document.querySelector('.superdoc-page').getBoundingClientRect();
+      return paper.width <= viewport.width;
+    });
+    const viewport = await page.locator('#editor').boundingBox();
+    const paper = await page.locator('.superdoc-page').first().boundingBox();
+    assert.ok(paper.x >= viewport.x - 1 && paper.x + paper.width <= viewport.x + viewport.width + 1, 'fit width keeps the whole Word page visible');
+    await page.setViewportSize({ width: 900, height: 760 });
+    await control.waitFor();
+  }
+  const editor = await page.locator('#editor').boundingBox();
+  await page.mouse.move(editor.x + editor.width / 2, editor.y + editor.height / 2);
+  const initial = await percent();
+  await page.keyboard.down('Control');
+  await page.mouse.wheel(0, -60);
+  await page.keyboard.up('Control');
+  await until(value => value > initial);
+  const enlarged = await percent();
+  await page.mouse.wheel(0, 60);
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.equal(await percent(), enlarged, 'ordinary scrolling does not zoom');
+  await page.evaluate(() => {
+    const root = document.querySelector('#editor');
+    for (let i = 0; i < 60; i++) root.dispatchEvent(new WheelEvent('wheel', {
+      deltaY: -0.1, ctrlKey: true, bubbles: true, cancelable: true,
+    }));
+  });
+  await until(value => value > enlarged);
+  const beforePinch = await percent();
+  await page.evaluate(() => {
+    const root = document.querySelector('#editor');
+    for (const [type, scale] of [['gesturestart', 1], ['gesturechange', 0.75], ['gestureend', 0.75]]) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.defineProperty(event, 'scale', { value: scale });
+      root.dispatchEvent(event);
+    }
+  });
+  await until(value => value < beforePinch);
+  await page.locator('#editor').evaluate(root => root.dispatchEvent(new KeyboardEvent('keydown', {
+    key: '0', ctrlKey: true, bubbles: true, cancelable: true,
+  })));
+  await until(value => value > 0);
+  await page.setViewportSize({ width: 900, height: 760 });
+}
 
 async function testEmptyQuote(page, quote, format) {
   await quote.click();

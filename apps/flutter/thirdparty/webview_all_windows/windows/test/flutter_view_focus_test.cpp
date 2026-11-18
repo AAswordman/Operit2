@@ -6,17 +6,25 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <initializer_list>
 
 namespace {
 HWND simulated_focus = nullptr;
 
 /// Supplies controlled focus state without activating a test window.
 HWND TestGetFocus() { return simulated_focus; }
+HWND TestSetFocus(HWND target) {
+  const HWND previous = simulated_focus;
+  simulated_focus = target;
+  return previous;
+}
 }  // namespace
 
 #define GetFocus TestGetFocus
+#define SetFocus TestSetFocus
 #include "../src/plugin/flutter_view_focus.h"
 #undef GetFocus
+#undef SetFocus
 
 namespace {
 constexpr UINT_PTR kObserverId = 1;
@@ -83,6 +91,18 @@ int main() {
           "install focus observer");
   Require(SetWindowSubclass(host, webview_all_windows::FlutterViewFocusProc,
                             kFocusHostId, 0), "install production focus host");
+
+  for (const UINT message : {WM_LBUTTONDOWN, WM_RBUTTONDOWN, WM_POINTERDOWN}) {
+    simulated_focus = browser_child;
+    SendMessage(host, message, 0, 0);
+    Require(simulated_focus == host,
+            "Flutter click restores keyboard from nested browser content");
+    simulated_focus = outside;
+    SendMessage(host, message, 0, 0);
+    Require(simulated_focus == outside,
+            "Flutter click does not steal keyboard from another window");
+  }
+  std::puts("PASS: Flutter clicks reclaim browser keyboard and IME focus");
 
   ExpectFocusTransfer(host, browser, 0, "entering WebView retains Flutter focus");
   ExpectFocusTransfer(host, browser_child, 0,

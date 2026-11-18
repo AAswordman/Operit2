@@ -5,6 +5,7 @@ import { base64, type Bytes, type Editor } from './editor';
 import { mountDocx } from './docx';
 import { mountPptx } from './pptx';
 import { mountPdf } from './pdf';
+import { mountZoom } from './zoom';
 
 interface Host {
   bootstrap(): Promise<{ info: DocumentInfo; locale: string; length: number; chunkSize: number }>;
@@ -13,7 +14,7 @@ interface Host {
   beginSave(length: number): Promise<boolean>;
   appendSave(chunk: string): Promise<boolean>;
   commitSave(): Promise<boolean>;
-  quote(text: string): Promise<unknown>;
+  quote(text: string, requestId: string): Promise<unknown>;
   dirty(dirty: boolean): Promise<unknown>;
 }
 
@@ -36,6 +37,7 @@ let revision = 0;
 let saved = 0;
 let saving = false;
 let running = false;
+let quoting = false;
 let lastDirty = false;
 let quoteNoticeTimer: ReturnType<typeof setTimeout> | undefined;
 let chinese = navigator.language.startsWith('zh');
@@ -56,6 +58,7 @@ function sync() {
     : quoteNoticeTimer !== undefined ? phrase('No text selected', '未选中文本')
     : dirty ? phrase('Unsaved', '未保存') : phrase('Saved', '已保存');
   save.disabled = !editor || saving || running || !dirty;
+  quote.disabled = !editor || quoting;
   if (dirty !== lastDirty) {
     lastDirty = dirty;
     dirtyDelivery = dirtyDelivery.then(() => host.dirty(dirty)).catch(showError);
@@ -74,7 +77,7 @@ async function saveBytes(getBytes: () => Promise<Bytes>) {
   sync();
   try {
     const bytes = await getBytes();
-    if (!bytes.length || bytes.length > maxBytes) throw new Error(phrase('File exceeds the 24 MiB save limit', '文件超过 24 MiB 保存限制'));
+    if (!bytes.length || bytes.length > maxBytes) throw new Error(phrase('File is empty or exceeds the 128 MiB save limit', '文件为空或超过 128 MiB 保存限制'));
     if (revision !== version) throw new Error(phrase('The file changed while preparing the save. Try again.', '生成保存内容时文档发生了变化，请重试。'));
     const encoded = base64(bytes);
     await host.beginSave(encoded.length);
@@ -149,6 +152,7 @@ async function bootstrap() {
   }
   editor = await mount[info.format]({ bytes, info, chinese, root: document.querySelector('#editor')!, toolbar: document.querySelector('#toolbar')!, changed,
     saveBytes: data => saveBytes(() => Promise.resolve(data)).catch(error => { showError(error); throw error; }) });
+  if (editor.zoom) mountZoom(document.querySelector('#editor')!, editor.zoom);
   window.OfficeEditor = {
     submit(key, command) {
       if (running || saving) return false;
@@ -177,6 +181,9 @@ async function bootstrap() {
 // Preserve the editor's selection while interacting with the outer toolbar.
 quote.addEventListener('pointerdown', event => event.preventDefault());
 quote.addEventListener('click', () => {
+  if (!editor || quoting) return;
+  quoting = true;
+  sync();
   void editor.selection().then(value => {
     const snippet = value.slice(0, 12000);
     clearTimeout(quoteNoticeTimer);
@@ -187,8 +194,8 @@ quote.addEventListener('click', () => {
       return;
     }
     sync();
-    return host.quote(snippet);
-  }).catch(showError);
+    return host.quote(snippet, crypto.randomUUID());
+  }).catch(showError).finally(() => { quoting = false; sync(); });
 });
 save.addEventListener('click', () => {
   alert.hidden = true;

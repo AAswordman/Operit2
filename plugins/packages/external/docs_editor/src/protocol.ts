@@ -10,7 +10,7 @@ export type Command = {
 };
 export type Reply = { ok: true; value: unknown } | { ok: false; error: string };
 export const channel = { registry: "office.registry", editor: "office.editor" };
-export const maxBytes = 24 * 1024 * 1024;
+export const maxBytes = 128 * 1024 * 1024;
 export const chunkSize = 256 * 1024;
 export const maxBase64 = Math.ceil(maxBytes / 3) * 4;
 

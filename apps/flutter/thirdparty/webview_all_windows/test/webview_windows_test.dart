@@ -6,7 +6,7 @@ import 'dart:math' as math;
 import 'package:flutter/gestures.dart';
 
 import 'package:flutter/services.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:webview_all_windows/src/windows_native_composition.dart';
 import 'package:webview_all_windows/src/windows_webview_api.g.dart';
@@ -167,6 +167,47 @@ void main() {
     expect(surfaceSizes.last.width, 500);
     expect(surfaceSizes.last.height, 300);
     expect(captureEnabled, <bool>[true]);
+  });
+
+  /// Exercises repeated browser/composer focus transfers through the native channel.
+  testWidgets('returns keyboard ownership from the browser to the composer', (
+    WidgetTester tester,
+  ) async {
+    final nativeFocus = <bool>[];
+    _mockWindowsWebViewCreation(onSetNativeFocus: nativeFocus.add);
+    final controller = WindowsWebViewController(
+      const PlatformWebViewControllerCreationParams(),
+    );
+    final platformWidget = WindowsWebViewWidget(
+      WindowsWebViewWidgetCreationParams(controller: controller),
+    );
+    final text = TextEditingController();
+    addTearDown(text.dispose);
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Column(
+            children: [
+              TextField(controller: text),
+              Expanded(child: Builder(builder: platformWidget.build)),
+            ],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    for (var attempt = 0; attempt < 3; attempt++) {
+      await tester.tap(find.byType(WindowsNativeComposition));
+      await tester.pumpAndSettle();
+      expect(nativeFocus.last, isTrue);
+      await tester.tap(find.byType(TextField));
+      await tester.pumpAndSettle();
+      expect(nativeFocus.last, isFalse);
+      tester.testTextInput.enterText('Returned to composer $attempt');
+      await tester.pump();
+      expect(text.text, 'Returned to composer $attempt');
+    }
+    expect(nativeFocus, [true, false, true, false, true, false]);
   });
 
   /// Verifies wheel ownership, cursor positioning, and incremental trackpad zoom.
@@ -1013,6 +1054,7 @@ void _mockWindowsWebViewCreation({
   void Function(WindowsPointData position)? onSetCursorPos,
   void Function(WindowsPointData delta, bool control)? onSetScrollDelta,
   void Function(bool enabled)? onSetCaptureEnabled,
+  void Function(bool focused)? onSetNativeFocus,
   void Function({
     required bool alert,
     required bool confirm,
@@ -1168,6 +1210,9 @@ void _mockWindowsWebViewCreation({
     (MethodCall methodCall) async {
       if (methodCall.method == 'setCaptureEnabled') {
         onSetCaptureEnabled?.call(methodCall.arguments as bool);
+      }
+      if (methodCall.method == 'setNativeFocus') {
+        onSetNativeFocus?.call(methodCall.arguments as bool);
       }
       return null;
     },

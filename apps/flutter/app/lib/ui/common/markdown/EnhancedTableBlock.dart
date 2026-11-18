@@ -34,6 +34,12 @@ class EnhancedTableBlock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) => _buildTable(context),
+    );
+  }
+
+  Widget _buildTable(BuildContext context) {
     final parsed = _parseTable(tableText);
     final rows = parsed.rows;
     final alignments = parsed.alignments;
@@ -89,6 +95,7 @@ class EnhancedTableBlock extends StatelessWidget {
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),
                 child: Table(
+                  key: ValueKey(maxColumns),
                   defaultColumnWidth: const _MarkdownTableColumnWidth(),
                   border: TableBorder(
                     horizontalInside: BorderSide(

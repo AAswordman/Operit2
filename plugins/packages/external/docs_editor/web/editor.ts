@@ -2,10 +2,16 @@ import type { DocumentInfo } from '../src/protocol';
 
 export type Bytes = Uint8Array<ArrayBuffer>;
 export interface Editor {
+  zoom?: DocumentZoom;
   selection(): Promise<string>;
   read(section: string, offset: number): Promise<unknown>;
   edit(change: Record<string, unknown>, assertRevision: () => void): Promise<unknown>;
   snapshot(): Promise<Bytes>;
+}
+export interface DocumentZoom {
+  get(): number;
+  set(percent: number): void;
+  fit(): void;
 }
 export type EditorOptions = {
   root: HTMLElement;
