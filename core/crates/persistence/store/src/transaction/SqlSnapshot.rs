@@ -8,6 +8,8 @@ use super::{Cell, Data, Result, sql_identifier};
 
 fn fail(error: impl std::fmt::Display) -> SqliteStoreError { SqliteStoreError::Message(error.to_string()) }
 fn host_error(error: impl std::fmt::Display) -> HostError { HostError::new(error.to_string()) }
+const INSERT_ROW: &str = "INSERT INTO rows(name,value) VALUES(?1,?2)
+    ON CONFLICT(name,value) DO UPDATE SET copies=copies+1";
 struct StagingHost(Arc<dyn RuntimeStorageHost>);
 impl RuntimeSqliteHost for StagingHost {
     fn runtimeStorage(&self) -> Option<Arc<dyn RuntimeStorageHost>> { Some(self.0.clone()) }
@@ -48,12 +50,13 @@ impl SqlSnapshot {
         let path = format!("runtime/sync/staging/{}.sqlite", uuid::Uuid::new_v4());
         let store = SqliteStore::openWithHost(Arc::new(StagingHost(storage.clone())), &path).map_err(|e|e.to_string())?;
         let snapshot = Self { store:Some(store), storage, path, columns:BTreeMap::new() };
-        // These settings apply to the disposable staging database, never to business durability.
+        // Store the row in canonical sort order without copying its payload into a second B-tree.
+        // Raw snapshots preserve multiplicity; the content projection is already defined as distinct.
         snapshot.store().executeBatch("PRAGMA journal_mode=OFF; PRAGMA synchronous=OFF; PRAGMA cache_size=-2048; PRAGMA temp_store=FILE;
-            CREATE TABLE rows(id INTEGER PRIMARY KEY,name TEXT NOT NULL,value TEXT NOT NULL);
-            CREATE INDEX row_order ON rows(name,value);
-            CREATE TABLE projected(name TEXT NOT NULL,value TEXT NOT NULL);
-            CREATE INDEX projected_order ON projected(name,value);").map_err(|e|e.to_string())?;
+            CREATE TABLE rows(name TEXT NOT NULL,value TEXT NOT NULL,copies INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY(name,value)) WITHOUT ROWID;
+            CREATE TABLE projected(name TEXT NOT NULL,value TEXT NOT NULL,
+                PRIMARY KEY(name,value)) WITHOUT ROWID;").map_err(|e|e.to_string())?;
         Ok(snapshot)
     }
     fn store(&self) -> &SqliteStore { self.store.as_ref().expect("live snapshot") }
@@ -83,7 +86,7 @@ impl SqlSnapshot {
                     let mut value = RowBuffer(Vec::new());
                     serde_json::to_writer(&mut value, &cells).map_err(host_error)?;
                     let value = String::from_utf8(value.0).map_err(host_error)?;
-                    stage.execute("INSERT INTO rows(name,value) VALUES(?1,?2)",vec![SqliteValue::Text(name.clone()),SqliteValue::Text(value)]).map_err(host_error)?;
+                    stage.execute(INSERT_ROW,vec![SqliteValue::Text(name.clone()),SqliteValue::Text(value)]).map_err(host_error)?;
                     Ok(())
                 })?;
             }
@@ -93,14 +96,18 @@ impl SqlSnapshot {
     }
     pub(crate) fn has_rows(&self) -> Result<bool> { self.store().queryOne("SELECT 1 FROM rows LIMIT 1",vec![]).map(|v|v.is_some()).map_err(|e|e.to_string()) }
     pub(crate) fn insert(&self, name: &str, cells: &[Cell]) -> Result<()> {
-        self.store().execute("INSERT INTO rows(name,value) VALUES(?1,?2)",vec![SqliteValue::Text(name.into()),SqliteValue::Text(serde_json::to_string(&cells).map_err(|e|e.to_string())?)]).map_err(|e|e.to_string())?;
+        self.store().execute(INSERT_ROW,vec![SqliteValue::Text(name.into()),SqliteValue::Text(serde_json::to_string(&cells).map_err(|e|e.to_string())?)]).map_err(|e|e.to_string())?;
         Ok(())
     }
     pub(crate) fn visit(&self, name: &str, projected: bool, visitor: &mut dyn FnMut(Vec<Cell>) -> Result<()>) -> Result<()> {
-        let sql = if projected { "SELECT DISTINCT value FROM projected WHERE name=?1 ORDER BY value" } else { "SELECT value FROM rows WHERE name=?1 ORDER BY value" };
+        let sql = if projected { "SELECT value,1 FROM projected WHERE name=?1 ORDER BY value" } else { "SELECT value,copies FROM rows WHERE name=?1 ORDER BY value" };
         self.store().visitRows(sql,vec![SqliteValue::Text(name.into())],&mut |row| {
-            let value: Vec<Cell> = serde_json::from_str(&row.get::<_,String>(0).map_err(host_error)?).map_err(host_error)?;
-            visitor(value).map_err(host_error)
+            let value: String = row.get(0).map_err(host_error)?;
+            let copies: i64 = row.get(1).map_err(host_error)?;
+            for _ in 0..copies {
+                visitor(serde_json::from_str(&value).map_err(host_error)?).map_err(host_error)?;
+            }
+            Ok(())
         }).map_err(|e|e.to_string())
     }
     pub(crate) fn install(&self, tx: &mut SqliteTransaction<'_>, names: &[String]) -> std::result::Result<(),SqliteStoreError> {
@@ -149,7 +156,7 @@ impl SqlSnapshot {
                 let paths=removed.iter().rev().map(|i|format!(",'$[{i}]'")).collect::<String>();
                 let value=if paths.is_empty() { "value".into() } else { format!("json_remove(value{paths})") };
                 let filter=identity.map_or(String::new(),|(a,b)|format!(" AND json_extract(value,'$[{a}]')!=json_extract(value,'$[{b}]')"));
-                tx.execute(&format!("INSERT INTO projected SELECT name,{value} FROM rows WHERE name=?1{filter}"),params)?;
+                tx.execute(&format!("INSERT OR IGNORE INTO projected SELECT name,{value} FROM rows WHERE name=?1{filter}"),params)?;
                 Ok(())
             }).map_err(|e|e.to_string())?;
         }

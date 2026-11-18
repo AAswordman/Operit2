@@ -1135,6 +1135,10 @@ impl RuntimePackageManager {
                 enabledPackageNames.insert(child.packageName.clone());
             }
         }
+        // A2A state can only affect packages already published by reloadA2APackages.
+        if !availablePackages.values().any(is_a2a_package) {
+            return enabledPackageNames.into_iter().collect();
+        }
         if let Ok(repository) = crate::tools::a2a::A2ARepository::A2ARepository::new(self.context.as_ref().clone()) {
             if let Ok(records) = repository.records() {
                 for record in records {

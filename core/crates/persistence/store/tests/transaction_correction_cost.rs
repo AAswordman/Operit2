@@ -4,6 +4,37 @@ use operit_host_native_storage::NativeRuntimeStorageHost;
 use operit_store::{SqliteRowGet, SqliteStore::{SqliteStore, SqliteValue}, Transaction::{Backend, Owner, SqlDataset}};
 
 #[test]
+fn staged_rows_keep_wire_order_and_multiplicity_but_project_distinct_contents() {
+    use operit_store::{sync::SqlChatSyncStore::SqlChatSyncStore, Transaction::Snapshot};
+    use serde_json::json;
+
+    let root = std::env::temp_dir().join(format!("operit-snapshot-order-{}", uuid::Uuid::new_v4()));
+    {
+        let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
+        let store = SqliteStore::openWithHost(host, "runtime/order.sqlite").unwrap();
+        store.executeBatch("CREATE TABLE messages(messageId INTEGER,body TEXT);
+            INSERT INTO messages VALUES(2,'same'),(10,'same'),(2,'same'),(2,'other');").unwrap();
+        let dataset = SqlDataset { store: &store, owner: Owner { backend: Backend::Sql,
+            path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(), format: 1, layout: 1 },
+            node: "authority".into(), tables: &["messages"],
+            revisions: "SELECT 'unused',0,'peer',1 WHERE 0", cleanup: "", restore_schema: None };
+        let staged = dataset.snapshot().unwrap();
+        let wire = serde_json::to_value(&staged).unwrap();
+        assert_eq!(wire["data"]["values"]["messages"]["rows"], json!([
+            [{"Integer":10},{"Text":"same"}],
+            [{"Integer":2},{"Text":"other"}],
+            [{"Integer":2},{"Text":"same"}],
+            [{"Integer":2},{"Text":"same"}]
+        ]));
+        let legacy: Snapshot = serde_json::from_value(wire).unwrap();
+        assert_eq!(staged.token().unwrap(), legacy.token().unwrap());
+        assert_eq!(SqlChatSyncStore::snapshotContentDigest(&staged).unwrap(),
+            SqlChatSyncStore::snapshotContentDigest(&legacy).unwrap());
+    }
+    std::fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn unchanged_sql_correction_updates_only_the_checkpoint_and_still_enforces_cas() {
     let root = std::env::temp_dir().join(format!("operit-correction-cost-{}", uuid::Uuid::new_v4()));
     {

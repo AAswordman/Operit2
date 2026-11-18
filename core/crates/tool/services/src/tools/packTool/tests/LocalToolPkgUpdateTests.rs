@@ -149,6 +149,7 @@ struct FaultStorage {
     inner: Arc<NativeRuntimeStorageHost>,
     faults: Arc<Faults>,
     frozen: Arc<Mutex<BTreeMap<String, i64>>>,
+    extensionRecordListings: Arc<AtomicUsize>,
 }
 
 impl RuntimeStorageHost for FaultStorage {
@@ -185,7 +186,12 @@ impl RuntimeStorageHost for FaultStorage {
         self.faults.perform("store_delete", path, || self.inner.delete(path, recursive))
     }
     fn exists(&self, path: &str) -> HostResult<bool> { self.inner.exists(path) }
-    fn list(&self, path: &str) -> HostResult<Vec<RuntimeStorageEntry>> { self.inner.list(path) }
+    fn list(&self, path: &str) -> HostResult<Vec<RuntimeStorageEntry>> {
+        if path.starts_with("runtime/extensions/") && path.ends_with("/records") {
+            self.extensionRecordListings.fetch_add(1, Ordering::Relaxed);
+        }
+        self.inner.list(path)
+    }
 }
 
 impl RuntimeSqliteHost for FaultStorage {
@@ -297,7 +303,7 @@ impl LocalUpdateFixture {
         std::fs::create_dir_all(root.join("artifacts")).unwrap();
         let storage = Arc::new(FaultStorage {
             inner: Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces"))),
-            faults: Arc::new(Faults::default()), frozen: Default::default(),
+            faults: Arc::new(Faults::default()), frozen: Default::default(), extensionRecordListings: Default::default(),
         });
         operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(storage.clone());
         operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(storage.clone());
@@ -504,6 +510,29 @@ fn packageArchive(id: &str, scope: Option<&str>, version: &str, marker: &str,
 
 fn nextArchive(scope: Option<&str>) -> Vec<u8> {
     packageArchive(TEST_ID, scope, "2.0.0", "v2", &[("kept.child", false), ("new.child", true)])
+}
+
+#[test]
+fn owner_check_skips_extension_scan_until_an_a2a_package_is_published() {
+    use crate::tools::a2a::A2ARepository::{A2AConfig, A2ARepository};
+
+    let _serial = serialTest();
+    let fixture = LocalUpdateFixture::new();
+    fixture.install("device");
+    let mut manager = fixture.manager.lock().unwrap();
+    let repository = A2ARepository::new(manager.context.as_ref().clone()).unwrap();
+    repository.save("test-agent", A2AConfig { url: "https://example.invalid/".into(), ..Default::default() }).unwrap();
+    let listings = &fixture.storage.extensionRecordListings;
+    let before = listings.load(Ordering::Relaxed);
+    manager.requireEnabledToolPkgContainer(TEST_ID).unwrap();
+    assert_eq!(listings.load(Ordering::Relaxed), before);
+    assert!(!manager.isPackageEnabled("a2a.test-agent"));
+
+    manager.reloadA2APackages();
+    assert!(manager.isPackageEnabled("a2a.test-agent"));
+    repository.set_enabled("test-agent", false).unwrap();
+    assert!(!manager.isPackageEnabled("a2a.test-agent"));
+    manager.requireEnabledToolPkgContainer(TEST_ID).unwrap();
 }
 
 #[tokio::test(flavor = "current_thread")]

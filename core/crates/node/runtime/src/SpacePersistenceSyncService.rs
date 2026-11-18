@@ -54,6 +54,8 @@ const WORKSPACE_SCAN_ACTIVE_INTERVAL_MS: u64 = 2_000;
 /// Bound external-editor discovery even after a long idle period. Unchanged files
 /// reuse metadata and blob references; the five-second ceiling leaves time to apply.
 const WORKSPACE_SCAN_IDLE_INTERVAL_MS: u64 = 5_000;
+const WORKSPACE_CHANGED: &str = "workspace_changed";
+const WORKSPACE_RETRY_POLL: &str = "workspace_retry_poll";
 
 /// Only verified exchange boundaries may become a caller's scheduling baseline.
 #[derive(Serialize, Deserialize)]
@@ -323,7 +325,7 @@ impl SpacePersistenceSyncService {
                         (intervalMs * 2).min(WORKSPACE_SCAN_IDLE_INTERVAL_MS)
                     };
                     // Also retry interrupted transfers even when no new edits occur.
-                    let _ = service.scheduleSynchronization(if changes > 0 { "workspace_changed" } else { "workspace_retry_poll" });
+                    let _ = service.scheduleSynchronization(if changes > 0 { WORKSPACE_CHANGED } else { WORKSPACE_RETRY_POLL });
                 }
             })),
         ).map_err(|e| e.to_string())?;
@@ -369,6 +371,10 @@ impl SpacePersistenceSyncService {
 
     /// Exchanges Space projections through direct pairings, then synchronizes every reachable member.
     pub async fn synchronizeOnce(&self) -> Result<(), String> {
+        self.synchronizeCycle(true).await
+    }
+
+    async fn synchronizeCycle(&self, scanWorkspace: bool) -> Result<(), String> {
         let space = self.state.spaceStore.initialize()?;
         self.state.progress.retain(&space.spaceId, &space.members);
         // A shared removal takes effect before any exchange: when the replayed
@@ -385,8 +391,10 @@ impl SpacePersistenceSyncService {
             }
         }
         let mut errors = Vec::new();
-        if let Err(error) = crate::fault_isolation::run("scan workspace files", || self.workspaceFiles().scan().map(|_| ())) {
-            errors.push(error);
+        if scanWorkspace {
+            if let Err(error) = crate::fault_isolation::run("scan workspace files", || self.workspaceFiles().scan().map(|_| ())) {
+                errors.push(error);
+            }
         }
         let services = self.state.nodeRouter.nodeServices()?;
         let activePeers = services.peers().activePeerNodeIds().map_err(|error| error.to_string())?;
@@ -1309,7 +1317,11 @@ impl SpacePersistenceSyncService {
                     }
                     service.state.synchronizationRequested.store(false, Ordering::Release);
                     let reasons = std::mem::take(&mut *service.state.synchronizationReasons.lock()
-                        .unwrap_or_else(|error| error.into_inner())).into_iter().collect::<Vec<_>>().join(",");
+                        .unwrap_or_else(|error| error.into_inner()));
+                    // A workspace tick has already scanned (and reported any failure).
+                    // Other wakeups keep the immediate scan before exchanging with peers.
+                    let scanWorkspace = !reasons.contains(WORKSPACE_CHANGED) && !reasons.contains(WORKSPACE_RETRY_POLL);
+                    let reasons = reasons.into_iter().collect::<Vec<_>>().join(",");
                     let synchronizedRevision = syncMutationRevision();
                     let syncStartedAt = currentTimeMillis();
                     let localNodeId = service.state.nodeRouter.localNodeId();
@@ -1321,7 +1333,7 @@ impl SpacePersistenceSyncService {
                         ),
                         operit_util::AppLogger::VERBOSE_LEVEL_5,
                     );
-                    match crate::fault_isolation::operation("Space synchronization pass", service.synchronizeOnce()).await {
+                    match crate::fault_isolation::operation("Space synchronization pass", service.synchronizeCycle(scanWorkspace)).await {
                         Ok(()) => {
                             operit_util::AppLogger::AppLogger::v_with_level(
                                 "SpacePersistenceSyncService",
