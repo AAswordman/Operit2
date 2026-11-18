@@ -22,6 +22,8 @@ class CatalogBridge extends OperitRuntimeBridge {
   bool duplicate = false;
   int ownersRead = 0;
   Completer<void>? gate;
+  List<core.ToolPkgNavigationEntry>? fileEntries;
+  List<core.ToolPkgUiRoute>? fileRoutes;
 
   /// Models enabled declarations without any plugin business or UI implementation.
   @override
@@ -32,22 +34,24 @@ class CatalogBridge extends OperitRuntimeBridge {
     final Object? value;
     switch (request.methodName) {
       case 'getToolPkgNavigationEntries':
-        value = [
-          if (enabled)
-            core.ToolPkgNavigationEntry(
-              containerPackageName: owner,
-              toolPkgId: owner,
-              entryId: 'page',
-              routeId: 'route',
-              params: null,
-              surface: surface,
-              title: 'Page',
-              description: '',
-              action: null,
-              icon: null,
-              order: 1,
-            ).toJson(),
-        ];
+        value =
+            fileEntries?.map((entry) => entry.toJson()).toList() ??
+            [
+              if (enabled)
+                core.ToolPkgNavigationEntry(
+                  containerPackageName: owner,
+                  toolPkgId: owner,
+                  entryId: 'page',
+                  routeId: 'route',
+                  params: null,
+                  surface: surface,
+                  title: 'Page',
+                  description: '',
+                  action: null,
+                  icon: null,
+                  order: 1,
+                ).toJson(),
+            ];
       case 'getToolPkgUiRoutes':
         final route = core.ToolPkgUiRoute(
           containerPackageName: owner,
@@ -61,10 +65,16 @@ class CatalogBridge extends OperitRuntimeBridge {
           moduleSpec: const {},
           keepAlive: true,
         ).toJson();
-        value = [if (enabled) route, if (duplicate) route];
+        value =
+            fileRoutes?.map((route) => route.toJson()).toList() ??
+            [if (enabled) route, if (duplicate) route];
       case 'getToolPkgContainerRuntime':
         ownersRead++;
-        value = enabled ? runtime(owner).toJson() : null;
+        final args = request.args;
+        final requested = args is Map
+            ? args['containerPackageName'] as String?
+            : null;
+        value = enabled ? runtime(requested ?? owner).toJson() : null;
       default:
         throw StateError('Unexpected catalog method: ${request.methodName}');
     }
@@ -159,6 +169,77 @@ Future<PluginWorkspacePresentation> resolve(
 
 /// Verifies routing boundaries, page reuse and live owner revocation.
 void main() {
+  test(
+    'file openers match suffixes and sort only valid owned routes',
+    () async {
+      core.ToolPkgNavigationEntry entry(
+        String owner,
+        String id,
+        int order,
+        List<String> extensions,
+      ) => core.ToolPkgNavigationEntry(
+        containerPackageName: owner,
+        toolPkgId: owner,
+        entryId: id,
+        routeId: '$owner:route',
+        params: {'extensions': extensions},
+        surface: 'workspace_file',
+        title: id,
+        description: '',
+        action: null,
+        icon: null,
+        order: order,
+      );
+      core.ToolPkgUiRoute route(String owner, {String? routeOwner}) =>
+          core.ToolPkgUiRoute(
+            containerPackageName: owner,
+            toolPkgId: owner,
+            routeId: '${routeOwner ?? owner}:route',
+            uiModuleId: 'page',
+            runtime: 'compose_dsl',
+            screen: 'ui/page.js',
+            title: 'Page',
+            description: '',
+            moduleSpec: const {},
+            keepAlive: true,
+          );
+      final bridge = CatalogBridge()
+        ..fileEntries = [
+          entry('z', 'last', 20, ['docx']),
+          entry('b', 'second', 5, ['docx']),
+          entry('a', 'first', 5, ['docx']),
+          entry('pdf', 'unmatched', 0, ['pdf']),
+          entry('unowned', 'invalid', 0, ['docx']),
+        ]
+        ..fileRoutes = [
+          route('z'),
+          route('b'),
+          route('a'),
+          route('pdf'),
+          route('other', routeOwner: 'unowned'),
+        ];
+      final matches = await PluginWorkspacePresentation.forFile(
+        clients: GeneratedCoreProxyClients(bridge),
+        path: '/files/Report.DOCX',
+        relativePath: 'folder/Report.DOCX',
+        language: 'en',
+        chatId: 'chat-a',
+      );
+      expect(matches.map((item) => item.fileOpenerId), [
+        'first',
+        'second',
+        'last',
+      ]);
+      expect(matches.first.input, {
+        'path': '/files/Report.DOCX',
+        'relativePath': 'folder/Report.DOCX',
+        'name': 'Report.DOCX',
+        'chatId': 'chat-a',
+      });
+      expect(bridge.ownersRead, 3);
+    },
+  );
+
   test(
     'navigation detaches opaque arguments before resolving the catalog',
     () async {

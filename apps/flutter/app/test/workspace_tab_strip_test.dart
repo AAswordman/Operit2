@@ -58,6 +58,77 @@ Future<void> _rightClick(WidgetTester tester, String title) async {
 
 void main() {
   for (final width in [390.0, 1024.0]) {
+    testWidgets('file opener has a fixed trailing button at width $width', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = Size(width, 600);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final tabs = _tabs();
+      WorkspaceTab? chosen;
+      WorkspaceTab? dropped;
+      int? selected;
+      const targetKey = ValueKey('tab-drop-target');
+      await tester.pumpWidget(
+        _app(
+          Column(
+            children: [
+              WorkspaceTabStrip(
+                tabs: tabs,
+                selectedIndex: 0,
+                onSelected: (index) => selected = index,
+                onClosed: (_) => fail('Open with must not close the tab'),
+                onCloseTabs: (_) async {},
+                onOpenWith: (tab) async => chosen = tab,
+              ),
+              Expanded(
+                child: DragTarget<WorkspaceTabDragPayload>(
+                  onAcceptWithDetails: (details) => dropped = details.data.tab,
+                  builder: (_, _, _) => const SizedBox.expand(key: targetKey),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final fileTab = find.byTooltip('a.txt');
+      final button = find.byTooltip('打开方式');
+      final close = find.descendant(
+        of: fileTab,
+        matching: find.byIcon(Icons.close),
+      );
+      expect(button, findsOneWidget);
+      expect(
+        tester.getRect(button).left,
+        greaterThan(tester.getCenter(close).dx),
+      );
+      final drag = await tester.startGesture(
+        tester.getCenter(find.text('a.txt')),
+      );
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      expect(find.byType(PopupMenuItem<int>), findsNothing);
+      expect(chosen, isNull);
+      await drag.moveTo(tester.getCenter(find.byKey(targetKey)));
+      await tester.pump();
+      await drag.up();
+      await tester.pumpAndSettle();
+      expect(dropped, same(tabs[1]));
+
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+      expect(chosen, same(tabs[1]));
+      expect(selected, isNull);
+
+      chosen = null;
+      await _rightClick(tester, 'a.txt');
+      await tester.tap(find.text('打开方式'));
+      await tester.pumpAndSettle();
+      expect(chosen, same(tabs[1]));
+    });
+  }
+  for (final width in [390.0, 1024.0]) {
     for (final direction in TextDirection.values) {
       for (final tabCount in [1, 2]) {
         testWidgets(

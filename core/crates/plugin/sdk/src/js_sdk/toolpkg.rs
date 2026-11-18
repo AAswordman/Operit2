@@ -2154,6 +2154,9 @@ pub enum ToolPkgNavigationSurface {
     /// Registers a package-owned page opened inside the workspace independently of sidebar docking.
     #[serde(rename = "workspace")]
     Workspace,
+    /// Opens files whose suffix matches a lowercase entry in params.extensions, without a leading dot.
+    #[serde(rename = "workspace_file")]
+    WorkspaceFile,
     /// Embeds package-owned Compose content on the workspace home surface.
     #[serde(rename = "workspace_home")]
     WorkspaceHome,

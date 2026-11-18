@@ -245,6 +245,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get workspaceCloseOtherTabs => 'Close Others';
 
   @override
+  String get workspaceOpenWith => 'Open with';
+
+  @override
+  String get workspaceBuiltInPreview => 'Built-in preview';
+
+  @override
+  String get workspacePluginUnsavedChanges =>
+      'Save in the editor first, or discard the unsaved changes.';
+
+  @override
   String get workspaceCloseTabsToRight => 'Close to the Right';
 
   @override

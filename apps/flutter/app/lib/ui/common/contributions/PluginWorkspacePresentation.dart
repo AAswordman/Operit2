@@ -20,6 +20,7 @@ class PluginWorkspacePresentation {
     required this.icon,
     required this.tabId,
     required this.title,
+    this.fileOpenerId,
   });
 
   final GeneratedCoreProxyClients clients;
@@ -34,13 +35,91 @@ class PluginWorkspacePresentation {
 
   /// Uses the requested tab title or the localized route title.
   final String title;
+  final String? fileOpenerId;
 
   /// Reuses the same route instance across both workspace panes.
   String get identity => jsonEncode([
     route.containerPackageName,
     route.routeId,
+    if (fileOpenerId != null) fileOpenerId,
     if (tabId != null) tabId,
   ]);
+
+  /// Resolves enabled openers in catalog order without executing plugin callbacks.
+  static Future<List<PluginWorkspacePresentation>> forFile({
+    required GeneratedCoreProxyClients clients,
+    required String path,
+    required String relativePath,
+    required String language,
+    String? chatId,
+  }) async {
+    final name = path.split(RegExp(r'[/\\]')).last;
+    if (!name.contains('.')) return const [];
+    final manager = clients.application.packageManager();
+    final declarations = await manager.getToolPkgNavigationEntries(
+      useEnglish: language == 'en',
+    );
+    final matching =
+        declarations.where((entry) {
+          final params = entry.params;
+          if (entry.surface != 'workspace_file' ||
+              entry.action != null ||
+              params is! Map ||
+              params['extensions'] is! List)
+            return false;
+          return (params['extensions'] as List).whereType<String>().any(
+            (extension) =>
+                extension.isNotEmpty &&
+                name.toLowerCase().endsWith('.$extension'),
+          );
+        }).toList()..sort((a, b) {
+          final order = a.order.compareTo(b.order);
+          if (order != 0) return order;
+          final owner = a.containerPackageName.compareTo(
+            b.containerPackageName,
+          );
+          return owner != 0 ? owner : a.entryId.compareTo(b.entryId);
+        });
+    if (matching.isEmpty) return const [];
+    final routes = await manager.getToolPkgUiRoutes(
+      runtime: 'compose_dsl',
+      useEnglish: language == 'en',
+    );
+    final result = <PluginWorkspacePresentation>[];
+    for (final entry in matching) {
+      final owned = routes.where(
+        (route) =>
+            route.containerPackageName == entry.containerPackageName &&
+            route.routeId == entry.routeId &&
+            route.runtime == 'compose_dsl' &&
+            route.screen.isNotEmpty,
+      );
+      if (owned.length != 1) continue;
+      final plugin = await manager.getToolPkgContainerRuntime(
+        containerPackageName: entry.containerPackageName,
+      );
+      if (plugin == null) continue;
+      result.add(
+        PluginWorkspacePresentation._(
+          clients: clients,
+          route: owned.single,
+          plugin: plugin,
+          input: {
+            'path': path,
+            'relativePath': relativePath,
+            'name': name,
+            'chatId': chatId,
+          },
+          hostState: const {},
+          icon: entry.icon,
+          tabId: path,
+          title: entry.title,
+          fileOpenerId: entry.entryId,
+        ),
+      );
+    }
+    return result;
+  }
 
   /// Uses ordinary page navigation; the registered surface determines placement.
   /// Returns null for routes that should continue through the application router.

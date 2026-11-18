@@ -80,6 +80,22 @@ class WorkspaceTab {
   final PluginWorkspacePresentation? pluginPresentation;
   final String identityToken;
 
+  WorkspaceTab withFileOpener(
+    PluginWorkspacePresentation? opener,
+    WorkspaceTextDocument? document,
+  ) => WorkspaceTab(
+    kind: kind,
+    title: title,
+    icon: icon,
+    closable: closable,
+    filePath: filePath,
+    absolutePath: absolutePath,
+    previewKind: previewKind,
+    textDocument: document,
+    pluginPresentation: opener,
+    identityToken: identityToken,
+  );
+
   /// Preserves an open file's draft and zoom when its path changes.
   WorkspaceTab withFileLocation(String path, String? absolute) {
     assert(

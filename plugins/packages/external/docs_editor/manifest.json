@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.office",
+  "version": "0.1.1",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "Office 文档", "en": "Office documents" },
+  "description": { "zh": "离线打开、编辑及保存 DOCX、PPTX 和 PDF，提供工作区文档操作工具。", "en": "Offline DOCX, PPTX and PDF editing, with live workspace document tools." },
+  "enabled_by_default": false,
+  "installation_scope": "space",
+  "subpackages": [{ "id": "office", "entry": "dist/tools.js" }],
+  "resources": [
+    { "key": "office_html", "path": "dist/web/index.html", "mime": "text/html" },
+    { "key": "office_js", "path": "dist/web/app.js", "mime": "application/javascript" },
+    { "key": "office_css", "path": "dist/web/app.css", "mime": "text/css" },
+    { "key": "office_pdfium", "path": "dist/web/pdfium.wasm", "mime": "application/wasm" }
+  ]
+}

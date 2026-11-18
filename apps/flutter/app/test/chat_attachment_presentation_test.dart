@@ -213,6 +213,26 @@ void main() {
     },
   );
 
+  test('quoted document text stays separate from the sent message body', () {
+    const markup =
+        'Summarize this <attachment id="pasted_text_1" filename="pasted_text.txt" type="text/plain">'
+        '额外信息 · 文档选区: sample.docx\n\nA &amp; B &lt;/attachment&gt;</attachment>';
+    final cursorMessage = cursor.parseMessageContent(markup);
+    final bubbleMessage = bubble.parseMessageContent(markup);
+    expect(cursorMessage.processedText, 'Summarize this');
+    expect(bubbleMessage.processedText, 'Summarize this');
+    for (final attachment in [
+      cursorMessage.attachments.single,
+      bubbleMessage.attachments.single,
+    ]) {
+      expect(attachment.isInlineContext, isTrue);
+      expect(
+        attachment.content,
+        '额外信息 · 文档选区: sample.docx\n\nA & B </attachment>',
+      );
+    }
+  });
+
   for (final isBubble in [false, true]) {
     testWidgets(
       'memory recall attachment folds into supplementary information, bubble=$isBubble',

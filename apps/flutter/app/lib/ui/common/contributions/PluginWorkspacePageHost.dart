@@ -14,11 +14,15 @@ class PluginWorkspacePageHost extends StatefulWidget {
     required this.presentation,
     required this.workspacePath,
     this.hostState = const {},
+    this.unavailable,
+    this.onActionResult,
   });
 
   final PluginWorkspacePresentation presentation;
   final String? workspacePath;
   final Map<String, Object?> hostState;
+  final Widget? unavailable;
+  final ValueChanged<Object?>? onActionResult;
 
   /// Retains one catalog observer and one native Compose page instance.
   @override
@@ -35,7 +39,11 @@ class _PluginWorkspacePageHostState extends State<PluginWorkspacePageHost> {
     super.initState();
     _catalog = EmbeddedPluginSurfaceCatalog(
       clients: widget.presentation.clients,
-      surfaces: const {'workspace'},
+      surfaces: {
+        widget.presentation.fileOpenerId == null
+            ? 'workspace'
+            : 'workspace_file',
+      },
     );
   }
 
@@ -50,11 +58,17 @@ class _PluginWorkspacePageHostState extends State<PluginWorkspacePageHost> {
   @override
   void didUpdateWidget(covariant PluginWorkspacePageHost oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.presentation.clients != widget.presentation.clients) {
+    if (oldWidget.presentation.clients != widget.presentation.clients ||
+        oldWidget.presentation.fileOpenerId !=
+            widget.presentation.fileOpenerId) {
       _catalog.dispose();
       _catalog = EmbeddedPluginSurfaceCatalog(
         clients: widget.presentation.clients,
-        surfaces: const {'workspace'},
+        surfaces: {
+          widget.presentation.fileOpenerId == null
+              ? 'workspace'
+              : 'workspace_file',
+        },
       );
       _catalog.setLanguage(Localizations.localeOf(context).languageCode);
     }
@@ -80,10 +94,12 @@ class _PluginWorkspacePageHostState extends State<PluginWorkspacePageHost> {
         (entry) =>
             entry.route.containerPackageName ==
                 requested.route.containerPackageName &&
-            entry.route.routeId == requested.route.routeId,
+            entry.route.routeId == requested.route.routeId &&
+            (requested.fileOpenerId == null ||
+                requested.fileOpenerId == entry.entry.entryId),
       );
-      if (matches.isEmpty) return const SizedBox.shrink();
-      final entry = matches.single;
+      if (matches.isEmpty) return widget.unavailable ?? const SizedBox.shrink();
+      final entry = matches.first;
       return ToolPkgUiLauncherScreen(
         key: ValueKey((
           requested.clients,
@@ -96,6 +112,7 @@ class _PluginWorkspacePageHostState extends State<PluginWorkspacePageHost> {
         embeddedScreenPath: entry.route.screen,
         initialModuleSpec: entry.route.moduleSpec,
         showLauncherChrome: false,
+        onActionResult: widget.onActionResult,
         initialState: {
           ...requested.hostState,
           ...widget.hostState,

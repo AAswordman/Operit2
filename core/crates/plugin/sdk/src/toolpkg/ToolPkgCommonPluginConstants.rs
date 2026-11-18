@@ -99,6 +99,8 @@ pub const TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS: &str = "chat_input_menu_
 pub const TOOLPKG_NAV_SURFACE_CHAT_MESSAGE_AFTER: &str = "chat_message_after";
 /// Opens plugin-owned pages inside the workspace without sidebar docking ownership.
 pub const TOOLPKG_NAV_SURFACE_WORKSPACE: &str = "workspace";
+/// Opens workspace files with matching filename extensions in a Compose route.
+pub const TOOLPKG_NAV_SURFACE_WORKSPACE_FILE: &str = "workspace_file";
 /// Embeds plugin-owned content on the workspace overview page.
 pub const TOOLPKG_NAV_SURFACE_WORKSPACE_HOME: &str = "workspace_home";
 
@@ -111,6 +113,7 @@ pub(crate) fn isToolPkgEmbeddedUiSurface(surface: &str) -> bool {
         | TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS
         | TOOLPKG_NAV_SURFACE_CHAT_MESSAGE_AFTER
         | TOOLPKG_NAV_SURFACE_WORKSPACE
+        | TOOLPKG_NAV_SURFACE_WORKSPACE_FILE
         | TOOLPKG_NAV_SURFACE_WORKSPACE_HOME
     )
 }
@@ -128,6 +131,7 @@ pub(crate) fn requireToolPkgNavigationSurface(surface: &str) -> Result<(), Strin
         | TOOLPKG_NAV_SURFACE_CHAT_INPUT_MENU_SECTIONS
         | TOOLPKG_NAV_SURFACE_CHAT_MESSAGE_AFTER
         | TOOLPKG_NAV_SURFACE_WORKSPACE
+        | TOOLPKG_NAV_SURFACE_WORKSPACE_FILE
         | TOOLPKG_NAV_SURFACE_WORKSPACE_HOME => Ok(()),
         _ => Err(format!("is unsupported: {surface}")),
     }

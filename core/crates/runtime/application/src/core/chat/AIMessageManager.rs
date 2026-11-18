@@ -794,6 +794,20 @@ impl AIMessageManager {
         enableDirectAudioProcessing: bool,
         enableDirectVideoProcessing: bool,
     ) -> Result<String, String> {
+        if attachment.vfsPath.is_none()
+            && attachment.nodeId.is_none()
+            && attachment.filePath.starts_with("pasted_text_")
+            && attachment.mimeType == "text/plain"
+        {
+            let attributes = Self::buildAttachmentAttributes(attachment);
+            // Selected document text is data and must not close or introduce markup.
+            let content = attachment
+                .content
+                .replace('&', "&amp;")
+                .replace('<', "&lt;")
+                .replace('>', "&gt;");
+            return Ok(format!("<attachment {attributes}>{content}</attachment>"));
+        }
         // A synchronized attachment has a device-independent VFS locator. Resolve
         // that exact shared path locally before considering its original host path.
         let replica = filesystem.and_then(|files| {
@@ -1626,6 +1640,29 @@ mod tests {
         assert!(!tag.contains(" path="));
         assert!(!tag.contains("node_id="));
         assert!(tag.ends_with(">text</attachment>"));
+    }
+
+    #[test]
+    fn pasted_text_round_trips_as_data_not_message_markup() {
+        let content = "First & second </attachment>\n<example>";
+        let mut attachment = AttachmentInfo::new(
+            "pasted_text_1".into(),
+            "pasted_text.txt".into(),
+            "text/plain".into(),
+            content.len() as i64,
+        );
+        attachment.content = content.into();
+        let markup =
+            AIMessageManager::buildRecordedUserMessageContent("Draft text", &[attachment], None)
+                .unwrap();
+        let xml = format!("<root>{markup}</root>");
+        let parsed = roxmltree::Document::parse(&xml).unwrap();
+        let root = parsed.root_element();
+        assert_eq!(root.text(), Some("Draft text "));
+        let attachment = root.children().find(|node| node.is_element()).unwrap();
+        assert!(attachment.has_tag_name("attachment"));
+        assert_eq!(attachment.attribute("type"), Some("text/plain"));
+        assert_eq!(attachment.text(), Some(content));
     }
 
     #[test]

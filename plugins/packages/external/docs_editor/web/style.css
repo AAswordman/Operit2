@@ -1,0 +1,17 @@
+:root { color-scheme: light dark; font: 13px/1.4 system-ui, sans-serif; --paper: #fff; --canvas: #f1f2f4; --ink: #1c2229; --muted: #515a65; --border: #d2d7dc; --accent: #136c54; }
+@media (prefers-color-scheme: dark) { :root { --paper: #24272c; --canvas: #181a1d; --ink: #f4f5f7; --muted: #bdc5cf; --border: #4c535e; --accent: #81e0b6; } }
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; width: 100%; height: 100%; }
+body { display: flex; flex-direction: column; overflow: hidden; background: var(--canvas); color: var(--ink); }
+.office-bar { display: flex; align-items: center; gap: 8px; min-height: 42px; flex: none; padding: 4px 8px; background: var(--paper); border-bottom: 1px solid var(--border); }
+.office-format { flex: none; color: var(--accent); font-size: 11px; font-weight: 700; }
+#filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+#status { margin-inline-start: auto; text-align: end; color: var(--muted); font-size: 11px; line-height: 1.1; }
+.office-bar button { display: grid; place-items: center; width: 34px; height: 32px; padding: 0; flex: none; border: 0; border-radius: 4px; color: inherit; background: transparent; cursor: pointer; }
+.office-bar button:hover:not(:disabled) { background: var(--canvas); }
+.office-bar button:disabled { opacity: .38; cursor: default; }
+.office-bar svg { width: 17px; height: 17px; }
+#error { background: var(--paper); border-bottom: 1px solid var(--border); padding: 7px 12px; color: var(--ink); overflow-wrap: anywhere; max-height: 22vh; overflow: auto; }
+#toolbar { flex: none; background: #fff; color-scheme: light; color: #1c2229; }
+#editor { flex: 1; min-height: 0; min-width: 0; overflow: hidden; position: relative; }
+body[data-format="docx"] #editor { overflow: auto; color-scheme: light; }

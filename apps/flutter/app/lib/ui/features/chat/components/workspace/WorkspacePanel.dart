@@ -18,12 +18,14 @@ import '../../../../common/components/RetainedPage.dart';
 import '../../../../common/contributions/ToolPkgChatUiCatalog.dart';
 import '../../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
 import '../../../../common/contributions/EmbeddedPluginSurfaceHost.dart';
+import '../../../../common/contributions/PluginWorkspacePresentation.dart';
 import '../../../../main/layout/SidebarDockController.dart';
 import '../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
 import '../../../../../l10n/generated/app_localizations.dart';
 import '../../../../theme/OperitTheme.dart';
 import 'WorkspacePanelSurface.dart';
+import 'file_preview/WorkspaceTextDocument.dart';
 import '../../viewmodel/WorkspaceFileModels.dart';
 import 'WorkspaceOverviewModels.dart';
 import 'WorkspaceOverviewContributionCatalog.dart';
@@ -59,6 +61,7 @@ class WorkspacePanel extends StatefulWidget {
     required this.onCreateWorkspace,
     required this.onBindWorkspace,
     required this.onUnbindWorkspace,
+    this.onFileQuote,
   });
 
   final WorkspaceSession session;
@@ -81,6 +84,7 @@ class WorkspacePanel extends StatefulWidget {
   final Future<void> Function(String name) onCreateWorkspace;
   final Future<void> Function(String workspace) onBindWorkspace;
   final Future<void> Function() onUnbindWorkspace;
+  final void Function(String fileName, String text)? onFileQuote;
 
   @override
   State<WorkspacePanel> createState() => _WorkspacePanelState();
@@ -414,6 +418,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
           onSelected: (index) => _selectTab(index, paneIndex: paneIndex),
           onClosed: (index) => _closeTab(index, paneIndex: paneIndex),
           onCloseTabs: _closeTabs,
+          onOpenWith: _chooseFileOpener,
         ),
         Expanded(
           child: IndexedStack(
@@ -692,6 +697,16 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     required int paneIndex,
     required _WorkspaceDropZone zone,
   }) {
+    if (_session.dirtyPluginFiles.contains(tab)) {
+      ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.workspacePluginUnsavedChanges,
+          ),
+        ),
+      );
+      return;
+    }
     final sourceTabs = _session.tabs.contains(tab)
         ? _session.tabs
         : (_session.secondaryTabs.contains(tab)
@@ -1158,6 +1173,24 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       onListWorkspaceBindingDirectories:
           widget.onListWorkspaceBindingDirectories,
       onReadWorkspaceTextFile: widget.onReadWorkspaceTextFile,
+      onChooseFileOpener: () => _chooseFileOpener(tab),
+      onFileQuote: (text) {
+        final input = tab.pluginPresentation?.input;
+        if (mounted &&
+            _containsWorkspaceTab(tab) &&
+            input is Map &&
+            input['chatId'] == widget.currentChatId) {
+          widget.onFileQuote?.call(tab.title, text);
+        }
+      },
+      onFileDirty: (dirty) {
+        if (!_containsWorkspaceTab(tab)) return;
+        if (dirty) {
+          _session.dirtyPluginFiles.add(tab);
+        } else {
+          _session.dirtyPluginFiles.remove(tab);
+        }
+      },
       onReadWorkspaceFileBytes: widget.onReadWorkspaceFileBytes,
       onWriteWorkspaceFileBytes: widget.onWriteWorkspaceFileBytes,
       onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
@@ -1764,6 +1797,12 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
             tab.kind == WorkspaceTabKind.files) &&
         (tab.filePath == path || tab.filePath?.startsWith('$path/') == true);
     if (operation != WorkspaceFileOperation.copy &&
+        _session.dirtyPluginFiles.any(affected)) {
+      throw StateError(
+        AppLocalizations.of(context)!.workspacePluginUnsavedChanges,
+      );
+    }
+    if (operation != WorkspaceFileOperation.copy &&
         [
           ..._session.tabs,
           ..._session.secondaryTabs,
@@ -1970,6 +2009,9 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     if (!tab.closable) {
       return;
     }
+    if (_session.dirtyPluginFiles.contains(tab)) {
+      if (!await _confirmDiscardPluginFile() || !mounted) return;
+    }
     final document = tab.textDocument;
     if (document != null && (document.isDirty || document.isSaving)) {
       final confirmed = await confirmWorkspaceTextClose(
@@ -1987,6 +2029,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     if (currentIndex < 0) return;
     setState(() {
       final selectedIndex = _selectedIndexForPane(paneIndex);
+      _session.dirtyPluginFiles.remove(tab);
       tabs.removeAt(currentIndex);
       if (selectedIndex == currentIndex) {
         _setSelectedIndexForPane(paneIndex, currentIndex - 1);
@@ -2089,7 +2132,134 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     path: entry.path,
     relativePath: entry.relativePath,
     readText: widget.onReadWorkspaceTextFile,
+    resolveOpener: () async =>
+        (await _fileOpeners(entry.path, entry.relativePath)).firstOrNull,
   );
+
+  Future<List<PluginWorkspacePresentation>> _fileOpeners(
+    String path,
+    String relativePath,
+  ) => PluginWorkspacePresentation.forFile(
+    clients: _coreClients,
+    path: path,
+    relativePath: relativePath,
+    language: Localizations.localeOf(context).languageCode,
+    chatId: widget.currentChatId,
+  );
+
+  Future<void> _chooseFileOpener(WorkspaceTab tab) async {
+    final path = tab.filePath;
+    if (path == null) return;
+    final chatId = widget.currentChatId;
+    final l10n = AppLocalizations.of(context)!;
+    try {
+      final openers = await _fileOpeners(tab.absolutePath ?? path, path);
+      if (!mounted ||
+          !_containsWorkspaceTab(tab) ||
+          chatId != widget.currentChatId)
+        return;
+      final current = tab.pluginPresentation?.identity;
+      final selected = await showDialog<int>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: Text(l10n.workspaceOpenWith),
+          children: [
+            for (final (index, opener) in <PluginWorkspacePresentation?>[
+              null,
+              ...openers,
+            ].indexed)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, index),
+                child: Row(
+                  children: [
+                    Icon(
+                      current == opener?.identity
+                          ? Icons.radio_button_checked
+                          : Icons.radio_button_unchecked,
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        opener?.title ?? l10n.workspaceBuiltInPreview,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+          ],
+        ),
+      );
+      if (!mounted ||
+          selected == null ||
+          chatId != widget.currentChatId ||
+          !_containsWorkspaceTab(tab))
+        return;
+      final opener = selected == 0 ? null : openers[selected - 1];
+      if (opener?.identity == current) return;
+      if (_session.dirtyPluginFiles.contains(tab) &&
+          (!await _confirmDiscardPluginFile() || !mounted))
+        return;
+      var document = tab.textDocument;
+      if (opener != null &&
+          document != null &&
+          (document.isDirty || document.isSaving)) {
+        final confirmed = await confirmWorkspaceTextClose(
+          context,
+          document: document,
+          write: (text) => widget.onWriteWorkspaceFileBytes(
+            path,
+            Uint8List.fromList(utf8.encode(text)),
+          ),
+        );
+        if (!confirmed) return;
+      }
+      if (opener != null) document = null;
+      if (opener == null &&
+          (tab.previewKind == WorkspaceFilePreviewKind.text ||
+              tab.previewKind == WorkspaceFilePreviewKind.markdown)) {
+        document = WorkspaceTextDocument(
+          await widget.onReadWorkspaceTextFile(path),
+        );
+      }
+      if (!mounted || chatId != widget.currentChatId) return;
+      final pane = _session.secondaryTabs.contains(tab) ? 1 : 0;
+      final tabs = _tabsForPane(pane);
+      final index = tabs.indexOf(tab);
+      if (index < 0) return;
+      setState(() {
+        _session.dirtyPluginFiles.remove(tab);
+        tabs[index] = tab.withFileOpener(opener, document);
+        _setSelectedIndexForPane(pane, index);
+      });
+    } catch (error) {
+      if (mounted)
+        ScaffoldMessenger.maybeOf(
+          context,
+        )?.showSnackBar(SnackBar(content: Text('$error')));
+    }
+  }
+
+  Future<bool> _confirmDiscardPluginFile() async {
+    final l10n = AppLocalizations.of(context)!;
+    return await showDialog<bool>(
+          context: context,
+          builder: (dialogContext) => AlertDialog(
+            title: Text(l10n.workspaceUnsavedChangesTitle),
+            content: Text(l10n.workspacePluginUnsavedChanges),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: Text(l10n.cancel),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, true),
+                child: Text(l10n.workspaceDiscardChanges),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
 }
 
 enum _WorkspaceDropZone { center, left, right, top, bottom }

@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; font-src 'self' blob: data:; connect-src 'self' blob: data:; worker-src 'self' blob:; media-src 'self' blob: data:; frame-src blob:; base-uri 'none'; form-action 'none'">
+  <title>Office</title>
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <header class="office-bar">
+    <span id="format" class="office-format"></span>
+    <strong id="filename">Office</strong>
+    <span id="status" role="status" aria-live="polite"></span>
+    <button type="button" id="quote" disabled><i data-lucide="message-square-quote"></i></button>
+    <button type="button" id="save" disabled><i data-lucide="save"></i></button>
+  </header>
+  <div id="error" role="alert" hidden></div>
+  <div id="toolbar" hidden></div>
+  <main id="editor" aria-label="Document"></main>
+</body>
+</html>

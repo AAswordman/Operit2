@@ -1572,6 +1572,42 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     }
   }
 
+  /// Adds document context through the same draft attachment path as pasted text.
+  Future<void> _attachWorkspaceFileQuote(String fileName, String text) async {
+    final chatId = _currentChatId;
+    if (chatId == null) return;
+    final request = ChatAttachmentRequest(
+      chatId: chatId,
+      chatSelectionGeneration: _chatSelectionGeneration,
+    );
+    if (!_isPluginAttachmentRequestCurrent(request)) return;
+    final chinese = Localizations.localeOf(context).languageCode == 'zh';
+    final label = chinese
+        ? '额外信息 · 文档选区'
+        : 'Additional information · Document selection';
+    try {
+      await _viewModel.attachPastedText('$label: $fileName\n\n$text');
+      if (!_isPluginAttachmentRequestCurrent(request)) return;
+      final attachments = await _viewModel.attachments();
+      if (_isPluginAttachmentRequestCurrent(request)) {
+        _attachments = attachments;
+        _publishChatContentData();
+      }
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to attach workspace selection',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (_isPluginAttachmentRequestCurrent(request)) {
+        _showLocalToast(
+          chinese ? '无法附加文档选区' : 'Could not attach the selection',
+        );
+      }
+    }
+  }
+
   Future<void> _removeAttachment(String filePath) async {
     await _viewModel.removeAttachment(filePath);
     await _refreshAttachments();
@@ -2754,6 +2790,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
         onCreateWorkspace: _createWorkspace,
         onBindWorkspace: _bindWorkspace,
         onUnbindWorkspace: _unbindWorkspace,
+        onFileQuote: _attachWorkspaceFileQuote,
         child: content,
       ),
     );
@@ -2983,6 +3020,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       onCreateWorkspace: _createWorkspace,
       onBindWorkspace: _bindWorkspace,
       onUnbindWorkspace: _unbindWorkspace,
+      onFileQuote: _attachWorkspaceFileQuote,
       child: child,
     );
   }

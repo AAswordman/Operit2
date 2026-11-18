@@ -235,6 +235,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get workspaceCloseOtherTabs => '关闭其他';
 
   @override
+  String get workspaceOpenWith => '打开方式';
+
+  @override
+  String get workspaceBuiltInPreview => '内置预览';
+
+  @override
+  String get workspacePluginUnsavedChanges => '请先在编辑器中保存，或放弃未保存的修改。';
+
+  @override
   String get workspaceCloseTabsToRight => '关闭右侧';
 
   @override

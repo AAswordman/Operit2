@@ -1,0 +1,23 @@
+{
+  "name": "@operit/docs-editor",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "scripts": {
+    "check": "tsc --noEmit",
+    "pack:toolpkg": "pnpm run check && node scripts/build.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@embedpdf/pdfium": "2.15.1",
+    "@embedpdf/snippet": "2.15.1",
+    "@office-kit/pptx-editor": "0.3.0",
+    "lucide": "1.74.0",
+    "superdoc": "1.47.2"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.10",
+    "fflate": "0.8.2",
+    "typescript": "5.9.2"
+  },
+  "packageManager": "pnpm@10.7.0"
+}

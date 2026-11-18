@@ -530,6 +530,24 @@ abstract class AppLocalizations {
   /// **'Close Others'**
   String get workspaceCloseOtherTabs;
 
+  /// No description provided for @workspaceOpenWith.
+  ///
+  /// In en, this message translates to:
+  /// **'Open with'**
+  String get workspaceOpenWith;
+
+  /// No description provided for @workspaceBuiltInPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Built-in preview'**
+  String get workspaceBuiltInPreview;
+
+  /// No description provided for @workspacePluginUnsavedChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'Save in the editor first, or discard the unsaved changes.'**
+  String get workspacePluginUnsavedChanges;
+
   /// No description provided for @workspaceCloseTabsToRight.
   ///
   /// In en, this message translates to:

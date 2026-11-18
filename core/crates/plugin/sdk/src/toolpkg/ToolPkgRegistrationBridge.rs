@@ -85,6 +85,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 case 'chat_input_menu_sections':
                 case 'chat_message_after':
                 case 'workspace':
+                case 'workspace_file':
                 case 'workspace_home':
                     return;
                 default:
@@ -96,7 +97,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
         function isEmbeddedUiSurface(surface) {
             return surface === 'chat_sidebar_tabs' || surface === 'chat_input_menu' ||
                 surface === 'chat_input_menu_sections' || surface === 'chat_message_after' ||
-                surface === 'workspace' || surface === 'workspace_home';
+                surface === 'workspace' || surface === 'workspace_file' || surface === 'workspace_home';
         }
 
         /** Requires one already registered package-owned Compose DSL route for an embedded surface. */
@@ -536,6 +537,14 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                     throw new Error('registerNavigationEntry requires an object');
                 }
                 validateNavigationSurface(definition.surface);
+                if (definition.surface === 'workspace_file') {
+                    var extensions = definition.params && definition.params.extensions;
+                    if (!Array.isArray(extensions) || !extensions.length ||
+                        extensions.some(function(ext) { return typeof ext !== 'string' || !/^[a-z0-9]+(?:[._+-][a-z0-9]+)*$/.test(ext); }) ||
+                        new Set(extensions).size !== extensions.length) {
+                        throw new Error('workspace_file requires unique lowercase params.extensions without leading dots');
+                    }
+                }
                 if (definition.surface === 'chat_attachments' || isEmbeddedUiSurface(definition.surface)) {
                     if (definition.action !== undefined && definition.action !== null) {
                         throw new Error('registerNavigationEntry.action is unsupported for ' + definition.surface);

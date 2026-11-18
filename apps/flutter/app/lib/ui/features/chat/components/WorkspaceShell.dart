@@ -5,7 +5,9 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:operit_ui/operit_ui.dart';
 
+import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../common/components/AdaptiveSidePanel.dart';
+import '../../../common/contributions/PluginWorkspacePresentation.dart';
 import '../../../common/markdown/MarkdownLink.dart';
 import '../../../common/markdown/MarkdownFileScope.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
@@ -18,6 +20,7 @@ import 'workspace/WorkspaceSession.dart';
 
 class WorkspaceShell extends StatelessWidget {
   static final WorkspaceSession _session = WorkspaceSession();
+  static final _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
   /// Returns the workspace session shared by phone and desktop shells.
   static WorkspaceSession get session => _session;
@@ -41,6 +44,7 @@ class WorkspaceShell extends StatelessWidget {
     required this.onCreateWorkspace,
     required this.onBindWorkspace,
     required this.onUnbindWorkspace,
+    this.onFileQuote,
     required this.child,
   });
 
@@ -64,10 +68,11 @@ class WorkspaceShell extends StatelessWidget {
   final Future<void> Function(String name) onCreateWorkspace;
   final Future<void> Function(String workspace) onBindWorkspace;
   final Future<void> Function() onUnbindWorkspace;
+  final void Function(String fileName, String text)? onFileQuote;
   final Widget child;
 
   /// Opens resolved message paths even while the workspace panel is unmounted.
-  Future<void> _openLinkedFile(String path) async {
+  Future<void> _openLinkedFile(String path, String language) async {
     final resolved = resolveMarkdownFilePath(
       path,
       fileDirectory,
@@ -77,6 +82,15 @@ class WorkspaceShell extends StatelessWidget {
       path: resolved,
       relativePath: resolved,
       readText: onReadWorkspaceTextFile,
+      resolveOpener: () async => resolved.startsWith('/')
+          ? (await PluginWorkspacePresentation.forFile(
+              clients: _clients,
+              path: resolved,
+              relativePath: resolved,
+              language: language,
+              chatId: currentChatId,
+            )).firstOrNull
+          : null,
     );
     onWorkspaceOpenChanged(true);
   }
@@ -90,7 +104,8 @@ class WorkspaceShell extends StatelessWidget {
         ? SidebarDockScope.maybeOf(context)
         : null;
     return MarkdownLinkScope(
-      onOpenFile: _openLinkedFile,
+      onOpenFile: (path) =>
+          _openLinkedFile(path, Localizations.localeOf(context).languageCode),
       child: AdaptiveSidePanel(
         open: workspaceOpen,
         widePanelPadding: EdgeInsets.zero,
@@ -136,6 +151,7 @@ class WorkspaceShell extends StatelessWidget {
             onCreateWorkspace: onCreateWorkspace,
             onBindWorkspace: onBindWorkspace,
             onUnbindWorkspace: onUnbindWorkspace,
+            onFileQuote: onFileQuote,
           ),
         ),
         child: child,

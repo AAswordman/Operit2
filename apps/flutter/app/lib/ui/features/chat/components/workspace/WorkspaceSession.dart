@@ -27,6 +27,7 @@ class WorkspaceSession extends ChangeNotifier {
     ),
   ];
   final List<WorkspaceTab> secondaryTabs = <WorkspaceTab>[];
+  final Set<WorkspaceTab> dirtyPluginFiles = <WorkspaceTab>{};
   int selectedIndex = 0;
   int secondarySelectedIndex = 0;
   WorkspaceSplitAxis? splitAxis;
@@ -39,6 +40,7 @@ class WorkspaceSession extends ChangeNotifier {
     required String path,
     required String relativePath,
     required Future<String> Function(String path) readText,
+    Future<PluginWorkspacePresentation?> Function()? resolveOpener,
   }) async {
     bool activate() {
       for (final pane in [tabs, secondaryTabs]) {
@@ -60,10 +62,17 @@ class WorkspaceSession extends ChangeNotifier {
     }
 
     if (activate()) return;
+    PluginWorkspacePresentation? opener;
+    try {
+      opener = await resolveOpener?.call();
+    } catch (error) {
+      debugPrint('Unable to discover workspace file openers: $error');
+    }
     final kind = workspacePreviewKindForPath(path);
     final document =
-        kind == WorkspaceFilePreviewKind.text ||
-            kind == WorkspaceFilePreviewKind.markdown
+        opener == null &&
+            (kind == WorkspaceFilePreviewKind.text ||
+                kind == WorkspaceFilePreviewKind.markdown)
         ? WorkspaceTextDocument(await readText(relativePath))
         : null;
     // A second request may have opened this file while its contents loaded.
@@ -77,6 +86,7 @@ class WorkspaceSession extends ChangeNotifier {
         absolutePath: path,
         textDocument: document,
         previewKind: kind,
+        pluginPresentation: opener,
       ),
     );
     selectedIndex = tabs.length - 1;

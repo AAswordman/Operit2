@@ -17,6 +17,7 @@ class WorkspaceTabStrip extends StatelessWidget {
     required this.onSelected,
     required this.onClosed,
     required this.onCloseTabs,
+    this.onOpenWith,
   });
 
   final List<WorkspaceTab> tabs;
@@ -24,6 +25,7 @@ class WorkspaceTabStrip extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final ValueChanged<int> onClosed;
   final Future<void> Function(List<WorkspaceTab>) onCloseTabs;
+  final Future<void> Function(WorkspaceTab)? onOpenWith;
 
   /// Builds a horizontally scrollable strip sized for the available width.
   @override
@@ -39,6 +41,7 @@ class WorkspaceTabStrip extends StatelessWidget {
         onSelected: onSelected,
         onClosed: onClosed,
         tabTitle: (tab) => _tabTitle(l10n, tab),
+        openWithAction: _openWithAction,
         wrapTab: _wrapTab,
       );
     }
@@ -82,6 +85,7 @@ class WorkspaceTabStrip extends StatelessWidget {
                             onClosed(index);
                           }
                         : null,
+                    onOpenWith: _openWithAction(tab),
                   );
                   return _wrapTab(context, tab, button);
                 },
@@ -96,12 +100,23 @@ class WorkspaceTabStrip extends StatelessWidget {
   Widget _wrapTab(BuildContext context, WorkspaceTab tab, Widget child) {
     return Tooltip(
       message: _tabTitle(AppLocalizations.of(context)!, tab),
+      triggerMode: _openWithAction(tab) != null
+          ? TooltipTriggerMode.manual
+          : null,
       child: GestureDetector(
         onSecondaryTapUp: (details) =>
             _showTabMenu(context, tab, details.globalPosition),
         child: _buildTabDragSource(context, tab, child),
       ),
     );
+  }
+
+  VoidCallback? _openWithAction(WorkspaceTab tab) {
+    final callback = onOpenWith;
+    if (tab.kind != WorkspaceTabKind.filePreview || callback == null) {
+      return null;
+    }
+    return () => callback(tab);
   }
 
   Future<void> _showTabMenu(
@@ -136,6 +151,8 @@ class WorkspaceTabStrip extends StatelessWidget {
         overlay.size,
       ),
       items: [
+        if (tab.kind == WorkspaceTabKind.filePreview && onOpenWith != null)
+          PopupMenuItem<int>(value: -1, child: Text(l10n.workspaceOpenWith)),
         for (var action = 0; action < targets.length; action++)
           PopupMenuItem<int>(
             value: action,
@@ -145,7 +162,11 @@ class WorkspaceTabStrip extends StatelessWidget {
       ],
     );
     if (action != null && context.mounted) {
-      await onCloseTabs(targets[action]);
+      if (action == -1) {
+        await onOpenWith?.call(tab);
+      } else {
+        await onCloseTabs(targets[action]);
+      }
     }
   }
 }
@@ -222,6 +243,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
     required this.onSelected,
     required this.onClosed,
     required this.tabTitle,
+    required this.openWithAction,
     required this.wrapTab,
   });
 
@@ -230,6 +252,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
   final ValueChanged<int> onSelected;
   final ValueChanged<int> onClosed;
   final String Function(WorkspaceTab tab) tabTitle;
+  final VoidCallback? Function(WorkspaceTab tab) openWithAction;
   final Widget Function(BuildContext, WorkspaceTab, Widget) wrapTab;
 
   @override
@@ -287,6 +310,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
                 onClose: () {
                   onClosed(index);
                 },
+                onOpenWith: openWithAction(tab),
               );
               return wrapTab(context, tab, button);
             },
@@ -342,6 +366,7 @@ class _TermuxWorkspaceTabButton extends StatelessWidget {
     required this.secondaryTextColor,
     required this.onTap,
     required this.onClose,
+    required this.onOpenWith,
   });
 
   final String title;
@@ -354,6 +379,7 @@ class _TermuxWorkspaceTabButton extends StatelessWidget {
   final Color secondaryTextColor;
   final VoidCallback onTap;
   final VoidCallback onClose;
+  final VoidCallback? onOpenWith;
 
   @override
   Widget build(BuildContext context) {
@@ -378,7 +404,7 @@ class _TermuxWorkspaceTabButton extends StatelessWidget {
             child: Padding(
               padding: EdgeInsetsDirectional.only(
                 start: 12,
-                end: closable ? 4 : 12,
+                end: closable || onOpenWith != null ? 4 : 12,
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
@@ -411,6 +437,13 @@ class _TermuxWorkspaceTabButton extends StatelessWidget {
                       ),
                     ),
                   ],
+                  if (onOpenWith != null)
+                    _OpenWithButton(
+                      size: 28,
+                      iconSize: 18,
+                      color: textColor,
+                      onPressed: onOpenWith!,
+                    ),
                 ],
               ),
             ),
@@ -428,6 +461,7 @@ class _WorkspaceTabButton extends StatelessWidget {
     required this.selected,
     required this.onTap,
     required this.onClose,
+    required this.onOpenWith,
   });
 
   final WorkspaceTab tab;
@@ -435,6 +469,7 @@ class _WorkspaceTabButton extends StatelessWidget {
   final bool selected;
   final VoidCallback onTap;
   final VoidCallback? onClose;
+  final VoidCallback? onOpenWith;
 
   @override
   Widget build(BuildContext context) {
@@ -461,7 +496,7 @@ class _WorkspaceTabButton extends StatelessWidget {
           constraints: const BoxConstraints(maxWidth: 180),
           padding: EdgeInsetsDirectional.only(
             start: 8,
-            end: onClose == null ? 8 : 4,
+            end: onClose == null && onOpenWith == null ? 8 : 4,
           ),
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(5),
@@ -501,12 +536,45 @@ class _WorkspaceTabButton extends StatelessWidget {
                   ),
                 ),
               ],
+              if (onOpenWith != null)
+                _OpenWithButton(
+                  size: 20,
+                  iconSize: 15,
+                  color: contentColor,
+                  onPressed: onOpenWith!,
+                ),
             ],
           ),
         ),
       ),
     );
   }
+}
+
+class _OpenWithButton extends StatelessWidget {
+  const _OpenWithButton({
+    required this.size,
+    required this.iconSize,
+    required this.color,
+    required this.onPressed,
+  });
+
+  final double size;
+  final double iconSize;
+  final Color color;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) => SizedBox.square(
+    dimension: size,
+    child: IconButton(
+      padding: EdgeInsets.zero,
+      tooltip: AppLocalizations.of(context)!.workspaceOpenWith,
+      iconSize: iconSize,
+      icon: Icon(Icons.more_vert, color: color),
+      onPressed: onPressed,
+    ),
+  );
 }
 
 String _tabTitle(AppLocalizations l10n, WorkspaceTab tab) {
