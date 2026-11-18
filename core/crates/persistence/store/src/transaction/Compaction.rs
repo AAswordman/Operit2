@@ -541,6 +541,42 @@ pub(crate) fn initialization_identity(
         Ok((row.get(0)?,row.get(1)?,row.get(2)?))).transpose()
 }
 
+/// Reports whether a peer still needs this sealed checkpoint shipped in full.
+///
+/// The initialization identity is the digest of its complete payload, so every
+/// local seal rotates it. Exporting on identity alone turns each routine seal
+/// of a large synchronized database into a complete database transfer on every
+/// peer, even when ordinary record exchange already delivered the same
+/// history. The checkpoint only carries irreplaceable state while the receiver
+/// is missing a covered original: sealed originals are no longer exported as
+/// records, so without the checkpoint the receiver could never rebuild them.
+/// Chained checkpoint identities are ignored because every seal's coverage
+/// transitively retains its ancestor's covered originals, so an adopted
+/// checkpoint contributes no state beyond those same originals. An empty
+/// coverage table cannot prove the receiver's state either way and stays
+/// conservative.
+#[cfg(feature = "full")]
+pub(crate) fn initialization_transfer_required<K: crate::SyncOperationStore::SyncOperationKnowledge>(
+    store: &crate::SqliteStore::SqliteStore,
+    clock: &K,
+) -> Result<bool, crate::SqliteStore::SqliteStoreError> {
+    use crate::SqliteStore::SqliteRowGet;
+    let mut covered = 0usize;
+    let mut missing = false;
+    store.visitRows("SELECT id FROM _operit_initialization_coverage", vec![], &mut |row| {
+        let id = row.valueAt(0)?.asString()?;
+        if id.starts_with("~init:") { return Ok(()); }
+        covered += 1;
+        let known = match id.rsplit_once(':') {
+            Some((origin, sequence)) => sequence.parse::<i64>().is_ok_and(|sequence| clock.containsSequence(origin, sequence)),
+            None => false,
+        };
+        if !known { missing = true; }
+        Ok(())
+    })?;
+    Ok(missing || covered == 0)
+}
+
 #[cfg(all(test, feature = "full"))]
 #[path = "CompactionTests.rs"]
 mod tests;

@@ -1677,7 +1677,10 @@ pub fn exportWithBudget<K: SyncOperationKnowledge>(
             crate::Transaction::compaction::prepare(&store)?;
             let mut entries = Vec::new();
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&store)? {
-                if !clock.containsSequence(&origin,sequence) {
+                // Every seal rotates the checkpoint identity; peers that already
+                // cover the sealed history rebuild it from ordinary records.
+                if !clock.containsSequence(&origin,sequence)
+                    && crate::Transaction::compaction::initialization_transfer_required(&store,clock)? {
                     let size: i64 = store.queryOne("SELECT length(CAST(original AS BLOB)) FROM _operit_transaction_initialization WHERE id=1", vec![])?.ok_or_else(||failure("Missing initialization"))?.get(0)?;
                     entries.push((0,origin,sequence,stores.len(),usize::try_from(size).map_err(|_|failure("Invalid initialization size"))?));
                 }

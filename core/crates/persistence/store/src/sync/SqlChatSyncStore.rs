@@ -509,7 +509,8 @@ impl SqlChatSyncStore {
             if sequence > floor && !clock.containsSequence(&origin, sequence) { ids.insert(row.get(0)?); }
         }
         if let Some((id,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
-            if !clock.containsSequence(&origin,sequence) { ids.insert(id); }
+            if !clock.containsSequence(&origin,sequence)
+                && crate::Transaction::compaction::initialization_transfer_required(&self.store,clock)? { ids.insert(id); }
         }
         Ok(ids)
     }
@@ -592,7 +593,10 @@ impl SqlChatSyncStore {
         let mut operations = page;
         if limit > 0 {
             if let Some((_,origin,sequence)) = crate::Transaction::compaction::initialization_identity(&self.store)? {
-                if !clock.containsSequence(&origin,sequence) {
+                // Every seal rotates the checkpoint identity; peers that already
+                // cover the sealed history rebuild it from ordinary records.
+                if !clock.containsSequence(&origin,sequence)
+                    && crate::Transaction::compaction::initialization_transfer_required(&self.store,clock)? {
                     if let Some(initialization) = self.dataset().initialization().map_err(SqlChatSyncStoreError::Message)? {
                         operations.insert(0,initialization);
                         operations.truncate(limit);
