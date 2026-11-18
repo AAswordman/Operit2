@@ -541,6 +541,26 @@ impl SyncOperationStore {
         }
     }
 
+    /// Captures mutable files before compression, under the same locks used by
+    /// their writers. The SQLite database and its durable sidecars are one set.
+    pub fn captureSnapshotFiles(&self, mut capture: impl FnMut(&str) -> Result<(), String>) -> Result<(), String> {
+        {
+            let _journal = lockSyncState(&self.sharedState.journal, "transaction journal").map_err(|e| e.to_string())?;
+            for name in ["transactions.sqlite", "transactions.sqlite-wal", "transactions.sqlite-journal"] {
+                capture(&format!("{}/{name}", self.rootPath))?;
+            }
+        }
+        {
+            let _versions = lockSyncState(&self.sharedState.entityVersions, "entity versions").map_err(|e| e.to_string())?;
+            capture(&self.entityVersionsPath())?;
+        }
+        {
+            let _clock = lockSyncState(&self.sharedState.clock, "clock").map_err(|e| e.to_string())?;
+            capture(&self.clockPath())?;
+        }
+        Ok(())
+    }
+
     /// Loads authority once for this host/root. Normal queries use the resulting
     /// state, and every control mutation below maintains it before returning.
     pub(crate) fn networkControlReadModel(

@@ -4,8 +4,10 @@ import android.content.Context
 import android.content.pm.PackageManager
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.storage.StorageManager
 import android.util.Log
 import io.flutter.plugin.common.MethodChannel
 import org.json.JSONObject
@@ -257,11 +259,26 @@ class AndroidRuntimeHost(context: Context) {
     ): AndroidRuntimePaths {
         runtimeRoot.mkdirs()
         workspaceRoot.mkdirs()
+        val sharedStorageRoots = sharedStorageRoots()
+        for (root in setOf(runtimeRoot, workspaceRoot)) {
+            runCatching { AndroidRuntimeMediaExclusion.ensureMarker(root, sharedStorageRoots) }
+                .onFailure { Log.w(TAG, "Could not create .nomedia in ${root.path}", it) }
+        }
         return AndroidRuntimeAssets.prepare(
             applicationContext,
             runtimeRoot,
             workspaceRoot,
         )
+    }
+
+    @Suppress("DEPRECATION")
+    private fun sharedStorageRoots(): List<File> = buildList {
+        add(Environment.getExternalStorageDirectory())
+        add(File("/sdcard"))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val storage = applicationContext.getSystemService(StorageManager::class.java)
+            storage?.storageVolumes?.mapNotNullTo(this) { it.directory }
+        }
     }
 
     /** Returns the platform default runtime and workspace roots. */

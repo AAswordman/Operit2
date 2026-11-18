@@ -3,7 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/common/markdown/MarkdownTextReveal.dart';
-import 'package:operit2/ui/common/markdown/StreamMarkdownRenderer.dart';
+
+const _cursorKey = ValueKey('reveal-cursor');
 
 class _CountingParagraph extends RenderParagraph {
   _CountingParagraph(super.text) : super(textDirection: TextDirection.ltr);
@@ -38,32 +39,41 @@ Widget _host({
   required String text,
   Widget? paragraph,
   TextDirection direction = TextDirection.ltr,
-}) => MaterialApp(
-  home: Directionality(
-    textDirection: direction,
-    child: Center(
-      child: SizedBox(
-        width: 220,
-        child: MarkdownTextReveal(
-          animation: animation,
-          text: text,
-          revealOffset: 0,
-          nextRevealOffset: null,
-          showCursor: true,
-          paragraph: paragraph ?? Text(text),
-          cursor: const StreamingCursor(blink: false),
+  ValueChanged<SelectedContent?>? onSelectionChanged,
+}) {
+  final reveal = MarkdownTextReveal(
+    animation: animation,
+    text: text,
+    revealOffset: 0,
+    nextRevealOffset: null,
+    showCursor: true,
+    paragraph: paragraph ?? Text(text),
+    cursor: const SizedBox(key: _cursorKey),
+  );
+  return MaterialApp(
+    home: Directionality(
+      textDirection: direction,
+      child: Center(
+        child: SizedBox(
+          width: 220,
+          child: onSelectionChanged == null
+              ? reveal
+              : SelectionArea(
+                  onSelectionChanged: onSelectionChanged,
+                  child: reveal,
+                ),
         ),
       ),
     ),
-  ),
-);
+  );
+}
 
 void main() {
   testWidgets(
     'reveal frames move the cursor without relayout or semantics churn',
     (tester) async {
       final semantics = tester.ensureSemantics();
-        final controller = AnimationController(
+      final controller = AnimationController(
         vsync: tester,
         duration: const Duration(milliseconds: 200),
         upperBound: 16,
@@ -82,14 +92,14 @@ void main() {
       );
       final layouts = paragraph.layouts;
       final semanticUpdates = paragraph.semanticsUpdates;
-      final initialCursor = tester.getTopLeft(find.byType(StreamingCursor));
+      final initialCursor = tester.getTopLeft(find.byKey(_cursorKey));
       controller.forward();
       await tester.pump();
       for (var i = 0; i < 6; i++) {
         await tester.pump(const Duration(milliseconds: 16));
       }
       expect(
-        tester.getTopLeft(find.byType(StreamingCursor)).dx,
+        tester.getTopLeft(find.byKey(_cursorKey)).dx,
         greaterThan(initialCursor.dx),
       );
       expect(paragraph.layouts, layouts);
@@ -99,7 +109,7 @@ void main() {
       await tester.pump();
       expect(tester.binding.hasScheduledFrame, isFalse);
       expect(tester.binding.transientCallbackCount, 0);
-    semantics.dispose();
+      semantics.dispose();
     },
   );
 
@@ -163,8 +173,45 @@ void main() {
       find.byType(RichText),
     );
     expect(paragraph.size.width, 220);
-    final cursor = tester.getTopLeft(find.byType(StreamingCursor));
+    final cursor = tester.getTopLeft(find.byKey(_cursorKey));
     expect(cursor.dx, greaterThan(tester.getTopLeft(find.byType(RichText)).dx));
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+    'selecting partially revealed text does not duplicate handle layers',
+    (tester) async {
+      const text = 'Hello streaming!';
+      final controller = AnimationController(vsync: tester, upperBound: 16)
+        ..value = 5.5;
+      addTearDown(controller.dispose);
+      SelectedContent? selection;
+      await tester.pumpWidget(
+        _host(
+          animation: controller,
+          text: text,
+          onSelectionChanged: (value) => selection = value,
+        ),
+      );
+      final region = tester.state<SelectableRegionState>(
+        find.byType(SelectableRegion),
+      );
+      region.selectAll();
+      expect(selection?.plainText, text);
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+
+      controller.value = 6.5;
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(selection?.plainText, text);
+
+      controller.value = 16;
+      await tester.pump();
+      region.clearSelection();
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(selection, isNull);
+    },
+  );
 }

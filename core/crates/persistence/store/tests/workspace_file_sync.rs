@@ -76,6 +76,72 @@ impl Drop for Node {
     }
 }
 
+/// Extracted database trees are ordinary files through capture, delivery and later edits.
+#[test]
+fn copied_database_trees_sync_without_policy_or_repeated_inventory_changes() {
+    let a = Node::new();
+    let b = Node::new();
+    let mut copied_files = Vec::new();
+    for root in [
+        "workspaces/project",
+        "runtime/data/chat_outputs/chat",
+        "runtime/data/chat_attachments/chat",
+    ] {
+        let database = format!("{root}/identities/old/runtime/plugin_data/space/demo/records.sqlite");
+        let marker = format!("{database}.operit-storage.json");
+        let metadata = br#"{"path":"runtime/plugin_data/space/demo/records.sqlite","owner":"demo","kind":"sqlite","sync":true}"#;
+        for (path, bytes) in [
+            (database, b"copied database".as_slice()),
+            (marker, metadata.as_slice()),
+            (format!("{root}/broken.sqlite"), b"another copied file".as_slice()),
+            (format!("{root}/broken.sqlite.operit-storage.json"), b"invalid copied metadata".as_slice()),
+        ] {
+            a.write(&path, bytes);
+            copied_files.push((path, bytes.to_vec()));
+        }
+        assert!(!a.host.exists(&format!("{root}/.operit/sync.json")).unwrap());
+    }
+    a.write("workspaces/healthy/note.txt", b"independent user file");
+    assert_eq!(a.workspace().scan().unwrap(), copied_files.len() + 1);
+    a.send(&b);
+    for (path, bytes) in &copied_files {
+        assert_eq!(b.host.readBytes(path).unwrap(), *bytes, "{path}");
+    }
+    assert_eq!(b.host.readBytes("workspaces/healthy/note.txt").unwrap(), b"independent user file");
+    for node in [&a, &b] {
+        let history = node.ops();
+        let versions = node.host.readBytes("runtime/sync/entity_versions.jsonl").unwrap();
+        for _ in 0..5 {
+            // Each call creates a fresh store, including reloading its durable inventory.
+            assert_eq!(node.workspace().scan().unwrap(), 0);
+        }
+        assert_eq!(node.ops(), history);
+        assert_eq!(node.host.readBytes("runtime/sync/entity_versions.jsonl").unwrap(), versions);
+    }
+
+    let path = &copied_files[0].0;
+    b.workspace().trackPaths(&[path], || {
+        b.host.writeBytes(path, b"edited copy").map_err(|error| error.to_string())
+    }).unwrap();
+    b.send(&a);
+    assert_eq!(a.host.readBytes(path).unwrap(), b"edited copy");
+    assert_eq!(a.workspace().scan().unwrap(), 0);
+    assert_eq!(b.workspace().scan().unwrap(), 0);
+
+    let output = "runtime/data/chat_outputs/chat/identities";
+    a.workspace().trackPaths(&[output], || {
+        a.host.delete(output, true).map_err(|error| error.to_string())
+    }).unwrap();
+    a.send(&b);
+    for suffix in ["records.sqlite", "records.sqlite.operit-storage.json"] {
+        let path = format!("{output}/old/runtime/plugin_data/space/demo/{suffix}");
+        assert!(!a.host.exists(&path).unwrap());
+        assert!(!b.host.exists(&path).unwrap());
+    }
+    assert_eq!(a.workspace().scan().unwrap(), 0);
+    assert_eq!(b.workspace().scan().unwrap(), 0);
+}
+
 #[test]
 fn bidirectional_binary_empty_and_no_echo() {
     let a = Node::new();
@@ -571,8 +637,10 @@ fn adding_ignore_rules_does_not_delete_peer_files_and_invalid_policy_is_safe() {
     assert!(!a.ops().iter().any(|o| o.operation == "delete"));
     let count = a.ops().len();
     a.write("workspaces/p/.operit/sync.json", b"{ invalid");
-    assert!(a.workspace().scan().is_err());
-    assert_eq!(a.ops().len(), count);
+    a.write("workspaces/healthy/next.txt", b"keep scanning");
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    assert_eq!(a.ops().len(), count + 1);
+    assert!(!a.ops().iter().any(|o| o.operation == "delete"));
 }
 
 #[test]
@@ -620,6 +688,23 @@ fn ignored_incoming_file_is_restored_when_rule_is_removed() {
     b.write("workspaces/p/.operit/sync.json", b"{}");
     b.workspace().scan().unwrap();
     assert_eq!(b.host.readBytes("workspaces/p/a.txt").unwrap(), b"arrived while ignored");
+}
+
+#[test]
+fn invalid_policy_defers_incoming_file_without_blocking_other_workspaces() {
+    let a = Node::new();
+    let b = Node::new();
+    b.write("workspaces/p/.operit/sync.json", b"{ invalid");
+    a.write("workspaces/p/incoming.txt", b"arrived while policy was broken");
+    a.workspace().scan().unwrap();
+    a.send(&b);
+    assert!(!b.host.exists("workspaces/p/incoming.txt").unwrap());
+
+    b.write("workspaces/healthy/note.txt", b"independent local edit");
+    assert_eq!(b.workspace().scan().unwrap(), 1);
+    b.write("workspaces/p/.operit/sync.json", b"{}");
+    b.workspace().scan().unwrap();
+    assert_eq!(b.host.readBytes("workspaces/p/incoming.txt").unwrap(), b"arrived while policy was broken");
 }
 
 /// Bindings and their relative files use the same existing Space file protocol.

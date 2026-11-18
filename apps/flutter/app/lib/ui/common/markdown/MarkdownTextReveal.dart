@@ -166,17 +166,21 @@ class RenderMarkdownTextReveal extends RenderBox
       (_revealOffset == 0 || _animation.value >= _revealOffset) &&
       (_nextRevealOffset == null || _animation.value < _nextRevealOffset!);
 
-  Path _rangePath(int start, int end) {
-    final path = Path();
+  void _addRangeToPath(Path path, int start, int end, {double fraction = 1}) {
     final paragraph = _paragraph;
-    if (paragraph == null || start == end) return path;
+    if (paragraph == null || start == end) return;
     for (final box in paragraph.getBoxesForSelection(
       TextSelection(baseOffset: start, extentOffset: end),
       boxHeightStyle: ui.BoxHeightStyle.max,
     )) {
-      path.addRect(box.toRect().inflate(0.5));
+      final rect = box.toRect().inflate(0.5);
+      final width = rect.width * fraction;
+      path.addRect(
+        box.direction == TextDirection.rtl
+            ? Rect.fromLTWH(rect.right - width, rect.top, width, rect.height)
+            : Rect.fromLTWH(rect.left, rect.top, width, rect.height),
+      );
     }
-    return path;
   }
 
   Offset get _cursorOffset {
@@ -202,43 +206,38 @@ class RenderMarkdownTextReveal extends RenderBox
     final complete = progress >= _characterOffsets.length - 1;
     if (complete || _paragraph == null) {
       context.paintChild(firstChild!, offset);
-    } else {
+    } else if (progress > 0) {
       final index = progress.floor();
-      if (index > 0) {
-        context.pushClipPath(
-          needsCompositing,
-          offset,
-          Offset.zero & size,
-          _rangePath(0, _characterOffsets[index]),
-          (context, offset) => context.paintChild(firstChild!, offset),
+      final path = Path();
+      _addRangeToPath(path, 0, _characterOffsets[index]);
+      final fraction = progress - index;
+      if (fraction > 0) {
+        _addRangeToPath(
+          path,
+          _characterOffsets[index],
+          _characterOffsets[index + 1],
+          fraction: fraction,
         );
       }
-      final alpha = ((progress - index) * 255).round();
-      if (alpha > 0) {
-        context.pushClipPath(
-          needsCompositing,
-          offset,
-          Offset.zero & size,
-          _rangePath(_characterOffsets[index], _characterOffsets[index + 1]),
-          (context, offset) => context.pushOpacity(
-            offset,
-            alpha,
-            (context, offset) => context.paintChild(firstChild!, offset),
-          ),
-        );
-      }
+      // Painting the paragraph twice would register its selection handles twice.
+      context.pushClipPath(
+        needsCompositing,
+        offset,
+        Offset.zero & size,
+        path,
+        (context, offset) => context.paintChild(firstChild!, offset),
+      );
     }
     if (_ownsCursor) context.paintChild(lastChild!, offset + _cursorOffset);
   }
 
   @override
   bool hitTestChildren(BoxHitTestResult result, {required Offset position}) {
-    if (_progress < _characterOffsets.length - 1 &&
-        !_rangePath(
-          0,
-          _characterOffsets[_progress.floor()],
-        ).contains(position)) {
-      return false;
+    final progress = _progress;
+    if (progress < _characterOffsets.length - 1) {
+      final path = Path();
+      _addRangeToPath(path, 0, _characterOffsets[progress.floor()]);
+      if (!path.contains(position)) return false;
     }
     return firstChild!.hitTest(result, position: position);
   }

@@ -550,6 +550,54 @@ fn sqlite_sync_is_atomic_and_validates_declared_rows() {
     b.dispose();
 }
 
+/// Copied metadata cannot claim storage ownership or make ordinary files unreadable.
+#[test]
+fn copied_markers_do_not_register_files_outside_the_live_storage_namespace() {
+    let f = Fixture::new("first");
+    for root in [
+        "workspaces/project",
+        "runtime/data/chat_outputs/chat",
+        "runtime/data/chat_attachments/chat",
+        "runtime/plugin_data/space-copy/demo",
+        "runtime/plugin_data/device-copy/demo",
+    ] {
+        let database = format!("{root}/identities/old/runtime/plugin_data/space/demo/records.sqlite");
+        let marker = format!("{database}.operit-storage.json");
+        for stored_path in ["runtime/plugin_data/space/demo/records.sqlite", &database] {
+            let metadata = serde_json::to_vec(&json!({
+                "path": stored_path, "owner": "demo", "kind": "sqlite", "sync": true,
+            })).unwrap();
+            f.host.writeBytes(&marker, &metadata).unwrap();
+            for suffix in ["", ".operit-storage.json", "-wal", "-shm", "-journal"] {
+                let path = format!("{database}{suffix}");
+                assert!(!PluginStorage::ownsFile(f.host.clone(), &path).unwrap(), "{path}");
+            }
+            assert_eq!(f.host.readBytes(&marker).unwrap(), metadata);
+        }
+        f.host.writeBytes(&marker, b"invalid copied metadata").unwrap();
+        assert!(!PluginStorage::ownsFile(f.host.clone(), &database).unwrap());
+        assert!(!PluginStorage::ownsFile(f.host.clone(), &marker).unwrap());
+        assert_eq!(f.host.readBytes(&marker).unwrap(), b"invalid copied metadata");
+    }
+    f.dispose();
+}
+
+/// A malformed live registration still fails closed with actionable paths.
+#[test]
+fn active_marker_mismatch_remains_an_error_with_the_storage_paths() {
+    let f = Fixture::new("first");
+    f.open("objects");
+    let marker = format!("{}.operit-storage.json", f.path);
+    let old_path = "runtime/plugin_data/space/other/old.sqlite";
+    let mut metadata: serde_json::Value = serde_json::from_slice(&f.host.readBytes(&marker).unwrap()).unwrap();
+    metadata["path"] = json!(old_path);
+    f.host.writeBytes(&marker, &serde_json::to_vec(&metadata).unwrap()).unwrap();
+    let error = PluginStorage::ownsFile(f.host.clone(), &f.path).unwrap_err().to_string();
+    assert!(error.contains("Storage marker identity mismatch"));
+    for path in [&marker, &f.path, old_path] { assert!(error.contains(path), "{error}"); }
+    f.dispose();
+}
+
 /// Ensures database bytes and sidecars never enter automatic whole-file change capture.
 #[test]
 fn file_sync_excludes_database_and_sidecars_but_keeps_ordinary_files() {

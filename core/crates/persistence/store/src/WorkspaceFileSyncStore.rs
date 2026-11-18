@@ -98,6 +98,12 @@ impl WorkspaceFileSyncStore {
         self.scanUnlocked()
     }
 
+    /// Keeps the inventory and pending recovery intents stable during the copy.
+    pub fn captureSnapshotInventory(&self, capture: impl FnOnce(&str) -> Result<(), String>) -> Result<(), String> {
+        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
+        capture(&self.statePath())
+    }
+
     /// Joining a Space makes old local operation logs unexportable. Retain local
     /// files, but inventory them again so files unique to this device are not stranded.
     pub fn prepareSpaceJoin(&self) -> Result<(), String> {
@@ -195,8 +201,15 @@ impl WorkspaceFileSyncStore {
             let Some(entries) = self.scanRead(self.host.list(root), root, &mut skipped)? else { continue; };
             for entry in entries {
                 if !entry.isDirectory || !FileUtils::isPortableFilePath(&entry.path) { continue; }
-                let Some(policy) = self.scanRead(FileSyncPolicy::loadForScan(self.host.as_ref(), &entry.path), &entry.path, &mut skipped)? else { continue; };
-                let Some(mut rules) = self.scanRead(policy.rulesForScan(self.host.as_ref(), &entry.path), &entry.path, &mut skipped)? else { continue; };
+                let Some((policy, mut rules)) = self.scanPolicy(
+                    FileSyncPolicy::loadForScan(self.host.as_ref(), &entry.path).and_then(|policy| {
+                        let rules = policy.rulesForScan(self.host.as_ref(), &entry.path)?;
+                        Ok((policy, rules))
+                    }), &entry.path,
+                ) else {
+                    skipped.push(entry.path);
+                    continue;
+                };
                 let mut candidates = Inventory::new();
                 self.collect(&entry.path, &entry.path, &policy, &mut rules, &mut candidates, &mut skipped)?;
                 let mut total = 0u64;
@@ -239,11 +252,17 @@ impl WorkspaceFileSyncStore {
             if isSkipped(path, &skipped) { continue; }
             if state.files.get(path) != Some(stamp) {
                 let root = managedDirectory(path)?;
-                let Some(policy) = self.scanRead(FileSyncPolicy::loadForScan(self.host.as_ref(), &root), &root, &mut skipped)? else { continue; };
+                let Some(policy) = self.scanPolicy(FileSyncPolicy::loadForScan(self.host.as_ref(), &root), &root) else {
+                    skipped.push(root);
+                    continue;
+                };
                 let limit = if path.ends_with(REFERENCE_SUFFIX) || isControl(&root, path) { MAX_POLICY_BYTES } else { usize::try_from(policy.maxFileBytes).unwrap_or(usize::MAX) };
                 let Some(bytes) = self.scanRead(readLimitedForScan(self.host.as_ref(), path, limit), path, &mut skipped)? else { continue; };
                 let Some(modifiedAt) = self.scanRead(self.host.modifiedAt(path), path, &mut skipped)? else { continue; };
-                if bytes.len() as i64 != stamp.size || Some(modifiedAt) != stamp.modifiedAt { return Err(format!("File changed during synchronization: {path}")); }
+                if bytes.len() as i64 != stamp.size || Some(modifiedAt) != stamp.modifiedAt {
+                    skipped.push(path.clone());
+                    continue;
+                }
                 // A verified file can replace an old directory, or a new child can
                 // replace an old file. Publish those tombstones before the upsert.
                 let replaced: Vec<_> = state.files.keys().filter(|previous|
@@ -268,6 +287,18 @@ impl WorkspaceFileSyncStore {
         state.references = large;
         if inventoryChanged || referencesChanged { self.save(&state)?; }
         Ok(changes)
+    }
+
+    /// A bad policy is local to its tree. Never interpret uncertainty as deletion.
+    fn scanPolicy<T>(&self, result: HostResult<T>, path: &str) -> Option<T> {
+        match result {
+            Ok(policy) => Some(policy),
+            Err(error) => {
+                operit_util::AppLogger::AppLogger::w("WorkspaceFileSyncStore",
+                    &format!("Skipping workspace sync policy for {path}; retaining prior sync state: {error}"));
+                None
+            }
+        }
     }
 
     /// Retains prior inventory when access is denied or a file disappears during scanning.
@@ -504,8 +535,10 @@ impl WorkspaceFileSyncStore {
     fn acceptsForScan(&self, path: &str, snapshot: Option<&RuntimeFileSnapshot>, state: Option<&ScanState>) -> HostResult<bool> {
         if !FileUtils::isPortableFilePath(path) { return Ok(false); }
         let root = managedDirectory(path).map_err(HostError::new)?;
-        let policy = FileSyncPolicy::loadForScan(self.host.as_ref(), &root)?;
-        if !policy.includesForScan(self.host.as_ref(), &root, path, false)? { return Ok(false); }
+        let Some(policy) = self.scanPolicy(FileSyncPolicy::loadForScan(self.host.as_ref(), &root), &root) else { return Ok(false); };
+        if self.scanPolicy(policy.includesForScan(self.host.as_ref(), &root, path, false), path) != Some(true) {
+            return Ok(false);
+        }
         let control = isControl(&root, path) || path.ends_with(REFERENCE_SUFFIX);
         let limit = if control { MAX_POLICY_BYTES as u64 } else { policy.maxFileBytes };
         let Some(snapshot) = snapshot else { return Ok(true); };
@@ -516,9 +549,12 @@ impl WorkspaceFileSyncStore {
         let state = match state { Some(state) => state, None => { loaded = self.load().map_err(HostError::new)?; &loaded } };
         for (other, stamp) in &state.files {
             if other != path && !state.references.contains_key(other) && other.starts_with(&format!("{root}/"))
-                && !isControl(&root, other) && !other.ends_with(REFERENCE_SUFFIX)
-                && policy.includesForScan(self.host.as_ref(), &root, other, false)? {
-                total = total.saturating_add(stamp.size.max(0) as u64);
+                && !isControl(&root, other) && !other.ends_with(REFERENCE_SUFFIX) {
+                match self.scanPolicy(policy.includesForScan(self.host.as_ref(), &root, other, false), other) {
+                    Some(true) => total = total.saturating_add(stamp.size.max(0) as u64),
+                    Some(false) => {}
+                    None => return Ok(false),
+                }
             }
         }
         Ok(total <= policy.maxTotalBytes)

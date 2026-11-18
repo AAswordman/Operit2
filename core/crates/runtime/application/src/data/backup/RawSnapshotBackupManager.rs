@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::io::{Seek, Write};
 use std::sync::Arc;
 
@@ -8,13 +9,77 @@ use operit_host_api::{HostSecretStore, RuntimeStorageHost, RuntimeStorageWriteHo
 use operit_store::PreferencesExport::{
     exportPreferences, isPreferencesPath, readPreferencesExportBytes, readPreferencesExportKey,
 };
+use operit_store::SyncOperationStore::SyncOperationStore;
+use operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore;
 use operit_util::RuntimeStorageLayout;
+use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
 use serde::{Deserialize, Serialize};
 use zip::ZipArchive;
 
 use crate::data::archive::ArchiveSource::{ArchiveSource, ArchiveSourceReader};
 
 const SNAPSHOT_LAYOUT: &str = "operit.runtime.v1";
+const EXPORT_STAGING_ROOT: &str = "runtime/temp/clean_on_exit/raw_snapshot_export";
+const LIVE_ONLY_PATHS: [&str; 4] = [
+    "runtime/logs",
+    "runtime/sync.rollback",
+    "runtime/sync/transactions.sqlite-shm",
+    EXPORT_STAGING_ROOT,
+];
+
+/// Owns only this export's private copies, including on an early failure.
+struct SnapshotStaging<'a> {
+    host: &'a dyn RuntimeStorageHost,
+    root: String,
+    files: BTreeMap<String, Option<(String, u64)>>,
+}
+
+impl SnapshotStaging<'_> {
+    fn capture(&mut self, writers: &dyn RuntimeStorageWriteHost, path: &str) -> Result<(), String> {
+        if !self.host.exists(path).map_err(|error| error.to_string())? {
+            self.files.insert(path.into(), None);
+            return Ok(());
+        }
+        let target = format!("{}/{}", self.root, self.files.len());
+        let mut writer = writers
+            .createWriteSession(&target)
+            .map_err(|error| error.to_string())?;
+        let result = (|| {
+            let mut offset = 0;
+            loop {
+                let bytes = self
+                    .host
+                    .readBytesRange(path, offset, operit_data_rescue::CHUNK_BYTES)
+                    .map_err(|error| error.to_string())?;
+                if bytes.is_empty() {
+                    return Ok(offset);
+                }
+                writer
+                    .writeChunk(&bytes)
+                    .map_err(|error| error.to_string())?;
+                offset += bytes.len() as u64;
+            }
+        })();
+        let length = match result {
+            Ok(length) => length,
+            Err(error) => {
+                let _ = writer.discard();
+                return Err(error);
+            }
+        };
+        writer.commitFast().map_err(|error| error.to_string())?;
+        self.files.insert(path.into(), Some((target, length)));
+        Ok(())
+    }
+}
+
+impl Drop for SnapshotStaging<'_> {
+    fn drop(&mut self) {
+        if let Err(error) = self.host.delete(&self.root, true) {
+            operit_host_api::logHostError("SnapshotExport", &error.to_string());
+        }
+    }
+}
 
 /// Describes the contents and format version of a raw runtime snapshot archive.
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -51,7 +116,26 @@ impl RawSnapshotBackupManager {
     pub(crate) fn exportSnapshot<W: Write + Seek>(&self, output: W) -> Result<(), String> {
         let secretBytes = serde_json::to_vec(&secrets::read_secrets(self.secretStore.as_deref())?)
             .map_err(|error| error.to_string())?;
-        let mut files = self.collectFileEntries(RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH)?;
+        let mut staging = SnapshotStaging {
+            host: self.storageHost.as_ref(),
+            root: format!("{EXPORT_STAGING_ROOT}/{}", uuid::Uuid::new_v4()),
+            files: BTreeMap::new(),
+        };
+        let mut capture = |path: &str| staging.capture(self.storageWriteHost.as_ref(), path);
+        WorkspaceFileSyncStore::new(self.storageHost.clone(), RUNTIME_SYNC_DIR_PATH)
+            .captureSnapshotInventory(&mut capture)?;
+        SyncOperationStore::new(self.storageHost.clone(), RUNTIME_SYNC_DIR_PATH)
+            .captureSnapshotFiles(capture)?;
+        let mut files =
+            self.collectFileEntries(RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH, &staging)?;
+        files.extend(staging.files.iter().filter_map(|(path, staged)| {
+            let (_, length) = staged.as_ref()?;
+            Some(RescueFile {
+                path: path.clone(),
+                byte_length: *length,
+                sha256: String::new(),
+            })
+        }));
         files.push(RescueFile {
             path: SYSTEM_SECRETS.into(),
             byte_length: secretBytes.len() as u64,
@@ -70,8 +154,13 @@ impl RawSnapshotBackupManager {
                     let end = start.saturating_add(length).min(secretBytes.len());
                     return Ok(secretBytes[start..end].to_vec());
                 }
+                let source = staging
+                    .files
+                    .get(path)
+                    .and_then(Option::as_ref)
+                    .map_or(path, |(staged, _)| staged.as_str());
                 self.storageHost
-                    .readBytesRange(path, offset, length)
+                    .readBytesRange(source, offset, length)
                     .map_err(|error| error.to_string())
             },
             |file| self.exportPreferences(&file.path, file.byte_length),
@@ -175,15 +264,24 @@ impl RawSnapshotBackupManager {
 
     /// Lists runtime payloads for the shared archive writer to sort and hash.
     #[allow(non_snake_case)]
-    fn collectFileEntries(&self, prefix: &str) -> Result<Vec<RescueFile>, String> {
+    fn collectFileEntries(
+        &self,
+        prefix: &str,
+        staging: &SnapshotStaging<'_>,
+    ) -> Result<Vec<RescueFile>, String> {
         let mut files = Vec::new();
         for entry in self
             .storageHost
             .list(prefix)
             .map_err(|error| error.to_string())?
         {
+            if staging.files.contains_key(&entry.path)
+                || LIVE_ONLY_PATHS.iter().any(|path| *path == entry.path)
+            {
+                continue;
+            }
             if entry.isDirectory {
-                files.extend(self.collectFileEntries(&entry.path)?);
+                files.extend(self.collectFileEntries(&entry.path, staging)?);
             } else {
                 let byteLength = u64::try_from(entry.size).map_err(|_| {
                     format!("runtime storage file has invalid size: {}", entry.path)
@@ -218,9 +316,9 @@ mod tests {
     use operit_host_native_storage::{NativeFileSecretStore, NativeRuntimeStorageHost};
     use operit_store::PreferencesDataStore::{stringPreferencesKey, PreferencesDataStore};
     use operit_store::PreferencesEncryption::PreferencesEncryption;
-    use operit_store::SyncOperationStore::{SyncClock, SyncOperationStore};
+    use operit_store::SyncOperationStore::SyncClock;
     use serde_json::json;
-    use std::io::{Cursor, Read};
+    use std::io::{Cursor, Read, SeekFrom};
     use zip::{write::SimpleFileOptions, ZipWriter};
 
     struct BytesSource(Vec<u8>);
@@ -298,6 +396,160 @@ mod tests {
     /// Builds a registered preferences key with deterministic fixture material.
     fn key() -> Vec<u8> {
         serde_json::to_vec(&json!({"format":"operit.preferences.encryption.key","version":1,"algorithm":"XChaCha20Poly1305","keyId":"snapshot-test-key","key":base64::engine::general_purpose::STANDARD_NO_PAD.encode([9u8;32])})).unwrap()
+    }
+
+    #[test]
+    fn snapshot_restores_copied_markers_with_or_without_existing_sync_state() {
+        for includeSync in [false, true] {
+            let source = Fixture::new();
+            let output = "runtime/data/chat_outputs/chat";
+            let policy = format!("{output}/.operit/sync.json");
+            let database =
+                format!("{output}/identities/old/runtime/plugin_data/space/demo/example.sqlite");
+            let marker = format!("{database}.operit-storage.json");
+            let markerBytes = br#"{"path":"runtime/plugin_data/space/demo/example.sqlite","owner":"demo","kind":"sqlite","sync":true}"#;
+            source.host.writeBytes(&database, b"copied file").unwrap();
+            source.host.writeBytes(&marker, markerBytes).unwrap();
+            assert!(!source.host.exists(&policy).unwrap());
+            if includeSync {
+                assert_eq!(WorkspaceFileSyncStore::new(source.host.clone(), RUNTIME_SYNC_DIR_PATH)
+                    .scan().unwrap(), 2);
+            }
+            let destination = Fixture::new();
+            destination.manager()
+                .restoreSnapshotSource(Arc::new(BytesSource(source.export())))
+                .unwrap();
+            assert_eq!(destination.host.exists(RUNTIME_SYNC_DIR_PATH).unwrap(), includeSync);
+            assert_eq!(destination.host.readBytes(&database).unwrap(), b"copied file");
+            assert_eq!(destination.host.readBytes(&marker).unwrap(), markerBytes);
+
+            let workspace =
+                WorkspaceFileSyncStore::new(destination.host.clone(), RUNTIME_SYNC_DIR_PATH);
+            // Archive restore assigns new file times; re-inventory once, then stay idle.
+            assert_eq!(workspace.scan().unwrap(), 2);
+            let journal = SyncOperationStore::new(destination.host.clone(), RUNTIME_SYNC_DIR_PATH);
+            let operations = journal.operationsSince(&SyncClock::empty(), &[], 100).unwrap();
+            let versions = destination.host.readBytes("runtime/sync/entity_versions.jsonl").unwrap();
+            for _ in 0..5 {
+                assert_eq!(WorkspaceFileSyncStore::new(destination.host.clone(), RUNTIME_SYNC_DIR_PATH)
+                    .scan().unwrap(), 0);
+            }
+            assert_eq!(journal.operationsSince(&SyncClock::empty(), &[], 100).unwrap(), operations);
+            assert_eq!(destination.host.readBytes("runtime/sync/entity_versions.jsonl").unwrap(), versions);
+
+            // Subsequent application writes and another device restore use the same path.
+            workspace.trackPaths(&[&database], || {
+                destination.host.writeBytes(&database, b"edited copied file")
+                    .map_err(|error| error.to_string())
+            }).unwrap();
+            let next = Fixture::new();
+            next.manager()
+                .restoreSnapshotSource(Arc::new(BytesSource(destination.export())))
+                .unwrap();
+            assert_eq!(next.host.readBytes(&database).unwrap(), b"edited copied file");
+            assert_eq!(next.host.readBytes(&marker).unwrap(), markerBytes);
+            assert!(!next.host.exists(&policy).unwrap());
+            let restoredWorkspace = WorkspaceFileSyncStore::new(next.host.clone(), RUNTIME_SYNC_DIR_PATH);
+            assert_eq!(restoredWorkspace.scan().unwrap(), 2);
+            assert_eq!(restoredWorkspace.scan().unwrap(), 0);
+        }
+    }
+
+    #[test]
+    fn snapshot_excludes_live_logs_and_captures_sync_files_before_compression() {
+        struct MutatingOutput<'a> {
+            output: Cursor<Vec<u8>>,
+            mutate: Option<Box<dyn FnOnce() + 'a>>,
+        }
+        impl Write for MutatingOutput<'_> {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if let Some(mutate) = self.mutate.take() {
+                    mutate();
+                }
+                self.output.write(bytes)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.output.flush()
+            }
+        }
+        impl Seek for MutatingOutput<'_> {
+            fn seek(&mut self, position: SeekFrom) -> std::io::Result<u64> {
+                self.output.seek(position)
+            }
+        }
+
+        let source = Fixture::new();
+        let log = "runtime/logs/operit.log";
+        source.host.writeBytes(log, b"before").unwrap();
+        source
+            .host
+            .writeBytes("runtime/logs/operit.log.manual-test.bak", b"old log")
+            .unwrap();
+        source
+            .host
+            .writeBytes("runtime/sync.rollback/old.sqlite", b"old journal")
+            .unwrap();
+        source
+            .host
+            .writeBytes("runtime/logs-extra/keep", b"user data")
+            .unwrap();
+        let workspace = WorkspaceFileSyncStore::new(source.host.clone(), RUNTIME_SYNC_DIR_PATH);
+        let journal = SyncOperationStore::new(source.host.clone(), RUNTIME_SYNC_DIR_PATH);
+        let versions = "runtime/sync/entity_versions.jsonl";
+        source
+            .host
+            .writeBytes("workspaces/test/before", b"user file")
+            .unwrap();
+        assert_eq!(workspace.scan().unwrap(), 1);
+        let capturedVersions = source.host.readBytes(versions).unwrap();
+        let expected = journal
+            .operationsSince(&SyncClock::empty(), &[], 100)
+            .unwrap();
+
+        let mut output = MutatingOutput {
+            output: Cursor::new(Vec::new()),
+            mutate: Some(Box::new(|| {
+                source.host.appendBytes(log, b"after").unwrap();
+                source
+                    .host
+                    .writeBytes("workspaces/test/while-exporting", b"second user file")
+                    .unwrap();
+                assert_eq!(workspace.scan().unwrap(), 1);
+                assert!(source.host.readBytes(versions).unwrap().len() > capturedVersions.len());
+            })),
+        };
+        source.manager().exportSnapshot(&mut output).unwrap();
+        assert!(source.host.list(EXPORT_STAGING_ROOT).unwrap().is_empty());
+        let archive = Arc::new(BytesSource(output.output.into_inner()));
+        let destination = Fixture::new();
+        destination
+            .manager()
+            .restoreSnapshotSource(archive)
+            .unwrap();
+        for path in ["runtime/logs", "runtime/sync.rollback", EXPORT_STAGING_ROOT] {
+            assert!(
+                !destination.host.exists(path).unwrap(),
+                "unexpected restore: {path}"
+            );
+        }
+        assert_eq!(
+            destination
+                .host
+                .readBytes("runtime/logs-extra/keep")
+                .unwrap(),
+            b"user data"
+        );
+        assert_eq!(
+            destination.host.readBytes(versions).unwrap(),
+            capturedVersions
+        );
+        let restored = SyncOperationStore::new(destination.host.clone(), RUNTIME_SYNC_DIR_PATH);
+        assert_eq!(
+            restored
+                .operationsSince(&SyncClock::empty(), &[], 100)
+                .unwrap(),
+            expected
+        );
     }
 
     /// Restores a fresh installation, reads encrypted journal history, and writes another entry.

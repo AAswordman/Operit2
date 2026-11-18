@@ -135,8 +135,11 @@ test('snapshot export cannot grow into a separately reserved upload', () => {
 test('snapshot export uses host files throughout generation and saving', () => {
   const backup = source('core/crates/runtime/application/src/data/backup/RawSnapshotBackupManager.rs');
   const exportCode = section(backup, 'pub(crate) fn exportSnapshot', '/// Replaces runtime storage contents');
-  assert.match(exportCode, /ZipWriter::new\(output\)/);
-  assert.match(exportCode, /large_file\(true\)/);
+  const archive = source('core/crates/persistence/rescue/src/archive.rs');
+  const writer = section(archive, 'pub fn write_archive', 'fn archive_names');
+  assert.match(exportCode, /archive::write_archive\(\s*output,/);
+  assert.match(writer, /ZipWriter::new\(output\)/);
+  assert.match(writer, /large_file\(true\)/);
   assert.doesNotMatch(exportCode, /Cursor|into_inner|to_string_pretty/);
   const ui = section(source('apps/flutter/app/lib/ui/features/settings/data/DataSettingsPanel.dart'), 'Future<void> _exportRawSnapshot()', 'Future<void> _importRawSnapshot()');
   assert.match(ui, /saveGeneratedFile/);
@@ -183,7 +186,7 @@ test('snapshot upload remains unsealed when the sealing flush fails', () => {
 
 /** Checks that every selected-file input and the runtime upload accept the same bounded chunks. */
 test('snapshot upload uses 1 MiB chunks while exports keep their existing bound', () => {
-  const dart = source('apps/flutter/app/lib/core/host/SelectedFileInput.dart');
+  const dart = source('apps/flutter/thirdparty/operit_folder_access/lib/src/selected_file_input.dart');
   const runtime = source('core/crates/runtime/application/src/services/ArchiveTransferManager.rs');
   const android = source('apps/flutter/app/android/app/src/main/kotlin/app/operit/DocumentInputChannel.kt');
   const apple = source('apps/flutter/app/ios/Runner/AppleSnapshotImportInputChannel.swift');

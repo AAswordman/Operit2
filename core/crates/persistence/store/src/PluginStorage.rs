@@ -11,7 +11,7 @@ use crate::SyncOperationStore::{
 };
 use operit_host_api::PluginStorage::*;
 use operit_host_api::{RuntimeSqliteHost, RuntimeStorageHost, SqliteValue};
-use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership, PLUGIN_DATA_SPACE_DIR_PATH, PLUGIN_DATA_DEVICE_DIR_PATH};
+use operit_util::RuntimeStorageLayout::{runtimeStorageOwnership, RuntimeStorageOwnership};
 pub use operit_util::PluginStoragePaths::resolveStoragePath;
 use operit_util::PluginStoragePaths::storageNamespace;
 use serde_json::Value;
@@ -1308,7 +1308,13 @@ pub fn ownsFile(host: Arc<dyn RuntimeStorageHost>, path: &str) -> Result<bool, S
         .iter()
         .find_map(|suffix| path.strip_suffix(suffix))
         .unwrap_or(path);
-    if database.ends_with(".preferences.json") && [PLUGIN_DATA_SPACE_DIR_PATH, PLUGIN_DATA_DEVICE_DIR_PATH].iter().any(|root| database.strip_prefix(root).is_some_and(|relative| relative.starts_with('/'))) {
+    // Ownership comes from the database's live namespace, not from a copied
+    // marker. Workspace/output copies (even with stale or invalid markers)
+    // remain ordinary files on both the sending and receiving nodes.
+    if storageNamespace(database).is_err() {
+        return Ok(false);
+    }
+    if database.ends_with(".preferences.json") {
         resolveStoragePath(database).map_err(failure)?;
         return Ok(true);
     }
@@ -1316,12 +1322,19 @@ pub fn ownsFile(host: Arc<dyn RuntimeStorageHost>, path: &str) -> Result<bool, S
     if !host.exists(&marker)? {
         return Ok(false);
     }
-    let manifest: Manifest =
-        decodeManifest(serde_json::from_slice(&host.readBytes(&marker)?).map_err(|error| failure(error.to_string()))?)?;
+    let manifest = readStorageMarker(host.as_ref(), &marker)?;
     if manifest.path != database {
-        return Err(failure("Storage marker identity mismatch"));
+        return Err(failure(format!("Storage marker identity mismatch at {marker}: expected path {database:?}, found {:?}", manifest.path)));
     }
     Ok(true)
+}
+
+fn readStorageMarker(host: &dyn RuntimeStorageHost, marker: &str) -> Result<Manifest, SqliteStoreError> {
+    let bytes = host.readBytes(marker)?;
+    serde_json::from_slice(&bytes)
+        .map_err(|error| failure(error.to_string()))
+        .and_then(decodeManifest)
+        .map_err(|error| failure(format!("Invalid storage marker at {marker}: {error}")))
 }
 
 /// Removes discovery metadata before an explicitly authorized plugin uninstall deletes its files.
@@ -1344,11 +1357,15 @@ fn registerFile(
     let marker = format!("{}.operit-storage.json", manifest.path);
     let mut current = manifest.clone();
     if host.exists(&marker)? {
-        let stored = decodeManifest(serde_json::from_slice(&host.readBytes(&marker)?).map_err(|error| failure(error.to_string()))?)?;
+        let stored = readStorageMarker(host.as_ref(), &marker)?;
         if stored.path != manifest.path || stored.owner != manifest.owner
             || stored.kind != manifest.kind || stored.sync != manifest.sync
         {
-            return Err(failure("Storage marker conflicts with database identity"));
+            return Err(failure(format!(
+                "Storage marker conflicts with database identity at {marker}: expected path={:?} owner={:?} kind={} sync={}, found path={:?} owner={:?} kind={} sync={}",
+                manifest.path, manifest.owner, kindName(&manifest.kind), manifest.sync,
+                stored.path, stored.owner, kindName(&stored.kind), stored.sync,
+            )));
         }
         current.merge = mergeDescriptorForOpen(stored.merge.clone(), manifest.merge.clone())?;
         if current.merge == stored.merge {
@@ -1356,7 +1373,7 @@ fn registerFile(
         }
     }
     let content = serde_json::to_vec(&current).map_err(|error| failure(error.to_string()))?;
-    host.writeBytes(&marker, &content)?;
+    host.writeBytesAtomically(&marker, &content)?;
     Ok(())
 }
 
