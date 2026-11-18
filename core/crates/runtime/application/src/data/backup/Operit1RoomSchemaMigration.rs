@@ -26,6 +26,7 @@ impl Operit1RoomSchemaVersion {
 }
 
 /// Identifies one explicit Operit1 Room to Operit2 SQLite archive bridge.
+/// Schema 30 restores nullable chat group columns; the archive already preserves those values.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum Operit1ToOperit2ChatArchiveBridge {
     Operit1RoomV10ToOperit2SqliteV30,
@@ -336,5 +337,9 @@ pub(crate) mod tests {
             Operit1ToOperit2ChatArchiveBridge::Operit1RoomV21ToOperit2SqliteV30
         );
         assert_eq!(bridge.operit2TargetSchemaVersion(), 30);
+        assert_eq!(
+            readOperit1RoomSchemaVersion(&mut connection).expect("schema version must be readable"),
+            21
+        );
     }
 }
