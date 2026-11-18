@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.wechat_bot",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": {

@@ -153,10 +153,10 @@ test("automatic reply queue overflow leaves the server batch and cursor uncommit
   const f = await fixture({auto:true});
   const model = load("model");
   f.config.queue = Array.from({ length: 199 }, (_, index) =>
-    model.inbound(message(index + 1)),
+    model.inbound(message(index + 1, `peer-${index}`)),
   );
   await f.call({ action: "start" });
-  await f.batch([message(200), message(201)], "overflow");
+  await f.batch([message(200, "new-peer-1"), message(201, "new-peer-2")], "overflow");
   assert.equal(f.config.queue.length, 199);
   assert.equal(f.config.cursor, "");
   assert.match((await f.status()).service.error, /队列已满/);
@@ -240,50 +240,57 @@ test("automatic replies use the real Waifu client and a native conversation for 
   await f.batch([message(1, "alice@im.wechat", "first"), message(2, "alice@im.wechat", "second"), message(3, "bob@im.wechat", "third")]);
   await f.time.advance(1200);
   assert.equal(f.created.length, 2);
-  assert.equal(f.submitted.length, 3);
+  assert.equal(f.submitted.length, 2);
   const alice = f.submitted.filter((item) => /^(first|second)/.test(item.input.text));
   const bob = f.submitted.find((item) => item.input.text.startsWith("third"));
   assert.ok(f.submitted.every(item => !item.input.text.includes("@im.wechat")));
-  assert.equal(alice.length, 2);
-  assert.equal(alice[0].chatId, alice[1].chatId);
+  assert.equal(alice.length, 1);
+  assert.match(alice[0].input.text, /^second/);
+  assert.equal(f.config.history.length, 3);
   assert.notEqual(alice[0].chatId, bob.chatId);
   assert.equal(
     f.created[0].input["com.operit.character_cards"].selection,
     "card:alice",
   );
-  assert.equal(f.sends().length, 3);
+  assert.equal(f.sends().length, 2);
   assert.equal(f.sends()[0].body.msg.context_token, "ctx-alice@im.wechat");
   assert.equal(f.config.delivery, null);
-  assert.equal((await f.status()).autoReply.repliedCount, 3);
+  assert.equal((await f.status()).autoReply.repliedCount, 2);
   await f.stop();
 });
 
-test("different peers reply concurrently with a cap and each peer stays FIFO", async () => {
-  const f = await fixture({ auto: true, deferReply: true, firstPart: "先回复。继续生成" });
+test("WeChat coalesces a batch, interrupts only the active peer, and respects the concurrency cap", async () => {
+  const f = await fixture({ auto: true, deferReply: true, firstPart: "先回复。继续生成", lateOnCancel: true });
   await f.call({ action: "start" });
   await f.batch([
     message(1, "alice", "alice-first"), message(2, "alice", "alice-second"),
-    message(3, "bob", "bob-first"), message(4, "carol", "carol-first"), message(5, "dave", "dave-first"),
+    message(3, "bob", "bob-first"), message(4, "carol", "carol-first"),
   ]);
   await f.time.advance(400);
-  assert.equal(f.submitted.length, 3);
-  assert.deepEqual(f.submitted.map((item) => item.input.text.split("\n")[0]).sort(), ["alice-first", "bob-first", "carol-first"]);
-  assert.equal(f.config.queue.length, 2);
-  assert.equal(f.config.activeDeliveries.length, 3);
-  const aliceChat = f.submitted.find((item) => item.input.text.includes("alice-first")).chatId;
-  assert.deepEqual(plain(await f.service.channel({action:"active_context",chatId:aliceChat})),
-    {channel:"wechat",chatId:aliceChat,accountId:"bot",conversationId:"alice",authorId:"alice"});
-  assert.equal(await f.service.channel({action:"active_context",chatId:"unrelated"}),null);
-  f.completeReply(aliceChat);
-  await settle();
+  assert.deepEqual(f.submitted.map(item => item.input.text.split("\n")[0]).sort(), ["alice-second", "bob-first", "carol-first"]);
+  const aliceChat = f.submitted.find(item => item.input.text.startsWith("alice-second")).chatId;
+  const bobChat = f.submitted.find(item => item.input.text.startsWith("bob-first")).chatId;
+  assert.deepEqual(plain(await f.service.channel({ action: "active_context", chatId: aliceChat })),
+    { channel: "wechat", chatId: aliceChat, accountId: "bot", conversationId: "alice", authorId: "alice" });
+  assert.equal(await f.service.channel({ action: "active_context", chatId: "unrelated" }), null);
+  await f.batch([message(5, "alice", "alice-third"), message(6, "alice", "alice-latest"), message(7, "dave", "dave-first")], "replacement");
   await f.time.advance(400);
   assert.equal(f.submitted.length, 4);
-  assert.match(f.submitted[3].input.text, /alice-second/);
+  assert.match(f.submitted[3].input.text, /^alice-latest/);
   assert.equal(f.submitted[3].chatId, aliceChat);
+  assert.ok(f.cancelled.length > 0 && f.cancelled.every(id => id === aliceChat));
   assert.equal(f.config.queue.length, 1);
+  assert.equal(f.config.activeDeliveries.length, 3);
+  assert.equal(f.config.failedDeliveries.length, 0);
+  assert.equal(f.config.history.length, 7);
+  assert.equal(f.config.cursor, "replacement");
+  assert.deepEqual(f.sends().filter(item => item.body.msg.to_user_id === "alice")
+    .map(item => item.body.msg.item_list[0].text_item.text), ["先回复。", "先回复。"]);
+  f.completeReply(bobChat);
+  await f.time.advance(400);
+  assert.match(f.submitted[4].input.text, /^dave-first/);
   await f.stop();
-  assert.equal(await f.service.channel({action:"active_context",chatId:aliceChat}),null);
-  assert.equal(f.cancelled.length, 3);
+  assert.equal(await f.service.channel({ action: "active_context", chatId: aliceChat }), null);
   assert.equal(f.config.activeDeliveries.length, 0);
   assert.equal(f.config.failedDeliveries.length, 3);
 });
@@ -304,8 +311,25 @@ test("a failed completion write retains the sent reply for manual review", async
   assert.equal(f.sends().length, 1);
   assert.equal(f.config.failedDeliveries[0].delivered, 1);
   assert.match(f.config.failedDeliveries[0].error, /injected config write failure/);
-  assert.equal(f.config.queue.length, 1);
+  assert.equal(f.config.queue.length, 0);
   assert.equal(f.snapshots.at(-1).failedDeliveries[0].delivered, 1);
+  await f.stop();
+});
+
+test("native WeChat replies cancel the old turn and suppress its late completed text", async () => {
+  const f = await fixture({ auto: true, native: true, deferReply: true, lateOnCancel: true });
+  await f.call({ action: "start" });
+  await f.batch([message(1, "alice", "first")]);
+  await f.time.advance(400);
+  assert.equal(f.submitted.length, 1);
+  await f.batch([message(2, "alice", "latest")]);
+  await f.time.advance(400);
+  assert.deepEqual(f.cancelled, [f.submitted[0].chatId]);
+  assert.equal(f.submitted.length, 2);
+  assert.equal(f.submitted[1].chatId, f.submitted[0].chatId);
+  assert.match(f.submitted[1].input.text, /^latest/);
+  assert.equal(f.sends().length, 0);
+  assert.equal(f.config.failedDeliveries.length, 0);
   await f.stop();
 });
 
@@ -324,26 +348,28 @@ test("restart marks every concurrent in-flight reply as failed without replay", 
   assert.equal(restored.sends().length, 0);
 });
 
-test("failed delivery blocks only its own user and never retries itself", async () => {
+test("a failed WeChat delivery stays available for review while newer messages proceed", async () => {
   const f = await fixture({ auto: true, failSendAt: 1 });
   await f.call({ action: "start" });
-  await f.batch([message(1), message(2), message(3, "bob@im.wechat")]);
+  await f.batch([message(1)]);
+  await f.time.advance(400);
+  await f.batch([message(2), message(3, "bob@im.wechat")]);
   await f.time.advance(1000);
-  assert.equal(f.sends().length, 2);
+  assert.equal(f.sends().length, 3);
   assert.equal(f.config.failedDeliveries[0].state, "failed");
-  assert.equal(f.config.queue.length, 1);
-  assert.equal(f.sends()[1].body.msg.to_user_id, "bob@im.wechat");
-  await f.time.advance(5000);
-  assert.equal(f.sends().length, 2);
+  assert.equal(f.config.failedDeliveries[0].event.messageId, "1");
+  assert.equal(f.config.queue.length, 0);
+  assert.equal(f.sends()[1].body.msg.to_user_id, "alice@im.wechat");
+  assert.equal(f.sends()[2].body.msg.to_user_id, "bob@im.wechat");
   await f.call({ action: "delivery_resolve", resolution: "discard" });
   await f.time.advance(400);
   assert.equal(f.sends().length, 3);
-  assert.equal(f.config.delivery, null);
+  assert.equal(f.config.failedDeliveries.length, 0);
   await f.stop();
 });
 
 
-test("multiple failures require an exact selection and preserve per-user order", async () => {
+test("multiple failures require an exact selection for manual retry", async () => {
   const model = load("model");
   const config = model.defaultConfig();
   config.account = { botId: "bot", userId: "owner@im.wechat", token: "secret-token", baseUrl: "https://ilinkai.weixin.qq.com" };
@@ -355,15 +381,16 @@ test("multiple failures require an exact selection and preserve per-user order",
   await f.call({ action: "start" });
   await f.batch([message(3), message(4, "bob@im.wechat"), message(5, "carol@im.wechat")]);
   await f.time.advance(600);
-  assert.equal(f.sends().length, 1);
-  assert.equal(f.sends()[0].body.msg.to_user_id, "carol@im.wechat");
+  assert.equal(f.sends().length, 3);
+  assert.equal(f.sends()[2].body.msg.to_user_id, "carol@im.wechat");
   assert.equal((await f.status()).autoReply.deliveries.length, 2);
   await assert.rejects(f.call({ action: "delivery_resolve", resolution: "discard" }), /多条/);
   await f.call({ action: "delivery_resolve", resolution: "retry", message_id: "2", user_id: "bob@im.wechat" });
   await f.time.advance(800);
-  assert.equal(f.sends().length, 3);
+  assert.equal(f.sends().length, 4);
+  assert.equal(f.sends()[3].body.msg.to_user_id, "bob@im.wechat");
   assert.equal(f.config.failedDeliveries.length, 1);
-  assert.equal(f.config.queue.length, 1);
+  assert.equal(f.config.queue.length, 0);
   await f.stop();
 });
 
@@ -396,21 +423,21 @@ test("runtime restoration flags an interrupted delivery instead of silently repl
   assert.equal(f.sends().length, 0);
 });
 
-test("failed deliveries survive a restart and continue to isolate their users", async () => {
+test("failed deliveries survive a restart without blocking new messages", async () => {
   const f = await fixture({ auto: true, failSendAt: 1 });
   await f.call({ action: "start" });
   await f.batch([message(1)]);
   await f.time.advance(400);
   const saved = structuredClone(f.snapshots.at(-1));
   await f.stop();
-  const restarted = await fixture({ config: saved });
+  const restarted = await fixture({ config: saved, storage: f.storage });
   assert.equal((await restarted.status()).autoReply.deliveries[0].messageId, "1");
   await restarted.call({ action: "start" });
   await restarted.batch([message(2), message(3, "bob@im.wechat")]);
   await restarted.time.advance(700);
-  assert.equal(restarted.sends().length, 1);
-  assert.equal(restarted.sends()[0].body.msg.to_user_id, "bob@im.wechat");
-  assert.equal(restarted.config.queue.length, 1);
+  assert.equal(restarted.sends().length, 2);
+  assert.equal(restarted.sends()[1].body.msg.to_user_id, "bob@im.wechat");
+  assert.equal(restarted.config.queue.length, 0);
   await restarted.stop();
 });
 
@@ -532,7 +559,7 @@ test("quoted server message IDs resolve only within the originating peer history
     current,
   ]);
   await f.time.advance(1600);
-  const input = f.submitted[2].input.text;
+  const input = f.submitted.find(item => item.input.text.includes("new-message")).input.text;
   assert.match(input, /old-alice/);
   assert.doesNotMatch(input, /引用消息 2/);
   assert.doesNotMatch(input, /private-bob/);

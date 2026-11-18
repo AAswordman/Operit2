@@ -116,8 +116,9 @@ test('group replies require an exact Bot mention, stay threaded, and can be stop
     return input;
   };
   const frames=[{type:'opened'}], acks=[], replies=[], started=[], cancelled=[];
-  let identityRequests=0, identityAvailable=false, releaseLate;
+  let identityRequests=0, identityAvailable=false, releaseLate, releaseSuperseded;
   const late=new Promise(resolve=>{releaseLate=resolve;});
+  const superseded=new Promise(resolve=>{releaseSuperseded=resolve;});
   const emit=(id,input)=>frames.push({type:'binary',base64:writeFrame(frame({type:'event',message_id:id},utf8(JSON.stringify(input))))});
   const awaitState=async check=>{
     for(let i=0;i<160;i++){if(await check())return;await delay(20);}
@@ -147,11 +148,12 @@ test('group replies require an exact Bot mention, stay threaded, and can be stop
       return {op:'close'};
     },
   },Chat:{
-    async createNew(){return {chatId:'operit-group'};},async updateTitle(){},
+    async createNew(){return {chatId:started.length ? 'operit-peer' : 'operit-group'};},async updateTitle(){},
     async cancel(id){cancelled.push(id);},
     async *sendMessageStreaming(request){
       started.push(request);
       if(request.input.text.startsWith('迟到'))await late;
+      if(request.input.text.startsWith('旧回复'))await superseded;
       yield {type:'completed',result:{outcome:{type:'committed',status:'completed'},aiResponse:'收到'}};
     }
   }};
@@ -190,5 +192,28 @@ test('group replies require an exact Bot mention, stay threaded, and can be stop
     assert.deepEqual(cancelled,['operit-group']);
     assert.equal(replies.length,1);
     assert.equal(identityRequests,2);
-  }finally{releaseLate();await service.stop();}
+
+    const old=group('om_old','ou_self');old.event.message.content=JSON.stringify({text:'@_user_1 旧回复'});
+    emit('old',old);
+    await awaitState(()=>started.length===3);
+    await service.request({action:'manage',command:'start',autoReply:true});
+    emit('ordinary-during-reply',group('om_ordinary2'));
+    emit('peer',event('text',{text:'另一个会话'}));
+    await awaitState(()=>acks.includes('peer') && replies.length===2);
+    assert.deepEqual(cancelled,['operit-group']);
+    emit('intermediate',group('om_intermediate','ou_self'));
+    emit('latest',group('om_latest','ou_self'));
+    await awaitState(()=>acks.includes('latest') && cancelled.length===2);
+    assert.deepEqual(cancelled,['operit-group','operit-group']);
+    assert.equal(started.length,4);
+    releaseSuperseded();
+    await awaitState(()=>replies.length===3);
+    assert.equal(started.length,5);
+    assert.match(replies[2].url,/om_latest\/reply$/);
+    const session=(await service.request({action:'conversations'})).conversations.find(item=>item.conversationId==='oc_group');
+    const history=await service.request({action:'history',conversationKey:session.key});
+    for(const messageId of ['om_old','om_intermediate','om_latest']) {
+      assert.ok(history.messages.some(message=>message.messageId===messageId));
+    }
+  }finally{releaseLate();releaseSuperseded();await service.stop();}
 });

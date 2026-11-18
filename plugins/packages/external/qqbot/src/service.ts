@@ -9,6 +9,13 @@ import { QQOpenApi } from "./openapi.js";
 import { CHANNEL, MAX_EVENTS, defaultConfig, errorText, integer, nonblank, text, type AutoReplyParams, type Config, type ConfigureParams, type InboundEvent, type ReceiveParams, type Request, type Response, type ReplyRole, type Status } from "./model.js";
 
 const MAX_DELIVERIES = 200;
+type Delivery = NonNullable<Config["deliveries"]>[number];
+interface ReplyTask {
+  superseded: boolean;
+  stopDelivery?: () => void;
+  done?: Promise<void>;
+  cancellation?: Promise<unknown>;
+}
 
 /** Owns configuration, Gateway events and AI work in the package main runtime. */
 class QQBotService {
@@ -20,7 +27,7 @@ class QQBotService {
   private readonly events: InboundEvent[] = [];
   private readonly seen = new Set<string>();
   private autoTimer: number | null = null;
-  private readonly autoTasks = new Map<string, Promise<void>>();
+  private readonly autoTasks = new Map<string, ReplyTask>();
   private autoGeneration = 0;
   private readonly activeChats = new Map<string, string>();
   private readonly activeContexts = new Map<string, {chatId: string; accountId: string; conversationId: string; authorId: string; scene: "c2c" | "group"}>();
@@ -35,6 +42,7 @@ class QQBotService {
     config.deliveries ??= [];
     config.bindingsAccountId ??= config.appId;
     config.deliveries=config.deliveries.map(delivery=>delivery.state==="processing"?{...delivery,state:"failed" as const,error:"上次回复中断，请确认已发送内容后重试或跳过。"}:delivery);
+    this.coalescePending();
     this.api = this.createApi();
     this.gateway = this.createGateway();
   }
@@ -138,6 +146,8 @@ class QQBotService {
       if(captured)await this.channelInbox.record(message);
       channelOnly=captured && this.config.channelOnlyWhenNoAuto && !this.shouldReply(event);
       if(this.shouldReply(event) && !this.config.processed.includes(key) && !this.config.processed.includes(`${event.scene}:${event.messageId}`) && !this.config.deliveries!.some(item=>item.key===key)){
+        this.interrupt(this.binding(event));
+        this.coalescePending(event);
         const deliveries = this.config.deliveries!;
         if (deliveries.length >= MAX_DELIVERIES) {
           const oldestFailure = deliveries.findIndex(item => item.state === "failed");
@@ -237,13 +247,14 @@ class QQBotService {
     await this.stopAuto();
     this.config.waifuProfile = profile;
     this.config.autoReply = next;
+    this.coalescePending();
     await PluginConfig.flush(this.config);
     if (next.enabled && params.start_now !== false) {
       await this.start(false);
     }
   }
 
-  /** Processes separate QQ conversations concurrently while preserving each conversation's order. */
+  /** Processes unrelated conversations concurrently. */
   private startAuto(): void {
     if (this.autoRunning) return;
     this.autoRunning = true; this.autoError = "";
@@ -251,37 +262,64 @@ class QQBotService {
   }
 
   private binding(event: InboundEvent): string {
-    return JSON.stringify([event.scene, event.scene === "group" ? event.groupOpenId : event.userOpenId]);
+    if (event.scene !== "group") return JSON.stringify([event.scene, event.userOpenId]);
+    return JSON.stringify(this.config.autoReply.groupContext === "member"
+      ? [event.scene, event.groupOpenId, event.userOpenId] : [event.scene, event.groupOpenId]);
   }
 
-  /** Reserves the next eligible conversation before starting any asynchronous work. */
-  private takeEvent(): {event: InboundEvent; binding: string} | null {
-    const deliveries = this.config.deliveries!;
-    // Preserve order for active work. Failed attempts stay available in diagnostics,
-    // but must never indefinitely block new messages in the same conversation.
-    const seen = new Set<string>();
-    const delivery = deliveries.find(item => {
-      if (item.state === "failed") return false;
+  /** Keeps the last waiting event per reply context, including after upgrading. */
+  private coalescePending(replacement?: InboundEvent): void {
+    const seen = new Set(replacement ? [this.binding(replacement)] : []);
+    const dropped: string[] = [];
+    const deliveries = [...this.config.deliveries!].reverse().filter(item => {
+      if (item.state !== "pending") return true;
       const binding = this.binding(item.event);
-      if (seen.has(binding)) return false;
+      if (seen.has(binding)) { dropped.push(item.key); return false; }
       seen.add(binding);
-      return item.state === "pending" && this.shouldReply(item.event) && !this.autoTasks.has(binding);
-    });
-    if(!delivery)return null;
-    delivery.state="processing";this.config.deliveries=[...this.config.deliveries!];
-    const index=this.events.findIndex(item=>item===delivery.event || (item.messageId===delivery.event.messageId&&this.binding(item)===this.binding(delivery.event)));
-    if(index>=0)this.events.splice(index,1);
-    return {event:delivery.event,binding:this.binding(delivery.event)};
+      return true;
+    }).reverse();
+    if (dropped.length === 0) return;
+    this.config.deliveries = deliveries;
+    this.config.processed = [...this.config.processed, ...dropped].slice(-512);
   }
 
-  private launchAuto(generation: number, item: {event: InboundEvent; binding: string}): Promise<void> {
-    const task = this.autoTick(generation, item.event, item.binding);
-    this.autoTasks.set(item.binding, task);
-    void task.then(
-      () => { if (this.autoTasks.get(item.binding) === task) this.autoTasks.delete(item.binding); },
-      error => { if (this.autoTasks.get(item.binding) === task) this.autoTasks.delete(item.binding); console.error("[qqbot.auto.task]", error); },
-    );
-    return task;
+  private interrupt(binding: string): void {
+    const task = this.autoTasks.get(binding);
+    if (!task || task.superseded) return;
+    task.superseded = true;
+    void this.cancelReply(binding, task);
+  }
+
+  private cancelReply(binding: string, task: ReplyTask): Promise<unknown> | undefined {
+    task.stopDelivery?.();
+    const chatId = this.activeChats.get(binding);
+    if (chatId) task.cancellation ??= Tools.Chat.cancel(chatId).catch(error => console.error("[qqbot.cancel]", error));
+    return task.cancellation;
+  }
+
+  private takeEvent(): Delivery | undefined {
+    const delivery = this.config.deliveries!.find(item => item.state === "pending" && this.shouldReply(item.event) &&
+      !this.autoTasks.has(this.binding(item.event)));
+    if (!delivery) return;
+    delivery.state = "processing";
+    this.config.deliveries = [...this.config.deliveries!];
+    const index = this.events.indexOf(delivery.event);
+    if (index >= 0) this.events.splice(index, 1);
+    return delivery;
+  }
+
+  private launchAuto(generation: number, delivery: Delivery): Promise<void> {
+    const binding = this.binding(delivery.event);
+    const task: ReplyTask = { superseded: false };
+    this.autoTasks.set(binding, task);
+    const done = this.autoTick(generation, delivery, binding, task).finally(async () => {
+      // Cancel by chat ID must settle before another turn reuses that chat.
+      await task.cancellation;
+      this.autoTasks.delete(binding);
+    });
+    task.done = done;
+    void done.catch(error => console.error("[qqbot.auto.task]", error));
+    return done;
   }
 
   /** Keeps a bounded number of unrelated conversations moving independently. */
@@ -294,7 +332,7 @@ class QQBotService {
       }
       if (this.gateway.status === "ready" && this.autoTasks.size < 3) {
         const item = this.takeEvent();
-        if (item !== null) void this.launchAuto(generation, item);
+        if (item) void this.launchAuto(generation, item);
       }
       this.scheduleAuto(generation);
     }, 300);
@@ -304,16 +342,18 @@ class QQBotService {
   private async stopAuto(): Promise<void> {
     this.autoRunning = false; ++this.autoGeneration;
     if (this.autoTimer !== null) { clearTimeout(this.autoTimer); this.autoTimer = null; }
-    const cancellations = await Promise.allSettled([...this.activeChats.values()].map(chatId => Tools.Chat.cancel(chatId)));
-    const tasks = await Promise.allSettled([...this.autoTasks.values()]);
+    const cancellations = await Promise.allSettled([...this.autoTasks].map(([binding, task]) => this.cancelReply(binding, task)));
+    const tasks = await Promise.allSettled([...this.autoTasks.values()].map(task => task.done));
     const failure = [...cancellations, ...tasks].find(result => result.status === "rejected");
     if (failure?.status === "rejected") throw failure.reason;
   }
 
   /** Consumes one reserved inbound message and records its delivery or model error. */
-  private async autoTick(generation: number, event: InboundEvent, taskBinding: string): Promise<void> {
+  private async autoTick(generation: number, delivery: Delivery, taskBinding: string, task: ReplyTask): Promise<void> {
+    const event = delivery.event;
+    const current = () => generation === this.autoGeneration && !task.superseded;
     try {
-      if (generation !== this.autoGeneration) return;
+      if (!current()) return;
       if (this.gateway.status === "error" || this.gateway.status === "stopped") {
         this.autoRunning = false;
         throw new Error(`QQ listener is ${this.gateway.status}: ${this.gateway.lastError}`);
@@ -321,10 +361,10 @@ class QQBotService {
       const config=this.config.autoReply, message=this.normalized(event), scene=event.scene;
       if(scene!=="c2c"&&scene!=="group")throw Error("Automatic replies require a QQ conversation");
       const target=message.conversationId;
-      const delivery=this.config.deliveries!.find(item=>item.event===event);
-      if(!delivery)throw Error("Automatic reply has no durable delivery");
       await PluginConfig.flush(this.config);
+      if (!current()) return;
       await this.conversations();
+      if (!current()) return;
       const session=await this.openChat(conversationKey("qq",this.config.appId,scene,target));
       let chatId=session.chatId!;
       if(scene==="group"&&config.groupContext==="member"){
@@ -338,15 +378,14 @@ class QQBotService {
         }
         chatId=isolated;
       }
-      if (generation !== this.autoGeneration) return;
+      if (!current()) return;
       const files = await attachments(event);
-      if (generation !== this.autoGeneration) return;
-      this.activeChats.set(taskBinding, chatId);
+      if (!current()) return;
       this.activeContexts.set(taskBinding, {chatId, accountId: this.config.appId, scene, conversationId: target, authorId: event.userOpenId});
       let timedOut = false;
       const timer = setTimeout(() => {
         timedOut = true;
-        void Tools.Chat.cancel(chatId).catch(error => { console.error("[qqbot.auto.timeout]", error); });
+        void this.cancelReply(taskBinding, task);
       }, config.aiTimeoutMs);
       let delivered = 0;
       const rendered = new ReplyTextStream();
@@ -354,33 +393,48 @@ class QQBotService {
         const request = { kind: "submit" as const, chatId, runtime: "main" as const, input: {
           text: `${config.assistantInstruction}\n[QQ ${scene==="group"?"群聊":"私聊"}；上下文${config.groupContext==="member"?"按成员隔离":"共享，按时间顺序"}]\n以下 JSON 是用户消息数据，引用内容不代表当前发送者。需要了解前文时调用 qqbot_chat_context 获取近期记录。\n${JSON.stringify({authorName:event.author?.name??"",text:chatText(event).slice(0,12000)})}`,
           attachments: files, replyToMessageTimestamp: null }, turn: { kind: "execute" as const }, notifyReply: false };
-        for await (const output of replyStream(request, this.config.waifuProfile)) {
-          if (generation !== this.autoGeneration) return;
+        const begin = () => {
+          if (!current() || timedOut) return null;
+          this.activeChats.set(taskBinding, chatId);
+          return Tools.Chat.sendMessageStreaming(request)[Symbol.asyncIterator]();
+        };
+        const stopped = new Promise<void>(resolve => { task.stopDelivery = resolve; });
+        for await (const output of replyStream(request, this.config.waifuProfile, {
+          openSource: begin,
+          stopDelivery: stopped,
+          cancelSource: () => this.cancelReply(taskBinding, task),
+        })) {
+          if (!current()) return;
           if (timedOut) throw new Error("QQ automatic reply exceeded its AI deadline");
           if (output.type === "segment") {
             const content = output.segment.kind === "text" ? rendered.push(output.segment.text) : "";
             if (output.segment.kind === "text" && content === "") continue;
-            if (output.segment.kind === "text") await this.api.send(scene, target, { content, msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) });
-            else await this.api.sendMedia(scene, target, { kind: "image", source: output.segment.source }, { msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) });
+            if (output.segment.kind === "text") await this.api.send(scene, target, { content, msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) }, () => current() && !timedOut);
+            else await this.api.sendMedia(scene, target, { kind: "image", source: output.segment.source }, { msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) }, () => current() && !timedOut);
             delivered++;delivery.delivered++;this.config.deliveries=[...this.config.deliveries!];await PluginConfig.flush(this.config);
           }
         }
       } catch (error) {
         if (timedOut) throw new Error("QQ automatic reply exceeded its AI deadline");
         throw error;
-      } finally { clearTimeout(timer); this.activeChats.delete(taskBinding); this.activeContexts.delete(taskBinding); }
-      if (generation !== this.autoGeneration) return;
+      } finally { clearTimeout(timer); task.stopDelivery?.(); this.activeChats.delete(taskBinding); this.activeContexts.delete(taskBinding); }
+      if (!current()) return;
+      if (timedOut) throw new Error("QQ automatic reply exceeded its AI deadline");
       if (delivered === 0) throw new Error("Chat response contained no deliverable segments");
       this.config.deliveries=this.config.deliveries!.filter(item=>item!==delivery);
       this.config.processed=[...this.config.processed,delivery.key].slice(-512);await PluginConfig.flush(this.config);
       this.repliedCount++; this.autoError = "";
     } catch (error) {
-      this.autoError=errorText(error);const delivery=this.config.deliveries!.find(item=>item.event===event);
+      if (task.superseded) return;
+      this.autoError=errorText(error);
       if(delivery){delivery.state="failed";delivery.error=this.autoError;this.config.deliveries=[...this.config.deliveries!];await PluginConfig.flush(this.config);}
       console.error("[qqbot.auto]",error);
     } finally {
-      const delivery=this.config.deliveries!.find(item=>item.event===event);
-      if(delivery?.state==="processing"){delivery.state="failed";delivery.error="回复被停止；请确认发送情况后重试或跳过。";this.config.deliveries=[...this.config.deliveries!];await PluginConfig.flush(this.config);}
+      if (task.superseded && this.config.deliveries!.includes(delivery)) {
+        this.config.deliveries = this.config.deliveries!.filter(item => item !== delivery);
+        this.config.processed = [...this.config.processed, delivery.key].slice(-512);
+        await PluginConfig.flush(this.config);
+      } else if(delivery.state==="processing" && this.config.deliveries!.includes(delivery)){delivery.state="failed";delivery.error="回复被停止；请确认发送情况后重试或跳过。";this.config.deliveries=[...this.config.deliveries!];await PluginConfig.flush(this.config);}
     }
   }
 
@@ -504,7 +558,7 @@ class QQBotService {
         if (this.gateway.status !== "ready") throw new Error("The QQ listener must be ready");
         this.autoError = "";
         const item = this.takeEvent();
-        if (item !== null) await this.launchAuto(this.autoGeneration, item);
+        if (item) await this.launchAuto(this.autoGeneration, item);
         if (this.autoError !== "") throw new Error(this.autoError);
         break;
       default: throw new Error("Unknown QQ Bot operation");
@@ -522,10 +576,12 @@ async function preferWaifu(profile: string): Promise<boolean> {
   }
 }
 
-async function* replyStream(request: Parameters<typeof waifuStream>[0], profile: string): ReturnType<typeof waifuStream> {
+async function* replyStream(request: Parameters<typeof waifuStream>[0], profile: string, controls: Required<NonNullable<Parameters<typeof waifuStream>[2]>>): ReturnType<typeof waifuStream> {
   // Select the backend before submitting the turn; never replay a failed or partial Waifu turn.
-  if (await preferWaifu(profile)) { yield* waifuStream(request, profile); return; }
-  for await (const event of Tools.Chat.sendMessageStreaming(request)) {
+  if (await preferWaifu(profile)) { yield* waifuStream(request, profile, controls); return; }
+  const source = controls.openSource();
+  if (!source) return;
+  for await (const event of { [Symbol.asyncIterator]: () => source }) {
     if (event.type !== "completed") continue;
     const { outcome, aiResponse } = event.result;
     if (outcome.type !== "committed" || outcome.status !== "completed") throw Error(`Chat did not complete: ${JSON.stringify(outcome)}`);

@@ -195,7 +195,7 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
     toggle("listenGroupMessages", "记录群友普通消息", listenGroupMessages, setListenGroupMessages),
     description("记录实际收到的最近 80 条群消息，供 AI 按需读取；普通消息不会默认触发回复。能否收到未 @ 消息取决于 QQ 开放平台授予的事件权限。"),
     toggle("isolateMembers", "按成员隔离群上下文", groupContext === "member", enabled => setGroupContext(enabled ? "member" : "shared")),
-    description(groupContext === "shared" ? "同群共享一个线性会话，按顺序处理；不同群和私聊互相独立。" : "同群仍按顺序处理，但每位成员使用独立 AI 会话，读取前文也只返回该成员的消息。关闭后恢复原来的群共享会话。"),
+    description(groupContext === "shared" ? "同群共享一个会话。触发自动回复的新消息会打断正在生成的回复。不同群和私聊互相独立。" : "每位成员使用独立 AI 会话。触发自动回复的新消息只会打断同一成员的回复，读取前文也只返回该成员的消息。"),
     ctx.UI.DropdownMenu({ key: "groupReplyMode", label: "群消息回复条件", text: groupReplyMode === "mentioned" ? "仅被 @ 时回复" : "回复所有收到的群消息",
       enabled: busy === "" && status !== null, fillMaxWidth: true, onClick: index => setGroupReplyMode(index === 0 ? "mentioned" : "all") },
       [ctx.UI.Text({ text: "仅被 @ 时回复", paddingVertical: 8 }), ctx.UI.Text({ text: "回复所有收到的群消息", paddingVertical: 8 })]),

@@ -6,7 +6,7 @@ import { c2c, clock, load, plain, settle, socketPort } from "./harness.mjs";
 
 /** Executes the real service against explicit networking, configuration and Chat Hosts. */
 function fixture(options = {}) {
-  const time = clock(), socket = socketPort(), storage = objectStorage();
+  const time = clock(), socket = socketPort(), storage = options.storage ?? objectStorage();
   const values = Object.assign(load("model").defaultConfig(), options.initialConfig??{}); values.appId = "app"; values.appSecret = "private-secret";
   let dirty=false;const snapshots=[];
   const config = new Proxy(values,{set(target,key,value){target[key]=value;dirty=true;return true;}});
@@ -52,7 +52,7 @@ function fixture(options = {}) {
         yield { type: "part", messageTimestamp: 1, parts: [{ kind: "markdown", content: options.replyText === undefined ? "actual AI response" : options.replyText }] };
         yield { type: "completed", result: { chatId: request.chatId, aiResponse: options.finalReply ?? "unrendered final response", outcome: { type: "committed", status: "completed" } } };
       },
-      async cancel(chatId) { cancelled.push(chatId); if (pendingReplies.has(chatId)) { pendingReplies.get(chatId)({ chatId, outcome: { type: "committed", status: "cancelled" } }); pendingReplies.delete(chatId); } return { chatId, cancelRequested: true }; },
+      async cancel(chatId) { cancelled.push(chatId); if (pendingReplies.has(chatId)) { pendingReplies.get(chatId)({ chatId, outcome: { type: "committed", status: options.lateOnCancel ? "completed" : "cancelled" }, aiResponse: "迟到的答复" }); pendingReplies.delete(chatId); } return { chatId, cancelRequested: true }; },
     },
   };
   Tools.Storage = { objects: storage };
@@ -113,12 +113,17 @@ test("automatic replies use independent durable chats and authoritative waifu sn
   assert.equal(f.created.length, 2);
   assert.equal(f.created[0].setAsCurrentChat, false);
   assert.deepEqual(plain(f.created[0].input), { "com.operit.character_cards": { version: 1, selection: "card:chosen" } });
-  assert.deepEqual(f.submitted.map(request => request.chatId), ["chat-1", "chat-2", "chat-1"]);
+  assert.deepEqual(f.submitted.map(request => request.chatId).sort(), ["chat-1", "chat-2"]);
   assert.equal(f.submitted[0].kind, "submit"); assert.equal(f.submitted[0].turn.kind, "execute");
   const replies = f.http.filter(request => request.url.endsWith("/messages"));
-  assert.equal(replies.length, 3);
-  assert.equal(replies[0].body.content, "actual AI response"); assert.equal(replies[0].body.msg_id, "one");
-  assert.deepEqual(plain(f.config.bindings), { "c2c:alice": "chat-1", "c2c:bob": "chat-2" });
+  assert.equal(replies.length, 2);
+  assert.ok(replies.every(request => request.body.content === "actual AI response"));
+  assert.deepEqual(replies.map(request => request.body.msg_id).sort(), ["three", "two"]);
+  const alice = (await f.service.channel({ action: "conversations" })).conversations.find(item => item.conversationId === "alice");
+  const history = await f.service.channel({ action: "history", conversationKey: alice.key });
+  assert.deepEqual(plain(history.messages.filter(message => message.direction !== "outgoing").map(message => message.messageId)).sort(), ["one", "three"]);
+  assert.notEqual(f.config.bindings["c2c:bob"], f.config.bindings["c2c:alice"]);
+  assert.ok(f.config.bindings["c2c:alice"] && f.config.bindings["c2c:bob"]);
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
@@ -142,21 +147,28 @@ test("optional Waifu fallback does not hide errors in a configured profile", asy
   assert.equal(f.config.listenerEnabled, false);
 });
 
-test("different QQ conversations progress concurrently while the same conversation stays ordered", async () => {
-  const f = fixture({ deferAlice: true, firstPart: "先回答。" });
+test("a newer QQ message cancels an active reply in the same conversation", async () => {
+  const f = fixture({ deferAlice: true, firstPart: "先回答。后半段尚未发送", lateOnCancel: true });
   await f.complete(f.service.receive({ action: "start" }));
   await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true } }));
   f.socket.frame(c2c("alice-1", "alice"));
-  f.socket.frame(c2c("alice-2", "alice"));
+  await f.time.advance(700);
+  assert.equal(f.submitted.length, 1);
+  const alice = f.config.bindings["c2c:alice"];
   f.socket.frame(c2c("bob-1", "bob"));
-  await f.time.advance(1500);
-  assert.equal(f.submitted.length, 2);
-  assert.ok(f.submitted.some(request => request.chatId === f.config.bindings["c2c:bob"]));
-  assert.equal(f.submitted.filter(request => request.chatId === f.config.bindings["c2c:alice"]).length, 1);
+  await f.time.advance(500);
   assert.ok(f.http.some(request => request.url.includes("/users/bob/messages")));
-  f.resolveReply("chat-1");
-  await f.time.advance(1000);
-  assert.ok(f.submitted.filter(request => request.chatId === f.config.bindings["c2c:alice"]).length > 1);
+  assert.deepEqual(f.cancelled, []);
+  f.socket.frame(c2c("alice-2", "alice"));
+  f.socket.frame(c2c("alice-3", "alice"));
+  await f.time.advance(900);
+  assert.ok(f.cancelled.length > 0);
+  assert.ok(f.cancelled.every(id => id === alice));
+  assert.equal(f.submitted.filter(request => request.chatId === alice).length, 2);
+  const replies = f.http.filter(request => request.url.includes("/users/alice/messages"));
+  assert.deepEqual(replies.map(request => request.body.msg_id), ["alice-1", "alice-3"]);
+  assert.ok(replies.every(request => request.body.content === "先回答。"));
+  assert.equal(f.config.deliveries.some(item => item.state === "failed"), false);
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
@@ -180,6 +192,23 @@ test("QQ automatic replies bound concurrent conversations and stop cancels each 
   assert.equal(await f.service.channel({action:"active_context",chatId:f.submitted[0].chatId}),null);
   assert.deepEqual([...f.cancelled].sort(), ["chat-1", "chat-2", "chat-3"]);
   assert.equal(f.http.filter(request => request.url.endsWith("/messages")).length, 0);
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("native QQ replies are interrupted before a late completion can be sent", async () => {
+  const f = fixture({ deferReply: true, lateOnCancel: true });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, waifu_profile: "native" } }));
+  f.socket.frame(c2c("first", "alice"));
+  await f.time.advance(700);
+  assert.equal(f.submitted.length, 1);
+  f.socket.frame(c2c("latest", "alice"));
+  await f.time.advance(700);
+  assert.deepEqual(f.cancelled, [f.submitted[0].chatId]);
+  assert.equal(f.submitted.length, 2);
+  assert.equal(f.submitted[1].chatId, f.submitted[0].chatId);
+  assert.equal(f.http.filter(request => request.url.endsWith("/messages")).length, 0);
+  assert.equal(f.config.deliveries.some(item => item.state === "failed"), false);
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
@@ -513,15 +542,26 @@ test("ordinary group messages are recorded without model turns and mentioned rep
   await assert.rejects(f.service.receive({action:"chat_context",chatId:"unrelated"}),/Bot/);
   await f.complete(f.service.receive({action:"stop"}));
 });
-test("group shared context stays linear while unrelated groups proceed",async()=>{
-  const f=fixture({deferReply:true,firstPart:"已了解"});await f.complete(f.service.receive({action:"start"}));
-  await f.complete(f.service.receive({action:"auto_configure",params:{enabled:true}}));
-  f.socket.frame(groupMessage("one"));f.socket.frame(groupMessage("two","bob"));f.socket.frame(groupMessage("other","alice","group-b"));
-  await f.time.advance(1300);assert.equal(f.submitted.length,2);
-  const root=f.submitted[0].chatId;f.resolveReply(root);await f.time.advance(700);
-  assert.equal(f.submitted.length,3);assert.equal(f.submitted[2].chatId,root);
-  await f.complete(f.service.receive({action:"stop"}));
+test("a QQ group mention replaces the shared reply while other groups keep running", async () => {
+  const f = fixture({ deferReply: true });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true } }));
+  f.socket.frame(groupMessage("one"));
+  f.socket.frame(groupMessage("other", "alice", "group-b"));
+  await f.time.advance(1000);
+  assert.equal(f.submitted.length, 2);
+  const root = f.config.bindings["group:group-a"];
+  f.socket.frame(groupMessage("ordinary", "bob", "group-a", false));
+  await f.time.advance(400);
+  assert.deepEqual(f.cancelled, []);
+  f.socket.frame(groupMessage("two", "bob"));
+  await f.time.advance(700);
+  assert.equal(f.submitted.length, 3);
+  assert.equal(f.submitted[2].chatId, root);
+  assert.ok(f.cancelled.length > 0 && f.cancelled.every(id => id === root));
+  await f.complete(f.service.receive({ action: "stop" }));
 });
+
 test("member isolation uses individual model chats and filters history while preserving group order",async()=>{
   const f=fixture();await f.complete(f.service.receive({action:"start"}));
   await f.complete(f.service.receive({action:"auto_configure",params:{enabled:true,group_context:"member"}}));
@@ -536,6 +576,24 @@ test("member isolation uses individual model chats and filters history while pre
   await assert.rejects(f.service.receive({action:"chat_context",chatId:root}),/隔离/);
   await f.complete(f.service.receive({action:"stop"}));
 });
+test("QQ member isolation interrupts the same member while another member keeps generating", async () => {
+  const f = fixture({ deferReply: true });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, group_context: "member" } }));
+  f.socket.frame(groupMessage("alice-first", "alice"));
+  f.socket.frame(groupMessage("bob-first", "bob"));
+  await f.time.advance(1100);
+  assert.equal(f.submitted.length, 2);
+  const aliceChat = f.submitted[0].chatId, bobChat = f.submitted[1].chatId;
+  assert.notEqual(aliceChat, bobChat);
+  assert.deepEqual(f.cancelled, []);
+  f.socket.frame(groupMessage("alice-latest", "alice"));
+  await f.time.advance(700);
+  assert.deepEqual(f.cancelled, [aliceChat]);
+  assert.equal(f.submitted.length, 3);
+  assert.equal(f.submitted[2].chatId, aliceChat);
+  await f.complete(f.service.receive({ action: "stop" }));
+});
 test("all-message reply mode and listening off are explicit independent controls",async()=>{
   const f=fixture();await f.complete(f.service.receive({action:"start"}));
   await f.complete(f.service.receive({action:"auto_configure",params:{enabled:true,listen_group_messages:false}}));
@@ -549,10 +607,15 @@ test("all-message reply mode and listening off are explicit independent controls
 test("delivery reservation survives config persistence and restart never automatically replays uncertain replies",async()=>{
  const f=fixture({deferReply:true,trackTopLevel:true});await f.complete(f.service.receive({action:"start"}));
  await f.complete(f.service.receive({action:"auto_configure",params:{enabled:true}}));
- f.socket.frame(groupMessage("pending-one","alice","group-a",true,"第一条反馈"));f.socket.frame(groupMessage("pending-two","bob","group-a",true,"第二条反馈"));await f.time.advance(700);
+ f.socket.frame(groupMessage("pending-one","alice","group-a",true,"第一条反馈"));
+ f.socket.frame(groupMessage("pending-two","bob","group-b",true,"第二条反馈"));
+ await f.time.advance(400);
  assert.equal(f.submitted.length,1);assert.equal(f.snapshots.at(-1).deliveries[0].state,"processing");
- const interrupted=f.snapshots.at(-1);await f.complete(f.service.receive({action:"stop"}));
- const next=fixture({initialConfig:interrupted,trackTopLevel:true});await next.complete(next.service.receive({action:"start"}));await next.time.advance(800);
+ const interrupted=f.snapshots.findLast(snapshot => snapshot.deliveries.some(item => item.state === "processing") &&
+   snapshot.deliveries.some(item => item.event.messageId === "pending-two" && item.state === "pending"));
+ assert.ok(interrupted, "both the reservation and pending event were persisted");
+ await f.complete(f.service.receive({action:"stop"}));
+ const next=fixture({initialConfig:interrupted,storage:f.storage,trackTopLevel:true});await next.complete(next.service.receive({action:"start"}));await next.time.advance(800);
  assert.equal(next.submitted.length,1);assert.match(next.submitted[0].input.text,/第二条反馈/);
  assert.equal(next.config.deliveries[0].state,"failed");
  await next.complete(next.service.receive({action:"retry_delivery",key:next.config.deliveries[0].key,skip:true}));await next.time.advance(800);

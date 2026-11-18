@@ -135,7 +135,7 @@ export function response(data = { ret: 0 }, extra = {}) {
 
 /** Runs the actual service, dependency client and Waifu provider against controlled host boundaries. */
 export async function fixture(options = {}) {
-  const sourceClock = clock(), storage = objectStorage();
+  const sourceClock = clock(), storage = options.storage ?? objectStorage();
   const time = {
     ...sourceClock,
     /** Advances real asynchronous chains between timer ticks instead of jumping past their continuations. */
@@ -159,6 +159,7 @@ export async function fixture(options = {}) {
     config.autoReply.enabled = options.auto === true;
     config.autoReply.waifuProfile = options.native ? "native" : "default";
   }
+  const existingChatCount = Object.keys(config.bindings).length;
   // Model PluginConfig's top-level-only dirty tracking when requested.
   let configDirty = false;
   if (options.trackTopLevel) {
@@ -255,7 +256,7 @@ export async function fixture(options = {}) {
     Chat: {
       async createNew(input) {
         created.push(plain(input));
-        return { chatId: `chat-${created.length}` };
+        return { chatId: `chat-${existingChatCount + created.length}` };
       },
       async updateTitle() {},
       async updateGroup() {},
@@ -264,7 +265,7 @@ export async function fixture(options = {}) {
         const resolve = pendingReplies.get(chatId);
         if (resolve) {
           pendingReplies.delete(chatId);
-          resolve({ chatId, outcome: { type: "committed", status: "cancelled" } });
+          resolve({ chatId, outcome: { type: "committed", status: options.lateOnCancel ? "completed" : "cancelled" }, aiResponse: "迟到的答复" });
         }
         return { chatId, cancelRequested: true };
       },

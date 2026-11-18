@@ -106,11 +106,11 @@ export class QQOpenApi {
   }
 
   /** Uploads then sends media using the same sequencing as adjacent text messages. */
-  async sendMedia(scene: "c2c" | "group", target: string, media: OutgoingMedia, params: SendParams = {}): Promise<JsonObject> {
+  async sendMedia(scene: "c2c" | "group", target: string, media: OutgoingMedia, params: SendParams = {}, canSend?: () => boolean): Promise<JsonObject> {
     // Validate the complete message before uploading bytes or contacting QQ.
     this.messageBody({ ...params, msg_type: 7, media: { file_info: "pending-upload" } });
     const uploaded = await this.uploadMedia(scene, target, media);
-    return this.sendMessage(scene, target, { ...params, msg_type: 7, media: { file_info: nonblank(uploaded.file_info, "uploaded media file_info") } }, media);
+    return this.sendMessage(scene, target, { ...params, msg_type: 7, media: { file_info: nonblank(uploaded.file_info, "uploaded media file_info") } }, media, canSend);
   }
 
   /** Compatibility wrapper for Waifu's image segments. */
@@ -163,11 +163,11 @@ export class QQOpenApi {
   }
 
   /** Builds one authoritative message body and keeps reply sequences monotonic per source message. */
-  async send(scene: "c2c" | "group", target: string, params: SendParams): Promise<JsonObject> {
-    return this.sendMessage(scene, target, params);
+  async send(scene: "c2c" | "group", target: string, params: SendParams, canSend?: () => boolean): Promise<JsonObject> {
+    return this.sendMessage(scene, target, params, undefined, canSend);
   }
 
-  private async sendMessage(scene: "c2c" | "group", target: string, params: SendParams, media?: OutgoingMedia): Promise<JsonObject> {
+  private async sendMessage(scene: "c2c" | "group", target: string, params: SendParams, media?: OutgoingMedia, canSend?: () => boolean): Promise<JsonObject> {
     nonblank(target, "QQ target openid");
     if (scene !== "c2c" && scene !== "group") throw new Error("Sending requires a C2C or group scene");
     const body = this.messageBody(params);
@@ -184,6 +184,7 @@ export class QQOpenApi {
     const summary = { text: typeof body.content === "string" && body.content ? body.content :
       body.markdown ? "[Markdown]" : body.card ? "[卡片]" : body.media && !media ? "[媒体]" : "",
       ...(media ? { media: [{ kind: media.kind, name: media.fileName }] } : {}) };
+    if (canSend && !canSend()) throw Error("QQ reply interrupted before sending");
     let response: JsonObject;
     try { response = await this.authenticated(token, "POST", path, body); }
     catch (error) {

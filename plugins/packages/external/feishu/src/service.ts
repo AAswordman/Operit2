@@ -9,12 +9,20 @@ type Result = ChannelResponses[ChannelRequest["action"]];
 const defaults:Config = {appId:"",appSecret:"",enabled:false,autoReply:false,groupAutoReply:false};
 export const IPC = "feishu.connector";
 
+interface ReplyWorker {
+  scene: Incoming["scene"];
+  superseded: boolean;
+  chatId?: string;
+  cancellation?: Promise<unknown>;
+}
+
 export class FeishuService {
   private readonly store = new ChannelStore();
   private api:FeishuApi;
   private state:ChannelStatus["service"] = "stopped";
   private error = "";
   private generation = 0;
+  private readingBatch: number | undefined;
   private readonly policy = {c2c:0,group:0};
   private botId = "";
   private groupIssue = "";
@@ -23,7 +31,7 @@ export class FeishuService {
   private readonly openings = new Map<string,Promise<ChannelConversation>>();
   private readonly pending:Incoming[] = [];
   private readonly active = new Map<string,ActiveContext>();
-  private readonly workers = new Map<string,Promise<void>>();
+  private readonly workers = new Map<string,ReplyWorker>();
   constructor(private readonly config:Config) { this.api=this.createApi(config.appId,config.appSecret); }
   private createApi(appId: string, secret: string): FeishuApi { return new FeishuApi(appId, secret, this.store.recordSend("feishu")); }
   status():ChannelStatus { return {channel:"feishu",capture:true,conversationIds:null,channelOnlyWhenNoAuto:false,service:this.state,
@@ -35,7 +43,13 @@ export class FeishuService {
   private async disableReply(scene: Incoming["scene"]): Promise<void> {
     this.policy[scene]++;
     for(let index=this.pending.length-1;index>=0;index--) if(this.pending[index]?.scene===scene)this.pending.splice(index,1);
-    await Promise.allSettled([...this.active.values()].filter(item=>item.scene===scene).map(item=>Tools.Chat.cancel(item.chatId)));
+    await Promise.allSettled([...this.workers.values()]
+      .filter(worker => worker.scene === scene).map(worker => this.cancelReply(worker)));
+  }
+  private cancelReply(worker: ReplyWorker): Promise<unknown> | undefined {
+    if (worker.chatId) worker.cancellation ??= Tools.Chat.cancel(worker.chatId)
+      .catch(error => console.error("[feishu.cancel]", this.api.error(error)));
+    return worker.cancellation;
   }
   private schedule(generation:number, ms:number, work:()=>Promise<void>):void {
     if (generation !== this.generation) return;
@@ -55,7 +69,7 @@ export class FeishuService {
     ++this.generation;
     if(this.timer!==null){clearTimeout(this.timer);this.timer=null;}
     this.pending.splice(0); this.state="stopped"; this.error="";
-    await Promise.allSettled([this.close(),...Array.from(this.active.keys(),chatId=>Tools.Chat.cancel(chatId))]);
+    await Promise.allSettled([this.close(),...Array.from(this.workers.values(), worker => this.cancelReply(worker))]);
   }
   start():void {
     if(this.state==="connecting"||this.state==="ready"||this.timer!==null)return;
@@ -87,25 +101,31 @@ export class FeishuService {
       const records=await Tools.Net.webSocket({op:"read",handle});
       if(generation!==this.generation)return;
       if(records.op!=="read")throw Error("飞书长连接读取失败");
-      for(const event of records.events){
-        if(event.type==="error"||event.type==="closed") throw Error("飞书长连接已断开，正在重连");
-        if(event.type==="opened"){opened=true;lastActivity=Date.now();this.state="ready";this.error="";}
-        if(event.type!=="binary")continue;
-        lastActivity=Date.now();
-        const frame=readFrame(event.base64);
-        if(frame.method===0&&frame.headers.type==="pong"&&frame.payload.length){
-          const data=JSON.parse(string(frame.payload));
-          if(typeof data.PingInterval==="number"&&data.PingInterval>0) interval=Math.min(120,Math.max(5,data.PingInterval))*1000;
+      this.readingBatch = generation;
+      try {
+        for(const event of records.events){
+          if(event.type==="error"||event.type==="closed") throw Error("飞书长连接已断开，正在重连");
+          if(event.type==="opened"){opened=true;lastActivity=Date.now();this.state="ready";this.error="";}
+          if(event.type!=="binary")continue;
+          lastActivity=Date.now();
+          const frame=readFrame(event.base64);
+          if(frame.method===0&&frame.headers.type==="pong"&&frame.payload.length){
+            const data=JSON.parse(string(frame.payload));
+            if(typeof data.PingInterval==="number"&&data.PingInterval>0) interval=Math.min(120,Math.max(5,data.PingInterval))*1000;
+          }
+          if(frame.method!==1||frame.headers.type!=="event")continue;
+          const payload=fragments.join(frame); if(!payload)continue;
+          const begin=Date.now(); let code=200;
+          try {
+            const message=incoming(JSON.parse(string(payload)),this.config.appId);
+            if(message)await this.record(message,generation);
+          } catch(error) { code=500;this.error=this.api.error(error); }
+          if(generation!==this.generation)return;
+          await send(writeFrame({...frame,headers:{...frame.headers,biz_rt:String(Date.now()-begin)},payload:utf8(JSON.stringify({code}))}));
         }
-        if(frame.method!==1||frame.headers.type!=="event")continue;
-        const payload=fragments.join(frame); if(!payload)continue;
-        const begin=Date.now(); let code=200;
-        try {
-          const message=incoming(JSON.parse(string(payload)),this.config.appId);
-          if(message)await this.record(message,generation);
-        } catch(error) { code=500;this.error=this.api.error(error); }
-        if(generation!==this.generation)return;
-        await send(writeFrame({...frame,headers:{...frame.headers,biz_rt:String(Date.now()-begin)},payload:utf8(JSON.stringify({code}))}));
+      } finally {
+        if (this.readingBatch === generation) this.readingBatch = undefined;
+        if (generation === this.generation) this.drain();
       }
       if(Date.now()-lastActivity>(opened?2*interval+5000:15000)) throw Error("飞书长连接心跳超时，正在重连");
       if(opened&&Date.now()>=nextPing){
@@ -120,7 +140,7 @@ export class FeishuService {
     const accountId=this.config.appId, key=JSON.stringify(["feishu",accountId,input.chatId,input.id]);
     if(await this.store.replyRoute(key))return;
     if(generation!==this.generation)return;
-    const autoReplyEnabled=this.canReply(input)&&this.pending.length<100;
+    const autoReplyEnabled=this.canReply(input);
     const policy=this.policy[input.scene];
     const message:ChannelMessage={key,channel:"feishu",accountId,messageId:input.id,conversationId:input.chatId,
       authorId:input.authorId,text:input.text,timestamp:input.timestamp,autoReplyEnabled,
@@ -128,26 +148,40 @@ export class FeishuService {
     const label=input.scene==="group"?"飞书群聊":"飞书私聊";
     await this.store.observe(message,input.scene,`${label} · ${input.chatId.slice(-6)}`);
     if(generation!==this.generation || policy!==this.policy[input.scene])return;
-    if(autoReplyEnabled){
-      this.pending.push(input);this.drain();
-    }else if(this.canReply(input)){
-      this.error="飞书自动回复积压过多；消息已保留，可手动处理。";
+    if (!autoReplyEnabled || !this.canReply(input)) return;
+    const worker = this.workers.get(input.chatId);
+    if (worker && !worker.superseded) {
+      worker.superseded = true;
+      void this.cancelReply(worker);
     }
+    const previous = this.pending.findIndex(message => message.chatId === input.chatId);
+    if (previous >= 0) this.pending.splice(previous, 1);
+    if (this.pending.length >= 100) {
+      this.error = "飞书自动回复积压过多；消息已保留，可手动处理。";
+      return;
+    }
+    this.pending.push(input);
   }
   private drain():void {
     const generation=this.generation;
+    if (this.readingBatch === generation) return;
     while(this.workers.size<3){
       const index=this.pending.findIndex(message=>!this.workers.has(message.chatId)); if(index<0)return;
       const [message]=this.pending.splice(index,1);
       const policy=this.policy[message.scene];
-      const current=()=>generation===this.generation&&policy===this.policy[message.scene]&&this.canReply(message);
-      const task=this.respond(message,current).catch(error=>{if(current())this.error=this.api.error(error);}).finally(()=>{
-        this.workers.delete(message.chatId);this.drain();
+      const worker: ReplyWorker = { scene: message.scene, superseded: false };
+      this.workers.set(message.chatId, worker);
+      const current = () => !worker.superseded && generation === this.generation && policy === this.policy[message.scene] && this.canReply(message);
+      void this.respond(message, current, worker).catch(error => {
+        if (current()) this.error = this.api.error(error);
+      }).finally(async () => {
+        await worker.cancellation;
+        this.workers.delete(message.chatId);
+        this.drain();
       });
-      this.workers.set(message.chatId,task);
     }
   }
-  private async respond(message:Incoming,current:()=>boolean):Promise<void> {
+  private async respond(message:Incoming,current:()=>boolean,worker:ReplyWorker):Promise<void> {
     if(!current())return;
     const api=this.api;
     const attachments=[], missing=[];
@@ -159,9 +193,10 @@ export class FeishuService {
     const session=await this.openChat(conversationKey("feishu",api.appId,message.scene,message.chatId));
     if(!current()||!session.chatId)return;
     const chatId=session.chatId;
+    worker.chatId = chatId;
     this.active.set(chatId,{chatId,channel:"feishu",scene:message.scene,accountId:api.appId,conversationId:message.chatId,authorId:message.authorId});
     let timedOut=false;
-    const timeout=setTimeout(()=>{timedOut=true;void Tools.Chat.cancel(chatId).catch(()=>{});},120000);
+    const timeout=setTimeout(()=>{timedOut=true;void this.cancelReply(worker);},120000);
     try{
       let answer="";
       for await(const item of Tools.Chat.sendMessageStreaming({kind:"submit",chatId,runtime:"main",input:{
@@ -178,7 +213,7 @@ export class FeishuService {
         if(timedOut)throw Error("飞书自动回复已超时");
         await api.send({messageId:message.id,thread:message.scene==="group"},{text:chars.slice(i,i+3000).join("")},session,()=>current()&&!timedOut);
       }
-    }finally{clearTimeout(timeout);this.active.delete(chatId);}
+    }finally{clearTimeout(timeout);worker.chatId=undefined;this.active.delete(chatId);}
   }
   private async session(key:string):Promise<ChannelConversation> {
     const result=await this.store.get(key);

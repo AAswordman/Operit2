@@ -60,6 +60,30 @@ test("unsuccessful HTTP preserves the remote status and never submits another re
   await settle(); assert.equal(calls, 1);
 });
 
+test("QQ checks cancellation again after authentication and media upload", async () => {
+  for (const media of [false, true]) {
+    const calls = [], { QQOpenApi } = load("openapi", clock());
+    let current = true;
+    const api = new QQOpenApi({ appId: "app", appSecret: "secret", useSandbox: false }, {
+      async request(request) {
+        calls.push(request);
+        if (request.url.endsWith("getAppAccessToken")) {
+          if (!media) current = false;
+          return { statusCode: 200, content: JSON.stringify({ access_token: "token", expires_in: "7200" }) };
+        }
+        assert.ok(request.url.endsWith("/files"));
+        current = false;
+        return { statusCode: 200, content: JSON.stringify({ file_info: "uploaded" }) };
+      },
+    });
+    const pending = media
+      ? api.sendMedia("c2c", "alice", { kind: "image", source: "https://example.com/image.png" }, { msg_id: "old" }, () => current)
+      : api.send("c2c", "alice", { content: "old reply", msg_id: "old" }, () => current);
+    await assert.rejects(pending, /interrupted before sending/);
+    assert.equal(calls.some(request => request.url.endsWith("/messages")), false);
+  }
+});
+
 test("expired cached tokens are refreshed before the next request", async () => {
   const { api, calls, time } = fixture();
   await api.accessToken(); await time.advance(7150000); await api.accessToken();

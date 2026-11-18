@@ -32,12 +32,27 @@ export function getSettings(profile = "default"): Promise<Settings> { return cal
 /** Replaces one explicitly named profile after provider-side validation. */
 export function setSettings(profile: string, settings: Settings): Promise<Settings> { return call("settings.set", { profile, settings }); }
 
+export interface StreamControls {
+  /** Defers creating the model stream until Waifu is ready, or skips a stale turn. */
+  openSource?: () => AsyncIterator<NativeEvent> | null;
+  /** Wakes the delivery consumer and skips any unsent segments when resolved. */
+  stopDelivery?: Promise<void>;
+  /** Allows callers that also cancel by chat ID to share their in-flight cancellation. */
+  cancelSource?: () => Promise<unknown> | undefined;
+}
+
 /** Adapts a native Chat stream into ordered waifu segments without transferring live objects through IPC. */
-export async function* stream(request: SendRequest, profile = "default"): AsyncGenerator<StreamEvent> {
+export async function* stream(request: SendRequest, profile = "default", controls: StreamControls = {}): AsyncGenerator<StreamEvent> {
   const session = await call<OpenRequest, OpenResult>("session.open", { chatId: request.chatId, profile });
-  let source: AsyncIterator<NativeEvent>;
-  try { source = Tools.Chat.sendMessageStreaming(request)[Symbol.asyncIterator](); }
+  let source: AsyncIterator<NativeEvent> | null;
+  try {
+    source = controls.openSource === undefined
+      ? Tools.Chat.sendMessageStreaming(request)[Symbol.asyncIterator]()
+      : controls.openSource();
+  }
   catch (error) { await call("session.close", { sessionId: session.sessionId }); throw error; }
+  if (source === null) { await call("session.close", { sessionId: session.sessionId }); return; }
+  const native = source;
   const queue: StreamEvent[] = [];
   let wake: (() => void) | null = null;
   let terminal = false;
@@ -63,7 +78,7 @@ export async function* stream(request: SendRequest, profile = "default"): AsyncG
     let completed = false;
     try {
       while (!stopped) {
-        const next = await source.next();
+        const next = await native.next();
         if (next.done) break;
         if (stopped) break;
         const event = next.value;
@@ -86,6 +101,15 @@ export async function* stream(request: SendRequest, profile = "default"): AsyncG
     finally { done = true; signal(); }
   }
 
+  // Release any typing delay and wake the consumer when the caller supersedes the turn.
+  const stop = () => {
+    if (stopped) return;
+    stopped = true;
+    signal();
+    if (delayState.timer !== null) clearTimeout(delayState.timer);
+    delayState.finish?.();
+  };
+  void controls.stopDelivery?.then(stop);
   const producer = produce();
   try {
     while (!stopped) {
@@ -100,17 +124,16 @@ export async function* stream(request: SendRequest, profile = "default"): AsyncG
         const delay = Math.min(3000, Array.from(event.segment.text).length * session.settings.charDelayMs);
         if (delay > 0) await new Promise<void>(resolve => { delayState.finish = resolve; delayState.timer = setTimeout(resolve, delay); });
         delayState.timer = null; delayState.finish = null;
+        if (stopped) break;
         if (failure !== null) throw failure;
       }
       yield event;
     }
   } finally {
-    stopped = true; signal();
-    if (delayState.timer !== null) clearTimeout(delayState.timer);
-    if (delayState.finish !== null) delayState.finish();
+    stop();
     try {
-      try { if (!terminal) await Tools.Chat.cancel(request.chatId); }
-      finally { await source.return?.(); await producer; }
+      try { if (!terminal) await (controls.cancelSource?.() ?? Tools.Chat.cancel(request.chatId)); }
+      finally { await native.return?.(); await producer; }
     }
     finally { await call("session.close", { sessionId: session.sessionId }); }
   }

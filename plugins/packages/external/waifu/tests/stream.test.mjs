@@ -19,14 +19,14 @@ function channel() {
 }
 
 /** Creates the production dependency client and real provider around deterministic Chat observation. */
-async function fixture(charDelayMs = 0) {
+async function fixture(charDelayMs = 0, controls) {
   const time = clock(), source = channel(), p = provider({ Date: time.Date }), calls = [], cancellations = [];
   const settings = await p.call("settings.get", { profile: "default" });
   await p.call("settings.set", { profile: "default", settings: { ...settings, charDelayMs, enableEmoticons: true } });
   const Tools = { Chat: { sendMessageStreaming() { return source; }, async cancel(chatId) { cancellations.push(chatId); return { cancelRequested: true }; } } };
   const client = load("api", { ...time, Tools, ToolPkg: { async callDependency(packageName, method, payload) { assert.equal(packageName, "com.operit.waifu"); calls.push(method); return p.call(method, payload); } } });
   const request = { kind: "submit", chatId: "chat", runtime: "main", input: { text: "hello", attachments: [], replyToMessageTimestamp: null }, turn: { kind: "execute" }, notifyReply: false };
-  const stream = client.stream(request);
+  const stream = client.stream(request, "default", controls);
   /** Publishes a real semantic snapshot containing text plus hidden thinking and tool content. */
   function part(text, messageTimestamp = 10) { source.push({ type: "part", messageTimestamp, parts: [{ kind: "thinking", content: "private" }, { kind: "tool_result", content: "secret" }, { kind: "markdown", content: text }] }); }
   /** Publishes only the originating turn's terminal receipt. */
@@ -55,6 +55,32 @@ test("typing delay is capped at three seconds while model collection continues e
   await f.time.advance(1); assert.equal((await second).value.segment.text, "第二句话很长很长很长很长。");
   assert.ok(f.source.stats().pulls >= 3);
   await f.stream.return(); assert.equal(f.cancellations.length, 0);
+});
+
+test("a superseded turn can close its Waifu session before opening the model stream", async () => {
+  let current = true;
+  const f = await fixture(0, { openSource: () => { assert.equal(current, false); return null; } });
+  const pending = f.stream.next();
+  current = false;
+  assert.equal((await pending).done, true);
+  assert.deepEqual(f.calls, ["session.open", "session.close"]);
+  assert.deepEqual(f.cancellations, []);
+  assert.equal(f.source.stats().pulls, 0);
+});
+
+test("superseding a reply releases its typing delay without delivering the buffered segment", async () => {
+  let stop;
+  const stopped = new Promise(resolve => { stop = resolve; });
+  const f = await fixture(250, { stopDelivery: stopped }), first = f.stream.next();
+  await settle();
+  f.part("第一句。后"); await settle(); await first;
+  f.part("第一句。第二句话很长很长很长很长。后"); f.complete(); await settle();
+  const second = f.stream.next(); let ready = false;
+  void second.then(() => { ready = true; });
+  await settle(); assert.equal(ready, false);
+  stop();
+  assert.equal((await second).done, true);
+  assert.equal(f.calls.at(-1), "session.close");
 });
 
 test("consumer early exit cancels its actual Chat and releases the provider session", async () => {
