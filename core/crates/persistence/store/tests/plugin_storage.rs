@@ -2123,3 +2123,56 @@ fn opening_a_legacy_plugin_log_backfills_the_index_and_physically_compacts_old_p
     drop(store);
     f.dispose();
 }
+
+/// A re-sealed checkpoint only ships when the receiver cannot rebuild it from records.
+#[test]
+fn initialization_export_waits_for_history_the_peer_cannot_rebuild() {
+    use operit_store::SyncOperationStore::SyncReceipt;
+    let source = Fixture::new("init-source");
+    let handle = source.open("objects");
+    source.call(json!({"op":"commit","handle":handle,"mutations":[put("a",json!(1))]})).unwrap();
+    source.call(json!({"op":"commit","handle":handle,"mutations":[put("b",json!(2))]})).unwrap();
+    let records = source.export();
+    assert_eq!(records.len(),2);
+
+    // Sealing replaces the record history with a checkpoint whose identity is
+    // the digest of its complete payload, so every future seal rotates it.
+    let seal = |fixture:&Fixture| {
+        let snapshot = PluginStorage::syncSnapshot(fixture.host.clone(), &fixture.path, fixture.device).unwrap();
+        let definition = PluginStorage::snapshotDefinition(fixture.host.clone(), &fixture.path).unwrap();
+        let token = snapshot.token().unwrap();
+        assert!(PluginStorage::repairSyncedSnapshot(fixture.host.clone(), &token, &snapshot, fixture.device, &definition).unwrap());
+    };
+    seal(&source);
+    let checkpoint = |export:&[SyncOperation]| export.iter().find(|op|op.originDeviceId.starts_with("~init:"))
+        .expect("missing checkpoint").clone();
+
+    // A peer that already covered the whole sealed history rebuilds every seal
+    // from records; re-shipping the checkpoint would repeat the full database.
+    let covering = Fixture::new("init-covering");
+    covering.replay(&records);
+    let clock = PluginStorage::receipt(covering.host.clone()).unwrap().0;
+    let (operations,errors) = PluginStorage::exportWithBudget(source.host.clone(), &clock, &[], 100, 1_000_000).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(operations.is_empty(), "re-exported to a covering peer: {}", operations.len());
+
+    // Rotating the checkpoint identity without new history stays suppressed.
+    seal(&source);
+    let (operations,errors) = PluginStorage::exportWithBudget(source.host.clone(), &clock, &[], 100, 1_000_000).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    assert!(operations.is_empty(), "identity rotation re-shipped the checkpoint");
+
+    // A receiver missing a sealed original cannot rebuild it and needs the checkpoint.
+    let mut gapped = SyncReceipt::default();
+    gapped.observe(&records[0].originDeviceId, records[0].sequence);
+    let (operations,errors) = PluginStorage::exportWithBudget(source.host.clone(), &gapped, &[], 100, 1_000_000).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    checkpoint(&operations);
+
+    // Bootstrap receivers still receive the checkpoint.
+    let (operations,errors) = PluginStorage::exportWithBudget(source.host.clone(), &SyncReceipt::default(), &[], 100, 1_000_000).unwrap();
+    assert!(errors.is_empty(), "{errors:?}");
+    checkpoint(&operations);
+    source.dispose();
+    covering.dispose();
+}
