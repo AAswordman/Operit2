@@ -577,7 +577,7 @@ class _SummaryBar extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(right: 8),
                 child: Text(
-                  updates > 0 ? '发现 $updates 个更新' : '都是最新版本',
+                  updates > 0 ? '发现 $updates 个更新' : '未发现可用更新',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                   ),

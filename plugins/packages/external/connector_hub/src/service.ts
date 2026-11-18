@@ -14,7 +14,20 @@ export type Manage = { action: "manage"; channel: Channel } & (
   | { command: "login_start" | "login_cancel" | "login_status" | "logout" }
   | { command: "login_verify"; code: string }
 );
-export type ManagementStatus = ChannelStatus & { login?: { state: string; qrContent: string; expiresAt: number; error: string } };
+export type ManagementStatus = ChannelStatus & {
+  replyActivity?: {
+    received: number;
+    replied: number;
+    failed: number;
+    running: boolean;
+    directEnabled: boolean;
+    groupMode: "off" | "mentioned" | "all";
+  };
+  login?: { state: string; qrContent: string; expiresAt: number; error: string };
+};
+export type ConsoleDashboard = Omit<Dashboard, "connectors"> & {
+  connectors: (Connector & { status?: ManagementStatus })[];
+};
 export type ConsoleAttachment = { fileName: string; mimeType: string; contentBase64: string };
 export type ConsoleRequest = Request | Manage | ({ action: "console_reply"; channel: Channel; conversationKey: string; key: string } & SendFields)
   | { action: "attachment"; channel: Channel; conversationKey: string; messageId: string; index: number };

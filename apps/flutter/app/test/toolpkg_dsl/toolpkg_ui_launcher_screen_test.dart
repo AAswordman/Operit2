@@ -1273,6 +1273,74 @@ void main() {
     ]);
   });
 
+  for (final bot in ['qqbot_bundle', 'wechat_bot']) {
+    testWidgets('package launcher reveals $bot settings immediately', (
+      tester,
+    ) async {
+      final destination = ValueNotifier<String>('扩展详情');
+      addTearDown(destination.dispose);
+      final route = 'toolpkg:com.operit.$bot:ui:settings';
+      AppRouterGateway.install(
+        handler: (id, _, _) => destination.value = id,
+        reset: (_, _, _) {},
+      );
+      addTearDown(AppRouterGateway.clear);
+      var selected = false;
+      final bridge = _ToolPkgDslTestBridge(
+        onAction: (_) => selected = true,
+        renderResult: (_) => jsonEncode({
+          'success': true,
+          'tree': _node(
+            'Button',
+            props: {
+              'text': '高级设置',
+              'onClick': {'__actionId': 'settings'},
+            },
+          ),
+          'navigationCommands': [
+            if (selected) {'route': route},
+          ],
+        }),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Builder(
+            builder: (context) {
+              return Scaffold(
+                body: Column(
+                  children: [
+                    ValueListenableBuilder(
+                      valueListenable: destination,
+                      builder: (_, value, _) => Text(value),
+                    ),
+                    TextButton(
+                      onPressed: () => Navigator.of(context).push(
+                        MaterialPageRoute<void>(
+                          builder: (_) => ToolPkgUiLauncherScreen(
+                            clients: GeneratedCoreProxyClients(bridge),
+                            plugin: _pluginRuntime(),
+                            dismissOnExternalNavigation: true,
+                          ),
+                        ),
+                      ),
+                      child: const Text('打开插件'),
+                    ),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+      );
+      await tester.tap(find.text('打开插件'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('高级设置'));
+      await tester.pumpAndSettle();
+      expect(find.text(route), findsOneWidget);
+      expect(find.byType(ToolPkgUiLauncherScreen), findsNothing);
+    });
+  }
+
   testWidgets(
     'retired renderer callbacks cannot enter a reloading or replacement session',
     (tester) async {

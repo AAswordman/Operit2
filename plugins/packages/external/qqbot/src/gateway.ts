@@ -8,6 +8,8 @@ export interface SocketPort {
   request(request: Net.WebSocketRequest): Promise<WebSocketResultData>;
 }
 
+class GatewayTransportError extends Error {}
+
 /** Implements the QQ Gateway protocol over one Host-owned WebSocket. */
 export class QQGateway {
   status: "stopped" | "connecting" | "ready" | "error" = "stopped";
@@ -23,6 +25,7 @@ export class QQGateway {
   private awaitingAck = false;
   private helloDeadline = 0;
   private gatewayUrl = "";
+  private reconnectAttempts = 0;
 
   /** Binds the QQ API and transport to an ordered inbound-event consumer. */
   constructor(private readonly api: QQOpenApi, private readonly socket: SocketPort, private readonly onEvent: (event: InboundEvent) => void | Promise<void>) {}
@@ -39,6 +42,7 @@ export class QQGateway {
       await this.open(generation);
       this.schedule(generation);
     } catch (error) {
+      if (generation !== this.generation) return;
       this.status = "error";
       this.lastError = errorText(error);
       console.error("[qqbot.gateway]", error);
@@ -68,6 +72,7 @@ export class QQGateway {
     this.status = "stopped";
     this.sessionId = "";
     this.sequence = null;
+    this.reconnectAttempts = 0;
     if (handle !== null) await this.socket.request({ op: "close", handle });
   }
 
@@ -87,7 +92,11 @@ export class QQGateway {
   /** Sends one JSON text frame for the currently active connection. */
   private async send(payload: JsonObject): Promise<void> {
     if (this.handle === null) throw new Error("QQ Gateway has no active socket");
-    await this.socket.request({ op: "send", handle: this.handle, text: JSON.stringify(payload) });
+    try {
+      await this.socket.request({ op: "send", handle: this.handle, text: JSON.stringify(payload) });
+    } catch (error) {
+      throw new GatewayTransportError(errorText(error));
+    }
   }
 
   /** Processes ordered frames, validates heartbeats and records terminal errors. */
@@ -95,20 +104,22 @@ export class QQGateway {
     try {
       if (generation !== this.generation || this.handle === null) return;
       const handle = this.handle;
-      const response = await this.socket.request({ op: "read", handle });
+      const response = await this.socket.request({ op: "read", handle }).catch(error => {
+        throw new GatewayTransportError(errorText(error));
+      });
       if (generation !== this.generation || handle !== this.handle) return;
       if (response.op !== "read") throw new Error("Unexpected WebSocket read response");
       for (const event of response.events) {
         if (generation !== this.generation || handle !== this.handle) break;
-        if (event.type === "error") throw new Error(event.message);
-        if (event.type === "closed") throw new Error("QQ Gateway closed the connection");
+        if (event.type === "error") throw new GatewayTransportError(event.message);
+        if (event.type === "closed") throw new GatewayTransportError("QQ Gateway closed the connection");
         if (event.type === "message") await this.dispatch(object(JSON.parse(event.text), "gateway frame"), generation);
       }
       if (generation !== this.generation) return;
       const now = Date.now();
       if (this.status === "connecting" && now >= this.helloDeadline) throw new Error("QQ Gateway authentication deadline exceeded");
       if (this.heartbeatInterval > 0 && now >= this.nextHeartbeat) {
-        if (this.awaitingAck) throw new Error("QQ Gateway heartbeat acknowledgement deadline exceeded");
+        if (this.awaitingAck) throw new GatewayTransportError("QQ Gateway heartbeat acknowledgement deadline exceeded");
         await this.send({ op: 1, d: this.sequence });
         this.awaitingAck = true;
         this.nextHeartbeat = now + this.heartbeatInterval;
@@ -116,11 +127,48 @@ export class QQGateway {
       this.schedule(generation);
     } catch (error) {
       if (generation !== this.generation) return;
+      if (error instanceof GatewayTransportError && this.sessionId !== "") {
+        await this.reconnect(generation, error);
+        return;
+      }
       this.lastError = errorText(error);
       console.error("[qqbot.gateway]", error);
       try { await this.stop(); } catch (closeError) { console.error("[qqbot.gateway.close]", closeError); }
-      this.status = "error";
+      // stop() invalidates the generation. Do not overwrite a newer start.
+      if (this.generation === generation + 1) this.status = "error";
     }
+  }
+
+  /** Keeps the authenticated session and resumes after transient transport loss. */
+  private async reconnect(generation: number, error: unknown): Promise<void> {
+    if (generation !== this.generation) return;
+    this.lastError = errorText(error);
+    this.status = "connecting";
+    const handle = this.handle;
+    this.handle = null;
+    if (handle !== null) {
+      try { await this.socket.request({ op: "close", handle }); }
+      catch (closeError) { console.error("[qqbot.gateway.close]", closeError); }
+    }
+    if (generation !== this.generation) return;
+    const delay = 1000 * 2 ** Math.min(this.reconnectAttempts++, 5);
+    this.timer = setTimeout(() => { void this.reopen(generation); }, delay);
+  }
+
+  private async reopen(generation: number): Promise<void> {
+    if (generation !== this.generation) return;
+    try {
+      await this.open(generation);
+      this.schedule(generation);
+    } catch (error) {
+      await this.reconnect(generation, error);
+    }
+  }
+
+  private markReady(): void {
+    this.status = "ready";
+    this.lastError = "";
+    this.reconnectAttempts = 0;
   }
 
   /** Handles exact QQ opcodes and server-directed session negotiation. */
@@ -141,8 +189,8 @@ export class QQGateway {
       }
       case 0: {
         const type = nonblank(frame.t, "dispatch.t");
-        if (type === "READY") { if (sequence !== null) this.sequence = sequence; this.sessionId = nonblank(object(frame.d, "READY.d").session_id, "session_id"); this.status = "ready"; return; }
-        if (type === "RESUMED") { if (sequence !== null) this.sequence = sequence; this.status = "ready"; return; }
+        if (type === "READY") { if (sequence !== null) this.sequence = sequence; this.sessionId = nonblank(object(frame.d, "READY.d").session_id, "session_id"); this.markReady(); return; }
+        if (type === "RESUMED") { if (sequence !== null) this.sequence = sequence; this.markReady(); return; }
         const event = inbound(frame);
         await this.onEvent(event);
         if (sequence !== null) this.sequence = sequence;

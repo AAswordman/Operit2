@@ -1,6 +1,6 @@
 import type { ComposeDslContext, ComposeNode, ComposePickedFile } from "../../../../types/compose-dsl";
-import { CHANNELS, type Channel, type Conversation, type Dashboard, type History, type Media } from "./api.js";
-import { IPC, type ConsoleAttachment, type ConsoleRequest, type Manage, type ManagementStatus } from "./service.js";
+import { CHANNELS, type Channel, type Conversation, type History, type Media } from "./api.js";
+import { IPC, type ConsoleAttachment, type ConsoleDashboard, type ConsoleRequest, type Manage, type ManagementStatus } from "./service.js";
 import { consoleLayout, platforms } from "./console-layout.js";
 import qr from "./vendor/qrcode.js";
 
@@ -19,7 +19,7 @@ function filePayload(channel: Channel, file: ComposePickedFile): Media {
 
 export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
   const ui = ctx.UI;
-  const [data, setData] = ctx.useState<Dashboard | null>("dashboard", null);
+  const [data, setData] = ctx.useState<ConsoleDashboard | null>("dashboard", null);
   const [view, setView] = ctx.useState<View>("view", "overview");
   const [width, setWidth] = ctx.useState("width", 0);
   const [changingAccount, setChangingAccount] = ctx.useState("changingAccount", false);
@@ -40,7 +40,7 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
   const [busy, setBusy] = ctx.useState("busy", false);
   const working = ctx.useRef("working", false);
 
-  async function refresh(): Promise<void> { setData(await call<Dashboard>({ action: "dashboard" })); }
+  async function refresh(): Promise<void> { setData(await call<ConsoleDashboard>({ action: "dashboard" })); }
   async function run(work: () => Promise<void>): Promise<void> {
     if (working.current) return;
     working.current = true; setBusy(true); setNotice(""); setError("");
@@ -79,7 +79,7 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
             const result = await call<ManagementStatus>({ action: "manage", channel: "wechat", command: "login_status" });
             if (active && !working.current && result.login) setLogin(result.login);
           }
-          const next = await call<Dashboard>({ action: "dashboard" });
+          const next = await call<ConsoleDashboard>({ action: "dashboard" });
           if (active && !working.current) setData(next);
         }
       } catch (error) { if (active && !working.current) setError(error instanceof Error ? error.message : String(error)); }
@@ -89,7 +89,7 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
     return () => { active = false; if (timer !== null) clearTimeout(timer); };
   }, [view, login?.state, login?.qrContent]);
 
-  const { colors, shape, text, muted: sub, icon, row, flow, stack: column, badge, tile, status: stateBadge, button, card, empty } = consoleLayout(ctx, busy);
+  const { colors, shape, logo, text, muted: sub, icon, row, flow, stack: column, badge, tile, status: stateBadge, button, card, empty } = consoleLayout(ctx, busy);
   const field = (key: string, label: string, value: string, onValueChange: (val: string) => void, options: { isPassword?: boolean; singleLine?: boolean } = {}) =>
     ui.OutlinedTextField({ key, label, value, onValueChange, fillMaxWidth: true, enabled: !busy, singleLine: true, ...options });
   const heading = (value: string) => text(value, "titleMedium");
@@ -178,19 +178,18 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
       nodes.push(card("composer", composer));
     }
   } else if (view === "overview") {
-    const online = data?.connectors.filter(connector => connector.available && connector.status?.service === "ready").length ?? 0;
-    const wide = width >= 680;
+    const wide = width >= 720;
     const cards = CHANNELS.map(channel => {
       const connector = connectorFor(channel);
       const count = conversations.filter(item => item.channel === channel).length;
-      const state = stateBadge(connector, !!data);
-      const action = button(`settings-${channel}`, !connector?.available ? "查看" : connector.status?.configured ? "管理" : "连接", () => show(channel), "tonal");
-      const identity = ui.Column({ weight: 1, spacing: 3 }, [heading(platforms[channel].name),
-        ...(wide ? [sub(`${count} 个会话`)] : [flow(`details-${channel}`, [state, sub(`${count} 个会话`)])])]);
-      return card(`channel-${channel}`, [row(`connector-${channel}`, [tile(channel), identity, ...(!wide ? [action] : [])]),
-        ...(wide ? [flow(`actions-${channel}`, [state, action])] : [])]);
+      const action = button(`settings-${channel}`, !connector?.available ? "查看" : connector.status?.configured ? "管理" : "连接",
+        () => show(channel), connector?.available && !connector.status?.configured ? "primary" : "tonal");
+      return card(`channel-${channel}`, [row(`connector-${channel}`, [tile(channel),
+        ui.Column({ weight: 1, spacing: 4 }, [text(platforms[channel].name, "titleSmall", { fontWeight: "bold" }), sub(`${count} 个会话`)]),
+        ...(!wide ? [action] : [])]),
+        flow(`status-${channel}`, [stateBadge(connector, !!data), ...(wide ? [action] : [])])]);
     });
-    nodes.push(row("overview-title", [text("Bot 总览", "titleLarge", { weight: 1 }), badge(data ? `${online} / ${CHANNELS.length} 在线` : "读取中")]));
+    nodes.push(text("机器人", "titleMedium"));
     if (wide) nodes.push(row("channel-grid", cards.map((item, index) => ui.Box({ key: CHANNELS[index], weight: 1 }, item))));
     else nodes.push(...cards);
     nodes.push(row("recent-heading", [text("最近会话", "titleMedium", { weight: 1 }),
@@ -211,6 +210,7 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
     const { settings: nativeSettings, name } = platforms[channel];
     const connector = connectorFor(channel);
     const status = connector?.status;
+    const panels: ComposeNode[] = [];
     nodes.push(row("bot-title", [tile(channel), ui.Column({ weight: 1, spacing: 4 }, [text(name, "titleLarge"), stateBadge(connector, !!data)])]));
     const shortcuts: ComposeNode[] = [button(`conversations-${channel}`, "查看会话", () => openList(channel), "tonal", true, "Forum")];
     if (nativeSettings && connector?.available) shortcuts.push(button(`native-${channel}`, "高级设置", () => run(async () => { await ctx.navigate(nativeSettings); }), "text", true, "Settings"));
@@ -240,31 +240,50 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
       if (status.configured) controls.push(flow("controls", [
         button("toggle", status.listenerEnabled ? "停止监听" : "启动监听", () => run(() => manage({ action: "manage", channel, command: status.listenerEnabled ? "stop" : "start" })), "tonal"),
         button("test", "测试连接", () => run(() => manage({ action: "manage", channel, command: "test" })))]));
-      nodes.push(ui.HorizontalDivider({}), column(`settings-${channel}-body`, controls, 12));
+      panels.push(card("connection-controls", [column(`settings-${channel}-body`, controls, 12)]));
       if (status.configured) {
         const replies: ComposeNode[] = [heading("自动回复"),
           row("auto", [text(channel === "feishu" ? "AI 自动回复（私聊）" : "AI 自动回复", "bodyMedium", { weight: 1 }), ui.Switch({ checked: status.autoReplyEnabled === true,
             enabled: !busy && status.listenerEnabled === true, onCheckedChange: enabled => { void run(() => manage({ action: "manage", channel, command: "start", autoReply: enabled })); } })])];
+        if (channel === "qq" && status.replyActivity) {
+          const activity = status.replyActivity;
+          const group = activity.groupMode === "mentioned" ? "群聊仅被 @ 时回复" : activity.groupMode === "all" ? "群聊回复所有消息" : "群聊回复关闭";
+          replies.push(sub(`${activity.directEnabled ? "私聊回复开启" : "私聊回复关闭"} · ${group}`),
+            sub(`本次运行收到 ${activity.received} 条 · 已回复 ${activity.replied} 条`));
+          if (status.autoReplyEnabled && !activity.running) replies.push(sub("自动回复等待监听恢复"));
+          if (activity.failed) replies.push(sub(`${activity.failed} 条回复未完成，可在高级设置的诊断信息中查看。`));
+        }
         if (channel === "feishu" && typeof status.groupAutoReplyEnabled === "boolean") {
           replies.push(row("group-auto", [text("AI 自动回复（群内 @ Bot）", "bodyMedium", { weight: 1 }), ui.Switch({ checked: status.groupAutoReplyEnabled,
             enabled: !busy, onCheckedChange: enabled => { void run(() => manage({ action: "manage", channel, command: "group_auto_reply", enabled })); } })]));
           if (status.groupAutoReplyIssue) replies.push(sub(status.groupAutoReplyIssue));
         }
-        nodes.push(ui.HorizontalDivider({}), column("reply-settings", replies));
+        panels.push(card("reply-controls", [column("reply-settings", replies)]));
       }
     }
+    if (width >= 760 && panels.length > 1 && !(channel === "wechat" && login?.qrContent)) {
+      nodes.push(ui.Row({ key: "bot-panels", fillMaxWidth: true, verticalAlignment: "start", spacing: 12 },
+        panels.map((panel, index) => ui.Box({ key: index === 0 ? "connection" : "reply", weight: 1 }, panel))));
+    } else {
+      nodes.push(...panels);
+    }
   }
-  const refreshControl = ui.IconButton({ key: "refresh", icon: "Refresh", tooltip: "刷新", enabled: !busy,
+  const refreshControl = ui.IconButton({ key: "refresh", content: icon("Refresh", 20, "#DCE7FF"), tooltip: "刷新", enabled: !busy,
     onClick: () => run(async () => { await refresh(); if (view === "conversations" && selected) await load(selected); }) });
   const feedback = error || notice;
   const page = view === "conversations" && selected ? `thread-${selected.key}` : view;
-  const inset = { horizontal: 16, vertical: 12 };
+  const inset = { horizontal: 18, vertical: 14 };
+  const online = data?.connectors.filter(connector => connector.available && connector.status?.service === "ready").length ?? 0;
+  const overviewStatus = data ? `${online} 个在线 · ${conversations.length} 个会话` : "正在读取连接状态";
   return ui.Column({ fillMaxSize: true, horizontalAlignment: "center", onLoad: () => run(refresh) }, [
-    ui.Column({ fillMaxWidth: true, padding: { horizontal: 16, vertical: 6 }, modifier: ctx.Modifier.widthIn({ maxWidth: 1024 }) }, [
-      row("title", [icon("Hub", 22, colors.primary), text("外部连接器", "titleMedium", { weight: 1 }),
-        ...(busy ? [ui.CircularProgressIndicator({ width: 16, height: 16, strokeWidth: 2 })] : []), refreshControl]),
-    ]),
-    ui[width > 0 && width < 320 ? "SecondaryScrollableTabRow" : "SecondaryTabRow"]({ key: busy ? "navigation-busy" : "navigation",
+    ui.Box({ fillMaxWidth: true, modifier: ctx.Modifier.widthIn({ maxWidth: 1040 }), padding: { horizontal: 16, vertical: 10 } },
+      ui.Column({ fillMaxWidth: true, padding: inset, background: "#17264D", backgroundShape: { cornerRadius: 18 } }, [
+        row("title", [logo(44), ui.Column({ weight: 1, spacing: 4 }, [
+          text("外部连接器", "titleLarge", { color: "#F4F7FF", fontWeight: "bold" }),
+          text(overviewStatus, "bodySmall", { color: "#C0D0F5" }),
+        ]), ...(busy ? [ui.CircularProgressIndicator({ width: 16, height: 16, strokeWidth: 2, color: "#77E7C3" })] : []), refreshControl]),
+      ])),
+    ui[width > 0 && width < 320 ? "SecondaryScrollableTabRow" : "SecondaryTabRow"]({ key: "navigation",
       fillMaxWidth: true, modifier: ctx.Modifier.widthIn({ maxWidth: 1024 }), selectedTabIndex: tabs.indexOf(view),
       tabs: tabs.map(tab => ui.Tab({ key: `tab-${tab}`, selected: view === tab, enabled: !busy, onClick: () => show(tab) },
         ui.Text({ text: label(tab), inheritStyle: true, maxLines: 1, overflow: "ellipsis", letterSpacing: 0 }))),

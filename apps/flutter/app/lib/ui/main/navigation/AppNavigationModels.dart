@@ -247,6 +247,9 @@ class AppRouteDiscoveryGateway {
     _routesProvider = null;
   }
 
+  static bool contains(String routeId) =>
+      _routesProvider?.call().any((route) => route.routeId == routeId) ?? false;
+
   static List<RouteSpec> listRoutes() {
     final provider = _routesProvider;
     if (provider == null) {

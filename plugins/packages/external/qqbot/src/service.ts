@@ -8,6 +8,8 @@ import { QQGateway } from "./gateway.js";
 import { QQOpenApi } from "./openapi.js";
 import { CHANNEL, MAX_EVENTS, defaultConfig, errorText, integer, nonblank, text, type AutoReplyParams, type Config, type ConfigureParams, type InboundEvent, type ReceiveParams, type Request, type Response, type ReplyRole, type Status } from "./model.js";
 
+const MAX_DELIVERIES = 200;
+
 /** Owns configuration, Gateway events and AI work in the package main runtime. */
 class QQBotService {
   private readonly sessions = new ChannelStore();
@@ -136,8 +138,20 @@ class QQBotService {
       if(captured)await this.channelInbox.record(message);
       channelOnly=captured && this.config.channelOnlyWhenNoAuto && !this.shouldReply(event);
       if(this.shouldReply(event) && !this.config.processed.includes(key) && !this.config.processed.includes(`${event.scene}:${event.messageId}`) && !this.config.deliveries!.some(item=>item.key===key)){
-        if(this.config.deliveries!.length>=200)this.autoError="自动回复积压已达 200 条；新消息仍保存在近期上下文和已订阅反馈入口中，请处理失败回复。";
-        else {this.config.deliveries=[...this.config.deliveries!,{key,event,state:"pending",delivered:0,error:""}];await PluginConfig.flush(this.config);}
+        const deliveries = this.config.deliveries!;
+        if (deliveries.length >= MAX_DELIVERIES) {
+          const oldestFailure = deliveries.findIndex(item => item.state === "failed");
+          if (oldestFailure >= 0) {
+            const [expired] = deliveries.splice(oldestFailure, 1);
+            this.config.processed = [...this.config.processed, expired.key].slice(-512);
+          }
+        }
+        if (deliveries.length >= MAX_DELIVERIES) {
+          this.autoError = "自动回复积压已达 200 条，新消息仍保存在近期会话中。";
+        } else {
+          this.config.deliveries = [...deliveries, { key, event, state: "pending", delivered: 0, error: "" }];
+          await PluginConfig.flush(this.config);
+        }
       }
     }
     this.seen.add(key);if(this.seen.size>512)this.seen.delete(this.seen.values().next().value!);
@@ -242,7 +256,17 @@ class QQBotService {
 
   /** Reserves the next eligible conversation before starting any asynchronous work. */
   private takeEvent(): {event: InboundEvent; binding: string} | null {
-    const delivery=this.config.deliveries!.find((item,index)=>item.state==="pending" && this.shouldReply(item.event) && !this.autoTasks.has(this.binding(item.event)) && !this.config.deliveries!.slice(0,index).some(prior=>this.binding(prior.event)===this.binding(item.event)));
+    const deliveries = this.config.deliveries!;
+    // Preserve order for active work. Failed attempts stay available in diagnostics,
+    // but must never indefinitely block new messages in the same conversation.
+    const seen = new Set<string>();
+    const delivery = deliveries.find(item => {
+      if (item.state === "failed") return false;
+      const binding = this.binding(item.event);
+      if (seen.has(binding)) return false;
+      seen.add(binding);
+      return item.state === "pending" && this.shouldReply(item.event) && !this.autoTasks.has(binding);
+    });
     if(!delivery)return null;
     delivery.state="processing";this.config.deliveries=[...this.config.deliveries!];
     const index=this.events.findIndex(item=>item===delivery.event || (item.messageId===delivery.event.messageId&&this.binding(item)===this.binding(delivery.event)));
@@ -268,7 +292,7 @@ class QQBotService {
       if (this.gateway.status === "error" || this.gateway.status === "stopped") {
         this.autoRunning = false; this.autoError = `QQ listener is ${this.gateway.status}: ${this.gateway.lastError}`; return;
       }
-      if (this.autoTasks.size < 3) {
+      if (this.gateway.status === "ready" && this.autoTasks.size < 3) {
         const item = this.takeEvent();
         if (item !== null) void this.launchAuto(generation, item);
       }
@@ -386,7 +410,16 @@ class QQBotService {
         return { capture: this.config.channelCapture, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true };
       }
       case "status": return { channel: "qq", capture: this.config.channelCapture === true, conversationIds: this.config.channelConversationIds ?? null, channelOnlyWhenNoAuto: this.config.channelOnlyWhenNoAuto === true, service: this.gateway.status,
-        configured: !!(this.config.appId && this.config.appSecret), listenerEnabled: this.config.listenerEnabled, autoReplyEnabled: this.config.autoReply.enabled, error: this.gateway.lastError || this.autoError };
+        configured: !!(this.config.appId && this.config.appSecret), listenerEnabled: this.config.listenerEnabled,
+        autoReplyEnabled: this.config.autoReply.enabled, error: this.gateway.lastError || this.autoError,
+        replyActivity: {
+          received: this.gateway.receivedCount,
+          replied: this.repliedCount,
+          failed: this.config.deliveries!.filter(item => item.state === "failed").length,
+          running: this.autoRunning && this.gateway.status === "ready",
+          directEnabled: this.config.autoReply.c2cEnabled,
+          groupMode: this.config.autoReply.groupEnabled ? this.config.autoReply.groupReplyMode : "off",
+        } };
       case "manage": {
         const command = request.command;
         if (command === "connect") await this.configure({ app_id: nonblank(request.appId, "App ID"), app_secret: nonblank(request.appSecret, "App Secret"), listener_enabled: true, test_connection: true });

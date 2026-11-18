@@ -95,6 +95,7 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
     this.initialMemo = const <String, Object?>{},
     this.initialModuleSpec,
     this.onActionResult,
+    this.dismissOnExternalNavigation = false,
   });
 
   final GeneratedCoreProxyClients clients;
@@ -118,6 +119,9 @@ class ToolPkgUiLauncherScreen extends StatefulWidget {
 
   /// Delivers completed plugin actions to the owner of an embedded surface.
   final ValueChanged<Object?>? onActionResult;
+
+  /// Closes a package manager overlay after a destination opens in the shell.
+  final bool dismissOnExternalNavigation;
 
   /// Creates the state that owns the plugin execution and render lifecycle.
   @override
@@ -1154,6 +1158,11 @@ class _ToolPkgUiLauncherScreenState extends State<ToolPkgUiLauncherScreen> {
             args: command.args,
             source: RouteEntrySource.script,
           );
+        }
+        if (widget.dismissOnExternalNavigation &&
+            ModalRoute.of(context)?.isCurrent == true) {
+          Navigator.of(context).pop();
+          return;
         }
       }
     } catch (error, stackTrace) {

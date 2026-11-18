@@ -553,7 +553,8 @@ test("delivery reservation survives config persistence and restart never automat
  assert.equal(f.submitted.length,1);assert.equal(f.snapshots.at(-1).deliveries[0].state,"processing");
  const interrupted=f.snapshots.at(-1);await f.complete(f.service.receive({action:"stop"}));
  const next=fixture({initialConfig:interrupted,trackTopLevel:true});await next.complete(next.service.receive({action:"start"}));await next.time.advance(800);
- assert.equal(next.submitted.length,0);assert.equal(next.config.deliveries[0].state,"failed");
+ assert.equal(next.submitted.length,1);assert.match(next.submitted[0].input.text,/第二条反馈/);
+ assert.equal(next.config.deliveries[0].state,"failed");
  await next.complete(next.service.receive({action:"retry_delivery",key:next.config.deliveries[0].key,skip:true}));await next.time.advance(800);
  assert.equal(next.submitted.length,1);assert.match(next.submitted[0].input.text,/第二条反馈/);
  await next.complete(next.service.receive({action:"stop"}));

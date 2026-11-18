@@ -38,16 +38,27 @@ test("C2C and group dispatch retain the schema-specific sender, target and reply
   await gateway.stop();
 });
 
-test("heartbeat carries the latest sequence and missing ACK closes exactly one connection", async () => {
+test("missing heartbeat ACK reconnects with the last sequence and keeps receiving messages", async () => {
   const { gateway, socket, time } = await fixture();
   socket.frame(c2c());
   await time.advance(400);
   assert.deepEqual(plain(socket.sent.at(-1).payload), { op: 1, d: 2 });
   await time.advance(500);
-  assert.equal(gateway.status, "error");
+  assert.equal(gateway.status, "connecting");
   assert.match(gateway.lastError, /acknowledgement deadline/);
-  assert.equal(socket.opened.length, 1);
   assert.equal(socket.closed.length, 1);
+  await time.advance(1000);
+  assert.equal(socket.opened.length, 2);
+  socket.frame({ op: 10, d: { heartbeat_interval: 500 } });
+  await time.advance(100);
+  assert.deepEqual(plain(socket.sent.at(-1).payload), { op: 6, d: { token: "QQBot access-token", session_id: "session-1", seq: 2 } });
+  socket.frame({ op: 0, t: "RESUMED", s: 3, d: {} });
+  socket.frame({ ...c2c("after-reconnect"), s: 4 });
+  await time.advance(100);
+  assert.equal(gateway.status, "ready");
+  assert.equal(gateway.lastError, "");
+  assert.equal(gateway.receivedCount, 2);
+  await gateway.stop();
   assert.equal(time.pending(), 0);
 });
 

@@ -10,6 +10,7 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/components/PageActivityMixin.dart';
+import '../../../main/navigation/AppNavigationModels.dart';
 import '../../settings/components/SettingsControlStyles.dart';
 import '../components/DeviceSpaceVisuals.dart';
 import '../components/ExtensionAvatar.dart';
@@ -938,12 +939,22 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
 
   /// Launches the exact route selected by the detail page.
   void _openUi(core_proxy.ToolPkgContainerRuntime runtime, String routeId) {
+    // Use the same back stack as the sidebar so a plugin can navigate to
+    // another shell page without a Flutter overlay covering the destination.
+    if (AppRouteDiscoveryGateway.contains(routeId)) {
+      AppRouterGateway.navigate(
+        routeId: routeId,
+        source: RouteEntrySource.script,
+      );
+      return;
+    }
     Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (context) => ToolPkgUiLauncherScreen(
           clients: _clients,
           plugin: runtime,
           initialRouteId: routeId,
+          dismissOnExternalNavigation: true,
         ),
       ),
     );

@@ -90,6 +90,14 @@ export interface ChannelConfiguration {
 }
 export interface ChannelStatus extends ChannelConfiguration {
   configured?: boolean; listenerEnabled?: boolean; autoReplyEnabled?: boolean; error?: string;
+  replyActivity?: {
+    received: number;
+    replied: number;
+    failed: number;
+    running: boolean;
+    directEnabled: boolean;
+    groupMode: "off" | "mentioned" | "all";
+  };
   channel: "qq" | "wechat";
   service: "ready" | "connecting" | "stopped" | "error";
 }
