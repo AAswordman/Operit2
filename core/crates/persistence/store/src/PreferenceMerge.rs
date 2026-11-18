@@ -503,7 +503,7 @@ where F: Fn(&str,&str)->bool {
                     });
                 let history_absorbed = crate::SyncOperationStore::SyncOperationStore::new(
                         store.storageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH)
-                    .preferenceHistory().map(|history| {
+                    .archivedPreferenceHistory(path).map(|history| {
                         history.iter().all(|op| snapshot.covered.contains(&op.opId))
                     }).unwrap_or(false);
                 if decisions_absorbed && history_absorbed {
