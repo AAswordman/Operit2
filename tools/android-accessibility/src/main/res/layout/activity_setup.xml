@@ -5,7 +5,7 @@
         <LinearLayout android:id="@+id/setup_content" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal" android:orientation="vertical" android:padding="24dp">
             <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:orientation="horizontal">
-                <ImageView android:layout_width="52dp" android:layout_height="52dp" android:src="@drawable/ic_provider_logo" android:importantForAccessibility="no" />
+                <ImageView android:layout_width="52dp" android:layout_height="52dp" android:src="@mipmap/ic_launcher" android:importantForAccessibility="no" />
                 <LinearLayout android:layout_width="0dp" android:layout_height="wrap_content" android:layout_weight="1" android:layout_marginStart="14dp" android:orientation="vertical">
                     <TextView android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="@string/brand_name"
                         android:fontFamily="sans-serif-medium" android:textSize="20sp" android:textColor="@color/provider_text" />

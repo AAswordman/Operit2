@@ -4953,4 +4953,88 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get workspaceFileSaving => '文件正在保存，请保存完成后重试。';
+
+  @override
+  String get chatBackupChooseTitle => '选择你的备份目录';
+
+  @override
+  String get chatBackupTitle => '每日聊天备份';
+
+  @override
+  String get chatBackupDescription =>
+      '应用运行时每天自动保存聊天数据库的 SQLite 快照，保留最近 10 份自动备份。只包含对话和消息，不包含附件文件、工作区、角色、记忆和应用配置。';
+
+  @override
+  String get chatRestoreTitle => '恢复聊天记录';
+
+  @override
+  String get chatRestoreDescription =>
+      '选择以前保存备份的外部文件夹，按日期选择聊天数据库快照进行恢复。重装或卸载后也可重新选择原备份目录。';
+
+  @override
+  String get chatRestoreChooseFolder => '选择已有备份目录';
+
+  @override
+  String get chatRestoreRefresh => '刷新快照';
+
+  @override
+  String get chatRestoreAction => '恢复';
+
+  @override
+  String get chatRestoreCancel => '取消';
+
+  @override
+  String get chatRestoreEmpty => '此目录中没有可恢复的聊天数据库快照。';
+
+  @override
+  String chatRestoreCounts(int chats, int messages) {
+    return '$chats 个对话 · $messages 条消息';
+  }
+
+  @override
+  String get chatRestoreConfirmTitle => '恢复这份聊天快照？';
+
+  @override
+  String chatRestoreConfirmDescription(String name) {
+    return '将用 $name 替换当前所有聊天记录。恢复前会先将当前聊天保存为独立快照；保存失败则停止恢复。请先停止正在运行的对话。其他设置不受影响。';
+  }
+
+  @override
+  String get chatRestoreSuccess => '聊天记录已恢复。';
+
+  @override
+  String get chatRestoreOnboardingTitle => '从以前的备份恢复';
+
+  @override
+  String get chatRestoreOnboardingDescription => '找回重装前或卸载前保存在外部目录的聊天记录';
+
+  @override
+  String get chatBackupExternalDescription =>
+      '请选择应用外的文件夹，确保卸载后备份仍保留。iPhone 和 iPad 请在 iCloud Drive 或其他外部文件提供者中选择目录。';
+
+  @override
+  String get chatBackupChoose => '选择备份目录';
+
+  @override
+  String get chatBackupLater => '稍后设置';
+
+  @override
+  String get chatBackupChange => '更改备份目录';
+
+  @override
+  String get chatBackupMissing => '尚未设置备份目录，或原目录已不存在、无法访问。请选择目录以开启每日聊天备份。';
+
+  @override
+  String get chatBackupReady => '备份目录已就绪。应用启动、回到前台及运行期间会检查每日备份。';
+
+  @override
+  String get chatBackupNow => '立即备份聊天';
+
+  @override
+  String get chatBackupNever => '尚无成功备份';
+
+  @override
+  String chatBackupLastSuccess(String time) {
+    return '最近成功备份：$time';
+  }
 }

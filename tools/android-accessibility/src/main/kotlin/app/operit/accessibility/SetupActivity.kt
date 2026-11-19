@@ -24,6 +24,11 @@ class SetupActivity : Activity() {
     /** Presents the branded, responsive service setup screen with native Android controls. */
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (CrashReportStore(this).exists()) {
+            CrashReportActivity.open(this)
+            finish()
+            return
+        }
         window.statusBarColor = Color.TRANSPARENT
         window.navigationBarColor = Color.TRANSPARENT
         val dark = resources.configuration.uiMode and Configuration.UI_MODE_NIGHT_MASK == Configuration.UI_MODE_NIGHT_YES
@@ -61,7 +66,7 @@ class SetupActivity : Activity() {
     /** Refreshes status after the user returns from system settings. */
     override fun onResume() {
         super.onResume()
-        refreshStatus()
+        if (!isFinishing) refreshStatus()
     }
 
     /** Refreshes the card using the service's actual connection state. */

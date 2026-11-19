@@ -20,6 +20,8 @@ import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../core/snapshot/SnapshotImportUploader.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/StorageDirectorySelectionError.dart';
+import '../../../common/ChatBackupDirectoryPanel.dart';
+import '../../../common/ChatBackupRestorePanel.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
@@ -786,6 +788,20 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     );
   }
 
+  /// Keeps snapshot recovery accessible independently of overview and model counts.
+  Widget _buildChatRestoreCard(AppLocalizations l10n) => _SectionCard(
+    title: l10n.chatRestoreTitle,
+    children: [
+      ChatBackupRestorePanel(
+        enabled: !_busy,
+        onBusyChanged: (busy) {
+          if (mounted) setState(() => _busy = busy);
+        },
+        onRestored: _reload,
+      ),
+    ],
+  );
+
   /// Builds host-owned backups and restore controls without plugin backup duplicates.
   @override
   Widget build(BuildContext context) {
@@ -800,6 +816,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
             children: <Widget>[
               _buildDiagnosticLogsCard(l10n, colorScheme),
+              _buildChatRestoreCard(l10n),
               if (snapshot.hasError)
                 _SectionCard(
                   title: l10n.settingsDataRuntimeSection,
@@ -818,9 +835,12 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
             _buildDiagnosticLogsCard(l10n, colorScheme),
+            _buildChatRestoreCard(l10n),
             _SectionCard(
               title: l10n.settingsDataBackupSection,
               children: <Widget>[
+                const ChatBackupDirectoryPanel(showBackupAction: true),
+                const Divider(height: 20),
                 _SnapshotBackupLine(
                   lastSnapshotBytes: _lastSnapshotBytes,
                   onExport: _busy ? null : _exportRawSnapshot,

@@ -4,6 +4,7 @@ use std::sync::Arc;
 use operit_host_api::HostManager::HostManager;
 use operit_host_native_common::{NativeRuntimeStorageHost, PosixFileSystemHost};
 use operit_runtime::services::FileSelectionService::FileSelectionService;
+use operit_runtime::services::ChatBackupDirectoryService::ChatBackupDirectoryService;
 use operit_vfs::VfsPath;
 use operit_vfs::VisualFileSystem::VisualFileSystem;
 use operit_util::stream::ReverseStream::ReverseStream;
@@ -13,6 +14,7 @@ struct Fixture {
     root: PathBuf,
     service: FileSelectionService,
     vfs: VisualFileSystem,
+    backup: ChatBackupDirectoryService,
 }
 
 impl Fixture {
@@ -43,9 +45,47 @@ impl Fixture {
         Self {
             root,
             service: FileSelectionService::getInstance(&host).unwrap(),
+            backup: ChatBackupDirectoryService::getInstance(&host).unwrap(),
             vfs: VisualFileSystem::fromStorage(files, storage).unwrap(),
         }
     }
+}
+
+/// Detects deleted destinations instead of recreating them, and preserves unrelated files.
+#[test]
+fn backup_directory_publication_and_missing_directory_checks() {
+    let fixture = Fixture::new();
+    let storage = Arc::new(NativeRuntimeStorageHost::new(fixture.root.join("runtime"), fixture.root.join("workspaces")));
+    operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(storage.clone());
+    operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(storage);
+    let selected = fixture.root.join("user-backups");
+    std::fs::create_dir(&selected).unwrap();
+    std::fs::write(selected.join("unrelated.txt"), "keep").unwrap();
+    let source = serde_json::json!({
+        "namespace":"/virtual/local/folders", "backend":"native", "root":selected, "name":"Backups",
+    }).to_string();
+    let directory = fixture.service.mountDirectory(source).unwrap();
+    fixture.backup.checkDirectory(directory.clone()).unwrap();
+    assert!(fixture.backup.checkDirectory(selected.to_string_lossy().into_owned()).is_err());
+    let name = "operit-chats-source-2026-11-19-123.sqlite";
+    std::fs::write(selected.join(name), b"incomplete database").unwrap();
+    assert!(fixture.backup.inspectBackup(directory.clone(), name.into()).is_err());
+    assert!(fixture.backup.createBackup(directory.clone(), name.into()).is_err());
+    let database = operit_store::db::AppDatabase::AppDatabase::default().unwrap();
+    database.chatDao().insertChat(operit_model::ChatEntity::ChatEntity::new("backup-chat".into(),"Snapshot".into(),1)).unwrap();
+    let valid = "operit-chats-source-2026-11-19-456.sqlite";
+    let info = fixture.backup.createBackup(directory.clone(),valid.into()).unwrap().unwrap();
+    assert_eq!(info.chatCount,1);
+    assert_eq!(fixture.backup.inspectBackup(directory.clone(),valid.into()).unwrap().chatCount,1);
+    assert!(std::fs::read(selected.join(valid)).unwrap().starts_with(b"SQLite format 3\0"));
+    fixture.backup.restoreBackup(directory.clone(),valid.into()).unwrap();
+    assert!(fixture.backup.removeBackup(directory.clone(), "unrelated.txt".into()).is_err());
+    assert!(fixture.backup.createBackup(directory.clone(), "operit-chats-../escape.sqlite".into()).is_err());
+    std::fs::rename(&selected, fixture.root.join("moved-backups")).unwrap();
+    assert!(fixture.backup.checkDirectory(directory).is_err());
+    assert!(!selected.exists());
+    assert_eq!(std::fs::read_to_string(fixture.root.join("moved-backups/unrelated.txt")).unwrap(), "keep");
+    operit_store::db::AppDatabase::AppDatabase::closeDatabase();
 }
 
 impl Drop for Fixture {

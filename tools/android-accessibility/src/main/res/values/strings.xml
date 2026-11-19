@@ -21,4 +21,8 @@
     <string name="control_title">You stay in control</string>
     <string name="control_description">This service can read screen content and perform actions. It is provided for Operit. You can turn it off in system accessibility settings at any time.</string>
     <string name="version_label">Provider v%1$s · Operit</string>
+    <string name="crash_title">Operit Accessibility stopped</string>
+    <string name="crash_description">Copy the report to share the error details. After dismissing it, you can reopen the app from the launcher.</string>
+    <string name="crash_copy">Copy error details</string>
+    <string name="crash_dismiss">Dismiss and clear report</string>
 </resources>

@@ -75,6 +75,9 @@ pub use AttachmentTransferManager::*;
 #[path = "FileSelectionService.rs"]
 pub mod FileSelectionService;
 pub use FileSelectionService::*;
+#[path = "ChatBackupDirectoryService.rs"]
+pub mod ChatBackupDirectoryService;
+pub use ChatBackupDirectoryService::*;
 
 #[path = "ComposeDslSessionService.rs"]
 pub mod ComposeDslSessionService;

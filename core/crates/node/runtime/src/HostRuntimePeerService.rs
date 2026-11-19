@@ -1804,7 +1804,9 @@ mod single_channel_tests {
     #[tokio::test]
     async fn protocol_version_is_checked_for_pairing_and_session_reconnect() {
         for purpose in ["start", "finish", "session"] {
-            for protocol in [None, Some(crate::PeerProtocol::PeerProtocol { version: crate::PeerProtocol::VERSION + 1 })] {
+            for protocol in [None,
+                Some(crate::PeerProtocol::PeerProtocol { version: crate::PeerProtocol::VERSION - 1 }),
+                Some(crate::PeerProtocol::PeerProtocol { version: crate::PeerProtocol::VERSION + 1 })] {
                 let expected = if protocol.is_none() { "PEER_PROTOCOL_UPGRADE_REQUIRED" } else { "PEER_PROTOCOL_MISMATCH" };
                 let (incoming, receive) = tokio::sync::mpsc::unbounded_channel();
                 let (send, mut outgoing) = tokio::sync::mpsc::unbounded_channel();

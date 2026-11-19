@@ -107,6 +107,16 @@ impl ChatExecutionLease {
 }
 
 impl SqliteStore {
+    /// Prevents restore-versus-generation races while replacing all conversation state.
+    pub fn withIdleConversations<T>(&self, action: impl FnOnce() -> Result<T, SqliteStoreError>) -> Result<T, SqliteStoreError> {
+        let state = self.executionLeases.lock().map_err(|_| SqliteStoreError::Message("Chat execution lease mutex poisoned".into()))?;
+        if !state.active.is_empty() {
+            return Err(SqliteStoreError::Message("Stop running conversations before restoring a chat snapshot".into()));
+        }
+        let result = action();
+        drop(state);
+        result
+    }
     /// Acquires metadata protection before configuration resolution, releasing all locks before awaiting plugins.
     pub fn beginChatExecution(&self, chatId: &str) -> Result<ChatExecutionLease, SqliteStoreError> {
         if chatId.trim().is_empty() {

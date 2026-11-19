@@ -74,6 +74,7 @@ class LocalRuntimeStorageConfig {
     required this.identities,
     required this.activeIdentityId,
     required this.updatedAt,
+    this.chatBackupDirectory,
   });
 
   /// Creates an unconfirmed local runtime storage config.
@@ -102,6 +103,7 @@ class LocalRuntimeStorageConfig {
           .toList(growable: false),
       activeIdentityId: json['activeIdentityId'] as String,
       updatedAt: json['updatedAt'] as int,
+      chatBackupDirectory: json['chatBackupDirectory'] as String?,
     );
     config.validate();
     return config;
@@ -113,6 +115,7 @@ class LocalRuntimeStorageConfig {
   final List<RuntimeIdentity> identities;
   final String activeIdentityId;
   final int updatedAt;
+  final String? chatBackupDirectory;
 
   /// Returns the identity selected for the next runtime process.
   RuntimeIdentity get activeIdentity {
@@ -152,6 +155,7 @@ class LocalRuntimeStorageConfig {
     List<RuntimeIdentity>? identities,
     String? activeIdentityId,
     int? updatedAt,
+    String? chatBackupDirectory,
   }) {
     return LocalRuntimeStorageConfig(
       confirmed: confirmed ?? this.confirmed,
@@ -160,6 +164,7 @@ class LocalRuntimeStorageConfig {
       identities: identities ?? this.identities,
       activeIdentityId: activeIdentityId ?? this.activeIdentityId,
       updatedAt: updatedAt ?? this.updatedAt,
+      chatBackupDirectory: chatBackupDirectory ?? this.chatBackupDirectory,
     );
   }
 
@@ -172,6 +177,8 @@ class LocalRuntimeStorageConfig {
       'identities': identities.map((identity) => identity.toJson()).toList(),
       'activeIdentityId': activeIdentityId,
       'updatedAt': updatedAt,
+      if (chatBackupDirectory != null)
+        'chatBackupDirectory': chatBackupDirectory,
     };
   }
 }

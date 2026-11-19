@@ -136,10 +136,14 @@ void main() {
   testWidgets('a new identity skips path selection when roots are mounted', (
     tester,
   ) async {
+    var storedConfig = LocalRuntimeStorageConfig.platformDefault();
     messenger.setMockMethodCallHandler(runtimeChannel, (call) async {
       switch (call.method) {
         case 'runtimeBootstrapRead':
-          return jsonEncode(<String, Object?>{'ok': true, 'value': null});
+          return jsonEncode(<String, Object?>{
+            'ok': true,
+            'value': jsonEncode(storedConfig.toJson()),
+          });
         case 'runtimeBootstrapWrite':
           return jsonEncode(<String, Object?>{'ok': true});
         case 'localRuntimeStoragePaths':
@@ -153,14 +157,20 @@ void main() {
       }
     });
     addTearDown(() async {
-      await RuntimeBootstrapManager.instance.initialize();
+      storedConfig = LocalRuntimeStorageConfig.platformDefault();
+      await RuntimeBootstrapManager.instance.initializeForDetachedWindow();
     });
 
     await ClientLogger.initialize();
     final manager = RuntimeBootstrapManager.instance;
-    await manager.initialize();
+    await manager.initializeForDetachedWindow();
     final decision = await const OnboardingStartupRouteStrategy().resolve();
-    await manager.confirmLocalRuntimeStorage('/runtime', '/workspaces');
+    storedConfig = storedConfig.copyWith(
+      confirmed: true,
+      runtimeRoot: '/runtime',
+      workspaceRoot: '/workspaces',
+    );
+    await manager.initializeForDetachedWindow();
     await tester.pumpWidget(
       MaterialApp(
         locale: const Locale('zh'),
@@ -173,7 +183,7 @@ void main() {
     await tester.tap(find.text('开始'));
     await tester.pumpAndSettle();
 
-    expect(find.text('2/3'), findsOneWidget);
+    expect(find.text('2/4'), findsOneWidget);
     expect(find.text('确认本地存储位置'), findsNothing);
     expect(find.text('用户协议与隐私政策'), findsOneWidget);
   });

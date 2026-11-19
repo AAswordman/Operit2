@@ -147,7 +147,11 @@ fn matching_software_does_not_hide_protocol_mismatch_or_missing_advertisement() 
     let mut peer = protocolDevice("peer", Some("2.0.0"), Some(crate::PeerProtocol::VERSION + 1));
     assert_eq!(runtimeDeviceSpaceConnectionState(&core, &peer, Some(true)).0,
         RuntimeDeviceSpaceConnectionStatus::VersionMismatch);
+    peer.online = false;
+    assert_eq!(runtimeDeviceSpaceConnectionState(&core, &peer, Some(false)).0,
+        RuntimeDeviceSpaceConnectionStatus::VersionMismatch);
     peer.protocolVersion = None;
+    peer.online = true;
     assert_eq!(runtimeDeviceSpaceConnectionState(&core, &peer, Some(true)).0,
         RuntimeDeviceSpaceConnectionStatus::Unknown);
     peer.online = false;

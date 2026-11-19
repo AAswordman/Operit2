@@ -26,6 +26,7 @@
 | [附件生命周期](chat-attachment-locations.md) | 来源节点、临时文件与流式导入 |
 | [插件存储](plugin-storage.md) | Preferences、对象存储和数据集事务 |
 | [数据救援](data-rescue.md) | 备份、恢复与修复工具 |
+| [每日聊天备份](chat-backups.md) | 跨平台备份目录选择、自动聊天备份与保留规则 |
 
 ## 插件与界面
 

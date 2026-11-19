@@ -1798,8 +1798,8 @@ interface ModelInstallWorkerError {
     return key(runtimePrefix, path);
   }
 
-  /** Persists SQLite bytes while restoring the real foreign-key setting reset by sql.js export. */
-  function saveSqliteDatabase(connection: SqliteConnection): void {
+  /** Exports SQLite pages while restoring the foreign-key setting reset by sql.js export. */
+  function exportSqliteDatabase(connection: SqliteConnection): Uint8Array {
     const rows = querySqlite(connection.db, "PRAGMA foreign_keys", []);
     if (rows.length !== 1 || rows[0].values.length !== 1) {
       throw new Error("sqlite foreign_keys query did not return one value");
@@ -1810,7 +1810,12 @@ interface ModelInstallWorkerError {
     }
     const bytes = connection.db.export();
     connection.db.run(`PRAGMA foreign_keys = ${foreignKeys.value}`);
-    storageWrite(runtimePrefix, connection.path, bytes);
+    return bytes;
+  }
+
+  /** Persists a standalone image without altering the live connection's foreign-key policy. */
+  function saveSqliteDatabase(connection: SqliteConnection): void {
+    storageWrite(runtimePrefix, connection.path, exportSqliteDatabase(connection));
   }
 
   function sqliteConnection(id: string): SqliteConnection {
@@ -4272,6 +4277,16 @@ self.onmessage = (event) => {
       },
     }),
     sqlite: registerWorkerHostModule({
+      /** Releases the database image retained by a Rust-owned connection. */
+      close(id: string): void {
+        sqliteConnection(id).db.close();
+        sqliteConnections.delete(id);
+      },
+      /** Publishes a standalone SQLite image without translating tables or records. */
+      snapshotDatabase(id: string, destination: string): void {
+        if (storageHasFile(runtimePrefix, destination)) throw new Error("SQLite snapshot destination already exists");
+        storageWrite(runtimePrefix, destination, exportSqliteDatabase(sqliteConnection(id)));
+      },
       open(path: string): string {
         if (!SQLite) {
           throw new Error("sqlite host is not initialized");

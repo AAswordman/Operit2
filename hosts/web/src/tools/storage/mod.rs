@@ -226,6 +226,15 @@ struct WebRuntimeSqliteConnection {
 
 unsafe impl Send for WebRuntimeSqliteConnection {}
 
+impl Drop for WebRuntimeSqliteConnection {
+    /// Releases worker-owned SQLite memory when staged snapshot connections leave scope.
+    fn drop(&mut self) {
+        if let Err(error) = call_sqlite("close", &[JsValue::from_str(&self.id)]) {
+            eprintln!("Failed to close browser SQLite connection: {error}");
+        }
+    }
+}
+
 // Connection and transaction calls share the same bridge conversion and bounded query fallback.
 macro_rules! sqlite_access {
     ($execute:literal, $query:literal, $rowid:literal) => {
@@ -275,6 +284,11 @@ macro_rules! sqlite_access {
 }
 
 impl RuntimeSqliteConnection for WebRuntimeSqliteConnection {
+    /// Exports SQLite's standalone database image through the browser storage owner.
+    fn snapshotDatabase(&mut self, destination: &str) -> HostResult<()> {
+        call_sqlite("snapshotDatabase", &[JsValue::from_str(&self.id), JsValue::from_str(destination)])?;
+        Ok(())
+    }
     fn executeBatch(&mut self, sql: &str) -> HostResult<()> {
         call_sqlite(
             "executeBatch",

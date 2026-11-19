@@ -1,0 +1,21 @@
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/crash_root" android:layout_width="match_parent" android:layout_height="match_parent">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="match_parent"
+        android:orientation="vertical" android:padding="24dp">
+        <TextView android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/crash_title" android:accessibilityHeading="true"
+            android:textSize="24sp" android:fontFamily="sans-serif-medium" />
+        <TextView style="@style/ProviderBody" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="8dp" android:text="@string/crash_description" />
+        <ScrollView android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+            android:layout_marginTop="16dp" android:layout_marginBottom="12dp" android:background="@drawable/provider_card"
+            android:padding="12dp">
+            <TextView android:id="@+id/crash_details" android:layout_width="match_parent" android:layout_height="wrap_content"
+                android:fontFamily="monospace" android:textSize="13sp" android:textIsSelectable="true" />
+        </ScrollView>
+        <Button android:id="@+id/copy_crash_report" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/crash_copy" android:textAllCaps="false" />
+        <Button android:id="@+id/dismiss_crash_report" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:text="@string/crash_dismiss" android:textAllCaps="false" />
+    </LinearLayout>
+</FrameLayout>

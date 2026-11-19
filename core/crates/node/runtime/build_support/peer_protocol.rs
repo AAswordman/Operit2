@@ -1,12 +1,13 @@
-//! Compatibility fingerprint for explicit route contracts and the authenticated session wire revision.
+//! Compatibility fingerprint for route, authenticated session and synchronization contracts.
 use sha2::{Digest, Sha256};
 use std::{collections::BTreeSet, fs, path::Path};
 
-/// Hashes canonical route signatures and the explicit authenticated session wire revision.
+/// Hashes route signatures with explicit session and synchronization wire revisions.
 pub fn fingerprint(routes: &str) -> String {
     let mut hash = Sha256::new();
     hash.update(b"operit-peer-route-signatures-v1\0");
     hash.update(b"operit-peer-session-fragments-v1\0");
+    hash.update(b"operit-sync-consistency-v8\0");
     hash.update(routes.as_bytes());
     format!("{:x}", hash.finalize())
 }

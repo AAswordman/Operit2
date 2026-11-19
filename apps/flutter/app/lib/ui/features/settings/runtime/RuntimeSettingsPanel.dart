@@ -12,6 +12,7 @@ import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as generated;
 import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/DeviceSpaceDiscoveryPanel.dart';
+import '../../../common/device/DeviceSphere.dart';
 import '../../../common/SpaceJoinWidgets.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -406,12 +407,22 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     final projected = _projectedDevice(deviceId);
     final displayState = _pairedDisplayState(probeState, projected);
     final name = _pairedDeviceName(device, projected);
-    final status =
-        '${_remoteProbeLabel(displayState, l10n)}'
-        '${_reachabilitySuffix(l10n, projected)}';
+    final incompatible = deviceProtocolMismatch(
+      _projectedDevice(_topology?.currentDeviceId ?? '')?.protocolVersion,
+      projected?.protocolVersion,
+    );
+    final status = incompatible
+        ? deviceCompatibilityLabel(context)
+        : '${_remoteProbeLabel(displayState, l10n)}'
+              '${_reachabilitySuffix(l10n, projected)}';
     final path = _relayPathText(l10n, names, projected);
     return _DeviceSpaceRow(
-      leading: _pairedLeading(displayState),
+      leading: incompatible
+          ? Icon(
+              Icons.link_off_outlined,
+              color: deviceCompatibilityColor(Theme.of(context).colorScheme),
+            )
+          : _pairedLeading(displayState),
       title: name,
       identity: _identityLabel(l10n, projected),
       status: status,
@@ -529,12 +540,24 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
   ) {
     final scheme = Theme.of(context).colorScheme;
     final icon = device.online ? Icons.lan_outlined : Icons.link_off_outlined;
-    final status =
-        '${_onlineText(l10n, device.online)}'
-        '${_reachabilitySuffix(l10n, device)}';
+    final incompatible = deviceProtocolMismatch(
+      _projectedDevice(_topology?.currentDeviceId ?? '')?.protocolVersion,
+      device.protocolVersion,
+    );
+    final status = incompatible
+        ? deviceCompatibilityLabel(context)
+        : '${_onlineText(l10n, device.online)}'
+              '${_reachabilitySuffix(l10n, device)}';
     final path = _relayPathText(l10n, names, device);
     return _DeviceSpaceRow(
-      leading: Icon(icon, color: device.online ? scheme.primary : scheme.error),
+      leading: Icon(
+        icon,
+        color: incompatible
+            ? deviceCompatibilityColor(scheme)
+            : device.online
+            ? scheme.primary
+            : scheme.error,
+      ),
       title: device.deviceName,
       identity: _identityLabel(l10n, device),
       status: status,

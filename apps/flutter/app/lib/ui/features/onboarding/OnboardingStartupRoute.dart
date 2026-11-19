@@ -9,17 +9,19 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../../core/host/SelectedFileInput.dart';
 import '../../../core/logging/ClientLogger.dart';
 import '../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../core/runtime/RuntimeBootstrapManager.dart';
+import '../../../core/backup/ChatBackupService.dart';
 import '../../../core/snapshot/SnapshotImportUploader.dart';
 import '../../../l10n/generated/app_localizations.dart';
 import '../../common/StorageDirectorySelectionError.dart';
 import '../../common/DeviceSpaceDiscoveryPanel.dart';
 import '../../common/OperitLogoMark.dart';
 import '../../common/RuntimeBootstrapScreen.dart';
+import '../../common/ChatBackupDirectoryPanel.dart';
+import '../../common/ChatBackupRestorePanel.dart';
 import '../../common/components/CommonNetworkErrorView.dart';
 import '../../main/navigation/StartupRouteStrategy.dart';
 import '../../theme/OperitFormStyles.dart';
@@ -28,11 +30,13 @@ enum _AiSetupPage {
   intro,
   agreement,
   storage,
+  backup,
   mode,
   permission,
   model,
   import,
   deviceSpace,
+  restore,
 }
 
 const String _operit1SnapshotImportLogTag = 'Operit1SnapshotImport';
@@ -218,6 +222,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   bool _requestingPermission = false;
   bool _preparingLocalSetup = false;
   bool _deviceSpaceDiscoveryBusy = false;
+  bool _chatBackupRestored = false;
+  bool _chatRestoreBusy = false;
   StreamSubscription<core_proxy.Operit1SnapshotImportProgress>?
   _operit1ImportProgressSubscription;
   String? _selectedProviderTypeId;
@@ -274,6 +280,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _AiSetupPage.intro,
       if (widget.agreementRequired) _AiSetupPage.agreement,
       if (_storageSelectionRequired) _AiSetupPage.storage,
+      _AiSetupPage.backup,
       _AiSetupPage.mode,
     ];
     return switch (_selectedStartMode) {
@@ -292,12 +299,24 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         ...commonPages,
         _AiSetupPage.deviceSpace,
       ],
+      _AiSetupStartMode.chatRestore => <_AiSetupPage>[
+        ...commonPages,
+        _AiSetupPage.restore,
+        _AiSetupPage.permission,
+        _AiSetupPage.model,
+      ],
     };
   }
 
   /// Reports whether the agreement page is currently visible.
   bool get _isAgreementPage => _currentPage == _agreementPageIndex;
   bool get _isStoragePage => _currentPage == _storagePageIndex;
+
+  /// Reports whether directory authorization is the current onboarding step.
+  bool get _isBackupPage => _pages[_currentPage] == _AiSetupPage.backup;
+
+  /// Reports whether the previous-installation recovery step is visible.
+  bool get _isRestorePage => _pages[_currentPage] == _AiSetupPage.restore;
   bool get _isModePage => _currentPage == _modePageIndex;
   bool get _isModelPage => _currentPage == _modelPageIndex;
   bool get _isImportPage => _currentPage == _importPageIndex;
@@ -330,6 +349,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   @override
   void initState() {
     super.initState();
+    ChatBackupService.instance.addListener(_backupChanged);
     _agreementAccepted = !widget.agreementRequired;
     _agreementWaitSeconds = widget.agreementRequired ? 5 : 0;
     WidgetsBinding.instance.addObserver(this);
@@ -360,6 +380,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
 
   @override
   void dispose() {
+    ChatBackupService.instance.removeListener(_backupChanged);
     WidgetsBinding.instance.removeObserver(this);
     final session = _operit1SnapshotSession;
     if (session != null) {
@@ -375,6 +396,11 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     _runtimeRootController.dispose();
     _workspaceRootController.dispose();
     super.dispose();
+  }
+
+  /// Refreshes the onboarding continue button after directory validation changes.
+  void _backupChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -601,6 +627,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _goToPreviousPage() async {
+    if (_chatRestoreBusy) return;
     if (_currentPage == 0) {
       return;
     }
@@ -626,7 +653,11 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_currentPage == _permissionPageIndex) {
-      await _animateToPage(_modePageIndex);
+      await _animateToPage(
+        _selectedStartMode == _AiSetupStartMode.chatRestore
+            ? _pages.indexOf(_AiSetupPage.restore)
+            : _modePageIndex,
+      );
       return;
     }
     if (_currentPage == _modelPageIndex) {
@@ -648,6 +679,11 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _goToNextPage() async {
+    if (_chatRestoreBusy) return;
+    if (_isRestorePage) {
+      if (_chatBackupRestored) await _openPermissionSetup();
+      return;
+    }
     if (_currentPage == _introPageIndex) {
       await _advanceFromIntro();
       return;
@@ -657,7 +693,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_isPermissionPage) {
-      if (_selectedStartMode == _AiSetupStartMode.quickStart) {
+      if (_selectedStartMode == _AiSetupStartMode.quickStart ||
+          _selectedStartMode == _AiSetupStartMode.chatRestore) {
         await _animateToPage(_modelPageIndex);
       } else if (_selectedStartMode == _AiSetupStartMode.operit1Import) {
         await _animateToPage(_importPageIndex);
@@ -668,9 +705,19 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       await _confirmStorageLocation();
       return;
     }
+    if (_isBackupPage) {
+      if (ChatBackupService.instance.directory == null ||
+          ChatBackupService.instance.needsDirectory) {
+        return;
+      }
+      await _animateToPage(_modePageIndex);
+      return;
+    }
     if (_isModePage) {
       if (_selectedStartMode == _AiSetupStartMode.deviceSpace) {
         await _animateToPage(_deviceSpacePageIndex);
+      } else if (_selectedStartMode == _AiSetupStartMode.chatRestore) {
+        await _animateToPage(_pages.indexOf(_AiSetupPage.restore));
       } else if (_selectedStartMode != null) {
         await _openPermissionSetup();
       }
@@ -772,7 +819,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         await widget.onComplete();
         return;
       }
-      await _animateToPage(_modePageIndex);
+      await _animateToPage(_pages.indexOf(_AiSetupPage.backup));
     } catch (error) {
       if (!mounted) {
         return;
@@ -1254,6 +1301,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     final importReady = !_isImportPage || _operit1Snapshot != null;
     final deviceSpaceReady = !_isDeviceSpacePage || !_deviceSpaceDiscoveryBusy;
     final canGoForward =
+        !_chatRestoreBusy &&
+        (!_isRestorePage || _chatBackupRestored) &&
         !_savingModel &&
         !_loadingModels &&
         !_readingOperit1Snapshot &&
@@ -1267,6 +1316,9 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         modeReady &&
         modelReady &&
         importReady &&
+        (!_isBackupPage ||
+            (ChatBackupService.instance.directory != null &&
+                !ChatBackupService.instance.needsDirectory)) &&
         deviceSpaceReady;
     final introActive = _currentPage == _introPageIndex;
     final showChrome = !introActive;
@@ -1337,6 +1389,19 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                     onPathChanged: _handleStoragePathChanged,
                                     errorText: _setupError,
                                   );
+                                case _AiSetupPage.backup:
+                                  return Center(
+                                    child: SingleChildScrollView(
+                                      padding: const EdgeInsets.all(16),
+                                      child: ChatBackupDirectoryPanel(
+                                        onDeferred: () =>
+                                            _animateToPage(_modePageIndex),
+                                        onSelected: () {
+                                          if (mounted) setState(() {});
+                                        },
+                                      ),
+                                    ),
+                                  );
                                 case _AiSetupPage.mode:
                                   return _AiSetupModePage(
                                     selectedMode: _selectedStartMode,
@@ -1346,6 +1411,26 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                         _setupError = null;
                                       });
                                     },
+                                  );
+                                case _AiSetupPage.restore:
+                                  return SingleChildScrollView(
+                                    padding: const EdgeInsets.all(16),
+                                    child: ChatBackupRestorePanel(
+                                      onRestored: () {
+                                        if (mounted) {
+                                          setState(
+                                            () => _chatBackupRestored = true,
+                                          );
+                                        }
+                                      },
+                                      onBusyChanged: (busy) {
+                                        if (mounted) {
+                                          setState(
+                                            () => _chatRestoreBusy = busy,
+                                          );
+                                        }
+                                      },
+                                    ),
                                   );
                                 case _AiSetupPage.model:
                                   return _AiSetupModelPage(
@@ -1409,7 +1494,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                       pageCount: _pageCount,
                       progressLabel: _progressLabel,
                       primaryActionLabel: _primaryActionLabel,
-                      canSkip: _agreementAccepted && _storageConfirmed,
+                      canSkip:
+                          !_chatRestoreBusy &&
+                          _agreementAccepted &&
+                          _storageConfirmed &&
+                          ((ChatBackupService.instance.directory != null &&
+                                  !ChatBackupService.instance.needsDirectory) ||
+                              ChatBackupService.instance.promptDeferred),
                       isAgreementPage: _isAgreementPage,
                       isPermissionPage: _isPermissionPage,
                       onBack: _goToPreviousPage,
@@ -1469,6 +1560,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   String get _progressLabel {
+    if (_isRestorePage) return AppLocalizations.of(context)!.chatRestoreTitle;
+    if (_isBackupPage) return AppLocalizations.of(context)!.chatBackupTitle;
     if (_isAgreementPage) {
       return '用户协议';
     }
@@ -2093,7 +2186,7 @@ class _AiSetupModePage extends StatelessWidget {
                 icon: Icons.route_rounded,
                 eyebrow: '启动方式',
                 title: '选择上手方式',
-                description: '可以配置新环境、导入 Operit1 数据，或加入已有设备空间直接同步配置和数据。',
+                description: '可以配置新环境、导入 Operit1 数据、加入已有设备空间，或从以前的备份恢复聊天记录。',
               ),
               const SizedBox(height: 22),
               _SetupModeTile(
@@ -2118,6 +2211,16 @@ class _AiSetupModePage extends StatelessWidget {
                 subtitle: '扫描附近设备空间，加入后直接同步模型和数据',
                 selected: selectedMode == _AiSetupStartMode.deviceSpace,
                 onTap: () => onModeChanged(_AiSetupStartMode.deviceSpace),
+              ),
+              const SizedBox(height: 10),
+              _SetupModeTile(
+                icon: Icons.restore_rounded,
+                title: AppLocalizations.of(context)!.chatRestoreOnboardingTitle,
+                subtitle: AppLocalizations.of(
+                  context,
+                )!.chatRestoreOnboardingDescription,
+                selected: selectedMode == _AiSetupStartMode.chatRestore,
+                onTap: () => onModeChanged(_AiSetupStartMode.chatRestore),
               ),
             ],
           ),
@@ -2285,10 +2388,7 @@ class _AiSetupAgreementPage extends StatelessWidget {
         style: bodyStyle,
       ),
       const SizedBox(height: 12),
-      Text(
-        '若这份"人话版协议"与中文严谨版不一致，以中文严谨版为准。',
-        style: boldBodyStyle,
-      ),
+      Text('若这份"人话版协议"与中文严谨版不一致，以中文严谨版为准。', style: boldBodyStyle),
       const SizedBox(height: 12),
       Text(
         'Operit 2 是在您的设备上运行的开源客户端。我们不运营模型推理服务、不托管聊天记录，也不向您提供共享 API Key。您配置云模型、语音、搜索、绘图、MCP 或其他网络功能时，数据会直接发送给相应服务商，并受其条款和隐私政策约束；本地模型在设备内推理。',
@@ -3444,7 +3544,7 @@ String? _requiredField(String? value) {
   return null;
 }
 
-enum _AiSetupStartMode { quickStart, operit1Import, deviceSpace }
+enum _AiSetupStartMode { quickStart, operit1Import, deviceSpace, chatRestore }
 
 class _OnboardingRequirement {
   const _OnboardingRequirement({
@@ -3549,4 +3649,3 @@ String _requirementButtonLabel(_OnboardingRequirement requirement) {
   }
   return '去授权';
 }
-

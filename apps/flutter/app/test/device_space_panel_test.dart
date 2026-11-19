@@ -454,6 +454,25 @@ void main() {
     await unmount(tester, bridge);
   });
 
+  testWidgets('offline incompatible members show amber until upgraded', (tester) async {
+    final bridge = DeviceSpacePanelBridge(topology: _topology(), control: _control());
+    final devices = bridge.topology['devices']! as List<Map<String, Object?>>;
+    devices[0]['protocolVersion'] = 25;
+    devices[1]['protocolVersion'] = 24;
+    devices[1]['online'] = false;
+    await mountPanel(tester, bridge);
+    expect(find.textContaining('版本不兼容 · 连接不可用'), findsWidgets);
+    expect(tester.widget<Icon>(find.byIcon(Icons.link_off_outlined).first).color, Colors.orange.shade800);
+    devices[1]['protocolVersion'] = 25;
+    devices[1]['online'] = true;
+    bridge.emitDeviceSpaceSnapshot();
+    await tester.pump();
+    await tester.pump();
+    expect(find.textContaining('版本不兼容 · 连接不可用'), findsNothing);
+    expect(tester.takeException(), isNull);
+    await unmount(tester, bridge);
+  });
+
   testWidgets(
     'member rows stay readable without device-management capabilities',
     (tester) async {

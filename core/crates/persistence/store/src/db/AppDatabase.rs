@@ -1,4 +1,5 @@
 use std::sync::{Arc, Mutex};
+use std::path::PathBuf;
 
 use crate::RuntimeStorePaths::RuntimeStorePaths;
 use crate::SqliteStore::{SqliteRowGet, SqliteStore, SqliteStoreError};
@@ -89,6 +90,13 @@ impl AppDatabase {
     /// Returns the underlying SQLite store.
     pub fn store(&self) -> &SqliteStore {
         &self.store
+    }
+
+    /// Opens and migrates an isolated snapshot without changing the live database singleton.
+    pub fn openSnapshot(path: PathBuf) -> Result<Self, AppDatabaseError> {
+        let database = Self { store: SqliteStore::open(path)? };
+        database.openWithMigrations()?;
+        Ok(database)
     }
 
     /// Opens the canonical schema and applies each required physical migration before publishing the database.

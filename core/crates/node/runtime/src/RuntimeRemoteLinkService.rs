@@ -1292,10 +1292,10 @@ fn runtimeDeviceSpaceConnectionState(
     if directlyOnline == Some(false) {
         reasons.push("Direct Peer Link is offline".to_string());
     }
-    let status = if !first.online || !second.online || directlyOnline == Some(false) {
-        RuntimeDeviceSpaceConnectionStatus::Offline
-    } else if versionsMismatch {
+    let status = if versionsMismatch {
         RuntimeDeviceSpaceConnectionStatus::VersionMismatch
+    } else if !first.online || !second.online || directlyOnline == Some(false) {
+        RuntimeDeviceSpaceConnectionStatus::Offline
     } else if firstProtocol.is_none() || secondProtocol.is_none() {
         reasons.push("Peer protocol version is unavailable".to_string());
         RuntimeDeviceSpaceConnectionStatus::Unknown

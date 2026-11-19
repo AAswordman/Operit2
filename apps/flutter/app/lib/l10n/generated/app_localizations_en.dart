@@ -5178,4 +5178,92 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get workspaceFileSaving =>
       'This file is being saved. Please try again when saving finishes.';
+
+  @override
+  String get chatBackupChooseTitle => 'Choose your backup directory';
+
+  @override
+  String get chatBackupTitle => 'Daily chat backup';
+
+  @override
+  String get chatBackupDescription =>
+      'Save a SQLite chat database snapshot daily while the app is running and keep the latest 10 automatic backups. Includes conversations and messages only, excluding attachment files, workspaces, characters, memories and app settings.';
+
+  @override
+  String get chatRestoreTitle => 'Restore chat records';
+
+  @override
+  String get chatRestoreDescription =>
+      'Select the external folder containing your previous backups, then choose a dated chat database snapshot. After reinstalling, select the original backup folder again to recover your chats.';
+
+  @override
+  String get chatRestoreChooseFolder => 'Choose existing backup folder';
+
+  @override
+  String get chatRestoreRefresh => 'Refresh snapshots';
+
+  @override
+  String get chatRestoreAction => 'Restore';
+
+  @override
+  String get chatRestoreCancel => 'Cancel';
+
+  @override
+  String get chatRestoreEmpty =>
+      'This folder contains no restorable chat database snapshots.';
+
+  @override
+  String chatRestoreCounts(int chats, int messages) {
+    return '$chats conversations · $messages messages';
+  }
+
+  @override
+  String get chatRestoreConfirmTitle => 'Restore this chat snapshot?';
+
+  @override
+  String chatRestoreConfirmDescription(String name) {
+    return 'Replace all current chat records with $name. Current chats will first be saved as a separate snapshot; restoration stops if that save fails. Stop running conversations first. Other settings are preserved.';
+  }
+
+  @override
+  String get chatRestoreSuccess => 'Chat records restored.';
+
+  @override
+  String get chatRestoreOnboardingTitle => 'Restore from a previous backup';
+
+  @override
+  String get chatRestoreOnboardingDescription =>
+      'Recover chats saved in an external folder before reinstalling or uninstalling';
+
+  @override
+  String get chatBackupExternalDescription =>
+      'Choose a folder outside the app so backups remain after uninstall. On iPhone and iPad, choose iCloud Drive or another external file provider.';
+
+  @override
+  String get chatBackupChoose => 'Choose backup directory';
+
+  @override
+  String get chatBackupLater => 'Set up later';
+
+  @override
+  String get chatBackupChange => 'Change backup directory';
+
+  @override
+  String get chatBackupMissing =>
+      'The backup directory is not configured, no longer exists or cannot be accessed. Select a directory to enable daily chat backups.';
+
+  @override
+  String get chatBackupReady =>
+      'The backup directory is ready. Daily backups are checked at startup, on resume and while the app is running.';
+
+  @override
+  String get chatBackupNow => 'Back up chats now';
+
+  @override
+  String get chatBackupNever => 'No successful backup yet';
+
+  @override
+  String chatBackupLastSuccess(String time) {
+    return 'Last successful backup: $time';
+  }
 }

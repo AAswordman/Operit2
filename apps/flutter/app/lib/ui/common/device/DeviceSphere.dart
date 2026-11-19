@@ -4,6 +4,22 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+/// Compares advertised protocol versions without inferring missing identities.
+bool deviceProtocolMismatch(int? local, int? remote) =>
+    local != null && remote != null && local != remote;
+
+/// Uses an amber accent for connections rejected by protocol negotiation.
+Color deviceCompatibilityColor(ColorScheme scheme) =>
+    scheme.brightness == Brightness.dark
+    ? Colors.orange.shade300
+    : Colors.orange.shade800;
+
+/// Labels an unavailable connection that requires compatible software.
+String deviceCompatibilityLabel(BuildContext context) =>
+    Localizations.localeOf(context).languageCode == 'zh'
+    ? '版本不兼容 · 连接不可用'
+    : 'Version incompatible · Connection unavailable';
+
 /// Icon for a device platform reported by the device space.
 IconData devicePlatformIcon(String platform) {
   final name = platform.trim().toLowerCase();
@@ -108,6 +124,7 @@ class DeviceSphere extends StatelessWidget {
     required this.motion,
     required this.elevation,
     required this.pose,
+    this.incompatible = false,
   });
 
   /// A resting sphere; [lift] raises it like a hovered graph node.
@@ -118,6 +135,7 @@ class DeviceSphere extends StatelessWidget {
     required this.current,
     required this.online,
     Animation<double> lift = kAlwaysDismissedAnimation,
+    this.incompatible = false,
   }) : iconSize = diameter * (current ? 0.42 : 0.44),
        motion = lift,
        elevation = lift,
@@ -130,15 +148,21 @@ class DeviceSphere extends StatelessWidget {
   final double iconSize;
   final bool current;
   final bool online;
+  final bool incompatible;
   final Listenable motion;
   final Animation<double> elevation;
   final ValueGetter<DeviceSpherePose> pose;
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final baseScheme = Theme.of(context).colorScheme;
+    final scheme = incompatible
+        ? baseScheme.copyWith(primary: deviceCompatibilityColor(baseScheme))
+        : baseScheme;
     final palette = DeviceSpherePalette(scheme);
-    final accent = current || online ? scheme.primary : scheme.outline;
+    final accent = incompatible || current || online
+        ? scheme.primary
+        : scheme.outline;
     final glyphColor = current
         ? palette.glyphCurrent()
         : palette.glyphRemote(online: online);

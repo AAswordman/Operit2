@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import java.io.IOException
 import java.util.concurrent.Executors
 import org.json.JSONObject
 
@@ -20,17 +21,20 @@ class UiAutomationBinderService : Service() {
             val pipe = ParcelFileDescriptor.createPipe()
             try {
                 worker.execute {
-                    ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).bufferedWriter(Charsets.UTF_8).use { writer ->
-                        val response = try {
-                            val service = UiAccessibilityService.connected
-                                ?: error("Enable Operit2 Accessibility in Android accessibility settings")
-                            JSONObject().put("success", true).put("data", service.execute(JSONObject(requestJson)))
-                        } catch (error: Exception) {
-                            Log.e("OperitUiAutomation", "UI operation failed", error)
-                            JSONObject().put("success", false).put("error", error.message ?: error.javaClass.simpleName)
+                    try {
+                        ParcelFileDescriptor.AutoCloseOutputStream(pipe[1]).bufferedWriter(Charsets.UTF_8).use { writer ->
+                            val response = try {
+                                val service = UiAccessibilityService.connected
+                                    ?: error("Enable Operit2 Accessibility in Android accessibility settings")
+                                JSONObject().put("success", true).put("data", service.execute(JSONObject(requestJson)))
+                            } catch (error: Exception) {
+                                Log.e("OperitUiAutomation", "UI operation failed", error)
+                                JSONObject().put("success", false).put("error", error.message ?: error.javaClass.simpleName)
+                            }
+                            writer.write(response.toString())
                         }
-                        try { writer.write(response.toString()) }
-                        catch (error: Exception) { Log.e("OperitUiAutomation", "UI response stream failed", error) }
+                    } catch (error: IOException) {
+                        Log.e("OperitUiAutomation", "UI response stream failed", error)
                     }
                 }
             } catch (error: Exception) {

@@ -21,4 +21,8 @@
     <string name="control_title">授权，始终由你掌控</string>
     <string name="control_description">此服务可以读取屏幕内容并执行操作，仅供 Operit 调用。你可以随时在系统无障碍设置中关闭服务。</string>
     <string name="version_label">提供者 v%1$s · Operit</string>
+    <string name="crash_title">Operit 无障碍服务已停止</string>
+    <string name="crash_description">你可以复制并分享错误详情。关闭报告后，可从桌面重新打开应用。</string>
+    <string name="crash_copy">复制错误详情</string>
+    <string name="crash_dismiss">关闭并清除报告</string>
 </resources>

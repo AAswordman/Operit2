@@ -72,7 +72,11 @@ class _GraphPainter extends CustomPainter {
             end.dx,
             end.dy,
           );
-        final color = device.online ? scheme.primary : scheme.outline;
+        final color = _deviceVersionMismatch(topology, device)
+            ? deviceCompatibilityColor(scheme)
+            : device.online
+            ? scheme.primary
+            : scheme.outline;
         canvas.drawPath(
           path,
           Paint()

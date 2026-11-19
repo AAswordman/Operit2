@@ -9089,6 +9089,156 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This file is being saved. Please try again when saving finishes.'**
   String get workspaceFileSaving;
+
+  /// No description provided for @chatBackupChooseTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose your backup directory'**
+  String get chatBackupChooseTitle;
+
+  /// No description provided for @chatBackupTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily chat backup'**
+  String get chatBackupTitle;
+
+  /// No description provided for @chatBackupDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Save a SQLite chat database snapshot daily while the app is running and keep the latest 10 automatic backups. Includes conversations and messages only, excluding attachment files, workspaces, characters, memories and app settings.'**
+  String get chatBackupDescription;
+
+  /// No description provided for @chatRestoreTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore chat records'**
+  String get chatRestoreTitle;
+
+  /// No description provided for @chatRestoreDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Select the external folder containing your previous backups, then choose a dated chat database snapshot. After reinstalling, select the original backup folder again to recover your chats.'**
+  String get chatRestoreDescription;
+
+  /// No description provided for @chatRestoreChooseFolder.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose existing backup folder'**
+  String get chatRestoreChooseFolder;
+
+  /// No description provided for @chatRestoreRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh snapshots'**
+  String get chatRestoreRefresh;
+
+  /// No description provided for @chatRestoreAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore'**
+  String get chatRestoreAction;
+
+  /// No description provided for @chatRestoreCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get chatRestoreCancel;
+
+  /// No description provided for @chatRestoreEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'This folder contains no restorable chat database snapshots.'**
+  String get chatRestoreEmpty;
+
+  /// No description provided for @chatRestoreCounts.
+  ///
+  /// In en, this message translates to:
+  /// **'{chats} conversations · {messages} messages'**
+  String chatRestoreCounts(int chats, int messages);
+
+  /// No description provided for @chatRestoreConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore this chat snapshot?'**
+  String get chatRestoreConfirmTitle;
+
+  /// No description provided for @chatRestoreConfirmDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace all current chat records with {name}. Current chats will first be saved as a separate snapshot; restoration stops if that save fails. Stop running conversations first. Other settings are preserved.'**
+  String chatRestoreConfirmDescription(String name);
+
+  /// No description provided for @chatRestoreSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat records restored.'**
+  String get chatRestoreSuccess;
+
+  /// No description provided for @chatRestoreOnboardingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore from a previous backup'**
+  String get chatRestoreOnboardingTitle;
+
+  /// No description provided for @chatRestoreOnboardingDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Recover chats saved in an external folder before reinstalling or uninstalling'**
+  String get chatRestoreOnboardingDescription;
+
+  /// No description provided for @chatBackupExternalDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a folder outside the app so backups remain after uninstall. On iPhone and iPad, choose iCloud Drive or another external file provider.'**
+  String get chatBackupExternalDescription;
+
+  /// No description provided for @chatBackupChoose.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose backup directory'**
+  String get chatBackupChoose;
+
+  /// No description provided for @chatBackupLater.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up later'**
+  String get chatBackupLater;
+
+  /// No description provided for @chatBackupChange.
+  ///
+  /// In en, this message translates to:
+  /// **'Change backup directory'**
+  String get chatBackupChange;
+
+  /// No description provided for @chatBackupMissing.
+  ///
+  /// In en, this message translates to:
+  /// **'The backup directory is not configured, no longer exists or cannot be accessed. Select a directory to enable daily chat backups.'**
+  String get chatBackupMissing;
+
+  /// No description provided for @chatBackupReady.
+  ///
+  /// In en, this message translates to:
+  /// **'The backup directory is ready. Daily backups are checked at startup, on resume and while the app is running.'**
+  String get chatBackupReady;
+
+  /// No description provided for @chatBackupNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Back up chats now'**
+  String get chatBackupNow;
+
+  /// No description provided for @chatBackupNever.
+  ///
+  /// In en, this message translates to:
+  /// **'No successful backup yet'**
+  String get chatBackupNever;
+
+  /// No description provided for @chatBackupLastSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Last successful backup: {time}'**
+  String chatBackupLastSuccess(String time);
 }
 
 class _AppLocalizationsDelegate

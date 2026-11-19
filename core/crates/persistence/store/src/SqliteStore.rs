@@ -71,6 +71,11 @@ impl SqliteStore {
         &self.path
     }
 
+    /// Serializes snapshot capture with writes on the shared SQLite connection.
+    pub fn snapshotDatabase(&self, destination: &str) -> Result<(), SqliteStoreError> {
+        Ok(self.lockedConnection()?.snapshotDatabase(destination)?)
+    }
+
     #[allow(non_snake_case)]
     /// Executes a SQL batch against the store connection.
     pub fn executeBatch(&self, sql: &str) -> Result<(), SqliteStoreError> {

@@ -301,6 +301,7 @@ class RuntimeBootstrapManager extends ChangeNotifier {
       identities: identities,
       activeIdentityId: activeIdentity.id,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
+      chatBackupDirectory: _config.chatBackupDirectory,
     );
     await LocalRuntimeStorageBridge.apply(localStorage);
     await _apply(localStorage, persist: true);
@@ -332,6 +333,7 @@ class RuntimeBootstrapManager extends ChangeNotifier {
       identities: identities,
       activeIdentityId: activeIdentity.id,
       updatedAt: DateTime.now().millisecondsSinceEpoch,
+      chatBackupDirectory: _config.chatBackupDirectory,
     );
     await _apply(localStorage, persist: true);
     ClientLogger.attachPersistentStorage();
@@ -339,6 +341,14 @@ class RuntimeBootstrapManager extends ChangeNotifier {
       'persist migrated local runtime storage done elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
     );
+  }
+
+  /// Persists a machine-local backup directory without changing runtime or workspace roots.
+  Future<void> saveChatBackupDirectory(String directory) async {
+    final next = _config.copyWith(chatBackupDirectory: directory);
+    await _writeBootstrapConfig(next);
+    _config = next;
+    notifyListeners();
   }
 
   /// Persists the theme mode needed before Core preferences become available.

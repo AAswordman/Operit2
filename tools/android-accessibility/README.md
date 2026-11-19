@@ -53,6 +53,13 @@ must contain `RELEASE_STORE_FILE`, `RELEASE_STORE_PASSWORD`, `RELEASE_KEY_ALIAS`
 `RELEASE_KEY_PASSWORD`, using the main application's release certificate. Keep it
 outside version control. Without those properties, a release APK is unsigned.
 
+## Crash reports
+
+Uncaught JVM exceptions in the companion save the latest stack trace in private
+storage. The report screen runs in a separate process and offers a copy action.
+Android can block the report screen from opening after a background crash. Open
+the companion from the launcher to review and clear the saved report.
+
 ## Protocol version 1
 
 `getProtocolVersion()` returns `1`. `execute(requestJson)` returns a
