@@ -509,7 +509,7 @@ impl ApiPreferences {
             Ok(preferences
                 .getTyped::<i32>(&stringPreferencesKey("mcp_startup_timeout_seconds"))?
                 .unwrap_or(Self::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS)
-                .clamp(1, 10))
+                .clamp(1, 60))
         })
     }
 
@@ -648,7 +648,7 @@ impl ApiPreferences {
         self.apiDataStore.edit(|preferences| {
             preferences.set(
                 &stringPreferencesKey("mcp_startup_timeout_seconds"),
-                seconds.clamp(1, 10),
+                seconds.clamp(1, 60),
             );
         })
     }
@@ -673,7 +673,7 @@ impl ApiPreferences {
         Ok(preferences
             .getTyped::<i32>(&stringPreferencesKey("mcp_startup_timeout_seconds"))?
             .unwrap_or(Self::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS)
-            .clamp(1, 10))
+            .clamp(1, 60))
     }
 
     /// Reads the total timeout for one ToolPkg pre-hook dispatch chain in seconds.
@@ -684,5 +684,44 @@ impl ApiPreferences {
             .getTyped::<i32>(&stringPreferencesKey("toolpkg_pre_hook_timeout_seconds"))?
             .unwrap_or(Self::DEFAULT_TOOLPKG_PRE_HOOK_TIMEOUT_SECONDS)
             .clamp(1, 60))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+
+    fn isolatedPreferences() -> ApiPreferences {
+        let root = std::env::temp_dir()
+            .join(format!("operit-api-preferences-tests-{}", uuid::Uuid::new_v4()));
+        ApiPreferences {
+            apiDataStore: ApiPreferences::store(std::sync::Arc::new(
+                NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")),
+            )),
+        }
+    }
+
+    /// A raised MCP startup timeout must survive the save/read round trip so cold
+    /// npx/uvx installs can outlast the default budget.
+    #[test]
+    fn mcpStartupTimeoutRoundTripsAboveDefault() {
+        let preferences = isolatedPreferences();
+        assert_eq!(
+            preferences.getMcpStartupTimeoutSeconds().unwrap(),
+            ApiPreferences::DEFAULT_MCP_STARTUP_TIMEOUT_SECONDS
+        );
+        preferences.saveMcpStartupTimeoutSeconds(30).unwrap();
+        assert_eq!(preferences.getMcpStartupTimeoutSeconds().unwrap(), 30);
+    }
+
+    /// Out-of-range input is bounded identically by the saver and the reader.
+    #[test]
+    fn mcpStartupTimeoutClampsToBounds() {
+        let preferences = isolatedPreferences();
+        preferences.saveMcpStartupTimeoutSeconds(0).unwrap();
+        assert_eq!(preferences.getMcpStartupTimeoutSeconds().unwrap(), 1);
+        preferences.saveMcpStartupTimeoutSeconds(600).unwrap();
+        assert_eq!(preferences.getMcpStartupTimeoutSeconds().unwrap(), 60);
     }
 }
