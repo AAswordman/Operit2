@@ -130,6 +130,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('slow terminal setup leaves workspace controls interactive', (
+    tester,
+  ) async {
+    final pending = Completer<void>();
+    var workspaceTaps = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Builder(
+            builder: (context) => Column(
+              children: [
+                TextButton(
+                  onPressed: () => launchWorkspaceTerminal(
+                    context: context,
+                    terminal: 'native',
+                    terminalType: 'powershell',
+                    launch: () => pending.future,
+                  ),
+                  child: const Text('Open terminal'),
+                ),
+                TextButton(
+                  onPressed: () => workspaceTaps++,
+                  child: const Text('Workspace action'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('Open terminal'));
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(find.byType(CircularProgressIndicator), findsOneWidget);
+    await tester.tap(find.text('Workspace action'));
+    expect(workspaceTaps, 1);
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets('disposing the entry point does not leak its startup failure', (
     tester,
   ) async {

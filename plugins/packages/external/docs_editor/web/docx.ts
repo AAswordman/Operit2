@@ -8,6 +8,7 @@ const imageEntry = /^word\/media\/[^/]+$/;
 const headerEntry = /^word\/(header|footer)\d+\.xml$/;
 const w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
+/** Mounts the paginated Word editor and exposes view and editing controls. */
 export async function mountDocx(options: EditorOptions): Promise<Editor> {
   options.toolbar.hidden = false;
   let live = false;
@@ -17,7 +18,7 @@ export async function mountDocx(options: EditorOptions): Promise<Editor> {
       selector: options.root,
       documents: [{ id: options.info.id, type: 'docx', data: new File([options.bytes], options.info.name, { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }) }],
       documentMode: 'editing', contained: true, telemetry: { enabled: false },
-      zoom: { mode: 'fit-width', fitWidth: { min: 10, max: 100, padding: 24 } },
+      zoom: { mode: 'fit-width', fitWidth: { min: 10, max: 100, padding: 26 } },
       user: { name: 'Operit', email: 'workspace@operit.local' },
       toolbar: '#toolbar',
       onReady: () => resolve(),
@@ -32,14 +33,62 @@ export async function mountDocx(options: EditorOptions): Promise<Editor> {
     return doc;
   };
   const snapshot = async () => new Uint8Array(await (await instance.export({ triggerDownload: false })).arrayBuffer());
+  const presentation = instance.activeEditor!.presentationEditor!;
+  const selectionOverlay = presentation.overlayElement!;
+  const viewport = options.root.querySelector<HTMLElement>('.presentation-editor__viewport')!;
+  let anchor: { point: { x: number; y: number }; x: number; y: number } | undefined;
+
+  /** Restores the document coordinate under the gesture at the current zoom. */
+  function restoreAnchor() {
+    if (!anchor) return;
+    const bounds = viewport.getBoundingClientRect();
+    options.root.scrollLeft += bounds.left + anchor.x * presentation.zoom - anchor.point.x;
+    options.root.scrollTop += bounds.top + anchor.y * presentation.zoom - anchor.point.y;
+  }
+
+  const selectionPaint = new MutationObserver(restoreAnchor);
+
+  /** Gives viewport control back to the next non-zoom input. */
+  function clearAnchor() {
+    anchor = undefined;
+    selectionPaint.disconnect();
+  }
+
+  for (const event of ['pointerdown', 'keydown', 'wheel']) {
+    document.addEventListener(event, clearAnchor, { capture: true, passive: true });
+  }
+
+  /** Keeps the point under the gesture stationary as the page scales. */
+  function setZoom(percent: number, focus?: { x: number; y: number }) {
+    if (percent === instance.getZoom()) return;
+    if (focus) {
+      const bounds = viewport.getBoundingClientRect();
+      anchor = {
+        point: focus,
+        x: (focus.x - bounds.left) / presentation.zoom,
+        y: (focus.y - bounds.top) / presentation.zoom,
+      };
+      selectionPaint.observe(selectionOverlay, { childList: true, subtree: true });
+    } else {
+      clearAnchor();
+    }
+    instance.setZoom(percent);
+    queueMicrotask(restoreAnchor);
+  }
+
+  /** Restores automatic width fitting and releases the previous zoom anchor. */
+  function fitWidth() {
+    clearAnchor();
+    instance.setZoomMode('fit-width');
+  }
   async function selection() {
     return (await api().selection.current({ includeText: true })).text ?? '';
   }
   return {
     zoom: {
       get: () => instance.getZoom(),
-      set: percent => instance.setZoom(percent),
-      fit: () => instance.setZoomMode('fit-width'),
+      set: setZoom,
+      fit: fitWidth,
     },
     selection, snapshot,
     async read(section, offset) {

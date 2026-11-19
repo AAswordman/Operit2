@@ -38,3 +38,18 @@ Widget build(BuildContext context) {
 ```
 
 For detailed usage, API coverage, and platform limits, see the [Documentation](https://abandoft.github.io/webview_all).
+
+## Browser lifetime
+
+`WebViewWidget` owns the lifetime of its mounted platform controller through all
+three constructors. Removing the final surface automatically releases the
+browser. Rebuilds, offstage views, and transfers between surfaces in the same
+frame retain the controller. A disposed controller cannot be mounted again;
+create a new controller when opening a new page.
+
+Use `onBeforeDispose` for asynchronous page resource cleanup that must finish
+before the browser closes. The widget releases the browser even when this
+callback fails and reports cleanup errors through `FlutterError.reportError`.
+
+Controllers used entirely without a widget belong to their offscreen owner,
+which must call `dispose()` when the work ends.

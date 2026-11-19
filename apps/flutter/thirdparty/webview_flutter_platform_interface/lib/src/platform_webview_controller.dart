@@ -69,6 +69,10 @@ abstract class PlatformWebViewController extends PlatformInterface {
   /// The parameters used to initialize the [PlatformWebViewController].
   final PlatformWebViewControllerCreationParams params;
 
+  /// Releases resources owned by this controller after its last widget unmounts.
+  /// Platforms whose views are managed by the framework have no explicit teardown.
+  Future<void> dispose() async {}
+
   /// Loads the file located on the specified [absoluteFilePath].
   ///
   /// The [absoluteFilePath] parameter should contain the absolute path to the

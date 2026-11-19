@@ -207,7 +207,7 @@ impl WorkActivityService {
     }
 }
 
-/// Starts one work item with the title and timestamps captured from its real execution.
+/// Starts a generation and completes its predecessor in the same work revision.
 pub(crate) fn beginWork(
     workId: String,
     chatId: String,
@@ -215,6 +215,7 @@ pub(crate) fn beginWork(
     turnId: u64,
     startedAtMillis: i64,
     delegate: MessageProcessingDelegate,
+    previousWorkId: Option<&str>,
 ) {
     change(|state| {
         state.controllers.insert(
@@ -225,8 +226,7 @@ pub(crate) fn beginWork(
                 turnId,
             },
         );
-        state.works.insert(
-            workId.clone(),
+        state.insertWork(
             WorkActivity {
                 activation: BTreeMap::from([
                     ("type".to_string(), "open_chat".to_string()),
@@ -245,14 +245,28 @@ pub(crate) fn beginWork(
                 permissionRequestIds: Vec::new(),
                 canStop: true,
             },
+            previousWorkId,
         );
     });
 }
 
 /// Updates a registered execution without creating work from incidental UI state.
 pub(crate) fn updateWork(workId: &str, input: &InputProcessingState) {
-    change(|state| {
-        let Some(work) = state.works.get_mut(workId) else {
+    change(|state| state.updateWork(workId, input));
+}
+
+impl WorkState {
+    /// Retires the replaced generation before exposing its successor.
+    fn insertWork(&mut self, work: WorkActivity, previousWorkId: Option<&str>) {
+        if let Some(previousWorkId) = previousWorkId {
+            self.updateWork(previousWorkId, &InputProcessingState::Completed);
+        }
+        self.works.insert(work.workId.clone(), work);
+    }
+
+    /// Applies a processing or terminal state to the selected live work item.
+    fn updateWork(&mut self, workId: &str, input: &InputProcessingState) {
+        let Some(work) = self.works.get_mut(workId) else {
             return;
         };
         if work.endedAtMillis.is_some() {
@@ -300,12 +314,12 @@ pub(crate) fn updateWork(workId: &str, input: &InputProcessingState) {
                 .to_string();
                 work.endedAtMillis = Some(operit_host_api::TimeUtils::currentTimeMillis());
                 work.canStop = false;
-                state.controllers.remove(workId);
+                self.controllers.remove(workId);
                 "ended"
             }
         }
         .to_string();
-    });
+    }
 }
 
 /// Binds each attention request to its original execution before later runs can reuse the chat.
@@ -490,6 +504,37 @@ mod tests {
         assert_eq!(visible.works[1].status, "completed");
         assert_eq!(visible.works[1].endedAtMillis, Some(30));
         assert!(!visible.works[1].canStop);
+    }
+
+    /// Verifies resuming after compaction leaves no active summary after the reply finishes.
+    #[test]
+    fn summaryContinuationRetiresThePreviousWork() {
+        let mut state = WorkState::default();
+        state.insertWork(work("original", "chat-a", 10), None);
+        state.insertWork(work("other", "chat-b", 20), None);
+        state.updateWork(
+            "original",
+            &InputProcessingState::Summarizing {
+                message: "Compacting context".to_string(),
+            },
+        );
+        assert_eq!(state.works["original"].phase, "summarizing");
+
+        let mut resumed = work("resumed", "chat-a", 30);
+        resumed.runId = 2;
+        state.insertWork(resumed, Some("original"));
+        assert_eq!(state.works["original"].status, "completed");
+        assert!(!state.works["original"].canStop);
+        assert!(state.works["resumed"].canStop);
+
+        state.updateWork("resumed", &InputProcessingState::Completed);
+        let visible = snapshot(&state);
+        let mut active = visible
+            .works
+            .iter()
+            .filter(|work| work.endedAtMillis.is_none());
+        assert_eq!(active.next().unwrap().workId, "other");
+        assert!(active.next().is_none());
     }
 
     /// Verifies step fractions become percentages and late callbacks cannot resurrect completion.

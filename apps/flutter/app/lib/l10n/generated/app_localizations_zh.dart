@@ -235,6 +235,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get workspaceCloseOtherTabs => '关闭其他';
 
   @override
+  String get workspaceDockDropTarget => '拖到工作区';
+
+  @override
   String get workspaceOpenWith => '打开方式';
 
   @override

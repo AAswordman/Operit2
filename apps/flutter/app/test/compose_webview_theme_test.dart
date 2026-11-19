@@ -292,7 +292,10 @@ void main() {
       expect(events.length, 4);
       await tester.pumpWidget(const SizedBox());
       await tester.pumpAndSettle();
-      expect(events.last, 'remove-document-start');
+      expect(events.sublist(events.length - 2), [
+        'remove-document-start',
+        'dispose',
+      ]);
     },
   );
   testWidgets('navigation awaits channel and native script registration', (
@@ -337,7 +340,12 @@ void main() {
     ]);
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
-    expect(platform.controller.events.last, 'remove-document-start');
+    expect(platform.controller.events, [
+      'document-start',
+      'load:https://example.com',
+      'remove-document-start',
+      'dispose',
+    ]);
   });
   testWidgets('DSL action errors do not dispose or reload the mounted WebView', (
     tester,
@@ -410,11 +418,11 @@ void main() {
     );
     expect(
       platform.controller.events,
-      isNot(contains('remove-document-start')),
+      allOf(isNot(contains('remove-document-start')), isNot(contains('dispose'))),
     );
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();
-    expect(platform.controller.events.last, 'remove-document-start');
+    expect(platform.controller.events.last, 'dispose');
     expect(actions, isNotEmpty);
     expect(tester.takeException(), isNull);
   });
@@ -708,11 +716,19 @@ class _ThemeTestController extends PlatformWebViewController {
     events.add('load:${params.uri}');
   }
 
-  /// Accepts the blank page used during disposal.
+  /// Records inline documents and rejects blank navigation during teardown.
   @override
   Future<void> loadHtmlString(String html, {String? baseUrl}) async {
+    expect(html, isNot('<html></html>'));
     this.html = html;
     htmlBaseUrl = baseUrl;
+  }
+
+  /// Records controller teardown after the page's registrations are removed.
+  @override
+  Future<void> dispose() async {
+    expect(resourceHandler, isNull);
+    events.add('dispose');
   }
 
   /// Emulates native registration before the first page is permitted to load.

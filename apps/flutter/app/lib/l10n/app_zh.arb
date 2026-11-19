@@ -111,6 +111,7 @@
   "close": "关闭",
   "workspaceCloseOtherTabs": "关闭其他",
   "workspaceOpenWith": "打开方式",
+  "workspaceDockDropTarget": "拖到工作区",
   "workspaceBuiltInPreview": "内置预览",
   "workspacePluginUnsavedChanges": "请先在编辑器中保存，或放弃未保存的修改。",
   "workspaceCloseTabsToRight": "关闭右侧",

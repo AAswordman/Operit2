@@ -54,6 +54,7 @@ class DrawerContent extends StatefulWidget {
     required this.onNavigationEntrySelected,
     required this.onConversationActivated,
     this.onCollapseSidebar,
+    this.onPluginDockDragChanged,
     this.conversationsOnly = false,
     this.bridge = const ProxyCoreRuntimeBridge(),
   });
@@ -70,6 +71,7 @@ class DrawerContent extends StatefulWidget {
   final ValueChanged<NavigationEntrySpec> onNavigationEntrySelected;
   final VoidCallback onConversationActivated;
   final VoidCallback? onCollapseSidebar;
+  final ValueChanged<bool>? onPluginDockDragChanged;
   final OperitRuntimeBridge bridge;
 
   /// Hides global navigation when hosted beside the fixed desktop rail.
@@ -1007,16 +1009,15 @@ class _DrawerContentState extends State<DrawerContent> {
       const SizedBox(height: 10),
       for (final entry in widget.pluginEntries)
         PluginNavigationDrawerItem(
+          key: ValueKey(entry.entryId),
           entry: entry,
           selected: widget.selectedRouteId == entry.routeId,
           appearance: widget.appearance,
           onClick: () => widget.onNavigationEntrySelected(entry),
+          onDockDragChanged: widget.onPluginDockDragChanged,
         ),
       SidebarDockEndDropTarget(
-        controller:
-            MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint
-            ? SidebarDockScope.maybeOf(context)
-            : null,
+        controller: SidebarDockScope.maybeOf(context),
         location: SidebarDockLocation.primary,
         height: 18,
       ),

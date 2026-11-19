@@ -152,7 +152,7 @@ async function bootstrap() {
   }
   editor = await mount[info.format]({ bytes, info, chinese, root: document.querySelector('#editor')!, toolbar: document.querySelector('#toolbar')!, changed,
     saveBytes: data => saveBytes(() => Promise.resolve(data)).catch(error => { showError(error); throw error; }) });
-  if (editor.zoom) mountZoom(document.querySelector('#editor')!, editor.zoom);
+  if (editor.zoom) mountZoom(document.querySelector('#editor')!, editor.zoom, info.format !== 'pdf');
   window.OfficeEditor = {
     submit(key, command) {
       if (running || saving) return false;

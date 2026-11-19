@@ -14,4 +14,38 @@ body { display: flex; flex-direction: column; overflow: hidden; background: var(
 #error { background: var(--paper); border-bottom: 1px solid var(--border); padding: 7px 12px; color: var(--ink); overflow-wrap: anywhere; max-height: 22vh; overflow: auto; }
 #toolbar { flex: none; background: #fff; color-scheme: light; color: #1c2229; }
 #editor { flex: 1; min-height: 0; min-width: 0; overflow: hidden; position: relative; }
-body[data-format="docx"] #editor { overflow: auto; color-scheme: light; }
+body[data-format="docx"] #editor {
+  overflow: auto;
+  overflow-anchor: none;
+  scrollbar-gutter: stable both-edges;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) var(--canvas);
+  touch-action: pan-x pan-y;
+  background: var(--canvas);
+}
+
+#editor .superdoc--contained {
+  display: block;
+  height: auto;
+  min-height: 100%;
+  padding: 12px;
+}
+
+#editor .superdoc--contained .superdoc__layers,
+#editor .superdoc--contained .superdoc__document,
+#editor .superdoc--contained .superdoc__sub-document,
+#editor .super-editor-container.contained {
+  height: auto;
+  overflow: visible;
+}
+
+#editor .super-editor-container.contained { min-width: 0 !important; }
+#editor .presentation-editor { width: max-content; min-width: 100%; }
+#editor .presentation-editor__viewport {
+  contain: size;
+  overflow: clip;
+  overflow-clip-margin: 8px;
+  margin-inline: auto;
+}
+
+#editor .superdoc-page { --sd-layout-page-shadow: 0 1px 5px rgb(0 0 0 / 22%); }

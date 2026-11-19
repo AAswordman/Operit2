@@ -279,12 +279,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
         headers: requestHeaders,
         capabilities: _capabilitiesForUrl(normalizedUrl),
       );
-      _configureTab(tab);
-      await _applyUserAgentForTab(tab);
-      _tabs.add(tab);
-      _selectedIndex = _tabs.length - 1;
-      notifyListeners();
-      _syncSessionRegistry();
+      await _attachTab(tab);
       await tab.controller.loadRequest(
         Uri.parse(normalizedUrl),
         headers: requestHeaders,
@@ -317,12 +312,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
         localFilePath: absolutePath,
         capabilities: _capabilitiesForUrl('file://$absolutePath'),
       );
-      _configureTab(tab);
-      await _applyUserAgentForTab(tab);
-      _tabs.add(tab);
-      _selectedIndex = _tabs.length - 1;
-      notifyListeners();
-      _syncSessionRegistry();
+      await _attachTab(tab);
       await tab.controller.loadFile(absolutePath);
       return tab;
     } finally {
@@ -330,6 +320,23 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     }
   }
 
+  /// Publishes a configured tab and releases it if setup fails before attachment.
+  Future<void> _attachTab(WorkspaceBrowserTabState tab) async {
+    try {
+      _configureTab(tab);
+      await _applyUserAgentForTab(tab);
+    } catch (_) {
+      unawaited(tab.controller.dispose());
+      _releaseTab(tab);
+      rethrow;
+    }
+    _tabs.add(tab);
+    _selectedIndex = _tabs.length - 1;
+    notifyListeners();
+    _syncSessionRegistry();
+  }
+
+  /// Opens a browser tab backed by the workspace HTML preview server.
   Future<WorkspaceBrowserTabState> openWorkspaceHtmlTab(
     String relativePath, {
     String? initialUrl,
@@ -384,13 +391,10 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     _closeTabAt(index);
   }
 
+  /// Removes the tab from the owner and updates the selected session.
   void _closeTabAt(int index) {
     final removed = _tabs.removeAt(index);
-    _automation.remove(removed.id);
-    _defaultUserAgents.remove(removed.id);
-    _sessionRegistry.unregister(removed.id);
-    _workspaceSurfaceSessionClaims.remove(removed.id);
-    removed.dispose();
+    _releaseTab(removed);
     if (_tabs.isEmpty) {
       _selectedIndex = 0;
       notifyListeners();
@@ -403,6 +407,15 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     }
     notifyListeners();
     _syncSessionRegistry();
+  }
+
+  /// Drops the registry and automation state before disposing the tab's browser.
+  void _releaseTab(WorkspaceBrowserTabState tab) {
+    _automation.remove(tab.id);
+    _defaultUserAgents.remove(tab.id);
+    _sessionRegistry.unregister(tab.id);
+    _workspaceSurfaceSessionClaims.remove(tab.id);
+    tab.dispose();
   }
 
   /// Navigates the current real owner WebView.
@@ -668,7 +681,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     );
     _automation[tab.id] = automationController;
     tab.controller.getUserAgent().then((value) {
-      if (value != null) {
+      if (!tab.isDisposed && value != null) {
         _defaultUserAgents[tab.id] = value;
       }
     });

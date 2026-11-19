@@ -1,0 +1,13 @@
+{
+  "version": "7.6.10",
+  "x86_64": {
+    "suffix": "x64",
+    "bytes": 109626781,
+    "sha256": "7d871531806eb1646264e4bbabd9f0c30c23355591bc756bb9909448c29ae166"
+  },
+  "aarch64": {
+    "suffix": "arm64",
+    "bytes": 102312337,
+    "sha256": "1d36ecac1d8f5ac9577cfdfc426af41f3e90cbca6c52445e7db167f532b3a7ab"
+  }
+}

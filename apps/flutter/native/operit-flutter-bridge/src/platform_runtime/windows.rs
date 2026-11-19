@@ -24,7 +24,7 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
         startup.workspaceRoot.clone(),
         Arc::new(FlutterWebVisitBridge::new()),
     )
-    .withTerminalHost(Arc::new(WindowsTerminalHost::new()));
+    .withTerminalHost(Arc::new(WindowsTerminalHost::with_on_demand_powershell(&startup.runtimeRoot)));
     let system = context
         .systemOperationHost
         .clone()

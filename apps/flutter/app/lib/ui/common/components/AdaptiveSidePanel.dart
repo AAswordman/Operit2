@@ -230,19 +230,17 @@ class _AdaptiveSidePanelState extends State<AdaptiveSidePanel> {
                     onDragEnd: _endResize,
                   ),
                 ),
-              if (useSplitLayout &&
-                  !widget.open &&
-                  widget.closedDropTarget != null)
-                PositionedDirectional(
-                  top: 0,
-                  bottom: 0,
-                  end: 0,
-                  width: widget.resizeHandleHitWidth * 2,
-                  child: widget.closedDropTarget!,
-                ),
             ],
           ),
         ),
+        if (!widget.open && widget.closedDropTarget != null)
+          PositionedDirectional(
+            top: useSplitLayout ? 0 : widget.overlayTopInset,
+            bottom: 0,
+            end: 0,
+            width: widget.resizeHandleHitWidth * 2,
+            child: widget.closedDropTarget!,
+          ),
       ],
     );
   }

@@ -11,7 +11,6 @@ import unittest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "tools/build_scripts"))
 from windows_bash import REQUIRED_FILES
-from windows_powershell import REQUIRED_FILES as POWERSHELL_REQUIRED_FILES
 
 
 @unittest.skipUnless(os.name == "nt" and shutil.which("cmake"), "Requires Windows CMake/MSBuild")
@@ -107,15 +106,6 @@ class WindowsBashBuildTests(unittest.TestCase):
         result = self.stage("Debug")
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("runtime preparation failed", result.stdout)
-
-
-class WindowsPowerShellBuildTests(WindowsBashBuildTests):
-    """Apply the build, incrementality and installation checks to bundled PowerShell 7."""
-
-    runtime_name = "powershell"
-    runtime_files = POWERSHELL_REQUIRED_FILES
-    executable = "pwsh.exe"
-    dependency = "coreclr.dll"
 
 
 if __name__ == "__main__":

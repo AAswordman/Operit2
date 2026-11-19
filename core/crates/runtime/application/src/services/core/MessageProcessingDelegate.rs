@@ -1327,16 +1327,28 @@ impl MessageProcessingDelegate {
         }
     }
 
-    /// Publishes the beginning of one logical chat execution atomically.
+    /// Publishes a new chat generation and retires the work it superseded.
     #[allow(non_snake_case)]
-    fn startChatExecution(&mut self, chatId: String, title: String) -> crate::services::WorkActivityService::WorkRequestGuard {
+    fn startChatExecution(
+        &mut self,
+        chatId: String,
+        title: String,
+    ) -> crate::services::WorkActivityService::WorkRequestGuard {
         let workId = uuid::Uuid::new_v4().to_string();
-        let (turnId, startedAtMillis) = self.withRuntime(Some(chatId.clone()), |runtime| {
-            runtime.workId = Some(workId.clone());
-            (runtime.activeTurnId, runtime.requestSentAt)
-        });
-        crate::services::WorkActivityService::beginWork(workId.clone(), chatId.clone(), title,
-            turnId, startedAtMillis, self.clone_for_core());
+        let (turnId, startedAtMillis, previousWorkId) =
+            self.withRuntime(Some(chatId.clone()), |runtime| {
+                let previousWorkId = runtime.workId.replace(workId.clone());
+                (runtime.activeTurnId, runtime.requestSentAt, previousWorkId)
+            });
+        crate::services::WorkActivityService::beginWork(
+            workId.clone(),
+            chatId.clone(),
+            title,
+            turnId,
+            startedAtMillis,
+            self.clone_for_core(),
+            previousWorkId.as_deref(),
+        );
         ToolProgressBus::clear();
         self.updateChatExecutionState(chatId, |state| {
             state.isLoading = true;

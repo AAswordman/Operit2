@@ -676,6 +676,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     final webView = WebViewWidget(
       controller: _controller,
       gestureRecognizers: _pageGestureRecognizers,
+      onBeforeDispose: _disposeWebViewResources,
     );
     _webViewWidget = operitDesignBridgeEnabled
         ? OperitDesignSurface(
@@ -791,6 +792,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         (kIsWeb || defaultTargetPlatform != TargetPlatform.windows);
   }
 
+  /// Unbinds this page before its browser surface unmounts.
   @override
   void dispose() {
     _emitLifecycle('disposed', forceEmit: true);
@@ -803,11 +805,12 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         controller: _controller,
       );
     }
-    unawaited(_disposeBridgeUserScript());
-    unawaited(_disposeResourceLoader());
-    unawaited(_controller.loadHtmlString('<html></html>'));
     super.dispose();
   }
+
+  /// Releases page registrations before the widget closes its browser.
+  Future<void> _disposeWebViewResources() =>
+      Future.wait([_disposeBridgeUserScript(), _disposeResourceLoader()]);
 
   /// Composes the WebView with Flutter overlays through the shared platform view.
   @override
@@ -1110,6 +1113,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
 
   /// Registers the shared resource handler before loading plugin documents.
   Future<ComposeDslWebViewResourceLoader> _ensureResourceLoader() async {
+    if (!mounted) throw StateError('WebView has been disposed');
     if (_resourceLoader == null) {
       final scheme = _controller.localResourceScheme;
       if (scheme == null) {
@@ -1196,6 +1200,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
       _servingVfsFiles = true;
       final loader = await _ensureResourceLoader();
       final prepared = await loader.prepareHtml(html, baseUrl: baseUrl);
+      if (!mounted) return;
       await _controller.loadHtmlString(
         prepared.html,
         baseUrl: prepared.baseUrl,
@@ -1247,8 +1252,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
           javascriptInterfaces: _javascriptInterfaces,
         );
       }
+      if (!mounted) return;
       if (_request.url != null) {
         final uri = await _webViewUriFor(_request.url!, isMainFrame: true);
+        if (!mounted) return;
         await _controller.loadRequest(uri, headers: _request.headers);
       } else if (_request.html != null) {
         await _loadHtml(

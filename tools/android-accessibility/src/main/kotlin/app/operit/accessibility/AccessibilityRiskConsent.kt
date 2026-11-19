@@ -15,10 +15,10 @@ import android.widget.TextView
 /** Records the provider's one-time, exact-text risk acknowledgment. */
 class AccessibilityRiskConsent(private val activity: Activity) {
     private var dialog: AlertDialog? = null
-    private val preferences = activity.getSharedPreferences("accessibility_risk_consent", Context.MODE_PRIVATE)
 
     /** Requests the exact acknowledgment only until the user has confirmed it once. */
     fun request(complete: (Boolean) -> Unit) {
+        val preferences = activity.getSharedPreferences("accessibility_risk_consent", Context.MODE_PRIVATE)
         if (preferences.getBoolean("accepted", false)) {
             complete(true)
             return

@@ -10,12 +10,15 @@ import 'package:flutter/rendering.dart';
 
 import '../../../core/bridge/OperitRuntimeBridge.dart';
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../l10n/generated/app_localizations.dart';
 
 import '../components/DrawerConversationState.dart';
 import '../components/DrawerContent.dart';
 import '../components/NavigationDrawerAppearance.dart';
 import '../navigation/AppNavigationModels.dart';
+import '../MainLayoutController.dart';
 import 'DrawerMotionScope.dart';
+import 'SidebarDockController.dart';
 import '../../theme/OperitGlassSurface.dart';
 import '../../common/interactions/DrawerGestureExclusion.dart';
 
@@ -72,6 +75,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
   double _verticalDrag = 0;
   final Set<int> _touchPointers = <int>{};
   Offset? _edgeSwipeStart;
+  int _activePluginDrags = 0;
 
   /// Connects the drawer state to its spring animation and motion lifecycle.
   @override
@@ -149,6 +153,33 @@ class _PhoneLayoutState extends State<PhoneLayout>
     _contentActivation.value++;
   }
 
+  /// Shows the workspace drop zone only while a plugin is being dragged.
+  void _handlePluginDockDragChanged(bool active) {
+    if (mounted) {
+      setState(() => _activePluginDrags += active ? 1 : -1);
+    }
+  }
+
+  /// Docks the plugin into the visible chat's workspace and dismisses the drawer.
+  void _dockPlugin(
+    SidebarDockController dock,
+    MainLayoutController layout,
+    SidebarDockDragPayload payload,
+  ) {
+    final openWorkspace = layout.workspaceDockDestination;
+    if (openWorkspace == null ||
+        !dock.canMove(payload.entryId, SidebarDockLocation.secondary)) {
+      return;
+    }
+    dock.move(
+      payload.entryId,
+      location: SidebarDockLocation.secondary,
+      insertionIndex: dock.secondaryViews.length,
+    );
+    openWorkspace();
+    widget.onCloseDrawer();
+  }
+
   /// Resets accumulated movement for a new drawer gesture.
   void _handleHorizontalDragStart(DragStartDetails details) {
     _currentDrag = 0;
@@ -221,6 +252,8 @@ class _PhoneLayoutState extends State<PhoneLayout>
   @override
   Widget build(BuildContext context) {
     final appearance = navigationDrawerAppearanceOf(context);
+    final layout = MainLayoutScope.maybeOf(context);
+    final dock = SidebarDockScope.maybeOf(context);
     final animatedChild = _PhoneLayoutAnimatedChild(
       content: RepaintBoundary(
         child: DrawerMotionScope(
@@ -259,6 +292,7 @@ class _PhoneLayoutState extends State<PhoneLayout>
                 loading: drawerState.loading,
                 onNavigationEntrySelected: _handleNavigationEntrySelected,
                 onConversationActivated: _handleConversationActivated,
+                onPluginDockDragChanged: _handlePluginDockDragChanged,
               );
             },
           ),
@@ -376,7 +410,22 @@ class _PhoneLayoutState extends State<PhoneLayout>
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
                     onTap: widget.onCloseDrawer,
-                    child: const ColoredBox(color: Colors.transparent),
+                    child:
+                        _activePluginDrags > 0 &&
+                            layout != null &&
+                            layout.workspaceDockDestination != null &&
+                            dock != null
+                        ? _PhoneWorkspaceDropTarget(
+                            canAccept: (payload) =>
+                                layout.workspaceDockDestination != null &&
+                                dock.canMove(
+                                  payload.entryId,
+                                  SidebarDockLocation.secondary,
+                                ),
+                            onAccept: (payload) =>
+                                _dockPlugin(dock, layout, payload),
+                          )
+                        : const ColoredBox(color: Colors.transparent),
                   ),
                 ),
               Positioned(
@@ -432,6 +481,63 @@ class _PhoneLayoutState extends State<PhoneLayout>
           );
         },
       ),
+    );
+  }
+}
+
+class _PhoneWorkspaceDropTarget extends StatelessWidget {
+  /// Creates the workspace landing area in the space beside the open drawer.
+  const _PhoneWorkspaceDropTarget({
+    required this.canAccept,
+    required this.onAccept,
+  });
+
+  final bool Function(SidebarDockDragPayload) canAccept;
+  final ValueChanged<SidebarDockDragPayload> onAccept;
+
+  /// Highlights the workspace landing area when the dragged plugin enters it.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    return DragTarget<SidebarDockDragPayload>(
+      onWillAcceptWithDetails: (details) => canAccept(details.data),
+      onAcceptWithDetails: (details) => onAccept(details.data),
+      builder: (context, candidates, rejected) {
+        final hovered = candidates.isNotEmpty;
+        return ColoredBox(
+          color: hovered
+              ? colors.primaryContainer
+              : colors.surfaceContainerHigh,
+          child: SafeArea(
+            left: false,
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: <Widget>[
+                    Icon(
+                      Icons.drive_folder_upload_outlined,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      AppLocalizations.of(context)!.workspaceDockDropTarget,
+                      textAlign: TextAlign.center,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        color: hovered
+                            ? colors.onPrimaryContainer
+                            : colors.onSurface,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 }

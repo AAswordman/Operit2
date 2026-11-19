@@ -704,6 +704,7 @@ class _ProviderEditorDialog extends StatefulWidget {
 
 class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
   final _formKey = GlobalKey<FormState>();
+  final _advancedController = ExpansibleController();
   late final TextEditingController _nameController;
   late final TextEditingController _endpointController;
   late final TextEditingController _apiKeyController;
@@ -752,6 +753,7 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
 
   @override
   void dispose() {
+    _advancedController.dispose();
     _nameController.dispose();
     _endpointController.dispose();
     _apiKeyController.dispose();
@@ -928,7 +930,16 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
 
   /// Saves provider settings from the dialog form.
   void _save() {
-    if (!_formKey.currentState!.validate() || _selectedProviderTypeId == null) {
+    final invalidFields = _formKey.currentState!.validateGranularly();
+    if (invalidFields.any(
+      (field) =>
+          field.context.findAncestorWidgetOfExactType<ExpansionTile>()
+              ?.controller ==
+          _advancedController,
+    )) {
+      _advancedController.expand();
+    }
+    if (invalidFields.isNotEmpty || _selectedProviderTypeId == null) {
       return;
     }
     Navigator.of(context).pop(
@@ -1044,26 +1055,6 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                       labelText: l10n.settingsModelApiKey,
                     ),
                   ),
-                if (!_isCodexProvider && !_isLocalProvider)
-                  ApiKeyPoolEditor(
-                    singleKey: _apiKeyController.text,
-                    onResetHealth: widget.provider == null
-                        ? null
-                        : () => widget.clients.preferencesModelConfigManager
-                              .clearProviderApiKeyFailures(
-                                providerId: widget.provider!.id,
-                              ),
-                    enabled: _useKeyPool,
-                    entries: _keyPool,
-                    onEnabledChanged: (value) =>
-                        setState(() => _useKeyPool = value),
-                    onChanged: (entries) => setState(() => _keyPool = entries),
-                    onTestingChanged: (value) =>
-                        setState(() => _keyTesting = value),
-                    onTestEntry: widget.provider?.models.isNotEmpty == true
-                        ? _testPoolEntry
-                        : null,
-                  ),
                 Theme(
                   data: Theme.of(context).copyWith(
                     dividerColor: Colors.transparent,
@@ -1072,6 +1063,8 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                     ),
                   ),
                   child: ExpansionTile(
+                    controller: _advancedController,
+                    maintainState: true,
                     tilePadding: EdgeInsets.zero,
                     childrenPadding: const EdgeInsets.only(top: 8),
                     shape: const Border(),
@@ -1082,7 +1075,6 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    initiallyExpanded: false,
                     children: <Widget>[
                       _DialogTextField(
                         controller: _customHeadersController,
@@ -1108,6 +1100,29 @@ class _ProviderEditorDialogState extends State<_ProviderEditorDialog> {
                           ),
                         ],
                       ),
+                      if (!_isCodexProvider && !_isLocalProvider)
+                        ApiKeyPoolEditor(
+                          singleKey: _apiKeyController.text,
+                          onResetHealth: widget.provider == null
+                              ? null
+                              : () => widget
+                                    .clients
+                                    .preferencesModelConfigManager
+                                    .clearProviderApiKeyFailures(
+                                      providerId: widget.provider!.id,
+                                    ),
+                          enabled: _useKeyPool,
+                          entries: _keyPool,
+                          onEnabledChanged: (value) =>
+                              setState(() => _useKeyPool = value),
+                          onChanged: (entries) =>
+                              setState(() => _keyPool = entries),
+                          onTestingChanged: (value) =>
+                              setState(() => _keyTesting = value),
+                          onTestEntry: widget.provider?.models.isNotEmpty == true
+                              ? _testPoolEntry
+                              : null,
+                        ),
                     ],
                   ),
                 ),

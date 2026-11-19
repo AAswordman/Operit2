@@ -34,6 +34,7 @@ import 'WorkspaceTabModels.dart';
 import 'WorkspaceSession.dart';
 import 'WorkspaceUnbindDialog.dart';
 import 'WorkspaceTabStrip.dart';
+import 'WorkspaceTopBarButton.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'browser/automation/WorkspaceWebVisitSessionRegistry.dart';
 import 'browser/tabs/WorkspaceBrowserTabModels.dart';
@@ -62,6 +63,7 @@ class WorkspacePanel extends StatefulWidget {
     required this.onBindWorkspace,
     required this.onUnbindWorkspace,
     this.onFileQuote,
+    this.onCloseWorkspace,
   });
 
   final WorkspaceSession session;
@@ -85,6 +87,7 @@ class WorkspacePanel extends StatefulWidget {
   final Future<void> Function(String workspace) onBindWorkspace;
   final Future<void> Function() onUnbindWorkspace;
   final void Function(String fileName, String text)? onFileQuote;
+  final VoidCallback? onCloseWorkspace;
 
   @override
   State<WorkspacePanel> createState() => _WorkspacePanelState();
@@ -410,16 +413,30 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   Widget _buildWorkspacePane(int paneIndex) {
     final paneTabs = _tabsForPane(paneIndex);
     final selectedIndex = _selectedIndexForPane(paneIndex);
+    final closeWorkspace = paneIndex == 0 ? widget.onCloseWorkspace : null;
+    final tabs = WorkspaceTabStrip(
+      tabs: paneTabs,
+      selectedIndex: selectedIndex,
+      onSelected: (index) => _selectTab(index, paneIndex: paneIndex),
+      onClosed: (index) => _closeTab(index, paneIndex: paneIndex),
+      onCloseTabs: _closeTabs,
+      onOpenWith: _chooseFileOpener,
+    );
     final content = Column(
       children: <Widget>[
-        WorkspaceTabStrip(
-          tabs: paneTabs,
-          selectedIndex: selectedIndex,
-          onSelected: (index) => _selectTab(index, paneIndex: paneIndex),
-          onClosed: (index) => _closeTab(index, paneIndex: paneIndex),
-          onCloseTabs: _closeTabs,
-          onOpenWith: _chooseFileOpener,
-        ),
+        if (closeWorkspace == null)
+          tabs
+        else
+          Row(
+            children: [
+              Expanded(child: tabs),
+              WorkspaceTopBarButton(
+                open: true,
+                hasBoundWorkspace: widget.hasBoundWorkspace,
+                onPressed: closeWorkspace,
+              ),
+            ],
+          ),
         Expanded(
           child: IndexedStack(
             index: selectedIndex,
@@ -2006,7 +2023,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       return;
     }
     final tab = tabs[index];
-    if (!tab.closable) {
+    if (!tab.closable && tab.pluginEntryId == null) {
       return;
     }
     if (_session.dirtyPluginFiles.contains(tab)) {

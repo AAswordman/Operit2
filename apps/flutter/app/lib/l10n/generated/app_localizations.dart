@@ -530,6 +530,12 @@ abstract class AppLocalizations {
   /// **'Close Others'**
   String get workspaceCloseOtherTabs;
 
+  /// No description provided for @workspaceDockDropTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Drop into workspace'**
+  String get workspaceDockDropTarget;
+
   /// No description provided for @workspaceOpenWith.
   ///
   /// In en, this message translates to:

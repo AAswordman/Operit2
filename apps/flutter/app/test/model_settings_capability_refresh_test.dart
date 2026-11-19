@@ -233,7 +233,7 @@ void main() {
 
   setUp(ClientLogger.initialize);
   testWidgets(
-    'provider editor persists the pool and imported identities through Core',
+    'provider editor validates and persists the pool under advanced settings',
     (tester) async {
       final bridge = _ModelSettingsBridge();
       final panelKey = GlobalKey<ModelSettingsPanelState>();
@@ -243,10 +243,23 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.byTooltip(l10n.settingsModelEditProvider));
       await tester.pumpAndSettle();
+      final advanced = find.text(l10n.settingsAdvanced);
       final toggle = find.byKey(const ValueKey('api-key-pool-toggle'));
+      expect(toggle, findsNothing);
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
       await tester.ensureVisible(toggle);
       await tester.tap(toggle);
       await tester.pumpAndSettle();
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
+      await tester.pumpAndSettle();
+      expect(toggle, findsNothing);
+      await tester.tap(find.text(l10n.save).last);
+      await tester.pumpAndSettle();
+      expect(bridge.savedProvider, isNull);
+      expect(find.text(l10n.settingsModelPoolNoEligible), findsOneWidget);
       await tester.ensureVisible(find.text(l10n.settingsModelAddApiKey));
       await tester.tap(find.text(l10n.settingsModelAddApiKey));
       await tester.pumpAndSettle();
@@ -255,6 +268,9 @@ void main() {
         'first-key\nsecond-key',
       );
       await tester.tap(find.text(l10n.save).last);
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(advanced);
+      await tester.tap(advanced);
       await tester.pumpAndSettle();
       await tester.tap(find.text(l10n.save).last);
       await tester.pumpAndSettle();

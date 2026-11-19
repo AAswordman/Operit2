@@ -824,6 +824,8 @@ class LinuxWebViewController extends PlatformWebViewController {
   Future<void> setZoomFactor(double zoomFactor) =>
       _nativeZoom.setPageZoomFactor(zoomFactor);
 
+  /// Releases the native WebKit view and its controller-owned resources.
+  @override
   Future<void> dispose() {
     return _disposeFuture ??= _dispose();
   }

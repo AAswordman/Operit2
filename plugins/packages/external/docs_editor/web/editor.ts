@@ -10,7 +10,7 @@ export interface Editor {
 }
 export interface DocumentZoom {
   get(): number;
-  set(percent: number): void;
+  set(percent: number, focus?: { x: number; y: number }): void;
   fit(): void;
 }
 export type EditorOptions = {

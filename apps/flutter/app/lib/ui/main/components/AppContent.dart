@@ -65,6 +65,7 @@ class _AppContentState extends State<AppContent> {
   static const double _phonePageTransitionOffset = 12;
   static const double _tabletPageTransitionOffset = 16;
 
+  final GlobalKey _frameKey = GlobalKey();
   final Map<String, Widget> _screenCache = <String, Widget>{};
   final Map<String, bool> _screenKeepAliveCache = <String, bool>{};
   final Set<String> _backStackRetainedScreens = <String>{};
@@ -278,6 +279,7 @@ class _AppContentState extends State<AppContent> {
       animation: mainLayoutController,
       builder: (context, _) {
         final frame = Column(
+          key: _frameKey,
           children: <Widget>[
             AnimatedBuilder(
               animation: widget.topBarController,

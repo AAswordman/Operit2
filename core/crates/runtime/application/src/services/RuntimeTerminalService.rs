@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::{Arc, Mutex, OnceLock};
 
 use base64::engine::general_purpose::STANDARD;
@@ -297,8 +298,37 @@ impl RuntimeTerminalService {
     }
 
     #[allow(non_snake_case)]
-    /// Starts a PTY terminal session and attaches its output stream.
+    /// Starts a PTY on the host's blocking pool without holding the Core proxy lock.
     pub fn startTerminalPty(
+        &self,
+        sessionName: String,
+        terminal: String,
+        terminalType: String,
+        workingDir: String,
+        rows: i32,
+        cols: i32,
+    ) -> impl Future<Output = Result<String, String>> + 'static {
+        let service = Self {
+            terminalHost: self.terminalHost.clone(),
+            context: self.context.clone(),
+        };
+        async move {
+            let scheduler = service.context.hostRuntimeTaskSchedulerHost.clone()
+                .ok_or_else(|| "Starting a terminal requires a runtime task scheduler".to_string())?;
+            let (send, receive) = tokio::sync::oneshot::channel();
+            scheduler.scheduleHostRuntimeTask("start-terminal-pty", Box::new(move || {
+                let result = service.start_terminal_pty(sessionName, terminal, terminalType, workingDir, rows, cols);
+                if let Err(Ok(session_id)) = send.send(result) {
+                    let _ = service.closeTerminalPty(session_id);
+                }
+            })).map_err(|error| error.message)?;
+            receive.await.map_err(|_| "Terminal startup worker stopped".to_string())?
+        }
+    }
+
+    #[allow(non_snake_case)]
+    /// Resolves the working directory, starts the host PTY, and publishes it.
+    fn start_terminal_pty(
         &self,
         sessionName: String,
         terminal: String,

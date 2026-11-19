@@ -73,6 +73,45 @@ void main() {
     );
   });
 
+  test('disposes each native view once even while creation is pending', () async {
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    final creation = Completer<ByteData?>();
+    messenger.setMockMessageHandler(
+      _hostApiChannel('createWebView'),
+      (_) => creation.future,
+    );
+    final disposedViews = <int>[];
+    messenger.setMockMessageHandler(_hostApiChannel('disposeWebView'), (
+      message,
+    ) async {
+      disposedViews.add(_decodePigeonArgs(message).single! as int);
+      return _encodePigeonSuccess();
+    });
+    addTearDown(
+      () => messenger.setMockMessageHandler(
+        _hostApiChannel('disposeWebView'),
+        null,
+      ),
+    );
+
+    final controller = WindowsWebViewController(
+      const PlatformWebViewControllerCreationParams(),
+    );
+    final disposal = controller.dispose();
+    expect(controller.dispose(), same(disposal));
+    expect(disposedViews, isEmpty);
+
+    creation.complete(
+      WindowsWebViewHostApi.pigeonChannelCodec.encodeMessage(<Object?>[
+        WindowsCreateWebViewResult(viewId: 1),
+      ]),
+    );
+    await disposal;
+    await controller.dispose();
+    expect(disposedViews, [1]);
+  });
+
   testWidgets('keeps explicitly managed surfaces independent from layout', (
     WidgetTester tester,
   ) async {

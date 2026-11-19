@@ -1,9 +1,10 @@
 #[path = "../../../../common/terminal_command.rs"]
 mod terminal_command;
+mod powershell_runtime;
 
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -31,6 +32,14 @@ const PRIMARY_TERMINAL_TYPE: &str = "powershell";
 #[derive(Clone, Default)]
 pub struct WindowsTerminalHost {
     state: Arc<Mutex<TerminalState>>,
+    powershell: PowerShellSource,
+}
+
+#[derive(Clone, Default)]
+enum PowerShellSource {
+    #[default]
+    Bundled,
+    OnDemand(PathBuf),
 }
 
 #[derive(Default)]
@@ -80,8 +89,17 @@ enum TerminalKind {
 }
 
 impl WindowsTerminalHost {
+    /// Creates a terminal host for a standalone package with a bundled interpreter.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Creates an application terminal host with an on-demand interpreter cache.
+    pub fn with_on_demand_powershell(runtime_root: &Path) -> Self {
+        Self {
+            state: Arc::default(),
+            powershell: PowerShellSource::OnDemand(runtime_root.join("cache/powershell")),
+        }
     }
 }
 
@@ -99,8 +117,15 @@ impl TerminalHost for WindowsTerminalHost {
         resolveHostDirectory(workingDir)
     }
 
+    /// Lists supported interpreters without initiating any download.
     fn terminalInfo(&self) -> HostResult<TerminalInfo> {
-        let powershell = bundledPowerShellExecutable();
+        let (powershell_available, powershell_description) = match &self.powershell {
+            PowerShellSource::OnDemand(_) => (true, "PowerShell 7 · downloads on first use".to_string()),
+            PowerShellSource::Bundled => match bundledPowerShellExecutable() {
+                Ok(_) => (true, "Bundled PowerShell 7 terminal".to_string()),
+                Err(error) => (false, error.message),
+            },
+        };
         let bash = bundledBashExecutable();
         Ok(TerminalInfo {
             platform: PLATFORM.to_string(),
@@ -110,14 +135,8 @@ impl TerminalHost for WindowsTerminalHost {
                 TerminalTypeInfo {
                     terminal: TERMINAL.to_string(),
                     terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
-                    available: powershell.is_ok(),
-                    description: match powershell {
-                        Ok(_) => "Bundled PowerShell 7 terminal".to_string(),
-                        Err(error) => format!(
-                            "Bundled PowerShell 7 unavailable: {}. Reinstall the complete Operit Windows package.",
-                            error.message,
-                        ),
-                    },
+                    available: powershell_available,
+                    description: powershell_description,
                 },
                 TerminalTypeInfo {
                     terminal: TERMINAL.to_string(),
@@ -135,6 +154,7 @@ impl TerminalHost for WindowsTerminalHost {
         })
     }
 
+    /// Opens the requested interpreter for a manual terminal session.
     fn startPtySession(
         &self,
         sessionName: &str,
@@ -149,6 +169,7 @@ impl TerminalHost for WindowsTerminalHost {
         let (normalizedTerminalType, kind) = normalizeTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createPtySession(
+            &self.powershell,
             normalizedSessionName,
             normalizedTerminalType,
             kind,
@@ -294,6 +315,7 @@ impl TerminalHost for WindowsTerminalHost {
 
         let workingDir = std::env::current_dir()?.display().to_string();
         let session = createPtySession(
+            &self.powershell,
             normalizedSessionName.clone(),
             normalizedTerminalType.clone(),
             kind,
@@ -559,6 +581,7 @@ fn hiddenPtySessionId(
 
     let workingDir = std::env::current_dir()?.display().to_string();
     let session = createPtySession(
+        &host.powershell,
         format!("hidden:{executorLabel}"),
         terminalType.to_string(),
         kind,
@@ -583,7 +606,9 @@ struct SessionCommandResult {
 }
 
 #[allow(non_snake_case)]
+/// Prepares the selected interpreter before allocating its PTY.
 fn createPtySession(
+    powershell: &PowerShellSource,
     sessionName: String,
     terminalType: String,
     kind: TerminalKind,
@@ -591,11 +616,11 @@ fn createPtySession(
     rows: u16,
     cols: u16,
 ) -> HostResult<PtySession> {
+    let command = ptyCommand(powershell, kind, &workingDir)?;
     let ptySystem = native_pty_system();
     let pair = ptySystem
         .openpty(ptySize(rows, cols))
         .map_err(toHostError)?;
-    let command = ptyCommand(kind, &workingDir)?;
     let mut child = pair.slave.spawn_command(command).map_err(toHostError)?;
     let mut reader = pair.master.try_clone_reader().map_err(toHostError)?;
     let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(toHostError)?));
@@ -670,9 +695,9 @@ fn ptyCommandLine(command: &str, kind: TerminalKind) -> String {
 
 #[allow(non_snake_case)]
 /// Builds the PTY command for the selected Windows terminal type.
-fn ptyCommand(kind: TerminalKind, workingDir: &str) -> HostResult<CommandBuilder> {
+fn ptyCommand(powershell: &PowerShellSource, kind: TerminalKind, workingDir: &str) -> HostResult<CommandBuilder> {
     match kind {
-        TerminalKind::PowerShell => windowsPtyCommand(workingDir),
+        TerminalKind::PowerShell => windowsPtyCommand(powershell, workingDir),
         TerminalKind::Bash => {
             let executable = bundledBashExecutable()?;
             let root = executable
@@ -737,9 +762,12 @@ fn bundledPowerShellExecutable() -> HostResult<PathBuf> {
 }
 
 #[allow(non_snake_case)]
-/// Builds the bundled PowerShell 7 PTY command.
-fn windowsPtyCommand(workingDir: &str) -> HostResult<CommandBuilder> {
-    let executable = bundledPowerShellExecutable()?;
+/// Builds the PowerShell 7 PTY command using the package's selected runtime source.
+fn windowsPtyCommand(powershell: &PowerShellSource, workingDir: &str) -> HostResult<CommandBuilder> {
+    let executable = match powershell {
+        PowerShellSource::Bundled => bundledPowerShellExecutable()?,
+        PowerShellSource::OnDemand(cache) => powershell_runtime::executable(cache)?,
+    };
     let mut paths = vec![executable.parent().unwrap().to_path_buf()];
     if let Some(inherited) = std::env::var_os("PATH") {
         paths.extend(std::env::split_paths(&inherited));

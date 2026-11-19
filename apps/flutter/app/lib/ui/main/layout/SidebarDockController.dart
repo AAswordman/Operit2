@@ -6,13 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 
 import '../navigation/AppNavigationModels.dart';
-import '../layout/NavigationLayoutMetrics.dart';
 import 'SidebarDockPreferences.dart';
-
-/// Returns whether the current window can host the desktop secondary sidebar.
-bool sidebarDockEnabledForWidth(BuildContext context) {
-  return MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint;
-}
 
 /// Identifies the sidebar zone that owns one plugin view entry.
 enum SidebarDockLocation { primary, secondary }

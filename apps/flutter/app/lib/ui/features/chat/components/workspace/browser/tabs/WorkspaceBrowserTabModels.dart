@@ -1,7 +1,8 @@
 // ignore_for_file: file_names
 
-import 'package:flutter/material.dart';
 import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
 import 'package:webview_all/webview_all.dart';
 
 import '../../../../../../../l10n/generated/app_localizations.dart';
@@ -156,6 +157,7 @@ class WorkspaceBrowserTabState extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Marks the session closed before its surface unmounts automatically.
   @override
   void dispose() {
     _disposed = true;

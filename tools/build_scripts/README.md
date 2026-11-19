@@ -52,17 +52,17 @@ are required. This command builds packages without installing them on a phone.
 
 ## Windows PowerShell 7 runtime
 
-Windows App MSI and CLI ZIP packages include the self-contained PowerShell
-7.6.10 distribution under `powershell/`, pinned by SHA-256 for x86_64 and
-aarch64. The default `powershell` terminal starts only the adjacent
-`powershell/pwsh.exe`; users do not need to install PowerShell or configure
-PATH. Windows PowerShell 5.1 remains in use for internal Windows system
-integration scripts. The terminal runtime ships the upstream modules, .NET
-runtime and licenses in full.
+The Windows App downloads the pinned PowerShell 7 ZIP from GitHub Releases on
+first use of the `powershell` terminal. The Windows host verifies SHA-256 before
+extracting it into `cache/powershell` under the runtime storage root. Subsequent
+sessions use the installed copy offline. Opening the terminal again after a
+network failure resumes the partial download. Connection, read-idle, and total
+download deadlines are 15 seconds, 30 seconds, and 10 minutes, respectively.
 
-Flutter's Windows CMake build stages PowerShell for Debug, Profile and Release
-with an independent incremental target. For standalone development binaries
-(including Rust terminal tests), run
+The CLI ZIP includes the same self-contained distribution under `powershell/`
+for offline use. Windows PowerShell 5.1 remains in use for internal Windows
+system integration scripts. For standalone development binaries (including
+Rust terminal tests), run
 `.venv/Scripts/python.exe tools/build_scripts/windows_powershell.py --destination <binary-directory>`.
 Rust test executables run from `target/debug/deps`, so stage their runtime there.
 

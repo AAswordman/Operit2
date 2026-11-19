@@ -64,7 +64,7 @@ class WebViewScaleScope extends InheritedWidget {
 ///       webViewWidget.platform as AndroidWebViewWidget;
 /// }
 /// ```
-class WebViewWidget extends StatelessWidget {
+class WebViewWidget extends StatefulWidget {
   /// Constructs a [WebViewWidget].
   ///
   /// See [WebViewWidget.fromPlatformCreationParams] for setting parameters for
@@ -72,11 +72,13 @@ class WebViewWidget extends StatelessWidget {
   WebViewWidget({
     Key? key,
     required WebViewController controller,
+    Future<void> Function()? onBeforeDispose,
     TextDirection layoutDirection = TextDirection.ltr,
     Set<Factory<OneSequenceGestureRecognizer>> gestureRecognizers =
         const <Factory<OneSequenceGestureRecognizer>>{},
   }) : this.fromPlatformCreationParams(
          key: key,
+         onBeforeDispose: onBeforeDispose,
          params: PlatformWebViewWidgetCreationParams(
            controller: controller.platform,
            layoutDirection: layoutDirection,
@@ -121,10 +123,22 @@ class WebViewWidget extends StatelessWidget {
   WebViewWidget.fromPlatformCreationParams({
     Key? key,
     required PlatformWebViewWidgetCreationParams params,
-  }) : this.fromPlatform(key: key, platform: PlatformWebViewWidget(params));
+    Future<void> Function()? onBeforeDispose,
+  }) : this.fromPlatform(
+         key: key,
+         platform: PlatformWebViewWidget(params),
+         onBeforeDispose: onBeforeDispose,
+       );
 
   /// Constructs a [WebViewWidget] from a specific platform implementation.
-  WebViewWidget.fromPlatform({super.key, required this.platform});
+  WebViewWidget.fromPlatform({
+    super.key,
+    required this.platform,
+    this.onBeforeDispose,
+  });
+
+  /// Completes application resource cleanup before the browser is released.
+  final Future<void> Function()? onBeforeDispose;
 
   /// Implementation of [PlatformWebViewWidget] for the current platform.
   final PlatformWebViewWidget platform;
@@ -145,8 +159,53 @@ class WebViewWidget extends StatelessWidget {
   late final Set<Factory<OneSequenceGestureRecognizer>> gestureRecognizers =
       platform.params.gestureRecognizers;
 
+  /// Tracks the mounted browser independently of parent rebuilds.
+  @override
+  State<WebViewWidget> createState() => _WebViewWidgetState();
+}
+
+class _WebViewWidgetState extends State<WebViewWidget> {
+  static final _lifetimes = Expando<_WebViewLifetime>();
+  late _WebViewLifetime _lifetime;
+
+  /// Acquires ownership of the mounted platform browser.
+  @override
+  void initState() {
+    super.initState();
+    _attach();
+  }
+
+  /// Uses platform identity across every public widget constructor.
+  void _attach() {
+    final controller = widget.platform.params.controller;
+    _lifetime = _lifetimes[controller] ??= _WebViewLifetime(controller);
+    _lifetime.attach();
+  }
+
+  /// Releases a replaced controller and acquires the new browser.
+  @override
+  void didUpdateWidget(WebViewWidget oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (!identical(
+      oldWidget.platform.params.controller,
+      widget.platform.params.controller,
+    )) {
+      _lifetime.detach(oldWidget.onBeforeDispose);
+      _attach();
+    }
+  }
+
+  /// Releases ownership when the surface leaves the widget tree.
+  @override
+  void dispose() {
+    _lifetime.detach(widget.onBeforeDispose);
+    super.dispose();
+  }
+
+  /// Builds the platform surface while retaining application zoom behavior.
   @override
   Widget build(BuildContext context) {
+    final platform = widget.platform;
     final Widget view = platform.build(context);
     if (!platform.params.controller.requiresNativeApplicationZoom) {
       return view;
@@ -156,6 +215,47 @@ class WebViewWidget extends StatelessWidget {
       scale: WebViewScaleScope.scaleOf(context),
       child: view,
     );
+  }
+}
+
+class _WebViewLifetime {
+  /// Owns the browser shared by its mounted surface wrappers.
+  _WebViewLifetime(this.controller);
+
+  final PlatformWebViewController controller;
+  int _mounts = 0;
+  bool _disposing = false;
+
+  /// Retains the browser during rebuilds and same-frame surface transfers.
+  void attach() {
+    if (_disposing)
+      throw StateError('Cannot mount a disposed WebView controller');
+    _mounts++;
+  }
+
+  /// Closes the browser after its final surface unmounts.
+  void detach(Future<void> Function()? onBeforeDispose) {
+    _mounts--;
+    scheduleMicrotask(() async {
+      if (_mounts != 0 || _disposing) return;
+      _disposing = true;
+      try {
+        try {
+          await onBeforeDispose?.call();
+        } finally {
+          await controller.dispose();
+        }
+      } catch (error, stackTrace) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'webview_all',
+            context: ErrorDescription('while releasing an unmounted WebView'),
+          ),
+        );
+      }
+    });
   }
 }
 

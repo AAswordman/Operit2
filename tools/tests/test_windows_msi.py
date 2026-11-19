@@ -35,7 +35,7 @@ class WindowsMsiTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
             release = root / "release"
-            for name in (*installer.REQUIRED_FILES, "data/flutter_assets/中文/hello.txt"):
+            for name in (*installer.REQUIRED_FILES, "data/flutter_assets/中文/hello.txt", "PowerShell/pwsh.exe"):
                 path = release / name
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_bytes(b"payload")
@@ -44,6 +44,7 @@ class WindowsMsiTests(unittest.TestCase):
             before = ET.parse(payload)
             files = before.findall(".//w:File", NS)
             self.assertEqual(len(files), len(installer.REQUIRED_FILES) + 1)
+            self.assertFalse(any(file.get("Name") == "pwsh.exe" for file in files))
             self.assertEqual(sum(file.get("Id") == "AppExecutable" for file in files), 1)
             components = {node.get("Id"): node.get("Guid") for node in before.findall(".//w:Component", NS)}
             for node in before.findall(".//w:Component", NS):

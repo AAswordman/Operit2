@@ -138,6 +138,7 @@ void main() {
             isNot(contains('/slow.html')),
           );
           expect(tester.element(find.byType(WebViewWidget)), same(element));
+          expect(platform.controller.disposeCount, 0);
 
           // Disposing during lookup must not navigate a detached native view.
           final disposedStart = Completer<void>();
@@ -147,6 +148,7 @@ void main() {
           disposedStart.complete();
           await tester.pumpAndSettle();
           expect(platform.controller.loads.last.path, '/latest.html');
+          expect(platform.controller.disposeCount, 1);
           expect(tester.takeException(), isNull);
         },
         variant: TargetPlatformVariant.only(target),
@@ -208,6 +210,13 @@ class _PreviewController extends PlatformWebViewController {
   final loads = <Uri>[];
   Future<void>? pendingLoad;
   bool backAvailable = false;
+  int disposeCount = 0;
+
+  /// Records preview browser disposal without running a native host.
+  @override
+  Future<void> dispose() async {
+    disposeCount++;
+  }
 
   @override
   Future<void> loadRequest(LoadRequestParams params) async {

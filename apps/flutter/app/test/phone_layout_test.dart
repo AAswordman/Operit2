@@ -11,10 +11,108 @@ import 'package:operit2/ui/main/components/DrawerContent.dart';
 import 'package:operit2/ui/main/components/DrawerConversationState.dart';
 import 'package:operit2/ui/main/layout/DrawerMotionScope.dart';
 import 'package:operit2/ui/main/layout/PhoneLayout.dart';
+import 'package:operit2/ui/main/layout/SidebarDockController.dart';
+import 'package:operit2/ui/main/MainLayoutController.dart';
+import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Verifies drawer transitions preserve the mounted conversation list and input.
 void main() {
+  testWidgets('phone drawer docks an eligible plugin on a workspace drop', (
+    tester,
+  ) async {
+    const plugin = NavigationEntrySpec(
+      entryId: 'plugin.entry',
+      routeId: 'plugin.route',
+      surface: NavigationSurface.mainSidebarPlugins,
+      title: 'Plugin View',
+      icon: Icons.extension_outlined,
+      kind: NavigationEntryKind.plugin,
+    );
+    const action = NavigationEntrySpec(
+      entryId: 'action.entry',
+      routeId: 'action.route',
+      surface: NavigationSurface.mainSidebarPlugins,
+      title: 'Plugin Action',
+      icon: Icons.bolt_outlined,
+      kind: NavigationEntryKind.plugin,
+      action: NavigationEntryActionSpec(functionName: 'run'),
+    );
+    final dock = SidebarDockController();
+    addTearDown(dock.dispose);
+    dock.synchronize(
+      pluginEntries: [plugin, action],
+      routesById: {
+        plugin.routeId: const RouteSpec(
+          routeId: 'plugin.route',
+          runtime: RouteRuntime.toolPkgComposeDsl,
+          ownerPackageName: 'plugin',
+          toolPkgUiModuleId: 'module',
+        ),
+      },
+    );
+    final layout = MainLayoutController();
+    final owner = Object();
+    final drawerOpen = ValueNotifier<bool>(true);
+    addTearDown(drawerOpen.dispose);
+    addTearDown(layout.dispose);
+    NavigationEntrySpec? selected;
+    var workspaceOpens = 0;
+    await _pumpSwipeTestLayout(
+      tester,
+      drawerOpen: drawerOpen,
+      enableNavigationAnimation: true,
+      content: const SizedBox.expand(),
+      dock: dock,
+      mainLayout: layout,
+      onNavigationEntrySelected: (entry) => selected = entry,
+    );
+
+    final pluginRow = find.text(plugin.title);
+    final actionRow = find.text(action.title);
+    final dropZone = find.byIcon(Icons.drive_folder_upload_outlined);
+    await tester.tap(pluginRow);
+    expect(selected, same(plugin));
+
+    final noWorkspace = await tester.startGesture(tester.getCenter(pluginRow));
+    await tester.pump(kLongPressTimeout);
+    expect(dropZone, findsNothing);
+    await noWorkspace.cancel();
+    await tester.pumpAndSettle();
+
+    layout.setWorkspaceDockDestination(() => workspaceOpens++, owner: owner);
+    await tester.longPress(actionRow);
+    expect(dropZone, findsNothing);
+    expect(dock.secondaryViews, isEmpty);
+
+    final canceled = await tester.startGesture(tester.getCenter(pluginRow));
+    await tester.pump(kLongPressTimeout);
+    expect(dropZone, findsOneWidget);
+    await canceled.moveTo(tester.getCenter(dropZone));
+    await tester.pump();
+    await canceled.cancel();
+    await tester.pumpAndSettle();
+    expect(dropZone, findsNothing);
+    expect(drawerOpen.value, isTrue);
+    expect(workspaceOpens, 0);
+    expect(dock.secondaryViews, isEmpty);
+
+    final accepted = await tester.startGesture(tester.getCenter(pluginRow));
+    await tester.pump(kLongPressTimeout);
+    await accepted.moveTo(tester.getCenter(dropZone));
+    await tester.pump();
+    await accepted.up();
+    await tester.pumpAndSettle();
+    expect(drawerOpen.value, isFalse);
+    expect(workspaceOpens, 1);
+    expect(dock.primaryEntries, [action]);
+    expect(dock.secondaryViews.single.entry, same(plugin));
+    expect(dock.selectedSecondaryViewId, plugin.entryId);
+    expect(dropZone, findsNothing);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   for (final enableNavigationAnimation in <bool>[true, false]) {
     testWidgets(
       'edge swipe opens drawer while eager page keeps pointer events (effects: $enableNavigationAnimation)',
@@ -602,6 +700,9 @@ Future<void> _pumpSwipeTestLayout(
   DrawerConversationState drawerState = const DrawerConversationState(
     loading: false,
   ),
+  SidebarDockController? dock,
+  MainLayoutController? mainLayout,
+  ValueChanged<NavigationEntrySpec>? onNavigationEntrySelected,
 }) async {
   tester.view.physicalSize = const Size(400, 800);
   tester.view.devicePixelRatio = 1;
@@ -609,6 +710,33 @@ Future<void> _pumpSwipeTestLayout(
   addTearDown(tester.view.resetDevicePixelRatio);
   final conversations = ValueNotifier<DrawerConversationState>(drawerState);
   addTearDown(conversations.dispose);
+  Widget buildLayout(List<NavigationEntrySpec> entries) => PhoneLayout(
+    bridge: NativeSidebarBridge(),
+    content: content,
+    navigationEntries: const [],
+    pluginSidebarEntries: entries,
+    selectedRouteId: 'ai_chat',
+    drawerConversationState: conversations,
+    drawerWidth: 300,
+    drawerOpenState: drawerOpen,
+    enableNavigationAnimation: enableNavigationAnimation,
+    onOpenDrawer: () => drawerOpen.value = true,
+    onCloseDrawer: () => drawerOpen.value = false,
+    onNavigationEntrySelected: onNavigationEntrySelected ?? (_) {},
+    onConversationActivated: () {},
+  );
+  Widget body = dock == null
+      ? buildLayout(const [])
+      : SidebarDockScope(
+          controller: dock,
+          child: ListenableBuilder(
+            listenable: dock,
+            builder: (_, _) => buildLayout(dock.primaryEntries),
+          ),
+        );
+  if (mainLayout != null) {
+    body = MainLayoutScope(controller: mainLayout, child: body);
+  }
   await tester.pumpWidget(
     OperitTheme(
       initialThemePreferenceSnapshot:
@@ -616,23 +744,7 @@ Future<void> _pumpSwipeTestLayout(
       initialThemeIsReady: false,
       unconfiguredChildEnabled: true,
       hostInteractionHostsEnabled: false,
-      child: Scaffold(
-        body: PhoneLayout(
-          bridge: NativeSidebarBridge(),
-          content: content,
-          navigationEntries: const [],
-          pluginSidebarEntries: const [],
-          selectedRouteId: 'ai_chat',
-          drawerConversationState: conversations,
-          drawerWidth: 300,
-          drawerOpenState: drawerOpen,
-          enableNavigationAnimation: enableNavigationAnimation,
-          onOpenDrawer: () => drawerOpen.value = true,
-          onCloseDrawer: () => drawerOpen.value = false,
-          onNavigationEntrySelected: (_) {},
-          onConversationActivated: () {},
-        ),
-      ),
+      child: Scaffold(body: body),
     ),
   );
   await tester.pumpAndSettle();

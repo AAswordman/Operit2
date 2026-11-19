@@ -247,163 +247,183 @@ class _ApiKeyPoolEditorState extends State<ApiKeyPoolEditor> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SwitchListTile(
-          key: const ValueKey('api-key-pool-toggle'),
-          contentPadding: EdgeInsets.zero,
-          title: Text(l10n.settingsModelApiKeyPool),
-          subtitle: Text(l10n.settingsModelApiKeyPoolDescription),
-          value: widget.enabled,
-          onChanged: _testing ? null : widget.onEnabledChanged,
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: InputDecorator(
+        decoration: const InputDecoration(
+          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 4),
         ),
-        if (widget.enabled) ...[
-          if (widget.singleKey.trim().isNotEmpty &&
-              !widget.entries.any(
-                (entry) => entry.key.trim() == widget.singleKey.trim(),
-              ))
-            TextButton(
-              onPressed: _testing
-                  ? null
-                  : () => widget.onChanged([
-                      ...widget.entries,
-                      core.ApiKeyInfo(
-                        id: _newId(),
-                        key: widget.singleKey.trim(),
-                        name: l10n.settingsModelApiKey,
-                        isEnabled: true,
-                        availabilityStatus:
-                            core.ApiKeyAvailabilityStatus.untested,
-                        usageCount: 0,
-                        lastUsed: 0,
-                        errorCount: 0,
-                      ),
-                    ]),
-              child: Text(l10n.settingsModelPoolAddSingle),
-            ),
-          FormField<bool>(
-            validator: (_) {
-              final enabled = widget.entries.where(
-                (entry) => entry.isEnabled && entry.key.trim().isNotEmpty,
-              );
-              return !enabled.any(
-                    (entry) =>
-                        entry.availabilityStatus !=
-                        core.ApiKeyAvailabilityStatus.unavailable,
-                  )
-                  ? l10n.settingsModelPoolNoEligible
-                  : null;
-            },
-            builder: (field) => Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                if (widget.entries.isEmpty)
-                  Text(l10n.settingsModelApiKeyPoolEmpty),
-                for (final entry in widget.entries)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      children: [
-                        Switch(
-                          value: entry.isEnabled,
-                          onChanged: _testing
-                              ? null
-                              : (value) => _replace(
-                                  _copy(entry, {'isEnabled': value}),
-                                ),
-                        ),
-                        Expanded(
-                          child: InkWell(
-                            onTap: _testing ? null : () => _edit(entry),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 8),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    entry.name.isEmpty
-                                        ? l10n.settingsModelApiKey
-                                        : entry.name,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                  Text(
-                                    '•••••••• · ${_status(l10n, entry.availabilityStatus)} · ${entry.usageCount} / ${entry.errorCount}',
-                                    style: Theme.of(
-                                      context,
-                                    ).textTheme.bodySmall,
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: l10n.settingsModelEditApiKey,
-                          onPressed: _testing ? null : () => _edit(entry),
-                          icon: const Icon(Icons.edit_outlined),
-                        ),
-                        IconButton(
-                          tooltip: l10n.delete,
-                          onPressed: _testing
-                              ? null
-                              : () => widget.onChanged(
-                                  widget.entries
-                                      .where((item) => item.id != entry.id)
-                                      .toList(),
-                                ),
-                          icon: const Icon(Icons.delete_outline),
-                        ),
-                      ],
-                    ),
-                  ),
-                if (field.hasError)
-                  Text(
-                    field.errorText!,
-                    style: TextStyle(
-                      color: Theme.of(context).colorScheme.error,
-                    ),
-                  ),
-              ],
-            ),
-          ),
-          Wrap(
-            spacing: 8,
-            children: [
-              TextButton.icon(
-                onPressed: _testing ? null : _edit,
-                icon: const Icon(Icons.add),
-                label: Text(l10n.settingsModelAddApiKey),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            SwitchListTile(
+              key: const ValueKey('api-key-pool-toggle'),
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                l10n.settingsModelApiKeyPool,
+                style: theme.textTheme.bodyMedium,
               ),
-              TextButton(
-                onPressed: _testing || widget.entries.isEmpty
-                    ? null
-                    : _resetHealth,
-                child: Text(l10n.settingsModelPoolClearMarks),
+              subtitle: Text(
+                l10n.settingsModelApiKeyPoolDescription,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
               ),
-              if (widget.onTestEntry != null)
+              value: widget.enabled,
+              onChanged: _testing ? null : widget.onEnabledChanged,
+            ),
+            if (widget.enabled) ...[
+              if (widget.singleKey.trim().isNotEmpty &&
+                  !widget.entries.any(
+                    (entry) => entry.key.trim() == widget.singleKey.trim(),
+                  ))
                 TextButton(
                   onPressed: _testing
-                      ? () => setState(() => _pause = true)
-                      : _test,
-                  child: Text(
-                    _testing ? l10n.pause : l10n.settingsModelPoolTest,
+                      ? null
+                      : () => widget.onChanged([
+                          ...widget.entries,
+                          core.ApiKeyInfo(
+                            id: _newId(),
+                            key: widget.singleKey.trim(),
+                            name: l10n.settingsModelApiKey,
+                            isEnabled: true,
+                            availabilityStatus:
+                                core.ApiKeyAvailabilityStatus.untested,
+                            usageCount: 0,
+                            lastUsed: 0,
+                            errorCount: 0,
+                          ),
+                        ]),
+                  child: Text(l10n.settingsModelPoolAddSingle),
+                ),
+              FormField<bool>(
+                validator: (_) {
+                  final enabled = widget.entries.where(
+                    (entry) => entry.isEnabled && entry.key.trim().isNotEmpty,
+                  );
+                  return !enabled.any(
+                        (entry) =>
+                            entry.availabilityStatus !=
+                            core.ApiKeyAvailabilityStatus.unavailable,
+                      )
+                      ? l10n.settingsModelPoolNoEligible
+                      : null;
+                },
+                builder: (field) => Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (widget.entries.isEmpty)
+                      Text(l10n.settingsModelApiKeyPoolEmpty),
+                    for (final entry in widget.entries)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 4),
+                        child: Row(
+                          children: [
+                            Switch(
+                              value: entry.isEnabled,
+                              onChanged: _testing
+                                  ? null
+                                  : (value) => _replace(
+                                      _copy(entry, {'isEnabled': value}),
+                                    ),
+                            ),
+                            Expanded(
+                              child: InkWell(
+                                onTap: _testing ? null : () => _edit(entry),
+                                child: Padding(
+                                  padding: const EdgeInsets.symmetric(
+                                    vertical: 8,
+                                  ),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        entry.name.isEmpty
+                                            ? l10n.settingsModelApiKey
+                                            : entry.name,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                      ),
+                                      Text(
+                                        '•••••••• · ${_status(l10n, entry.availabilityStatus)} · ${entry.usageCount} / ${entry.errorCount}',
+                                        style: Theme.of(
+                                          context,
+                                        ).textTheme.bodySmall,
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                            IconButton(
+                              tooltip: l10n.settingsModelEditApiKey,
+                              onPressed: _testing ? null : () => _edit(entry),
+                              icon: const Icon(Icons.edit_outlined),
+                            ),
+                            IconButton(
+                              tooltip: l10n.delete,
+                              onPressed: _testing
+                                  ? null
+                                  : () => widget.onChanged(
+                                      widget.entries
+                                          .where((item) => item.id != entry.id)
+                                          .toList(),
+                                    ),
+                              icon: const Icon(Icons.delete_outline),
+                            ),
+                          ],
+                        ),
+                      ),
+                    if (field.hasError)
+                      Text(
+                        field.errorText!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              Wrap(
+                spacing: 8,
+                children: [
+                  TextButton.icon(
+                    onPressed: _testing ? null : _edit,
+                    icon: const Icon(Icons.add),
+                    label: Text(l10n.settingsModelAddApiKey),
                   ),
+                  TextButton(
+                    onPressed: _testing || widget.entries.isEmpty
+                        ? null
+                        : _resetHealth,
+                    child: Text(l10n.settingsModelPoolClearMarks),
+                  ),
+                  if (widget.onTestEntry != null)
+                    TextButton(
+                      onPressed: _testing
+                          ? () => setState(() => _pause = true)
+                          : _test,
+                      child: Text(
+                        _testing ? l10n.pause : l10n.settingsModelPoolTest,
+                      ),
+                    ),
+                ],
+              ),
+              if (_testing) ...[
+                const LinearProgressIndicator(),
+                Text(l10n.settingsModelTestProgress(_tested, _total)),
+              ],
+              if (widget.onTestEntry == null)
+                Text(
+                  l10n.settingsModelPoolNeedsModel,
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
             ],
-          ),
-          if (_testing) ...[
-            const LinearProgressIndicator(),
-            Text(l10n.settingsModelTestProgress(_tested, _total)),
           ],
-          if (widget.onTestEntry == null)
-            Text(
-              l10n.settingsModelPoolNeedsModel,
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-        ],
-      ],
+        ),
+      ),
     );
   }
 }

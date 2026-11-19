@@ -3,7 +3,6 @@
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
-import 'package:operit_ui/operit_ui.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../common/components/AdaptiveSidePanel.dart';
@@ -99,14 +98,40 @@ class WorkspaceShell extends StatelessWidget {
   /// Builds the workspace panel with plugins rendered as peer tabs.
   @override
   Widget build(BuildContext context) {
-    final usesMainLayoutAttachment =
+    final hasSidebarDropTarget =
         MediaQuery.sizeOf(context).width >= navigationTabletBreakpoint;
-    final dockController = usesMainLayoutAttachment
-        ? SidebarDockScope.maybeOf(context)
-        : null;
+    final isOverlay = workspaceSidePanelLayout == SidePanelLayout.overlay;
+    final dockController = SidebarDockScope.maybeOf(context);
+    final panel = SafeArea(
+      top: isOverlay,
+      left: false,
+      right: false,
+      child: WorkspacePanel(
+        session: _session,
+        sidebarDockController: dockController,
+        currentChatId: currentChatId,
+        hasBoundWorkspace: hasBoundWorkspace,
+        workspacePath: workspacePath,
+        fileDirectory: fileDirectory,
+        chatCore: chatCore,
+        onListWorkspaceFiles: onListWorkspaceFiles,
+        onMutateWorkspaceFile: onMutateWorkspaceFile,
+        onListWorkspaceBindingDirectories: onListWorkspaceBindingDirectories,
+        onReadWorkspaceTextFile: onReadWorkspaceTextFile,
+        onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
+        onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
+        onOpenWorkspaceFile: onOpenWorkspaceFile,
+        onCreateWorkspace: onCreateWorkspace,
+        onBindWorkspace: onBindWorkspace,
+        onUnbindWorkspace: onUnbindWorkspace,
+        onFileQuote: onFileQuote,
+        onCloseWorkspace: isOverlay
+            ? () => onWorkspaceOpenChanged(false)
+            : null,
+      ),
+    );
     return MainLayoutBackAction(
-      enabled:
-          workspaceOpen && workspaceSidePanelLayout == SidePanelLayout.overlay,
+      enabled: workspaceOpen && isOverlay,
       onBack: () => onWorkspaceOpenChanged(false),
       child: MarkdownLinkScope(
         onOpenFile: (path) =>
@@ -116,12 +141,6 @@ class WorkspaceShell extends StatelessWidget {
           widePanelPadding: EdgeInsets.zero,
           onOpenChanged: onWorkspaceOpenChanged,
           layout: workspaceSidePanelLayout,
-          // Match the phone shell: cover only the body, leaving the original
-          // title and workspace toggle in the host toolbar visible.
-          overlayTopInset: usesMainLayoutAttachment
-              ? ThemeTopBarChrome.toolbarHeight +
-                    MediaQuery.paddingOf(context).top
-              : 0,
           defaultWidth: workspaceDefaultWidth,
           defaultWidthFraction: workspaceDefaultWidthFraction,
           minWidth: workspaceMinWidth,
@@ -129,36 +148,18 @@ class WorkspaceShell extends StatelessWidget {
           resizeHandleHitWidth: workspaceResizeHandleHitWidth,
           resizeHandleVisualWidth: workspaceResizeHandleVisualWidth,
           resizeHandleHeight: workspaceResizeHandleHeight,
-          closedDropTarget: _WorkspacePluginDropTarget(
-            controller: dockController,
-            onAccepted: () => onWorkspaceOpenChanged(true),
-          ),
-          panel: SafeArea(
-            top: false,
-            left: false,
-            right: false,
-            child: WorkspacePanel(
-              session: _session,
-              sidebarDockController: dockController,
-              currentChatId: currentChatId,
-              hasBoundWorkspace: hasBoundWorkspace,
-              workspacePath: workspacePath,
-              fileDirectory: fileDirectory,
-              chatCore: chatCore,
-              onListWorkspaceFiles: onListWorkspaceFiles,
-              onMutateWorkspaceFile: onMutateWorkspaceFile,
-              onListWorkspaceBindingDirectories:
-                  onListWorkspaceBindingDirectories,
-              onReadWorkspaceTextFile: onReadWorkspaceTextFile,
-              onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
-              onWriteWorkspaceFileBytes: onWriteWorkspaceFileBytes,
-              onOpenWorkspaceFile: onOpenWorkspaceFile,
-              onCreateWorkspace: onCreateWorkspace,
-              onBindWorkspace: onBindWorkspace,
-              onUnbindWorkspace: onUnbindWorkspace,
-              onFileQuote: onFileQuote,
-            ),
-          ),
+          closedDropTarget: hasSidebarDropTarget && dockController != null
+              ? _WorkspacePluginDropTarget(
+                  controller: dockController,
+                  onAccepted: () => onWorkspaceOpenChanged(true),
+                )
+              : null,
+          panel: isOverlay
+              ? ColoredBox(
+                  color: Theme.of(context).colorScheme.surface,
+                  child: panel,
+                )
+              : panel,
           child: child,
         ),
       ),
@@ -172,39 +173,37 @@ class _WorkspacePluginDropTarget extends StatelessWidget {
     required this.onAccepted,
   });
 
-  final SidebarDockController? controller;
+  final SidebarDockController controller;
   final VoidCallback onAccepted;
 
   /// Builds the drop target that opens the workspace plugin tab area.
   @override
   Widget build(BuildContext context) {
-    final dockController = controller;
-    if (dockController == null) {
-      return const SizedBox.expand();
-    }
     return DragTarget<SidebarDockDragPayload>(
-      onWillAcceptWithDetails: (details) => dockController.canMove(
+      onWillAcceptWithDetails: (details) => controller.canMove(
         details.data.entryId,
         SidebarDockLocation.secondary,
       ),
       onAcceptWithDetails: (details) {
-        dockController.move(
+        controller.move(
           details.data.entryId,
           location: SidebarDockLocation.secondary,
-          insertionIndex: dockController.secondaryViews.length,
+          insertionIndex: controller.secondaryViews.length,
         );
         onAccepted();
       },
       builder: (context, candidateData, rejectedData) {
-        return DecoratedBox(
-          decoration: candidateData.isEmpty
-              ? const BoxDecoration()
-              : BoxDecoration(
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.primary,
+        return IgnorePointer(
+          child: DecoratedBox(
+            decoration: candidateData.isEmpty
+                ? const BoxDecoration()
+                : BoxDecoration(
+                    border: Border.all(
+                      color: Theme.of(context).colorScheme.primary,
+                    ),
                   ),
-                ),
-          child: const SizedBox.expand(),
+            child: const SizedBox.expand(),
+          ),
         );
       },
     );

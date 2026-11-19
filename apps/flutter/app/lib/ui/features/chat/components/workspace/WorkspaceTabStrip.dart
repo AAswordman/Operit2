@@ -298,7 +298,7 @@ class _TermuxWorkspaceTabStrip extends StatelessWidget {
               final button = _TermuxWorkspaceTabButton(
                 title: tabTitle(tab),
                 selected: selected,
-                closable: tab.closable,
+                closable: tab.closable || tab.pluginEntryId != null,
                 backgroundColor: Colors.transparent,
                 selectedBackgroundColor: selectedBackgroundColor,
                 borderColor: tabBorderColor,

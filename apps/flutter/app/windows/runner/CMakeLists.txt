@@ -52,8 +52,6 @@ set(OPERIT_PLUGIN_SYNC_SCRIPT "${OPERIT_REPO_ROOT}/plugins/tools/sync_plugin_pac
 set(OPERIT_FLUTTER_BRIDGE_CRATE "${CMAKE_CURRENT_SOURCE_DIR}/../../../native/operit-flutter-bridge")
 include("${CMAKE_CURRENT_SOURCE_DIR}/operit_windows_bash.cmake")
 add_dependencies(${BINARY_NAME} operit_windows_bash)
-include("${CMAKE_CURRENT_SOURCE_DIR}/operit_windows_powershell.cmake")
-add_dependencies(${BINARY_NAME} operit_windows_powershell)
 find_program(OPERIT_CARGO_EXECUTABLE
   NAMES cargo cargo.exe
   HINTS "$ENV{USERPROFILE}/.cargo/bin" "$ENV{CARGO_HOME}/bin"

@@ -245,6 +245,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get workspaceCloseOtherTabs => 'Close Others';
 
   @override
+  String get workspaceDockDropTarget => 'Drop into workspace';
+
+  @override
   String get workspaceOpenWith => 'Open with';
 
   @override

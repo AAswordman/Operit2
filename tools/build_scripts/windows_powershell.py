@@ -14,10 +14,11 @@ from zipfile import ZipFile
 
 from common import REPO_ROOT
 
-VERSION = "7.6.10"
+RELEASE = json.loads((REPO_ROOT / "hosts/windows/src/tools/terminal/powershell_release.json").read_text(encoding="utf-8"))
+VERSION = RELEASE["version"]
 PACKAGES = {
-    "x86_64": ("x64", "7d871531806eb1646264e4bbabd9f0c30c23355591bc756bb9909448c29ae166"),
-    "aarch64": ("arm64", "1d36ecac1d8f5ac9577cfdfc426af41f3e90cbca6c52445e7db167f532b3a7ab"),
+    arch: (RELEASE[arch]["suffix"], RELEASE[arch]["sha256"])
+    for arch in ("x86_64", "aarch64")
 }
 REQUIRED_FILES = (
     "pwsh.exe", "pwsh.dll", "pwsh.deps.json", "pwsh.runtimeconfig.json",

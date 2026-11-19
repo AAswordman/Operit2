@@ -11,6 +11,7 @@ class MainLayoutController extends ChangeNotifier {
   Object? _attachmentOwner;
   VoidCallback? _backAction;
   Object? _backActionOwner;
+  ({Object owner, VoidCallback open})? _workspaceDockDestination;
   bool _notificationScheduled = false;
   bool _disposed = false;
 
@@ -18,6 +19,21 @@ class MainLayoutController extends ChangeNotifier {
 
   /// Reports whether the current page has a surface to dismiss before leaving.
   bool get hasBackAction => _backAction != null;
+
+  /// Returns the active workspace destination for phone drawer drops.
+  VoidCallback? get workspaceDockDestination => _workspaceDockDestination?.open;
+
+  /// Registers the current page's workspace opener for phone drawer drops.
+  void setWorkspaceDockDestination(VoidCallback open, {required Object owner}) {
+    _workspaceDockDestination = (owner: owner, open: open);
+  }
+
+  /// Removes the workspace destination only if it still belongs to this page.
+  void clearWorkspaceDockDestination({required Object owner}) {
+    if (identical(owner, _workspaceDockDestination?.owner)) {
+      _workspaceDockDestination = null;
+    }
+  }
 
   /// Publishes the current page's dismiss action with explicit ownership.
   void setBackAction(VoidCallback action, {required Object owner}) {
@@ -85,6 +101,7 @@ class MainLayoutController extends ChangeNotifier {
     _attachmentOwner = null;
     _backAction = null;
     _backActionOwner = null;
+    _workspaceDockDestination = null;
     _notifySafely();
   }
 
@@ -206,6 +223,10 @@ class MainLayoutScope extends InheritedWidget {
   });
 
   final MainLayoutController controller;
+
+  /// Reads the main layout controller when a shell provides one.
+  static MainLayoutController? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<MainLayoutScope>()?.controller;
 
   static MainLayoutController of(BuildContext context) {
     final scope = context.dependOnInheritedWidgetOfExactType<MainLayoutScope>();

@@ -124,8 +124,6 @@ set(INSTALL_BUNDLE_LIB_DIR ".")
 # evaluated in the destination, alongside the other application runtime files.
 install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/runner/$<CONFIG>/bash"
   DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
-install(DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/runner/$<CONFIG>/powershell"
-  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}" COMPONENT Runtime)
 
 # Ship the compiler's redistributable DLLs so fresh Windows users can launch the app.
 set(CMAKE_INSTALL_SYSTEM_RUNTIME_LIBS_SKIP TRUE)

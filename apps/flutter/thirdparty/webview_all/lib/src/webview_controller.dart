@@ -18,7 +18,8 @@ import 'webview_widget.dart';
 /// Pass this to a [WebViewWidget] to display the WebView.
 ///
 /// A [WebViewController] can only be used by a single [WebViewWidget] at a
-/// time.
+/// time. The widget automatically releases its browser when unmounted.
+/// Controllers created for offscreen work must be explicitly disposed by their owner.
 ///
 /// ## Platform-Specific Features
 /// This class contains an underlying implementation provided by the current
@@ -125,6 +126,9 @@ class WebViewController {
 
   /// Implementation of [PlatformWebViewController] for the current platform.
   final PlatformWebViewController platform;
+
+  /// Releases the browser owned by this controller after its widget unmounts.
+  Future<void> dispose() => platform.dispose();
 
   /// Updates the browser color preference without navigating or reloading content.
   Future<void> setPreferredColorScheme(Brightness brightness) =>

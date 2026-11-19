@@ -57,6 +57,37 @@ Future<void> _rightClick(WidgetTester tester, String title) async {
 }
 
 void main() {
+  testWidgets('compact docked plugin tab can return to the sidebar', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    tester.view.physicalSize = const Size(390, 600);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(tester.view.resetPhysicalSize);
+    int? closedIndex;
+    await tester.pumpWidget(
+      _app(
+        WorkspaceTabStrip(
+          tabs: const [
+            WorkspaceTab(
+              kind: WorkspaceTabKind.plugin,
+              title: 'Docked plugin',
+              icon: Icons.extension_outlined,
+              pluginEntryId: 'plugin.entry',
+              closable: false,
+            ),
+          ],
+          selectedIndex: 0,
+          onSelected: (_) {},
+          onClosed: (index) => closedIndex = index,
+          onCloseTabs: (_) async {},
+        ),
+      ),
+    );
+    await tester.tap(find.byIcon(Icons.close));
+    expect(closedIndex, 0);
+  });
+
   for (final width in [390.0, 1024.0]) {
     testWidgets('file opener has a fixed trailing button at width $width', (
       tester,

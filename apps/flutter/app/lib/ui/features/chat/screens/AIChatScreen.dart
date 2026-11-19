@@ -384,7 +384,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _toastMessageNotifier = ValueNotifier<String?>(_toastMessage);
     _workspaceOpen = _chatWorkspaceOpen;
     if (!widget.embedded) {
-      WorkspaceShell.session.onOpenRequested = _openWorkspaceForDiff;
+      WorkspaceShell.session.onOpenRequested = _openWorkspace;
     }
     _watchChatFlows();
     _watchToastEvent();
@@ -437,6 +437,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _topBarController?.clearActions(owner: _topBarActionsOwner);
       _topBarController?.clearTitleContent(owner: _topBarTitleOwner);
       _mainLayoutController?.clearAttachment(owner: _mainLayoutOwner);
+      _mainLayoutController?.clearWorkspaceDockDestination(
+        owner: _mainLayoutOwner,
+      );
     }
   }
 
@@ -466,7 +469,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _topBarController?.clearActions(owner: _topBarActionsOwner);
     _topBarController?.clearTitleContent(owner: _topBarTitleOwner);
     _mainLayoutController?.clearAttachment(owner: _mainLayoutOwner);
-    if (WorkspaceShell.session.onOpenRequested == _openWorkspaceForDiff) {
+    _mainLayoutController?.clearWorkspaceDockDestination(
+      owner: _mainLayoutOwner,
+    );
+    if (WorkspaceShell.session.onOpenRequested == _openWorkspace) {
       WorkspaceShell.session.onOpenRequested = null;
     }
     super.dispose();
@@ -2752,8 +2758,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     _mainLayoutController?.refreshAttachment(owner: _mainLayoutOwner);
   }
 
-  /// Opens the side workspace for a turn diff on both phone and desktop.
-  void _openWorkspaceForDiff() {
+  /// Opens the side workspace for an external request from the active layout.
+  void _openWorkspace() {
     _setWorkspaceOpen(true);
   }
 
@@ -2767,44 +2773,22 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       );
     }
     _isCurrentMainScreen = MainScreenActivityScope.isCurrentScreenOf(context);
-    final useMainLayoutWorkspace =
-        MediaQuery.sizeOf(context).width >= workspaceTabletBreakpoint;
-    _syncWorkspaceMainLayoutAttachment(
-      useMainLayoutWorkspace && _isCurrentMainScreen,
-    );
-    final content = _buildChatContent();
-    if (useMainLayoutWorkspace) {
-      return ChatRuntimeScope(
-        chatCore: _viewModel.chatCore,
-        chatId: _currentChatId,
-        child: content,
+    _syncWorkspaceMainLayoutAttachment(_isCurrentMainScreen);
+    if (_isCurrentMainScreen &&
+        MediaQuery.sizeOf(context).width < workspaceTabletBreakpoint) {
+      _mainLayoutController?.setWorkspaceDockDestination(
+        _openWorkspace,
+        owner: _mainLayoutOwner,
+      );
+    } else {
+      _mainLayoutController?.clearWorkspaceDockDestination(
+        owner: _mainLayoutOwner,
       );
     }
     return ChatRuntimeScope(
       chatCore: _viewModel.chatCore,
       chatId: _currentChatId,
-      child: WorkspaceShell(
-        workspaceOpen: _workspaceOpen,
-        onWorkspaceOpenChanged: _setWorkspaceOpen,
-        currentChatId: _currentChatId,
-        hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
-        workspacePath: _currentWorkspacePath,
-        fileDirectory: _currentFileDirectory,
-        chatCore: _viewModel.chatCore,
-        onListWorkspaceFiles: _viewModel.listWorkspaceFiles,
-        onMutateWorkspaceFile: _viewModel.mutateWorkspaceFile,
-        onListWorkspaceBindingDirectories:
-            _viewModel.listWorkspaceBindingDirectories,
-        onReadWorkspaceTextFile: _viewModel.readWorkspaceTextFile,
-        onReadWorkspaceFileBytes: _viewModel.readWorkspaceFileBytes,
-        onWriteWorkspaceFileBytes: _viewModel.writeWorkspaceFileBytes,
-        onOpenWorkspaceFile: _viewModel.openWorkspaceFile,
-        onCreateWorkspace: _createWorkspace,
-        onBindWorkspace: _bindWorkspace,
-        onUnbindWorkspace: _unbindWorkspace,
-        onFileQuote: _attachWorkspaceFileQuote,
-        child: content,
-      ),
+      child: _buildChatContent(),
     );
   }
 

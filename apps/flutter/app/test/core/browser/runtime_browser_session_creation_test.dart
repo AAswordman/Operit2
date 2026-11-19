@@ -138,4 +138,5 @@ class _Controller extends PlatformWebViewController {
   /// Creates a controller using the shared platform interface contract.
   _Controller()
     : super.implementation(const PlatformWebViewControllerCreationParams());
+
 }

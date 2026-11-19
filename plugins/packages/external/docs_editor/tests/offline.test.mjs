@@ -160,9 +160,19 @@ test('offline DOCX, PPTX and PDF editor/tool round trips', { skip: !require && '
       };
       const first = await command({ kind: 'read' });
       await testZoom(page, format);
-      assert.equal((await command({ kind: 'read' })).revision, first.revision, 'zoom does not edit the document');
       const quote = page.getByRole('button', { name: 'Quote selection in chat' });
       await testEmptyQuote(page, quote, format);
+      if (!process.env.OFFICE_WEBKIT && format !== 'pdf') await testTouchZoom(page, format);
+      if (!process.env.OFFICE_WEBKIT && format === 'docx') {
+        await page.setViewportSize({ width: 402, height: 820 });
+        await page.locator('#editor').evaluate(root => root.dispatchEvent(new KeyboardEvent('keydown', {
+          key: '0', ctrlKey: true, bubbles: true, cancelable: true,
+        })));
+        await page.waitForFunction(() => document.querySelector('.superdoc-page').getBoundingClientRect().width < 380);
+        await testTouchZoom(page, format);
+        await page.setViewportSize({ width: 900, height: 760 });
+      }
+      assert.equal((await command({ kind: 'read' })).revision, first.revision, `${format}: zoom does not edit the document`);
       let edit;
       if (format === 'docx') {
         assert.match(first.data.text, /Replace this exact sentence/);
@@ -283,6 +293,7 @@ test('Office opens documents over 24 MiB and reports read failures separately fr
   await assert.rejects(host.bootstrap(), /document is empty/);
 });
 
+/** Checks fit, scrolling and existing desktop zoom inputs against the live editor. */
 async function testZoom(page, format) {
   // Read each editor's visible native zoom control, including shadow DOM controls.
   const control = format === 'docx' ? page.locator('[aria-label="Zoom"] .sd-button-label')
@@ -310,7 +321,16 @@ async function testZoom(page, format) {
     });
     const viewport = await page.locator('#editor').boundingBox();
     const paper = await page.locator('.superdoc-page').first().boundingBox();
-    assert.ok(paper.x >= viewport.x - 1 && paper.x + paper.width <= viewport.x + viewport.width + 1, 'fit width keeps the whole Word page visible');
+    assert.ok(paper.x >= viewport.x + 8 && paper.x + paper.width <= viewport.x + viewport.width - 8, 'fit width leaves gutters on both sides');
+    assert.ok(Math.abs(paper.x + paper.width / 2 - viewport.x - viewport.width / 2) < 2, 'Word page is centered');
+    assert.ok(paper.y >= viewport.y + 8, 'Word page has space above it');
+    assert.deepEqual(await page.locator('.superdoc-page').first().evaluate(page => {
+      const owners = [];
+      for (let ancestor = page.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        if (['scroll', 'auto'].includes(getComputedStyle(ancestor).overflowY)) owners.push(ancestor.id);
+      }
+      return owners;
+    }), ['', 'editor'], 'the pane owns scrolling outside the page painter');
     await page.setViewportSize({ width: 900, height: 760 });
     await control.waitFor();
   }
@@ -347,6 +367,56 @@ async function testZoom(page, format) {
   })));
   await until(value => value > 0);
   await page.setViewportSize({ width: 900, height: 760 });
+}
+
+/** Sends Chromium touch input with two touches landing on separate page descendants. */
+async function testTouchZoom(page, format) {
+  const session = await page.context().newCDPSession(page);
+  const control = format === 'docx' ? page.locator('.presentation-editor__pages')
+    : page.getByRole('slider', { name: 'Zoom percentage' });
+  const percent = () => control.evaluate((node, format) => format === 'docx'
+    ? new DOMMatrix(getComputedStyle(node).transform).a * 100
+    : Number.parseFloat(node.getAttribute('aria-valuetext')), format);
+  const surface = page.locator('#editor');
+  const paper = page.locator('.superdoc-page').first();
+  const viewport = await surface.boundingBox();
+  const midpoint = format === 'docx'
+    ? { x: Math.round(viewport.x + viewport.width * 0.58), y: Math.round(viewport.y + 180) }
+    : { x: Math.round(viewport.x + viewport.width * 0.64), y: Math.round(viewport.y + viewport.height / 2) };
+  const left = offset => ({ id: 1, x: midpoint.x - offset, y: midpoint.y - offset });
+  const right = offset => ({ id: 2, x: midpoint.x + offset, y: midpoint.y + offset });
+  const touch = (type, touchPoints) => session.send('Input.dispatchTouchEvent', { type, touchPoints });
+  try {
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: true, maxTouchPoints: 5 });
+    const initial = await percent();
+    const before = format === 'docx' ? await paper.boundingBox() : null;
+    await touch('touchStart', [left(30)]);
+    await touch('touchStart', [left(30), right(30)]);
+    await touch('touchMove', [left(42), right(42)]);
+    await touch('touchMove', [left(54), right(54)]);
+    await touch('touchEnd', []);
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    const enlarged = await percent();
+    assert.ok(enlarged > initial, `${format} zooms in response to touch (${initial} → ${enlarged})`);
+    if (before) {
+      const after = await paper.boundingBox();
+      const scale = after.width / before.width;
+      const drift = {
+        x: after.x + (midpoint.x - before.x) * scale - midpoint.x,
+        y: after.y + (midpoint.y - before.y) * scale - midpoint.y,
+      };
+      assert.ok(Math.abs(drift.x) < 4 && Math.abs(drift.y) < 4, `Word pinch point drifted by ${JSON.stringify(drift)}`);
+      assert.ok(await surface.evaluate(editor => editor.scrollWidth > editor.clientWidth), 'zoomed Word page can scroll horizontally');
+    }
+    await touch('touchStart', [left(54)]);
+    await touch('touchStart', [left(54), right(54)]);
+    await touch('touchMove', [left(30), right(30)]);
+    await touch('touchEnd', []);
+    assert.ok(await percent() < enlarged, `${format} can pinch back out`);
+  } finally {
+    await session.send('Emulation.setTouchEmulationEnabled', { enabled: false });
+    await session.detach();
+  }
 }
 
 async function testEmptyQuote(page, quote, format) {

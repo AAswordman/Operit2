@@ -4,6 +4,61 @@ import 'package:operit2/ui/common/components/AdaptiveSidePanel.dart';
 import 'package:operit2/ui/features/chat/components/workspace/WorkspaceLayoutMetrics.dart';
 
 void main() {
+  for (final layout in [SidePanelLayout.overlay, SidePanelLayout.split]) {
+    testWidgets('closed $layout accepts drops at the visible edge', (
+      tester,
+    ) async {
+      const source = ValueKey('drag-source');
+      var taps = 0;
+      int? accepted;
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: AdaptiveSidePanel(
+              layout: layout,
+              open: false,
+              onOpenChanged: (_) {},
+              panel: const SizedBox.expand(),
+              closedDropTarget: DragTarget<int>(
+                onAcceptWithDetails: (details) => accepted = details.data,
+                builder: (_, _, _) => const SizedBox.expand(),
+              ),
+              child: GestureDetector(
+                onTap: () => taps++,
+                behavior: HitTestBehavior.opaque,
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Draggable<int>(
+                    data: 42,
+                    feedback: const SizedBox(width: 32, height: 32),
+                    child: const ColoredBox(
+                      key: source,
+                      color: Colors.blue,
+                      child: SizedBox(width: 32, height: 32),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      final panelBounds = tester.getRect(find.byType(AdaptiveSidePanel));
+      final edge = Offset(panelBounds.right - 16, panelBounds.center.dy);
+      await tester.tapAt(edge);
+      expect(taps, 1);
+
+      final drag = await tester.startGesture(
+        tester.getCenter(find.byKey(source)),
+      );
+      await drag.moveBy(const Offset(30, 0));
+      await drag.moveTo(edge);
+      await tester.pump();
+      await drag.up();
+      expect(accepted, 42);
+    });
+  }
+
   for (final width in <double>[402, 900]) {
     for (final open in <bool>[false, true]) {
       testWidgets('fills available height at width $width, open: $open', (
@@ -75,6 +130,7 @@ void main() {
           const panelKey = ValueKey('workspace');
           const toolbarKey = ValueKey('original-toolbar');
           const toggleKey = ValueKey('original-workspace-toggle');
+          const closeKey = ValueKey('workspace-close');
           const toolbarHeight = 64.0;
           expect(
             workspaceSidePanelLayout,
@@ -99,10 +155,17 @@ void main() {
                         minWidth: workspaceMinWidth,
                         minContentWidth: workspaceMinChatWidth,
                         widePanelPadding: EdgeInsets.zero,
-                        overlayTopInset: toolbarHeight,
-                        panel: const ColoredBox(
+                        panel: ColoredBox(
                           key: panelKey,
                           color: Colors.blue,
+                          child: Align(
+                            alignment: Alignment.topRight,
+                            child: IconButton(
+                              key: closeKey,
+                              onPressed: () => open.value = false,
+                              icon: const Icon(Icons.close),
+                            ),
+                          ),
                         ),
                         child: Column(
                           key: contentKey,
@@ -149,18 +212,17 @@ void main() {
               findsOneWidget,
             );
             expect(panel.width, width);
-            expect(panel.top, tester.getRect(find.byKey(toolbarKey)).bottom);
+            expect(panel.top, host.top);
             expect(find.byKey(toolbarKey), findsOneWidget);
-            expect(find.byKey(toggleKey).hitTestable(), findsOneWidget);
-            // The original toolbar stays visible above both panel and barrier.
-            await tester.tap(find.byKey(toggleKey));
+            expect(find.byKey(toggleKey).hitTestable(), findsNothing);
+            await tester.tap(find.byKey(closeKey));
             await tester.pumpAndSettle();
             expect(open.value, isFalse);
             expect(tester.getRect(find.byKey(contentKey)).width, width);
             await tester.tap(find.byKey(toggleKey));
             await tester.pumpAndSettle();
             expect(open.value, isTrue);
-            expect(tester.getRect(find.byKey(panelKey)).top, toolbarHeight);
+            expect(tester.getRect(find.byKey(panelKey)).top, host.top);
           } else {
             expect(
               find.byKey(const ValueKey('sidePanelDismissBarrier')),

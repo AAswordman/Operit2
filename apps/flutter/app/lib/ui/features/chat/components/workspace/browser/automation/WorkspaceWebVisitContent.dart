@@ -77,8 +77,10 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
     unawaited(_start());
   }
 
+  /// Cancels visit work before the browser surface unmounts.
   @override
   void dispose() {
+    _completed = true;
     _loadTimeoutTimer?.cancel();
     _extractDelayTimer?.cancel();
     _countdownTimer?.cancel();
@@ -86,6 +88,7 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
     super.dispose();
   }
 
+  /// Starts navigation while the visit owns its browser.
   Future<void> _start() async {
     try {
       _armLoadTimeout();
@@ -93,6 +96,7 @@ class _WorkspaceWebVisitContentState extends State<WorkspaceWebVisitContent> {
       if (userAgent.isNotEmpty) {
         await _controller.setUserAgent(userAgent);
       }
+      if (_completed) return;
       await _controller.loadRequest(Uri.parse(_currentUrl), headers: _headers);
     } catch (error) {
       _finishError(error.toString());

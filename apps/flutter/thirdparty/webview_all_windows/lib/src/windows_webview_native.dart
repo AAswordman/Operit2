@@ -176,6 +176,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   late Completer<void> _creatingCompleter;
   int _viewId = 0;
   bool _isDisposed = false;
+  Future<void>? _disposeFuture;
 
   Future<void> get ready => _creatingCompleter.future;
 
@@ -462,8 +463,8 @@ class WebviewController extends ValueNotifier<WebviewValue> {
 
       value = value.copyWith(isInitialized: true);
       _creatingCompleter.complete();
-    } on PlatformException catch (e) {
-      _creatingCompleter.completeError(e);
+    } catch (error, stackTrace) {
+      _creatingCompleter.completeError(error, stackTrace);
     }
 
     return _creatingCompleter.future;
@@ -562,15 +563,24 @@ class WebviewController extends ValueNotifier<WebviewValue> {
     return callback(url, errorStatus);
   }
 
+  /// Closes the native view and unregisters its Dart channels exactly once.
   @override
-  Future<void> dispose() async {
-    await _creatingCompleter.future;
-    if (!_isDisposed) {
+  Future<void> dispose() => _disposeFuture ??= _dispose();
+
+  /// Keeps the notifier teardown paired with the native view lifecycle.
+  Future<void> _dispose() async {
+    try {
+      await ready;
       _isDisposed = true;
-      await _eventStreamSubscription?.cancel();
-      await _hostApi.disposeWebView(_viewId);
+      _methodChannel.setMethodCallHandler(null);
+      try {
+        await _eventStreamSubscription?.cancel();
+      } finally {
+        await _hostApi.disposeWebView(_viewId);
+      }
+    } finally {
+      super.dispose();
     }
-    super.dispose();
   }
 
   /// Loads the given [url].
@@ -1357,10 +1367,12 @@ class _WebviewState extends State<Webview> {
     );
   }
 
+  /// Reports the surface size only while this widget owns its layout.
   void _reportSurfaceSize() async {
     final box = _key.currentContext?.findRenderObject() as RenderBox?;
     if (box != null) {
       await _controller.ready;
+      if (!mounted) return;
       unawaited(
         _controller._setSize(
           box.size,

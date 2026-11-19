@@ -89,6 +89,8 @@ void main() {
       await tester.tap(find.byTooltip('Close'));
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
+      expect(controller.disposeCount, 1);
+      expect(platform.controllers.first.disposeCount, 0);
       expect(tester.getSize(inlineBlock), inlineSize);
       expect(
         tester
@@ -111,6 +113,19 @@ void main() {
       await tester.pumpAndSettle();
       expect(dialog, findsNothing);
       expect(inlineBlock, findsOneWidget);
+      expect(platform.controllers.map((view) => view.disposeCount), [
+        0,
+        1,
+        1,
+        1,
+      ]);
+      await tester.pumpWidget(const SizedBox.shrink());
+      expect(platform.controllers.map((view) => view.disposeCount), [
+        1,
+        1,
+        1,
+        1,
+      ]);
       expect(tester.takeException(), isNull);
     });
   }
@@ -151,6 +166,13 @@ class _PreviewController extends PlatformWebViewController {
 
   String? html;
   JavaScriptMode? mode;
+  int disposeCount = 0;
+
+  /// Records when each independently owned preview browser closes.
+  @override
+  Future<void> dispose() async {
+    disposeCount++;
+  }
 
   /// Records source loaded into either preview surface.
   @override

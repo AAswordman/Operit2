@@ -90,6 +90,7 @@ class _WorkspaceHtmlPreviewWidgetState
     }
   }
 
+  /// Stops serving preview files before the browser surface unmounts.
   @override
   void dispose() {
     _loadGeneration += 1;
@@ -149,11 +150,13 @@ class _WorkspaceHtmlPreviewWidgetState
     // Page completion, not loadRequest completion, clears the loading state.
   }
 
+  /// Updates the toolbar only while the preview still owns its browser.
   Future<void> _updateNavigationState({required bool isPageLoading}) async {
     if (!mounted) {
       return;
     }
     final canGoBack = await _controller.canGoBack();
+    if (!mounted) return;
     final canGoForward = await _controller.canGoForward();
     if (!mounted ||
         (_canGoBack == canGoBack &&
