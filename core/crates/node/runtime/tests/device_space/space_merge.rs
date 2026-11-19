@@ -133,7 +133,7 @@ async fn source_space_chain_merges_all_members_profiles_policy_and_routes() {
         .contains(&routers[3].localNodeId()));
     assert_eq!(
         services[1].deviceSpaceTopology().unwrap().connections.len(),
-        edges.len() * 2
+        edges.len()
     );
 }
 

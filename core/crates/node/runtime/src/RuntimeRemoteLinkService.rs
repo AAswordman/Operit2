@@ -94,7 +94,8 @@ pub enum RuntimeDeviceSpaceConnectionStatus {
     Unknown,
 }
 
-/// Describes one direct connection in the UI-facing device-space topology projection.
+/// Describes one undirected connection in the UI-facing device-space topology projection.
+/// Endpoints are ordered by device ID so both owners' announcements form one connection.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RuntimeDeviceSpaceConnection {
     pub firstDeviceId: String,
@@ -652,6 +653,20 @@ impl RuntimeRemoteLinkService {
         let connections = self
             .spaceStore
             .deviceConnectionsForSpace(&space)?
+            .into_iter()
+            .map(|mut connection| {
+                // Routing announcements are directed and independently owned. The
+                // overview shows device pairs, so merge A -> B and B -> A here
+                // without discarding either owner's routing/quality record.
+                if connection.firstDeviceId > connection.secondDeviceId {
+                    std::mem::swap(
+                        &mut connection.firstDeviceId,
+                        &mut connection.secondDeviceId,
+                    );
+                }
+                connection
+            })
+            .collect::<BTreeSet<_>>()
             .into_iter()
             .map(|connection| {
                 let first = devicesById.get(&connection.firstDeviceId).ok_or_else(|| {

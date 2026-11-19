@@ -71,6 +71,27 @@ async fn tree_topology_publication_routes_between_leaves() {
 
     publishTree(&routers, &peers);
 
+    for (router, service) in routers.iter().zip(&access) {
+        assert_eq!(
+            router.spaceStore.deviceConnections().unwrap().len(),
+            4,
+            "routing must retain both endpoints' directed announcements"
+        );
+        let projection = service.deviceSpaceTopology().unwrap();
+        assert_eq!(
+            projection.connections.len(),
+            2,
+            "each physical link must appear once from every device's perspective"
+        );
+        assert!(
+            projection
+                .connections
+                .iter()
+                .all(|connection| connection.firstDeviceId < connection.secondDeviceId),
+            "connection endpoint order must be stable across devices"
+        );
+    }
+
     let middleRecord = serde_json::to_value(
         routers[1]
             .spaceStore
@@ -158,6 +179,29 @@ async fn tree_topology_publication_routes_between_leaves() {
         localEdge.status,
         crate::RuntimeRemoteLinkService::RuntimeDeviceSpaceConnectionStatus::Online
     );
+
+    // Snapshot exchange can deliver the owners' announcements at different times.
+    // Either endpoint alone must still project the same device pair. Reachability
+    // may change because routing continues to use the directed announcements.
+    let endpointPairs = |service: &RuntimeRemoteLinkService| {
+        service
+            .deviceSpaceTopology()
+            .unwrap()
+            .connections
+            .into_iter()
+            .map(|connection| (connection.firstDeviceId, connection.secondDeviceId))
+            .collect::<Vec<_>>()
+    };
+    let before = access
+        .iter()
+        .map(|service| endpointPairs(service))
+        .collect::<Vec<_>>();
+    routers[1].spaceStore.setDirectPeers(Vec::new()).unwrap();
+    propagateTopology(&routers);
+    for ((router, service), expected) in routers.iter().zip(&access).zip(before) {
+        assert_eq!(router.spaceStore.deviceConnections().unwrap().len(), 2);
+        assert_eq!(endpointPairs(service), expected);
+    }
 }
 
 /// Verifies a dropped direct link is pruned from the announcement and stops routing.
