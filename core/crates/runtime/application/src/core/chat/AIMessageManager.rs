@@ -16,7 +16,8 @@ use operit_model::MessagePartCodec::MessagePartCodec;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_providers::chat::enhance::InputProcessor::{InputProcessor, ProcessUserInputRequest};
-use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream};
+use operit_providers::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
+use operit_providers::chat::llmprovider::AIService::{AiServiceError, SharedAiResponseStream, TokenCounts};
 use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
     ChatGuidanceInbox, EnhancedAIService, MessageCancellationToken, ResumeRequest,
@@ -39,6 +40,14 @@ const MESSAGE_PROCESS_TIMING_TAG: &str = "MessageProcessTiming";
 /// Bounds the appended review independently of the model-generated summary.
 const MAX_CONVERSATION_REVIEW_ENTRIES: usize = 100;
 const CONVERSATION_REVIEW_HEAD_ENTRIES: usize = 30;
+
+/// A generated summary plus the timestamp it should be inserted before, when a
+/// selection-boundary hook kept a verbatim tail out of the summarized range.
+#[derive(Clone, Debug)]
+pub struct SummarySelection {
+    pub message: ChatMessage,
+    pub insert_before_timestamp: Option<i64>,
+}
 
 pub struct AIMessageManager;
 
@@ -375,6 +384,16 @@ impl AIMessageManager {
                 workspace_path: request.workspacePath.clone(),
                 max_tokens: request.maxTokens,
                 token_usage_threshold: request.tokenUsageThreshold,
+                last_assistant_usage: request
+                    .chatHistory
+                    .iter()
+                    .rev()
+                    .find(|message| message.sender == "ai")
+                    .map(|message| TokenCounts {
+                        input: message.inputTokens,
+                        cached_input: message.cachedInputTokens,
+                        output: message.outputTokens,
+                    }),
             },
         )
         .await;
@@ -531,7 +550,8 @@ impl AIMessageManager {
         configuration: &ChatConfigurationResult,
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
         trigger: Option<operit_providers::chat::enhance::ConversationService::SummaryTriggerContext>,
-    ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
+        allowSelectionHook: bool,
+    ) -> Result<Option<SummarySelection>, operit_providers::chat::llmprovider::AIService::AiServiceError>
     {
         let lastSummaryIndex = messages
             .iter()
@@ -558,6 +578,46 @@ impl AIMessageManager {
                 .collect::<Vec<_>>(),
         };
 
+        if messagesToSummarize.is_empty() {
+            return Ok(None);
+        }
+
+        let mut keptTailCount = 0usize;
+        if allowSelectionHook {
+            let candidateTurns = messagesToSummarize
+                .iter()
+                .map(|message| {
+                    let kind = if message.sender == "user" { PromptTurnKind::USER } else { PromptTurnKind::ASSISTANT };
+                    PromptTurn::new(kind, message.displayText())
+                })
+                .collect::<Vec<_>>();
+            let mut boundaryMetadata = HashMap::new();
+            boundaryMetadata.insert("candidateCount".to_string(), serde_json::json!(messagesToSummarize.len()));
+            let boundaryContext = SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
+                stage: "before_select_summary_boundary".to_string(),
+                chat_id: Some(chatId.clone()),
+                use_english: None,
+                previous_summary: previousSummary.clone(),
+                chat_history: candidateTurns,
+                prepared_history: Vec::new(),
+                system_prompt: None,
+                summary_prompt: None,
+                summary_result: None,
+                model_parameters: Vec::new(),
+                metadata: boundaryMetadata,
+            })
+            .await
+            .map_err(AiServiceError::RequestFailed)?;
+            keptTailCount = boundaryContext
+                .metadata
+                .get("keptTailCount")
+                .and_then(serde_json::Value::as_i64)
+                .unwrap_or(0)
+                .clamp(0, messagesToSummarize.len() as i64) as usize;
+        }
+        let splitIndex = messagesToSummarize.len() - keptTailCount;
+        let insertBeforeTimestamp = messagesToSummarize[splitIndex..].first().map(|message| message.timestamp);
+        let messagesToSummarize = &messagesToSummarize[..splitIndex];
         if messagesToSummarize.is_empty() {
             return Ok(None);
         }
@@ -597,22 +657,25 @@ impl AIMessageManager {
             summaryWithQuotes.trim_end().to_string()
         };
 
-        Ok(Some(ChatMessage {
-            sender: "summary".to_string(),
-            parts: vec![operit_model::MessagePart::MessagePart::markdown(
-                "part-0".to_string(),
-                0,
-                finalSummary,
-            )],
-            timestamp: ChatMessageTimestampAllocator::next(),
-            roleName: "system".to_string(),
-            inputTokens: usage.input,
-            outputTokens: usage.output,
-            cachedInputTokens: usage.cached_input,
-            waitDurationMs: (endTime - startTime).max(1),
-            sentAt: startTime,
-            completedAt: endTime,
-            ..ChatMessage::new("summary".to_string())
+        Ok(Some(SummarySelection {
+            message: ChatMessage {
+                sender: "summary".to_string(),
+                parts: vec![operit_model::MessagePart::MessagePart::markdown(
+                    "part-0".to_string(),
+                    0,
+                    finalSummary,
+                )],
+                timestamp: ChatMessageTimestampAllocator::next(),
+                roleName: "system".to_string(),
+                inputTokens: usage.input,
+                outputTokens: usage.output,
+                cachedInputTokens: usage.cached_input,
+                waitDurationMs: (endTime - startTime).max(1),
+                sentAt: startTime,
+                completedAt: endTime,
+                ..ChatMessage::new("summary".to_string())
+            },
+            insert_before_timestamp: insertBeforeTimestamp,
         }))
     }
 

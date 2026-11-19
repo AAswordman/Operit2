@@ -47,9 +47,10 @@ transformation or a message persistence interceptor.
 
 `registerSummaryGenerateHook` runs at:
 
-1. `before_prepare_summary_prompt`
-2. `before_send_to_model`
-3. `after_generate_summary`
+1. `before_select_summary_boundary`
+2. `before_prepare_summary_prompt`
+3. `before_send_to_model`
+4. `after_generate_summary`
 
 The payload includes `chatId`, `chatHistory`, `preparedHistory`, `systemPrompt`,
 `summaryPrompt`, `summaryResult`, `previousSummary`, model parameters and metadata.
@@ -63,6 +64,17 @@ or `"after_reply"`). It is absent for manual summaries and token-limit
 continuations. From `before_send_to_model` onward metadata also includes
 `preparedMessageCount`; `after_generate_summary` adds the summary model's real
 token usage (`inputTokens`, `cachedInputTokens`, `outputTokens`).
+
+`before_select_summary_boundary` runs before the host slices the conversation,
+for automatic compaction and whole-chat manual summaries (not for summaries
+inserted at a user-chosen position). Its `chatHistory` lists the candidate turns
+since the previous summary and `metadata.candidateCount` gives their count.
+Return `metadata.keptTailCount` (integer, clamped to `[0, candidateCount]`) to
+keep that many trailing candidate messages verbatim: they are excluded from the
+summarized range and the summary is inserted before them, so they remain in the
+active window. `0` — the default when no handler sets it — summarizes every
+candidate, matching the host's historical boundary. Keeping all candidates
+skips compaction entirely.
 
 An object result can replace `chatHistory`, `preparedHistory`, `systemPrompt`,
 `summaryPrompt` and `summaryResult`; metadata entries are merged. Every handler
@@ -78,3 +90,18 @@ A string result replaces `summaryPrompt` at either before stage and
 `summaryResult` at `after_generate_summary`. Empty strings are accepted as
 explicit replacements; the normal summary-content validation still applies to
 the final result. Return `null` or `undefined` to leave the summary unchanged.
+
+## Message processing
+
+`registerMessageProcessingPlugin` runs before a send (and its independent
+estimate) with `chatId`, `messageContent`, `chatHistory`, `workspacePath`,
+`maxTokens`, `tokenUsageThreshold` and `probeOnly`. It also carries
+`lastAssistantUsage`: the real generation usage (`inputTokens`,
+`cachedInputTokens`, `outputTokens`) of the latest completed assistant turn in
+that chat, or `null` before the first reply. Because it describes the previous
+completed call, it lags the current send by one turn. `cachedInputTokens` is the
+portion of that prompt served from the provider's prompt cache — the signal a
+cache-aware policy needs to weigh what a history rewrite would discard.
+`inputTokens` conventions differ across providers (some report the prompt total,
+some prompt-minus-cached), so treat `cachedInputTokens` as the cache-hit count
+rather than assuming a fixed ratio against `inputTokens`.

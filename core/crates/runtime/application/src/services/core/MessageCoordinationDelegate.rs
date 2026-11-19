@@ -1022,30 +1022,44 @@ impl MessageCoordinationDelegate {
         request: ConversationSummaryRequest,
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
     ) -> Result<(), String> {
-        let insertPosition = self
-            .chatHistoryDelegate
-            .findProperSummaryPosition(messages.clone());
-        let beforeTimestamp = insertPosition
-            .checked_sub(1)
-            .and_then(|index| messages.get(index))
-            .map(|message| message.timestamp);
-        let afterTimestamp = messages
-            .get(insertPosition)
-            .map(|message| message.timestamp);
-        let summary =
+        let selection =
             AIMessageManager::summarizeMemory(
-                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger,
+                enhancedAiService, messages.clone(), request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger, true,
             )
                 .await
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "No valid conversation summary was generated".to_string())?;
+        let (beforeTimestamp, afterTimestamp) = match selection.insert_before_timestamp {
+            Some(anchor) => {
+                let anchorIndex = messages.iter().position(|message| message.timestamp == anchor);
+                (
+                    anchorIndex
+                        .and_then(|index| index.checked_sub(1))
+                        .and_then(|index| messages.get(index))
+                        .map(|message| message.timestamp),
+                    Some(anchor),
+                )
+            }
+            None => {
+                let insertPosition = self
+                    .chatHistoryDelegate
+                    .findProperSummaryPosition(messages.clone());
+                (
+                    insertPosition
+                        .checked_sub(1)
+                        .and_then(|index| messages.get(index))
+                        .map(|message| message.timestamp),
+                    messages.get(insertPosition).map(|message| message.timestamp),
+                )
+            }
+        };
         if request.requireCurrentChat
             && self.chatHistoryDelegate.currentChatIdFlow.value().as_ref() != Some(&request.chatId)
         {
             return Ok(());
         }
         self.chatHistoryDelegate.addSummaryMessage(
-            summary,
+            selection.message,
             beforeTimestamp,
             afterTimestamp,
             Some(request.chatId.clone()),
