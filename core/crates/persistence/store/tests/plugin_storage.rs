@@ -1877,6 +1877,7 @@ fn snapshot_correction_preserves_plugin_scope_versions_and_uncovered_late_rows()
     source.replay(&late);
     assert_eq!(PluginStorage::syncSnapshot(reopened, &target.path, target.device).unwrap().data,
         PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap().data);
+    drop((authoritative, capture));
     author.dispose();source.dispose();target.dispose();delayed.dispose();
 }
 
@@ -1953,6 +1954,7 @@ fn complete_file_correction_restores_plugin_schema_and_history() {
             let offline = Fixture::new("offline"); offline.replay(&history); offline.replay(&initialized);
             offline.replay(&source.export()); target.replay(&source.export());
             assert_eq!(PluginStorage::syncSnapshot(offline.host.clone(), &offline.path, offline.device).unwrap().data, file.data);
+            drop(file);
             source.dispose(); target.dispose(); offline.dispose();
         }
     }
@@ -1983,7 +1985,7 @@ fn damaged_plugin_structures_accept_complete_correction_and_forward_the_baseline
             _ => unreachable!(),
         }).unwrap();
         let capture = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
-        assert_eq!(PluginStorage::snapshotContentDigest(&capture).is_err(), !matches!(damage,"missing-internal"|"invalid-initialization"), "{damage}");
+        assert_eq!(PluginStorage::snapshotContentSummary(&capture).is_err(), !matches!(damage,"missing-internal"|"invalid-initialization"), "{damage}");
         assert_eq!(capture.manifest().unwrap().damaged, damage == "invalid-initialization");
         let file = PluginStorage::syncSnapshot(source.host.clone(), &source.path, source.device).unwrap();
         assert!(!target.repair(&source, "stale", &file).unwrap(), "{damage}");
@@ -1996,10 +1998,10 @@ fn damaged_plugin_structures_accept_complete_correction_and_forward_the_baseline
         assert!(target.repair(&source, &capture.token().unwrap(), &file).unwrap(), "{damage}");
         let restored = PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap();
         assert_eq!(restored.data, file.data, "{damage}");
-        assert!(PluginStorage::snapshotContentDigest(&restored).is_ok());
+        assert!(PluginStorage::snapshotContentSummary(&restored).is_ok());
         let offline = Fixture::new("offline"); offline.replay(&target.export());
         assert_eq!(PluginStorage::syncSnapshot(offline.host.clone(), &offline.path, offline.device).unwrap().data, file.data);
-        drop(store); source.dispose(); target.dispose(); offline.dispose();
+        drop((store, capture, file, restored)); source.dispose(); target.dispose(); offline.dispose();
     }
 }
 
@@ -2018,6 +2020,7 @@ fn covered_character_history_cannot_rekey_the_copied_file_through_merge_rules() 
     assert!(target.repair(&source, "", &file).unwrap());
     target.replay(&covered);
     assert_eq!(PluginStorage::syncSnapshot(target.host.clone(), &target.path, target.device).unwrap().data, file.data);
+    drop(file);
     old.dispose(); source.dispose(); target.dispose();
 }
 
@@ -2035,22 +2038,22 @@ fn incremental_object_merge_bookkeeping_does_not_require_a_full_snapshot() {
     b.data=serde_json::from_slice(&serde_json::to_vec(&b.data).unwrap()).unwrap();
     assert_eq!(a.data.revision, b.data.revision);
     assert_ne!(a.data.values["_operit_merge_map"], b.data.values["_operit_merge_map"]);
-    assert_eq!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&b).unwrap());
+    assert_eq!(PluginStorage::snapshotContentSummary(&a).unwrap(), PluginStorage::snapshotContentSummary(&b).unwrap());
     let mut local_cas = b.clone();
     let values = local_cas.data.values.get_mut("_operit_values").unwrap();
     let version = values["columns"].as_array().unwrap().iter().position(|column| column == "version").unwrap();
     values["rows"][0][version] = json!({"Text":"another-local-cas-token"});
-    assert_eq!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&local_cas).unwrap());
+    assert_eq!(PluginStorage::snapshotContentSummary(&a).unwrap(), PluginStorage::snapshotContentSummary(&local_cas).unwrap());
     assert_ne!(b.token().unwrap(), local_cas.token().unwrap());
     let map = local_cas.data.values.get_mut("_operit_merge_map").unwrap();
     let canonical = map["columns"].as_array().unwrap().iter().position(|column| column == "canonical_key").unwrap();
     map["rows"][0][canonical] = json!({"Text":"different-canonical-card"});
-    assert_ne!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&local_cas).unwrap());
+    assert_ne!(PluginStorage::snapshotContentSummary(&a).unwrap(), PluginStorage::snapshotContentSummary(&local_cas).unwrap());
     let mut changed = b.clone();
     let values = changed.data.values.get_mut("_operit_values").unwrap();
     let value = values["columns"].as_array().unwrap().iter().position(|column| column == "value").unwrap();
     values["rows"][0][value] = json!({"Text":"changed business content"});
-    assert_ne!(PluginStorage::snapshotContentDigest(&a).unwrap(), PluginStorage::snapshotContentDigest(&changed).unwrap());
+    assert_ne!(PluginStorage::snapshotContentSummary(&a).unwrap(), PluginStorage::snapshotContentSummary(&changed).unwrap());
     source.dispose(); target.dispose();
 }
 
@@ -2090,6 +2093,7 @@ fn corrected_plugin_logs_collapse_on_both_peers_and_initialize_an_offline_peer()
     assert_eq!(PluginStorage::syncSnapshot(empty.host.clone(),&empty.path,empty.device).unwrap().data,authority.data);
     let (receipt,errors) = PluginStorage::receipt(source.host.clone()).unwrap(); assert!(errors.is_empty());
     assert!(PluginStorage::operationsSince(source.host.clone(),&receipt,&[],100).unwrap().is_empty());
+    drop((a, b, authority));
     source.dispose(); target.dispose(); offline.dispose(); empty.dispose();
 }
 

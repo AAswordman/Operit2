@@ -201,7 +201,7 @@ pub(super) fn installControlSyncTestApplication(router: &mut CoreNodeRouter) {
         control,
         storage: router.localCore.runtimeStorageHost(),
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        consistencyVersion: Some(7),
+        consistencyVersion: Some(8),
     }));
 }
 
@@ -230,7 +230,7 @@ fn gateMesh(
                 control,
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: pendingFailure.clone(),
-                consistencyVersion: Some(7),
+                consistencyVersion: Some(8),
             }));
         } else {
             installControlSyncTestApplication(router);
@@ -557,7 +557,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
                 control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(7),
+                consistencyVersion: Some(8),
             }
             .gateClock()
             .unwrap()
@@ -619,7 +619,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
                 control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(7),
+                consistencyVersion: Some(8),
             }
             .gateClock()
             .unwrap(),
@@ -765,8 +765,8 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
                 if self.fault == "new-write" && report == 0 && snapshot.node == "z" {
                     self.inner.control.updatePolicy("async-boundary".into(), "new".into()).unwrap();
                 }
-                let content = operit_store::sync::SqlChatSyncStore::SqlChatSyncStore::snapshotContentDigest(&snapshot).unwrap();
-                let manifest = snapshot.manifest_with_digest(content).unwrap();
+                let content = operit_store::sync::SqlChatSyncStore::SqlChatSyncStore::snapshotContentSummary(&snapshot).unwrap();
+                let manifest = snapshot.manifest_with_content(content).unwrap();
                 let pending = self.fault == "pending" && self.faultPending.load(std::sync::atomic::Ordering::SeqCst);
                 operit_link::toCoreValue(serde_json::json!({"manifests":[manifest],"pendingOwners":if pending {vec![snapshot.data.owner.path.clone()]} else {vec![]},"errors":[],"boundary":operit_store::Transaction::digest(&self.inner.gateClock().unwrap()).unwrap()}))
                     .map_err(|error| operit_link::CoreLinkError::internal(error.to_string()))
@@ -839,24 +839,28 @@ impl operit_link::CoreLinkSharedClient for CorrectionRaceApplication {
 
 #[tokio::test]
 async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retry() {
-    use operit_store::Transaction::{Backend, Data, Owner, Snapshot};
+    use operit_store::Transaction::{Backend, Data, Owner, Revision, Snapshot};
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
-    for fault in ["syncReadSnapshot", "syncReadCoverage", "manifest", "syncRepairSnapshot", "repeated-writes", "incremental", "hydrate", "pending", "storage"] {
+    for fault in ["syncReadSnapshot", "syncReadCoverage", "manifest", "syncRepairSnapshot", "repeated-writes", "incremental", "hydrate", "pending", "storage", "larger-older"] {
         let (mut routers, _access, peers, _) = gateMesh(&format!("sync-quiet-{fault}"));
         let snapshots = ["z", "a"].map(|node| {
             let mut data = Data::empty(Owner { backend: Backend::Sql,
                 path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(), format: 1, layout: 1 });
             data.values.insert("record".into(), serde_json::json!({"columns":["value"],"rows":[[{"Text":if fault == "hydrate" {"same"} else {node}}]]}));
+            if fault == "larger-older" {
+                if node == "a" { data.values.get_mut("record").unwrap()["rows"].as_array_mut().unwrap().push(serde_json::json!([{"Text":"phone-history"}])); }
+                data.revision = Some(Revision { createdAt: if node == "a" {10} else {999}, originDeviceId: node.into(), sequence: 1 });
+            }
             Arc::new(StdMutex::new(Snapshot { damage: None, node: node.into(), data, covered: BTreeSet::new(), generation: 0 }))
         });
         for (index, router) in routers.iter_mut().enumerate() {
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(7) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(8) },
                 snapshot: snapshots[index].clone(), fault, reports: std::sync::atomic::AtomicUsize::new(0),
-                authority: Arc::new(StdMutex::new(snapshots[0].lock().unwrap().clone())), faultPending: std::sync::atomic::AtomicBool::new(true),
+                authority: Arc::new(StdMutex::new(snapshots[usize::from(fault == "larger-older")].lock().unwrap().clone())), faultPending: std::sync::atomic::AtomicBool::new(true),
             }));
         }
         peers[1].link(&routers[0]);
@@ -872,6 +876,10 @@ async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retr
             continue;
         }
         assert!(result.is_ok(), "{fault}: {result:?}");
+        if fault == "larger-older" {
+            assert_eq!(synchronizedMethodCount(&peers[1], "syncReadSnapshot"), 0, "the newer, smaller remote file must not be exported as authority");
+            assert!(synchronizedMethodCount(&peers[1], "syncReadCoverage") > 0, "only its covered history is imported");
+        }
         assert!(observer.progressFlow().value().is_empty(), "a snapshot race must stay quiet: {fault}");
         let before = synchronizedMethodCount(&peers[1], "syncConsistency");
         assert_eq!(snapshots[0].lock().unwrap().data, snapshots[1].lock().unwrap().data);
@@ -908,7 +916,7 @@ async fn metadata_differences_and_new_incremental_writes_never_start_a_full_tran
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(7) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(8) },
                 snapshot: snapshots[index].clone(),
                 fault: if scenario == "new-write" { "new-write" } else { "" },
                 reports: std::sync::atomic::AtomicUsize::new(0),

@@ -238,7 +238,7 @@ fn production_sync_memory_budget() {
         let path = format!("runtime/config/preferences/probe-{owner}.json");
         let source = path.clone();
         registry.register(Participant { path, prepare: Box::new(||Ok(())), validate:None, apply:Box::new(|_,_|Ok(BTreeMap::new())), project:None,
-            snapshot:Some(Box::new(move || Ok(snapshot(&source, 2 * 1024 * 1024)))), definition:None, coverage:Box::new(||Ok(BTreeSet::new())), content_digest:Snapshot::content_digest, repair:None }).unwrap();
+            snapshot:Some(Box::new(move || Ok(snapshot(&source, 2 * 1024 * 1024)))), definition:None, coverage:Box::new(||Ok(BTreeSet::new())), content_summary:Snapshot::content_summary, repair:None }).unwrap();
     }
     let ((manifests, _, errors), manifest_peak) = measured("sixteen_2MiB_manifests", || registry.manifests().unwrap());
     assert_eq!(manifests.len(), 16); assert!(errors.is_empty());

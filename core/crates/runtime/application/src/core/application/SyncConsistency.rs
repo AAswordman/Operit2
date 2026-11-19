@@ -48,7 +48,7 @@ impl OperitApplication {
         let chat = SqlChatSyncStore::default().map_err(|e|e.to_string());
         let (prepare,apply,snapshot,coverage,repair,receipt,export,inventory) = (chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat.clone(),chat);
         registry.register(Participant { validate: None,
-            content_digest: SqlChatSyncStore::snapshotContentDigest,
+            content_summary: SqlChatSyncStore::snapshotContentSummary,
             path: operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH.into(),
             prepare: Box::new(move || prepare.as_ref().map(|_|()).map_err(|e|ApplyError::Retry(e.clone()))),
             apply: Box::new(move |operations,_| {
@@ -88,7 +88,7 @@ impl OperitApplication {
             let (apply,snapshot,coverage,repair,project,definition) = (plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone(),plugin.clone());
             let (snapshot_path,coverage_path,project_path,definition_path,node_snapshot,node_repair,storage) = (path.clone(),path.clone(),path.clone(),path.clone(),node.clone(),node.clone(),storage.clone());
             registry.register(Participant { validate: None, path,
-                content_digest: PluginStorage::snapshotContentDigest,
+                content_summary: PluginStorage::snapshotContentSummary,
                 prepare: Box::new(||Ok(())),
                 apply: Box::new(move |operations,aliases| {
                     PluginStorage::applyOperations(apply.clone().map_err(ApplyError::Retry)?,storage.clone(),operations,aliases)?;
@@ -111,7 +111,7 @@ impl OperitApplication {
             let path = registry.target(operation)?;
             if registry.owners.contains_key(&path) { continue; }
             let file_batch = file_batch.clone();
-            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, definition: None, coverage: Box::new(||Ok(Default::default())), content_digest: operit_store::Transaction::Snapshot::content_digest, repair: None,
+            registry.register(Participant { validate: None, path, prepare: Box::new(||Ok(())), project: None, snapshot: None, definition: None, coverage: Box::new(||Ok(Default::default())), content_summary: operit_store::Transaction::Snapshot::content_summary, repair: None,
                 apply: Box::new(move |operations,_| (|| {
                     if operations.iter().all(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN) {
                         self.runtimeNetworkControlStore()?.applySyncedOperations(operations)?;

@@ -1542,8 +1542,8 @@ pub fn syncCoverage(host: Arc<dyn RuntimeSqliteHost>, path: &str) -> Result<BTre
     withSyncDataset(host, path, "", |dataset| dataset.coverage())
 }
 
-/// Compares synchronized plugin records independently of local materialization bookkeeping.
-pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
+/// Hashes and counts synchronized plugin contents independently of local bookkeeping.
+pub fn snapshotContentSummary(snapshot: &crate::Transaction::Snapshot) -> Result<(String, u64), String> {
     let mut values=snapshot.data.values.clone();
     if let Some(sql)=&snapshot.data.sql {
         for (name,columns) in &sql.columns { values.insert(name.clone(),serde_json::json!({"columns":columns})); }
@@ -1574,8 +1574,8 @@ pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<
     if values.keys().filter(|name|!name.starts_with("_operit_")).cloned().collect::<BTreeSet<_>>() != declared {
         return Err("Synchronized SQL declarations are incomplete".into());
     }
-    if let Some(sql)=&snapshot.data.sql { return sql.content_digest(&snapshot.data.owner); }
-    snapshot.projected_content_digest(|table, value| match table {
+    if let Some(sql)=&snapshot.data.sql { return sql.content_summary(&snapshot.data.owner); }
+    snapshot.projected_content_summary(|table, value| match table {
         // Derived reference/name projection may allocate a device-local CAS token.
         "_operit_values" => crate::Transaction::project_sql_table(value, &["version"], None).map(Some),
         // A receipt's self mapping and the origin recording an equivalent alias do not change its meaning.

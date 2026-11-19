@@ -82,8 +82,8 @@ pub struct Participant<'a> {
     /// Owner-specific metadata required to reconstruct a database from its snapshot.
     pub definition: Option<Box<dyn Fn() -> Result<serde_json::Value, String> + 'a>>,
     pub coverage: Box<dyn Fn() -> Result<BTreeSet<String>, String> + 'a>,
-    /// Owner-defined business equality; snapshot tokens and transfer contents remain complete.
-    pub content_digest: fn(&Snapshot) -> Result<String, String>,
+    /// Owner-defined business digest and byte count; CAS and transfer contents remain complete.
+    pub content_summary: fn(&Snapshot) -> Result<(String, u64), String>,
     pub repair: Option<Box<dyn Fn(&str, &Snapshot, Option<&str>, Option<&serde_json::Value>) -> Result<bool, String> + 'a>>,
 }
 
@@ -346,8 +346,8 @@ impl<'a> Registry<'a> {
                 Ok(snapshot) => snapshot,
                 Err(error) => { errors.push(format!("{path}: {error}")); continue; }
             };
-            let manifest = match (owner.content_digest)(&snapshot) {
-                Ok(digest) => snapshot.manifest_with_digest(digest)?,
+            let manifest = match (owner.content_summary)(&snapshot) {
+                Ok(content) => snapshot.manifest_with_content(content)?,
                 Err(error) => {
                     let mut manifest = snapshot.manifest()?;
                     manifest.damaged = true;
@@ -409,6 +409,7 @@ impl<'a> Registry<'a> {
         self.repair_file(owner, expected, source, None, None)
     }
 
+    /// Applies the shared authority rule and CAS before atomically publishing a replacement.
     pub fn repair_file(&self, owner: &Owner, expected: &str, source: &Snapshot, file: Option<&str>, definition: Option<&serde_json::Value>) -> Result<bool, String> {
         if &source.data.owner != owner { return Err("Snapshot owner differs".into()); }
         let participant = self.owners.get(&owner.path).ok_or("Unknown transaction owner")?;
@@ -422,8 +423,14 @@ impl<'a> Registry<'a> {
         if !expected.is_empty() {
             let current = capture()?;
             if current.token()? != expected { return Ok(false); }
-            if current.damage.is_none() && (participant.content_digest)(&current).is_ok() && (&current.data.revision, &current.node) > (&source.data.revision, &source.node) {
-                return Err("Snapshot source is older than the local authority".into());
+            if current.damage.is_none() {
+                if let Ok(content) = (participant.content_summary)(&current) {
+                    let local = current.manifest_with_content(content)?;
+                    let remote = source.manifest_with_content((participant.content_summary)(source)?)?;
+                    if super::compare_manifests(&local, &remote)? == super::Source::Local {
+                        return Err("Snapshot source ranks below the local authority".into());
+                    }
+                }
             }
         }
         let repair = participant.repair.as_ref().ok_or("Owner cannot replace files")?;

@@ -28,8 +28,13 @@ fn staged_rows_keep_wire_order_and_multiplicity_but_project_distinct_contents() 
         ]));
         let legacy: Snapshot = serde_json::from_value(wire).unwrap();
         assert_eq!(staged.token().unwrap(), legacy.token().unwrap());
-        assert_eq!(SqlChatSyncStore::snapshotContentDigest(&staged).unwrap(),
-            SqlChatSyncStore::snapshotContentDigest(&legacy).unwrap());
+        assert_eq!(SqlChatSyncStore::snapshotContentSummary(&staged).unwrap(),
+            SqlChatSyncStore::snapshotContentSummary(&legacy).unwrap());
+        let (digest, bytes) = SqlChatSyncStore::snapshotContentSummary(&staged).unwrap();
+        assert_eq!(bytes, serde_json::to_vec(&json!({"messages":{"columns":["body"],"rows":[
+            [{"Text":"other"}],[{"Text":"same"}]
+        ]}})).unwrap().len() as u64);
+        assert_eq!(staged.manifest_with_content((digest, bytes)).unwrap().contentBytes, bytes);
     }
     std::fs::remove_dir_all(root).unwrap();
 }

@@ -95,6 +95,30 @@ impl Drop for Fixture {
     fn drop(&mut self) { let _ = std::fs::remove_dir_all(&self.root); }
 }
 
+/// Forced correction accepts an older, larger file and seals the smaller peer's newer history.
+#[test]
+fn registry_restores_larger_older_contents_and_accepts_subsequent_edits() {
+    let f = Fixture::new();
+    let store = f.store();
+    let key = stringPreferencesKey("retained_models");
+    store.edit(|values| values.set(&key, json!(["phone-model".repeat(100)]))).unwrap();
+    let mut source = store.syncSnapshot().unwrap();
+    store.edit(|values| values.set(&key, json!([]))).unwrap();
+    let current = store.syncSnapshot().unwrap();
+    assert!(source.data.revision < current.data.revision);
+    assert!(source.manifest().unwrap().contentBytes > current.manifest().unwrap().contentBytes);
+    source.covered.extend(current.covered.iter().cloned());
+    let schema = PreferenceMergeSchema::default();
+    let registry = PreferenceMerge::registry(f.host.clone(), &schema, [], |_,_|true).unwrap();
+    assert!(registry.repair(&source.data.owner, &current.token().unwrap(), &source).unwrap());
+    assert_eq!(store.syncSnapshot().unwrap().data, source.data);
+    let restored = store.syncSnapshot().unwrap();
+    assert!(registry.repair(&source.data.owner, &restored.token().unwrap(), &current).unwrap_err().contains("ranks below"));
+    assert_eq!(store.syncSnapshot().unwrap(), restored);
+    store.edit(|values| values.set(&key, json!(["phone-model".repeat(100), "new-model"]))).unwrap();
+    assert_eq!(store.data().unwrap().get(&key).unwrap().as_array().unwrap().len(), 2);
+}
+
 #[test]
 fn comparison_restores_a_missing_space_projection_without_publishing_an_empty_record() {
     let f = Fixture::new();

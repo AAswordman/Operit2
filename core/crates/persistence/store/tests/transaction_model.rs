@@ -178,8 +178,9 @@ fn missing_higher_order_targets_wait_and_immutable_conflicts_are_errors() {
     assert!(h.materialize(&Data::empty(owner.clone()), &migration(&owner, &owner)).unwrap().pending.contains_key("missing"));
 }
 
+/// Equal-size business contents retain revision and node ordering, with CAS enforced.
 #[test]
-fn correction_chooses_business_revision_then_node_and_uses_cas() {
+fn correction_breaks_size_ties_by_business_revision_then_node_and_uses_cas() {
     let owner = owner(Backend::DataStore, 1, "file");
     let mut a = Data::empty(owner.clone());
     a.apply(&tx(&owner, "older", 20, vec![set("x", json!("a"))])).unwrap();
@@ -197,7 +198,7 @@ fn correction_chooses_business_revision_then_node_and_uses_cas() {
     assert_eq!(local.covered, BTreeSet::from(["older".into(), "newer".into()]));
     let mut tied = remote.clone();
     tied.node = "z".into();
-    tied.data.values.insert("x".into(), json!("tie"));
+    tied.data.values.insert("x".into(), json!("z"));
     assert_eq!(compare(&remote, &tied).unwrap().unwrap().source.node, "z");
 }
 

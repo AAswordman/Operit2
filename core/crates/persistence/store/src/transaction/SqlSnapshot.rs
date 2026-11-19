@@ -135,7 +135,8 @@ impl SqlSnapshot {
         self.visit(name,false,&mut |row| { rows.push(serde_json::to_value(row).map_err(|e|e.to_string())?); Ok(()) })?;
         Ok(serde_json::json!({"columns":columns,"rows":rows}))
     }
-    pub(crate) fn content_digest(&self, owner: &super::Owner) -> Result<String> {
+    /// Hashes projected business contents and counts their bytes in one streamed pass.
+    pub(crate) fn content_summary(&self, owner: &super::Owner) -> Result<(String, u64)> {
         if self.columns.values().any(Vec::is_empty) { return Err("Missing synchronized SQL table".into()); }
         let mut projected_columns = self.columns.clone();
         for (name, columns) in &self.columns {
@@ -160,7 +161,7 @@ impl SqlSnapshot {
                 Ok(())
             }).map_err(|e|e.to_string())?;
         }
-        super::digest(&Values { snapshot:self, columns:&projected_columns, projected:true })
+        super::serialized_digest(&Values { snapshot:self, columns:&projected_columns, projected:true })
     }
     pub(crate) fn values(&self) -> Values<'_> { Values { snapshot:self, columns:&self.columns, projected:false } }
     pub(crate) fn files(&self) -> RuntimeFileSyncStore { RuntimeFileSyncStore::new(self.storage.clone(),"runtime/sync") }

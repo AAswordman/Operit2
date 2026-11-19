@@ -311,3 +311,55 @@ fn model_correction_seals_missing_old_context_before_new_transactions() {
     assert_eq!(open(target.host.clone(), path).unwrap().syncSnapshot().unwrap().data, store.syncSnapshot().unwrap().data);
     assert_eq!(receiver.data().unwrap().get(&key).unwrap()["name"], json!("After correction"));
 }
+
+/// A newly edited desktop default cannot displace the phone's larger model file during correction.
+#[test]
+fn model_correction_keeps_phone_models_despite_a_newer_desktop_edit() {
+    use operit_model::ModelConfigData::{default_deepseek_provider, ModelProfile};
+    use operit_store::{PreferenceMerge, Transaction};
+    let path = Layout::MODEL_CONFIGS_PREFERENCES_PATH;
+    let (phone, desktop) = (Fixture::new(), Fixture::new());
+    for fixture in [&phone, &desktop] {
+        fixture.host.writeBytes(path, br#"{"__operit_preferences_schema_version":9}"#).unwrap();
+    }
+    let mut provider = default_deepseek_provider();
+    provider.models.extend([ModelProfile::new("phone-model-one".into()), ModelProfile::new("phone-model-two".into())]);
+    let key = stringPreferencesKey(&format!("provider_{}", provider.id));
+    let phone_store = open(phone.host.clone(), path).unwrap();
+    phone_store.edit(|values| values.set(&key, serde_json::to_value(&provider).unwrap())).unwrap();
+    let phone_snapshot = phone_store.syncSnapshot().unwrap();
+    let desktop_store = open(desktop.host.clone(), path).unwrap();
+    desktop_store.edit(|values| values.set(&key, serde_json::to_value(default_deepseek_provider()).unwrap())).unwrap();
+    desktop_store.edit(|values| {
+        let mut provider = values.get(&key).unwrap().clone();
+        provider["endpoint"] = json!("https://desktop.invalid/v1");
+        values.set(&key, provider);
+    }).unwrap();
+    let desktop_snapshot = desktop_store.syncSnapshot().unwrap();
+    assert!(phone_snapshot.data.revision < desktop_snapshot.data.revision);
+    let baseline = Transaction::compare(&phone_snapshot, &desktop_snapshot).unwrap().unwrap().source;
+    assert_eq!(baseline.data, phone_snapshot.data);
+    assert_eq!(Transaction::compare(&desktop_snapshot, &phone_snapshot).unwrap().unwrap().source, baseline);
+    let declarations = schema();
+    for fixture in [&phone, &desktop] {
+        let registry = PreferenceMerge::registry(fixture.host.clone(), &declarations, [], |_,_|true).unwrap();
+        let before = registry.snapshot(&baseline.data.owner).unwrap();
+        assert!(registry.repair(&baseline.data.owner, &before.token().unwrap(), &baseline).unwrap());
+        assert_eq!(registry.snapshot(&baseline.data.owner).unwrap().data, phone_snapshot.data);
+    }
+    let source = PreferenceMerge::registry(phone.host.clone(), &declarations, [], |_,_|true).unwrap();
+    let target = PreferenceMerge::registry(desktop.host.clone(), &declarations, [], |_,_|true).unwrap();
+    assert_eq!(source.journal.preferenceHistory().unwrap(), target.journal.preferenceHistory().unwrap());
+    let before = source.journal.preferenceHistory().unwrap();
+    phone_store.edit(|values| {
+        let mut provider = values.get(&key).unwrap().clone();
+        provider["models"].as_array_mut().unwrap().push(serde_json::to_value(ModelProfile::new("after-correction".into())).unwrap());
+        values.set(&key, provider);
+    }).unwrap();
+    let newer = source.journal.preferenceHistory().unwrap().into_iter().filter(|op| !before.contains(op)).collect::<Vec<_>>();
+    assert!(!newer.is_empty());
+    let report = target.receive(&newer).unwrap();
+    assert!(report.errors.is_empty() && report.pending.is_empty() && report.skipped == 0);
+    assert_eq!(desktop_store.syncSnapshot().unwrap().data, phone_store.syncSnapshot().unwrap().data);
+    assert_eq!(desktop_store.data().unwrap().get(&key).unwrap()["models"].as_array().unwrap().len(), provider.models.len() + 1);
+}

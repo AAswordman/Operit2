@@ -28,6 +28,8 @@ pub const CHAT_SYNC_DOMAIN: &str = "chat";
 
 const CHAT_SYNC_OPERATION_SCHEMA_VERSION: i32 = 8;
 
+const EXPORT_OPERATIONS_SQL: &str = "SELECT opId, originDeviceId, sequence, domain, entityType, entityId, operation, semantics, createdAt, schemaVersion FROM sync_sql_operations AS original WHERE domain=?1 AND originDeviceId=?2 AND sequence>=?3 AND (semantics!='entity_state' OR NOT EXISTS (SELECT 1 FROM sync_sql_operations AS newer WHERE newer.originDeviceId=original.originDeviceId AND newer.domain=original.domain AND newer.entityType=original.entityType AND newer.entityId=original.entityId AND newer.semantics='entity_state' AND newer.sequence>original.sequence)) ORDER BY sequence LIMIT ?4";
+
 const DELETE_CHAT: &str = "chats";
 const DELETE_MESSAGE: &str = "messages";
 const DELETE_MESSAGES_FROM: &str = "messages_from";
@@ -135,10 +137,10 @@ impl SqlChatSyncStore {
     /// Returns exact applied identities independently of the chat table contents.
     pub fn syncCoverage(&self) -> Result<BTreeSet<String>, String> { self.dataset().coverage() }
 
-    /// Compares synchronized chat contents independently of local storage identities.
-    pub fn snapshotContentDigest(snapshot: &crate::Transaction::Snapshot) -> Result<String, String> {
-        if let Some(sql)=&snapshot.data.sql { return sql.content_digest(&snapshot.data.owner); }
-        snapshot.projected_content_digest(|table, value| match table {
+    /// Hashes and counts synchronized chat contents independently of local row identities.
+    pub fn snapshotContentSummary(snapshot: &crate::Transaction::Snapshot) -> Result<(String, u64), String> {
+        if let Some(sql)=&snapshot.data.sql { return sql.content_summary(&snapshot.data.owner); }
+        snapshot.projected_content_summary(|table, value| match table {
             "messages" => crate::Transaction::project_sql_table(value, &["messageId"], None).map(Some),
             "message_variants" => crate::Transaction::project_sql_table(value, &["variantId"], None).map(Some),
             _ => Ok(None),
@@ -549,7 +551,7 @@ impl SqlChatSyncStore {
                     break;
                 };
                 let rows = self.store.queryRows(
-                    "SELECT opId, originDeviceId, sequence, domain, entityType, entityId, operation, semantics, createdAt, schemaVersion FROM sync_sql_operations AS original WHERE domain=?1 AND originDeviceId=?2 AND sequence>=?3 AND (semantics!='entity_state' OR NOT EXISTS (SELECT 1 FROM sync_sql_operations AS newer WHERE newer.originDeviceId=original.originDeviceId AND newer.domain=original.domain AND newer.entityType=original.entityType AND newer.entityId=original.entityId AND newer.semantics='entity_state' AND newer.sequence>original.sequence)) ORDER BY sequence LIMIT ?4",
+                    EXPORT_OPERATIONS_SQL,
                     sqliteParams![CHAT_SYNC_DOMAIN, origin, next, limit.min(256) as i64],
                 )?;
                 if rows.is_empty() {

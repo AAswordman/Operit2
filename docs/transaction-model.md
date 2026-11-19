@@ -140,10 +140,10 @@ $$
 (\widehat e_A=e_A)\land(\widehat e_B=e_B)\land C(A')\ne C(B').
 $$
 
-该前提允许 $e_A\ne e_B$，无需两端同时采样。历史覆盖信息差异本身不触发全量。$d(X)$ 为固定节点优先序，按业务修订、节点优先序依次比较：
+该前提允许 $e_A\ne e_B$，无需两端同时采样。历史覆盖信息差异本身不触发全量。仅在完整且未损坏的来源中选源；$s(X)$ 为该 owner 确定序列化的同步业务内容字节数，排除本地辅助列、事务历史、加密开销及数据库空闲页；$d(X)$ 为固定节点优先序。强制校正按内容字节数、业务修订、节点优先序依次比较：
 
 $$
-X^*=\underset{X\in\{A',B'\}}{\arg\max}\;(\rho(X),d(X)),\qquad
+X^*=\underset{X\in\{A',B'\}}{\arg\max}\;(s(X),\rho(X),d(X)),\qquad
 C(A_{\mathrm{final}})=C(B_{\mathrm{final}})=C(X^*).
 $$
 

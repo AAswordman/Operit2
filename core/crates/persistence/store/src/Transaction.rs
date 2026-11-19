@@ -379,10 +379,16 @@ impl PartialEq for Data {
     }
 }
 impl Data {
-    pub fn values_digest(&self) -> Result<String> {
+    /// Hashes business values and counts their canonical bytes in the same pass.
+    pub fn values_summary(&self) -> Result<(String, u64)> {
         #[cfg(feature="full")]
-        if let Some(sql)=&self.sql { return digest(&sql.values()); }
-        digest(&self.values)
+        if let Some(sql)=&self.sql { return serialized_digest(&sql.values()); }
+        serialized_digest(&self.values)
+    }
+
+    /// Reads the business digest independently of replay metadata.
+    pub fn values_digest(&self) -> Result<String> {
+        self.values_summary().map(|(digest, _)| digest)
     }
 
     pub fn empty(owner: Owner) -> Self {
@@ -1247,8 +1253,12 @@ impl Snapshot {
     pub fn content_digest(&self) -> Result<String> {
         self.data.values_digest()
     }
+    /// Counts synchronized business bytes without including history or snapshot metadata.
+    pub fn content_summary(&self) -> Result<(String, u64)> {
+        self.data.values_summary()
+    }
     /// Owners may project local SQL bookkeeping out of comparisons while retaining the full CAS/export snapshot.
-    pub fn projected_content_digest(&self, project: impl Fn(&str, &Value) -> Result<Option<Value>>) -> Result<String> {
+    pub fn projected_content_summary(&self, project: impl Fn(&str, &Value) -> Result<Option<Value>>) -> Result<(String, u64)> {
         use std::borrow::Cow;
         let values = self.data.values.iter().map(|(name, value)| {
             if self.data.owner.backend == Backend::Sql && value["columns"].as_array().is_none_or(Vec::is_empty) {
@@ -1260,7 +1270,7 @@ impl Snapshot {
             };
             Ok((name, content))
         }).collect::<Result<BTreeMap<_, _>>>()?;
-        digest(&values)
+        serialized_digest(&values)
     }
 
     /// Installs authoritative data without allocating a business revision.
@@ -1304,6 +1314,8 @@ pub struct Manifest {
     pub revision: Option<Revision>,
     pub token: String,
     pub digest: String,
+    /// Canonical synchronized content bytes, excluding local bookkeeping and journal history.
+    pub contentBytes: u64,
     #[serde(default)]
     pub damaged: bool,
 }
@@ -1315,6 +1327,7 @@ pub enum Source {
     Remote,
 }
 
+/// Chooses complete, larger business contents before revision and deterministic node order.
 pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> {
     if local.owner != remote.owner {
         return Err("Snapshots are not at the same format/layout".into());
@@ -1329,7 +1342,7 @@ pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> 
         return Ok(Source::Equal);
     }
     Ok(
-        if (&local.revision, &local.node) >= (&remote.revision, &remote.node) {
+        if (local.contentBytes, &local.revision, &local.node) >= (remote.contentBytes, &remote.revision, &remote.node) {
             Source::Local
         } else {
             Source::Remote
@@ -1338,18 +1351,20 @@ pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> 
 }
 
 impl Snapshot {
+    /// Captures the business digest and byte count together with the complete CAS token.
     pub fn manifest(&self) -> Result<Manifest> {
-        self.manifest_with_digest(self.content_digest()?)
+        self.manifest_with_content(self.content_summary()?)
     }
 
-    /// Use the owner's content digest while retaining the complete snapshot token.
-    pub fn manifest_with_digest(&self, digest: String) -> Result<Manifest> {
+    /// Uses the owner's digest and byte count while retaining the complete snapshot token.
+    pub fn manifest_with_content(&self, (digest, contentBytes): (String, u64)) -> Result<Manifest> {
         Ok(Manifest {
             owner: self.data.owner.clone(),
             node: self.node.clone(),
             revision: self.data.revision.clone(),
             token: self.token()?,
             digest,
+            contentBytes,
             damaged: self.damage.is_some(),
         })
     }
