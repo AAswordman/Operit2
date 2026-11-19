@@ -324,8 +324,11 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
   } else if (state.toolDraft !== null && state.snapshot !== null) {
     const draft = state.toolDraft, catalog = state.snapshot.toolCatalog;
     const names = ["内置工具", "插件", "技能", "MCP"], keys = ["allowedBuiltinTools", "allowedPackages", "allowedSkills", "allowedMcpServers"] as const;
-    const key = keys[state.toolTab], options = [catalog.builtinTools, catalog.packages, catalog.skills, catalog.mcpServers][state.toolTab];
-    const children = options.filter(option => (option.displayName + " " + option.description).toLowerCase().includes(state.toolQuery.toLowerCase())).map(option => check("entity-tool-" + key + "-" + option.name, option.displayName, draft[key].includes(option.name), checked => {
+    const key = keys[state.toolTab], available = [catalog.builtinTools, catalog.packages, catalog.skills, catalog.mcpServers][state.toolTab];
+    // Keep stored sources removable after a tool is renamed, uninstalled or disconnected.
+    const options = [...available, ...[...new Set(draft[key])].filter(name => !available.some(option => option.name === name))
+      .map(name => ({ name, displayName: name + "（来源已不可用）", description: "" }))];
+    const children = options.filter(option => (option.name + " " + option.displayName + " " + option.description).toLowerCase().includes(state.toolQuery.toLowerCase())).map(option => check("entity-tool-" + key + "-" + option.name, option.displayName, draft[key].includes(option.name), checked => {
       assertOwner(); const policy = live.current.toolDraft; if (policy !== null) update({ toolDraft: { ...policy, [key]: checked ? [...policy[key], option.name] : policy[key].filter(name => name !== option.name) } });
     }));
     panel = shell("配置允许使用的工具", ctx.UI.Column({ fillMaxSize: true }, [tabs("entity-tool-tabs", names, state.toolTab, toolTab => update({ toolTab })),

@@ -12,6 +12,7 @@ import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/common/markdown/EnhancedCodeBlock.dart';
 import 'package:operit2/ui/common/markdown/MarkdownImageRenderer.dart';
 import 'package:operit2/ui/features/chat/components/ChatArea.dart';
+import 'package:operit2/ui/features/chat/components/attachments/ChatMessageImageAttachments.dart';
 import 'package:operit2/ui/features/chat/components/part/CustomXmlRenderer.dart';
 import 'package:operit2/ui/features/chat/components/part/ToolCallResultMergeRender.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleAiMessageComposable.dart';
@@ -252,6 +253,51 @@ void main() {
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  for (final wide in [false, true]) {
+    for (final avatar in [false, true]) {
+      for (final systemScale in [1.0, 2.0]) {
+        testWidgets('context footer aligns with the bubble left without moving it, '
+            'wide=$wide, avatar=$avatar, scale=$systemScale', (tester) async {
+          for (final text in [
+            'hi',
+            List.filled(60, 'long message').join(' '),
+          ]) {
+            await _mount(
+              tester,
+              _snapshot(wide: wide, avatar: avatar),
+              message: _message(user: true, content: text),
+              systemScale: systemScale,
+            );
+            final before = tester.getRect(find.byType(BubbleSurface));
+            await _mount(
+              tester,
+              _snapshot(wide: wide, avatar: avatar),
+              message: _message(
+                user: true,
+                content:
+                    '$text\n<attachment id="message_insert_extra_bundle_1" '
+                    'filename="Context" type="text/plain">extra</attachment>',
+              ),
+              systemScale: systemScale,
+            );
+            final after = tester.getRect(find.byType(BubbleSurface));
+            expect(after.width, closeTo(before.width, 0.01));
+            expect(after.right, closeTo(before.right, 0.01));
+            final metadata = tester.getRect(
+              find.byType(ChatMessageContextMetadata),
+            );
+            expect(metadata.top, greaterThanOrEqualTo(after.bottom));
+            expect(metadata.left, closeTo(after.left, 0.01));
+            expect(metadata.width, lessThanOrEqualTo(after.width + 0.01));
+            expect(find.text('补充信息'), findsOneWidget);
+            expect(tester.takeException(), isNull);
+            await tester.pumpWidget(const SizedBox.shrink());
+          }
+        });
+      }
+    }
+  }
 
   for (final scale in [0.85, 1.0, 1.3]) {
     for (final systemScale in [1.0, 2.0]) {

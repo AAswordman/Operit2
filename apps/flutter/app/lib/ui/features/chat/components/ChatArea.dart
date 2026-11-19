@@ -239,7 +239,7 @@ class _ChatAreaState extends State<ChatArea>
     return _buildTranscript(context);
   }
 
-  /// Mounts only viewport rows and lets each row acquire its display projection.
+  /// Prepares nearby rows while keeping distant history unmounted.
   Widget _buildTranscript(BuildContext context) {
     final showLoadingIndicator = _shouldShowLoadingIndicator();
     final itemCount =
@@ -305,6 +305,13 @@ class _ChatAreaState extends State<ChatArea>
                 child: CustomScrollView(
                   key: _scrollLayoutKey,
                   controller: _layoutScrollController,
+                  // Projection and Markdown parsing both cross the async bridge.
+                  // Prepare one screen on either side before bubbles become visible,
+                  // with a cap so tall desktop windows do not mount whole histories.
+                  cacheExtent: math.min(
+                    MediaQuery.sizeOf(context).height,
+                    1200,
+                  ),
                   // Chat history should stop hard at its boundaries. The
                   // platform default can use bouncing physics, which lets the
                   // transcript move past the bottom and snap back on release.

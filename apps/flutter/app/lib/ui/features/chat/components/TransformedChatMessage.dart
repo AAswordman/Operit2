@@ -8,6 +8,7 @@ import 'package:operit2/l10n/generated/app_localizations.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../common/ChatResponsePresentation.dart';
+import '../../../common/markdown/StreamMarkdownRenderer.dart';
 
 /// Retains completed display copies across viewport mounts without changing canonical messages.
 class MessageTransformCache {
@@ -309,12 +310,28 @@ class _TransformedChatMessageState extends State<TransformedChatMessage> {
     super.dispose();
   }
 
+  /// Releases any reserved height when a pending row leaves the transcript.
+  @override
+  void deactivate() {
+    MarkdownLayoutNotification(
+      source: this,
+      isPending: false,
+    ).dispatch(context);
+    super.deactivate();
+  }
+
   /// Renders completed projections and explicit failures while retaining valid prior display copies.
   @override
   Widget build(BuildContext context) {
     return ValueListenableBuilder<AsyncSnapshot<core_proxy.ChatMessage>>(
       valueListenable: _entry.snapshot,
       builder: (context, snapshot, _) {
+        // Projection precedes Markdown mounting, so it must reserve the row's
+        // measured height too; otherwise remounting briefly records a 64px row.
+        MarkdownLayoutNotification(
+          source: this,
+          isPending: !snapshot.hasData && !snapshot.hasError,
+        ).dispatch(context);
         if (snapshot.hasError) {
           return Text(
             AppLocalizations.of(

@@ -13,7 +13,6 @@ class ChatScrollRailGeometry {
 
   static const double tickSpacing = 16;
   static const double interactionWidth = 88;
-  static const double hitWidth = 48;
   static const double rightInset = 8;
   static const double maximumTickWidth = 18;
   // Reach full width before the pointer touches the longest tick's left edge.
@@ -35,11 +34,10 @@ class ChatScrollRailGeometry {
   /// Centers the rail independently of the number of messages in history.
   double get top => (viewportHeight - height) / 2;
 
-  /// Provides at least a finger-sized target without enlarging the painted rail.
-  double get hitHeight => math.min(viewportHeight, math.max(48.0, height + 16));
+  /// The entire right-hand viewport is one target, regardless of tick count.
+  double get hitHeight => viewportHeight;
 
-  /// Centers the touch target around the actual tick positions.
-  double get hitTop => (viewportHeight - hitHeight) / 2;
+  double get hitTop => 0;
 
   /// Keeps the wave visible in both short conversations and long histories.
   double get waveSpread => math.min(waveRadius, math.max(12.0, height / 3));

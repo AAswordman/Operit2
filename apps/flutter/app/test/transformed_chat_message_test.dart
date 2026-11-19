@@ -11,6 +11,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/ui/common/ChatResponsePresentation.dart';
 import 'package:operit2/ui/features/chat/components/TransformedChatMessage.dart';
+import 'package:operit2/ui/features/chat/components/ChatMessageExtent.dart';
 
 /// Retains projection requests so tests can complete them out of order.
 class _ProjectionBridge extends OperitRuntimeBridge {
@@ -138,6 +139,58 @@ ChatMessage _message([
 
 /// Exercises actual generated projection requests, revision watches, and widget lifetime.
 void main() {
+  testWidgets(
+    'preserves measured bubble height while display projection waits',
+    (tester) async {
+      final bridge = _ProjectionBridge();
+      addTearDown(bridge.revisions.close);
+      final clients = GeneratedCoreProxyClients(bridge);
+      final extent = ChatMessageExtent();
+      addTearDown(extent.dispose);
+      Widget render(int generation) => MaterialApp(
+        home: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 400,
+            child: observeChatMessageExtent(
+              key: ValueKey(generation),
+              extent: extent,
+              child: TransformedChatMessage(
+                message: _message(),
+                chatId: 'chat',
+                clients: clients,
+                depthAnchor: 42,
+                builder: (message) => SizedBox(
+                  height: message.parts.single.content == 'short' ? 180 : 320,
+                ),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.pumpWidget(render(0));
+      expect(extent.hasPendingContent, isTrue);
+      bridge.complete(0, 'tall');
+      await tester.pumpAndSettle();
+      expect(extent.hasPendingContent, isFalse);
+      expect(tester.getSize(find.byType(ChatMessageExtentBox)).height, 320);
+      await tester.pumpWidget(render(1));
+      expect(extent.hasPendingContent, isTrue);
+      expect(tester.getSize(find.byType(ChatMessageExtentBox)).height, 320);
+      bridge.complete(1, 'short');
+      await tester.pumpAndSettle();
+      expect(extent.hasPendingContent, isFalse);
+      expect(tester.getSize(find.byType(ChatMessageExtentBox)).height, 180);
+      await tester.pumpWidget(render(2));
+      expect(extent.hasPendingContent, isTrue);
+      await tester.pumpWidget(const SizedBox());
+      expect(extent.hasPendingContent, isFalse);
+      bridge.complete(2, 'unmounted');
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+    },
+  );
+
   testWidgets(
     'only mounted rows acquire projections and inactive rows stay idle',
     (tester) async {

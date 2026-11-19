@@ -214,15 +214,6 @@ function normalizedCharacter(card: Card): Card {
     throw new Error("记忆绑定模式无效");
   if (card.ttsConfigId !== null) requireId(card.ttsConfigId, "TTS 配置");
   if (card.themeConfigId !== null) requireId(card.themeConfigId, "主题配置");
-  const policy = card.toolAccessConfig;
-  if (
-    policy.enabled &&
-    (policy.allowedPackages.length !== 0 ||
-      policy.allowedSkills.length !== 0 ||
-      policy.allowedMcpServers.length !== 0) &&
-    !new Set(normalizeNames(policy.allowedBuiltinTools)).has("use_package")
-  )
-    throw new Error("选择外部工具来源时必须允许 use_package");
   const mounts = [];
   const mountIds = new Set<string>();
   for (const mount of card.sharedMemoryMounts) {

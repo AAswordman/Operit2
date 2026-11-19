@@ -30,6 +30,7 @@ import 'package:operit2/ui/features/chat/components/part/ThinkToolsXmlNodeGroupe
 import 'package:operit2/ui/features/chat/components/part/ToolDisplayComponents.dart';
 import 'package:operit2/ui/features/chat/components/style/input/common/InputProcessingStatusLane.dart';
 import 'package:operit2/ui/features/chat/components/style/cursor/CursorStyleChatMessage.dart';
+import 'package:operit2/ui/features/chat/components/style/bubble/BubbleAiMessageComposable.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
@@ -49,6 +50,96 @@ class _PositionPeakController extends ScrollController {
 
 /// Verifies transcript rendering and scroll ownership across asynchronous updates.
 void main() {
+  for (final tailOrigin in [false, true]) {
+    testWidgets(
+      'prepares bubbles before scrolling them into view, tail origin=$tailOrigin',
+      (tester) async {
+        final scroll = ScrollController();
+        final autoScroll = ValueNotifier(tailOrigin);
+        final bridge = _ScriptedGeneratedChatBridge()
+          ..messageProjectionDelay = const Duration(milliseconds: 80);
+        addTearDown(scroll.dispose);
+        addTearDown(autoScroll.dispose);
+        addTearDown(bridge.dispose);
+        final parsed = <String>[];
+        final messages = List.generate(
+          80,
+          (index) => _heightTestMessageWithContent(
+            index,
+            'Prefetch $tailOrigin row $index\n${List.filled(8, 'Body line').join('\n')}',
+          ),
+        );
+        await tester.pumpWidget(
+          _chatArea(
+            bridge: bridge,
+            messages: messages,
+            isLoading: false,
+            scrollController: scroll,
+            autoScrollToBottom: autoScroll,
+            themeSnapshot: ThemePreferenceSnapshot.fromJson({
+              ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
+              'aiChatStyle': UserPreferencesManager.CHAT_STYLE_BUBBLE,
+            }),
+            splitMarkdownContent: (content) async {
+              parsed.add(content);
+              await Future<void>.delayed(const Duration(milliseconds: 80));
+              return _splitMarkdownContent(content);
+            },
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 160));
+        await tester.pump(const Duration(milliseconds: 160));
+        await tester.pumpAndSettle();
+        final viewport = tester.getRect(find.byType(CustomScrollView));
+        // Select a completed bubble beyond Flutter's default 250px cache.
+        final candidates = find
+            .byType(BubbleAiMessageComposable, skipOffstage: false)
+            .evaluate()
+            .where((element) {
+              final rect = tester.getRect(
+                find.byWidget(element.widget, skipOffstage: false),
+              );
+              return tailOrigin
+                  ? rect.bottom < viewport.top - 300 &&
+                        rect.bottom > viewport.top - viewport.height
+                  : rect.top > viewport.bottom + 300 &&
+                        rect.top < viewport.bottom + viewport.height;
+            })
+            .toList();
+        expect(candidates, isNotEmpty);
+        final bubble = candidates.first.widget as BubbleAiMessageComposable;
+        final content = bubble.message.parts.single.content;
+        final surface = find.descendant(
+          of: find.byWidget(bubble, skipOffstage: false),
+          matching: find.byType(StreamMarkdownRenderer, skipOffstage: false),
+          skipOffstage: false,
+        );
+        expect(parsed.where((text) => text == content), hasLength(1));
+        final rect = tester.getRect(find.byWidget(bubble, skipOffstage: false));
+        final distance = tailOrigin
+            ? rect.bottom - viewport.top - 100
+            : rect.top - viewport.bottom + 100;
+        autoScroll.value = false;
+        scroll.jumpTo(scroll.offset + distance);
+        // Inspect the first scroll frame, before either delayed operation could finish.
+        await tester.pump();
+        expect(
+          tester.getRect(find.byWidget(bubble)).overlaps(viewport),
+          isTrue,
+        );
+        expect(
+          tester.widget<StreamMarkdownRenderer>(surface).state!.renderNodes,
+          isNotEmpty,
+        );
+        expect(parsed.where((text) => text == content), hasLength(1));
+        expect(parsed.length, lessThan(40));
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pump(const Duration(milliseconds: 200));
+      },
+    );
+  }
+
   testWidgets(
     'mounts the viewport without preparing its complete history window',
     (tester) async {
@@ -3030,6 +3121,7 @@ class _GeneratedFlowRendererHarnessState
 /// Emits generated proxy events in the same order as routed chat streaming.
 class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
   bool deferMessageProjections = false;
+  Duration messageProjectionDelay = Duration.zero;
   final delayedProjections =
       <({Object? message, Completer<Uint8List> result})>[];
 
@@ -3069,6 +3161,9 @@ class _ScriptedGeneratedChatBridge extends OperitRuntimeBridge {
             result: result,
           ));
           return result.future;
+        }
+        if (messageProjectionDelay != Duration.zero) {
+          await Future<void>.delayed(messageProjectionDelay);
         }
         return encodeCoreLink([0, (request.args as Map)['messages']]);
       case 'executeTool':
@@ -3248,6 +3343,7 @@ Widget _chatArea({
   double bottomContentInset = 0,
   ValueChanged<bool>? onAutoScrollToBottomChanged,
   Widget Function(Widget)? bodyBuilder,
+  ThemePreferenceSnapshot? themeSnapshot,
   MarkdownContentSplitter splitMarkdownContent = _splitMarkdownContent,
   RevealMessageForLocator? onRevealMessageForLocator,
   LoadMessageLocatorEntries? loadLocatorEntries,
@@ -3315,7 +3411,7 @@ Widget _chatArea({
   );
   return OperitTheme(
     initialThemePreferenceSnapshot:
-        UserPreferencesManager.defaultThemePreferenceSnapshot,
+        themeSnapshot ?? UserPreferencesManager.defaultThemePreferenceSnapshot,
     initialThemeIsReady: false,
     unconfiguredChildEnabled: true,
     hostInteractionHostsEnabled: false,

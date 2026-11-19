@@ -384,10 +384,6 @@ test("native export saves canonical Operit and Tavern data through the host sele
 
 test("the sole native editor retains model TTS shared-memory and four-category tool bindings on the real save transaction", async t => {
   const plugin = await environment(t), card = await plugin.api("character.create", { values: { name: "原生全部绑定" } });
-  const readCatalog = plugin.tools.Catalog.readToolSources;
-  plugin.tools.Catalog.readToolSources = async () => {
-    const catalog = await readCatalog(); catalog.builtinTools.push({ name: "use_package", displayName: "启用外部工具", description: "真实工具策略必需的显式能力" }); return catalog;
-  };
   const store = await plugin.api("memory.shared.create", { name: "原生共享库" });
   const ui = management(plugin); await ui.load(); await ui.open("edit", "card", card.id); await loadManagementModal(ui);
   await click(ui, "entity-model-switch", "onCheckedChange", true); await click(ui, "entity-model-picker"); await click(ui, "entity-picker-" + JSON.stringify(["dashscope", "qwen-plus"]));
@@ -400,9 +396,6 @@ test("the sole native editor retains model TTS shared-memory and four-category t
     const row = keyedNode(ui.render().tree, "entity-tool-" + keys[tab] + "-" + names[tab]);
     await ui.dispatch(composeNodes(row, node => node.type === "Checkbox")[0].props.onCheckedChange, true);
   }
-  await click(ui, "entity-tool-tabs-0");
-  const activation = keyedNode(ui.render().tree, "entity-tool-allowedBuiltinTools-use_package");
-  await ui.dispatch(composeNodes(activation, node => node.type === "Checkbox")[0].props.onCheckedChange, true);
   await click(ui, "entity-primary");
   assert.equal((await plugin.api("character.get", { id: card.id })).ttsConfigId, null);
   await click(ui, "entity-primary");
@@ -410,7 +403,43 @@ test("the sole native editor retains model TTS shared-memory and four-category t
   const saved = plain(await plugin.api("character.get", { id: card.id }));
   assert.equal(saved.chatModelBindingMode, "FIXED_MODEL"); assert.equal(saved.chatModelId, "qwen-plus"); assert.equal(saved.chatProviderId, "dashscope"); assert.equal(saved.ttsConfigId, "tts-one");
   assert.equal(saved.memoryBindingMode, "SHARED"); assert.equal(saved.sharedMemoryId, store.id); assert.equal(saved.toolAccessConfig.enabled, true);
-  for (let tab = 0; tab < 4; tab++) assert.deepEqual(saved.toolAccessConfig[keys[tab]], tab === 0 ? [names[tab], "use_package"] : [names[tab]]);
+  for (let tab = 0; tab < 4; tab++) assert.deepEqual(saved.toolAccessConfig[keys[tab]], [names[tab]]);
+});
+
+/** Stored permissions remain editable even when sources disappeared or activation was never allowed. */
+test("installed tool policies open preserve content edits and allow removing unavailable sources", async t => {
+  const plugin = await environment(t);
+  const keys = ["allowedBuiltinTools", "allowedPackages", "allowedSkills", "allowedMcpServers"];
+  const policy = { enabled: true, ...Object.fromEntries(keys.map(key => [key, ["unavailable-" + key]])) };
+  plugin.disk.storage.inspectPreferences("cards", values => { values.record_default.toolAccessConfig = policy; });
+  const before = plugin.disk.stateBytes(), ui = mount(plugin, "preview", "card", "default");
+  await ui.load(); await click(ui, "entity-preview-config-toggle");
+  assert.deepEqual(plugin.disk.stateBytes(), before);
+  await click(ui, "entity-primary");
+  await click(ui, "entity-field-description", "onValueChange", "白名单不应阻止编辑正文");
+  await click(ui, "entity-primary");
+  const saved = await plugin.api("character.get", { id: "default" });
+  assert.equal(saved.description, "白名单不应阻止编辑正文");
+  assert.deepEqual(plain(saved.toolAccessConfig), policy);
+  await click(ui, "entity-primary"); await click(ui, "entity-tool-configure");
+  for (let tab = 0; tab < keys.length; tab++) {
+    await click(ui, "entity-tool-tabs-" + tab);
+    const row = keyedNode(ui.render().tree, "entity-tool-" + keys[tab] + "-unavailable-" + keys[tab]);
+    const checkbox = composeNodes(row, node => node.type === "Checkbox")[0];
+    assert.equal(checkbox.props.checked, true);
+    await ui.dispatch(checkbox.props.onCheckedChange, false);
+  }
+  await click(ui, "entity-cancel");
+  assert.deepEqual(plain((await plugin.api("character.get", { id: "default" })).toolAccessConfig), policy);
+  await click(ui, "entity-tool-configure");
+  for (let tab = 0; tab < keys.length; tab++) {
+    await click(ui, "entity-tool-tabs-" + tab);
+    const row = keyedNode(ui.render().tree, "entity-tool-" + keys[tab] + "-unavailable-" + keys[tab]);
+    await ui.dispatch(composeNodes(row, node => node.type === "Checkbox")[0].props.onCheckedChange, false);
+  }
+  await click(ui, "entity-primary"); await click(ui, "entity-primary");
+  assert.deepEqual(plain((await plugin.api("character.get", { id: "default" })).toolAccessConfig),
+    { enabled: true, ...Object.fromEntries(keys.map(key => [key, []])) });
 });
 
 test("native entity content and cancellation are available while its default avatar is pending", async t => {

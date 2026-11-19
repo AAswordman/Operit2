@@ -1,5 +1,6 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
 import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
@@ -357,7 +358,7 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
 }
 
 class _MessageTickRail extends StatefulWidget {
-  /// Creates a painted rail with a separate, finger-sized scrolling strip.
+  /// Creates one continuous interaction region for the painted message index.
   const _MessageTickRail({
     super.key,
     required this.entries,
@@ -383,7 +384,8 @@ class _MessageTickRailState extends State<_MessageTickRail>
   final _pointer = ValueNotifier<Offset>(Offset.zero);
   final _scroll = ScrollController();
   bool _scrolling = false;
-  bool _selecting = false;
+  Timer? _edgeScrollTimer;
+  Offset? _lastPressPosition;
 
   double get _scrollOffset => _scroll.hasClients ? _scroll.offset : 0;
   late final AnimationController _proximity;
@@ -451,6 +453,7 @@ class _MessageTickRailState extends State<_MessageTickRail>
   /// Releases the single repaint animation and pointer notifier.
   @override
   void dispose() {
+    _edgeScrollTimer?.cancel();
     _scroll.dispose();
     _proximity.dispose();
     _pointer.dispose();
@@ -494,17 +497,23 @@ class _MessageTickRailState extends State<_MessageTickRail>
   void _updatePointer(Offset position) {
     final geometry = widget.geometry;
     _pointer.value = position;
-    if (_scrolling && !_selecting) return;
+    if (_scrolling && _touchPointer == null) return;
     final insideHeight =
         position.dy >= geometry.hitTop &&
         position.dy <= geometry.hitTop + geometry.hitHeight;
-    _animateProximity(insideHeight ? geometry.proximityAt(position.dx) : 0);
+    final selecting = _touchPointer != null;
+    _animateProximity(
+      selecting
+          ? 1
+          : insideHeight
+          ? geometry.proximityAt(position.dx)
+          : 0,
+    );
     final index =
-        insideHeight &&
-            position.dx >=
-                ChatScrollRailGeometry.interactionWidth -
-                    ChatScrollRailGeometry.hitWidth &&
-            position.dx <= ChatScrollRailGeometry.interactionWidth
+        selecting ||
+            (insideHeight &&
+                position.dx >= 0 &&
+                position.dx <= ChatScrollRailGeometry.interactionWidth)
         ? geometry.entryIndexAt(position.dy, scrollOffset: _scrollOffset)
         : null;
     if (index != _previewIndex) {
@@ -527,48 +536,80 @@ class _MessageTickRailState extends State<_MessageTickRail>
     }
   }
 
-  /// Shows touch previews immediately, before a tap or drag wins its gesture arena.
+  /// The whole right-hand area owns one continuous press/move/release gesture.
   void _handlePointerDown(PointerDownEvent event) {
-    if (event.kind != PointerDeviceKind.mouse) {
-      if (_touchPointer != null) return;
-      _touchPointer = event.pointer;
-    }
+    if (_touchPointer != null || event.buttons != kPrimaryButton) return;
+    _touchPointer = event.pointer;
+    _lastPressPosition = event.localPosition;
+    _scrolling = false;
+    if (_scroll.hasClients) _scroll.jumpTo(_scrollOffset);
     _updatePointer(event.localPosition);
+    _edgeScrollTimer = Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) => _scrollAtSelectionEdge(),
+    );
   }
 
-  /// Scrubs previews without jumping through the transcript on drag updates.
+  /// Moving always updates selection, without a long-press or swipe threshold.
   void _handlePointerMove(PointerMoveEvent event) {
-    if (event.kind != PointerDeviceKind.mouse &&
-        event.pointer != _touchPointer) {
-      return;
-    }
+    if (event.pointer != _touchPointer) return;
+    _lastPressPosition = event.localPosition;
     _updatePointer(event.localPosition);
   }
 
-  /// Clears touch state on both release and cancellation without hiding mouse hover.
-  void _handlePointerEnd(PointerEvent event) {
-    if (event.pointer != _touchPointer) return;
-    _touchPointer = null;
-    _clearPointer();
+  /// Holding near either edge browses long histories while preserving selection.
+  void _scrollAtSelectionEdge() {
+    final position = _lastPressPosition;
+    if (!mounted || position == null || !_scroll.hasClients) return;
+    const edge = 48.0;
+    final height = widget.geometry.viewportHeight;
+    final direction = position.dy < edge
+        ? -((edge - position.dy) / edge).clamp(0.0, 1.0)
+        : position.dy > height - edge
+        ? ((position.dy - height + edge) / edge).clamp(0.0, 1.0)
+        : 0.0;
+    if (direction == 0) return;
+    final offset = (_scrollOffset + direction * 12).clamp(
+      0.0,
+      widget.geometry.maxScrollOffset,
+    );
+    if (offset == _scrollOffset) return;
+    _scroll.jumpTo(offset);
+    _updatePointer(position);
   }
 
-  /// Commits a deliberate tap or long-press selection using the scrolled geometry.
-  void _jumpAt(double localY) {
+  /// Release always confirms the current selection, including horizontal drift.
+  void _handlePointerUp(PointerUpEvent event) {
+    if (event.pointer != _touchPointer) return;
     final index = widget.geometry.entryIndexAt(
-      localY + widget.geometry.hitTop,
+      event.localPosition.dy,
       scrollOffset: _scrollOffset,
     );
+    _endPress();
     widget.onTapTick(widget.entries[index].timestamp);
   }
 
-  /// Observes proximity without consuming transcript gestures outside the hit strip.
+  void _handlePointerCancel(PointerCancelEvent event) {
+    if (event.pointer == _touchPointer) _endPress();
+  }
+
+  void _endPress() {
+    _edgeScrollTimer?.cancel();
+    _edgeScrollTimer = null;
+    _touchPointer = null;
+    _lastPressPosition = null;
+    _scrolling = false;
+    _clearPointer();
+  }
+
+  /// Captures the entire region; individual painted ticks have no hit targets.
   @override
   Widget build(BuildContext context) {
     _disableAnimations = MediaQuery.disableAnimationsOf(context);
     final geometry = widget.geometry;
     final colors = Theme.of(context).colorScheme;
     return MouseRegion(
-      opaque: false,
+      opaque: true,
       hitTestBehavior: HitTestBehavior.translucent,
       onHover: (event) => _updatePointer(event.localPosition),
       onExit: (_) {
@@ -576,10 +617,6 @@ class _MessageTickRailState extends State<_MessageTickRail>
       },
       child: Listener(
         behavior: HitTestBehavior.translucent,
-        onPointerDown: _handlePointerDown,
-        onPointerMove: _handlePointerMove,
-        onPointerUp: _handlePointerEnd,
-        onPointerCancel: _handlePointerEnd,
         child: Stack(
           fit: StackFit.expand,
           children: <Widget>[
@@ -606,70 +643,50 @@ class _MessageTickRailState extends State<_MessageTickRail>
             Positioned(
               right: 0,
               top: geometry.hitTop,
-              width: ChatScrollRailGeometry.hitWidth,
+              width: ChatScrollRailGeometry.interactionWidth,
               height: geometry.hitHeight,
               child: MouseRegion(
                 cursor: SystemMouseCursors.click,
-                opaque: false,
-                child: GestureDetector(
+                opaque: true,
+                child: RawGestureDetector(
                   key: const ValueKey<String>('chat-scroll-rail-hit-target'),
                   behavior: HitTestBehavior.opaque,
-                  onTapUp: (details) => _jumpAt(details.localPosition.dy),
-                  onLongPressStart: (details) {
-                    _selecting = true;
-                    _updatePointer(
-                      Offset(
-                        ChatScrollRailGeometry.interactionWidth -
-                            ChatScrollRailGeometry.hitWidth +
-                            details.localPosition.dx,
-                        details.localPosition.dy + geometry.hitTop,
-                      ),
-                    );
+                  gestures: <Type, GestureRecognizerFactory>{
+                    EagerGestureRecognizer:
+                        GestureRecognizerFactoryWithHandlers<
+                          EagerGestureRecognizer
+                        >(EagerGestureRecognizer.new, (_) {}),
                   },
-                  onLongPressMoveUpdate: (details) => _updatePointer(
-                    Offset(
-                      ChatScrollRailGeometry.interactionWidth -
-                          ChatScrollRailGeometry.hitWidth +
-                          details.localPosition.dx,
-                      details.localPosition.dy + geometry.hitTop,
-                    ),
-                  ),
-                  onLongPressEnd: (details) {
-                    _selecting = false;
-                    if (details.localPosition.dy >= 0 &&
-                        details.localPosition.dy <= geometry.hitHeight &&
-                        details.localPosition.dx >= 0 &&
-                        details.localPosition.dx <=
-                            ChatScrollRailGeometry.hitWidth) {
-                      _jumpAt(details.localPosition.dy);
-                    }
-                    _clearPointer();
-                  },
-                  onLongPressCancel: () {
-                    _selecting = false;
-                    _clearPointer();
-                  },
-                  child: NotificationListener<ScrollNotification>(
-                    onNotification: (notification) {
-                      if (notification is ScrollStartNotification) {
-                        _scrolling = true;
-                        _clearPointer();
-                      } else if (notification is ScrollEndNotification) {
-                        _scrolling = false;
-                      }
-                      return true;
-                    },
-                    child: ScrollConfiguration(
-                      behavior: ScrollConfiguration.of(
-                        context,
-                      ).copyWith(scrollbars: false, overscroll: false),
-                      child: SingleChildScrollView(
-                        controller: _scroll,
-                        primary: false,
-                        physics: const ClampingScrollPhysics(),
-                        child: SizedBox(
-                          height: geometry.hitHeight + geometry.maxScrollOffset,
-                          width: ChatScrollRailGeometry.hitWidth,
+                  child: Listener(
+                    behavior: HitTestBehavior.opaque,
+                    onPointerDown: _handlePointerDown,
+                    onPointerMove: _handlePointerMove,
+                    onPointerUp: _handlePointerUp,
+                    onPointerCancel: _handlePointerCancel,
+                    child: NotificationListener<ScrollNotification>(
+                      onNotification: (notification) {
+                        if (_touchPointer != null) return true;
+                        if (notification is ScrollStartNotification) {
+                          _scrolling = true;
+                          _clearPointer();
+                        } else if (notification is ScrollEndNotification) {
+                          _scrolling = false;
+                        }
+                        return true;
+                      },
+                      child: ScrollConfiguration(
+                        behavior: ScrollConfiguration.of(
+                          context,
+                        ).copyWith(scrollbars: false, overscroll: false),
+                        child: SingleChildScrollView(
+                          controller: _scroll,
+                          primary: false,
+                          physics: const ClampingScrollPhysics(),
+                          child: SizedBox(
+                            height:
+                                geometry.hitHeight + geometry.maxScrollOffset,
+                            width: ChatScrollRailGeometry.interactionWidth,
+                          ),
                         ),
                       ),
                     ),

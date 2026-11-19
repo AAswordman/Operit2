@@ -165,6 +165,21 @@ test("actual execution policy accepts only frozen builtin and registered source 
   assert.deepEqual(ioCounts(runtime), before);
 });
 
+/** Saving an independent source choice must not implicitly grant its activation permission. */
+test("source policies without use_package save successfully and still block activation at execution", async t => {
+  const runtime = await environment(t);
+  await bind(runtime);
+  await runtime.dispatchDomain("character.update", { id: "default", changes: { toolAccessConfig: {
+    enabled: true, allowedBuiltinTools: ["read_file"], allowedPackages: ["approved_package"], allowedSkills: [], allowedMcpServers: [],
+  } } });
+  const context = await resolveContext(runtime, "policy-chat", "default"), before = ioCounts(runtime);
+  assert.equal((await runtime.toolCallPolicy(event("read_file", context))).action, "allow");
+  assert.equal((await runtime.toolCallPolicy(event("approved_package:read", context))).action, "allow");
+  assert.equal((await runtime.toolCallPolicy(event("use_package", context, { package_name: "approved_package" }))).action, "block");
+  assert.equal((await runtime.toolCallPolicy(event("another_package:read", context))).action, "block");
+  assert.deepEqual(ioCounts(runtime), before);
+});
+
 /** Rejects missing, malformed, mismatched and foreign snapshots instead of manufacturing a participant or reading current bindings. */
 test("invalid execution context and unowned or incomplete snapshot reject explicitly", async t => {
   const runtime = await environment(t), context = await bind(runtime), before = ioCounts(runtime);

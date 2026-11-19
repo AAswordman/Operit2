@@ -316,11 +316,20 @@ class _UserBubbleWithAttachmentsState
         if (widget.parseResult.attachments.any(
           (attachment) => attachment.isInlineContext,
         ))
-          Padding(
-            padding: const EdgeInsets.only(top: 2),
-            child: ChatMessageContextMetadata(
-              attachments: widget.parseResult.attachments,
-              enableDialogs: widget.enableDialogs,
+          SizedBox(
+            width: math.min(
+              effectiveBubbleWidth ?? widget.maxBubbleWidth,
+              widget.maxBubbleWidth,
+            ),
+            child: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: ChatMessageContextMetadata(
+                  attachments: widget.parseResult.attachments,
+                  enableDialogs: widget.enableDialogs,
+                ),
+              ),
             ),
           ),
       ],
