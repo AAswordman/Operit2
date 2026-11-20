@@ -88,10 +88,17 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - name: Prepare plugin build dependencies
         run: |
+          python -m venv .venv
           corepack enable pnpm
           npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends emscripten
       - name: Install bootstrap Dart
         uses: dart-lang/setup-dart@v1
         with:
