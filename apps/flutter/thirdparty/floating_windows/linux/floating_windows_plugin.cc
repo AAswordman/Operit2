@@ -9,6 +9,7 @@ namespace {
 struct WidgetHost {
   FlView* view;
   bool configured = false;
+  bool fill = false;
   bool pointer_down = false;
   guint button = 0;
   guint32 time = 0;
@@ -99,14 +100,17 @@ gboolean CloseWindow(gpointer data) {
   return G_SOURCE_REMOVE;
 }
 
-/// Applies explicit geometry and input policy to this GTK surface.
-void Apply(WidgetHost* host, GtkWindow* window, FlValue* args) {
-  if (!args || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) throw std::invalid_argument("Expected window options");
-  if (FlValue* value = fl_value_lookup_string(args, "draggable")) {
-    if (fl_value_get_type(value) != FL_VALUE_TYPE_BOOL) throw std::invalid_argument("draggable must be boolean");
-    host->draggable = fl_value_get_bool(value);
-    if (!host->draggable) { host->pointer_down = false; host->dragging = false; }
-  }
+/// Sizes a host-sized surface to the primary monitor's full geometry.
+void FillDisplay(GtkWindow* window) {
+  GdkScreen* screen = gtk_window_get_screen(window);
+  GdkRectangle bounds;
+  gdk_screen_get_monitor_geometry(screen, gdk_screen_get_primary_monitor(screen), &bounds);
+  gtk_window_move(window, bounds.x, bounds.y);
+  gtk_window_resize(window, bounds.width, bounds.height);
+}
+
+/// Applies a bounded surface's explicit size and position.
+void ApplyBounds(GtkWindow* window, FlValue* args) {
   int width, height, x, y;
   gtk_window_get_size(window, &width, &height);
   gtk_window_get_position(window, &x, &y);
@@ -123,6 +127,18 @@ void Apply(WidgetHost* host, GtkWindow* window, FlValue* args) {
     if (strcmp(key,"x") == 0) x = static_cast<int>(number); else y = static_cast<int>(number);
   }
   if (fl_value_lookup_string(args,"x") || fl_value_lookup_string(args,"y")) gtk_window_move(window,x,y);
+}
+
+/// Applies geometry and input policy to this GTK surface.
+void Apply(WidgetHost* host, GtkWindow* window, FlValue* args) {
+  if (!args || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) throw std::invalid_argument("Expected window options");
+  if (FlValue* value = fl_value_lookup_string(args, "draggable")) {
+    if (fl_value_get_type(value) != FL_VALUE_TYPE_BOOL) throw std::invalid_argument("draggable must be boolean");
+    host->draggable = fl_value_get_bool(value);
+    if (!host->draggable) { host->pointer_down = false; host->dragging = false; }
+  }
+  if (host->fill) FillDisplay(window);
+  else ApplyBounds(window, args);
   for (const auto* key : {"alwaysOnTop", "focusable", "clickThrough"}) {
     FlValue* value = fl_value_lookup_string(args,key);
     if (!value) continue;
@@ -167,8 +183,6 @@ void HandleMethod(FlMethodChannel*, FlMethodCall* call, gpointer data) {
       fl_value_set_string_take(bounds,"height",fl_value_new_int(height));
       fl_method_call_respond_success(call,bounds,nullptr); return;
     } else if (strcmp(method, "configure") == 0) {
-      const int width = Dimension(args, "width");
-      const int height = Dimension(args, "height");
       FlValue* role = fl_value_lookup_string(args, "role");
       if (role == nullptr || fl_value_get_type(role) != FL_VALUE_TYPE_STRING ||
           strcmp(fl_value_get_string(role), "floating_windows.window") != 0) {
@@ -198,8 +212,15 @@ void HandleMethod(FlMethodChannel*, FlMethodCall* call, gpointer data) {
       gtk_style_context_add_provider(gtk_widget_get_style_context(top), GTK_STYLE_PROVIDER(css), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
       const GdkRGBA clear = {0, 0, 0, 0};
       fl_view_set_background_color(host->view, &clear);
-      gtk_window_resize(window, width, height);
+      if (FlValue* fill = fl_value_lookup_string(args, "fill")) {
+        if (fl_value_get_type(fill) != FL_VALUE_TYPE_BOOL) throw std::invalid_argument("fill must be boolean");
+        host->fill = fl_value_get_bool(fill);
+      }
       Apply(host, window, args);
+      if (host->fill) {
+        g_signal_connect_object(gtk_window_get_screen(window), "monitors-changed",
+            G_CALLBACK(FillDisplay), window, G_CONNECT_SWAPPED);
+      }
       host->configured = true;
     } else if (strcmp(method,"update") == 0 || strcmp(method,"show") == 0 ||
                strcmp(method,"hide") == 0 || strcmp(method,"close") == 0) {

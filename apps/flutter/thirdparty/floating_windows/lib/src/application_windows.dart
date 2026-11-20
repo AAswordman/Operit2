@@ -15,9 +15,11 @@ class FloatingWindowsHost extends StatefulWidget {
 }
 
 class _ApplicationWindow {
-  _ApplicationWindow(this.payload, this.options);
+  /// Stores one surface's content and layout policy for the owning view.
+  _ApplicationWindow(this.payload, this.options, {required this.fill});
   Map<String, Object?> payload;
   FloatingWindowOptions options;
+  final bool fill;
   Future<void> Function()? beforeClose;
   bool visible = true;
   bool closing = false;
@@ -25,6 +27,7 @@ class _ApplicationWindow {
 
 class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
   final _windows = <String, _ApplicationWindow>{};
+  Size _viewport = Size.zero;
 
   @override
   void initState() {
@@ -35,15 +38,17 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
     FloatingWindows._applicationHost = this;
   }
 
+  /// Creates a surface whose bounds are resolved by the application layout.
   FloatingWindow open(
     Map<String, Object?> payload,
-    FloatingWindowOptions options,
-  ) {
+    FloatingWindowOptions options, {
+    required bool fill,
+  }) {
     final id = 'application:${++FloatingWindows._applicationSerial}';
     setState(() {
-      _windows[id] = _ApplicationWindow(payload, options);
+      _windows[id] = _ApplicationWindow(payload, options, fill: fill);
     });
-    return FloatingWindow._(id);
+    return FloatingWindow._(id, fill: fill);
   }
 
   Future<Object?> command(String id, String method, Object? arguments) async {
@@ -54,11 +59,12 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
       case 'ready':
         return true;
       case 'getBounds':
+        final bounds = _bounds(window);
         return {
-          'x': window.options.x ?? 24,
-          'y': window.options.y ?? 80,
-          'width': window.options.width,
-          'height': window.options.height,
+          'x': bounds.left,
+          'y': bounds.top,
+          'width': bounds.width,
+          'height': bounds.height,
         };
       case 'update':
         final args = Map<String, Object?>.from(arguments as Map);
@@ -130,12 +136,13 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
       view: View.of(context),
       child: LayoutBuilder(
         builder: (context, constraints) {
+          _viewport = constraints.biggest;
           return Stack(
             fit: StackFit.expand,
             children: [
               widget.child,
               for (final entry in _windows.entries)
-                _surface(entry.key, entry.value, constraints),
+                _surface(entry.key, entry.value),
             ],
           );
         },
@@ -143,16 +150,27 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
     ),
   );
 
-  Widget _surface(String id, _ApplicationWindow window, BoxConstraints bounds) {
+  /// Resolves a surface against the current application viewport.
+  Rect _bounds(_ApplicationWindow window) {
+    if (window.fill) return Offset.zero & _viewport;
     final options = window.options;
-    final width = options.width!.clamp(0.0, bounds.maxWidth);
-    final height = options.height!.clamp(0.0, bounds.maxHeight);
-    return Positioned(
+    final width = options.width!.clamp(0.0, _viewport.width);
+    final height = options.height!.clamp(0.0, _viewport.height);
+    return Rect.fromLTWH(
+      (options.x ?? 24).clamp(0.0, _viewport.width - width),
+      (options.y ?? 80).clamp(0.0, _viewport.height - height),
+      width,
+      height,
+    );
+  }
+
+  /// Paints the surface without changing the underlying application's layout.
+  Widget _surface(String id, _ApplicationWindow window) {
+    final options = window.options;
+    final bounds = _bounds(window);
+    return Positioned.fromRect(
       key: ValueKey(id),
-      left: (options.x ?? 24).clamp(0.0, bounds.maxWidth - width),
-      top: (options.y ?? 80).clamp(0.0, bounds.maxHeight - height),
-      width: width,
-      height: height,
+      rect: bounds,
       child: Offstage(
         offstage: !window.visible,
         child: TickerMode(
@@ -163,17 +181,20 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
               excluding: !options.focusable!,
               child: _ApplicationDragSurface(
                 enabled: options.draggable == true,
-                origin: Offset(
-                  (options.x ?? 24).clamp(0.0, bounds.maxWidth - width),
-                  (options.y ?? 80).clamp(0.0, bounds.maxHeight - height),
-                ),
+                origin: bounds.topLeft,
                 onMove: (position) {
                   if (!mounted || window.closing) return;
                   setState(() {
                     window.options = window.options.merge(
                       FloatingWindowOptions(
-                        x: position.dx.clamp(0.0, bounds.maxWidth - width),
-                        y: position.dy.clamp(0.0, bounds.maxHeight - height),
+                        x: position.dx.clamp(
+                          0.0,
+                          _viewport.width - bounds.width,
+                        ),
+                        y: position.dy.clamp(
+                          0.0,
+                          _viewport.height - bounds.height,
+                        ),
                       ),
                     );
                   });
@@ -182,6 +203,7 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
                   FloatingWindowLaunch(
                     payload: window.payload,
                     options: options,
+                    fill: window.fill,
                     onBeforeCloseChanged: (callback) {
                       window.beforeClose = callback;
                     },

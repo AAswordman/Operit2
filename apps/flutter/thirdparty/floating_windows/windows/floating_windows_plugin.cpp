@@ -25,6 +25,7 @@ struct WidgetWindow {
   bool topmost = true;
   bool focusable = false;
   bool draggable = false;
+  bool fill = false;
   bool pointer_down = false;
   bool dragging = false;
   POINT pointer_start{};
@@ -108,6 +109,34 @@ void EnableTransparency(HWND window) {
   }
 }
 
+/// Applies physical screen geometry without activating the floating window.
+bool PlaceWindow(const WidgetWindow& owner, const RECT& bounds) {
+  const int width = bounds.right - bounds.left;
+  const int height = bounds.bottom - bounds.top;
+  return SetWindowPos(owner.window, owner.topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
+      bounds.left, bounds.top, width, height, SWP_NOACTIVATE | SWP_FRAMECHANGED) &&
+      MoveWindow(owner.view, 0, 0, width, height, TRUE);
+}
+
+/// Fills the primary display without changing the operating system's fullscreen mode.
+bool FillDisplay(const WidgetWindow& owner) {
+  MONITORINFO monitor{};
+  monitor.cbSize = sizeof(monitor);
+  return GetMonitorInfo(MonitorFromPoint(POINT{0, 0}, MONITOR_DEFAULTTOPRIMARY), &monitor) &&
+      PlaceWindow(owner, monitor.rcMonitor);
+}
+
+/// Keeps host-sized geometry current across display configuration changes.
+LRESULT CALLBACK WatchDisplay(HWND window, UINT message, WPARAM wparam, LPARAM lparam,
+    UINT_PTR id, DWORD_PTR data) {
+  auto* owner = reinterpret_cast<WidgetWindow*>(data);
+  if (message == WM_NCDESTROY) RemoveWindowSubclass(window, WatchDisplay, id);
+  if (message == WM_DISPLAYCHANGE && owner->configured && owner->fill && !FillDisplay(*owner)) {
+    OutputDebugStringW(L"Unable to resize the floating window to the display\n");
+  }
+  return DefSubclassProc(window, message, wparam, lparam);
+}
+
 /// Applies partial updates without resetting unrelated window state.
 void Apply(WidgetWindow& owner, const Map& args) {
   RECT rect; GetWindowRect(owner.window, &rect);
@@ -148,12 +177,14 @@ void Apply(WidgetWindow& owner, const Map& args) {
       !SetLayeredWindowAttributes(owner.window, 0, 255, LWA_ALPHA)) {
     throw std::runtime_error("Unable to configure floating window alpha");
   }
-  if (!SetWindowPos(owner.window, owner.topmost ? HWND_TOPMOST : HWND_NOTOPMOST,
-      coordinate("x", rect.left), coordinate("y", rect.top), width, height,
-      SWP_NOACTIVATE | SWP_FRAMECHANGED)) throw std::runtime_error("Unable to update floating window");
-  if (!MoveWindow(owner.view, 0, 0, width, height, TRUE)) throw std::runtime_error("Unable to resize content");
+  const LONG left = coordinate("x", rect.left);
+  const LONG top = coordinate("y", rect.top);
+  const bool placed = owner.fill ? FillDisplay(owner) :
+      PlaceWindow(owner, RECT{left, top, left + width, top + height});
+  if (!placed) throw std::runtime_error("Unable to update floating window geometry");
 }
 
+/// Configures an explicitly owned transparent window before it becomes visible.
 void Configure(WidgetWindow& owner, const Map& arguments) {
   const auto role = arguments.find(Value("role"));
   if (role == arguments.end() || !std::holds_alternative<std::string>(role->second) ||
@@ -165,7 +196,15 @@ void Configure(WidgetWindow& owner, const Map& arguments) {
     (GetWindowLongPtr(owner.window, GWL_STYLE) & ~static_cast<LONG_PTR>(WS_OVERLAPPEDWINDOW)) | WS_POPUP);
   SetStyle(owner.window, GWL_EXSTYLE,
     (GetWindowLongPtr(owner.window, GWL_EXSTYLE) & ~static_cast<LONG_PTR>(WS_EX_APPWINDOW)) | WS_EX_TOOLWINDOW);
+  if (auto fill = arguments.find(Value("fill")); fill != arguments.end()) {
+    const auto value = std::get_if<bool>(&fill->second);
+    if (!value) throw std::invalid_argument("fill must be boolean");
+    owner.fill = *value;
+  }
   Apply(owner, arguments);
+  if (owner.fill && !SetWindowSubclass(owner.window, WatchDisplay, 1, reinterpret_cast<DWORD_PTR>(&owner))) {
+    throw std::runtime_error("Unable to observe display changes");
+  }
   owner.configured = true;
 }
 }  // namespace
@@ -239,6 +278,7 @@ class FloatingWindowsPlugin : public flutter::Plugin {
   /// Releases ownership while engine teardown clears its detached messenger.
   ~FloatingWindowsPlugin() override {
     if (owner_ && IsWindow(owner_->view)) RemoveWindowSubclass(owner_->view, DragInput, 1);
+    if (owner_ && owner_->fill && IsWindow(owner_->window)) RemoveWindowSubclass(owner_->window, WatchDisplay, 1);
   }
 
  private:

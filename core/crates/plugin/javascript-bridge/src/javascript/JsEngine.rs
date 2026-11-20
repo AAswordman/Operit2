@@ -2009,11 +2009,12 @@ impl JsEngineState {
                     let sink = windowSink.clone();
                     // A new surface must be able to acquire its own JS session
                     // while this caller awaits the host's startup acknowledgement.
-                    defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeTask(
+                    defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
                         "operit-floating-window",
-                        Box::new(move || {
-                            sink(JsAsyncCallback::Promise { requestId, result: host.floating_window_command(&payload) });
-                        }),
+                        Box::new(move || Box::pin(async move {
+                            let result = host.floating_window_command(payload).await;
+                            sink(JsAsyncCallback::Promise { requestId, result });
+                        })),
                     )?;
                     Ok(())
                 }),

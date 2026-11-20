@@ -1,12 +1,16 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import test from 'node:test';
 import vm from 'node:vm';
+import { readSdkScript, wrapComposeScript } from '../runtime/compose_scripts.mjs';
+import { composeStreamFixture } from './support/compose_stream_fixture.mjs';
 
 const require = createRequire(new URL('../../plugins/packages/buildin/workflow/package.json', import.meta.url));
 const ts = require('typescript');
-const source = readFileSync(new URL('../../plugins/packages/buildin/automatic_ui_base.ts', import.meta.url), 'utf8');
+const root = new URL('../../plugins/packages/buildin/automatic_ui_base/', import.meta.url);
+const manifest = JSON.parse(readFileSync(new URL('manifest.json', root), 'utf8'));
+const source = readFileSync(new URL('src/tools.ts', root), 'utf8');
 const metadata = JSON.parse(source.split('/* METADATA')[1].split('*/')[0]);
 const compiled = ts.transpileModule(source, {
   compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
@@ -25,9 +29,14 @@ function plain(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-test('legacy package stays disabled and every declared tool has a display icon and localized name', () => {
+test('the ToolPkg preserves the existing namespace, default disabled state and tool display metadata', () => {
+  assert.equal(manifest.toolpkg_id, 'com.operit.ui_automation');
+  assert.equal(manifest.api_version, '2.0.0');
+  assert.equal(manifest.enabled_by_default, false);
+  assert.deepEqual(manifest.subpackages, [{ id: 'Automatic_ui_base', entry: 'dist/tools.js' }]);
+  assert.throws(() => readFileSync(new URL('../automatic_ui_base.ts', root)), { code: 'ENOENT' });
   assert.equal(metadata.name, 'Automatic_ui_base');
-  assert.equal(metadata.enabledByDefault, false);
+  assert.equal(metadata.enabledByDefault, true);
   assert.equal(metadata.tools.length, 13);
   const { tools } = runtime();
   for (const tool of metadata.tools) {
@@ -109,4 +118,129 @@ test('provider failures remain errors and package main performs no input', async
   assert.match(results[0].message, /Whole-device automation is unsupported/);
   await tools.main();
   assert.equal(results[1].success, true);
+});
+
+/** Loads the actual plugin modules with a recorded floating-window host. */
+function indicatorRuntime({ scope = 'system', permissionGranted = true } = {}) {
+  const routes = new Map();
+  const hooks = new Map();
+  const windows = new Map([['other-surface', { id: 'other-surface' }]]);
+  const commands = [];
+  const context = vm.createContext({ console, ToolPkg: {
+    registerUiRoute(definition) { routes.set(definition.id, definition); },
+    registerNavigationEntry(entry) { assert.equal(entry.route, routes.get('status').route); },
+    registerAppLifecycleHook(definition) { hooks.set(definition.event, definition.function); },
+    registerChatRuntimeHook(definition) { hooks.set('state_changed', definition.function); },
+    registerToolLifecycleHook(definition) { hooks.set('tool_lifecycle', definition.function); },
+    ui: { floatingWindows: {
+      async list() { return [...windows.values()]; },
+      async capabilities() { return { scope, permissionGranted, supported: scope !== 'unsupported', clickThrough: true }; },
+      async requestPermission() { assert.fail('Lifecycle cannot prompt for permission'); },
+      async open(request) {
+        assert.ok(!windows.has(request.id));
+        windows.set(request.id, request);
+        commands.push(['open', plain(request)]);
+      },
+      async close(id) {
+        assert.ok(windows.delete(id));
+        commands.push(['close', id]);
+      },
+    } },
+  } });
+  const modules = new Map();
+
+  /** Resolves the same relative imports used by the packaged CommonJS modules. */
+  function load(moduleName) {
+    if (modules.has(moduleName)) return modules.get(moduleName);
+    const source = readFileSync(new URL(`src/${moduleName}.ts`, root), 'utf8');
+    const script = ts.transpileModule(source, {
+      compilerOptions: { target: ts.ScriptTarget.ES2020, module: ts.ModuleKind.CommonJS },
+    }).outputText;
+    const output = {};
+    modules.set(moduleName, output);
+    vm.runInContext(`(function(exports, require) { ${script}\n})`, context)(output, modulePath => load(modulePath.slice(2)));
+    return output;
+  }
+
+  const main = load('main');
+  assert.equal(main.registerToolPkg(), true);
+  assert.deepEqual(commands, []);
+  return { context, commands, routes, windows,
+    /** Delivers a normalized application lifecycle event. */
+    app(state) {
+      const eventName = `application_on_${state}`;
+      return hooks.get(eventName)({ eventName });
+    },
+    /** Delivers the concrete tool identity and its authenticated turn context. */
+    tool(toolName, chatId, eventName = 'tool_execution_started') {
+      return hooks.get('tool_lifecycle')({ eventName, eventPayload: { toolName, runtimeContext: chatId ? { chatId } : null } });
+    },
+    /** Delivers the terminal state for one conversation. */
+    finish(chatId) {
+      return hooks.get('state_changed')({ eventPayload: { chatId, isActive: false } });
+    },
+  };
+}
+
+test('a background automation indicator belongs to the plugin and follows concurrent turns', async () => {
+  const plugin = indicatorRuntime();
+  await plugin.app('foreground');
+  await plugin.tool('elsewhere:tap', 'unrelated');
+  await plugin.tool('Automatic_ui_base:tap', 'blocked', 'tool_call_requested');
+  await plugin.tool('tap', undefined);
+  await plugin.app('background');
+  assert.deepEqual(plugin.commands, []);
+  await plugin.app('foreground');
+  await plugin.tool('Automatic_ui_base:tap', 'first');
+  assert.deepEqual(plugin.commands, []);
+  await plugin.app('background');
+  assert.deepEqual(plugin.commands, [['open', {
+    id: 'automation-activity', route: plugin.routes.get('indicator').route, fill: true,
+    options: { clickThrough: true, focusable: false },
+  }]]);
+  await plugin.tool('get_page_info', 'second');
+  await plugin.finish('first');
+  assert.equal(plugin.commands.length, 1);
+  await plugin.app('foreground');
+  assert.deepEqual(plugin.commands.at(-1), ['close', 'automation-activity']);
+  await plugin.app('background');
+  await plugin.finish('second');
+  assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
+  assert.deepEqual([...plugin.windows.keys()], ['other-surface']);
+});
+
+test('application scope is visible only while Operit is in use, and missing permission never prompts', async () => {
+  const local = indicatorRuntime({ scope: 'application' });
+  await local.app('background');
+  await local.tool('Automatic_ui_base:double_tap', 'chat');
+  assert.deepEqual(local.commands, []);
+  await local.app('foreground');
+  await local.app('terminate');
+  assert.deepEqual(local.commands.map(([command]) => command), ['open', 'close']);
+  await local.app('foreground');
+  assert.equal(local.commands.length, 2);
+
+  const denied = indicatorRuntime({ permissionGranted: false });
+  await denied.app('background');
+  await denied.tool('tap', 'chat');
+  await denied.finish('chat');
+  assert.deepEqual(denied.commands, []);
+});
+
+test('the indicator route renders a full-size outline with a separate activity orb', async () => {
+  const { context, routes } = indicatorRuntime();
+  context.module = { exports: { default: routes.get('indicator').screen } };
+  vm.runInContext(readSdkScript('ToolPkgComposeDslBridge.rs'), context);
+  vm.runInContext(wrapComposeScript(), context);
+  const fixture = composeStreamFixture(context);
+  fixture.adapt();
+  await context.__operit_render_compose_dsl({ executionContextKey: 'automation-preview' });
+  const tree = fixture.latest.tree;
+  assert.equal(tree.type, 'Box');
+  assert.equal(tree.props.fillMaxSize, true);
+  assert.equal(tree.children[0].props.fillMaxSize, true);
+  assert.equal(tree.children[1].children[0].type, 'CircularProgressIndicator');
+  if (process.env.OPERIT_AUTOMATION_PREVIEW_TREE) {
+    writeFileSync(process.env.OPERIT_AUTOMATION_PREVIEW_TREE, JSON.stringify(tree));
+  }
 });

@@ -373,7 +373,9 @@ Widget _withModifier(
             'click' => SystemMouseCursors.click,
             'basic' => SystemMouseCursors.basic,
             'text' => SystemMouseCursors.text,
-            final name => throw FormatException('Unknown Compose cursor: $name'),
+            final name => throw FormatException(
+              'Unknown Compose cursor: $name',
+            ),
           },
           child: current,
         );
@@ -386,7 +388,8 @@ Widget _withModifier(
               ? BorderSide.none
               : BorderSide(
                   width: _number(spec['width']) ?? 1,
-                  color: _color(context, spec['color']) ??
+                  color:
+                      _color(context, spec['color']) ??
                       Theme.of(context).colorScheme.outline,
                 );
         }
@@ -403,15 +406,30 @@ Widget _withModifier(
         );
         break;
       case 'border':
+        final width = _number(args.firstOrNull) ?? 1;
+        final value = args.length > 1 ? args[1] : null;
+        final radius = _borderRadius(args.length > 2 ? args[2] : null);
+        final brush = _stringMap(value);
+        if (brush['colors'] != null) {
+          current = CustomPaint(
+            foregroundPainter: _ComposeGradientBorderPainter(
+              gradient: _backgroundGradient(context, brush),
+              width: width,
+              radius: radius ?? BorderRadius.zero,
+            ),
+            child: current,
+          );
+          break;
+        }
         current = DecoratedBox(
           decoration: BoxDecoration(
             border: Border.all(
-              width: _number(args.firstOrNull) ?? 1,
+              width: width,
               color:
-                  _color(context, args.length > 1 ? args[1] : null) ??
+                  _color(context, value) ??
                   Theme.of(context).colorScheme.outline,
             ),
-            borderRadius: _borderRadius(args.length > 2 ? args[2] : null),
+            borderRadius: radius,
           ),
           child: current,
         );
@@ -630,6 +648,42 @@ Gradient _backgroundGradient(BuildContext context, Map<String, Object?> brush) {
     end: Alignment.bottomCenter,
     colors: colors,
   );
+}
+
+/// Strokes a Compose brush inside the bounding shape, leaving its center clear.
+class _ComposeGradientBorderPainter extends CustomPainter {
+  /// Stores the resolved border paint and shape.
+  const _ComposeGradientBorderPainter({
+    required this.gradient,
+    required this.width,
+    required this.radius,
+  });
+
+  final Gradient gradient;
+  final double width;
+  final BorderRadius radius;
+
+  /// Draws an inside stroke using the same gradient coordinates as a background.
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (size.isEmpty || width <= 0) return;
+    final bounds = Offset.zero & size;
+    final outer = radius.toRRect(bounds).scaleRadii();
+    final inner = outer.deflate(width);
+    final paint = Paint()..shader = gradient.createShader(bounds);
+    if (inner.isEmpty) {
+      canvas.drawRRect(outer, paint);
+    } else {
+      canvas.drawDRRect(outer, inner, paint);
+    }
+  }
+
+  /// Repaints when the brush or border geometry changes.
+  @override
+  bool shouldRepaint(covariant _ComposeGradientBorderPainter oldDelegate) =>
+      gradient != oldDelegate.gradient ||
+      width != oldDelegate.width ||
+      radius != oldDelegate.radius;
 }
 
 /// Evaluates node owns direct alpha for the Compose DSL renderer.

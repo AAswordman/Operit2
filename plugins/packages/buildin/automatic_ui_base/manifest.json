@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.ui_automation",
+  "version": "1.0.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "UI 自动化", "en": "UI Automation" },
+  "description": {
+    "zh": "让 AI 读取和操作系统界面，在当前宿主允许的范围内显示运行状态球和边框。",
+    "en": "Lets the AI read and operate device interfaces and shows an activity orb and outline within the host's supported window scope."
+  },
+  "enabled_by_default": false,
+  "subpackages": [{ "id": "Automatic_ui_base", "entry": "dist/tools.js" }]
+}

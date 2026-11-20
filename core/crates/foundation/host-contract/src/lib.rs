@@ -3332,13 +3332,22 @@ where
 }
 
 /// Owns application-independent floating surfaces requested by authenticated plugins.
+#[async_trait(?Send)]
 pub trait FloatingWindowHost: Send + Sync {
-    fn command(&self, request: Value) -> HostResult<Value>;
+    /// Awaits the application owner's response without blocking its event loop.
+    async fn command(&self, request: Value) -> HostResult<Value>;
 }
 
-impl<F> FloatingWindowHost for F
-where F: Fn(Value) -> HostResult<Value> + Send + Sync {
-    fn command(&self, request: Value) -> HostResult<Value> { self(request) }
+#[async_trait(?Send)]
+impl<F, Output> FloatingWindowHost for F
+where
+    F: Fn(Value) -> Output + Send + Sync,
+    Output: Future<Output = HostResult<Value>>,
+{
+    /// Forwards the command to an asynchronous host adapter.
+    async fn command(&self, request: Value) -> HostResult<Value> {
+        self(request).await
+    }
 }
 
 /// Identifies the native package that can update this running application.

@@ -4042,6 +4042,10 @@ export namespace ToolPkg {
      */
     state?: JsonObject;
     /**
+     * Fills the current scope: primary display for system windows, full view for application windows.
+     */
+    fill?: boolean;
+    /**
      * Configures geometry and interaction flags.
      */
     options?: FloatingWindowOptions;

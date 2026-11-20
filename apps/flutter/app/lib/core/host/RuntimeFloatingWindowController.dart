@@ -14,13 +14,21 @@ class _OwnedFloatingWindow {
   FloatingWindowOptions options;
   Map<String, Object?> state;
   bool visible = true;
+
+  /// Reports measured geometry separately from the validated configuration.
   Future<Map<String, Object?>> info(String id) async {
-    options = options.merge(await window.getBounds());
+    final bounds = await window.getBounds();
     return {
       'id': id,
       'route': route,
       'visible': visible,
-      'options': options.toMap(),
+      'options': {
+        ...options.toMap(),
+        'x': bounds.x,
+        'y': bounds.y,
+        'width': bounds.width,
+        'height': bounds.height,
+      },
     };
   }
 }
@@ -73,11 +81,10 @@ class RuntimeFloatingWindowController {
       if (_owners.values.where((value) => value == owner).length >= 16) {
         throw StateError('A plugin may own at most 16 floating windows');
       }
-      final options = FloatingWindowOptions.defaults.merge(
-        FloatingWindowOptions.fromMap(
-          ((request['options'] as Map?) ?? {}).cast<String, Object?>(),
-        ),
+      final options = FloatingWindowOptions.fromMap(
+        ((request['options'] as Map?) ?? {}).cast<String, Object?>(),
       );
+      final fill = (request['fill'] as bool?) ?? false;
       final support = await FloatingWindows.capabilities();
       if ((options.x != null || options.y != null) &&
           support['positioning'] != true) {
@@ -99,11 +106,12 @@ class RuntimeFloatingWindowController {
               WidgetsBinding.instance.platformDispatcher.locale.languageCode,
         },
         options: options,
+        fill: fill,
       );
       final owned = _OwnedFloatingWindow(
         window,
         route,
-        options,
+        FloatingWindowOptions.defaults.merge(options),
         Map<String, Object?>.from((request['state'] as Map?) ?? {}),
       );
       _windows[key] = owned;

@@ -3,6 +3,8 @@ package dev.floating_windows;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
+import android.graphics.Point;
+import android.graphics.Rect;
 import android.hardware.input.InputManager;
 import android.graphics.PixelFormat;
 import android.net.Uri;
@@ -49,6 +51,7 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         WindowManager manager;
         WindowManager.LayoutParams params;
         boolean attached, configured, closed, draggable, pointerDown, dragging;
+        boolean fill;
         float downX, downY;
         int windowX, windowY;
         float opacity = 1.0f;
@@ -127,6 +130,7 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         if (!(value instanceof Boolean)) throw new IllegalArgumentException("Expected boolean " + key);
         return (Boolean)value;
     }
+    /** Applies surface options while Android owns the bounds of a fill window. */
     private void apply(Surface surface, Map<?, ?> args) {
         if (!flag(args,"alwaysOnTop",true)) throw new UnsupportedOperationException("Android overlays are always above applications");
         surface.draggable = flag(args, "draggable", surface.draggable);
@@ -134,10 +138,21 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         float density = context.getResources().getDisplayMetrics().density;
         WindowManager.LayoutParams next = new WindowManager.LayoutParams();
         next.copyFrom(surface.params);
-        next.width = pixels(number(args,"width",next.width/density,true));
-        next.height = pixels(number(args,"height",next.height/density,true));
-        next.x = pixels(number(args,"x",next.x/density,false));
-        next.y = pixels(number(args,"y",next.y/density,false));
+        if (surface.fill) {
+            next.width = WindowManager.LayoutParams.MATCH_PARENT;
+            next.height = WindowManager.LayoutParams.MATCH_PARENT;
+            if (Build.VERSION.SDK_INT >= 30) {
+                next.setFitInsetsTypes(0);
+                next.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            } else if (Build.VERSION.SDK_INT >= 28) {
+                next.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            }
+        } else {
+            next.width = pixels(number(args,"width",next.width/density,true));
+            next.height = pixels(number(args,"height",next.height/density,true));
+            next.x = pixels(number(args,"x",next.x/density,false));
+            next.y = pixels(number(args,"y",next.y/density,false));
+        }
         boolean focus = flag(args,"focusable",(next.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)==0);
         boolean through = flag(args,"clickThrough",(next.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)!=0);
         next.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
@@ -150,6 +165,16 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         next.alpha = surface.configured ? surface.opacity : 0.0f;
         if (surface.attached) surface.manager.updateViewLayout(surface.view,next);
         surface.params = next;
+    }
+    /** Reports display dimensions for match-parent surfaces in the current orientation. */
+    private static Point displaySize(WindowManager manager) {
+        if (Build.VERSION.SDK_INT >= 30) {
+            Rect bounds = manager.getMaximumWindowMetrics().getBounds();
+            return new Point(bounds.width(), bounds.height());
+        }
+        Point size = new Point();
+        manager.getDefaultDisplay().getRealSize(size);
+        return size;
     }
     /** Attaches the engine only after its view has an Android window parent. */
     private void show(Surface surface) {
@@ -235,6 +260,7 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 Surface surface=current();
                 if (call.method.equals("configure")) {
                     if (!"floating_windows.window".equals(call.argument("role"))) throw new IllegalArgumentException("Explicit floating window role required");
+                    surface.fill = flag((Map<?,?>)call.arguments, "fill", false);
                     apply(surface,(Map<?,?>)call.arguments); surface.configured=true; result.success(null); return;
                 }
                 if (!surface.configured) throw new IllegalStateException("Configure the floating window first");
@@ -243,7 +269,8 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                     float density = context.getResources().getDisplayMetrics().density;
                     Map<String,Object> bounds = new HashMap<>();
                     bounds.put("x",surface.params.x / density); bounds.put("y",surface.params.y / density);
-                    bounds.put("width",surface.params.width / density); bounds.put("height",surface.params.height / density);
+                    Point size = surface.fill ? displaySize(surface.manager) : new Point(surface.params.width, surface.params.height);
+                    bounds.put("width",size.x / density); bounds.put("height",size.y / density);
                     result.success(bounds); return;
                 }
                 case "update": apply(surface,(Map<?,?>)call.arguments); result.success(null); return;

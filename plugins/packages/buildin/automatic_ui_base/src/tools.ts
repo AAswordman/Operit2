@@ -11,7 +11,7 @@
         "en": "Basic UI automation for the device system interface and other apps. Disabled by default; requires a whole-device platform provider."
     },
     "category": "Automatic",
-    "enabledByDefault": false,
+    "enabledByDefault": true,
     "tools": [
         {
             "name": "usage_advice",
@@ -410,8 +410,6 @@
     ]
 }
 */
-
-// Migrated from Operit 1 examples/automatic_ui_base.ts; all device access uses v2 Host APIs.
 
 const UIAutomationTools = (() => {
 

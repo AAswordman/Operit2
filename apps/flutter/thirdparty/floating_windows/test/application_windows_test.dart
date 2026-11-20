@@ -6,6 +6,64 @@ import 'package:flutter_test/flutter_test.dart';
 // test/application_windows_test.dart. It needs no native method-channel mocks.
 void main() {
   testWidgets(
+    'fill covers the resized viewport and passes input through at the edges',
+    (tester) async {
+      var taps = 0;
+      const surface = ValueKey('fill-surface');
+      await tester.binding.setSurfaceSize(const Size(820, 540));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+      await tester.pumpWidget(
+        FloatingWindowsHost(
+          windowBuilder: (launch) {
+            expect(launch.fill, isTrue);
+            return const SizedBox.expand(key: surface);
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.opaque,
+            onTap: () => taps++,
+            child: const SizedBox.expand(),
+          ),
+        ),
+      );
+      await expectLater(
+        FloatingWindows.open(
+          payload: {},
+          fill: true,
+          options: const FloatingWindowOptions(width: 100),
+        ),
+        throwsArgumentError,
+      );
+      final window = await FloatingWindows.open(
+        payload: {},
+        fill: true,
+        options: const FloatingWindowOptions(clickThrough: true),
+      );
+      await tester.pump();
+      expect(
+        tester.getRect(find.byKey(surface)),
+        const Rect.fromLTWH(0, 0, 820, 540),
+      );
+      await tester.binding.setSurfaceSize(const Size(390, 740));
+      await tester.pump();
+      expect(
+        tester.getRect(find.byKey(surface)),
+        const Rect.fromLTWH(0, 0, 390, 740),
+      );
+      expect((await window.getBounds()).height, 740);
+      await expectLater(
+        window.update(const FloatingWindowOptions(x: 30)),
+        throwsArgumentError,
+      );
+      await tester.tapAt(const Offset(388, 738));
+      expect(taps, 1);
+      await window.close();
+      await tester.pump(const Duration(milliseconds: 1));
+      await tester.pumpWidget(const SizedBox());
+    },
+    variant: TargetPlatformVariant.only(TargetPlatform.iOS),
+  );
+
+  testWidgets(
     'drag uses pointer-down anchors across sparse moves, rebuilds and reversals',
     (tester) async {
       var taps = 0;

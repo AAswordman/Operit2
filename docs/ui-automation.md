@@ -1,8 +1,7 @@
 # System window UI automation
 
-All automation tools use `UiAutomationHost`, rather than implementing platform
-dispatch in the runtime or Flutter UI. The ordinary tool catalog, JavaScript SDK
-and `Automatic_ui_base` expose the same workflow:
+All automation tools use `UiAutomationHost` for platform dispatch. The ordinary
+tool catalog, JavaScript SDK and `Automatic_ui_base` expose the same workflow:
 
 ```typescript
 const {windows} = await Tools.UI.listWindows();
@@ -39,6 +38,29 @@ excluded. Ordinary tool-message output limits still apply. Native provider failu
 transport resource errors are reported explicitly, never as complete partial
 snapshots. Accessibility can only reveal what each application's provider
 exposes; virtualized or custom-drawn content may not have materialized nodes.
+
+## Plugin and background indicator
+
+Enable **UI Automation** (`com.operit.ui_automation`) in plugin management. The
+built-in ToolPkg is disabled by default. Its tool subpackage retains the
+`Automatic_ui_base` namespace for existing calls and permissions.
+
+The plugin owns the status orb, the transparent gradient outline and the
+display lifecycle. It marks a chat turn when an exact UI automation tool starts
+executing, keeps the indicator across successive tool calls and model steps in
+that turn, and releases it when the last marked turn completes, fails or is
+stopped. Disabling the plugin closes its surfaces. The orb and outline share one
+click-through window that leaves input and focus on the underlying application.
+
+| Window scope | When and where the indicator appears |
+| --- | --- |
+| System (Windows, macOS, Linux/X11 with composition, Android with permission) | Covers the primary display while Operit is in the background. Returning to Operit closes it. System surfaces and system security restrictions still apply. |
+| Application (iOS, OpenHarmony, Web, Linux/Wayland) | Covers the Operit view while Operit is active. This scope is limited to the app's own view. |
+
+Open **Toolbox → UI Automation** to see the host's current scope and grant
+overlay permission when required. The UI uses the shared
+[floating-window API](../plugins/docs/FLOATING_WINDOWS.md). Window presentation
+and the device's accessibility provider are separate host capabilities.
 
 ## Platform status
 

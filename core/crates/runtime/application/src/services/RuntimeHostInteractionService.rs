@@ -1504,6 +1504,19 @@ pub fn requestOwnerSystemOperation(
         .ok_or_else(|| "system operation response payload is missing".to_string())
 }
 
+/// Awaits a system operation on the owner event loop, including single-threaded hosts.
+pub async fn requestOwnerSystemOperationAsync(
+    payload: RuntimeHostInteractionSystemOperationPayload,
+    timeout: Duration,
+) -> Result<RuntimeHostInteractionSystemOperationResponse, String> {
+    let response = runtimeHostInteractionBroker().requestAsync(
+        RuntimeHostInteractionTarget::OwnerHost,
+        RuntimeHostInteractionRequest::systemOperation(payload),
+        timeout,
+    ).await?;
+    response.systemOperation.ok_or_else(|| "system operation response payload is missing".to_string())
+}
+
 /// Requests file opening from the owner host.
 pub fn requestOwnerFileOpen(
     payload: RuntimeHostInteractionFileOpenPayload,

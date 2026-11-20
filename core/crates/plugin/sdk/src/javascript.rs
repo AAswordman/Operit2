@@ -322,8 +322,8 @@ pub trait JsExecutionHost: Send + Sync {
     fn open_compose_file_picker(&self, payload: &Value) -> Result<Value, String>;
 
     /// Controls a floating surface with identity supplied by the authenticated engine.
-    fn floating_window_command(&self, _payload: &Value) -> Result<Value, String> {
-        Err("Floating windows are unavailable on this host".into())
+    fn floating_window_command(&self, _payload: Value) -> JsExecutionFuture<Result<Value, String>> {
+        Box::pin(async { Err("Floating windows are unavailable on this host".into()) })
     }
 
     /// Saves a UTF-8 export through the embedding application's file selector.

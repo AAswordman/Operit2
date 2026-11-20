@@ -3086,6 +3086,8 @@ pub struct ToolPkgFloatingWindowOpenOptions {
     pub route: String,
     /// Supplies the UI session's initial state.
     pub state: Option<ToolPkgJsonObject>,
+    /// Fills the current scope: primary display for system windows, full view for application windows.
+    pub fill: Option<bool>,
     /// Configures geometry and interaction flags.
     pub options: Option<ToolPkgFloatingWindowOptions>,
 }

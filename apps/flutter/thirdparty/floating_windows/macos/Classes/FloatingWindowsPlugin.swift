@@ -9,12 +9,16 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
     private var focusable = false
     private var topmost = true
     private var draggable = false
+    private var fill = false
     private var pointerDown: NSPoint?
     private var windowDown: NSPoint?
     private var dragging = false
     private var monitor: Any?
     private var channel: FlutterMethodChannel?
-    deinit { if let monitor = monitor { NSEvent.removeMonitor(monitor) } }
+    deinit {
+        if let monitor = monitor { NSEvent.removeMonitor(monitor) }
+        NotificationCenter.default.removeObserver(self)
+    }
     private func trackPointer(_ event: NSEvent) {
         guard configured, draggable, let window = view?.window, event.window === window else { return }
         switch event.type {
@@ -44,8 +48,19 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
             plugin?.trackPointer(event)
             return event
         }
+        NotificationCenter.default.addObserver(plugin, selector: #selector(displayDidChange),
+            name: NSApplication.didChangeScreenParametersNotification, object: nil)
         registrar.addMethodCallDelegate(plugin, channel: channel)
     }
+
+    /// Keeps host-sized surfaces aligned with the primary display after display changes.
+    @objc private func displayDidChange(_ notification: Notification) {
+        guard configured, fill, let window = view?.window,
+              let display = NSScreen.screens.first else { return }
+        window.setFrame(display.frame, display: true)
+    }
+
+    /// Applies input and appearance flags and resolves the chosen geometry.
     private func apply(_ values: [String: Any], to window: NSWindow) throws {
         var size = window.contentLayoutRect.size
         for key in ["width", "height", "x", "y"] {
@@ -73,7 +88,14 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
         if let value = values["clickThrough"] as? Bool { window.ignoresMouseEvents = value }
         window.level = topmost ? .floating : .normal
         if let floating = window as? CustomWindow { floating.floatingWindowFocusable = focusable }
-        window.setFrame(NSRect(origin: origin, size: size), display: true)
+        if fill {
+            guard let display = NSScreen.screens.first else {
+                throw NSError(domain: "floating_windows", code: 4, userInfo: [NSLocalizedDescriptionKey: "No primary display"])
+            }
+            window.setFrame(display.frame, display: true)
+        } else {
+            window.setFrame(NSRect(origin: origin, size: size), display: true)
+        }
     }
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         if call.method == "capabilities" {
@@ -97,6 +119,7 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
                 window.isOpaque = false; window.backgroundColor = .clear; window.hasShadow = false
                 window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .ignoresCycle]
                 view?.wantsLayer = true; view?.layer?.backgroundColor = NSColor.clear.cgColor
+                fill = args["fill"] as? Bool == true
                 try apply(args, to: window)
                 configured = true; result(nil)
             case "update":

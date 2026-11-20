@@ -18,7 +18,7 @@ use operit_host_api::{
 use operit_runtime::services::RuntimeHostInteractionService::{
     requestOwnerAudioPlay, requestOwnerBluetooth, requestOwnerFileOpen, requestOwnerFileShare,
     requestOwnerLocalInference, requestOwnerMusicPlayback, requestOwnerSystemCaptureScreenshot,
-    requestOwnerSystemOperation, requestOwnerSystemRecognizeText, requestOwnerTtsPlayback,
+    requestOwnerSystemOperation, requestOwnerSystemOperationAsync, requestOwnerSystemRecognizeText, requestOwnerTtsPlayback,
     requestOwnerTtsSynthesis, RuntimeHostInteractionAudioPlayPayload,
     RuntimeHostInteractionBluetoothPayload, RuntimeHostInteractionFileOpenPayload,
     RuntimeHostInteractionFileSharePayload, RuntimeHostInteractionLocalInferencePayload,
@@ -47,6 +47,19 @@ pub(crate) fn ownerSystemOperation<T: serde::de::DeserializeOwned>(
     }
     serde_json::from_str(&response.resultJson)
         .map_err(|error| HostError::new(format!("{operation} response decode failed: {error}")))
+}
+
+/// Forwards a floating window command without blocking the owner event loop.
+pub(crate) async fn floatingWindowCommand(request: serde_json::Value) -> HostResult<serde_json::Value> {
+    let response = requestOwnerSystemOperationAsync(
+        RuntimeHostInteractionSystemOperationPayload {
+            operation: "floating_window".to_string(),
+            paramsJson: request.to_string(),
+        },
+        Duration::from_secs(120),
+    ).await.map_err(HostError::new)?;
+    serde_json::from_str(&response.resultJson)
+        .map_err(|error| HostError::new(format!("floating_window response decode failed: {error}")))
 }
 
 /// Requires an explicit success acknowledgement from an owner operation.

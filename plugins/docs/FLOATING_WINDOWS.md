@@ -45,6 +45,7 @@ await ToolPkg.ui.floatingWindows.close("pet");
 
 - `id` 是插件内的窗口 ID，长度为 1–128，不能有首尾空白。同一插件重复打开同一个 ID 会报错；不同插件可以使用相同 ID。每个插件最多同时拥有 16 个窗口。
 - `route` 必须是当前启用插件注册的完整 Compose UI 路由，不是注册项的短 `id`。`state` 是该 UI 会话的初始状态对象。
+- `open` 的 `fill: true` 让窗口覆盖当前范围的完整区域。系统范围覆盖主显示器，应用范围覆盖应用视图。该模式在打开时选定，跟随显示器或视图尺寸变化，不接受手动宽高、坐标或拖动。`list()` 返回当前测量尺寸，可能超过普通窗口的尺寸上限。
 - 默认大小为 `240 × 240`，透明、无边框、置顶、不抢键盘焦点。宽高范围为 16–4096 逻辑像素。`x/y` 在系统范围使用主屏幕左上角坐标，允许负数；应用范围使用应用视图左上角坐标，显示时约束在当前视图内，随视图尺寸变化重新约束。
 - `update(id, options, state?)` 只更新提供的窗口选项；可选的第三个参数按顶层键合并 UI 状态，并在原有 UI 会话中重新渲染。隐藏、显示和更新窗口不重建 UI 会话。
 - `draggable: true` 由宿主处理整窗拖动：按下时记录指针屏幕坐标和窗口位置，移动时使用「窗口起点 + 当前屏幕坐标 − 按下屏幕坐标」，松手结束。系统窗口在原生输入线程移动，应用内窗口在 Flutter 宿主直接移动，中途不经过 JS/Rust，也不累加局部 delta。默认不启用。
@@ -58,9 +59,9 @@ await ToolPkg.ui.floatingWindows.close("pet");
 
 ## 宿主实现
 
-调用路径：`ToolPkg.ui.floatingWindows` → 专用异步原生绑定 → 认证后的 `JsExecutionHost` → `FloatingWindowHost` → Flutter 主引擎 → `floating_windows` → 原生窗口。
+调用通过 `ToolPkg.ui.floatingWindows`、异步原生绑定、认证后的 `JsExecutionHost` 和 `FloatingWindowHost`，由 Flutter 主引擎经 `floating_windows` 驱动当前窗口范围。
 
-窗口请求离开 JavaScript 调度线程后执行，创建新 UI 引擎不会阻塞调用者所在的 JS 调度线程。Flutter 主引擎串行管理窗口生命周期。系统悬浮窗各自拥有独立的 Flutter 引擎与插件 UI 会话，子引擎跳过主进程初始化与通知订阅。应用内悬浮层使用同一主引擎的独立 UI 会话，各自保存关闭回调、焦点策略、可见状态和输入穿透状态，隐藏时保留会话并暂停 Flutter ticker。
+窗口请求异步等待 Flutter 主引擎的响应，Web 与原生使用同一个请求和响应协议。Flutter 主引擎串行管理窗口生命周期。系统悬浮窗各自拥有独立的 Flutter 引擎与插件 UI 会话，子引擎跳过主进程初始化与通知订阅。应用内悬浮层使用同一主引擎的独立 UI 会话，各自保存关闭回调、焦点策略、可见状态和输入穿透状态，隐藏时保留会话并暂停 Flutter ticker。
 
 `apps/flutter/thirdparty/floating_windows` 不依赖 Operit、Rust、插件注册模型或 Compose DSL。它只接收不透明的应用数据和窗口选项，提供引擎启动、准备完成确认、窗口控制和失败回收；`FloatingWindowsHost` 提供不依赖原生插件的应用内实现。应用层负责渲染插件 UI 与释放会话。
 

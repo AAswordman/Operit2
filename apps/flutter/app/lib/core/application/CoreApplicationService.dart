@@ -199,8 +199,10 @@ class CoreApplicationService with WidgetsBindingObserver {
     try {
       if (!_runtimeManager.runtimeConfigured) return;
       ClientLogger.attachPersistentStorage();
+      await _syncHostSubscriber();
+      final lifecycle = WidgetsBinding.instance.lifecycleState;
+      if (lifecycle != null) await _emitLifecycleEvent(lifecycle);
       if (!_ownsRuntime) {
-        await _syncHostSubscriber();
         AppNotificationService.instance.initialize();
         return;
       }
@@ -210,7 +212,6 @@ class CoreApplicationService with WidgetsBindingObserver {
         verboseLevel: VerboseLevel.level1,
       );
       await _retainCoreRuntime();
-      await _syncHostSubscriber();
       AppNotificationService.instance.initialize();
       await WorkActivityPresentationService.instance.initialize();
       final deviceInfo = await RuntimeDeviceInfoProvider.current();
@@ -304,8 +305,7 @@ class CoreApplicationService with WidgetsBindingObserver {
 
   /// Synchronizes owner-host event handling with the selected runtime role.
   Future<void> _syncHostSubscriber() async {
-    final shouldInstall =
-        _runtimeManager.runtimeConfigured && _ownsHostInteractions;
+    final shouldInstall = _runtimeManager.runtimeConfigured;
     final installed = RuntimeHostInteractionSubscriber.isInstalled;
     if (shouldInstall && !installed) {
       final subscriberStopwatch = Stopwatch()..start();
@@ -336,10 +336,5 @@ class CoreApplicationService with WidgetsBindingObserver {
         verboseLevel: VerboseLevel.level1,
       );
     }
-  }
-
-  /// Returns whether this process owns native host interaction handling.
-  bool get _ownsHostInteractions {
-    return !kIsWeb;
   }
 }
