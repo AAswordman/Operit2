@@ -566,7 +566,7 @@ test("native memory binding can explicitly switch to character memory with no sh
 });
 
 
-test("native avatar selection copies picker bytes into getConfigDir and saves only the plugin file", async t => {
+test("native avatar selection copies picker bytes into shared data independently of the installation config directory", async t => {
   const image = await readFile(new URL("../resources/operit-avatar.png", import.meta.url));
   const picked = { path: "/private/var/mobile/tmp/selector/avatar.png", uri: "file:///private/var/mobile/tmp/selector/avatar.png", name: "avatar.png", size: image.length, contentBase64: image.toString("base64") };
   const requests = [];
@@ -584,6 +584,7 @@ test("native avatar selection copies picker bytes into getConfigDir and saves on
   assert.deepEqual(requests[0].options, { picker: "image", allowMultiple: false, mimeTypes: ["image/*"], maxContentBytes: 8 * 1024 * 1024 });
   const uri = keyedNode(ui.render().tree, "entity-edit-avatar").props.uri;
   assert.equal(path.dirname(path.resolve(uri)), path.join(plugin.disk.directory, "avatars"));
+  assert.notEqual(path.dirname(path.resolve(uri)), path.join(plugin.disk.globals.ToolPkg.getConfigDir(), "avatars"));
   assert.notEqual(uri, picked.path);
   assert.deepEqual(await readFile(uri), image);
   assert.equal(plugin.disk.calls.filter(call => call.method === "readBinary").length, 0);

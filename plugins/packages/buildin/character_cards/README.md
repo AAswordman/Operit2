@@ -23,6 +23,23 @@ This is a recoverable multi-owner operation, not a transaction spanning JSON,
 SQLite and files. Concurrent edits fail explicitly. The space-owned plan declares
 its card references for normal identity remapping during space merges.
 
+## Avatar storage
+
+Selected image bytes are stored under `ToolPkg.getSpaceDataDir()/avatars`, alongside
+the shared character records. The generic Files write/copy path publishes their
+Space file snapshots. Avatar ownership is independent of whether the plugin itself
+is installed in device or Space scope; picker temporary paths are never saved.
+
+On repository startup, avatars referencing the current installation's old
+`getConfigDir()/avatars` directory are copied to shared data before their character
+references are updated. Original files remain intact. An existing target must have
+identical bytes, and concurrent avatar changes reject the migration. Interrupted
+reference publication reuses the verified shared copy on the next initialization.
+Missing originals retain their saved reference and emit an explicit diagnostic;
+their image bytes must be recovered on the device that still has them, restored
+from a backup containing the image, or selected again. A diagnostic log cannot
+recover missing image bytes.
+
 For an old interrupted installation without a plan, open character management in
 the plugin and select **检查初始化数据**. Inspection shows the actual saved card
 and does not adopt it automatically. After reviewing the preservation notice,

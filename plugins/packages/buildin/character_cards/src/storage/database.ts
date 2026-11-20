@@ -24,6 +24,7 @@ import type {
 import { RepositorySession } from "../repository";
 import { createMemorySpace, normalizeMemoryRecallSettings } from "./state";
 import { initializeCharacterStorage } from "./initialization";
+import { migrateCharacterAvatars } from "./avatars";
 import {
   clone,
   equal,
@@ -114,6 +115,7 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     const repository = new DatabaseCharacterRepository(storage, directory, directories);
     try {
       await traceCharacterLoad(1, "storage.initialize", () => initializeCharacterStorage(storage, directory));
+      await traceCharacterLoad(1, "storage.avatars.migrate", () => migrateCharacterAvatars(storage));
       await traceCharacterLoad(1, "storage.metadata.read", () => repository.readMetadata());
       return repository;
     } catch (error) {

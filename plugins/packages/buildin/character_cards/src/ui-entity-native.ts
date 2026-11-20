@@ -232,7 +232,7 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
       if (selected.cancelled) return;
       if (selected.files.length !== 1) throw new Error("请选择一个头像文件");
       const contentBase64 = readAvatarImport(selected.files[0]); assertOwner();
-      const directory = ToolPkg.getConfigDir().replace(/\/$/, "") + "/avatars";
+      const directory = ToolPkg.getSpaceDataDir().replace(/\/$/, "") + "/avatars";
       const created = await Tools.Files.mkdir(directory, true); if (!created.successful) throw new Error(created.details);
       const uri = directory + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".image";
       const written = await Tools.Files.writeBinary(uri, contentBase64);

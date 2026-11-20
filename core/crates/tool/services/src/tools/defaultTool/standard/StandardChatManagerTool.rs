@@ -1138,12 +1138,17 @@ fn collectToolMarkupRanges(content: &str) -> Vec<(usize, usize)> {
     ranges
 }
 
-/// Removes response markup ranges while preserving all ordinary model text.
+/// Removes ordered response markup ranges, including overlapping hidden blocks.
 fn removeRanges(content: &str, ranges: &[(usize, usize)]) -> String {
-    let mut output = content.to_string();
-    for (start, end) in ranges.iter().rev() {
-        output.replace_range(*start..*end, "");
+    let mut output = String::with_capacity(content.len());
+    let mut cursor = 0;
+    for &(start, end) in ranges {
+        if start > cursor {
+            output.push_str(&content[cursor..start]);
+        }
+        cursor = cursor.max(end);
     }
+    output.push_str(&content[cursor..]);
     output
 }
 
@@ -1164,7 +1169,7 @@ fn parseChatCallOutput(rawContent: &str) -> ChatCallResultData {
             }
         }
     }
-    let content = removeProtocolMetadata(rawContent);
+    let content = removeChatCallHiddenMarkup(rawContent);
     let matches = collectChatCallToolMatches(&content);
     let mut turns = Vec::new();
     let mut cursor = 0;
@@ -1198,20 +1203,12 @@ fn parseChatCallOutput(rawContent: &str) -> ChatCallResultData {
     }
 }
 
-/// Removes provider metadata tags while preserving all other response content.
-fn removeProtocolMetadata(rawContent: &str) -> String {
-    let mut ranges = Vec::new();
-    for (start, end) in operit_util::ChatMarkupRegex::tag_ranges(rawContent, "meta") {
-        let tag = &rawContent[start..end];
-        if operit_util::ChatMarkupRegex::attr_value(tag, "provider").is_some() {
-            ranges.push((start, end));
-        }
-    }
-    let mut output = rawContent.to_string();
-    for (start, end) in ranges.into_iter().rev() {
-        output.replace_range(start..end, "");
-    }
-    output.trim().to_string()
+/// Removes thinking and all metadata blocks before interpreting assistant or tool-call segments.
+fn removeChatCallHiddenMarkup(rawContent: &str) -> String {
+    let mut ranges = operit_util::ChatMarkupRegex::ChatMarkupRegex::think_ranges(rawContent);
+    ranges.extend(operit_util::ChatMarkupRegex::tag_ranges(rawContent, "meta"));
+    ranges.sort_unstable();
+    removeRanges(rawContent, &ranges).trim().to_string()
 }
 
 /// Adds one non-empty assistant response segment to the result turn list.
@@ -1811,6 +1808,85 @@ pub(crate) async fn executePluginChatObservation(
             stream.close().await.map_err(|error| error.to_string())?;
             Ok(ChatObservationResultData::Close)
         }
+    }
+}
+
+#[cfg(test)]
+mod chat_call_output_tests {
+    use super::*;
+
+    /// Keeps functional JSON separate from thinking and metadata while retaining provider metadata.
+    #[test]
+    fn functional_json_excludes_thinking_and_all_metadata_blocks() {
+        let plan = r#"{"rounds":[[{"id":"role-a","speak":true}]]}"#;
+        let raw = format!(
+            "<meta provider=\"fixture:signature\">signature</meta>\n\
+             <think>用户现在需要一轮对话</think>\n\
+             <meta>internal metadata</meta><thinking>private reasoning</thinking>\n{plan}\n\
+             <meta name=\"usage\">internal usage</meta>"
+        );
+        let result = parseChatCallOutput(&raw);
+        assert_eq!(result.text, plan);
+        assert_eq!(result.finishReason, "stop");
+        assert_eq!(result.turns.len(), 1);
+        assert_eq!(result.turns[0].kind, "ASSISTANT");
+        assert_eq!(result.turns[0].content, plan);
+        assert_eq!(result.metadata["protocolMeta"], json!([
+            { "provider": "fixture:signature", "payload": "signature" }
+        ]));
+        assert_eq!(serde_json::from_str::<Value>(&result.text).unwrap()["rounds"][0][0]["id"], "role-a");
+    }
+
+    /// Removes overlapping hidden blocks without corrupting Unicode byte offsets or adjacent visible text.
+    #[test]
+    fn nested_hidden_markup_preserves_visible_text() {
+        let result = parseChatCallOutput(
+            "甲<think>私密<meta>内部</meta><thinking>嵌套</thinking></think>乙\
+             <meta><think>另一个嵌套</think></meta>丙<THINKING>hidden</THINKING>丁",
+        );
+        assert_eq!(result.text, "甲乙丙丁");
+        assert_eq!(result.turns.len(), 1);
+        assert_eq!(result.turns[0].content, "甲乙丙丁");
+    }
+
+    /// Prevents tool markup inside hidden reasoning or metadata from becoming an actual returned tool call.
+    #[test]
+    fn hidden_tool_markup_is_not_a_tool_call() {
+        let result = parseChatCallOutput(
+            "<think><tool name=\"private\" /></think>\
+             <meta><tool name=\"internal\">hidden</tool></meta>{\"rounds\":[[]]}",
+        );
+        assert_eq!(result.text, r#"{"rounds":[[]]}"#);
+        assert_eq!(result.finishReason, "stop");
+        assert_eq!(result.turns.len(), 1);
+        assert_eq!(result.turns[0].kind, "ASSISTANT");
+    }
+
+    /// Retains genuine tool-call segments and their finish reason after removing hidden blocks.
+    #[test]
+    fn visible_tool_calls_remain_available() {
+        let result = parseChatCallOutput(
+            "<think>private</think>before<tool name=\"visible\">arguments</tool>\
+             <meta>hidden</meta>after",
+        );
+        assert_eq!(result.text, "beforeafter");
+        assert_eq!(result.finishReason, "tool_call");
+        assert_eq!(result.turns.len(), 3);
+        assert_eq!(result.turns[1].kind, "TOOL_CALL");
+        assert_eq!(result.turns[1].toolName.as_deref(), Some("visible"));
+    }
+
+    /// Keeps unfinished hidden payloads out of assistant text without fabricating a JSON plan.
+    #[test]
+    fn unfinished_hidden_blocks_do_not_become_assistant_answers() {
+        for raw in ["<think>unfinished", "<thinking>unfinished", "<meta>unfinished"] {
+            let result = parseChatCallOutput(raw);
+            assert!(result.text.is_empty());
+            assert!(result.turns.is_empty());
+            assert!(serde_json::from_str::<Value>(&result.text).is_err());
+        }
+        let result = parseChatCallOutput("{\"rounds\":[[]]}<meta>unfinished");
+        assert_eq!(result.text, r#"{"rounds":[[]]}"#);
     }
 }
 

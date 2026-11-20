@@ -642,6 +642,7 @@ async fn native_character_avatar_picker_keeps_all_retained_revisions() {
         });
         __operitNativeReadToolPkgResource = async function() { await new Promise(resolve => setTimeout(resolve, 2)); return '/operitapp/default-avatar.png'; };
         __operitNativeGetScopedPluginConfigDir = function() { return '/operitapp/character-config'; };
+        __operitNativeGetPluginSpaceDataDir = function() { return '/operitapp/data/plugin_data/space/com.operit.character_cards'; };
         globalThis.avatarWrites = [];
         __operitNativeCallToolStructured = async function(owner, type, name, params) {
             await new Promise(resolve => setTimeout(resolve, 1));
@@ -689,7 +690,7 @@ async fn native_character_avatar_picker_keeps_all_retained_revisions() {
     let mut store = super::super::ToolPkgComposeDslProgramStore::ToolPkgComposeDslProgramStore::default();
     for event in events { if let Some(update) = event.update { store.apply_decoded(update.transaction).unwrap(); } }
     let snapshot = inspect_programs(&store);
-    assert!(snapshot.views.iter().any(|node| node.props.get("key").and_then(Value::as_str) == Some("entity-edit-avatar") && node.props.get("uri").and_then(Value::as_str).is_some_and(|uri| uri.starts_with("/operitapp/character-config/avatars/"))), "avatar selection must finish");
+    assert!(snapshot.views.iter().any(|node| node.props.get("key").and_then(Value::as_str) == Some("entity-edit-avatar") && node.props.get("uri").and_then(Value::as_str).is_some_and(|uri| uri.starts_with("/operitapp/data/plugin_data/space/com.operit.character_cards/avatars/"))), "avatar selection must finish in shared data");
     let writes = engine.execute_script_function(
         "exports.inspect = function() { return globalThis.avatarWrites; };",
         "inspect", &options(), &BTreeMap::new(), None, false, None,
@@ -699,7 +700,7 @@ async fn native_character_avatar_picker_keeps_all_retained_revisions() {
     assert_eq!(writes.len(), 3, "each picker result must be written");
     for write in writes {
         assert_eq!(write["base64Content"], "iVBORw0KGgoAAAANSUhEUgAAAAEAAAAB");
-        assert!(write["path"].as_str().unwrap().starts_with("/operitapp/character-config/avatars/"));
+        assert!(write["path"].as_str().unwrap().starts_with("/operitapp/data/plugin_data/space/com.operit.character_cards/avatars/"));
     }
     session.close(); engine.destroy();
 }
