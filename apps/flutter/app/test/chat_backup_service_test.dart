@@ -303,7 +303,7 @@ void main() {
   );
 
   test(
-    'retention follows successful publication and never deletes manual or foreign backups',
+    'retention keeps ten current-identity backups including legacy manual files',
     () async {
       final storage = _DirectoryStorage();
       final bridge = _ChatBridge();
@@ -328,9 +328,15 @@ void main() {
       expect(storage.removed, isEmpty);
       storage.failWrite = false;
       await service.checkAndBackup();
-      expect(storage.files, hasLength(12));
-      expect(storage.files, contains(manual));
+      expect(storage.files, hasLength(11));
+      expect(storage.files, isNot(contains(manual)));
       expect(storage.files, contains(foreign));
+      expect(storage.removed, [
+        '${prefix}2000-01-01-1.sqlite',
+        manual,
+        '${prefix}2000-01-02-1.sqlite',
+        '${prefix}2000-01-03-1.sqlite',
+      ]);
       service.dispose();
     },
   );
@@ -351,6 +357,106 @@ void main() {
     expect(service.lastSuccess, DateTime.fromMillisecondsSinceEpoch(1));
     service.dispose();
   });
+
+  test(
+    'restarts and repeated checks create only one backup per local day',
+    () async {
+      final storage = _DirectoryStorage();
+      var now = DateTime(2026, 11, 20, 0, 1);
+      final first = ChatBackupService(storage: storage, now: () => now);
+      await first.selectDirectory();
+      await first.checkAndBackup();
+      expect(storage.creates, 1);
+      expect(first.lastSuccess, now);
+      first.dispose();
+
+      now = DateTime(2026, 11, 20, 23, 59);
+      final restarted = ChatBackupService(storage: storage, now: () => now);
+      await restarted.checkAndBackup();
+      await restarted.checkAndBackup();
+      expect(storage.creates, 1);
+      expect(restarted.lastSuccess, DateTime(2026, 11, 20, 0, 1));
+
+      now = DateTime(2026, 11, 21, 0, 1);
+      await restarted.checkAndBackup();
+      await restarted.checkAndBackup();
+      expect(storage.creates, 2);
+      expect(storage.files, hasLength(2));
+      expect(restarted.lastSuccess, now);
+      restarted.dispose();
+    },
+  );
+
+  test('a legacy manual backup counts toward the daily limit', () async {
+    final storage = _DirectoryStorage();
+    final now = DateTime(2026, 11, 20, 12);
+    final service = ChatBackupService(storage: storage, now: () => now);
+    await service.selectDirectory();
+    final created = DateTime(2026, 11, 20, 8);
+    final name =
+        'operit-chats-${manager.activeIdentity.id}-'
+        'manual-2026-11-20-${created.millisecondsSinceEpoch}.sqlite';
+    storage.files[name] = null;
+    await service.checkAndBackup();
+    expect(storage.creates, 0);
+    expect(service.lastSuccess, created);
+    service.dispose();
+  });
+
+  test(
+    'startup prunes oldest backups even when today already exists',
+    () async {
+      final storage = _DirectoryStorage();
+      final now = DateTime(2026, 11, 20, 12);
+      final service = ChatBackupService(storage: storage, now: () => now);
+      await service.selectDirectory();
+      final prefix = 'operit-chats-${manager.activeIdentity.id}-';
+      final names = <String>[];
+      for (var day = 8; day <= 20; day++) {
+        final date = DateTime(2026, 11, day, 8);
+        final name =
+            '${prefix}2026-11-${day.toString().padLeft(2, '0')}-'
+            '${date.millisecondsSinceEpoch}.sqlite';
+        names.add(name);
+        storage.files[name] = null;
+      }
+      storage.files['unrelated.txt'] = null;
+      await service.checkAndBackup();
+      expect(storage.creates, 0);
+      expect(storage.files, hasLength(11));
+      expect(storage.removed, names.take(3).toList());
+      expect(storage.files, contains('unrelated.txt'));
+      expect(service.lastSuccess, DateTime(2026, 11, 20, 8));
+      service.dispose();
+    },
+  );
+
+  test(
+    'failed retention is retried without creating another backup today',
+    () async {
+      final storage = _DirectoryStorage();
+      var now = DateTime(2026, 11, 10, 12);
+      final service = ChatBackupService(storage: storage, now: () => now);
+      await service.selectDirectory();
+      for (var day = 10; day < 20; day++) {
+        now = DateTime(2026, 11, day, 12);
+        await service.checkAndBackup();
+      }
+      expect(storage.files, hasLength(10));
+      now = DateTime(2026, 11, 20, 12);
+      storage.failRemove = true;
+      await service.checkAndBackup();
+      expect(storage.files, hasLength(11));
+      expect(service.error, contains('Deletion denied'));
+      storage.failRemove = false;
+      await service.checkAndBackup();
+      expect(storage.files, hasLength(10));
+      expect(storage.creates, 11);
+      expect(storage.removed.single, contains('2026-11-10-'));
+      expect(service.error, isNull);
+      service.dispose();
+    },
+  );
 
   testWidgets(
     'settings only lists backups on request and restores from an independent folder',
@@ -481,6 +587,7 @@ class _DirectoryStorage implements PersistentDirectoryStorage {
   Object? selectFailure;
   Object? checkFailure;
   bool failWrite = false;
+  bool failRemove = false;
   int creates = 0;
   final files = <String, ChatBackupSnapshot?>{};
   final removed = <String>[];
@@ -514,7 +621,7 @@ class _DirectoryStorage implements PersistentDirectoryStorage {
     creates++;
     final value = _snapshot(
       name,
-      createdAt: DateTime.now().millisecondsSinceEpoch,
+      createdAt: int.parse(name.split('-').last.split('.').first),
     );
     files[name] = value;
     return value;
@@ -541,6 +648,7 @@ class _DirectoryStorage implements PersistentDirectoryStorage {
   /// Records only explicit retention deletions.
   @override
   Future<void> remove(PersistentDirectory directory, String name) async {
+    if (failRemove) throw StateError('Deletion denied');
     removed.add(name);
     files.remove(name);
   }

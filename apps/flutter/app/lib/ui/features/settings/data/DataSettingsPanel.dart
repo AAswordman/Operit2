@@ -687,7 +687,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                   onPressed: _busy || service.backingUp
                       ? null
                       : () => _runBackupAction(() async {
-                          await service.checkAndBackup(force: true);
+                          await service.checkAndBackup();
                           if (mounted && service.error == null) {
                             _showMessage(l10n.settingsDataBackupSaved);
                           }

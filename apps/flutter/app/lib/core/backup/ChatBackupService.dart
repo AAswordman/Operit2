@@ -21,10 +21,13 @@ class ChatBackupService extends ChangeNotifier {
       ProxyCoreRuntimeBridge(),
     ),
     PersistentDirectoryStorage? storage,
-  }) : _storage = storage ?? MountedChatBackupDirectoryStorage(clients);
+    DateTime Function()? now,
+  }) : _storage = storage ?? MountedChatBackupDirectoryStorage(clients),
+       _now = now ?? DateTime.now;
 
   static final ChatBackupService instance = ChatBackupService();
   final PersistentDirectoryStorage _storage;
+  final DateTime Function() _now;
   Future<void>? _active;
   bool _selecting = false;
   bool _restoring = false;
@@ -53,22 +56,21 @@ class ChatBackupService extends ChangeNotifier {
   }
 
   /// Serializes checks so lifecycle changes cannot create duplicate backups or picker routes.
-  Future<void> checkAndBackup({bool force = false}) {
+  Future<void> checkAndBackup() {
     if (_selecting || _restoring) return Future<void>.value();
     final current = _active;
     if (current != null) return current;
-    final future = Future<void>.microtask(() => _checkAndBackup(force: force))
-        .whenComplete(() {
-          _active = null;
-          notifyListeners();
-        });
+    final future = Future<void>.microtask(_checkAndBackup).whenComplete(() {
+      _active = null;
+      notifyListeners();
+    });
     _active = future;
     notifyListeners();
     return future;
   }
 
   /// Checks daily filenames and copies the database once when today's backup is absent.
-  Future<void> _checkAndBackup({required bool force}) async {
+  Future<void> _checkAndBackup() async {
     final PersistentDirectory? selected;
     try {
       selected = configuredDirectory;
@@ -96,50 +98,40 @@ class ChatBackupService extends ChangeNotifier {
     directorySelectionFailed = false;
     notifyListeners();
     try {
-      final now = DateTime.now();
+      final now = _now().toLocal();
       final identity = RuntimeBootstrapManager.instance.activeIdentity.id;
       final prefix = 'operit-chats-$identity-';
       final day =
           '${now.year.toString().padLeft(4, '0')}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      final automatic = <String>[];
-      if (!force) {
-        final pattern = RegExp(
-          '^${RegExp.escape(prefix)}(manual-)?(\\d{4}-\\d{2}-\\d{2})-(\\d+)\\.sqlite\$',
-        );
-        var backedUpToday = false;
-        DateTime? latest;
-        for (final name in await _storage.list(selected)) {
-          final match = pattern.firstMatch(name);
-          if (match == null) continue;
-          if (match.group(1) == null) {
-            automatic.add(name);
-            if (match.group(2) == day) backedUpToday = true;
-          }
-          final createdAt = DateTime.fromMillisecondsSinceEpoch(
-            int.parse(match.group(3)!),
-          );
-          if (latest == null || createdAt.isAfter(latest)) latest = createdAt;
-        }
-        lastSuccess = latest;
-        if (backedUpToday) {
-          notifyListeners();
-          return;
-        }
+      final backups = <({String name, String day, int timestamp})>[];
+      final pattern = RegExp(
+        '^${RegExp.escape(prefix)}(?:manual-)?(\\d{4}-\\d{2}-\\d{2})-(\\d+)\\.sqlite\$',
+      );
+      for (final name in await _storage.list(selected)) {
+        final match = pattern.firstMatch(name);
+        if (match == null) continue;
+        backups.add((
+          name: name,
+          day: match.group(1)!,
+          timestamp: int.parse(match.group(2)!),
+        ));
       }
-      final name =
-          '$prefix${force ? 'manual-' : ''}$day-${now.millisecondsSinceEpoch}.sqlite';
-      final snapshot = await _storage.create(selected, name);
-      lastSuccess = DateTime.fromMillisecondsSinceEpoch(snapshot.createdAt);
-      // Retention belongs to this identity and this installation's source ID only.
-      // A fresh installation never removes archives from older identities.
-      if (!force) {
-        automatic.add(name);
-        automatic.sort();
-        for (final old in automatic.take(
-          (automatic.length - 10).clamp(0, automatic.length),
-        )) {
-          await _storage.remove(selected, old);
-        }
+      if (!backups.any((backup) => backup.day == day)) {
+        final name = '$prefix$day-${now.millisecondsSinceEpoch}.sqlite';
+        final snapshot = await _storage.create(selected, name);
+        backups.add((name: name, day: day, timestamp: snapshot.createdAt));
+      }
+      backups.sort((a, b) {
+        final dateOrder = a.day.compareTo(b.day);
+        if (dateOrder != 0) return dateOrder;
+        final timeOrder = a.timestamp.compareTo(b.timestamp);
+        return timeOrder != 0 ? timeOrder : a.name.compareTo(b.name);
+      });
+      lastSuccess = DateTime.fromMillisecondsSinceEpoch(backups.last.timestamp);
+      for (final old in backups.take(
+        (backups.length - 10).clamp(0, backups.length),
+      )) {
+        await _storage.remove(selected, old.name);
       }
       notifyListeners();
     } catch (failure, stack) {

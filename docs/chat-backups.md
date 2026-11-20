@@ -17,8 +17,8 @@ The backup copy does not export chat tables, filter records, run VACUUM, check
 integrity or foreign keys, hash contents, stage a database, or read the copy back.
 All tables and their contents remain as they are in the source database. Separate
 preferences, attachment files, workspaces and other external files are not copied.
-The filename is `operit-chats-<identity>-<date>-<timestamp>.sqlite`; manual copies
-include `manual-` before the date. Existing backup filenames are not overwritten.
+The filename is `operit-chats-<identity>-<date>-<timestamp>.sqlite`; older manual
+copies include `manual-` before the date. Existing backup filenames are not overwritten.
 A failed backup copy removes its incomplete destination.
 
 ## Recovery
@@ -63,12 +63,19 @@ rule. Incompatible endpoints are refused before operation exchange.
 ## Scheduling and retention
 
 Checks run after onboarding, on foreground resume, and every five minutes while
-the main application is active. An existing filename for the current identity and
-local date completes the daily check without reading database contents. Otherwise
-the service copies the database once. After that copy succeeds, the latest ten
-automatic files of the current identity remain. Manual backups and files belonging
-to previous identities are outside automatic retention. Empty databases are copied
-in the same way as databases containing chats.
+the main application is active. Both lifecycle checks and the settings backup
+button enforce one backup per local calendar date for the current identity in the
+selected folder. Existing filenames, including older `manual-` files, count toward
+that date without reading database contents. Restarting the process does not reset
+the limit. When no backup exists for today, the service copies the database once.
+
+Every successful daily check retains the latest ten files for the current identity,
+ordered by their filename date and numeric timestamp, including older `manual-`
+files. Cleanup also runs when today's backup already exists, so an excess or a
+previously failed deletion is handled on the next check. A failed new copy does
+not prune existing backups. Files belonging to other identities and unrelated
+files remain untouched. Empty databases are copied in the same way as databases
+containing chats.
 
 ## External directory lifetime
 
