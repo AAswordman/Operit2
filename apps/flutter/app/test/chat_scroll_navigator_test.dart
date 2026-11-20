@@ -58,14 +58,16 @@ void main() {
     );
     expect(geometry.proximityAt(0), 0);
     var previous = 0.0;
-    for (var x = 8.0; x <= 80; x++) {
+    for (var x = 0.0; x <= ChatScrollRailGeometry.interactionWidth; x++) {
       final proximity = geometry.proximityAt(x);
       expect(proximity, inInclusiveRange(previous, 1.0));
       previous = proximity;
     }
-    expect(geometry.proximityAt(68), 1);
-    expect(geometry.proximityAt(80), 1);
-    expect(geometry.proximityAt(88), 1);
+    expect(
+      geometry.proximityAt(ChatScrollRailGeometry.interactionWidth - 20),
+      1,
+    );
+    expect(geometry.proximityAt(ChatScrollRailGeometry.interactionWidth), 1);
   });
 
   test('the wave saturates before contact and cannot grow farther inward', () {
@@ -109,6 +111,33 @@ void main() {
     expect(width(250, 1), greaterThan(width(270, 1)));
     expect(width(270, 1), greaterThan(width(310, 1)));
     expect(width(250, 0.5), inExclusiveRange(10, width(250, 1)));
+  });
+
+  for (final height in <double>[61, 120, 500, 1200]) {
+    test('edge scrolling follows the painted bounds at height $height', () {
+      final geometry = ChatScrollRailGeometry(
+        entryCount: 100,
+        viewportHeight: height,
+      );
+      final top = geometry.top;
+      final bottom = top + geometry.height;
+      expect(geometry.edgeScrollFactorAt(top), -1);
+      expect(geometry.edgeScrollFactorAt(top + 1), inExclusiveRange(-1, 0));
+      expect(geometry.edgeScrollFactorAt((top + bottom) / 2), 0);
+      expect(geometry.edgeScrollFactorAt(bottom - 1), inExclusiveRange(0, 1));
+      expect(geometry.edgeScrollFactorAt(bottom), 1);
+      expect(geometry.edgeScrollFactorAt(top - 100), -1);
+      expect(geometry.edgeScrollFactorAt(bottom + 100), 1);
+    });
+  }
+
+  test('histories that fit the rail do not request edge scrolling', () {
+    const geometry = ChatScrollRailGeometry(
+      entryCount: 20,
+      viewportHeight: 500,
+    );
+    expect(geometry.edgeScrollFactorAt(0), 0);
+    expect(geometry.edgeScrollFactorAt(500), 0);
   });
 
   for (final count in <int>[1, 20, 10000]) {
@@ -463,6 +492,33 @@ void main() {
     },
   );
 
+  testWidgets('the rail only captures the rightmost 48 pixels', (tester) async {
+    final transcript = ScrollController();
+    addTearDown(transcript.dispose);
+    final jumps = <int>[];
+    var underlyingDowns = 0;
+    await _pumpNavigator(
+      tester,
+      jumps: jumps,
+      scrollController: transcript,
+      onTranscriptPointerDown: (_) => underlyingDowns++,
+    );
+    transcript.jumpTo(200);
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(
+      find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
+    );
+    await tester.dragFrom(
+      Offset(rect.right - 52, rect.center.dy),
+      const Offset(0, -60),
+    );
+    await tester.pumpAndSettle();
+    expect(transcript.offset, greaterThan(200));
+    expect(underlyingDowns, 1);
+    expect(jumps, isEmpty);
+    expect(rect.width, 48);
+  });
+
   testWidgets('moving immediately selects and release jumps without a hold', (
     tester,
   ) async {
@@ -481,7 +537,9 @@ void main() {
     final rect = tester.getRect(
       find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
     );
-    final touch = await tester.startGesture(Offset(rect.left + 1, rect.center.dy));
+    final touch = await tester.startGesture(
+      Offset(rect.left + 1, rect.center.dy),
+    );
     await touch.moveBy(const Offset(-30, -140));
     await tester.pump();
     expect(jumps, isEmpty);
@@ -493,7 +551,7 @@ void main() {
     expect(transcript.offset, 0);
   });
 
-  testWidgets('holding at either edge browses history without moving messages', (
+  testWidgets('dragging to painted edges scrolls until the finger moves away', (
     tester,
   ) async {
     final transcript = ScrollController();
@@ -511,23 +569,115 @@ void main() {
     final rect = tester.getRect(
       find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
     );
+    const geometry = ChatScrollRailGeometry(
+      entryCount: 100,
+      viewportHeight: 500,
+    );
     expect(rect.height, 500);
     final touch = await tester.startGesture(rect.center);
-    await touch.moveTo(Offset(rect.left + 1, rect.bottom - 1));
-    await tester.pump(const Duration(seconds: 1));
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(rail.offset, 400);
+    await touch.moveTo(
+      Offset(rect.left + 1, rect.top + geometry.top + geometry.height - 8),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
     expect(rail.offset, greaterThan(400));
     expect(jumps, isEmpty);
     expect(transcript.offset, 0);
     final bottomOffset = rail.offset;
-    await touch.moveTo(Offset(rect.left + 1, rect.top + 1));
-    await tester.pump(const Duration(seconds: 1));
+    await touch.moveTo(rect.center);
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(rail.offset, bottomOffset);
+    // The held gesture keeps scrolling even after drifting left of the target.
+    await touch.moveTo(Offset(rect.left - 40, rect.top + geometry.top + 8));
+    await tester.pump(const Duration(milliseconds: 250));
     expect(rail.offset, lessThan(bottomOffset));
+    final releasedOffset = rail.offset;
+    final selected = geometry.entryIndexAt(
+      geometry.top + 8,
+      scrollOffset: releasedOffset,
+    );
+    expect(find.text('message $selected'), findsOneWidget);
     await touch.up();
     await tester.pumpAndSettle();
-    expect(jumps, hasLength(1));
+    expect(jumps, [selected]);
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(rail.offset, releasedOffset);
     expect(transcript.offset, 0);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('cancelling edge scrolling clears the preview without jumping', (
+    tester,
+  ) async {
+    final jumps = <int>[];
+    await _pumpNavigator(tester, count: 100, jumps: jumps);
+    final rail = _railScroll(tester);
+    rail.jumpTo(400);
+    await tester.pumpAndSettle();
+    final rect = tester.getRect(
+      find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
+    );
+    const geometry = ChatScrollRailGeometry(
+      entryCount: 100,
+      viewportHeight: 500,
+    );
+    final touch = await tester.startGesture(rect.center);
+    await touch.moveTo(
+      Offset(rect.center.dx, rect.top + geometry.top + geometry.height - 8),
+    );
+    await tester.pump(const Duration(milliseconds: 250));
+    expect(rail.offset, greaterThan(400));
+    await touch.cancel();
+    await tester.pumpAndSettle();
+    final cancelledOffset = rail.offset;
+    await tester.pump(const Duration(milliseconds: 500));
+    expect(rail.offset, cancelledOffset);
+    expect(find.textContaining('message '), findsNothing);
+    expect(jumps, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
+    'one held drag reaches both history endpoints without overscroll',
+    (tester) async {
+      final jumps = <int>[];
+      await _pumpNavigator(tester, count: 100, jumps: jumps);
+      final rail = _railScroll(tester);
+      rail.jumpTo(400);
+      await tester.pumpAndSettle();
+      final rect = tester.getRect(
+        find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
+      );
+      const geometry = ChatScrollRailGeometry(
+        entryCount: 100,
+        viewportHeight: 500,
+      );
+      final touch = await tester.startGesture(rect.center);
+      await touch.moveTo(Offset(rect.center.dx, rect.top + geometry.top - 20));
+      await tester.pump(const Duration(seconds: 2));
+      expect(rail.offset, 0);
+      expect(find.text('message 0'), findsOneWidget);
+      final dynamic painter = tester
+          .widget<CustomPaint>(
+            find.byKey(const ValueKey('chat-scroll-rail-paint')),
+          )
+          .painter;
+      expect(painter.pointer.value.dy, geometry.top);
+      await touch.moveTo(
+        Offset(rect.center.dx, rect.top + geometry.top + geometry.height + 20),
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(rail.offset, rail.position.maxScrollExtent);
+      expect(find.text('message 99'), findsOneWidget);
+      expect(painter.pointer.value.dy, geometry.top + geometry.height);
+      expect(jumps, isEmpty);
+      await touch.up();
+      await tester.pumpAndSettle();
+      expect(jumps, [99]);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   testWidgets('scrolled ticks preview and tap the same message', (
     tester,
@@ -556,29 +706,30 @@ void main() {
     expect(find.text('message 25'), findsNothing);
   });
 
-  testWidgets('cancel cancels selection; drift outside preserves release selection', (
-    tester,
-  ) async {
-    final jumps = <int>[];
-    await _pumpNavigator(tester, jumps: jumps);
-    final rect = tester.getRect(
-      find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
-    );
-    final touch = await tester.startGesture(rect.center);
-    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
-    await touch.cancel();
-    await tester.pumpAndSettle();
-    expect(jumps, isEmpty);
-    final second = await tester.startGesture(rect.center);
-    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
-    await second.moveBy(const Offset(-100, 0));
-    await tester.pump();
-    expect(find.text('message 10'), findsOneWidget);
-    await second.up();
-    await tester.pumpAndSettle();
-    expect(jumps, [10]);
-    expect(find.textContaining('message '), findsNothing);
-  });
+  testWidgets(
+    'cancel cancels selection; drift outside preserves release selection',
+    (tester) async {
+      final jumps = <int>[];
+      await _pumpNavigator(tester, jumps: jumps);
+      final rect = tester.getRect(
+        find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
+      );
+      final touch = await tester.startGesture(rect.center);
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await touch.cancel();
+      await tester.pumpAndSettle();
+      expect(jumps, isEmpty);
+      final second = await tester.startGesture(rect.center);
+      await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+      await second.moveBy(const Offset(-100, 0));
+      await tester.pump();
+      expect(find.text('message 10'), findsOneWidget);
+      await second.up();
+      await tester.pumpAndSettle();
+      expect(jumps, [10]);
+      expect(find.textContaining('message '), findsNothing);
+    },
+  );
 
   testWidgets('mouse wheel scrolls the rail without navigating', (
     tester,

@@ -12,12 +12,12 @@ class ChatScrollRailGeometry {
        assert(viewportHeight > 0 && viewportHeight < double.infinity);
 
   static const double tickSpacing = 16;
-  static const double interactionWidth = 88;
+  static const double interactionWidth = 48;
   static const double rightInset = 8;
   static const double maximumTickWidth = 18;
   // Reach full width before the pointer touches the longest tick's left edge.
   static const double fullExpansionDistance = maximumTickWidth + 4;
-  static const double proximityDistance = 72;
+  static const double proximityDistance = interactionWidth - rightInset;
   static const double waveRadius = 44;
 
   final int entryCount;
@@ -51,6 +51,21 @@ class ChatScrollRailGeometry {
   /// Uses the same scroll offset for ticks, hit testing, and preview placement.
   double entryCenter(int index, {double scrollOffset = 0}) =>
       top + (index + 0.5) * tickSpacing - scrollOffset;
+
+  /// Scrolls near the painted rail's edges, including when a press drifts past them.
+  double edgeScrollFactorAt(double y) {
+    if (maxScrollOffset == 0) return 0;
+    final edgeExtent = math.min(48.0, height / 2);
+    final leadingEdge = top + edgeExtent;
+    final trailingEdge = top + height - edgeExtent;
+    if (y < leadingEdge) {
+      return -((leadingEdge - y) / edgeExtent).clamp(0.0, 1.0);
+    }
+    if (y > trailingEdge) {
+      return ((y - trailingEdge) / edgeExtent).clamp(0.0, 1.0);
+    }
+    return 0;
+  }
 
   /// Smoothly increases horizontal proximity and saturates beside the rail.
   double proximityAt(double x) {

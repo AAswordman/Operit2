@@ -496,7 +496,10 @@ class _MessageTickRailState extends State<_MessageTickRail>
   /// Repaints on every motion but rebuilds the preview only when its row changes.
   void _updatePointer(Offset position) {
     final geometry = widget.geometry;
-    _pointer.value = position;
+    _pointer.value = Offset(
+      position.dx,
+      position.dy.clamp(geometry.top, geometry.top + geometry.height),
+    );
     if (_scrolling && _touchPointer == null) return;
     final insideHeight =
         position.dy >= geometry.hitTop &&
@@ -536,7 +539,7 @@ class _MessageTickRailState extends State<_MessageTickRail>
     }
   }
 
-  /// The whole right-hand area owns one continuous press/move/release gesture.
+  /// The narrow right-hand strip owns one continuous press/move/release gesture.
   void _handlePointerDown(PointerDownEvent event) {
     if (_touchPointer != null || event.buttons != kPrimaryButton) return;
     _touchPointer = event.pointer;
@@ -561,13 +564,7 @@ class _MessageTickRailState extends State<_MessageTickRail>
   void _scrollAtSelectionEdge() {
     final position = _lastPressPosition;
     if (!mounted || position == null || !_scroll.hasClients) return;
-    const edge = 48.0;
-    final height = widget.geometry.viewportHeight;
-    final direction = position.dy < edge
-        ? -((edge - position.dy) / edge).clamp(0.0, 1.0)
-        : position.dy > height - edge
-        ? ((position.dy - height + edge) / edge).clamp(0.0, 1.0)
-        : 0.0;
+    final direction = widget.geometry.edgeScrollFactorAt(position.dy);
     if (direction == 0) return;
     final offset = (_scrollOffset + direction * 12).clamp(
       0.0,
@@ -589,10 +586,12 @@ class _MessageTickRailState extends State<_MessageTickRail>
     widget.onTapTick(widget.entries[index].timestamp);
   }
 
+  /// Stops a cancelled press without committing its current message.
   void _handlePointerCancel(PointerCancelEvent event) {
     if (event.pointer == _touchPointer) _endPress();
   }
 
+  /// Stops edge scrolling and clears all state owned by the completed press.
   void _endPress() {
     _edgeScrollTimer?.cancel();
     _edgeScrollTimer = null;
