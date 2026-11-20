@@ -17,6 +17,7 @@ async function environment(t, runtimeGlobals = {}) {
 /** Dispatches the SDK's actual callback on a keyed native control. */
 async function action(ui, key, prop = "onClick", payload) {
   if (key === "import-card" || key === "create-card") return ui.dispatch(keyedNode(ui.render().tree, "add-card").props.onSelect, key === "create-card" ? 0 : 1);
+  if (key === "import-group" || key === "create-group") return ui.dispatch(keyedNode(ui.render().tree, "add-group").props.onSelect, key === "create-group" ? 0 : 1);
   return ui.dispatch(keyedNode(ui.render().tree, key).props[prop], payload);
 }
 /** Checks that forms and management routes have no platform view underneath. */

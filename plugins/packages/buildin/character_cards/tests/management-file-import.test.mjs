@@ -9,6 +9,7 @@ const modules = await buildUiScreenScripts();
 /** Invokes the actual registered management callback, including the add menu. */
 async function action(ui, key, payload) {
   if (key === "import-card") return ui.dispatch(keyedNode(ui.render().tree, "add-card").props.onSelect, 1);
+  if (key === "import-group") return ui.dispatch(keyedNode(ui.render().tree, "add-group").props.onSelect, 1);
   const node = keyedNode(ui.render().tree, key);
   return ui.dispatch(node.props.onClick, payload);
 }

@@ -281,7 +281,7 @@ function management(plugin) {
   const ui = mountRegisteredComposeRoute(plugin, null, "main", {}, command => { commands.push(plain(command)); });
   return { ...ui, commands, async open(mode, entity, id) {
     await click(ui, "management-root", "onLoad");
-    return mode === "create" && entity === "card" ? click(ui, "add-card", "onSelect", 0) : click(ui, mode === "create" ? "create-" + entity : entity + ":" + id + "-open");
+    return mode === "create" ? click(ui, "add-" + entity, "onSelect", 0) : click(ui, entity + ":" + id + "-open");
   } };
 }
 async function loadManagementModal(ui) {

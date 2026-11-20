@@ -145,8 +145,9 @@ Management lists, shared-library controls, USER.md, memory editors, imports,
 exports, attachment selection and owner settings are ordinary Compose DSL in
 `src/ui-management.ts` and `src/ui-memory-*.ts`. The original sections, separate
 owner graph/profile/settings entries, modal forms and graph inspector are retained.
-The character toolbar combines creation and import in the compact “添加” native
-menu beside “绑定对话”. Management reuses the same native entity editor and refreshes
+The character and group toolbars each combine creation and import in a compact “添加”
+native menu. A shared “绑定对话” action above both sections opens the picker for either
+characters or groups. Management reuses the same native entity editor and refreshes
 canonical records when a local transaction completes.
 
 Only the memory graph canvas uses an offline WebView. Its display-only bridge has
