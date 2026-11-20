@@ -317,6 +317,13 @@ impl ApplicationUpdateManager {
                 receivedBytes: readBytes,
                 totalBytes,
             }),
+            FullUpdateProgressEvent::PreparationProgress { phase, completedBytes, totalBytes } => {
+                progress.set_value(ApplicationUpdateProgress {
+                    stage: phase.as_str().into(),
+                    receivedBytes: completedBytes,
+                    totalBytes,
+                })
+            }
             FullUpdateProgressEvent::StageChanged { stage, .. } => {
                 let previous = progress.value();
                 progress.set_value(ApplicationUpdateProgress {
@@ -327,8 +334,8 @@ impl ApplicationUpdateManager {
                         FullUpdateStage::DownloadingPackage => "downloading",
                     }
                     .into(),
-                    receivedBytes: previous.receivedBytes,
-                    totalBytes: previous.totalBytes,
+                    receivedBytes: if stage == FullUpdateStage::Ready { previous.receivedBytes } else { 0 },
+                    totalBytes: if stage == FullUpdateStage::Ready { previous.totalBytes } else { 0 },
                 })
             }
         })

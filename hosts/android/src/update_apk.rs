@@ -23,7 +23,10 @@ impl Read for PackageReader<'_> {
         if length == 0 {
             return Ok(0);
         }
-        let bytes = self.source.readBytesRange(self.offset, length).map_err(io::Error::other)?;
+        let bytes = self
+            .source
+            .readBytesRange(self.offset, length)
+            .map_err(io::Error::other)?;
         if bytes.len() != length {
             return Err(invalid("APK source changed during transformation"));
         }
@@ -117,16 +120,29 @@ fn recipe(metadata: &[u8]) -> io::Result<Recipe> {
 fn copy(
     source: &mut impl Read,
     target: &mut impl Write,
-    mut count: u64,
+    count: u64,
     control: &HttpDownloadControl,
 ) -> io::Result<()> {
+    copy_progress(source, target, count, control, &|_| {})
+}
+
+/// Reports payload bytes only after they have reached the copy or compression destination.
+fn copy_progress(
+    source: &mut impl Read,
+    target: &mut impl Write,
+    mut count: u64,
+    control: &HttpDownloadControl,
+    progress: &dyn Fn(u64),
+) -> io::Result<()> {
     let mut buffer = vec![0; BUFFER];
+    let total = count;
     while count > 0 {
         active(control)?;
         let length = count.min(BUFFER as u64) as usize;
         source.read_exact(&mut buffer[..length])?;
         target.write_all(&buffer[..length])?;
         count -= length as u64;
+        progress(total - count);
     }
     Ok(())
 }
@@ -138,6 +154,7 @@ fn decode(
     output: &mut File,
     metadata: &[u8],
     control: &HttpDownloadControl,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
 ) -> io::Result<()> {
     let recipe = recipe(metadata)?;
     if source_size != recipe.size {
@@ -146,6 +163,14 @@ fn decode(
     output.write_all(MAGIC)?;
     output.write_all(&(metadata.len() as u32).to_le_bytes())?;
     output.write_all(metadata)?;
+    let shell = recipe.size
+        - recipe
+            .entries
+            .iter()
+            .map(|entry| entry.compressed)
+            .sum::<u64>();
+    let total = shell + recipe.entries.iter().map(|entry| entry.size).sum::<u64>();
+    progress(0, total);
     let mut offset = 0;
     for entry in &recipe.entries {
         source.seek(SeekFrom::Start(offset))?;
@@ -154,14 +179,19 @@ fn decode(
     }
     source.seek(SeekFrom::Start(offset))?;
     copy(source, output, recipe.size - offset, control)?;
+    let mut completed = shell;
+    progress(completed, total);
     for entry in &recipe.entries {
         source.seek(SeekFrom::Start(entry.offset))?;
         let mut decoder = flate2::read::DeflateDecoder::new((&mut *source).take(entry.compressed));
-        copy(&mut decoder, output, entry.size, control)?;
+        copy_progress(&mut decoder, output, entry.size, control, &|done| {
+            progress(completed + done, total)
+        })?;
         let mut trailing = [0];
         if decoder.read(&mut trailing)? != 0 || decoder.total_in() != entry.compressed {
             return Err(invalid("Expanded APK entry does not match recipe"));
         }
+        completed += entry.size;
     }
     Ok(())
 }
@@ -189,7 +219,13 @@ impl Write for EntryWriter<'_> {
 }
 
 /// Recreates each original DEFLATE stream without rewriting APK metadata or signatures.
-fn encode(source: &mut impl Read, source_size: u64, output: &mut File, control: &HttpDownloadControl) -> io::Result<()> {
+fn encode(
+    source: &mut impl Read,
+    source_size: u64,
+    output: &mut File,
+    control: &HttpDownloadControl,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
+) -> io::Result<()> {
     let mut magic = [0; 8];
     source.read_exact(&mut magic)?;
     if &magic != MAGIC {
@@ -209,6 +245,8 @@ fn encode(source: &mut impl Read, source_size: u64, output: &mut File, control: 
     if source_size != 12 + length as u64 + shell + expanded {
         return Err(invalid("Expanded APK length mismatch"));
     }
+    let total = shell + expanded;
+    progress(0, total);
     let mut offset = 0;
     for entry in &recipe.entries {
         output.seek(SeekFrom::Start(offset))?;
@@ -218,6 +256,8 @@ fn encode(source: &mut impl Read, source_size: u64, output: &mut File, control: 
     output.seek(SeekFrom::Start(offset))?;
     copy(source, output, recipe.size - offset, control)?;
     output.set_len(recipe.size)?;
+    let mut completed = shell;
+    progress(completed, total);
     for entry in &recipe.entries {
         output.seek(SeekFrom::Start(entry.offset))?;
         let writer = EntryWriter {
@@ -226,10 +266,13 @@ fn encode(source: &mut impl Read, source_size: u64, output: &mut File, control: 
         };
         let mut encoder =
             flate2::write::DeflateEncoder::new(writer, flate2::Compression::new(entry.level));
-        copy(source, &mut encoder, entry.size, control)?;
+        copy_progress(source, &mut encoder, entry.size, control, &|done| {
+            progress(completed + done, total)
+        })?;
         if encoder.finish()?.remaining != 0 {
             return Err(invalid("APK encoder does not reproduce target layout"));
         }
+        completed += entry.size;
     }
     Ok(())
 }
@@ -240,6 +283,7 @@ pub(super) fn transform(
     target: &dyn FileTarget,
     transform: ApplicationUpdateTransform,
     control: &HttpDownloadControl,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
 ) -> io::Result<()> {
     active(control)?;
     let size = u64::try_from(source.fileInfo().map_err(io::Error::other)?.size)
@@ -247,7 +291,14 @@ pub(super) fn transform(
     if size == 0 || size > LIMIT {
         return Err(invalid("APK source exceeds size limits"));
     }
-    let mut input = BufReader::with_capacity(BUFFER, PackageReader { source, size, offset: 0 });
+    let mut input = BufReader::with_capacity(
+        BUFFER,
+        PackageReader {
+            source,
+            size,
+            offset: 0,
+        },
+    );
     let target_path = target.nativePath().map_err(io::Error::other)?;
     let target = Path::new(&target_path);
     if let Some(parent) = target.parent() {
@@ -259,9 +310,11 @@ pub(super) fn transform(
         .open(target)?;
     let result = match transform {
         ApplicationUpdateTransform::ExpandApkEntries { recipe } => {
-            decode(&mut input, size, &mut output, &recipe, control)
+            decode(&mut input, size, &mut output, &recipe, control, progress)
         }
-        ApplicationUpdateTransform::RestoreApkEntries => encode(&mut input, size, &mut output, control),
+        ApplicationUpdateTransform::RestoreApkEntries => {
+            encode(&mut input, size, &mut output, control, progress)
+        }
         _ => Err(io::Error::new(
             io::ErrorKind::Unsupported,
             "Unsupported Android installer transform",

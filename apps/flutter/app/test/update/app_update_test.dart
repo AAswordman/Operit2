@@ -49,6 +49,8 @@ class Backend extends AppUpdateBackend {
   @override
   Stream<AppUpdateNetwork> get backgroundNetwork => network;
   AppUpdateProgress? onProgress;
+  void Function()? onReconstructing;
+  void Function(AppUpdatePreparationProgress)? onPreparationProgress;
   @override
   Future<AppUpdateRelease?> check() async =>
       checking == null ? availableRelease : checking!.future;
@@ -87,9 +89,12 @@ class Backend extends AppUpdateBackend {
     AppUpdateProgress progress, {
     void Function()? onSelectingSource,
     void Function()? onReconstructing,
+    void Function(AppUpdatePreparationProgress)? onPreparationProgress,
   }) async {
     downloads++;
     onProgress = progress;
+    this.onReconstructing = onReconstructing;
+    this.onPreparationProgress = onPreparationProgress;
     selectSource = onSelectingSource;
     if (selectingSource) {
       onSelectingSource?.call();
@@ -124,6 +129,105 @@ class Backend extends AppUpdateBackend {
 
 void main() {
   setUpAll(ClientLogger.initialize);
+  testWidgets(
+    'local steps show measured progress and elapsed time across native waits',
+    (tester) async {
+      final backend = Backend()..downloadPending = Completer<String>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      final pending = controller.start();
+      await tester.pumpWidget(
+        OperitTheme(
+          initialThemePreferenceSnapshot:
+              UserPreferencesManager.defaultThemePreferenceSnapshot,
+          initialThemeIsReady: false,
+          unconfiguredChildEnabled: true,
+          hostInteractionHostsEnabled: false,
+          child: AppUpdateDialog(controller: controller),
+        ),
+      );
+      await tester.pump();
+      backend.onReconstructing!();
+      backend.onPreparationProgress!(
+        const AppUpdatePreparationProgress(
+          AppUpdatePreparationPhase.applyingPatch,
+          40,
+          100,
+        ),
+      );
+      await tester.pump();
+      expect(find.text('正在合并补丁…'), findsOneWidget);
+      expect(find.text('当前步骤 40%'), findsOneWidget);
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator),
+            )
+            .value,
+        0.4,
+      );
+      backend.onPreparationProgress!(
+        const AppUpdatePreparationProgress(
+          AppUpdatePreparationPhase.restoringPackage,
+          0,
+          0,
+        ),
+      );
+      await tester.pump(const Duration(seconds: 2));
+      expect(find.text('正在生成新安装包…'), findsOneWidget);
+      expect(find.text('当前步骤 40%'), findsNothing);
+      expect(find.textContaining('已用时 '), findsOneWidget);
+      expect(
+        tester
+            .widget<LinearProgressIndicator>(
+              find.byType(LinearProgressIndicator),
+            )
+            .value,
+        isNull,
+      );
+      expect(find.text('取消更新'), findsOneWidget);
+      backend.onPreparationProgress!(
+        const AppUpdatePreparationProgress(
+          AppUpdatePreparationPhase.restoringPackage,
+          75,
+          100,
+        ),
+      );
+      await tester.pump();
+      expect(find.text('当前步骤 75%'), findsOneWidget);
+      backend.downloadPending!.complete('fixture-update-receipt');
+      await pending;
+      await tester.pump();
+      expect(controller.phase, AppUpdatePhase.ready);
+      expect(find.textContaining('已用时 '), findsNothing);
+      expect(backend.installs, 0);
+      await tester.pumpWidget(const SizedBox.shrink());
+      controller.dispose();
+    },
+  );
+  testWidgets(
+    'late native progress after disposal cannot restart repaint ticks',
+    (tester) async {
+      final backend = Backend()..downloadPending = Completer<String>();
+      final controller = AppUpdateController(backend: backend);
+      await controller.check();
+      final pending = controller.start();
+      await tester.pump();
+      backend.onReconstructing!();
+      controller.dispose();
+      await pending;
+      backend.onPreparationProgress!(
+        const AppUpdatePreparationProgress(
+          AppUpdatePreparationPhase.restoringPackage,
+          0,
+          100,
+        ),
+      );
+      backend.onReconstructing!();
+      await tester.pump(const Duration(seconds: 2));
+      expect(backend.installs, 0);
+    },
+  );
   test(
     'unmetered discovery prepares silently and installs only after confirmation',
     () async {
@@ -720,6 +824,45 @@ void main() {
   );
 
   for (final textScale in [1.0, 1.6]) {
+    testWidgets(
+      'local progress fits a narrow screen with text scale $textScale',
+      (tester) async {
+        tester.view.physicalSize = const Size(360, 640);
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        final backend = Backend()..downloadPending = Completer<String>();
+        final controller = AppUpdateController(backend: backend);
+        await controller.check();
+        controller.markUpdatePrompted();
+        final pending = controller.start();
+        await tester.pumpWidget(updateApp(controller, textScale: textScale));
+        await tester.pump();
+        await tester.tap(find.byKey(const ValueKey('app-update-badge')).first);
+        await tester.pump();
+        backend.onPreparationProgress!(
+          const AppUpdatePreparationProgress(
+            AppUpdatePreparationPhase.restoringPackage,
+            75,
+            100,
+          ),
+        );
+        await tester.pump(const Duration(seconds: 2));
+        expect(find.text('正在生成新安装包…'), findsOneWidget);
+        expect(find.text('当前步骤 75%'), findsOneWidget);
+        expect(find.textContaining('已用时 '), findsOneWidget);
+        expect(find.text('后台更新').hitTestable(), findsOneWidget);
+        expect(find.text('取消更新').hitTestable(), findsOneWidget);
+        expect(tester.takeException(), isNull);
+        await tester.tap(find.text('取消更新'));
+        await pending;
+        await tester.pumpAndSettle();
+        await tester.tap(find.text('关闭'));
+        await tester.pumpAndSettle();
+        await tester.pumpWidget(const SizedBox());
+        controller.dispose();
+      },
+    );
     testWidgets('reminder fits a narrow screen with text scale $textScale', (
       tester,
     ) async {

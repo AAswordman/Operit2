@@ -75,6 +75,7 @@ class _Backend extends AppUpdateBackend {
     AppUpdateProgress progress, {
     void Function()? onSelectingSource,
     void Function()? onReconstructing,
+    void Function(AppUpdatePreparationProgress)? onPreparationProgress,
   }) async {
     downloads++;
     onReconstructing?.call();

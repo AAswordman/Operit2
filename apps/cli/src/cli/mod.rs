@@ -681,6 +681,22 @@ async fn run_update_with_progress(
                         io::stdout().flush().expect("stdout flush failed");
                         *last_line_len = line.len();
                     }
+                    FullUpdateProgressEvent::PreparationProgress { phase, completedBytes, totalBytes } => {
+                        if cli_json_mode() { return; }
+                        let line = if totalBytes > 0 {
+                            format!("{}: {:.1}% ({}/{})", phase.label(),
+                                completedBytes as f64 * 100.0 / totalBytes as f64,
+                                format_bytes(completedBytes), format_bytes(totalBytes))
+                        } else {
+                            phase.label().to_string()
+                        };
+                        let mut last_line_len = progress_line_len.lock()
+                            .expect("progress line length mutex poisoned");
+                        clear_progress_line(&mut *last_line_len);
+                        print!("\r{line}");
+                        io::stdout().flush().expect("stdout flush failed");
+                        *last_line_len = line.len();
+                    }
                 },
             )
             .await?;

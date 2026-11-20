@@ -31,6 +31,9 @@ class AppUpdateController extends ChangeNotifier {
   String? error;
   int receivedBytes = 0;
   int? totalBytes;
+  AppUpdatePreparationProgress? preparation;
+  final Stopwatch _preparationClock = Stopwatch();
+  Timer? _preparationTimer;
   bool restartRequired = false;
   String? installMessage;
   final Set<String> _promptedVersions = <String>{};
@@ -65,6 +68,27 @@ class AppUpdateController extends ChangeNotifier {
   double? get progress => totalBytes != null && totalBytes! > 0
       ? (receivedBytes / totalBytes!).clamp(0.0, 1.0)
       : null;
+
+  /// Shows time spent in local processing, including native compression waits.
+  Duration get preparationElapsed => _preparationClock.elapsed;
+
+  /// Keeps visible activity independent of the frequency of native progress callbacks.
+  void _startPreparation() {
+    if (_disposed) return;
+    phase = AppUpdatePhase.reconstructing;
+    _preparationClock.start();
+    _preparationTimer ??= Timer.periodic(
+      const Duration(seconds: 1),
+      (_) => _emit(),
+    );
+  }
+
+  /// Stops repaint ticks whenever local processing finishes or yields to transfer.
+  void _stopPreparation() {
+    _preparationClock.stop();
+    _preparationTimer?.cancel();
+    _preparationTimer = null;
+  }
 
   void _emit() {
     if (!_disposed) notifyListeners();
@@ -199,6 +223,7 @@ class AppUpdateController extends ChangeNotifier {
         );
       }
     } finally {
+      _stopPreparation();
       _background = false;
       _emit();
       if (_network != AppUpdateNetwork.offline && _backgroundAttempt == null) {
@@ -322,6 +347,9 @@ class AppUpdateController extends ChangeNotifier {
   /// Downloads, reconstructs and verifies without invoking the installer.
   Future<void> _download() async {
     if (packageReceipt == null) {
+      _stopPreparation();
+      _preparationClock.reset();
+      preparation = null;
       receivedBytes = 0;
       totalBytes = null;
       phase = AppUpdatePhase.selectingSource;
@@ -329,24 +357,35 @@ class AppUpdateController extends ChangeNotifier {
       packageReceipt = await _backend.download(
         release!,
         (received, total) {
+          _stopPreparation();
+          preparation = null;
           phase = AppUpdatePhase.downloading;
           receivedBytes = received;
           totalBytes = total;
           _emit();
         },
         onSelectingSource: () {
+          _stopPreparation();
+          preparation = null;
           phase = AppUpdatePhase.selectingSource;
           receivedBytes = 0;
           totalBytes = null;
           _emit();
         },
         onReconstructing: () {
-          phase = AppUpdatePhase.reconstructing;
+          preparation = null;
+          _startPreparation();
+          _emit();
+        },
+        onPreparationProgress: (value) {
+          preparation = value;
+          _startPreparation();
           _emit();
         },
       );
     }
     if (_cancelRequested) throw const AppUpdateCancelled();
+    _stopPreparation();
     phase = AppUpdatePhase.ready;
     _emit();
   }
@@ -373,6 +412,7 @@ class AppUpdateController extends ChangeNotifier {
 
   /// Preserves prepared installers and applies typed cancellation and availability outcomes.
   void _fail(Object exception, StackTrace stack) {
+    _stopPreparation();
     if (exception is AppUpdatePackageMissing) {
       packageReceipt = null;
       error = exception.toString();
@@ -437,6 +477,7 @@ class AppUpdateController extends ChangeNotifier {
 
   @override
   void dispose() {
+    _stopPreparation();
     _disposed = true;
     unawaited(_networkSubscription?.cancel());
     unawaited(cancelDownload());

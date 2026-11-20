@@ -85,7 +85,12 @@ class UpdateBridge extends NativeSidebarBridge {
     return progress.stream;
   }
 
-  void reportProgress({String stage = 'downloading'}) {
+  /// Sends an actual wire snapshot, including unknown local-work totals.
+  void reportProgress({
+    String stage = 'downloading',
+    int done = 48,
+    int total = 120,
+  }) {
     final request = watch!;
     progress.add(
       CoreEvent.raw(
@@ -95,8 +100,8 @@ class UpdateBridge extends NativeSidebarBridge {
         kind: 'Snapshot',
         valueBytes: encodeCoreLink({
           'stage': stage,
-          'receivedBytes': 48,
-          'totalBytes': 120,
+          'receivedBytes': done,
+          'totalBytes': total,
         }),
         decodeValue: (bytes) => decodeCoreLink<Object?>(bytes),
       ),
@@ -106,6 +111,49 @@ class UpdateBridge extends NativeSidebarBridge {
 
 void main() {
   setUpAll(ClientLogger.initialize);
+  test(
+    'local preparation progress stays separate from download bytes',
+    () async {
+      final bridge = UpdateBridge();
+      final backend = CoreAppUpdateBackend(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      final release = (await backend.check())!;
+      final local = <AppUpdatePreparationProgress>[];
+      final downloads = <(int, int?)>[];
+      final pending = backend.download(
+        release,
+        (done, total) => downloads.add((done, total)),
+        onPreparationProgress: local.add,
+      );
+      final phases = {
+        'verifying_base': AppUpdatePreparationPhase.verifyingBase,
+        'verifying_patch': AppUpdatePreparationPhase.verifyingPatch,
+        'expanding_base': AppUpdatePreparationPhase.expandingBase,
+        'verifying_expanded_base':
+            AppUpdatePreparationPhase.verifyingExpandedBase,
+        'applying_patch': AppUpdatePreparationPhase.applyingPatch,
+        'restoring_package': AppUpdatePreparationPhase.restoringPackage,
+        'verifying_package': AppUpdatePreparationPhase.verifyingPackage,
+        'saving_package': AppUpdatePreparationPhase.savingPackage,
+      };
+      for (final entry in phases.entries) {
+        bridge.reportProgress(stage: entry.key);
+        await Future<void>.delayed(Duration.zero);
+        expect(local.last.phase, entry.value);
+        expect(local.last.fraction, 0.4);
+      }
+      bridge.reportProgress(stage: 'restoring_package', done: 0, total: 0);
+      await Future<void>.delayed(Duration.zero);
+      expect(local.last.fraction, isNull);
+      bridge.progress.addError(StateError('local progress disconnected'));
+      await Future<void>.delayed(Duration.zero);
+      expect(downloads, isEmpty);
+      bridge.download.complete('opaque-receipt');
+      await pending;
+      await bridge.progress.close();
+    },
+  );
   test(
     'maps explicit base rejection and vanished patch routes to presentation outcomes',
     () async {

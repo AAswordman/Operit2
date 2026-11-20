@@ -5,6 +5,8 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 const MAGIC: &[u8; 8] = b"O2MSI1\0\0";
@@ -197,13 +199,95 @@ fn unpack(
     )
 }
 
+/// Processes independent folders largest-first with at most four cancellable CAB workers.
+fn folders(
+    recipe: &Recipe,
+    work: &Path,
+    control: &HttpDownloadControl,
+    operation: impl Fn(usize, &Folder, &Path, &HttpDownloadControl) -> io::Result<()> + Sync,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
+) -> io::Result<()> {
+    let mut order = (0..recipe.folders.len()).collect::<Vec<_>>();
+    order.sort_unstable_by_key(|&index| std::cmp::Reverse(recipe.folders[index].raw_size));
+    let workers = std::thread::available_parallelism()?
+        .get()
+        .min(4)
+        .min(order.len());
+    let next = AtomicUsize::new(0);
+    let failure = Mutex::new(None);
+    let completed = Mutex::new(0u64);
+    let total = recipe.folders.iter().map(|folder| folder.raw_size).sum();
+    progress(0, total);
+    let jobs = HttpDownloadControl::new();
+    let cancelled = jobs.clone();
+    let _subscription = control.onCancel(Arc::new(move || cancelled.cancel()));
+    std::thread::scope(|scope| {
+        let mut threads = Vec::with_capacity(workers);
+        for _ in 0..workers {
+            let thread = std::thread::Builder::new()
+                .name("update-cab".into())
+                .spawn_scoped(scope, || {
+                    while !jobs.isCancelled() {
+                        let index = next.fetch_add(1, Ordering::Relaxed);
+                        let Some(&index) = order.get(index) else {
+                            break;
+                        };
+                        let result = tempfile::Builder::new()
+                            .prefix("folder-")
+                            .tempdir_in(work)
+                            .and_then(|directory| {
+                                operation(index, &recipe.folders[index], directory.path(), &jobs)
+                            });
+                        if let Err(error) = result {
+                            failure
+                                .lock()
+                                .expect("CAB worker error")
+                                .get_or_insert(error);
+                            jobs.cancel();
+                            break;
+                        }
+                        let mut completed = completed.lock().expect("CAB completed bytes");
+                        *completed += recipe.folders[index].raw_size;
+                        progress(*completed, total);
+                    }
+                });
+            match thread {
+                Ok(thread) => threads.push(thread),
+                Err(error) => {
+                    failure
+                        .lock()
+                        .expect("CAB worker error")
+                        .get_or_insert(error);
+                    jobs.cancel();
+                    break;
+                }
+            }
+        }
+        for thread in threads {
+            if thread.join().is_err() {
+                failure
+                    .lock()
+                    .expect("CAB worker error")
+                    .get_or_insert_with(|| io::Error::other("CAB worker panicked"));
+                jobs.cancel();
+            }
+        }
+    });
+    if let Some(error) = failure.into_inner().expect("CAB worker error") {
+        return Err(error);
+    }
+    active(control)
+}
+
 /// Serializes the compact installer shell followed by all uncompressed folders.
 fn decode(
     source: &Path,
     output: &mut File,
+    output_path: &Path,
     work: &Path,
     metadata: &[u8],
     control: &HttpDownloadControl,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
 ) -> io::Result<()> {
     require(
         metadata.len() <= 4 * 1024 * 1024,
@@ -227,24 +311,44 @@ fn decode(
     }
     original.seek(SeekFrom::Start(offset))?;
     copy(&mut original, output, recipe.size - offset, control)?;
-    for folder in &recipe.folders {
-        unpack(&mut original, folder, work, control)?;
-        copy(
-            &mut File::open(work.join("payload"))?,
-            output,
-            folder.raw_size,
-            control,
-        )?;
-    }
-    Ok(())
+    let mut offset = output.stream_position()?;
+    let offsets = recipe
+        .folders
+        .iter()
+        .map(|folder| {
+            let start = offset;
+            offset += folder.raw_size;
+            start
+        })
+        .collect::<Vec<_>>();
+    output.set_len(offset)?;
+    folders(
+        &recipe,
+        work,
+        control,
+        |index, folder, work, control| {
+            unpack(&mut File::open(source)?, folder, work, control)?;
+            let mut output = std::fs::OpenOptions::new().write(true).open(output_path)?;
+            output.seek(SeekFrom::Start(offsets[index]))?;
+            copy(
+                &mut File::open(work.join("payload"))?,
+                &mut output,
+                folder.raw_size,
+                control,
+            )
+        },
+        progress,
+    )
 }
 
 /// Restores CAB byte streams into their original sectors, preserving signatures and installer metadata.
 fn encode(
     source: &Path,
     output: &mut File,
+    output_path: &Path,
     work: &Path,
     control: &HttpDownloadControl,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
 ) -> io::Result<()> {
     let mut image = File::open(source)?;
     let mut header = [0; 12];
@@ -271,52 +375,71 @@ fn encode(
     output.seek(SeekFrom::Start(offset))?;
     copy(&mut image, output, recipe.size - offset, control)?;
     output.set_len(recipe.size)?;
-    for folder in &recipe.folders {
-        copy(
-            &mut image,
-            &mut File::create(work.join("payload"))?,
-            folder.raw_size,
-            control,
-        )?;
-        let memory = format!("CompressionMemory={}", folder.compression >> 8);
-        cabinet(
-            "makecab.exe",
-            &[
-                "/D",
-                "CompressionType=LZX",
-                "/D",
-                &memory,
-                "/D",
-                "FolderSizeThreshold=1000000000",
-                "/D",
-                "MaxDiskSize=0",
-                "/D",
-                "MaxCabinetSize=0",
-                "payload",
-                "output.cab",
-            ],
-            work,
-            control,
-        )?;
-        let mut cab = File::open(work.join("output.cab"))?;
-        cab.seek(SeekFrom::Start(36))?;
-        let mut header = [0; 8];
-        cab.read_exact(&mut header)?;
-        let start = number(&header, 0, 4)?;
-        require(
-            number(&header, 6, 2)? == u64::from(folder.compression)
-                && number(&header, 4, 2)? == folder.raw_size.div_ceil(32768)
-                && cab.metadata()?.len().checked_sub(start)
-                    == Some(folder.ranges.iter().map(|range| range[1]).sum()),
-            "Windows CAB encoder does not reproduce target layout",
-        )?;
-        cab.seek(SeekFrom::Start(start))?;
-        for [offset, count] in &folder.ranges {
-            output.seek(SeekFrom::Start(*offset))?;
-            copy(&mut cab, output, *count, control)?;
-        }
-    }
-    Ok(())
+    let mut offset = image.stream_position()?;
+    let offsets = recipe
+        .folders
+        .iter()
+        .map(|folder| {
+            let start = offset;
+            offset += folder.raw_size;
+            start
+        })
+        .collect::<Vec<_>>();
+    folders(
+        &recipe,
+        work,
+        control,
+        |index, folder, work, control| {
+            let mut image = File::open(source)?;
+            image.seek(SeekFrom::Start(offsets[index]))?;
+            copy(
+                &mut image,
+                &mut File::create(work.join("payload"))?,
+                folder.raw_size,
+                control,
+            )?;
+            let mut output = std::fs::OpenOptions::new().write(true).open(output_path)?;
+            let memory = format!("CompressionMemory={}", folder.compression >> 8);
+            cabinet(
+                "makecab.exe",
+                &[
+                    "/D",
+                    "CompressionType=LZX",
+                    "/D",
+                    &memory,
+                    "/D",
+                    "FolderSizeThreshold=1000000000",
+                    "/D",
+                    "MaxDiskSize=0",
+                    "/D",
+                    "MaxCabinetSize=0",
+                    "payload",
+                    "output.cab",
+                ],
+                work,
+                control,
+            )?;
+            let mut cab = File::open(work.join("output.cab"))?;
+            cab.seek(SeekFrom::Start(36))?;
+            let mut header = [0; 8];
+            cab.read_exact(&mut header)?;
+            let start = number(&header, 0, 4)?;
+            require(
+                number(&header, 6, 2)? == u64::from(folder.compression)
+                    && number(&header, 4, 2)? == folder.raw_size.div_ceil(32768)
+                    && cab.metadata()?.len().checked_sub(start)
+                        == Some(folder.ranges.iter().map(|range| range[1]).sum()),
+                "Windows CAB encoder does not reproduce target layout",
+            )?;
+            cab.seek(SeekFrom::Start(start))?;
+            for [offset, count] in &folder.ranges {
+                output.seek(SeekFrom::Start(*offset))?;
+                copy(&mut cab, &mut output, *count, control)?;
+            }
+            Ok(())
+        },
+        progress,
+    )
 }
 
 /// Publishes only completed transforms; temporary files remain inside the disposable update job.
@@ -325,6 +448,7 @@ pub(super) fn transform(
     target: &Path,
     transform: ApplicationUpdateTransform,
     control: &HttpDownloadControl,
+    progress: &(dyn Fn(u64, u64) + Send + Sync),
 ) -> io::Result<()> {
     active(control)?;
     let parent = target.parent().ok_or_else(|| {
@@ -335,14 +459,31 @@ pub(super) fn transform(
     let mut output = tempfile::Builder::new()
         .prefix("cab-")
         .tempfile_in(parent)?;
+    let output_path = output.path().to_path_buf();
     match transform {
-        ApplicationUpdateTransform::ExpandMsiCabinets { recipe } => {
-            decode(source, output.as_file_mut(), work.path(), &recipe, control)?
+        ApplicationUpdateTransform::ExpandMsiCabinets { recipe } => decode(
+            source,
+            output.as_file_mut(),
+            &output_path,
+            work.path(),
+            &recipe,
+            control,
+            progress,
+        )?,
+        ApplicationUpdateTransform::RestoreMsiCabinets => encode(
+            source,
+            output.as_file_mut(),
+            &output_path,
+            work.path(),
+            control,
+            progress,
+        )?,
+        _ => {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "Unsupported Windows installer transform",
+            ))
         }
-        ApplicationUpdateTransform::RestoreMsiCabinets => {
-            encode(source, output.as_file_mut(), work.path(), control)?
-        }
-        _ => return Err(io::Error::new(io::ErrorKind::Unsupported, "Unsupported Windows installer transform")),
     }
     active(control)?;
     output.as_file_mut().flush()?;

@@ -71,8 +71,9 @@ impl SystemOperationHost for AndroidSystemOperationHost {
         target: &dyn operit_host_api::FileTarget,
         transform: operit_host_api::ApplicationUpdateTransform,
         control: &operit_host_api::HttpDownloadControl,
+        onProgress: &(dyn Fn(u64, u64) + Send + Sync),
     ) -> HostResult<()> {
-        crate::update_apk::transform(source, target, transform, control)
+        crate::update_apk::transform(source, target, transform, control, onProgress)
             .map_err(|error| HostError::new(error.to_string()))
     }
     /// Reads the package owner identity through the existing Android interaction channel.

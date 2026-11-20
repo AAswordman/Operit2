@@ -74,6 +74,36 @@ class AppUpdateInstallResult {
 
 typedef AppUpdateProgress = void Function(int received, int? total);
 
+/// Identifies local preparation work reported by Core on every supported host.
+enum AppUpdatePreparationPhase {
+  verifyingBase,
+  verifyingPatch,
+  expandingBase,
+  verifyingExpandedBase,
+  applyingPatch,
+  restoringPackage,
+  verifyingPackage,
+  savingPackage,
+}
+
+/// Carries actual work completed in the current step, independently of downloads.
+class AppUpdatePreparationProgress {
+  /// Stores the counters supplied by the shared update pipeline.
+  const AppUpdatePreparationProgress(
+    this.phase,
+    this.completedBytes,
+    this.totalBytes,
+  );
+
+  final AppUpdatePreparationPhase phase;
+  final int completedBytes;
+  final int totalBytes;
+
+  /// Leaves unknown work indeterminate without estimating time or completion.
+  double? get fraction =>
+      totalBytes > 0 ? (completedBytes / totalBytes).clamp(0.0, 1.0) : null;
+}
+
 /// Always operates on this installed client, independently of selected devices.
 abstract class AppUpdateBackend {
   /// Emits connectivity and cost from the installed client's normalized Host events.
@@ -94,6 +124,7 @@ abstract class AppUpdateBackend {
     AppUpdateProgress progress, {
     void Function()? onSelectingSource,
     void Function()? onReconstructing,
+    void Function(AppUpdatePreparationProgress)? onPreparationProgress,
   });
   Future<void> cancelDownload();
   Future<AppUpdateInstallResult> install(String receipt);

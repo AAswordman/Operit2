@@ -37,9 +37,10 @@ impl SystemOperationHost for FlutterSystemOperationBridge {
         target: &dyn operit_host_api::FileTarget,
         transform: operit_host_api::ApplicationUpdateTransform,
         control: &operit_host_api::HttpDownloadControl,
+        onProgress: &(dyn Fn(u64, u64) + Send + Sync),
     ) -> HostResult<()> {
         self.host
-            .transformApplicationUpdate(source, target, transform, control)
+            .transformApplicationUpdate(source, target, transform, control, onProgress)
     }
     /// Preserves installed-package access instead of replacing it with the desktop default.
     fn applicationUpdateBase(&self) -> HostResult<operit_host_api::ApplicationUpdateBase> {

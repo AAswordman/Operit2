@@ -35,3 +35,7 @@ flate2 = { version = "1", default-features = false, features = ["zlib"] }
 operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler", default-features = false }
+tempfile = "3"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.59", features = ["Win32_System_Threading"] }

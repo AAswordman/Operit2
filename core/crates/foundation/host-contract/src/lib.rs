@@ -3397,12 +3397,15 @@ pub enum ApplicationUpdateTransform {
 
 pub trait SystemOperationHost: Send + Sync {
     /// Transcodes a package into a disposable VFS target without installing or executing it.
+    /// Reports completed and total work bytes synchronously; zero total means unknown work.
+    /// Hosts may report completed independent compression units rather than encoder-internal progress.
     fn transformApplicationUpdate(
         &self,
         _source: &dyn FileSource,
         _target: &dyn FileTarget,
         _transform: ApplicationUpdateTransform,
         _control: &HttpDownloadControl,
+        _onProgress: &(dyn Fn(u64, u64) + Send + Sync),
     ) -> HostResult<()> {
         Err(HostError::new("Installer transformation is not supported by this host"))
     }

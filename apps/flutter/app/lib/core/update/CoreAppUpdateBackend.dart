@@ -96,20 +96,48 @@ class CoreAppUpdateBackend extends AppUpdateBackend {
     AppUpdateProgress progress, {
     void Function()? onSelectingSource,
     void Function()? onReconstructing,
+    void Function(AppUpdatePreparationProgress)? onPreparationProgress,
   }) async {
+    var preparing = false;
     final subscription = _clients.application
         .applicationUpdateProgressFlow()
         .listen(
           (event) {
             if (event.stage == 'selecting_source') {
+              preparing = false;
               onSelectingSource?.call();
               return;
             }
             if (event.stage == 'reconstructing') {
+              preparing = true;
               onReconstructing?.call();
               return;
             }
+            final phase = switch (event.stage) {
+              'verifying_base' => AppUpdatePreparationPhase.verifyingBase,
+              'verifying_patch' => AppUpdatePreparationPhase.verifyingPatch,
+              'expanding_base' => AppUpdatePreparationPhase.expandingBase,
+              'verifying_expanded_base' =>
+                AppUpdatePreparationPhase.verifyingExpandedBase,
+              'applying_patch' => AppUpdatePreparationPhase.applyingPatch,
+              'restoring_package' => AppUpdatePreparationPhase.restoringPackage,
+              'verifying_package' => AppUpdatePreparationPhase.verifyingPackage,
+              'saving_package' => AppUpdatePreparationPhase.savingPackage,
+              _ => null,
+            };
+            if (phase != null) {
+              preparing = true;
+              onPreparationProgress?.call(
+                AppUpdatePreparationProgress(
+                  phase,
+                  event.receivedBytes,
+                  event.totalBytes,
+                ),
+              );
+              return;
+            }
             if (event.stage != 'downloading') return;
+            preparing = false;
             progress(
               event.receivedBytes,
               event.totalBytes > 0 ? event.totalBytes : null,
@@ -118,7 +146,7 @@ class CoreAppUpdateBackend extends AppUpdateBackend {
           onError: (Object error, StackTrace stack) {
             // Completion/failure still comes from the download call. A broken
             // progress subscription must not escape as an unhandled UI error.
-            progress(0, null);
+            if (!preparing) progress(0, null);
             ClientLogger.w(
               'Application update progress unavailable',
               tag: 'AppUpdate',

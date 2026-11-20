@@ -5861,26 +5861,12 @@ impl OperitTui {
                         if stage == FullUpdateStage::Ready {
                             continue;
                         }
-                        let current = match prompt.download_state.clone() {
-                            FullUpdateDownloadState::Downloading {
-                                read_bytes,
-                                total_bytes,
-                                speed_bytes_per_sec,
-                                ..
-                            } => (read_bytes, total_bytes, speed_bytes_per_sec),
-                            _ => (0, 0, 0),
-                        };
-                        let message = if current.1 == 0 {
-                            text.preparing_download().to_string()
-                        } else {
-                            message
-                        };
                         prompt.download_state = FullUpdateDownloadState::Downloading {
                             stage,
                             message,
-                            read_bytes: current.0,
-                            total_bytes: current.1,
-                            speed_bytes_per_sec: current.2,
+                            read_bytes: 0,
+                            total_bytes: 0,
+                            speed_bytes_per_sec: 0,
                         };
                     }
                     FullUpdateProgressEvent::DownloadProgress {
@@ -5888,21 +5874,25 @@ impl OperitTui {
                         totalBytes,
                         speedBytesPerSec,
                     } => {
-                        let current = match prompt.download_state.clone() {
-                            FullUpdateDownloadState::Downloading { stage, message, .. } => {
-                                (stage, message)
-                            }
-                            _ => (
-                                FullUpdateStage::DownloadingPackage,
-                                text.full_update_download_message().to_string(),
-                            ),
+                        let message = match prompt.download_state.clone() {
+                            FullUpdateDownloadState::Downloading { message, .. } => message,
+                            _ => text.full_update_download_message().to_string(),
                         };
                         prompt.download_state = FullUpdateDownloadState::Downloading {
-                            stage: current.0,
-                            message: current.1,
+                            stage: FullUpdateStage::DownloadingPackage,
+                            message,
                             read_bytes: readBytes,
                             total_bytes: totalBytes,
                             speed_bytes_per_sec: speedBytesPerSec,
+                        };
+                    }
+                    FullUpdateProgressEvent::PreparationProgress { phase, completedBytes, totalBytes } => {
+                        prompt.download_state = FullUpdateDownloadState::Downloading {
+                            stage: FullUpdateStage::ReconstructingPackage,
+                            message: phase.label().into(),
+                            read_bytes: completedBytes,
+                            total_bytes: totalBytes,
+                            speed_bytes_per_sec: 0,
                         };
                     }
                 },

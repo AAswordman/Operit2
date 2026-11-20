@@ -75,6 +75,54 @@ pub enum FullUpdateProgressEvent {
         totalBytes: u64,
         speedBytesPerSec: u64,
     },
+    PreparationProgress {
+        phase: UpdatePreparationPhase,
+        completedBytes: u64,
+        totalBytes: u64,
+    },
+}
+
+/// Identifies measurable local work separately from network transfer progress.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UpdatePreparationPhase {
+    VerifyingBase,
+    VerifyingPatch,
+    ExpandingBase,
+    VerifyingExpandedBase,
+    ApplyingPatch,
+    RestoringPackage,
+    VerifyingPackage,
+    SavingPackage,
+}
+
+impl UpdatePreparationPhase {
+    /// Exposes stable phase identifiers to all clients without platform inference.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::VerifyingBase => "verifying_base",
+            Self::VerifyingPatch => "verifying_patch",
+            Self::ExpandingBase => "expanding_base",
+            Self::VerifyingExpandedBase => "verifying_expanded_base",
+            Self::ApplyingPatch => "applying_patch",
+            Self::RestoringPackage => "restoring_package",
+            Self::VerifyingPackage => "verifying_package",
+            Self::SavingPackage => "saving_package",
+        }
+    }
+
+    /// Names local stages for terminal clients without exposing container internals.
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::VerifyingBase => "Verifying original package",
+            Self::VerifyingPatch => "Verifying update patch",
+            Self::ExpandingBase => "Preparing original package",
+            Self::VerifyingExpandedBase => "Verifying prepared files",
+            Self::ApplyingPatch => "Applying update patch",
+            Self::RestoringPackage => "Generating update package",
+            Self::VerifyingPackage => "Verifying update package",
+            Self::SavingPackage => "Saving update package",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

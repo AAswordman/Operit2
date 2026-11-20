@@ -3,6 +3,7 @@ use crate::GithubReleaseUtil::{
     downloadOptionalUpdatePackage, downloadUpdatePackage, ensureDownloadActive, updateHttpRequest,
     validateDownloadedUpdatePackage, validateUpdatePackageSource, DownloadAttempt,
     FullUpdateProgressEvent, FullUpdateStage, FullUpdateTarget, GithubReleaseUtil, ReleaseInfo,
+    UpdatePreparationPhase,
 };
 use crate::UpdateHttp::{requestOptional, UpdateHttpEvent};
 use operit_host_api::{
@@ -11,7 +12,7 @@ use operit_host_api::{
 use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::io::{self, Read};
+use std::io::{self, BufReader, Read};
 use std::sync::{Arc, Mutex};
 
 const BUFFER: usize = 1024 * 1024;
@@ -19,6 +20,12 @@ const MAX_PACKAGE: u64 = 16 * 1024 * 1024 * 1024;
 
 #[path = "IncrementalUpdateChain.rs"]
 mod chain;
+#[path = "IncrementalUpdateMerge.rs"]
+mod merge;
+use merge::applyInstructions;
+#[path = "IncrementalUpdateProgress.rs"]
+mod progress;
+use progress::PreparationProgress;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -70,6 +77,15 @@ pub fn hashSource(
     source: &dyn FileSource,
     control: &HttpDownloadControl,
 ) -> Result<(String, u64), String> {
+    hashSourceWithProgress(source, control, &|_, _| {})
+}
+
+/// Hashes bounded ranges and reports only bytes actually verified.
+fn hashSourceWithProgress(
+    source: &dyn FileSource,
+    control: &HttpDownloadControl,
+    progress: &dyn Fn(u64, u64),
+) -> Result<(String, u64), String> {
     let size = u64::try_from(source.fileInfo().map_err(|e| e.to_string())?.size)
         .map_err(|_| "Invalid package size")?;
     if size == 0 || size > MAX_PACKAGE {
@@ -77,6 +93,7 @@ pub fn hashSource(
     }
     let mut hash = Sha256::new();
     let mut offset = 0;
+    progress(0, size);
     while offset < size {
         ensureDownloadActive(control)?;
         let length = (size - offset).min(BUFFER as u64) as usize;
@@ -88,6 +105,7 @@ pub fn hashSource(
         }
         hash.update(&bytes);
         offset += length as u64;
+        progress(offset, size);
     }
     Ok((format!("{:x}", hash.finalize()), size))
 }
@@ -266,6 +284,17 @@ fn integer(reader: &mut impl Read) -> Result<u64, String> {
     Ok(u64::from_le_bytes(bytes))
 }
 
+/// Records aggregate local-stage timings without logging individual patch operations.
+fn logPatchPhase(phase: &str, started: u128) {
+    crate::AppLogger::AppLogger::i(
+        "ApplicationUpdate",
+        &format!(
+            "Patch stage: phase={phase}, elapsedMs={}",
+            operit_host_api::TimeUtils::currentTimeMillisU128().saturating_sub(started),
+        ),
+    );
+}
+
 /// Authenticates sources and reconstructs the original signed installer, including CAB-aware deltas.
 pub fn applyPatch(
     base: &dyn FileSource,
@@ -276,17 +305,39 @@ pub fn applyPatch(
     destination: &str,
     control: &HttpDownloadControl,
 ) -> Result<(), String> {
-    if hashSource(base, control)? != (declaration.baseSha256.clone(), declaration.baseSize)
-        || hashSource(patch, control)? != (declaration.sha256.clone(), declaration.size)
-    {
+    applyPatchWithProgress(base, patch, manifest, declaration, context, destination, control,
+        &PreparationProgress::new(Arc::new(|_| {})))
+}
+
+/// Reconstructs authenticated package bytes while exposing all local preparation phases.
+fn applyPatchWithProgress(
+    base: &dyn FileSource,
+    patch: &dyn FileSource,
+    manifest: &UpdateManifest,
+    declaration: &PackagePatch,
+    context: &HostManager,
+    destination: &str,
+    control: &HttpDownloadControl,
+    progress: &PreparationProgress,
+) -> Result<(), String> {
+    let started = operit_host_api::TimeUtils::currentTimeMillisU128();
+    if hashSourceWithProgress(base, control, &|done, total| progress.report(UpdatePreparationPhase::VerifyingBase, done, total))?
+        != (declaration.baseSha256.clone(), declaration.baseSize) {
         return Err("Incremental source SHA-256 mismatch".into());
     }
+    logPatchPhase("verify-base", started);
+    let started = operit_host_api::TimeUtils::currentTimeMillisU128();
+    if hashSourceWithProgress(patch, control, &|done, total| progress.report(UpdatePreparationPhase::VerifyingPatch, done, total))?
+        != (declaration.sha256.clone(), declaration.size) {
+        return Err("Incremental source SHA-256 mismatch".into());
+    }
+    logPatchPhase("verify-patch", started);
     let source = SourceReader {
         source: patch,
         offset: 0,
         size: declaration.size,
     };
-    let mut decoder = flate2::read::MultiGzDecoder::new(source);
+    let mut decoder = flate2::bufread::MultiGzDecoder::new(BufReader::with_capacity(BUFFER, source));
     let mut magic = [0; 9];
     decoder.read_exact(&mut magic).map_err(|e| e.to_string())?;
     let residuals = &magic == b"O2PATCH2\0" && matches!(manifest.schema, 2 | 3);
@@ -317,6 +368,7 @@ pub fn applyPatch(
             destination,
             control,
             apk,
+            progress,
         );
     }
     applyInstructions(
@@ -330,6 +382,7 @@ pub fn applyPatch(
         context,
         destination,
         control,
+        &|done, total| progress.report(UpdatePreparationPhase::ApplyingPatch, done, total),
     )
 }
 
@@ -342,6 +395,7 @@ fn applyContainerPatch(
     destination: &str,
     control: &HttpDownloadControl,
     apk: bool,
+    progress: &PreparationProgress,
 ) -> Result<(), String> {
     use operit_host_api::ApplicationUpdateTransform::*;
     let mut length = [0; 4];
@@ -394,11 +448,18 @@ fn applyContainerPatch(
     } else {
         ExpandMsiCabinets { recipe }
     };
-    host.transformApplicationUpdate(base, &old, expand, control)
+    let started = operit_host_api::TimeUtils::currentTimeMillisU128();
+    progress.report(UpdatePreparationPhase::ExpandingBase, 0, 0);
+    host.transformApplicationUpdate(base, &old, expand, control,
+        &|done, total| progress.report(UpdatePreparationPhase::ExpandingBase, done, total))
         .map_err(|e| e.to_string())?;
-    if hashSource(&old, control)? != (oldHash, oldSize) {
+    logPatchPhase("expand-base", started);
+    let started = operit_host_api::TimeUtils::currentTimeMillisU128();
+    if hashSourceWithProgress(&old, control,
+        &|done, total| progress.report(UpdatePreparationPhase::VerifyingExpandedBase, done, total))? != (oldHash, oldSize) {
         return Err("Expanded base package SHA-256 mismatch".into());
     }
+    logPatchPhase("verify-expanded-base", started);
     let expandedPath = format!("{directory}/target");
     applyInstructions(
         &old,
@@ -411,6 +472,7 @@ fn applyContainerPatch(
         context,
         &expandedPath,
         control,
+        &|done, total| progress.report(UpdatePreparationPhase::ApplyingPatch, done, total),
     )?;
     storage
         .delete(&format!("{directory}/base"), false)
@@ -424,134 +486,38 @@ fn applyContainerPatch(
     } else {
         RestoreMsiCabinets
     };
-    host.transformApplicationUpdate(&expanded, &restored, restore, control)
+    let started = operit_host_api::TimeUtils::currentTimeMillisU128();
+    progress.report(UpdatePreparationPhase::RestoringPackage, 0, 0);
+    host.transformApplicationUpdate(&expanded, &restored, restore, control,
+        &|done, total| progress.report(UpdatePreparationPhase::RestoringPackage, done, total))
         .map_err(|e| e.to_string())?;
+    logPatchPhase("restore-container", started);
     storage
         .delete(&expandedPath, false)
         .map_err(|e| e.to_string())?;
-    copyPackage(
+    let started = operit_host_api::TimeUtils::currentTimeMillisU128();
+    copyPackageWithProgress(
         &restored,
         destination,
         &manifest.assetName,
         Some(&(manifest.sha256.clone(), manifest.size)),
         context,
         control,
+        &|done, total| progress.report(UpdatePreparationPhase::VerifyingPackage, done, total),
     )?;
+    logPatchPhase("verify-and-publish", started);
     Ok(())
 }
 
-/// Applies bounded copy, literal and residual operations to original or expanded package bytes.
-fn applyInstructions(
-    base: &dyn FileSource,
-    decoder: &mut impl Read,
-    baseSize: u64,
-    targetSize: u64,
-    targetHash: &str,
-    residuals: bool,
-    assetName: Option<&str>,
-    context: &HostManager,
-    destination: &str,
-    control: &HttpDownloadControl,
-) -> Result<(), String> {
-    let writes = context
-        .runtimeStorageWriteHost
-        .as_ref()
-        .ok_or("Update writer unavailable")?;
-    let mut writer = PendingWrite(Some(
-        writes
-            .createWriteSession(destination)
-            .map_err(|e| e.to_string())?,
-    ));
-    let mut hash = Sha256::new();
-    let mut written = 0u64;
-    let mut prefix = Vec::with_capacity(8);
-    let mut ended = false;
-    for _ in 0..4_000_000 {
-        ensureDownloadActive(control)?;
-        let mut opcode = [0];
-        decoder.read_exact(&mut opcode).map_err(|e| e.to_string())?;
-        if opcode[0] == 0 {
-            ended = true;
-            break;
-        }
-        let (offset, length) = match opcode[0] {
-            1 => (integer(decoder)?, integer(decoder)?),
-            3 if residuals => (integer(decoder)?, integer(decoder)?),
-            2 => (0, integer(decoder)?),
-            _ => return Err("Invalid patch instruction".into()),
-        };
-        if length == 0
-            || length > targetSize.saturating_sub(written)
-            || (opcode[0] != 2 && (offset > baseSize || length > baseSize - offset))
-        {
-            return Err("Patch instruction exceeds package bounds".into());
-        }
-        let mut done = 0;
-        while done < length {
-            ensureDownloadActive(control)?;
-            let count = (length - done).min(BUFFER as u64) as usize;
-            let bytes = if opcode[0] != 2 {
-                let mut bytes = base
-                    .readBytesRange(offset + done, count)
-                    .map_err(|e| e.to_string())?;
-                if bytes.len() != count {
-                    return Err("Truncated base package".into());
-                }
-                if opcode[0] == 3 {
-                    let mut residual = vec![0; count];
-                    decoder
-                        .read_exact(&mut residual)
-                        .map_err(|e| e.to_string())?;
-                    for (byte, diff) in bytes.iter_mut().zip(residual) {
-                        *byte = byte.wrapping_add(diff);
-                    }
-                }
-                bytes
-            } else {
-                let mut bytes = vec![0; count];
-                decoder.read_exact(&mut bytes).map_err(|e| e.to_string())?;
-                bytes
-            };
-            prefix.extend_from_slice(&bytes[..bytes.len().min(8 - prefix.len())]);
-            hash.update(&bytes);
-            writer
-                .0
-                .as_mut()
-                .expect("pending update")
-                .writeChunk(&bytes)
-                .map_err(|e| e.to_string())?;
-            done += count as u64;
-        }
-        written += length;
-    }
-    let mut trailing = [0];
-    if !ended
-        || written != targetSize
-        || decoder.read(&mut trailing).map_err(|e| e.to_string())? != 0
-        || format!("{:x}", hash.finalize()) != targetHash
-    {
-        return Err("Reconstructed package SHA-256 or length mismatch".into());
-    }
-    if let Some(assetName) = assetName {
-        validateDownloadedUpdatePackage(&prefix, assetName)?;
-    }
-    ensureDownloadActive(control)?;
-    writer
-        .0
-        .take()
-        .expect("pending update")
-        .commit()
-        .map_err(|e| e.to_string())
-}
-
-/// Copies bounded package bytes transactionally, validating the copied container and optional digest.
-fn copyPackage(
+/// Verifies and copies into transactional storage while reporting actual copied bytes.
+fn copyPackageWithProgress(
     source: &dyn FileSource,
     destination: &str,
     assetName: &str,
     expected: Option<&(String, u64)>,
     context: &HostManager,
     control: &HttpDownloadControl,
+    progress: &dyn Fn(u64, u64),
 ) -> Result<(String, u64), String> {
     let size = u64::try_from(source.fileInfo().map_err(|e| e.to_string())?.size)
         .map_err(|_| "Invalid package size")?;
@@ -575,6 +541,7 @@ fn copyPackage(
     let mut hash = Sha256::new();
     let mut prefix = Vec::with_capacity(8);
     let mut offset = 0u64;
+    progress(0, size);
     while offset < size {
         ensureDownloadActive(control)?;
         let count = (size - offset).min(BUFFER as u64) as usize;
@@ -593,6 +560,7 @@ fn copyPackage(
             .writeChunk(&bytes)
             .map_err(|e| e.to_string())?;
         offset += count as u64;
+        progress(offset, size);
     }
     validateDownloadedUpdatePackage(&prefix, assetName)?;
     let identity = (format!("{:x}", hash.finalize()), size);
@@ -619,9 +587,22 @@ fn retainSource(
     context: &HostManager,
     control: &HttpDownloadControl,
 ) -> Result<(), String> {
+    retainSourceWithProgress(source, version, assetName, expected, context, control, &|_, _| {})
+}
+
+/// Retains the verified installer while exposing the final local copy separately from transfer.
+fn retainSourceWithProgress(
+    source: &dyn FileSource,
+    version: &str,
+    assetName: &str,
+    expected: Option<&(String, u64)>,
+    context: &HostManager,
+    control: &HttpDownloadControl,
+    progress: &dyn Fn(u64, u64),
+) -> Result<(), String> {
     let root = packageCacheDirectory(version, assetName)?;
     let destination = format!("{root}/{assetName}");
-    copyPackage(source, &destination, assetName, expected, context, control)?;
+    copyPackageWithProgress(source, &destination, assetName, expected, context, control, progress)?;
     let storage = context
         .runtimeStorageHost
         .as_ref()
@@ -1153,7 +1134,7 @@ where
                 let source = context
                     .vfs()?
                     .file(&VisualFileSystem::runtimePath(&patchPath)?)?;
-                applyPatch(
+                applyPatchWithProgress(
                     base.as_ref().ok_or("Missing verified base")?.as_ref(),
                     &source,
                     &package.manifest,
@@ -1161,6 +1142,7 @@ where
                     context,
                     &output,
                     &control,
+                    &PreparationProgress::new(events.clone()),
                 )
             };
             reconstruct()
@@ -1222,7 +1204,9 @@ where
         let source = context
             .vfs()?
             .file(&VisualFileSystem::runtimePath(&destination)?)?;
-        let (hash, size) = hashSource(&source, &control)?;
+        let preparation = PreparationProgress::new(events.clone());
+        let (hash, size) = hashSourceWithProgress(&source, &control,
+            &|done, total| preparation.report(UpdatePreparationPhase::VerifyingPackage, done, total))?;
         if let Some(digest) = &release.packageSha256 {
             if hash != githubHash(digest)? {
                 return Err("Full package SHA-256 mismatch".into());
@@ -1237,14 +1221,15 @@ where
     let source = context
         .vfs()?
         .file(&VisualFileSystem::runtimePath(&destination)?)?;
-    retainSource(
+    let preparation = PreparationProgress::new(events.clone());
+    retainSourceWithProgress(
         &source,
-        &currentAsset,
         &release.version,
         &release.assetName,
         None,
         context,
         &control,
+        &|done, total| preparation.report(UpdatePreparationPhase::SavingPackage, done, total),
     )?;
     ensureDownloadActive(&control)?;
     events(FullUpdateProgressEvent::StageChanged {

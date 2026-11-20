@@ -110,9 +110,10 @@ impl SystemOperationHost for WindowsSystemOperationHost {
         target: &dyn operit_host_api::FileTarget,
         transform: operit_host_api::ApplicationUpdateTransform,
         control: &operit_host_api::HttpDownloadControl,
+        onProgress: &(dyn Fn(u64, u64) + Send + Sync),
     ) -> HostResult<()> {
         update_msi::transform(
-            Path::new(&source.nativePath()?), Path::new(&target.nativePath()?), transform, control,
+            Path::new(&source.nativePath()?), Path::new(&target.nativePath()?), transform, control, onProgress,
         ).map_err(|error| HostError::new(error.to_string()))
     }
     /// Selects MSI or ZIP from the running copy's registered installation identity.

@@ -59,6 +59,16 @@ fn fixture() -> Fixture {
     fixture
 }
 
+/// The production Android codec forwards all local phases through the Flutter decorator.
+#[tokio::test]
+async fn apk_update_reports_expansion_and_recompression_progress() {
+    use operit_util::GithubReleaseUtil::UpdatePreparationPhase::*;
+    super::preparation_progress::phases(fixture(), &[
+        VerifyingBase, VerifyingPatch, ExpandingBase, VerifyingExpandedBase,
+        ApplyingPatch, RestoringPackage, VerifyingPackage, SavingPackage,
+    ]).await;
+}
+
 /// Recompression must preserve signature shell bytes and the target hash across Python and Rust.
 #[test]
 fn apk_python_delta_reconstructs_exact_original_through_android_host() {
@@ -113,11 +123,11 @@ fn apk_flutter_bridge_preserves_transform_failures_and_cancellation() {
     let control = HttpDownloadControl::new();
     control.cancel();
     let error = host.transformApplicationUpdate(&fixture.base, &target,
-        ApplicationUpdateTransform::ExpandApkEntries { recipe: b"{}".to_vec() }, &control).unwrap_err();
+        ApplicationUpdateTransform::ExpandApkEntries { recipe: b"{}".to_vec() }, &control, &|_, _| {}).unwrap_err();
     assert!(error.to_string().contains("UPDATE_CANCELLED"));
     assert!(!std::path::Path::new(&target_path).exists());
     assert!(host.transformApplicationUpdate(&fixture.base, &target,
-        ApplicationUpdateTransform::ExpandApkEntries { recipe: b"{}".to_vec() }, &HttpDownloadControl::new()).is_err());
+        ApplicationUpdateTransform::ExpandApkEntries { recipe: b"{}".to_vec() }, &HttpDownloadControl::new(), &|_, _| {}).is_err());
     assert!(!std::path::Path::new(&target_path).exists());
 }
 
@@ -138,7 +148,8 @@ fn apk_host_rejects_invalid_recipe_without_retaining_output() {
             ApplicationUpdateTransform::ExpandApkEntries {
                 recipe: serde_json::to_vec(&recipe).unwrap()
             },
-            &HttpDownloadControl::new()
+            &HttpDownloadControl::new(),
+            &|_, _| {},
         )
         .is_err());
         assert!(!std::path::Path::new(&target_path).exists());

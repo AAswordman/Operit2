@@ -118,7 +118,18 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
           controller.plan?.mode == AppUpdateMode.incremental
               ? '正在下载增量补丁…'
               : '正在下载完整安装包…',
-        AppUpdatePhase.reconstructing => '正在合并并校验安装包…',
+        AppUpdatePhase.reconstructing =>
+          switch (controller.preparation?.phase) {
+            AppUpdatePreparationPhase.verifyingBase => '正在校验原安装包…',
+            AppUpdatePreparationPhase.verifyingPatch => '正在校验增量补丁…',
+            AppUpdatePreparationPhase.expandingBase => '正在准备原安装包…',
+            AppUpdatePreparationPhase.verifyingExpandedBase => '正在校验更新文件…',
+            AppUpdatePreparationPhase.applyingPatch => '正在合并补丁…',
+            AppUpdatePreparationPhase.restoringPackage => '正在生成新安装包…',
+            AppUpdatePreparationPhase.verifyingPackage => '正在校验新安装包…',
+            AppUpdatePreparationPhase.savingPackage => '正在保存安装包…',
+            null => '正在准备更新文件…',
+          },
         AppUpdatePhase.ready => '更新已下载并校验完成，等待你确认安装',
         AppUpdatePhase.preparing => '正在准备安装，请稍候…',
         AppUpdatePhase.installing => '正在启动更新安装，应用即将重启…',
@@ -270,9 +281,44 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                   installing) ...[
                 const SizedBox(height: 14),
                 LinearProgressIndicator(
-                  value: downloading ? controller.progress : null,
+                  value: downloading
+                      ? controller.progress
+                      : reconstructing
+                      ? controller.preparation?.fraction
+                      : null,
                   minHeight: 6,
                   borderRadius: BorderRadius.circular(8),
+                ),
+              ],
+              if (reconstructing) ...[
+                const SizedBox(height: 10),
+                Wrap(
+                  spacing: 16,
+                  runSpacing: 6,
+                  children: [
+                    if (controller.preparation?.fraction
+                        case final double fraction)
+                      Text(
+                        '当前步骤 ${(fraction * 100).floor()}%',
+                        style: const TextStyle(
+                          fontFeatures: [FontFeature.tabularFigures()],
+                        ),
+                      ),
+                    Text(
+                      '已用时 ${formatUpdateDuration(controller.preparationElapsed)}',
+                      style: TextStyle(
+                        color: colors.onSurfaceVariant,
+                        fontSize: 12,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                Text(
+                  '正在本机处理更新文件，生成安装包可能需要一些时间。你可以后台更新，稍后点击 Operit 标志查看进度。',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: colors.onSurfaceVariant,
+                  ),
                 ),
               ],
               if (downloading) ...[
@@ -527,4 +573,11 @@ String formatUpdateBytes(int bytes) {
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
   }
   return '${(bytes / (1024 * 1024 * 1024)).toStringAsFixed(1)} GB';
+}
+
+/// Formats measured local processing time without predicting remaining work.
+String formatUpdateDuration(Duration duration) {
+  final minutes = duration.inMinutes.toString().padLeft(2, '0');
+  final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+  return '$minutes:$seconds';
 }

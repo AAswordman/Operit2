@@ -1233,10 +1233,12 @@ impl OperitTui {
                             format_bytes(*total_bytes)
                         )),
                     ]));
-                    lines.push(Line::from(vec![
-                        Span::styled(text.speed_label(), Style::default().fg(theme::TEXT_SUBTLE)),
-                        Span::raw(format!("{}/s", format_bytes(*speed_bytes_per_sec))),
-                    ]));
+                    if *stage == FullUpdateStage::DownloadingPackage {
+                        lines.push(Line::from(vec![
+                            Span::styled(text.speed_label(), Style::default().fg(theme::TEXT_SUBTLE)),
+                            Span::raw(format!("{}/s", format_bytes(*speed_bytes_per_sec))),
+                        ]));
+                    }
                 }
             }
             FullUpdateDownloadState::Complete {
