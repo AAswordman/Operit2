@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 use crate::EdgeNode;
+use operit_edge_contract::EDGE_WATCH_PET_OBJECT_ID;
 use async_trait::async_trait;
 use operit_link::{
     CoreCallRequest, CoreCallResponse, CoreEvent, CoreEventStream, CoreLinkError,
@@ -67,6 +68,18 @@ impl EdgePeerRouter {
         Ok(())
     }
 
+    /// Requires a live direct pairing and current shared membership for watch preferences.
+    fn checkWatchManagement(&self, previous: &str, request: &RoutedCoreRequest<CoreCallRequest>) -> Result<(), CoreLinkError> {
+        self.checkSpaceOrigin(previous, request)?;
+        if self.spaceChannelScope(previous)?.as_deref() != Some(request.spaceId.as_str()) {
+            return Err(CoreLinkError::new(
+                "EDGE_WATCH_SPACE_REQUIRED",
+                "The controller and watch must be admitted to the same Space",
+            ));
+        }
+        Ok(())
+    }
+
 }
 #[async_trait(?Send)]
 impl PeerRouter for EdgePeerRouter {
@@ -83,6 +96,11 @@ impl PeerRouter for EdgePeerRouter {
         let id = request.payload.requestId.clone();
         if let Err(e) = self.check(&request) {
             return CoreCallResponse::err(id, e);
+        }
+        if request.payload.target == EDGE_WATCH_PET_OBJECT_ID {
+            if let Err(error) = self.checkWatchManagement(&previous, &request) {
+                return CoreCallResponse::err(id, error);
+            }
         }
         if request.payload.target == NODE_SPACE_TARGET
             || request.payload.target == NODE_SPACE_APPROVAL_TARGET

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.edge_watch_pet",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "手表桌宠",
+    "en": "Watch Pet"
+  },
+  "description": {
+    "zh": "预览并管理设备空间内手表桌宠的配色、触感和亮屏设置。",
+    "en": "Preview and configure the watch pet on a device in your Device Space."
+  },
+  "enabled_by_default": false,
+  "resources": [
+    { "key": "watch_studio", "path": "resources/studio.html", "mime": "text/html" }
+  ]
+}

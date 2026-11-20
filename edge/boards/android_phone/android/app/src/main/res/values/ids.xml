@@ -1,0 +1,4 @@
+<resources>
+    <item type="id" name="peer_address" />
+    <item type="id" name="pairing_pin" />
+</resources>

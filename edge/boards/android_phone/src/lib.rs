@@ -1,6 +1,8 @@
 //! Standalone old-phone Edge product. No Android Core Host or Flutter runtime.
 #[cfg(target_os = "android")]
 mod android;
+mod pairing;
+mod pet;
 mod storage;
 #[cfg(test)]
 mod tests;
@@ -14,11 +16,13 @@ use operit_edge_sdk::{
     link::protocol::LinkDeviceInfo,
     runtime::{
         NodeServices::{PeerEndpoint, PeerTransport, PendingPairing},
+        PeerConnectionCode,
         PeerStateStore::{PeerHostConfig, PeerHostPortMode, PeerStateStore},
     },
     space::{NodeSpaceContext, PeerRuntimeLimits, SpaceDevice},
 };
 use operit_host_native_common::NativeTcpHost;
+use operit_host_native_common::ServiceDiscovery::localNetworkAddresses;
 use operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -55,6 +59,9 @@ impl RobotFaceHost for Face {
 #[serde(tag = "action", rename_all = "camelCase", deny_unknown_fields)]
 pub enum Command {
     Status,
+    InspectInvitation { code: String },
+    PairInvitation { code: String },
+    Addresses,
     StartPairing { address: String },
     FinishPairing { id: String, code: String },
     CancelPairing { id: String },
@@ -70,22 +77,29 @@ pub enum Command {
 pub struct PhoneNode {
     device: SpaceDevice,
     face: Arc<Face>,
+    preferences: Arc<pet::PetPreferences>,
     pending_pairing: Mutex<Option<PendingPairing>>,
 }
 impl PhoneNode {
     /// Starts one genuine Edge identity over TCP with SDK-owned authentication.
-    pub async fn start(root: PathBuf, model: String, bind: String) -> Result<Self, String> {
+    pub async fn start(root: PathBuf, model: String, bind: String, keep_awake: bool) -> Result<Self, String> {
         let face = Arc::new(Face(Mutex::new("happy".into())));
+        let storage = Arc::new(storage::PhoneStorage::open(root).map_err(|error| error.to_string())?);
+        let preferences = Arc::new(pet::PetPreferences::open(storage.clone(), keep_awake)?);
         let host = HostManager::new()
-            .withRuntimeStorageHost(Arc::new(
-                storage::PhoneStorage::open(root).map_err(|e| e.to_string())?,
-            ))
+            .withRuntimeStorageHost(storage)
             .withTcpHost(Arc::new(NativeTcpHost))
             .withHostRuntimeTaskSchedulerHost(Arc::new(
                 LocalHostRuntimeTaskSchedulerHost::new().map_err(|e| e.to_string())?,
             ))
             .withRobotFaceHost(face.clone());
-        let node = EdgeNode::headless().withRobotFaceService(createRobotFaceService(host.clone()));
+        let remote_preferences = preferences.clone();
+        let node = EdgeNode::headless()
+            .withRobotFaceService(createRobotFaceService(host.clone()))
+            .withCallHandler(Arc::new(move |request| {
+                let result = remote_preferences.call(request);
+                Box::pin(async move { result })
+            }));
         let device = SpaceDevice::assemble(
             host,
             LinkDeviceInfo {
@@ -131,6 +145,7 @@ impl PhoneNode {
         Ok(Self {
             device,
             face,
+            preferences,
             pending_pairing: Mutex::new(None),
         })
     }
@@ -140,6 +155,19 @@ impl PhoneNode {
         let peers = self.device.services.peers();
         match command {
             Command::Status => self.status(),
+            Command::Addresses => Ok(json!({"addresses": self.addresses()?})),
+            Command::InspectInvitation { code } => {
+                let invitation = pairing::decode_invitation(&code, &self.device.node_id)?;
+                Ok(json!(invitation.info))
+            }
+            Command::PairInvitation { code } => {
+                if self.pending_pairing.lock().map_err(|error| error.to_string())?.is_some() {
+                    return Err("请先完成或取消当前配对".into());
+                }
+                let invitation = pairing::decode_invitation(&code, &self.device.node_id)?;
+                let peer = pairing::pair_invitation(peers.as_ref(), invitation).await?;
+                Ok(json!({"peer": peer}))
+            }
             Command::StartPairing { address } => {
                 if self
                     .pending_pairing
@@ -215,16 +243,32 @@ impl PhoneNode {
         }
     }
 
+    /// Reads the SDK's bound port and advertises only usable interface addresses.
+    fn addresses(&self) -> Result<Vec<String>, String> {
+        let config = self.listener_config()?;
+        let socket = config.bindAddress.parse().map_err(|error: std::net::AddrParseError| error.to_string())?;
+        let interfaces = localNetworkAddresses().map_err(|error| error.to_string())?;
+        PeerConnectionCode::listenerAddresses(&[(PeerTransport::Tcp, socket)], &interfaces)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Reads the product-owned TCP listener configuration installed at startup.
+    fn listener_config(&self) -> Result<PeerHostConfig, String> {
+        PeerStateStore::new(self.device.space.storage())
+            .hostConfig()?
+            .ok_or_else(|| "Edge listener configuration is missing".into())
+    }
+
     /// Exposes bounded local management state, including codes only to this app.
     pub fn status(&self) -> Result<Value, String> {
         let peers = self.device.services.peers();
-        let config = PeerStateStore::new(self.device.space.storage())
-            .hostConfig()?
-            .ok_or("Edge listener configuration is missing")?;
+        let config = self.listener_config()?;
         let space = self.device.space.spaceStore().space()?;
+        let active = peers.activePeerNodeIds().map_err(|error| error.to_string())?;
         Ok(
             json!({"nodeId": self.device.node_id, "address": config.bindAddress,
             "spaceId": space.spaceId, "spaceName": space.spaceName,
+            "members": space.members, "activePeers": active, "pet": self.preferences.read()?,
             "expression": self.face.getExpression().map_err(|e| e.to_string())?.expression,
             "peers": peers.pairedPeers().map_err(|e| e.to_string())?,
             "pendingPairing": *self.pending_pairing.lock().map_err(|e| e.to_string())?,

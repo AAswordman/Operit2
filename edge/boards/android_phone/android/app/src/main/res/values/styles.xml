@@ -1,0 +1,9 @@
+<resources>
+    <style name="EdgePetTheme" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">#10131D</item>
+        <item name="android:statusBarColor">#10131D</item>
+        <item name="android:navigationBarColor">#10131D</item>
+        <item name="android:colorAccent">#A5E9CB</item>
+        <item name="android:fontFamily">sans</item>
+    </style>
+</resources>

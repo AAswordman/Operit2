@@ -21,6 +21,10 @@ android {
     }
 }
 
+dependencies {
+    implementation 'com.google.zxing:core:3.5.3'
+}
+
 // Fail before packaging an APK that cannot start on either supported phone ABI.
 tasks.register('verifyEdgeLibraries') {
     doLast {

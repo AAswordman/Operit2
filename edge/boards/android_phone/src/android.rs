@@ -2,7 +2,7 @@
 use crate::{Command, PhoneNode};
 use jni::{
     objects::{JClass, JString},
-    sys::jstring,
+    sys::{jboolean, jstring, JNI_TRUE},
     JNIEnv,
 };
 use serde_json::{json, Value};
@@ -53,6 +53,7 @@ pub extern "system" fn Java_com_operit_edgephone_EdgeNative_start(
     _: JClass,
     root: JString,
     model: JString,
+    keep_awake: jboolean,
 ) -> jstring {
     let result = (|| {
         let root = PathBuf::from(text(&mut env, &root, 4096)?);
@@ -80,7 +81,7 @@ pub extern "system" fn Java_com_operit_edgephone_EdgeNative_start(
                     }
                 };
                 runtime.block_on(async move {
-                    let node = match PhoneNode::start(root, model, "0.0.0.0:0".into()).await {
+                    let node = match PhoneNode::start(root, model, "0.0.0.0:0".into(), keep_awake == JNI_TRUE).await {
                         Ok(node) => node,
                         Err(error) => {
                             let _ = ready.send(Err(error));
@@ -129,7 +130,7 @@ pub extern "system" fn Java_com_operit_edgephone_EdgeNative_execute(
 ) -> jstring {
     let result = (|| {
         let command: Command =
-            serde_json::from_str(&text(&mut env, &input, 4096)?).map_err(|e| e.to_string())?;
+            serde_json::from_str(&text(&mut env, &input, 4608)?).map_err(|e| e.to_string())?;
         let stop = matches!(command, Command::Stop);
         let mut owner = WORKER
             .get_or_init(|| Mutex::new(None))

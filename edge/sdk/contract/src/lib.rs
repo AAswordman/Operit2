@@ -15,6 +15,9 @@ pub const EDGE_ROBOT_FACE_OBJECT_ID: &str = "edge.robotFace";
 /// Link property name used by the robot face expression watch.
 pub const EDGE_ROBOT_FACE_STATE_PROPERTY: &str = "robotFaceState";
 
+/// Link target for the Android watch companion's persisted preferences.
+pub const EDGE_WATCH_PET_OBJECT_ID: &str = "edge.watchPet";
+
 /// Link target reserved for the generic lightweight display service.
 pub const EDGE_SCREEN_OBJECT_ID: &str = "edge.screen";
 

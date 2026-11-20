@@ -1,5 +1,10 @@
 use super::*;
-use operit_edge_sdk::{host::RuntimeStorageHost, runtime::NodeSpaceService::SpaceJoinStatus};
+use operit_edge_sdk::{
+    contract::EDGE_WATCH_PET_OBJECT_ID,
+    host::RuntimeStorageHost,
+    link::{toCoreValue, CoreCallRequest, CoreCallResponse, RoutedCoreRequest, RoutedCoreRequestKind},
+    runtime::{NodeServices::PeerConnectionInfo, NodeSpaceService::SpaceJoinStatus, PeerConnectionCode::ConnectionInvitation},
+};
 use std::{
     fs,
     sync::atomic::{AtomicU64, Ordering},
@@ -76,6 +81,7 @@ async fn real_tcp_pairing_admission_expression_and_restart() {
         first_directory.0.clone(),
         "Old phone".into(),
         "127.0.0.1:0".into(),
+        false,
     )
     .await
     .unwrap();
@@ -83,6 +89,7 @@ async fn real_tcp_pairing_admission_expression_and_restart() {
         second_directory.0.clone(),
         "Controller".into(),
         "127.0.0.1:0".into(),
+        false,
     )
     .await
     .unwrap();
@@ -213,6 +220,7 @@ async fn real_tcp_pairing_admission_expression_and_restart() {
         first_directory.0.clone(),
         "Old phone".into(),
         "127.0.0.1:0".into(),
+        false,
     )
     .await
     .unwrap();
@@ -230,4 +238,74 @@ async fn real_tcp_pairing_admission_expression_and_restart() {
     );
     restarted.execute(Command::Stop).await.unwrap();
     second.execute(Command::Stop).await.unwrap();
+}
+
+/// Sends a configuration write via the same authenticated channel used by the plugin.
+async fn configure_pet(controller: &PhoneNode, watch: &PhoneNode, config: &Value) -> CoreCallResponse {
+    controller.device.services.peers().call(
+        &watch.device.node_id,
+        RoutedCoreRequest {
+            spaceId: controller.status().unwrap()["spaceId"].as_str().unwrap().into(),
+            originNodeId: controller.device.node_id.clone(),
+            targetNodeId: watch.device.node_id.clone(),
+            ttl: 0,
+            routeKind: RoutedCoreRequestKind::Target,
+            payload: CoreCallRequest::new("watch-config", EDGE_WATCH_PET_OBJECT_ID, "setConfig", toCoreValue(config).unwrap()),
+        },
+    ).await
+}
+
+/// A standard invitation admits the watch to the issuer's Space before configuration can be written.
+#[tokio::test(flavor = "current_thread")]
+async fn standard_space_invitation_and_watch_configuration() {
+    let watch_directory = Directory::new();
+    let controller_directory = Directory::new();
+    let watch = PhoneNode::start(watch_directory.0.clone(), "Watch".into(), "127.0.0.1:0".into(), false).await.unwrap();
+    let controller = PhoneNode::start(controller_directory.0.clone(), "Controller".into(), "127.0.0.1:0".into(), false).await.unwrap();
+    let initial_space = watch.status().unwrap()["spaceId"].clone();
+    let controller_status = controller.status().unwrap();
+    let controller_space = controller_status["spaceId"].as_str().unwrap();
+    let (invitation_id, secret) = controller.device.services.peers().pairingInvitation(controller_space).unwrap();
+    let code = PeerConnectionCode::encode(&ConnectionInvitation {
+        info: PeerConnectionInfo {
+            version: PeerConnectionCode::VERSION,
+            nodeId: controller.device.node_id.clone(),
+            displayName: "Controller".into(),
+            addresses: vec!["tcp://192.0.2.10:18080".into()],
+        },
+        invitationId: invitation_id,
+        secret,
+    }).unwrap();
+    let info = watch.execute(Command::InspectInvitation { code: code.clone() }).await.unwrap();
+    assert_eq!(info["nodeId"], controller.device.node_id);
+    assert_eq!(watch.status().unwrap()["peers"].as_array().unwrap().len(), 0);
+    let mut invitation = pairing::decode_invitation(&code, &watch.device.node_id).unwrap();
+    invitation.info.addresses = vec![format!("tcp://{}", controller_status["address"].as_str().unwrap())];
+    let paired = pairing::pair_invitation(watch.device.services.peers().as_ref(), invitation).await.unwrap();
+    assert_eq!(paired.nodeId, controller.device.node_id);
+    assert_eq!(watch.status().unwrap()["spaceId"], initial_space);
+
+    let config = json!({"version": 1, "accent": "peach", "haptics": false, "keepAwake": true});
+    let error = configure_pet(&watch, &controller, &config).await.result.unwrap_err();
+    assert_eq!(error.code, "EDGE_WATCH_SPACE_REQUIRED");
+    let error = configure_pet(&controller, &watch, &config).await.result.unwrap_err();
+    assert_eq!(error.code, "EDGE_WATCH_SPACE_REQUIRED");
+    let mut request = watch.device.space.requestDeviceSpaceJoin(paired.nodeId).await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while request.status != SpaceJoinStatus::Joined {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            request = watch.device.space.refreshDeviceSpaceJoin(request.requestId.clone()).await.unwrap();
+        }
+    }).await.unwrap();
+    assert_eq!(watch.status().unwrap()["spaceId"], controller_space);
+    assert_eq!(controller.status().unwrap()["spaceId"], controller_space);
+    configure_pet(&controller, &watch, &config).await.result.unwrap();
+    assert_eq!(watch.status().unwrap()["pet"], config);
+
+    watch.execute(Command::Stop).await.unwrap();
+    drop(watch);
+    let restarted = PhoneNode::start(watch_directory.0.clone(), "Watch".into(), "127.0.0.1:0".into(), false).await.unwrap();
+    assert_eq!(restarted.status().unwrap()["pet"], config);
+    restarted.execute(Command::Stop).await.unwrap();
+    controller.execute(Command::Stop).await.unwrap();
 }

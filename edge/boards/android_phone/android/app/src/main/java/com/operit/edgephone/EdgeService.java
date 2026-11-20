@@ -50,7 +50,8 @@ public final class EdgeService extends Service {
         notification(false);
         worker.execute(() -> {
             try {
-                JSONObject result = decode(EdgeNative.start(getFilesDir().getAbsolutePath() + "/edge", Build.MODEL));
+                boolean keepAwake = getSharedPreferences("MainActivity", MODE_PRIVATE).getBoolean("keepScreen", false);
+                JSONObject result = decode(EdgeNative.start(getFilesDir().getAbsolutePath() + "/edge", Build.MODEL, keepAwake));
                 running = true;
                 publish(result, null);
             } catch (Exception | LinkageError error) {
@@ -89,9 +90,14 @@ public final class EdgeService extends Service {
                 if (!running) throw new IllegalStateException("边缘节点未运行，请查看启动错误");
                 result = decode(EdgeNative.execute(command.toString()));
                 if ("stop".equals(command.optString("action"))) running = false;
-                else publish("status".equals(command.optString("action")) ? result
-                    : decode(EdgeNative.execute(command("status").toString())), null);
-            } catch (Exception | LinkageError problem) { error = problem.toString(); }
+                else if ("status".equals(command.optString("action"))) publish(result, null);
+                else if (!"inspectInvitation".equals(command.optString("action")) && !"addresses".equals(command.optString("action"))) {
+                    publish(decode(EdgeNative.execute(command("status").toString())), null);
+                }
+            } catch (Exception | LinkageError problem) {
+                error = problem.toString();
+                if ("status".equals(command.optString("action")) && running) publish(null, error);
+            }
             JSONObject reply = result;
             String problem = error;
             main.post(() -> { if (!destroyed) callback.complete(reply, problem); });

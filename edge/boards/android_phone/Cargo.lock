@@ -1000,7 +1000,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
+ "bytes",
  "futures-util",
+ "http",
+ "http-body-util",
  "operit-host-api",
  "operit-link",
  "operit-peer-link",
@@ -1074,6 +1077,8 @@ version = "2.0.0-preview.17"
 dependencies = [
  "base64",
  "chrono",
+ "flate2",
+ "futures-util",
  "heic-rs",
  "image",
  "operit-host-api",
