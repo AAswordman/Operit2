@@ -123,6 +123,7 @@ fn copied_database_trees_sync_without_policy_or_repeated_inventory_changes() {
     b.workspace().trackPaths(&[path], || {
         b.host.writeBytes(path, b"edited copy").map_err(|error| error.to_string())
     }).unwrap();
+    b.workspace().scan().unwrap();
     b.send(&a);
     assert_eq!(a.host.readBytes(path).unwrap(), b"edited copy");
     assert_eq!(a.workspace().scan().unwrap(), 0);
@@ -132,6 +133,7 @@ fn copied_database_trees_sync_without_policy_or_repeated_inventory_changes() {
     a.workspace().trackPaths(&[output], || {
         a.host.delete(output, true).map_err(|error| error.to_string())
     }).unwrap();
+    a.workspace().scan().unwrap();
     a.send(&b);
     for suffix in ["records.sqlite", "records.sqlite.operit-storage.json"] {
         let path = format!("{output}/old/runtime/plugin_data/space/demo/{suffix}");
@@ -317,17 +319,19 @@ fn direct_workspace_repository_writes_do_not_echo_or_duplicate() {
     files
         .writeBytes("workspaces/project/direct.txt", b"one")
         .unwrap();
-    assert_eq!(a.workspace().scan().unwrap(), 0);
+    assert_eq!(a.workspace().scan().unwrap(), 1);
     a.send(&b);
     files
         .appendBytes("workspaces/project/direct.txt", b" two")
         .unwrap();
+    a.workspace().scan().unwrap();
     a.send(&b);
     assert_eq!(
         b.host.readBytes("workspaces/project/direct.txt").unwrap(),
         b"one two"
     );
     files.delete("workspaces/project/direct.txt").unwrap();
+    a.workspace().scan().unwrap();
     a.send(&b);
     assert!(!b.host.exists("workspaces/project/direct.txt").unwrap());
     // operationsSince compacts superseded states of the same entity.
@@ -505,6 +509,43 @@ impl CountedNode {
 
 }
 
+/// A tracked write commits local bytes and intent without traversing unrelated trees.
+#[test]
+fn tracked_writes_leave_discovery_to_the_scanner() {
+    let node = CountedNode::new();
+    node.host.writeBytes("workspaces/unrelated/file.txt", b"old").unwrap();
+    node.workspace().scan().unwrap();
+    node.host.directoryListings.lock().unwrap().clear();
+    let inventory_writes = node.host.inventoryWrites.load(Ordering::SeqCst);
+    let reads = node.reads();
+    RuntimeFileSyncStore::new(node.host.clone(), SYNC)
+        .writeBytes("workspaces/project/file.txt", b"new").unwrap();
+    assert!(node.host.directoryListings.lock().unwrap().is_empty());
+    assert_eq!(node.host.inventoryWrites.load(Ordering::SeqCst), inventory_writes);
+    assert_eq!(node.reads(), reads);
+    assert_eq!(node.host.readBytes("workspaces/project/file.txt").unwrap(), b"new");
+    assert!(node.host.exists("runtime/sync/workspace_dirty.json").unwrap());
+    assert_eq!(node.workspace().scan().unwrap(), 1);
+    assert!(!node.host.exists("runtime/sync/workspace_dirty.json").unwrap());
+}
+
+/// An invalid policy retains local intent until a later scan can safely publish it.
+#[test]
+fn failed_discovery_preserves_intent_across_store_recreation() {
+    let node = Node::new();
+    let path = "workspaces/project/file.txt";
+    let policy = "workspaces/project/.operit/sync.json";
+    node.write(policy, b"invalid JSON");
+    node.workspace().trackPaths(&[path], || node.host.writeBytes(path, b"local").map_err(|e| e.to_string())).unwrap();
+    node.workspace().scan().unwrap();
+    assert!(node.host.exists("runtime/sync/workspace_dirty.json").unwrap());
+    node.host.delete(policy, false).unwrap();
+    let restarted = Arc::new(NativeRuntimeStorageHost::new(node.root.join("runtime"), node.root.join("workspaces")));
+    WorkspaceFileSyncStore::new(restarted.clone(), SYNC).scan().unwrap();
+    assert!(!restarted.exists("runtime/sync/workspace_dirty.json").unwrap());
+    assert!(node.ops().iter().any(|operation| operation.entityId == path && operation.operation == "upsert"));
+}
+
 #[test]
 fn size_unchanged_scans_reuse_references_without_reading() {
     let node = CountedNode::new();
@@ -566,7 +607,7 @@ fn equal_time_and_size_do_not_read_or_hash_contents() {
 }
 
 #[test]
-fn structured_same_size_writes_publish_immediately() {
+fn structured_same_size_writes_publish_on_discovery() {
     let a = Node::new();
     let b = Node::new();
     a.write("workspaces/project/file.txt", b"hello");
@@ -574,6 +615,9 @@ fn structured_same_size_writes_publish_immediately() {
     RuntimeFileSyncStore::new(a.host.clone(), SYNC)
         .writeBytes("workspaces/project/file.txt", b"world")
         .unwrap();
+    assert!(a.host.exists("runtime/sync/workspace_dirty.json").unwrap());
+    a.workspace().scan().unwrap();
+    assert!(!a.host.exists("runtime/sync/workspace_dirty.json").unwrap());
     a.send(&b);
     assert_eq!(
         b.host.readBytes("workspaces/project/file.txt").unwrap(),

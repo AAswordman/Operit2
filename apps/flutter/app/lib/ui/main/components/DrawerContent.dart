@@ -35,6 +35,7 @@ import 'SidebarChatCreation.dart';
 
 part 'DrawerContentGroups.dart';
 part 'DrawerContentDesktop.dart';
+part 'DrawerContentList.dart';
 
 enum _WorkspaceBindingChoice { existing, folder, create }
 
@@ -813,6 +814,11 @@ class _DrawerContentState extends State<DrawerContent> {
     if (!_expandedWorkspaces.remove(key)) _expandedWorkspaces.add(key);
   });
 
+  /// Stores group expansion outside the recycled row widgets.
+  void _toggleGroup(String key) => setState(() {
+    if (!_collapsedGroups.remove(key)) _collapsedGroups.add(key);
+  });
+
   void _toggleRecentHistory() => setState(() {
     _recentHistoryCollapsed = !_recentHistoryCollapsed;
   });
@@ -1024,123 +1030,6 @@ class _DrawerContentState extends State<DrawerContent> {
     ],
   );
 
-  /// Renders collapsible groups and their conversation lists within a project.
-  Widget _workspaceHistory(_WorkspaceSection section, bool searching) {
-    final groups = _nativeGroups(section);
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        for (final group in groups) ...<Widget>[
-          if (widget.conversationsOnly && group != groups.first)
-            const SizedBox(height: 4),
-          _GroupSectionHeader(
-            key: ValueKey('workspace-group:${group.key}'),
-            group: group,
-            pinned: _pinnedDirectories.contains(group.directory),
-            expanded:
-                searching && widget.conversationsOnly ||
-                !_collapsedGroups.contains(group.key),
-            compact: widget.conversationsOnly,
-            appearance: widget.appearance,
-            canCreate: section.canCreate,
-            onToggleExpanded: () => setState(() {
-              if (!_collapsedGroups.remove(group.key)) {
-                _collapsedGroups.add(group.key);
-              }
-            }),
-            onCreateChat: () => unawaited(
-              _runGroupMutation(
-                () => _createGroupedConversation(section, group.name),
-              ),
-            ),
-            onCreateGroup: () => unawaited(_createWorkspaceGroup(section)),
-            onRename: () => unawaited(_renameWorkspaceGroup(section, group)),
-            onTogglePinned: () =>
-                unawaited(_toggleDirectoryPinned(group.directory)),
-            onDissolve: () =>
-                unawaited(_dissolveWorkspaceGroup(section, group)),
-            canAcceptDrop: (chat) => _workspaceKey(chat) == section.key,
-            onMoveToGroup: (chat) => unawaited(
-              _runGroupMutation(() => _moveWorkspaceGroup(chat, group.name)),
-            ),
-          ),
-          if (searching && widget.conversationsOnly ||
-              !_collapsedGroups.contains(group.key))
-            _workspaceGroupHistory(group, searching),
-        ],
-      ],
-    );
-  }
-
-  Widget _workspaceGroupHistory(_NativeWorkspaceGroup group, bool searching) {
-    final tree = ChatHistoryTree(group.histories);
-    final retained = tree.matching(
-      (chat) =>
-          chat.pinned ||
-          chat.id == widget.currentChatId ||
-          widget.activeStreamingChatIds.contains(chat.id),
-    );
-    final preview = [
-      for (var i = 0; i < tree.roots.length; i++)
-        if (i < _previewLimit || retained.contains(tree.roots[i].id))
-          tree.roots[i],
-    ];
-    final expanded = _expandedWorkspaces.contains(group.key);
-
-    Iterable<Widget> branch(
-      core_proxy.ChatHistoryListItem chat,
-      int depth,
-    ) sync* {
-      final children = tree.children[chat.id]!;
-      final open = searching || _expandedChatBranches.contains(chat.id);
-      yield Padding(
-        padding: EdgeInsetsDirectional.only(
-          start: (widget.conversationsOnly ? 20.0 : 16.0) + depth * 16,
-        ),
-        child: _historyRow(
-          chat,
-          childCount: children.length,
-          childrenExpanded: open,
-        ),
-      );
-      if (open) {
-        for (final child in children) {
-          yield* branch(child, depth + 1);
-        }
-      }
-    }
-
-    final content = Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        for (final chat in searching || expanded ? tree.roots : preview)
-          ...branch(chat, 0),
-        if (!searching && preview.length < tree.roots.length)
-          Padding(
-            padding: EdgeInsetsDirectional.only(
-              start: widget.conversationsOnly ? 20 : 0,
-            ),
-            child: _HistoryLimitButton(
-              key: ValueKey('history-limit:${group.key}'),
-              icon: expanded ? Icons.expand_less : Icons.expand_more,
-              label: expanded
-                  ? '收起'
-                  : '展开更多 ${tree.roots.length - preview.length}',
-              workspaceStyle: true,
-              flat: widget.conversationsOnly,
-              appearance: widget.appearance,
-              onClick: () => _togglePreview(group.key),
-            ),
-          ),
-      ],
-    );
-    return widget.conversationsOnly
-        ? _DesktopGroupBody(appearance: widget.appearance, child: content)
-        : content;
-  }
-
   /// Uses the original native sliver layout, with no plugin UI route or loading substitution.
   Widget _workspaceContent(BuildContext context, {Widget? tabs}) {
     if (widget.conversationsOnly) {
@@ -1219,41 +1108,7 @@ class _DrawerContentState extends State<DrawerContent> {
                   appearance: widget.appearance,
                 ),
               ),
-            for (final section in sections) ...<Widget>[
-              SliverToBoxAdapter(
-                child: _WorkspaceHeader(
-                  key: ValueKey('workspace-header:${section.key}'),
-                  label: section.label,
-                  unbound: section.workspaceId == null,
-                  subtitle: section.subtitle,
-                  pinned: _pinnedDirectories.contains(
-                    SidebarDirectory.workspace(section.workspaceId),
-                  ),
-                  expanded: !_collapsedWorkspaces.contains(section.key),
-                  appearance: widget.appearance,
-                  canCreate: section.canCreate,
-                  onDelete: section.workspaceId != null
-                      ? () => unawaited(_deleteWorkspace(section))
-                      : null,
-                  onToggleExpanded: () => _toggleWorkspace(section.key),
-                  onCreateConversation: () => unawaited(
-                    _createConversation(workspaceId: section.workspaceId),
-                  ),
-                  onCreateGroup: () =>
-                      unawaited(_createWorkspaceGroup(section)),
-                  onTogglePinned: () => unawaited(
-                    _toggleDirectoryPinned(
-                      SidebarDirectory.workspace(section.workspaceId),
-                    ),
-                  ),
-                ),
-              ),
-              if (!_collapsedWorkspaces.contains(section.key)) ...<Widget>[
-                SliverToBoxAdapter(
-                  child: _workspaceHistory(section, searching),
-                ),
-              ],
-            ],
+            _workspaceHistorySliver(sections, searching),
             if (sections.isEmpty && !widget.loading)
               SliverToBoxAdapter(
                 child: SidebarStatusText(

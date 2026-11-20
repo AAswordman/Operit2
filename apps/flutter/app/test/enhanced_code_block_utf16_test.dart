@@ -1,10 +1,75 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/common/markdown/CanvasMonospaceCodeBlockBody.dart';
 import 'package:operit2/ui/common/markdown/EnhancedCodeBlock.dart';
 
+/// Exercises code rendering, scrolling, and text selection.
 void main() {
+  testWidgets('code selection magnification has a bounded clip', (
+    tester,
+  ) async {
+    const firstLine = 'alpha beta gamma delta';
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData.dark(),
+        home: Scaffold(
+          body: Center(
+            child: SizedBox(
+              width: 360,
+              height: 240,
+              child: CanvasMonospaceCodeBlockBody(
+                lines: [firstLine, ...List.filled(24, 'more code')],
+                autoWrapEnabled: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final firstLineFinder = find.text(firstLine);
+    final paragraph = tester.renderObject<RenderParagraph>(
+      find.descendant(of: firstLineFinder, matching: find.byType(RichText)),
+    );
+    final word = paragraph.getBoxesForSelection(
+      const TextSelection(baseOffset: 6, extentOffset: 10),
+    ).single.toRect();
+    await tester.longPressAt(paragraph.localToGlobal(word.center));
+    await tester.pumpAndSettle();
+    expect(paragraph.selections.single, const TextSelection(
+      baseOffset: 6,
+      extentOffset: 10,
+    ));
+
+    final handle = await tester.startGesture(
+      paragraph.localToGlobal(word.bottomRight + const Offset(3, 6)),
+    );
+    await handle.moveBy(const Offset(24, 0));
+    await tester.pump();
+    await handle.moveBy(const Offset(25, 0));
+    await tester.pumpAndSettle();
+
+    final layers = tester.layers;
+    expect(layers.whereType<BackdropFilterLayer>(), hasLength(1));
+    final widestPathClip = layers.whereType<ClipPathLayer>().fold<double>(
+      0,
+      (width, layer) => math.max(width, layer.clipPath!.getBounds().width),
+    );
+    expect(widestPathClip, lessThanOrEqualTo(360));
+    expect(paragraph.selections.single.end, greaterThan(10));
+
+    await handle.up();
+    await tester.pumpAndSettle();
+    expect(tester.layers.whereType<BackdropFilterLayer>(), isEmpty);
+    expect(find.byType(AdaptiveTextSelectionToolbar), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  }, variant: const TargetPlatformVariant({TargetPlatform.android}));
+
   testWidgets(
     'long code blocks mount only viewport lines and remain scrollable',
     (tester) async {

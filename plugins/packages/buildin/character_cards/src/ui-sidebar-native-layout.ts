@@ -1,6 +1,6 @@
 import { SidebarChatTree } from './sidebar-chat-tree';
 import { renderGroupAvatar } from './group-avatar';
-import type { ComposeDslContext, ComposeNode } from '../../../../types/compose-dsl';
+import type { ComposeDslContext, ComposeLazyItems, ComposeNode } from '../../../../types/compose-dsl';
 import type { CharacterSidebarSection, ConversationSidebarGroup, CurrentSidebar, SidebarCatalog, SidebarChatSummary } from './ui-sidebar';
 
 export interface SidebarLayoutState {
@@ -33,6 +33,8 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
   actions: SidebarLayoutActions, defaultAvatar: string | null): SidebarRowBuilder[] {
   const colors = ctx.MaterialTheme.colorScheme, m = legacySidebarMetrics;
   const query = state.query.trim().toLocaleLowerCase();
+  const collapsed = new Set(state.collapsed), expandedGroups = new Set(state.expandedGroups);
+  const streaming = new Set(current.chatSidebar.activeStreamingChatIds);
   const muted = colors.onSurfaceVariant.copy({ alpha: 0.80 });
   const rows: SidebarRowBuilder[] = [];
   const tree = new SidebarChatTree(current.chatSidebar.chats);
@@ -52,7 +54,7 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
   function chatRow(chat: SidebarChatSummary, section: CharacterSidebarSection, groupId: string | null, depth = 0): ComposeNode {
     const selected = current.chatSidebar.currentChatId === chat.id;
     const titleColor = selected ? colors.onSecondaryContainer : muted;
-    const running = current.chatSidebar.activeStreamingChatIds.includes(chat.id);
+    const running = streaming.has(chat.id);
     const status = ctx.UI.ActivityDots({ key: 'sidebar-status-' + chat.id, width: 10, height: 13.5,
       running, selected, restingColor: selected ? colors.onSecondaryContainer.copy({ alpha: 0.70 }) : colors.onSurfaceVariant.copy({ alpha: 0.30 }),
       activeColor: colors.primary });
@@ -65,7 +67,7 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
     if (chat.locked) content.push(gap(5), ctx.UI.Icon({ name: 'Lock', size: 12, tint: titleColor.copy ? titleColor.copy({ alpha: 0.60 }) : titleColor }));
     const children = tree.children.get(chat.id)!;
     if (children.length > 0) {
-      const expanded = query !== '' || state.expandedGroups.includes('children:' + chat.id);
+      const expanded = query !== '' || expandedGroups.has('children:' + chat.id);
       content.push(ctx.UI.IconButton({ key: 'sidebar-children-' + chat.id,
         content: ctx.UI.Icon({ name: expanded ? 'KeyboardArrowUp' : 'KeyboardArrowDown', size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }),
         width: 22, height: 22, shape: { cornerRadius: 6 },
@@ -118,14 +120,14 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
   /** Renders the preview subset and counts hidden chats directly from its size. */
   function chats(values: SidebarChatSummary[], id: string, section: CharacterSidebarSection, groupId: string | null, matchAll = false): SidebarRowBuilder[] {
     const matches = values.filter(chat => tree.roots.has(chat.id) && (matchAll || matching.has(chat.id)));
-    const expanded = state.expandedGroups.includes('preview:' + id);
+    const expanded = expandedGroups.has('preview:' + id);
     const preview = query !== '' || expanded ? matches : matches.filter((chat, index) => index < m.previewLimit || chat.pinned
-      || current.chatSidebar.currentChatId === chat.id || current.chatSidebar.activeStreamingChatIds.includes(chat.id));
+      || current.chatSidebar.currentChatId === chat.id || streaming.has(chat.id));
     const result: SidebarRowBuilder[] = [];
     /** Flattens only visible branches into the existing lazy row surface. */
     function append(chat: SidebarChatSummary, depth: number): void {
       result.push(() => chatRow(chat, section, groupId, depth));
-      if (query !== '' || state.expandedGroups.includes('children:' + chat.id)) {
+      if (query !== '' || expandedGroups.has('children:' + chat.id)) {
         for (const child of tree.children.get(chat.id)!) {
           if (matchAll || matching.has(child.id)) append(child, depth + 1);
         }
@@ -143,7 +145,7 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
   }
 
   function category(section: CharacterSidebarSection): ComposeNode {
-    const collapsed = state.collapsed.includes(section.id);
+    const sectionCollapsed = collapsed.has(section.id);
     const avatar = section.groupPortrait !== undefined ? renderGroupAvatar(ctx, section.groupPortrait, defaultAvatar, m.categoryAvatar, 'sidebar-avatar-' + section.id) : section.kind === 'card' ? ctx.UI.Image({ key: 'sidebar-avatar-' + section.id,
       uri: section.avatarUri ?? defaultAvatar ?? '', width: m.categoryAvatar, height: m.categoryAvatar, contentScale: 'crop',
       contentDescription: section.title, modifier: ctx.Modifier.clip({ type: 'circle' }) })
@@ -160,12 +162,12 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
           modifier: ctx.Modifier.widthIn({ max: 170 }), color: colors.onSurface }), gap(8),
         ctx.UI.Text({ text: String(section.chats.length), style: 'labelSmall', fontWeight: '700', color: colors.onSurfaceVariant.copy({ alpha: 0.64 }) }),
         ctx.UI.GradientRule({ weight: 1, paddingHorizontal: 10, height: 2, startColor: colors.outlineVariant.copy({ alpha: 0.62 }), endColor: colors.outlineVariant.copy({ alpha: 0 }) }),
-        ctx.UI.Icon({ name: collapsed ? 'KeyboardArrowDown' : 'KeyboardArrowUp', size: 18, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }),
+        ctx.UI.Icon({ name: sectionCollapsed ? 'KeyboardArrowDown' : 'KeyboardArrowUp', size: 18, tint: colors.onSurfaceVariant.copy({ alpha: 0.78 }) }),
       ])));
   }
 
   function groupRow(group: ConversationSidebarGroup, section: CharacterSidebarSection, ungrouped = false): ComposeNode {
-    const expanded = !state.collapsed.includes('group:' + group.id);
+    const expanded = !collapsed.has('group:' + group.id);
     const groupBody = ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: 'center', paddingStart: 12, paddingEnd: 8,
       paddingTop: 2, paddingBottom: 2, ...({background: colors.surfaceContainerLow.copy({ alpha: 0.72 }), backgroundShape: {cornerRadius: m.groupRadius}, modifier: ctx.Modifier.border(1, colors.outlineVariant.copy({alpha: 0.24}), {cornerRadius: m.groupRadius})}), onClick: () => actions.toggleSection('group:' + group.id) }, [
       ctx.UI.Icon({ name: 'FolderOutlined', size: 16, tint: colors.onSurfaceVariant.copy({ alpha: 0.76 }) }), gap(7),
@@ -194,23 +196,30 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
     const visibleGroups = groups.filter(group => categoryMatches || group.name.toLocaleLowerCase().includes(query) || group.chats.some(chat => tree.roots.has(chat.id) && matching.has(chat.id)));
     if (!categoryMatches && visibleGroups.length === 0 && !ungrouped.some(chat => matching.has(chat.id))) continue;
     rows.push(() => category(section));
-    if (state.collapsed.includes(section.id)) continue;
+    if (collapsed.has(section.id)) continue;
     for (const group of visibleGroups) {
       rows.push(() => groupRow(group, section));
-      if (!state.collapsed.includes('group:' + group.id)) rows.push(...chats(group.chats, group.id, section, group.id, categoryMatches || group.name.toLocaleLowerCase().includes(query)));
+      if (!collapsed.has('group:' + group.id)) rows.push(...chats(group.chats, group.id, section, group.id, categoryMatches || group.name.toLocaleLowerCase().includes(query)));
     }
     if (ungrouped.length > 0 && (categoryMatches || '未分组'.includes(query) || ungrouped.some(chat => matching.has(chat.id)))) {
       const id = 'ungrouped:' + section.id;
       rows.push(() => groupRow({ id, name: '未分组', pinned: ungrouped.every(chat => chat.pinned), displayOrder: 0, chats: ungrouped }, section, true));
-      if (!state.collapsed.includes('group:' + id)) rows.push(...chats(ungrouped, id, section, null, categoryMatches || '未分组'.includes(query)));
+      if (!collapsed.has('group:' + id)) rows.push(...chats(ungrouped, id, section, null, categoryMatches || '未分组'.includes(query)));
     }
   }
   if (rows.length === 0) rows.push(() => ctx.UI.Text({ text: query === '' ? '暂无会话' : '没有匹配的会话', height: m.chatHeight, color: muted, fontSize: 12, paddingHorizontal: 20 }));
   return rows;
 }
 
-/** Materializes expanded rows once, so scrolling never needs a plugin round trip. */
-export function nativeSidebarRows(ctx: ComposeDslContext, current: CurrentSidebar, state: SidebarLayoutState,
-  actions: SidebarLayoutActions, defaultAvatar: string | null): ComposeNode[] {
-  return sidebarRowBuilders(ctx, current, state, actions, defaultAvatar).map(build => build());
+/** Retains lightweight row factories and materializes only the viewport's buffered window. */
+export function nativeSidebarItems(ctx: ComposeDslContext, current: CurrentSidebar, state: SidebarLayoutState,
+  actions: SidebarLayoutActions, defaultAvatar: string | null): ComposeLazyItems {
+  const rows = ctx.useMemo('native-sidebar-row-builders',
+    () => sidebarRowBuilders(ctx, current, state, actions, defaultAvatar),
+    [current.chatSidebar, state.data, state.query, state.collapsed, state.expandedGroups, state.busy,
+      defaultAvatar, ctx.MaterialTheme.colorScheme]);
+  return ctx.lazyItems({ key: 'native-sidebar-rows', itemCount: rows.length,
+    itemExtent: legacySidebarMetrics.chatHeight, initialItemCount: 24, variableExtent: true },
+    /** Creates controls and callbacks only for rows entering the live window. */
+    index => rows[index]());
 }

@@ -1,0 +1,243 @@
+# 设备空间与同步历史提交索引
+
+基线：`5a8ea62879c04e33af66a55436e1372c6b3c4169`。分析见 [同步演进与文件阻塞来源](analysis-device-space-sync-history-2026-11-20.md)。
+
+这是按相关源码路径检索当前 HEAD 可达历史得到的 228 项非合并提交。综合提交可能同时修改插件、界面或其他运行时能力，列入索引不代表整项提交都属于同步。索引用于覆盖性检查和回查；对 bug 的具体归因以分析报告中的 diff、源码和证据边界为准。
+
+检索覆盖：
+
+- `core/crates/node/runtime/src` 与 `core/crates/node/peer-link/src`。
+- 旧目录中的 `SpacePersistenceSyncService.rs`、`CoreSpaceStore.rs`、`SyncOperationStore.rs`、`RuntimeFileSyncStore.rs`。
+- 当前 store 中 Space／网络控制存储、操作日志、工作区文件、runtime 文件、文件同步策略、偏好物化与迁移、事务模型、`transaction/`、`sync/`。
+- CoreNode／Space 架构、同步架构、工作区文件同步、事务模型和事务契约文档。
+
+按 Git 拓扑顺序由旧到新排列；显示作者日期，因此合并分支处的日期可能不单调。`[W]` 表示直接修改 `WorkspaceFileSyncStore.rs` 的 13 项提交，已逐项核对对应补丁。其他提交的重点核查范围见分析报告，不能将索引误读为对所有无关代码的逐行审计。
+
+- 2026-05-25 [`1223b7f81`](https://github.com/AAswordman/Operit2/commit/1223b7f812725801cb42c40da303c17ed5852478) — Add web host and repository support
+- 2026-05-27 [`066ae46fa`](https://github.com/AAswordman/Operit2/commit/066ae46fa764abfdd693bad8efcd12522b4d428d) — Refine runtime stores and host tools
+- 2026-05-28 [`5421571ef`](https://github.com/AAswordman/Operit2/commit/5421571efa909aa79c8268db18a50d9c497366e6) — Add command core and thinking guidance package
+- 2026-06-14 [`6484d5182`](https://github.com/AAswordman/Operit2/commit/6484d5182a2ad2564a94d9ec077a565b490ad280) — Refactor runtime preferences and UI bindings
+- 2026-07-08 [`4254b55ac`](https://github.com/AAswordman/Operit2/commit/4254b55ac2f650d56f06eb428c722bc595b85aef) — Refactor runtime boundaries and web access packaging
+- 2026-07-10 [`21eec508d`](https://github.com/AAswordman/Operit2/commit/21eec508d3b0ff721f3ac703f78da10f4ced964f) — Refactor runtime crates and plugin SDK boundaries
+- 2026-08-13 [`fbf17e4ce`](https://github.com/AAswordman/Operit2/commit/fbf17e4ce9da26959f763af270e3a57d0e1c3456) — feat: unify cross-platform runtime and ToolPkg execution
+- 2026-08-21 [`ca992d1cc`](https://github.com/AAswordman/Operit2/commit/ca992d1cc3b482f874939326d0bcd709d9ee3004) — feat: add core node space handoff architecture
+- 2026-08-23 [`3e681dc86`](https://github.com/AAswordman/Operit2/commit/3e681dc8605dd46f02bb2c1b17a837bc846ae683) — checkpoint: staged changes
+- 2026-08-24 [`ab7c8e048`](https://github.com/AAswordman/Operit2/commit/ab7c8e048eb4b29296bd673e4af8de1e184e5ef1) — refactor: reorganize core crate layout
+- 2026-08-28 [`743034718`](https://github.com/AAswordman/Operit2/commit/743034718c993a7f9a212260e490395299e0b93b) — checkpoint: preserve workspace index
+- 2026-08-31 [`9bf12ac80`](https://github.com/AAswordman/Operit2/commit/9bf12ac80f12b55592d4aacd23473ecace642836) — feat: update chat streaming and runtime links
+- 2026-09-01 [`f4e4d991a`](https://github.com/AAswordman/Operit2/commit/f4e4d991a97fb20d062025510ae5bd6c93796ef1) — chore: bump version to 2.0.0-preview.6
+- 2026-09-02 [`303192ccf`](https://github.com/AAswordman/Operit2/commit/303192ccf12a8873d9d391228be026096de95db5) — chore: commit workspace changes
+- 2026-09-10 [`b6691cf04`](https://github.com/AAswordman/Operit2/commit/b6691cf04ceb95155c7585c8d9c590648ea6c52a) — Implement space link network control and runtime updates
+- 2026-09-12 [`cf14914d2`](https://github.com/AAswordman/Operit2/commit/cf14914d20345b3e75fbb22323368db3eb339069) — Update merge render and provider streaming handling
+- 2026-09-13 [`7611afba4`](https://github.com/AAswordman/Operit2/commit/7611afba4e442a2b9fed839dc4e8b5628cf1b3ce) — Add plugin catalog, TUI transcript folding, and startup package loading
+- 2026-09-15 [`20dbdad4c`](https://github.com/AAswordman/Operit2/commit/20dbdad4c98f73b599749c55fa065b3fcacd1834) — feat: add workspace and plugin sdk ipc
+- 2026-09-17 [`5cf6e7f51`](https://github.com/AAswordman/Operit2/commit/5cf6e7f51591070fcc5655f8d6f7d11d269ee015) — feat(esp32): add remote UI debugging and deployment
+- 2026-09-19 [`5a1d2a456`](https://github.com/AAswordman/Operit2/commit/5a1d2a456b98aa2f4f1856435c01881125fed1ef) — fix: stabilize iOS runtime and move serial transport into hosts
+- 2026-09-20 [`8072dcaa0`](https://github.com/AAswordman/Operit2/commit/8072dcaa05eddd64e6123ec6d08e229af90ae52b) — fix: synchronize device space overview and align device icons
+- 2026-09-19 [`fac0b782c`](https://github.com/AAswordman/Operit2/commit/fac0b782c6823c83f0e7cd0570ea90a472eaa2e1) — feat(edge): route Edge chat through Space
+- 2026-09-24 [`defbffd56`](https://github.com/AAswordman/Operit2/commit/defbffd56cf45f10401a80f3a330cf48b098f5be) — Refactor runtime routing and chat tool permissions
+- 2026-09-25 [`b184361e5`](https://github.com/AAswordman/Operit2/commit/b184361e5fd4b03a570f111e85cedce28179f379) — Improve remote routing, persistence, and runtime diagnostics
+- 2026-09-26 [`fa2935d8d`](https://github.com/AAswordman/Operit2/commit/fa2935d8d6ca0ff7345a5c4f4bfc6da7a40d4d19) — chore: submit workspace changes and bump version to 2.0.0-preview.8
+- 2026-09-26 [`5c89fb526`](https://github.com/AAswordman/Operit2/commit/5c89fb52608e5813ba7e4fcc8c003e12f68d5154) — feat(esp32): integrate Edge discovery and pairing UI
+- 2026-09-26 [`58cede943`](https://github.com/AAswordman/Operit2/commit/58cede9436e33864e35dc1b731b74ea072d23b79) — fix(edge): enforce host discovery and pairing boundaries
+- 2026-09-28 [`bd449b756`](https://github.com/AAswordman/Operit2/commit/bd449b75605a00bef8cfbf6f4c93b980464bc6e3) — feat: update link protocol and plugin API compatibility
+- 2026-09-28 [`9c5be1408`](https://github.com/AAswordman/Operit2/commit/9c5be140894dd3022a7eb14c6d368827833cd97e) — fix(esp32): align shared UI and route real conversations
+- 2026-09-29 [`d6a4a4731`](https://github.com/AAswordman/Operit2/commit/d6a4a4731de26806456ca2c9c8163e5eaf9b598d) — fix(space): return admission commands when a device joins
+- 2026-10-01 [`a0ec0eb74`](https://github.com/AAswordman/Operit2/commit/a0ec0eb74eb11eb40829d79cc6279052d832ff2d) — WIP: checkpoint workspace including node link and ESP32 host refactor
+- 2026-10-01 [`96d524a3d`](https://github.com/AAswordman/Operit2/commit/96d524a3de9a068d2f2f087588355cb9b31477c9) — WIP: unify node peer service boundaries and remove legacy link paths
+- 2026-10-02 [`6e3de7712`](https://github.com/AAswordman/Operit2/commit/6e3de7712e59a225a970fff4b3fe5c55778876e7) — update
+- 2026-10-02 [`1b4ac77f6`](https://github.com/AAswordman/Operit2/commit/1b4ac77f6d71280206ae16301a5014b486d825ec) — feat: add device space join flows and network control sessions
+- 2026-10-02 [`38c1d4e97`](https://github.com/AAswordman/Operit2/commit/38c1d4e97c96eaec99b83758252a2c6e9af7025a) — fix: align peer controls, web development, and memory search behavior
+- 2026-10-03 [`cde6e3bc2`](https://github.com/AAswordman/Operit2/commit/cde6e3bc22d197cda25b334583d8361c25a12983) — fix: release chat stream subscriptions and eliminate idle thermal overhead
+- 2026-10-03 [`080ab8a75`](https://github.com/AAswordman/Operit2/commit/080ab8a75ce4ee94c4a573dd4ed7e90db086a2b3) — feat: synchronize extension scopes and improve runtime compatibility
+- 2026-10-03 [`63e8e04d2`](https://github.com/AAswordman/Operit2/commit/63e8e04d2eaaafdf9972c922fa08b79b55b403c3) — feat: 完善记忆管理与扩展运行时
+- 2026-10-03 [`70ff2d710`](https://github.com/AAswordman/Operit2/commit/70ff2d710b3cd5072a50e6ad65ee781c093ed423) — fix: 修复消息变体删除、XML 渲染刷新与插件配置访问
+- 2026-10-03 [`806351806`](https://github.com/AAswordman/Operit2/commit/8063518069f00be70097a9ac5fa62625085d9f32) — fix: 统一 Host 监听能力并修复跨平台运行时桥接
+- 2026-10-04 [`b8a05c0a2`](https://github.com/AAswordman/Operit2/commit/b8a05c0a2c01b57d9b621c3ec23478266259d8c7) — fix: 完善 Android 运行时、插件注册配置与聊天流式处理
+- 2026-10-04 [W] [`6360602b7`](https://github.com/AAswordman/Operit2/commit/6360602b7bac666b7aaa490f6dfe7d9c3159bc93) — feat: 完善工作区同步、记忆图谱与跨平台构建
+- 2026-10-06 [`675ccd0fe`](https://github.com/AAswordman/Operit2/commit/675ccd0fefe86a9efb70c6b90c9ab7d41c5f4ff4) — feat: 完善设备空间同步、跨平台运行时与 Flutter 交互
+- 2026-10-07 [`ea96a90d5`](https://github.com/AAswordman/Operit2/commit/ea96a90d51883268f87344b4bb8f3e3081a72b66) — fix: 修复模型请求、跨节点同步、插件运行与 Flutter 交互等多项问题
+- 2026-10-08 [`8fbff8c4f`](https://github.com/AAswordman/Operit2/commit/8fbff8c4fa0a4e725a3c77e45cb74c842a173a2f) — feat(space): forget devices completely on removal
+- 2026-10-08 [`de83ad7c6`](https://github.com/AAswordman/Operit2/commit/de83ad7c689eb806b7e5d375079340c95c10ea67) — fix(space): reset device identity to default user on clearing
+- 2026-10-08 [`425074726`](https://github.com/AAswordman/Operit2/commit/4250747263c47d0b7340811a1467391543da78df) — feat: sync workspace changes and filter MCP arguments
+- 2026-10-06 [`93360af8a`](https://github.com/AAswordman/Operit2/commit/93360af8a86cfb2171b6b21a616efc7171547300) — fix(node): enforce space admission and bound remote chat windows
+- 2026-10-08 [`f34545d6e`](https://github.com/AAswordman/Operit2/commit/f34545d6e54a884893f9a54328ba265eb4f62815) — fix(store): preserve node-local state across member removal
+- 2026-10-08 [`c57e03067`](https://github.com/AAswordman/Operit2/commit/c57e030678c98e1f5731746afc2f42dd35a99f41) — fix(node): recover partial space admission and retain review errors
+- 2026-10-09 [`86545d022`](https://github.com/AAswordman/Operit2/commit/86545d0227f0952f1bef325e295d6f075103be00) — fix(node): retire join consent when pairing is revoked
+- 2026-10-09 [`d21e469e5`](https://github.com/AAswordman/Operit2/commit/d21e469e5240cc80ffcb735186c71f9ce95f5ab0) — fix(core): reject self-referential space joins and validate before append
+- 2026-10-09 [`99f9d2afc`](https://github.com/AAswordman/Operit2/commit/99f9d2afc34373859b0e8d853809c8cb19dda0a3) — fix(node): retire stale join records on re-application from a new source Space
+- 2026-10-09 [`0c2e06f49`](https://github.com/AAswordman/Operit2/commit/0c2e06f49a55ccb7f167003e764e00f9361ec724) — fix: remove legacy JavaScript bridge and NativeInterface
+- 2026-10-09 [`3d60ddd6b`](https://github.com/AAswordman/Operit2/commit/3d60ddd6b6d55174fefc0d95d7c86f4e25038930) — feat(node): reconcile shared-space membership splits
+- 2026-10-09 [`f8b21ec7a`](https://github.com/AAswordman/Operit2/commit/f8b21ec7a59165a79d1dbd1933d3ddba33051fa9) — fix(node): resolve Edge business routes through chat bindings
+- 2026-10-09 [`302087bea`](https://github.com/AAswordman/Operit2/commit/302087bea262dcd57b0d20fdf1b3ce5f51de14ee) — test(node): preserve write permission for Core plugin diagnostics
+- 2026-10-09 [`0706882c5`](https://github.com/AAswordman/Operit2/commit/0706882c50436255255b36e25f1b4945a1551414) — fix(host): preserve capabilities across Web and native dispatch
+- 2026-10-09 [`d86ee92a9`](https://github.com/AAswordman/Operit2/commit/d86ee92a9081d54da9befc7f558ec9a8603d135c) — feat(edge): add bounded native scenes and Core event delivery
+- 2026-10-09 [`fff974ce8`](https://github.com/AAswordman/Operit2/commit/fff974ce8f8cef73e05b9438b56f8be6e8e237c2) — refactor(edge): generalize action events and expose static SDK classes
+- 2026-10-09 [`5e02a26dd`](https://github.com/AAswordman/Operit2/commit/5e02a26dd71eb02cac3cf5b6e83112d779afe5a2) — fix(node): give uncommitted Approving joins an exit
+- 2026-10-09 [`e87f0fe62`](https://github.com/AAswordman/Operit2/commit/e87f0fe621d1a5a1280f98e7e389cfbfc68aca66) — feat(store): skip corrupt operation-log lines on read and expose raw scans
+- 2026-10-09 [`eb688c5be`](https://github.com/AAswordman/Operit2/commit/eb688c5be22683df5f2e6913c31bd47635a29130) — feat(store): quarantine damaged journal lines reversibly
+- 2026-10-09 [`eeac9c8ed`](https://github.com/AAswordman/Operit2/commit/eeac9c8ed1852f3da68f75ce08ef59b764081557) — feat(node): add link doctor for shared-Space health and repair
+- 2026-10-09 [`1664a284a`](https://github.com/AAswordman/Operit2/commit/1664a284a5ca13e9f9e25bd566e822a8301a2645) — feat(node): incremental, paged and rate-limited space reconciliation
+- 2026-10-09 [`e468d0f5b`](https://github.com/AAswordman/Operit2/commit/e468d0f5bfce90695663ef5e64333d819cc95eb6) — fix(node): terminate paged reconciliation when id sets overflow budget
+- 2026-10-10 [`9c01c89c7`](https://github.com/AAswordman/Operit2/commit/9c01c89c75de061f3a29dd791f35986a00ce44c1) — feat(node): publish direct-link adjacency for multi-hop space routing
+- 2026-10-10 [`b0d096eda`](https://github.com/AAswordman/Operit2/commit/b0d096edad704d38c50bf1da97e9935ba13a9244) — fix(core): implement the cooperative host scheduler method in test doubles
+- 2026-10-10 [`36cfde795`](https://github.com/AAswordman/Operit2/commit/36cfde795cea05380988fcb93b1672a61bcaab4c) — fix(node): report directly paired members as reachable in list_core_nodes
+- 2026-10-10 [`f59af45af`](https://github.com/AAswordman/Operit2/commit/f59af45aff2207f86eb4d5e00c0e14a9b5d4933f) — feat(tool): fail switch_core up front for invalid targets
+- 2026-10-09 [`e34a908da`](https://github.com/AAswordman/Operit2/commit/e34a908da0615823e5968a2353459757427e162c) — feat: migrate chat UI contributions and character card plugins
+- 2026-10-09 [`5655bd071`](https://github.com/AAswordman/Operit2/commit/5655bd07182073b5043a75ba5cf4b633f1cdddc8) — fix: enable CLI plugin character cards and stable macOS signing
+- 2026-10-09 [`09d16d26f`](https://github.com/AAswordman/Operit2/commit/09d16d26f92716b46fc0cc2d8c03738805b8939b) — chore: checkpoint entire workspace before travel
+- 2026-10-09 [`471a629da`](https://github.com/AAswordman/Operit2/commit/471a629da491ca5d4a97f1c66dca982a26f4d43f) — feat: migrate character card sidebar to native Compose UI
+- 2026-10-10 [`6418c009b`](https://github.com/AAswordman/Operit2/commit/6418c009b43e19ca793aabf9382116b20957bdf9) — chore: snapshot entire workspace
+- 2026-10-11 [`79f5aadfd`](https://github.com/AAswordman/Operit2/commit/79f5aadfd4f2e86985c2855fc5cd84d0c6bda6fb) — feat(node): deliver removal notices and retire removed devices
+- 2026-10-11 [`e08878dfc`](https://github.com/AAswordman/Operit2/commit/e08878dfcdfefb6448c62e336a4bfb60507dff75) — fix(node): shrink the member table on every replica after a removal
+- 2026-10-11 [`38e48e4f9`](https://github.com/AAswordman/Operit2/commit/38e48e4f937b838b747507711d41251c28d81147) — fix(node): let a removed device apply again on the first attempt
+- 2026-10-11 [`4e5964aec`](https://github.com/AAswordman/Operit2/commit/4e5964aec95496c6f99173b4bbd3419e7a0d8b2d) — fix(space): never retire a device that the replayed policy admits
+- 2026-10-11 [`f37027d98`](https://github.com/AAswordman/Operit2/commit/f37027d980762d7376b006ac54f5409d7db3dc2f) — fix(node): forget pairing credentials in the step that changes membership
+- 2026-10-11 [`132d2e6e1`](https://github.com/AAswordman/Operit2/commit/132d2e6e1ea18ed5fdd484605118c0f44d2653c2) — fix(node): apply removal effects once, on first acceptance
+- 2026-10-11 [`f529851bc`](https://github.com/AAswordman/Operit2/commit/f529851bc41bafdb397bdb3ec5f76f45552b36c2) — fix(node): match removals to pairings by pairing generation
+- 2026-10-11 [`9cf3f1fc7`](https://github.com/AAswordman/Operit2/commit/9cf3f1fc70fb7d2143b9039a61cfadc7db4cb663) — fix(node): forget removed pairings by operation, not by delivery path
+- 2026-10-11 [`7e5da6aaf`](https://github.com/AAswordman/Operit2/commit/7e5da6aafdfb26b5762a0f494fab93b96c72c623) — fix(node): revoke a pairing when any missed removal revoked its generation
+- 2026-10-12 [`b827afca5`](https://github.com/AAswordman/Operit2/commit/b827afca5f16c2066ed6c1c40fdece0c5de5d9d6) — feat(tools): accept device aliases for switch_core and edge tools
+- 2026-10-12 [`e39a59ad2`](https://github.com/AAswordman/Operit2/commit/e39a59ad22287cb9698e5c7d105ce88110539656) — feat(sync): gate full exchanges behind per-peer change probes
+- 2026-10-12 [`55c4bca1b`](https://github.com/AAswordman/Operit2/commit/55c4bca1b4809a7e9018a25e6f91670c6a80c4c1) — feat(plugins): execute v2 tools on selected devices
+- 2026-10-12 [`abb9bec04`](https://github.com/AAswordman/Operit2/commit/abb9bec048083fb08a18939d16fb13fdbe5b767e) — refactor(plugins): unify routed device and hardware tools
+- 2026-10-12 [`9cff8ad9c`](https://github.com/AAswordman/Operit2/commit/9cff8ad9c4e59dcf8ad74ae8e57402a5b075f181) — refactor(node): centralize pairing and routed forwarding
+- 2026-10-12 [`7b90b07c4`](https://github.com/AAswordman/Operit2/commit/7b90b07c4787587a74e29f75674da9a0b8534f51) — fix(node): bound peer channel acquisition with a connect deadline
+- 2026-10-12 [`02dda4faa`](https://github.com/AAswordman/Operit2/commit/02dda4faab4abcfba988e39a51757786ef221aa3) — feat(node): carry calls both ways over the connection the peer opened
+- 2026-10-13 [`115937a5b`](https://github.com/AAswordman/Operit2/commit/115937a5b085252ba910b5145a30cd1d4bbdd964) — feat(app,core): device role edit/delete and TCP manual pairing
+- 2026-10-13 [`c6dceacb6`](https://github.com/AAswordman/Operit2/commit/c6dceacb6069c823c92749d71f47986c55f712d9) — feat: integrate shared-buffer transport and relational character storage
+- 2026-10-13 [`3f523074c`](https://github.com/AAswordman/Operit2/commit/3f523074c10ead7e2a6dfe3bae1696fec87ef720) — chore: sync workspace updates across runtime, Flutter, and plugins
+- 2026-10-14 [`9ae1e558a`](https://github.com/AAswordman/Operit2/commit/9ae1e558a66f96d81ff95a499bd39bda7da6c122) — fix: 迁移原生 JSON 偏好存储，统一配对与会话删除
+- 2026-10-17 [`4bc2a5623`](https://github.com/AAswordman/Operit2/commit/4bc2a562306582699ef268b2177f05afdedaad53) — fix(chat): drop the local device suffix from the composer hint
+- 2026-10-15 [`9e95dd461`](https://github.com/AAswordman/Operit2/commit/9e95dd46161f4b3e78a1128a9f439e5418b6411c) — feat(device): unify speech transport and harden space lifecycle
+- 2026-10-14 [`2043895b3`](https://github.com/AAswordman/Operit2/commit/2043895b3425bddae6b5b70057664ee5828f856b) — feat(app,core): auto-detect the link carrier when pairing by address
+- 2026-10-17 [`e07e3f2da`](https://github.com/AAswordman/Operit2/commit/e07e3f2da3f731066ce88c234ca00a0540b8f073) — feat: 完善插件同步、路由、数据恢复和类型生成
+- 2026-10-17 [`88807c88f`](https://github.com/AAswordman/Operit2/commit/88807c88f2c3f82d2e7d820afc02ac246c4d78e4) — fix: 完善配置同步、懒列表渲染与插件运行时生命周期
+- 2026-10-18 [`bf535ccb3`](https://github.com/AAswordman/Operit2/commit/bf535ccb349ad60847ad750537f7471578d6c2e9) — perf: optimize send preparation, JS host bridge and persistence
+- 2026-10-18 [`7289a6a70`](https://github.com/AAswordman/Operit2/commit/7289a6a7079257cb13868c12e68193e4b3c1e11e) — perf: remove historical snapshots and fix sidebar refresh
+- 2026-10-18 [`166cad089`](https://github.com/AAswordman/Operit2/commit/166cad089131ae2fdae821b1b211b636a126bc87) — refactor(logging): unify diagnostic levels across the application
+- 2026-10-19 [`df95e3a42`](https://github.com/AAswordman/Operit2/commit/df95e3a422e45969ac94b49f3b66efcf31dae199) — feat: store plugin preferences natively and extend the TTS catalog
+- 2026-10-18 [`9e7287465`](https://github.com/AAswordman/Operit2/commit/9e72874652b8ac62a47f03c6240898c538041e30) — fix(space-sync): bound synchronization pages by bytes
+- 2026-10-19 [`e7b2d75b6`](https://github.com/AAswordman/Operit2/commit/e7b2d75b6e0ff56c8172542ab8fb64e4489d5f7a) — fix(space-sync): bound journal exports by bytes
+- 2026-10-19 [`bcd5275a3`](https://github.com/AAswordman/Operit2/commit/bcd5275a320a7ac6043b5ce38272662abfa2aacf) — fix: stabilize startup, chat routing and package loading
+- 2026-10-19 [`00786c68b`](https://github.com/AAswordman/Operit2/commit/00786c68bb93c934ce0e620bb5678deaf6c8f03c) — fix(space): skip atomic-write staging siblings in runtime listings
+- 2026-10-19 [`a7a77b9ad`](https://github.com/AAswordman/Operit2/commit/a7a77b9adaf4cc3c557a5530b06b42734a61d823) — fix(peer): replace offline-verifiable pairing proof with SPAKE2
+- 2026-10-21 [`899babb14`](https://github.com/AAswordman/Operit2/commit/899babb14451c713fc5afbbf8320736684d06a72) — feat: 完善后台常驻与任务呈现，修复同步、聊天流和插件管理
+- 2026-10-20 [`0cfd15e99`](https://github.com/AAswordman/Operit2/commit/0cfd15e9970804143c34d49c00aed1d27e835810) — fix(network): let Space join ride any pairing direction
+- 2026-10-21 [`b968cf123`](https://github.com/AAswordman/Operit2/commit/b968cf123c489af9f14e5935ad4171dd471c3db1) — fix(sync): 隔离插件同步故障，修复历史分页阻塞与分片接收
+- 2026-10-21 [`9e8d2e571`](https://github.com/AAswordman/Operit2/commit/9e8d2e571b2747d016c040807544471f311bc947) — fix: simplify legacy migration and improve bridge, keep-alive and sync handling
+- 2026-10-21 [`e4b889589`](https://github.com/AAswordman/Operit2/commit/e4b88958913f361240226d84ab8c69a62f8a3aec) — fix(sync): acknowledge network-control operations without replay loops
+- 2026-10-21 [`49d6028b8`](https://github.com/AAswordman/Operit2/commit/49d6028b8362eddf50e8f16767e60bc20ed192e6) — fix(cli): name devices with the host name
+- 2026-10-21 [`b2162baef`](https://github.com/AAswordman/Operit2/commit/b2162baef2e9422b0db977683dc1c81662fe28c0) — fix: improve chat streaming, character memory, sync, and liquid glass
+- 2026-10-22 [`d17ca2124`](https://github.com/AAswordman/Operit2/commit/d17ca212403fd8178166761e40db8459e14b6e83) — fix: repair cross-device sync transaction boundaries and replay
+- 2026-10-22 [`92bbee00f`](https://github.com/AAswordman/Operit2/commit/92bbee00f631d6399186a7c943a30ad3391b56e8) — fix: harden sync upgrades and complete plugin media and terminal APIs
+- 2026-10-22 [`fa7757cf2`](https://github.com/AAswordman/Operit2/commit/fa7757cf2f9250c6c2bb13cb34e7bba845d5bb56) — fix: route terminal streaming and storage durability through hosts
+- 2026-10-22 [W] [`9e29fb812`](https://github.com/AAswordman/Operit2/commit/9e29fb812ddf9239bbc41ab9aa8ae960076705ed) — fix: streamline peer synchronization and unify device-space persistence
+- 2026-10-22 [`4d100656a`](https://github.com/AAswordman/Operit2/commit/4d100656aa588e1850a2a44f2d83457aec6cf282) — feat(link): let operators update a paired device's direct address
+- 2026-10-22 [`9b23a656b`](https://github.com/AAswordman/Operit2/commit/9b23a656b8968c207f81d5aefb30325c6056895c) — fix(link): announce inbound session-return reachability on arrival
+- 2026-10-23 [`580db8a4d`](https://github.com/AAswordman/Operit2/commit/580db8a4dbf9e8b134d607daf5957e03a24a55cf) — feat(local-models): add native llama.cpp and MNN inference
+- 2026-10-24 [`ba9966ecc`](https://github.com/AAswordman/Operit2/commit/ba9966eccfb5bda79a02c90c1d7bd5b53f68445d) — docs(edge): clarify Space responsibilities and consolidate device guides
+- 2026-10-24 [`3cd874b5a`](https://github.com/AAswordman/Operit2/commit/3cd874b5af5e050a5a95b151ea28f2c50c121b3e) — feat(plugins): restore native Waifu chat mode and harden plugin runtime
+- 2026-10-25 [`6c1fa5791`](https://github.com/AAswordman/Operit2/commit/6c1fa5791936bf5bfb9e50b43abd041dc1ed1f35) — fix: address sync journal memory, character storage, and avatar imports
+- 2026-10-25 [`c1f432b35`](https://github.com/AAswordman/Operit2/commit/c1f432b3587ed7de904e444423690310410cf9d8) — fix(compose): retain dynamic UI callback ownership across redraws
+- 2026-10-25 [`2a215df3b`](https://github.com/AAswordman/Operit2/commit/2a215df3b42e060698bcb1f192f78f758e959a6c) — fix: update engine, adaptive navigation and device sync progress
+- 2026-10-25 [`a82350031`](https://github.com/AAswordman/Operit2/commit/a823500318e8e46d181d706991d52c71f6b75489) — feat: show device space sync progress and preserve idle synchronization
+- 2026-10-25 [`8478f4813`](https://github.com/AAswordman/Operit2/commit/8478f4813f118bc50c87fa9bc171f65c27a1ce37) — feat: unify global loading and sync progress overlay
+- 2026-10-25 [`85fb7cd8e`](https://github.com/AAswordman/Operit2/commit/85fb7cd8efffbb21c5f4a87f60d20bc35b17fb1b) — fix(space): skip leftover atomic-write staging files in record listings
+- 2026-10-25 [`d149a6d8d`](https://github.com/AAswordman/Operit2/commit/d149a6d8d75d68d4be4a1d1a2211106f956049e6) — docs: remove progress reports and consolidate reference guides
+- 2026-10-25 [`90ec13baa`](https://github.com/AAswordman/Operit2/commit/90ec13baa48c2d8dca9854de1249e1f93b03f845) — fix: enforce chat deletion lifecycle and unify native storage
+- 2026-10-26 [`c11a93305`](https://github.com/AAswordman/Operit2/commit/c11a933059459279983fec15c2659d858b811325) — fix(node): back off dialing peers rejected by Space policy
+- 2026-10-26 [W] [`6f3ce544c`](https://github.com/AAswordman/Operit2/commit/6f3ce544c55933aaa0058d5836ecda0db069afd6) — perf(store): skip rehashing size-unchanged workspace files in scans
+- 2026-10-26 [`8d99557c2`](https://github.com/AAswordman/Operit2/commit/8d99557c2b7ef1e21619cf023d26bd95a62ff4bb) — perf(node): back off idle workspace scan polling
+- 2026-10-26 [`8c608715c`](https://github.com/AAswordman/Operit2/commit/8c608715c6602f5465b65ee0fa40900def9ccbc1) — fix(node): back off synchronization after a lost clock probe
+- 2026-10-27 [`9764b8f8e`](https://github.com/AAswordman/Operit2/commit/9764b8f8ec97bde266f556ba1532f8f32b0b2920) — fix(sync): keep idle clock probes constant-size
+- 2026-10-27 [`847208e4c`](https://github.com/AAswordman/Operit2/commit/847208e4c28785e3905016ab0fdd21282474489d) — fix(space): stop re-authoring imported topology records
+- 2026-10-27 [`e88289c2d`](https://github.com/AAswordman/Operit2/commit/e88289c2d3f47c5aefdbc982195ae3cfd326d647) — fix(sync): gate on progress this device authored
+- 2026-10-27 [`a81dcf259`](https://github.com/AAswordman/Operit2/commit/a81dcf259906f7521d3bef0826e01eac7340b999) — fix: improve streaming markdown and JavaScript runtime performance
+- 2026-10-28 [`f2e2aea0e`](https://github.com/AAswordman/Operit2/commit/f2e2aea0e937903defcc56078b7e77d2fca30930) — fix: maintain network control state on writes
+- 2026-10-28 [`3406dca7a`](https://github.com/AAswordman/Operit2/commit/3406dca7a04d3c30c63a90c6e811b08f33733004) — fix: harden preference sync, Android runtime and QQBot setup
+- 2026-10-28 [`fdf162a2c`](https://github.com/AAswordman/Operit2/commit/fdf162a2c11416d25acfc0a2e68fdd6314bf8a56) — fix: unify automatic listener port allocation across devices
+- 2026-10-28 [`a9dd899c3`](https://github.com/AAswordman/Operit2/commit/a9dd899c32f52f740dd70377869daf573d1248ae) — fix: version preference layouts before synchronization
+- 2026-10-29 [`a1e906730`](https://github.com/AAswordman/Operit2/commit/a1e906730ff550a27747e433778b5282b3a858df) — fix: repair cross-platform LAN device discovery
+- 2026-10-29 [`3c5fcc816`](https://github.com/AAswordman/Operit2/commit/3c5fcc81653999613328209bd0beafb415949c82) — feat: isolate device space failures and add QR pairing
+- 2026-10-29 [`f380dff8e`](https://github.com/AAswordman/Operit2/commit/f380dff8e804f1984a3e2b320d65179c60907bbf) — refactor(edge): consolidate device runtime changes for main integration
+- 2026-10-29 [`0e3e681a5`](https://github.com/AAswordman/Operit2/commit/0e3e681a55d0f339c391d55147184dc8e58e6d39) — refactor(edge): isolate manufacturer SDK and complete product workspaces
+- 2026-10-29 [`b1cb77dd6`](https://github.com/AAswordman/Operit2/commit/b1cb77dd6f394d28b6d4ca247c92481fce154b21) — fix: reconcile sync revisions and Android terminal privileges
+- 2026-10-29 [`1ced7f408`](https://github.com/AAswordman/Operit2/commit/1ced7f4088c9e47e266d988a014769762386d916) — fix(sync): streamline exchange progress and retain chat deletion lifecycles
+- 2026-10-29 [`06784b037`](https://github.com/AAswordman/Operit2/commit/06784b037267e3e2e4ebbd952b33f2ae64509647) — fix: stabilize character memory sync and refine mobile graph UI
+- 2026-10-30 [`b42d23314`](https://github.com/AAswordman/Operit2/commit/b42d233140f3c40411872e9469387ef34f056719) — refactor(sync): unify transaction journal, migrations and consistency checks
+- 2026-10-28 [`a5f04e9fa`](https://github.com/AAswordman/Operit2/commit/a5f04e9fa03b52eff57bc1ace62c3e41a706ff8d) — feat(model): add interactive_ui message part for OpenUI programs
+- 2026-10-28 [`ab07e6e41`](https://github.com/AAswordman/Operit2/commit/ab07e6e416bc6a83cf8d7a39c95b505a94ad33b7) — feat(chat): persist chat attachments in runtime/chat_attachments
+- 2026-10-29 [`710dc80bf`](https://github.com/AAswordman/Operit2/commit/710dc80bf998d53ad88443fedbd604818aad12fe) — refactor(openui): remove PR 375 built-in integration
+- 2026-10-29 [`93b390485`](https://github.com/AAswordman/Operit2/commit/93b390485f273ddbd83b110dc3730dd2187fbfb3) — fix: declare tool display semantics and correct workspace behavior
+- 2026-10-30 [`de007933f`](https://github.com/AAswordman/Operit2/commit/de007933f431c74753614dd6c3be6de0da434bb7) — fix(sync): register dynamic owners and retire migrated character layouts
+- 2026-10-30 [`ebc654321`](https://github.com/AAswordman/Operit2/commit/ebc654321a78c10487471c8d8e2b299f354ea0c3) — fix(sync): keep chat selection local and unblock retired character history
+- 2026-10-30 [`11cb0842c`](https://github.com/AAswordman/Operit2/commit/11cb0842cf7bdbf7f5e662e68bf91b9933962072) — fix(sync): converge files independently and avoid redundant correction
+- 2026-10-30 [`56cdbca9b`](https://github.com/AAswordman/Operit2/commit/56cdbca9bf861bd619823b6cee4405890456662f) — fix(sync): retry concurrent file changes without error notifications
+- 2026-10-30 [`3ad5e94d1`](https://github.com/AAswordman/Operit2/commit/3ad5e94d18b497c5dccb1c61dbd97e01e3087b0c) — feat: add design capture tooling and correct sync fallback conditions
+- 2026-10-30 [`05fd7bc74`](https://github.com/AAswordman/Operit2/commit/05fd7bc74056aec8ad3349463ce1d5e2c41ffe7d) — feat: improve peer discovery, chat cleanup, and live design tooling
+- 2026-10-30 [`72d9499ce`](https://github.com/AAswordman/Operit2/commit/72d9499ce899b6033794825b3ab8191c3bde265c) — fix: complete chat presentation, desktop chrome, and sync consistency repairs
+- 2026-10-31 [`23e1a49aa`](https://github.com/AAswordman/Operit2/commit/23e1a49aa5ee7538866fd263abe13bbd363884a2) — feat: share one peer listener port across HTTP WebSocket and TCP
+- 2026-10-31 [`8f43e6122`](https://github.com/AAswordman/Operit2/commit/8f43e61221e60f2e8a03770bf4f106f18da2a60f) — feat: improve chat workspace UI and macOS distribution support
+- 2026-10-31 [`8c6d21003`](https://github.com/AAswordman/Operit2/commit/8c6d21003f18cd75513856a4efdcf5633be03f10) — feat: add declarative preference migrations and transaction compaction
+- 2026-10-31 [`52e915f43`](https://github.com/AAswordman/Operit2/commit/52e915f43cc10098670f8020b07d1fcf39fde5d3) — feat: unify plugin page navigation and sync failure recovery
+- 2026-10-31 [`bba3cb403`](https://github.com/AAswordman/Operit2/commit/bba3cb4039e0d5ef43365d67c3c1268afa66d9dc) — fix: constrain preference sync ownership and extend merge contracts
+- 2026-10-31 [`0c956c09c`](https://github.com/AAswordman/Operit2/commit/0c956c09cae3c9f42976f3e0ef5873f14e74b509) — fix: recover preference checkpoints and legacy import conflicts
+- 2026-10-31 [`987d67fd0`](https://github.com/AAswordman/Operit2/commit/987d67fd0205ca43817493aae8786271e6723b31) — fix: preserve transaction sequence allocation across recovery and compaction
+- 2026-10-31 [`27699b617`](https://github.com/AAswordman/Operit2/commit/27699b6173f6936012256393bc9a05fdbdf68d0c) — feat: add WeChat bot and integrate workspace reliability fixes
+- 2026-11-01 [`b48dbeca3`](https://github.com/AAswordman/Operit2/commit/b48dbeca3237862d49443bb960c7a21eee330f54) — fix: optimize space sync and report tool invocation errors
+- 2026-10-31 [`df0b58488`](https://github.com/AAswordman/Operit2/commit/df0b5848814b8ed46899ee5ad1b14a99a51c5e57) — feat: add cross-platform floating windows and plugin window APIs
+- 2026-11-01 [`5bec8b0b2`](https://github.com/AAswordman/Operit2/commit/5bec8b0b240dcc4a4f458e6c739f0cbc4e740cf5) — feat: improve workspace navigation, usage analytics, and runtime reliability
+- 2026-11-01 [`340522707`](https://github.com/AAswordman/Operit2/commit/34052270726a05e0e0dbed22e328a224a1f4e943) — feat: refine local model settings and transaction sync recovery
+- 2026-11-01 [W] [`b3c47b54a`](https://github.com/AAswordman/Operit2/commit/b3c47b54a85b3eefedefcf185292b7c0f6c626f3) — fix: repair file sync, optimize logging, and add chat history clearing
+- 2026-11-01 [`ba4d49463`](https://github.com/AAswordman/Operit2/commit/ba4d49463f5d949930ecf23c6a09fb9204eee8cc) — fix(sync): route initialization envelopes by entity id instead of failing the registry
+- 2026-11-01 [`94dbc222a`](https://github.com/AAswordman/Operit2/commit/94dbc222a8207ef050314495734d9f1dbfe51b62) — Improve QR joining, chat activity grouping, and change review icons
+- 2026-11-04 [`adcca67e0`](https://github.com/AAswordman/Operit2/commit/adcca67e0ad77f3cf142320886dc7656e5df393a) — feat: expand Linux runtime and workspace integration
+- 2026-11-04 [W] [`026c688ea`](https://github.com/AAswordman/Operit2/commit/026c688ea8638ca52b84352fa4cb8433c57ce1b7) — feat: improve chat file storage, markdown rendering, and workspace UI
+- 2026-10-29 [`5f9acc36d`](https://github.com/AAswordman/Operit2/commit/5f9acc36dc79050c792f21cb877d7a92af4f44b5) — fix(edge): close SDK integration within device budgets
+- 2026-11-05 [`d4977e0e2`](https://github.com/AAswordman/Operit2/commit/d4977e0e22f998b859c3b85fd8cc2050c6330b8b) — fix(core): decode control commands without JSON roundtrips
+- 2026-11-08 [`4ab684138`](https://github.com/AAswordman/Operit2/commit/4ab6841383c6be640a301739173ff4aad05eace0) — feat: integrate runtime, peer protocol and platform improvements
+- 2026-11-08 [`88098cd0f`](https://github.com/AAswordman/Operit2/commit/88098cd0f3e264cb03c94de36ea5f6b3ca6ca37a) — feat: integrate sync, terminal and token usage updates for preview.29
+- 2026-11-08 [`35f1493ee`](https://github.com/AAswordman/Operit2/commit/35f1493ee861ab3762c2c807ea7500401231b2a3) — fix: improve sync recovery, extension chrome and tool execution
+- 2026-11-09 [`3dfda18f1`](https://github.com/AAswordman/Operit2/commit/3dfda18f1a15951a297241f9fcbd847fb4ba570f) — fix(web): use host timers and shared plugin interrupt signals
+- 2026-11-09 [`dd373003b`](https://github.com/AAswordman/Operit2/commit/dd373003b2f522de0da4c2474b03f4bc428b4c7b) — fix(sync): preserve plugin definitions when resetting transaction baselines
+- 2026-11-09 [W] [`d4aba0b25`](https://github.com/AAswordman/Operit2/commit/d4aba0b2517274933e2204f1d087ff6ccc3b7d25) — fix: preserve inaccessible sync files and update video plugin integration
+- 2026-11-10 [`90f47e366`](https://github.com/AAswordman/Operit2/commit/90f47e3662d6024c787285ed0b4d0c99fc22c703) — fix: address TestFlight feedback across chat and platform runtimes
+- 2026-11-10 [W] [`108feda5e`](https://github.com/AAswordman/Operit2/commit/108feda5e36094c15f7c5b6e6c52184120b97162) — fix: update legacy imports, platform runtimes and Windows installer
+- 2026-11-10 [W] [`8432acab3`](https://github.com/AAswordman/Operit2/commit/8432acab3e7abdcaf84601f4ef8dc725ee1d0b78) — fix: improve transaction compaction and platform runtime behavior
+- 2026-11-10 [`8b9828b6f`](https://github.com/AAswordman/Operit2/commit/8b9828b6f42ecc52cb2a8d4c2e019fb1c007bec8) — fix: stream SQL sync snapshots and harden archive and memory handling
+- 2026-11-10 [`e7e6d5c6e`](https://github.com/AAswordman/Operit2/commit/e7e6d5c6e590121866dfede3bf368ffce6290e5d) — fix: resolve preference migration conflicts without blocking sync
+- 2026-11-11 [`f10f51aa5`](https://github.com/AAswordman/Operit2/commit/f10f51aa513bf4ed5cd8196fed4c41861ae5862e) — fix(peer): bound pairing waits and expose handshake diagnostics
+- 2026-11-11 [`e887ca5e5`](https://github.com/AAswordman/Operit2/commit/e887ca5e549dc36742f6672577ced985ba83abc6) — refactor: centralize VFS boundaries and sync workspace fixes
+- 2026-11-11 [`7e887cf78`](https://github.com/AAswordman/Operit2/commit/7e887cf78ba1b1a3b25e92a0a813f1e018bacb93) — fix: resolve large sync failures and integrate preview.32 workspace updates
+- 2026-11-12 [`fffdedad3`](https://github.com/AAswordman/Operit2/commit/fffdedad37e749e9639f60a0794d655e4e2c3ed3) — fix(store): complete blob-transported operations under their reception fingerprint
+- 2026-11-12 [`fa999a948`](https://github.com/AAswordman/Operit2/commit/fa999a9484189739f4ee358a8dab35cfb329a1f3) — fix: bundle model catalog and integrate workspace updates
+- 2026-11-12 [`0f08fd431`](https://github.com/AAswordman/Operit2/commit/0f08fd431f58514396057f88b121b943dfa8e4cc) — feat(edge): add standalone Android phone node and sync workspace fixes
+- 2026-11-12 [`a50f54a11`](https://github.com/AAswordman/Operit2/commit/a50f54a11bcd08d6d99aa2cfd47e2b955ae71236) — feat: integrate workspace updates for preview.33
+- 2026-11-13 [W] [`54e82347e`](https://github.com/AAswordman/Operit2/commit/54e82347e68e18987e49c92836aa883d645deb28) — fix: integrate chat rendering, runtime diagnostics and sync improvements
+- 2026-11-13 [W] [`09249fb9f`](https://github.com/AAswordman/Operit2/commit/09249fb9ff3b660731b88f3846ebc26915ea89f7) — fix: refine market comments and reclaim legacy sync storage
+- 2026-11-14 [`24c382083`](https://github.com/AAswordman/Operit2/commit/24c382083c4990e763be7c16401904da0cfc10de) — fix: converge sync corrections and reclaim obsolete blobs
+- 2026-11-14 [`506ba7c8d`](https://github.com/AAswordman/Operit2/commit/506ba7c8d782909bdb4d2cd5f8d940f87254a057) — fix: remove redundant sync verification and align preference contracts
+- 2026-11-14 [`98d41036c`](https://github.com/AAswordman/Operit2/commit/98d41036c60239066e6d43b2f2a0dbc635714b18) — feat: add workspace file actions and refine bundled extension updates
+- 2026-11-14 [`7eba19da3`](https://github.com/AAswordman/Operit2/commit/7eba19da320718ad70136db8f4c74382566f991e) — feat(peer): unify automatic discovery with a shared directory
+- 2026-11-14 [`b56aa8575`](https://github.com/AAswordman/Operit2/commit/b56aa85751288075a445b2df49964f14d1cdaa17) — fix: release shared chat runtime during asynchronous operations
+- 2026-11-14 [W] [`35f1b70fa`](https://github.com/AAswordman/Operit2/commit/35f1b70fafb857491cc9bb00399953d881507386) — fix: repair sync baselines and stabilize blob transfers
+- 2026-11-15 [`ff5373fb6`](https://github.com/AAswordman/Operit2/commit/ff5373fb6fa187ecffff04dacd239bf2c13443d0) — fix(chat): load history on demand and preserve summary context
+- 2026-11-15 [`b8c9f4d1b`](https://github.com/AAswordman/Operit2/commit/b8c9f4d1bcb3a586d6e447b113d4ddb280debb53) — fix: unblock startup and chat, streamline sync for preview 37
+- 2026-11-15 [`8780bbf50`](https://github.com/AAswordman/Operit2/commit/8780bbf50de9c8efbca0e378441b5fc3966e98b0) — fix(sync): back off peer security failures instead of retrying instantly
+- 2026-11-16 [W] [`af503c1af`](https://github.com/AAswordman/Operit2/commit/af503c1afb1d4e8a7db9381ef2afad89fb738ea7) — perf(sync): batch persistence and reduce redundant sync work
+- 2026-11-18 [`75e229e07`](https://github.com/AAswordman/Operit2/commit/75e229e07df4530296658d99c6b1dbfe79ad975d) — perf: remove redundant work from idle sync and plugin checks
+- 2026-11-18 [`a361a004e`](https://github.com/AAswordman/Operit2/commit/a361a004e245ca41bd2d440b8c5b19f738c5a452) — fix(preferences): stop replaying covered old-format history on empty deliveries
+- 2026-11-18 [`ee5607a08`](https://github.com/AAswordman/Operit2/commit/ee5607a08426b99b9019b641e3cdb97c8d5edf8d) — fix(preferences): ignore absorbed-check for identities absent from stored values
+- 2026-11-18 [`a2bd08260`](https://github.com/AAswordman/Operit2/commit/a2bd08260d55aeec72fbd834c28af92dc3f8b64d) — fix(preferences): scope the replay shortcut check to the dataset history
+- 2026-11-18 [W] [`98d4f041d`](https://github.com/AAswordman/Operit2/commit/98d4f041daeaf8e9be328f0dcc88c7a19d9eeae5) — fix: correct copied storage ownership and stabilize runtime snapshots
+- 2026-11-18 [`191ec4da8`](https://github.com/AAswordman/Operit2/commit/191ec4da835dd628204a15e32aea9a1ddc010606) — fix(preferences): inspect declared identities before skipping replay
+- 2026-11-18 [`a75cb9874`](https://github.com/AAswordman/Operit2/commit/a75cb98746dde6751a6cc05acde15f2113f95a00) — fix(storage): ship sealed checkpoints only when peers cannot rebuild them
+- 2026-11-18 [`eca47d2a4`](https://github.com/AAswordman/Operit2/commit/eca47d2a4e698e81a55d2da628cc3c65a9c0a16f) — feat(sync): attribute full synchronization transfers in logs
+- 2026-11-18 [`59205a14b`](https://github.com/AAswordman/Operit2/commit/59205a14b2800abd6fd929b209da90ce66c411a3) — feat(sync): name the transfer peer in required blob logs
+- 2026-11-19 [`13167592f`](https://github.com/AAswordman/Operit2/commit/13167592f7ac5685ec9ce75005bd1323780570d2) — fix(sync): prefer fuller correction sources and index chat lookups
+- 2026-11-19 [`2a01dec5c`](https://github.com/AAswordman/Operit2/commit/2a01dec5c566a7ef258c577ba5067c1a04a1dea4) — feat: add chat backups and update sync and companion flows
+- 2026-11-19 [`3ec1c2385`](https://github.com/AAswordman/Operit2/commit/3ec1c2385287e332c435383e36c3d22b502cd529) — fix(node): deduplicate device topology connections
+- 2026-11-20 [`a416e389b`](https://github.com/AAswordman/Operit2/commit/a416e389b81512c3130873d07f3d391f1460bbce) — feat: update chat backups, delivery flows, local models and workspace UI
+- 2026-11-20 [`82429518b`](https://github.com/AAswordman/Operit2/commit/82429518b431bb34a4b9aa76ed453271ea06e42d) — fix(node): unify peer protocol compatibility and stop rejected reconnects
+- 2026-11-20 [`ba75158e5`](https://github.com/AAswordman/Operit2/commit/ba75158e52dbc9ebe2c2dd013e0d69c40dca1bd4) — fix: prevent stale plugin loading and retired editor gesture errors

@@ -59,15 +59,16 @@ test('native role sidebar restores rounded nested legacy layout without timestam
   const screen = mount(context(chats, { activeStreamingChatIds: ['c2'] }), catalog(chats));
   const { tree } = await screen.load();
   if (process.env.OPERIT_NATIVE_SIDEBAR_FIXTURE) await writeFile(process.env.OPERIT_NATIVE_SIDEBAR_FIXTURE, JSON.stringify(tree, null, 2) + '\n');
-  assert.equal(tree.type, 'Column');
+  assert.equal(tree.type, 'LazyColumn');
   assert.equal(tree.props.fillMaxWidth, true);
   assert.equal(tree.props.fillMaxSize, undefined);
   assert.equal(tree.props.height, undefined);
   assert.equal(tree.props.paddingBottom, 16);
   assert.equal(tree.props.weight, undefined);
-  assert.equal(composeNodes(tree, node => node.type === 'LazyColumn').length, 0);
-  assert.equal(tree.props.viewport, undefined);
-  assert.ok(tree.children.some(node => node.props.key === 'sidebar-chat-drop-c1'), 'Chat rows share the host scroll through a Column');
+  assert.equal(composeNodes(tree, node => node.type === 'LazyColumn').length, 1);
+  assert.equal(tree.props.viewport.variableExtent, true);
+  assert.equal(tree.props.viewport.staticItemCount, 2);
+  assert.ok(tree.children.some(node => node.props.key === 'sidebar-chat-drop-c1'), 'Chat rows share the host viewport as independent lazy items');
   assert.equal(composeNodes(tree, node => node.type === 'WebView').length, 0);
   assert.equal(composeNodes(tree, node => node.type === 'Text' && node.props.text === '1791059541109').length, 0);
   assert.equal(keyedNode(tree, 'sidebar-create-bar').props.height, 34);
@@ -261,8 +262,8 @@ test('search matches workspace animation and input decoration and retains an act
 });
 
 /** Checks transport growth and backend isolation through the actual compiled sidebar and SDK. */
-test('expanded conversations are complete Column content without viewport callbacks or catalog IO', async () => {
-  const chats = Array.from({ length: 200 }, (_, i) => summary('c' + i, { group: null }));
+test('expanded conversations recycle bounded windows without catalog IO and refill immediately after collapse', async () => {
+  const chats = Array.from({ length: 2000 }, (_, i) => summary('c' + i, { group: null }));
   const data = catalog(chats);
   data.sections[0].conversationGroups = []; data.sections[0].ungroupedChats = chats;
   const screen = mount(context(chats), data);
@@ -271,11 +272,12 @@ test('expanded conversations are complete Column content without viewport callba
   const expanded = await screen.click(loaded.tree, 'sidebar-preview-ungrouped:card:travel');
   const targets = composeNodes(expanded.tree, node => node.type === 'DragTarget');
   const visibleChats = composeNodes(expanded.tree, node => /^sidebar-chat-c\d+$/.test(node.props.key ?? '')).length;
-  assert.equal(visibleChats, chats.length);
-  assert.equal(expanded.tree.type, 'Column');
-  assert.equal(expanded.tree.props.viewport, undefined);
+  assert.equal(visibleChats, 22);
+  assert.equal(expanded.tree.type, 'LazyColumn');
+  assert.equal(expanded.tree.props.viewport.itemCount, chats.length + 3);
+  assert.equal(expanded.tree.props.viewport.variableExtent, true);
   assert.ok(keyedNode(expanded.tree, 'sidebar-chat-c0'));
-  assert.ok(keyedNode(expanded.tree, 'sidebar-chat-c199'));
+  assert.equal(composeNodes(expanded.tree, node => node.props.key === 'sidebar-chat-c1999').length, 0);
   assert.ok(targets.every(node => node.props.acceptedData === undefined));
   assert.equal(targets.reduce((count, node) => count + (node.props.excludedData?.length ?? 0), 0), visibleChats);
   assert.ok(targets.every(node => node.props.acceptedTypes.length === 1));
@@ -283,17 +285,44 @@ test('expanded conversations are complete Column content without viewport callba
   assert.equal(screen.events.length - before, 1, 'A synchronous toggle must render only its final commit');
   const update = screen.events[before].response.update;
   assert.ok(update.instances.every(node => node.id.length < 12), 'Transport handles must not carry ancestor paths');
-  assert.ok(JSON.stringify(update).length < chats.length * 6500, 'Expanded updates must stay within a linear per-chat transport budget');
-  const collapsed = await screen.click(expanded.tree, 'sidebar-preview-ungrouped:card:travel');
+  assert.ok(JSON.stringify(update).length < 24 * 8000, 'Expansion transport is bounded by the live window');
+  const originalAction = keyedNode(expanded.tree, 'sidebar-chat-menu-c0').props.onSelected;
+  const toolbar = keyedNode(expanded.tree, 'sidebar-search-toggle');
+  const middle = await screen.dispatch(expanded.tree.props.viewport.onRangeChanged, { firstIndex: 998, lastIndex: 1022 });
+  assert.equal(middle.tree.props.viewport.firstIndex, 998);
+  assert.equal(composeNodes(middle.tree, node => /^sidebar-chat-c\d+$/.test(node.props.key ?? '')).length, 24);
+  assert.ok(keyedNode(middle.tree, 'sidebar-chat-c1000'));
+  assert.equal(keyedNode(middle.tree, 'sidebar-search-toggle').props.onClick.__actionId, toolbar.props.onClick.__actionId);
+  await assert.rejects(async () => screen.dispatch(originalAction, 0), /not found/);
+  const end = await screen.dispatch(middle.tree.props.viewport.onRangeChanged,
+    { firstIndex: chats.length - 21, lastIndex: chats.length + 3 });
+  assert.ok(keyedNode(end.tree, 'sidebar-chat-c1999'));
+  const collapsed = await screen.click(end.tree, 'sidebar-preview-ungrouped:card:travel');
   assert.equal(composeNodes(collapsed.tree, node => /^sidebar-chat-c\d+$/.test(node.props.key ?? '')).length, 4);
   assert.equal(screen.calls.length, calls);
-  assert.ok(JSON.stringify(screen.events.at(-1).response.update).length < chats.length * 250, 'Collapse must transmit compact removal handles');
+  assert.equal(collapsed.tree.props.viewport.firstIndex, 0);
+  assert.equal(collapsed.tree.props.viewport.itemCount, 7);
   const again = await screen.click(collapsed.tree, 'sidebar-preview-ungrouped:card:travel');
-  assert.equal(again.tree.props.viewport, undefined);
-  assert.equal(composeNodes(again.tree, node => /^sidebar-chat-c\d+$/.test(node.props.key ?? '')).length, chats.length);
+  assert.equal(again.tree.props.viewport.firstIndex, 0);
+  assert.equal(composeNodes(again.tree, node => /^sidebar-chat-c\d+$/.test(node.props.key ?? '')).length, 22);
   assert.ok(keyedNode(again.tree, 'sidebar-chat-c0'), 'Top rows must arrive in the expansion commit');
   assert.equal(screen.calls.length, calls);
 });
+
+/** Collects avatar metadata through real window actions without materializing the full tree. */
+async function windowedAvatars(screen, initial) {
+  const avatars = new Map();
+  let tree = initial;
+  for (let first = 0; first < initial.props.viewport.itemCount; first += 24) {
+    if (first > 0) {
+      ({ tree } = await screen.dispatch(tree.props.viewport.onRangeChanged,
+        { firstIndex: first, lastIndex: Math.min(first + 24, initial.props.viewport.itemCount) }));
+    }
+    for (const node of composeNodes(tree, node => node.type === 'Image')) avatars.set(node.props.key, node.props.uri);
+    assert.ok(tree.children.length <= 26, 'Only a window and its static toolbar may be delivered');
+  }
+  return avatars;
+}
 
 test('obsolete sidebar browser files, registration and archive builder are removed', async () => {
   for (const path of ['web/sidebar.ts', 'web/features/sidebar/controller.ts', 'resources/character-sidebar.html']) {
@@ -591,7 +620,7 @@ test('concurrent input refresh joins the real pending promise instead of leaving
   const loading = screen.load(), refresh = screen.update(context(chats));
   const updated = screen.render();
   assert.equal(calls, 1);
-  assert.equal(keyedNode(updated.tree, 'native-character-sidebar').type, 'Column');
+  assert.equal(keyedNode(updated.tree, 'native-character-sidebar').type, 'LazyColumn');
   assert.equal(composeNodes(updated.tree, node => node.type === 'LoadingIndicator').length, 1);
   finish(); await Promise.all([loading, refresh]);
   assert.equal(screen.render().state['native-sidebar-state'].loading, false);
@@ -662,9 +691,7 @@ test('native custom avatars carry paths without reading their contents', async (
   } });
   const { tree } = await screen.load();
   assert.equal(reads, 0);
-  const avatars = new Map();
-  assert.equal(tree.props.viewport, undefined);
-  for (const node of composeNodes(tree, node => node.type === 'Image')) avatars.set(node.props.key, node.props.uri);
+  const avatars = await windowedAvatars(screen, tree);
   assert.equal(avatars.size, 17);
   assert.equal(reads, 0);
   for (let i = 0; i < 17; i++) assert.equal(avatars.get('sidebar-avatar-card:avatar-' + i), '/test/avatar-' + i + '.png');
@@ -710,9 +737,7 @@ test('twenty default avatars serialize resource paths without any binary reads',
     reads++; throw new Error('Unexpected binary read');
   } });
   const { tree } = await screen.load();
-  const avatars = new Map();
-  assert.equal(tree.props.viewport, undefined);
-  for (const node of composeNodes(tree, node => node.type === 'Image')) avatars.set(node.props.key, node.props.uri);
+  const avatars = await windowedAvatars(screen, tree);
   assert.equal(avatars.size, 20);
   assert.equal(reads, 0);
   assert.equal(screen.calls.filter(call => call.resource).length, 1);

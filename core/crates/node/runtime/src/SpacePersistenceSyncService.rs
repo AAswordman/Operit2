@@ -47,11 +47,9 @@ const MAX_SYNC_PAGES_PER_PASS: usize = 64;
 const PEER_FULL_SYNC_BACKOFF_BASE_MS: i64 = 2_000;
 /// Ceiling for the exponential retry delay of one peer's full synchronization pass.
 const PEER_FULL_SYNC_BACKOFF_MAX_MS: i64 = 60_000;
-/// Fast workspace-scan polling while scans keep finding changes. App writes and
-/// incoming batches scan inline, so this only bounds discovery latency for
-/// writes made by terminals and external editors while activity continues.
+/// Polls for app and external-editor changes without putting discovery on app writes.
 const WORKSPACE_SCAN_ACTIVE_INTERVAL_MS: u64 = 2_000;
-/// Bound external-editor discovery even after a long idle period. Unchanged files
+/// Bound idle polling for local edits. Unchanged files
 /// reuse metadata and blob references; the five-second ceiling leaves time to apply.
 const WORKSPACE_SCAN_IDLE_INTERVAL_MS: u64 = 5_000;
 const WORKSPACE_CHANGED: &str = "workspace_changed";
@@ -298,7 +296,7 @@ impl SpacePersistenceSyncService {
     fn startWorkspaceScanner(&self) -> Result<(), String> {
         let weakState = Arc::downgrade(&self.state);
         let (sender, mut stopped) = tokio::sync::oneshot::channel();
-        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask(
+        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeBlockingAsyncTask(
             "core-node-workspace-file-scan",
             Box::new(move || Box::pin(async move {
                 let mut intervalMs = WORKSPACE_SCAN_ACTIVE_INTERVAL_MS;
@@ -317,6 +315,10 @@ impl SpacePersistenceSyncService {
                         operit_util::AppLogger::AppLogger::w("SpacePersistenceSyncService",
                             &format!("Workspace scan failed; no missing-file deletions published: {error}"));
                     }
+                    // Reclamation belongs to background maintenance, never a file commit.
+                    operit_store::SyncOperationStore::SyncOperationStore::new(
+                        service.state.localRuntime.runtimeStorageHost(), RUNTIME_SYNC_DIR_PATH,
+                    ).collectBlobs(None);
                     // A productive round pulls the scanner back to fast polling;
                     // quiet rounds double the interval up to the idle ceiling.
                     intervalMs = if changes > 0 {

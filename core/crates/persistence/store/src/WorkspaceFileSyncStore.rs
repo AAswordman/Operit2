@@ -3,8 +3,9 @@
 //! by terminals/editors and deletions made while the application was stopped.
 #![allow(non_snake_case)]
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use operit_util::FileUtils::FileUtils;
 use operit_host_api::{HostError, HostErrorKind, HostResult, RuntimeStorageHost};
@@ -20,13 +21,26 @@ use crate::SyncOperationStore::{SyncOperation, SyncOperationStore};
 type Inventory = BTreeMap<String, FileStamp>;
 const MANAGED_ROOTS: [&str; 3] = ["workspaces", RUNTIME_CHAT_OUTPUTS_DIR_PATH, LEGACY_CHAT_ATTACHMENTS_DIR_PATH];
 
+#[derive(Default)]
+struct ScanSkips {
+    paths: BTreeSet<String>,
+    unresolved: BTreeSet<String>,
+}
+
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct FileStamp {
     size: i64,
     #[serde(default)]
     modifiedAt: Option<i64>,
 }
-type WorkspaceLocks = Vec<(Weak<dyn RuntimeStorageHost>, String, Arc<Mutex<()>>)>;
+#[derive(Default)]
+struct WorkspaceSyncLocks {
+    scan: Mutex<()>,
+    mutation: Mutex<()>,
+    revision: AtomicU64,
+    recovered: AtomicBool,
+}
+type WorkspaceLocks = Vec<(Weak<dyn RuntimeStorageHost>, String, Arc<WorkspaceSyncLocks>)>;
 static LOCKS: OnceLock<Mutex<WorkspaceLocks>> = OnceLock::new();
 
 #[derive(Serialize, Deserialize, Default)]
@@ -45,11 +59,11 @@ struct ScanState {
 pub struct WorkspaceFileSyncStore {
     host: Arc<dyn RuntimeStorageHost>,
     root: String,
-    lock: Arc<Mutex<()>>,
+    lock: Arc<WorkspaceSyncLocks>,
 }
 
 impl WorkspaceFileSyncStore {
-    /// Shares one scan/write lock per host and inventory root.
+    /// Serializes inventory owners separately from short filesystem mutations.
     pub fn new(host: Arc<dyn RuntimeStorageHost>, root: impl Into<String>) -> Self {
         let root = root.into();
         let mut locks = LOCKS
@@ -67,7 +81,7 @@ impl WorkspaceFileSyncStore {
                 .then(|| lock.clone())
             })
             .unwrap_or_else(|| {
-                let lock = Arc::new(Mutex::new(()));
+                let lock = Arc::new(WorkspaceSyncLocks::default());
                 locks.push((Arc::downgrade(&host), root.clone(), lock.clone()));
                 lock
             });
@@ -94,42 +108,80 @@ impl WorkspaceFileSyncStore {
 
     /// Scans only the managed root; mounted VFS directories are not consulted.
     pub fn scan(&self) -> Result<usize, String> {
-        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
+        let _guard = self.lock.scan.lock().map_err(|e| e.to_string())?;
         self.scanUnlocked()
     }
 
     /// Keeps the inventory and pending recovery intents stable during the copy.
-    pub fn captureSnapshotInventory(&self, capture: impl FnOnce(&str) -> Result<(), String>) -> Result<(), String> {
-        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        capture(&self.statePath())
+    pub fn captureSnapshotInventory(&self, mut capture: impl FnMut(&str) -> Result<(), String>) -> Result<(), String> {
+        let _guard = self.lock.scan.lock().map_err(|e| e.to_string())?;
+        let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+        capture(&self.statePath())?;
+        capture(&self.dirtyPath())
     }
 
     /// Joining a Space makes old local operation logs unexportable. Retain local
     /// files, but inventory them again so files unique to this device are not stranded.
     pub fn prepareSpaceJoin(&self) -> Result<(), String> {
-        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
+        let _guard = self.lock.scan.lock().map_err(|e| e.to_string())?;
+        let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
         let mut state = self.load()?;
         let pendingPath = state.pending.as_ref().map(|(path, _)| path.clone());
         self.recoverPending(&mut state)?;
         if let Some(path) = pendingPath.filter(|path| state.deferred.contains_key(path)) {
             return Err(format!("Cannot reset workspace inventory while a pending file is inaccessible: {path}"));
         }
-        self.save(&ScanState::default())
+        self.save(&ScanState::default())?;
+        self.markDirty::<&str>(&[])
     }
 
-    /// Captures app edits immediately; periodic scans also cover other writers.
+    /// Durably requests discovery without putting a global scan on the write path.
     pub fn track<T>(&self, change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
         self.trackPaths::<T, &str>(&[], change)
     }
 
-    /// Validates managed paths and captures both sides of an application edit.
+    /// Commits a rescan intent before writing; only unfinished remote writes require recovery.
     pub fn trackPaths<T, P: AsRef<str>>(&self, paths: &[P], change: impl FnOnce() -> Result<T, String>) -> Result<T, String> {
-        for path in paths { validateFilePath(path.as_ref())?; }
-        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        self.scanUnlocked()?;
-        let result = change();
-        let scanned = self.scanUnlocked();
-        match result { Err(error) => Err(error), Ok(value) => { scanned?; Ok(value) } }
+        for path in paths {
+            let path = path.as_ref();
+            if !Self::affectedBy(path) || path.split('/').any(|part| part.is_empty() || part == "." || part == ".." || part.contains(['\\', '\0'])) {
+                return Err(format!("Not a managed mutation scope: {path}"));
+            }
+        }
+        let _guard = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+        if !self.lock.recovered.load(Ordering::Acquire) {
+            self.recoverPending(&mut self.load()?)?;
+        }
+        self.markDirty(paths)?;
+        change()
+    }
+
+    /// Stores coalesced path scopes, not file contents or a second operation journal.
+    fn markDirty<P: AsRef<str>>(&self, paths: &[P]) -> Result<(), String> {
+        let mut dirty = self.dirtyScopes()?;
+        let previous = dirty.clone();
+        if paths.is_empty() { dirty.extend(MANAGED_ROOTS.iter().map(|path| path.to_string())); }
+        else { dirty.extend(paths.iter().map(|path| path.as_ref().to_string())); }
+        let mut scopes = BTreeSet::new();
+        for path in dirty {
+            if !isSkipped(&path, &scopes) { scopes.insert(path); }
+        }
+        if scopes != previous {
+            self.host.writeBytesAtomically(&self.dirtyPath(), &serde_json::to_vec(&scopes).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+        }
+        self.lock.revision.fetch_add(1, Ordering::AcqRel);
+        Ok(())
+    }
+
+    /// Retains pending local discovery across process restarts and failed mutations.
+    fn dirtyScopes(&self) -> Result<BTreeSet<String>, String> {
+        if !self.host.exists(&self.dirtyPath()).map_err(|e| e.to_string())? { return Ok(BTreeSet::new()); }
+        serde_json::from_slice(&self.host.readBytes(&self.dirtyPath()).map_err(|e| e.to_string())?).map_err(|e| format!("Invalid workspace rescan intent: {e}"))
+    }
+
+    /// Keeps the small local rescan intent separate from the full observed inventory.
+    fn dirtyPath(&self) -> String {
+        format!("{}/workspace_dirty.json", self.root)
     }
 
     /// Returns the node-local inventory path.
@@ -157,13 +209,22 @@ impl WorkspaceFileSyncStore {
         self.host.writeBytesAtomically(&self.statePath(), &serde_json::to_vec(state).map_err(|e| e.to_string())?).map_err(|e| e.to_string())
     }
 
+    /// Checkpoints single-file recovery while batching page-wide inventory writes.
     fn saveProgress(&self, state: &ScanState, checkpoint: bool) -> Result<(), String> {
         if checkpoint { self.save(state) } else { Ok(()) }
     }
 
     /// Traverses accessible files and retains prior inventory beneath permission failures.
     fn scanUnlocked(&self) -> Result<usize, String> {
+        let revision = self.lock.revision.load(Ordering::Acquire);
         let mut state = self.load()?;
+        let dirty = {
+            let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+            if self.lock.revision.load(Ordering::Acquire) != revision { return Ok(0); }
+            self.recoverPending(&mut state)?;
+            self.dirtyScopes()?
+        };
+        let mut changes = 0;
         // Incompatible names are outside sync scope, including old recovery state.
         self.operations().ignoreNonPortableFileOperations().map_err(|e| e.to_string())?;
         let previousCounts = (state.files.len(), state.references.len(), state.deferred.len());
@@ -171,21 +232,26 @@ impl WorkspaceFileSyncStore {
         state.references.retain(|path, _| FileUtils::isPortableFilePath(path));
         state.deferred.retain(|path, _| FileUtils::isPortableFilePath(path));
         if previousCounts != (state.files.len(), state.references.len(), state.deferred.len()) { self.save(&state)?; }
-        self.recoverPending(&mut state)?;
         // Received states outside the current policy remain durable. Re-enabling
         // a path restores the latest received version instead of losing it.
-        let mut skipped = Vec::new();
+        let mut skipped = ScanSkips::default();
         for (path, next) in state.deferred.clone() {
-            if self.accepts(&path, next.as_ref())? {
+            // Explicit edits supersede deferred values; a policy edit alone does not.
+            if isSkipped(&path, &dirty) { continue; }
+            let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+            if self.lock.revision.load(Ordering::Acquire) != revision { return Ok(changes); }
+            if self.scanRead(self.acceptsForScan(&path, next.as_ref(), Some(&state)), &path, &mut skipped)?.unwrap_or(false) {
                 if let Some(snapshot) = &next {
                     if !self.files().hasBlob(&snapshot.reference)? { continue; }
                 }
                 let content = next.as_ref().map(|s| self.files().readBlob(&s.reference)).transpose()?;
                 state.deferred.remove(&path);
                 state.pending = Some((path.clone(), next));
+                self.lock.recovered.store(false, Ordering::Release);
                 self.save(&state)?;
                 self.finishPending(&mut state, content.as_deref(), true)?;
-                if state.deferred.contains_key(&path) { skipped.push(path); }
+                self.lock.recovered.store(true, Ordering::Release);
+                if state.deferred.contains_key(&path) { skipped.paths.insert(path); }
             }
         }
         let mut current = Inventory::new();
@@ -207,7 +273,8 @@ impl WorkspaceFileSyncStore {
                         Ok((policy, rules))
                     }), &entry.path,
                 ) else {
-                    skipped.push(entry.path);
+                    skipped.unresolved.insert(entry.path.clone());
+                    skipped.paths.insert(entry.path);
                     continue;
                 };
                 let mut candidates = Inventory::new();
@@ -226,41 +293,49 @@ impl WorkspaceFileSyncStore {
         }
         // Sidecars are small synchronized files. The large original stays on its source node.
         for (path, stamp) in &large {
-            if isSkipped(path, &skipped) { continue; }
+            let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+            if self.lock.revision.load(Ordering::Acquire) != revision { return Ok(changes); }
+            if isSkipped(path, &skipped.paths) { continue; }
             let sidecar = format!("{path}{REFERENCE_SUFFIX}");
-            if !FileUtils::isPortableFilePath(&sidecar) { skipped.push(path.clone()); continue; }
+            if !FileUtils::isPortableFilePath(&sidecar) { skipped.paths.insert(path.clone()); continue; }
             // A formerly small file exceeding the limit is no longer uploaded,
             // but changing a limit must not erase the peer's existing copy.
-            let Some(referenceStamp) = self.scanRead(self.captureReference(path, stamp, state.references.get(path)), path, &mut skipped)? else {
-                skipped.push(sidecar);
+            let Some(referenceStamp) = self.scanRead(self.captureReference(path, stamp, state.references.get(path), current.get(&sidecar)), path, &mut skipped)? else {
+                skipped.paths.insert(sidecar);
                 continue;
             };
             current.insert(sidecar, referenceStamp);
         }
         for path in state.references.keys().filter(|path| !large.contains_key(*path)) {
-            if isSkipped(path, &skipped) { continue; }
+            let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+            if self.lock.revision.load(Ordering::Acquire) != revision { return Ok(changes); }
+            if isSkipped(path, &skipped.paths) { continue; }
             let sidecar = format!("{path}{REFERENCE_SUFFIX}");
             let Some(removed) = self.scanRead(self.removeLocalReference(path), path, &mut skipped)? else {
-                skipped.push(sidecar);
+                skipped.paths.insert(sidecar);
                 continue;
             };
             if removed { current.remove(&sidecar); }
         }
         let files = self.files();
-        let mut changes = 0;
         for (path, stamp) in &current {
-            if isSkipped(path, &skipped) { continue; }
-            if state.files.get(path) != Some(stamp) {
+            let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+            if self.lock.revision.load(Ordering::Acquire) != revision { return Ok(changes); }
+            if isSkipped(path, &skipped.paths) { continue; }
+            let localDeferred = state.deferred.contains_key(path) && isSkipped(path, &dirty);
+            if state.files.get(path) != Some(stamp) || localDeferred {
                 let root = managedDirectory(path)?;
                 let Some(policy) = self.scanPolicy(FileSyncPolicy::loadForScan(self.host.as_ref(), &root), &root) else {
-                    skipped.push(root);
+                    skipped.unresolved.insert(root.clone());
+                    skipped.paths.insert(root);
                     continue;
                 };
                 let limit = if path.ends_with(REFERENCE_SUFFIX) || isControl(&root, path) { MAX_POLICY_BYTES } else { usize::try_from(policy.maxFileBytes).unwrap_or(usize::MAX) };
                 let Some(bytes) = self.scanRead(readLimitedForScan(self.host.as_ref(), path, limit), path, &mut skipped)? else { continue; };
                 let Some(modifiedAt) = self.scanRead(self.host.modifiedAt(path), path, &mut skipped)? else { continue; };
                 if bytes.len() as i64 != stamp.size || Some(modifiedAt) != stamp.modifiedAt {
-                    skipped.push(path.clone());
+                    skipped.unresolved.insert(path.clone());
+                    skipped.paths.insert(path.clone());
                     continue;
                 }
                 // A verified file can replace an old directory, or a new child can
@@ -274,18 +349,45 @@ impl WorkspaceFileSyncStore {
                     changes += 1;
                 }
                 files.recordSnapshot(path, &bytes, false)?;
+                if localDeferred { state.deferred.remove(path); }
                 changes += 1;
             }
         }
-        preserveSkipped(&mut large, &state.references, &skipped);
-        skipped.extend(large.keys().cloned());
-        preserveSkipped(&mut current, &state.files, &skipped);
-        for path in state.files.keys().filter(|path| !current.contains_key(*path)) { files.recordDeletion(path)?; changes += 1; }
-        let inventoryChanged = state.files != current;
+        preserveSkipped(&mut large, &state.references, &skipped.paths);
+        skipped.paths.extend(large.keys().cloned());
+        preserveSkipped(&mut current, &state.files, &skipped.paths);
+        let deleted = state.files.keys().chain(state.deferred.keys().filter(|path| isSkipped(path, &dirty)))
+            .filter(|path| !current.contains_key(*path)).cloned().collect::<BTreeSet<_>>();
+        for path in deleted {
+            let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+            if self.lock.revision.load(Ordering::Acquire) != revision { return Ok(changes); }
+            if isSkipped(&path, &skipped.paths) { continue; }
+            if self.host.exists(&path).map_err(|e| e.to_string())? {
+                if let Some(stamp) = state.files.get(&path) { current.insert(path.clone(), stamp.clone()); }
+                skipped.unresolved.insert(path);
+                continue;
+            }
+            if state.deferred.contains_key(&path) && !self.accepts(&path, None)? { continue; }
+            files.recordDeletion(&path)?;
+            state.deferred.remove(&path);
+            changes += 1;
+        }
+        let inventoryChanged = state.files != current || !dirty.is_empty();
         state.files = current;
         let referencesChanged = state.references != large;
         state.references = large;
         if inventoryChanged || referencesChanged { self.save(&state)?; }
+        let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+        if self.lock.revision.load(Ordering::Acquire) == revision && !dirty.is_empty() {
+            // Errors retain only overlapping intent. Ignored and oversized files are settled.
+            let mut remaining = BTreeSet::new();
+            for path in &skipped.unresolved {
+                if isSkipped(path, &dirty) { remaining.insert(path.clone()); }
+                else { remaining.extend(dirty.range(format!("{path}/")..format!("{path}0")).cloned()); }
+            }
+            if remaining.is_empty() { self.host.delete(&self.dirtyPath(), false).map_err(|e| e.to_string())?; }
+            else { self.host.writeBytesAtomically(&self.dirtyPath(), &serde_json::to_vec(&remaining).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?; }
+        }
         Ok(changes)
     }
 
@@ -302,17 +404,19 @@ impl WorkspaceFileSyncStore {
     }
 
     /// Retains prior inventory when access is denied or a file disappears during scanning.
-    fn scanRead<T>(&self, result: HostResult<T>, path: &str, skipped: &mut Vec<String>) -> Result<Option<T>, String> {
+    fn scanRead<T>(&self, result: HostResult<T>, path: &str, skipped: &mut ScanSkips) -> Result<Option<T>, String> {
         match result {
             Ok(value) => Ok(Some(value)),
             Err(error) if error.kind == HostErrorKind::NotFound => {
-                skipped.push(path.to_string());
+                skipped.unresolved.insert(path.to_string());
+                skipped.paths.insert(path.to_string());
                 Ok(None)
             }
             Err(error) if error.kind == HostErrorKind::PermissionDenied => {
+                skipped.unresolved.insert(path.to_string());
                 operit_util::AppLogger::AppLogger::w("WorkspaceFileSyncStore",
                     &format!("Skipping inaccessible workspace path {path}; retaining prior sync state: {error}"));
-                skipped.push(path.to_string());
+                skipped.paths.insert(path.to_string());
                 Ok(None)
             }
             Err(error) => Err(format!("Workspace path {path}: {error}")),
@@ -320,10 +424,10 @@ impl WorkspaceFileSyncStore {
     }
 
     /// Updates a large-file locator while preserving typed access failures.
-    fn captureReference(&self, path: &str, stamp: &FileStamp, previous: Option<&FileStamp>) -> HostResult<FileStamp> {
+    fn captureReference(&self, path: &str, stamp: &FileStamp, previous: Option<&FileStamp>, observed: Option<&FileStamp>) -> HostResult<FileStamp> {
         let sidecar = format!("{path}{REFERENCE_SUFFIX}");
         let missing = !self.host.exists(&sidecar)?;
-        if previous != Some(stamp) || missing {
+        if previous != Some(stamp) || missing || observed.is_none() {
             let reference = FileReference::new(self.host.clone(), managedVfsPath(path).map_err(HostError::new)?, path.rsplit('/').next().unwrap().into(), stamp.size, stamp.modifiedAt).map_err(HostError::new)?;
             let bytes = reference.bytes().map_err(HostError::new)?;
             if !missing {
@@ -331,9 +435,9 @@ impl WorkspaceFileSyncStore {
                 if old.format != "operit_file_reference" || old.version != 1 || old.path != reference.path { return Err(HostError::new(format!("Reference path is occupied: {sidecar}"))); }
             }
             self.host.writeBytesAtomically(&sidecar, &bytes)?;
+            return Ok(FileStamp { size: bytes.len() as i64, modifiedAt: Some(self.host.modifiedAt(&sidecar)?) });
         }
-        let size = self.host.list(path.rsplit_once('/').unwrap().0)?.into_iter().find(|entry| entry.path == sidecar).ok_or_else(|| HostError::new("Missing file reference"))?.size;
-        Ok(FileStamp { size, modifiedAt: Some(self.host.modifiedAt(&sidecar)?) })
+        Ok(observed.expect("existing locator was collected").clone())
     }
 
     /// Removes an obsolete local locator without losing access errors or replacing user files.
@@ -352,7 +456,7 @@ impl WorkspaceFileSyncStore {
     }
 
     /// Traverses each accessible subtree with its own inherited ignore rules.
-    fn collect(&self, root: &str, directory: &str, policy: &FileSyncPolicy, rules: &mut Vec<ignore::gitignore::Gitignore>, files: &mut Inventory, skipped: &mut Vec<String>) -> Result<(), String> {
+    fn collect(&self, root: &str, directory: &str, policy: &FileSyncPolicy, rules: &mut Vec<ignore::gitignore::Gitignore>, files: &mut Inventory, skipped: &mut ScanSkips) -> Result<(), String> {
         let Some(entries) = self.scanRead(self.host.list(directory), directory, skipped)? else { return Ok(()); };
         let previous = rules.len();
         if directory != root && policy.ignoreFiles.iter().any(|p| p == ".gitignore") {
@@ -363,8 +467,8 @@ impl WorkspaceFileSyncStore {
             if !FileUtils::isPortableFilePath(&entry.path) { continue; }
             validatePath(&entry.path)?;
             entry.path.strip_prefix(&format!("{directory}/")).ok_or_else(|| format!("Managed entry escaped directory: {}", entry.path))?;
-            if isSkipped(&entry.path, skipped) { continue; }
-            if !isControl(root, &entry.path) && ignored(rules, &entry.path, entry.isDirectory) { skipped.push(entry.path); continue; }
+            if isSkipped(&entry.path, &skipped.paths) { continue; }
+            if !isControl(root, &entry.path) && ignored(rules, &entry.path, entry.isDirectory) { skipped.paths.insert(entry.path); continue; }
             if entry.isDirectory { self.collect(root, &entry.path, policy, rules, files, skipped)?; }
             else {
                 let Some(modifiedAt) = self.scanRead(self.host.modifiedAt(&entry.path), &entry.path, skipped)? else { continue; };
@@ -403,8 +507,10 @@ impl WorkspaceFileSyncStore {
         if batch.iter().any(|op| !paths.insert(&op.entityId)) {
             return batch.iter().map(|op|self.materializeOperation(op, bootstrap)).collect();
         }
-        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        self.scanUnlocked()?;
+        self.scan()?;
+        let _guard = self.lock.scan.lock().map_err(|e| e.to_string())?;
+        let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+        self.requireDiscoveredWrites(batch.iter().map(|operation| operation.entityId.as_str()))?;
         let operations = self.operations();
         let mut state = self.load()?;
         let mut decisions = Vec::new();
@@ -421,8 +527,10 @@ impl WorkspaceFileSyncStore {
             decisions.push(apply);
         }
         if !state.pendingBatch.is_empty() {
+            self.lock.recovered.store(false, Ordering::Release);
             self.save(&state)?;
             self.finishBatch(&mut state, bootstrap)?;
+            self.lock.recovered.store(true, Ordering::Release);
         }
         Ok(decisions)
     }
@@ -466,16 +574,34 @@ impl WorkspaceFileSyncStore {
         payload: serde_json::Value,
     ) -> Result<(), String> {
         validateFilePath(path)?;
-        let _guard = self.lock.lock().map_err(|e| e.to_string())?;
-        self.scanUnlocked()?;
+        self.scan()?;
+        let _guard = self.lock.scan.lock().map_err(|e| e.to_string())?;
+        let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
+        self.requireDiscoveredWrites(std::iter::once(path))?;
         self.applyUnlocked(path, operation, payload)
+    }
+
+    /// A concurrent local edit must be journaled before any remote conflict decision.
+    fn requireDiscoveredWrites<'a>(&self, paths: impl Iterator<Item = &'a str>) -> Result<(), String> {
+        let dirty = self.dirtyScopes()?;
+        for path in paths {
+            let root = managedDirectory(path)?;
+            if isSkipped(&root, &dirty) || dirty.range(format!("{root}/")..format!("{root}0")).next().is_some() {
+                return Err(format!("Workspace changed during synchronization; local discovery is pending: {root}"));
+            }
+        }
+        Ok(())
     }
 
     /// Saves a complete recovery intent before materializing the incoming state.
     fn applyUnlocked(&self, path: &str, operation: &str, payload: serde_json::Value) -> Result<(), String> {
-        self.applyToState(&mut self.load()?, path, operation, payload, true)
+        self.lock.recovered.store(false, Ordering::Release);
+        self.applyToState(&mut self.load()?, path, operation, payload, true)?;
+        self.lock.recovered.store(true, Ordering::Release);
+        Ok(())
     }
 
+    /// Applies one incoming state using the current page's inventory and policy limits.
     fn applyToState(&self, state: &mut ScanState, path: &str, operation: &str, payload: serde_json::Value, checkpoint: bool) -> Result<(), String> {
         if !FileUtils::isPortableFilePath(path) { return Ok(()); }
         let next: Option<RuntimeFileSnapshot> = match operation {
@@ -483,11 +609,11 @@ impl WorkspaceFileSyncStore {
             "delete" => None,
             other => return Err(format!("Unsupported managed file operation: {other}")),
         };
-        if !self.scanRead(self.acceptsForScan(path, next.as_ref(), Some(state)), path, &mut Vec::new())?.unwrap_or(false) {
+        if !self.scanRead(self.acceptsForScan(path, next.as_ref(), Some(state)), path, &mut ScanSkips::default())?.unwrap_or(false) {
             state.deferred.insert(path.to_string(), next);
             return self.saveProgress(state, checkpoint);
         }
-        if self.scanRead(self.checkDestination(path), path, &mut Vec::new())?.is_none() {
+        if self.scanRead(self.checkDestination(path), path, &mut ScanSkips::default())?.is_none() {
             state.deferred.insert(path.to_string(), next);
             return self.saveProgress(state, checkpoint);
         }
@@ -528,7 +654,7 @@ impl WorkspaceFileSyncStore {
 
     /// Leaves inaccessible incoming files deferred until their permissions permit access.
     fn accepts(&self, path: &str, snapshot: Option<&RuntimeFileSnapshot>) -> Result<bool, String> {
-        Ok(self.scanRead(self.acceptsForScan(path, snapshot, None), path, &mut Vec::new())?.is_some_and(|accepted| accepted))
+        Ok(self.scanRead(self.acceptsForScan(path, snapshot, None), path, &mut ScanSkips::default())?.is_some_and(|accepted| accepted))
     }
 
     /// Evaluates incoming policy limits while retaining typed errors from local rules.
@@ -562,16 +688,19 @@ impl WorkspaceFileSyncStore {
 
     /// Completes an interrupted incoming write before any scan can publish local changes.
     fn recoverPending(&self, state: &mut ScanState) -> Result<(), String> {
+        self.lock.recovered.store(false, Ordering::Release);
         if !state.pendingBatch.is_empty() { self.finishBatch(state, false)?; }
         if state.pending.as_ref().is_some_and(|(path, _)| !FileUtils::isPortableFilePath(path)) {
             state.pending = None;
-            return self.save(state);
+            self.save(state)?;
         }
         let content = match &state.pending {
             Some((_, Some(snapshot))) => Some(self.files().readBlob(&snapshot.reference)?),
             _ => None,
         };
-        self.finishPending(state, content.as_deref(), true)
+        self.finishPending(state, content.as_deref(), true)?;
+        self.lock.recovered.store(true, Ordering::Release);
+        Ok(())
     }
 
     /// Publishes already verified bytes and commits the corresponding metadata inventory.
@@ -579,7 +708,7 @@ impl WorkspaceFileSyncStore {
         let Some((path, next)) = state.pending.clone() else {
             return Ok(());
         };
-        let Some(stamp) = self.scanRead(self.writePending(&path, next.as_ref(), content, checkpoint), &path, &mut Vec::new())? else {
+        let Some(stamp) = self.scanRead(self.writePending(&path, next.as_ref(), content, checkpoint), &path, &mut ScanSkips::default())? else {
             state.deferred.insert(path, next);
             state.pending = None;
             return self.saveProgress(state, checkpoint);
@@ -660,12 +789,17 @@ impl WorkspaceFileSyncStore {
 }
 
 /// Matches an inaccessible or excluded path together with all of its descendants.
-fn isSkipped(path: &str, skipped: &[String]) -> bool {
-    skipped.iter().any(|prefix| path == prefix || path.strip_prefix(prefix).is_some_and(|rest| rest.starts_with('/')))
+fn isSkipped(path: &str, skipped: &BTreeSet<String>) -> bool {
+    let mut current = path;
+    loop {
+        if skipped.contains(current) { return true; }
+        let Some((parent, _)) = current.rsplit_once('/') else { return false; };
+        current = parent;
+    }
 }
 
 /// Retains only the previous observations of paths that could not be scanned safely.
-fn preserveSkipped(current: &mut Inventory, previous: &Inventory, skipped: &[String]) {
+fn preserveSkipped(current: &mut Inventory, previous: &Inventory, skipped: &BTreeSet<String>) {
     current.retain(|path, _| !isSkipped(path, skipped));
     for (path, stamp) in previous {
         if isSkipped(path, skipped) { current.insert(path.clone(), stamp.clone()); }

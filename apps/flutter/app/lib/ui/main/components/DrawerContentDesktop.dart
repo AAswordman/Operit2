@@ -32,69 +32,41 @@ extension _DesktopWorkspaceContent on _DrawerContentState {
     return recent.map((entry) => entry.history).toList(growable: false);
   }
 
-  Widget _desktopRecentHistory(
-    List<core_proxy.ChatHistoryListItem> histories,
-    bool searching,
-  ) {
+  /// Builds only the recent-section header; conversation rows belong to the lazy sliver.
+  Widget _desktopRecentHeader() {
     final appearance = widget.appearance;
-    final open = searching || !_recentHistoryCollapsed;
-    final expanded = searching || _recentHistoryExpanded;
-    return Column(
+    final open =
+        _searchController.text.trim().isNotEmpty || !_recentHistoryCollapsed;
+    return Padding(
       key: const ValueKey('recent-history-section'),
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: <Widget>[
-        Padding(
-          padding: const EdgeInsetsDirectional.fromSTEB(14, 2, 12, 0),
-          child: InkWell(
-            key: const ValueKey('recent-history-header'),
-            borderRadius: BorderRadius.circular(8),
-            onTap: _toggleRecentHistory,
-            child: Padding(
-              padding: const EdgeInsetsDirectional.fromSTEB(8, 4, 6, 4),
-              child: Row(
-                children: <Widget>[
-                  Expanded(
-                    child: Text(
-                      '最近会话',
-                      style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                        color: appearance.titleColor,
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
+      padding: const EdgeInsetsDirectional.fromSTEB(14, 2, 12, 0),
+      child: InkWell(
+        key: const ValueKey('recent-history-header'),
+        borderRadius: BorderRadius.circular(8),
+        onTap: _toggleRecentHistory,
+        child: Padding(
+          padding: const EdgeInsetsDirectional.fromSTEB(8, 4, 6, 4),
+          child: Row(
+            children: <Widget>[
+              Expanded(
+                child: Text(
+                  '最近会话',
+                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: appearance.titleColor,
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w600,
                   ),
-                  Icon(
-                    open ? Icons.expand_less : Icons.expand_more,
-                    size: 18,
-                    color: appearance.itemColor.withValues(alpha: 0.7),
-                  ),
-                ],
+                ),
               ),
-            ),
+              Icon(
+                open ? Icons.expand_less : Icons.expand_more,
+                size: 18,
+                color: appearance.itemColor.withValues(alpha: 0.7),
+              ),
+            ],
           ),
         ),
-        if (open) ...<Widget>[
-          for (final history
-              in expanded
-                  ? histories
-                  : histories.take(_DrawerContentState._previewLimit))
-            _historyRow(history, recent: true),
-          if (!searching &&
-              histories.length > _DrawerContentState._previewLimit)
-            _HistoryLimitButton(
-              key: const ValueKey('recent-history-limit'),
-              icon: expanded ? Icons.expand_less : Icons.expand_more,
-              label: expanded
-                  ? '收起'
-                  : '展开更多 ${histories.length - _DrawerContentState._previewLimit}',
-              workspaceStyle: true,
-              flat: true,
-              appearance: appearance,
-              onClick: _toggleRecentPreview,
-            ),
-        ],
-      ],
+      ),
     );
   }
 
@@ -159,62 +131,7 @@ extension _DesktopWorkspaceContent on _DrawerContentState {
                 key: const PageStorageKey<String>('desktop-workspace-scroll'),
                 primary: false,
                 slivers: <Widget>[
-                  if (recent.isNotEmpty)
-                    SliverToBoxAdapter(
-                      child: _desktopRecentHistory(recent, searching),
-                    ),
-                  for (final section in sections) ...[
-                    SliverToBoxAdapter(
-                      child: Padding(
-                        padding: EdgeInsets.only(
-                          top: section == sections.first && recent.isEmpty
-                              ? 2
-                              : 12,
-                        ),
-                        child: _WorkspaceHeader(
-                          key: ValueKey('workspace-header:${section.key}'),
-                          label: section.label,
-                          subtitle: section.subtitle,
-                          unbound: section.workspaceId == null,
-                          flat: true,
-                          expanded:
-                              searching ||
-                              !_collapsedWorkspaces.contains(section.key),
-                          pinned: _pinnedDirectories.contains(
-                            SidebarDirectory.workspace(section.workspaceId),
-                          ),
-                          appearance: appearance,
-                          canCreate: section.canCreate,
-                          onToggleExpanded: () => _toggleWorkspace(section.key),
-                          onCreateConversation: () => unawaited(
-                            _createConversation(
-                              workspaceId: section.workspaceId,
-                            ),
-                          ),
-                          onCreateGroup: () =>
-                              unawaited(_createWorkspaceGroup(section)),
-                          onTogglePinned: () => unawaited(
-                            _toggleDirectoryPinned(
-                              SidebarDirectory.workspace(section.workspaceId),
-                            ),
-                          ),
-                          onDelete: section.workspaceId != null
-                              ? () => unawaited(_deleteWorkspace(section))
-                              : null,
-                        ),
-                      ),
-                    ),
-                    if (searching ||
-                        !_collapsedWorkspaces.contains(section.key))
-                      SliverToBoxAdapter(
-                        child: section.histories.isEmpty
-                            ? SidebarStatusText(
-                                text: '暂无会话',
-                                appearance: appearance,
-                              )
-                            : _workspaceHistory(section, searching),
-                      ),
-                  ],
+                  _workspaceHistorySliver(sections, searching, recent: recent),
                   if (sections.isEmpty && !widget.loading)
                     SliverToBoxAdapter(
                       child: SidebarStatusText(
@@ -245,19 +162,28 @@ extension _DesktopWorkspaceContent on _DrawerContentState {
 
 /// Connects group members with one light guide beneath the folder icon.
 class _DesktopGroupBody extends StatelessWidget {
-  const _DesktopGroupBody({required this.appearance, required this.child});
+  /// Draws one segment of a group guide while its row is materialized.
+  const _DesktopGroupBody({
+    required this.appearance,
+    required this.child,
+    required this.first,
+    required this.last,
+  });
 
   final NavigationDrawerAppearance appearance;
   final Widget child;
+  final bool first;
+  final bool last;
 
+  /// Joins adjacent row segments without retaining an offscreen group column.
   @override
   Widget build(BuildContext context) => Stack(
     clipBehavior: Clip.none,
     children: <Widget>[
       PositionedDirectional(
         start: 28,
-        top: -4,
-        bottom: 6,
+        top: first ? -4 : 0,
+        bottom: last ? 6 : 0,
         width: 1,
         child: ColoredBox(color: appearance.itemColor.withValues(alpha: 0.12)),
       ),

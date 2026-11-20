@@ -14,6 +14,7 @@ import '../../../data/preferences/UserPreferencesManager.dart';
 import '../../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../../features/chat/viewmodel/ChatMessageLookupRequests.dart';
 import '../components/M3LoadingIndicator.dart';
+import '../components/RetainedPage.dart';
 import '../../main/navigation/ToolPkgCatalogChangeBus.dart';
 
 /// Produces an unambiguous package-and-entry namespace without decoding plugin input.
@@ -669,13 +670,10 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
       fit: StackFit.expand,
       children: [
         for (final id in _visitedTabs)
-          Offstage(
+          RetainedPage(
             key: ValueKey('sidebar-surface:$id'),
-            offstage: id != selected,
-            child: TickerMode(
-              enabled: id == selected,
-              child: _surface(context, id),
-            ),
+            active: id == selected,
+            child: Builder(builder: (context) => _surface(context, id)),
           ),
       ],
     );

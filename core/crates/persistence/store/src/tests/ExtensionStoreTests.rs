@@ -419,12 +419,14 @@ fn managed_file_tracking_captures_ancestor_edits_and_mixed_local_paths() {
             source.writeBytes(log, b"local log").map_err(|e| e.to_string())?;
             source.writeBytes(path, b"shared file").map_err(|e| e.to_string())
         }).unwrap();
+        crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(source.clone(), RUNTIME_SYNC_DIR_PATH).scan().unwrap();
         let ops = operations(&source, &SyncClock::empty());
         assert_eq!(ops.len(), 1, "{ancestor}");
         assert_eq!(ops[0].entityId, path);
         assert_eq!(ops[0].operation, "upsert");
         let before_delete = clock(&source);
         files.trackChanges(&[ancestor.into()], || source.delete(path, false).map_err(|e| e.to_string())).unwrap();
+        crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(source.clone(), RUNTIME_SYNC_DIR_PATH).scan().unwrap();
         let ops = operations(&source, &before_delete);
         assert_eq!(ops.len(), 1, "{ancestor}");
         assert_eq!(ops[0].entityId, path);

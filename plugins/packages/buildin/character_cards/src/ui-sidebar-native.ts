@@ -1,8 +1,8 @@
-import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
+import type { ComposeDslContext, ComposeLazyItems, ComposeNode } from "../../../../types/compose-dsl";
 import { reconcileSidebarCatalog, parseCurrentSidebar, preparedSidebar, sidebarCatalogKey, type CurrentSidebar, type SidebarCatalog, type ConversationSidebarGroup, type ConversationSidebarScope } from "./ui-sidebar";
 import { callMainDomain, encodeSelection } from "./ui-contributions";
 import { createChatInput } from "./chat-lifecycle";
-import { nativeSidebarRows } from "./ui-sidebar-native-layout";
+import { nativeSidebarItems } from "./ui-sidebar-native-layout";
 import { deleteConversationGroupMembers, type SidebarDeletionProgress } from "./sidebar-group-delete";
 import { traceCharacterLoad } from "./diagnostics";
 
@@ -25,8 +25,10 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
   current.current = parsed;
   const catalogKey = sidebarCatalogKey;
   const [warmData] = ctx.useState<unknown>("chatSidebarPrepared", null);
-  const prepared = preparedSidebar(warmData, current.current);
-  const identity = catalogKey(current.current), colors = ctx.MaterialTheme.colorScheme;
+  const prepared = ctx.useMemo('native-sidebar-prepared', () => preparedSidebar(warmData, parsed),
+    [warmData, parsed.input, parsed.chatSidebar.chats]);
+  const identity = ctx.useMemo('native-sidebar-identity', () => catalogKey(parsed),
+    [parsed.input, parsed.chatSidebar.chats]), colors = ctx.MaterialTheme.colorScheme;
   const [state, setState] = ctx.useState<SidebarState>("native-sidebar-state", {
     data: prepared?.data ?? null, defaultAvatar: prepared?.defaultAvatar ?? null, context: prepared?.context ?? "", loading: prepared === null, busy: false, error: "", query: "", search: false,
     collapsed: [], expandedGroups: [], dialog: null,
@@ -324,7 +326,7 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
     return data === null || data.view !== current.current.input.view ? null
       : latest.current.context === catalogKey(current.current) ? data : reconcileSidebarCatalog(data, current.current);
   }
-  const data = visibleCatalog();
+  const data = ctx.useMemo('native-sidebar-visible-catalog', visibleCatalog, [state.data, state.context, identity]);
   const toggleSection = (id: string): void => update({ collapsed: state.collapsed.includes(id)
     ? state.collapsed.filter(key => key !== id) : [...state.collapsed, id] });
   const toggleGroup = (id: string): void => update({ expandedGroups: state.expandedGroups.includes(id)
@@ -371,19 +373,20 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
           hintStyle: { color: colors.onSurfaceVariant.copy({ alpha: 0.62 }) },
           contentPadding: { horizontal: 12, vertical: 10 } } })) : ctx.UI.Spacer({ height: 0 })));
   if (state.error !== "") rows.push(ctx.UI.Text({ key: "sidebar-error", text: state.error, fontSize: 11, color: colors.error, paddingHorizontal: 20, paddingVertical: 6 }));
+  let items: ComposeLazyItems | null = null;
   if (data !== null) {
     const actions = { activate, toggleSection, toggleGroup, menu, longPress,
       rename: renameChat, confirmSwipeDelete, drop };
     // Retained row callbacks read the actions from the latest render.
     const layoutActions = ctx.useRef("native-sidebar-layout-actions", actions);
     Object.assign(layoutActions.current, actions);
-    rows.push(...nativeSidebarRows(ctx, current.current, { data, query: state.query,
+    items = nativeSidebarItems(ctx, current.current, { data, query: state.query,
       collapsed: state.collapsed, expandedGroups: state.expandedGroups, busy: state.busy },
-      layoutActions.current, state.defaultAvatar));
+      layoutActions.current, state.defaultAvatar);
   }
   else if (state.loading) rows.push(ctx.UI.Box({ fillMaxWidth: true, height: 80, contentAlignment: "center" },
     ctx.UI.LoadingIndicator({ size: 24 })));
-  const content: ComposeNode[] = [...rows];
+  const content: ComposeNode[] = [...rows, ...(items?.content ?? [])];
   if (state.dialog !== null) {
     const staged = state.dialog, body: ComposeNode[] = [ctx.UI.Text({ text: { create: "新建分组", rename: "重命名分组", delete: "删除分组及其对话", renameUngrouped: "重命名分组", deleteUngrouped: "删除分组及其对话", renameChat: "编辑对话名称", deleteChat: "删除对话", chatActions: "聊天记录" }[staged.kind], fontSize: 16, fontWeight: "600" })];
     if (staged.kind === "create" || staged.kind === "rename" || staged.kind === "renameUngrouped" || staged.kind === "renameChat") body.push(ctx.UI.TextField({ key: "sidebar-group-name", value: staged.name, label: staged.kind === "renameChat" ? "对话名称" : "分组名称", onValueChange: name => update({ dialog: { ...staged, name } }), enabled: !state.busy }));
@@ -420,6 +423,7 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
   // background so the initial lifecycle command does not wait on catalog IPC;
   // an authoritative response still replaces the projection when it arrives.
   const onLoad = prepared === null ? refresh : () => { void Promise.resolve().then(refresh).catch(() => {}); };
-  return ctx.UI.Column({ key: "native-character-sidebar", fillMaxWidth: true, paddingBottom: 16, spacing: 0,
-    onLoad, onInputsChanged: refreshInputs }, content);
+  return ctx.UI.LazyColumn({ key: "native-character-sidebar", fillMaxWidth: true, paddingBottom: 16, spacing: 0,
+    ...(items === null ? {} : { viewport: { ...items.viewport, staticItemCount: rows.length } }),
+    onLoad, onInputsChanged: refreshInputs, content });
 }

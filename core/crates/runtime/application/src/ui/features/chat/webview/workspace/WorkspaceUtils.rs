@@ -24,7 +24,7 @@ pub fn createAndGetDefaultWorkspace(
     chatId: String,
     projectType: Option<String>,
 ) -> Result<String, String> {
-    workspaceSyncStore().track(|| createDefaultWorkspace(chatId, projectType))
+    workspaceSyncStore().trackPaths(&[getWorkspaceRelativePath(&chatId)], || createDefaultWorkspace(chatId, projectType))
 }
 
 fn workspaceSyncStore() -> operit_store::WorkspaceFileSyncStore::WorkspaceFileSyncStore {
@@ -50,7 +50,7 @@ fn createDefaultWorkspace(chatId: String, projectType: Option<String>) -> Result
 pub fn createAndResetWorkspaceDirectory(chatId: String) -> Result<String, String> {
     let workspaceRelativePath = getWorkspaceRelativePath(&chatId);
     let storage = defaultRuntimeStorageHost();
-    workspaceSyncStore().track(|| storage
+    workspaceSyncStore().trackPaths(&[&workspaceRelativePath], || storage
         .delete(&workspaceRelativePath, true)
         .map_err(|error| error.to_string()))?;
     VfsPath::workspacePath(&chatId)
@@ -101,7 +101,7 @@ pub(crate) fn deleteWorkspaceFiles(
     }
     for path in ownedPaths {
         if storage.exists(&path).map_err(|error| error.to_string())? {
-            workspaceSyncStore().track(|| {
+            workspaceSyncStore().trackPaths(&[&path], || {
                 storage
                     .delete(&path, true)
                     .map_err(|error| error.to_string())

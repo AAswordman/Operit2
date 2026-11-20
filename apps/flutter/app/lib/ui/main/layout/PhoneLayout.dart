@@ -21,6 +21,7 @@ import 'DrawerMotionScope.dart';
 import 'SidebarDockController.dart';
 import '../../theme/OperitGlassSurface.dart';
 import '../../common/interactions/DrawerGestureExclusion.dart';
+import '../../common/components/RetainedPage.dart';
 
 class PhoneLayout extends StatefulWidget {
   /// Creates the retained phone content and its animated navigation drawer.
@@ -435,8 +436,8 @@ class _PhoneLayoutState extends State<PhoneLayout>
                 top: 0,
                 bottom: 0,
                 width: widget.drawerWidth,
-                child: TickerMode(
-                  enabled: isDrawerOpen,
+                child: RetainedPage(
+                  active: isDrawerOpen,
                   child: Transform.translate(
                     // A fixed Stack slot keeps drag frames in the paint phase.
                     offset: Offset(drawerOffset, 0),

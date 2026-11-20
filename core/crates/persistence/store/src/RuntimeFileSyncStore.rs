@@ -176,19 +176,7 @@ impl RuntimeFileSyncStore {
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
         }
-        let mut next = if self
-            .storageHost
-            .exists(storagePath)
-            .map_err(|error| error.to_string())?
-        {
-            self.storageHost
-                .readBytes(storagePath)
-                .map_err(|error| error.to_string())?
-        } else {
-            Vec::new()
-        };
-        next.extend_from_slice(content);
-        self.writeBytes(storagePath, &next)
+        self.trackChanges(&[storagePath.into()], || self.storageHost.appendBytes(storagePath, content).map_err(|e| e.to_string()))
     }
 
     /// Deletes a Space file and records a synchronized tombstone.
@@ -199,7 +187,7 @@ impl RuntimeFileSyncStore {
         }
         if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(storagePath) {
             return crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone())
-                .track(|| {
+                .trackPaths(&[storagePath], || {
                     if self.storageHost.exists(storagePath).map_err(|e| e.to_string())? {
                         self.storageHost.delete(storagePath, false).map_err(|e| e.to_string())?;
                     }
@@ -245,11 +233,9 @@ impl RuntimeFileSyncStore {
             for path in before.keys().filter(|path| !after.contains_key(*path)) { self.recordDeletion(path)?; }
             result
         };
-        // Only edits intersecting managed roots acquire their scanner lock and
-        // recover pending workspace operations. Unrelated local files must not
-        // depend on the availability or recovery state of shared workspaces.
-        if paths.iter().any(|path| crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::affectedBy(path)) {
-            crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone()).track(tracked)
+        let managed = paths.iter().filter(|path| crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::affectedBy(path)).collect::<Vec<_>>();
+        if !managed.is_empty() {
+            crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(self.storageHost.clone(), self.syncRootPath.clone()).trackPaths(&managed, tracked)
         } else {
             tracked()
         }
@@ -260,6 +246,7 @@ impl RuntimeFileSyncStore {
         let mut files = std::collections::BTreeMap::new();
         for path in paths {
             if !FileUtils::isPortableFilePath(path) { continue; }
+            if crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::manages(path) { continue; }
             if !self.storageHost.exists(path).map_err(|e|e.to_string())? { continue; }
             let Some((parent, _)) = path.rsplit_once('/') else {
                 for entry in self.storageHost.list(path).map_err(|e|e.to_string())? { self.captureEntry(entry, &mut files)?; }
@@ -496,7 +483,6 @@ impl RuntimeFileSyncStore {
             }
             Ok(())
         })).map_err(|e|e.to_string())?;
-        self.syncOperationStore.collectBlobs(None);
         Ok(())
     }
 

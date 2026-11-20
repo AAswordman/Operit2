@@ -1906,8 +1906,6 @@ impl SyncOperationStore {
         cached.value = clock;
         drop(cached);
         self.recordAppliedOperation(&op)?;
-        #[cfg(feature = "full")]
-        self.collectBlobs(None);
         drop(control);
         publishSyncMutation();
         Ok(op)
@@ -2060,8 +2058,6 @@ impl SyncOperationStore {
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operations.iter().any(|op| op.domain == NETWORK_CONTROL_SYNC_DOMAIN))?;
         self.withJournal(|journal| journal.complete(operations))?;
         if let Some(control) = &control { control.update(|model| model.complete(operations))?; }
-        #[cfg(feature = "full")]
-        if operations.iter().any(crate::RuntimeFileSyncStore::RuntimeFileSyncStore::isCompleteState) { self.collectBlobs(None); }
         Ok(())
     }
 

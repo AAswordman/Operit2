@@ -332,6 +332,7 @@ impl HostRuntimePeerService {
             service.state.nodeId, service.state.info.platform, crate::PeerProtocol::VERSION));
         Ok(service)
     }
+
     /// Checks the known identity and the handshake result before creating a pairing transaction.
     async fn startPairingWithInvitation(&self, target: PeerEndpoint, transport: Option<PeerTransport>, invitationId: Option<&str>) -> Result<PendingPairing, CoreLinkError> {
         operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(

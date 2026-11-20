@@ -44,6 +44,68 @@ void main() {
 
   for (final desktop in [false, true]) {
     testWidgets(
+      'expanded workspace and recent lists recycle 2000 chats / desktop:$desktop',
+      (tester) async {
+        final bridge = _DrawerBridge();
+        await _pumpDrawer(
+          tester,
+          bridge,
+          _histories('A', 2000),
+          conversationsOnly: desktop,
+          viewportSize: const Size(320, 800),
+        );
+        final first = find.byKey(const ValueKey('workspace-chat:A-0'));
+        final original = tester.state(first);
+        await tester.ensureVisible(_limitButton('A'));
+        await tester.tap(_limitButton('A'));
+        await _pumpSidebar(tester);
+        expect(tester.state(first), same(original));
+        expect(
+          find.byType(ConversationDrawerItem).evaluate().length,
+          lessThan(80),
+        );
+        expect(
+          find.byKey(const ValueKey('workspace-chat:A-1999')),
+          findsNothing,
+        );
+        final controller = tester
+            .widget<CustomScrollView>(find.byType(CustomScrollView))
+            .controller!;
+        for (var pass = 0; pass < 3; pass++) {
+          controller.jumpTo(controller.position.maxScrollExtent);
+          await _pumpSidebar(tester);
+          expect(
+            find.byType(ConversationDrawerItem).evaluate().length,
+            lessThan(80),
+          );
+        }
+        expect(
+          find.byKey(const ValueKey('workspace-chat:A-1999')),
+          findsOneWidget,
+        );
+        expect(original.mounted, isFalse);
+        controller.jumpTo(0);
+        await _pumpSidebar(tester);
+        expect(first, findsOneWidget);
+        expect(tester.state(first), isNot(same(original)));
+        if (desktop) {
+          await tester.tap(find.byKey(const ValueKey('recent-history-limit')));
+          await _pumpSidebar(tester);
+          expect(_recentIds(tester).length, lessThan(40));
+          controller.jumpTo(12000);
+          await _pumpSidebar(tester);
+          expect(_recentIds(tester), isNotEmpty);
+          expect(_recentIds(tester), isNot(contains('A-0')));
+          expect(
+            find.byType(ConversationDrawerItem).evaluate().length,
+            lessThan(80),
+          );
+        }
+        expect(tester.takeException(), isNull);
+      },
+    );
+
+    testWidgets(
       'workspace branches collapse independently and search reveals ancestors / desktop:$desktop',
       (tester) async {
         final bridge = _DrawerBridge();
@@ -80,6 +142,40 @@ void main() {
       },
     );
   }
+
+  testWidgets('workspace and group headers share the recycling viewport', (
+    tester,
+  ) async {
+    final bridge = _DrawerBridge();
+    await _pumpDrawer(tester, bridge, [
+      for (var project = 0; project < 200; project++)
+        for (var group = 0; group < 3; group++)
+          _history('P$project', group, groupName: 'G$group'),
+    ], viewportSize: const Size(320, 800));
+
+    /// Counts directory controls, including the viewport's nearby cache.
+    int headers(String prefix) => find
+        .byWidgetPredicate((widget) {
+          final key = widget.key;
+          return key is ValueKey<String> && key.value.startsWith(prefix);
+        })
+        .evaluate()
+        .length;
+
+    expect(headers('workspace-header:'), lessThan(10));
+    expect(headers('workspace-group:'), lessThan(30));
+    final controller = tester
+        .widget<CustomScrollView>(find.byType(CustomScrollView))
+        .controller!;
+    for (var pass = 0; pass < 3; pass++) {
+      controller.jumpTo(controller.position.maxScrollExtent);
+      await _pumpSidebar(tester);
+    }
+    expect(find.byKey(const ValueKey('workspace-chat:P199-2')), findsOneWidget);
+    expect(headers('workspace-header:'), lessThan(10));
+    expect(headers('workspace-group:'), lessThan(30));
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'workspace preview retains parents of active descendants and counts roots',
@@ -1677,11 +1773,12 @@ Future<void> _pumpDrawer(
   String? currentChatId,
   bool conversationsOnly = false,
   Set<String> streamingIds = const <String>{},
+  Size? viewportSize,
 }) async {
   bridge.updateHistories(histories);
-  tester.view.physicalSize = conversationsOnly
-      ? const Size(280, 800)
-      : const Size(500, 2400);
+  tester.view.physicalSize =
+      viewportSize ??
+      (conversationsOnly ? const Size(280, 800) : const Size(500, 2400));
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
@@ -1751,12 +1848,8 @@ List<String> _workspaceIds(WidgetTester tester) => tester
     .toList();
 
 List<String> _recentIds(WidgetTester tester) => tester
-    .widgetList<ConversationDrawerItem>(
-      find.descendant(
-        of: find.byKey(const ValueKey('recent-history-section')),
-        matching: find.byType(ConversationDrawerItem),
-      ),
-    )
+    .widgetList<ConversationDrawerItem>(find.byType(ConversationDrawerItem))
+    .where((item) => item.key == ValueKey('recent-chat:${item.history.id}'))
     .map((item) => item.history.id)
     .toList();
 

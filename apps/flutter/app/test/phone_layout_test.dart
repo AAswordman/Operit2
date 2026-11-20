@@ -119,6 +119,95 @@ void main() {
 
   for (final enableNavigationAnimation in <bool>[true, false]) {
     testWidgets(
+      'hidden drawer skips keyboard builds and detaches layouts while retaining state (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(true);
+        final conversations = ValueNotifier(
+          const DrawerConversationState(loading: false),
+        );
+        addTearDown(drawerOpen.dispose);
+        addTearDown(conversations.dispose);
+        addTearDown(tester.view.resetViewInsets);
+        final counts = _ContentCounts();
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: _ContentProbe(counts: counts),
+          conversationState: conversations,
+        );
+        await tester.tap(find.byTooltip('搜索对话'));
+        await tester.pumpAndSettle();
+        await tester.enterText(find.byType(TextField), 'retained search');
+        await tester.pumpAndSettle();
+        final drawer = find.byType(DrawerContent);
+        final drawerState = tester.state(drawer);
+        final elements = <Element>{};
+        final renders = <RenderObject>[];
+
+        /// Records the real sidebar subtree so hidden work is observed directly.
+        void collect(Element element) {
+          elements.add(element);
+          if (element is RenderObjectElement) renders.add(element.renderObject);
+          element.visitChildren(collect);
+        }
+
+        collect(tester.element(drawer));
+        drawerOpen.value = false;
+        await tester.pumpAndSettle();
+        expect(renders.every((render) => !render.attached), isTrue);
+        final initialLayouts = counts.layouts;
+        var hiddenBuilds = 0;
+        final previous = debugOnRebuildDirtyWidget;
+        debugOnRebuildDirtyWidget = (element, builtOnce) {
+          previous?.call(element, builtOnce);
+          if (elements.contains(element)) hiddenBuilds++;
+        };
+        addTearDown(() => debugOnRebuildDirtyWidget = previous);
+
+        for (var cycle = 0; cycle < 3; cycle++) {
+          conversations.value = DrawerConversationState(
+            loading: false,
+            currentChatId: 'latest-$cycle',
+            histories: [
+              core.ChatHistoryListItem(
+                id: 'latest-$cycle',
+                title: 'Latest $cycle',
+                updatedAt: '0',
+                displayOrder: 0,
+                parentChatId: null,
+                group: null,
+                workspaceId: null,
+                workspaceName: null,
+                locked: false,
+                pinned: false,
+              ),
+            ],
+          );
+          for (final inset in <double>[80, 160, 240, 320, 240, 160, 80, 0]) {
+            tester.view.viewInsets = FakeViewPadding(bottom: inset);
+            await tester.pump(const Duration(milliseconds: 16));
+            expect(hiddenBuilds, 0);
+            expect(renders.every((render) => !render.attached), isTrue);
+            expect(
+              tester.getSize(find.byType(_ContentProbe)).height,
+              800 - inset,
+            );
+          }
+        }
+        expect(counts.layouts, greaterThan(initialLayouts));
+        drawerOpen.value = true;
+        await tester.pumpAndSettle();
+        expect(tester.state(drawer), same(drawerState));
+        expect(find.text('retained search'), findsOneWidget);
+        expect(tester.widget<DrawerContent>(drawer).currentChatId, 'latest-2');
+        expect(hiddenBuilds, greaterThan(0));
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+
+    testWidgets(
       'edge swipe opens drawer while eager page keeps pointer events (effects: $enableNavigationAnimation)',
       (tester) async {
         final drawerOpen = ValueNotifier<bool>(false);
@@ -714,19 +803,27 @@ void main() {
         final indicator = find.byKey(
           const ValueKey<String>('conversation-running-indicator'),
         );
-        final element = tester.element(indicator);
-        expect(TickerMode.valuesOf(element).enabled, isFalse);
+        expect(find.byType(DrawerContent, skipOffstage: false), findsNothing);
         expect(tester.binding.transientCallbackCount, 0);
 
         drawerOpen.value = true;
         await tester.pump();
         await tester.pump(const Duration(seconds: 1));
-        expect(TickerMode.valuesOf(tester.element(indicator)).enabled, isTrue);
+        final element = tester.element(indicator);
+        expect(TickerMode.valuesOf(element).enabled, isTrue);
         expect(tester.binding.transientCallbackCount, greaterThan(0));
 
         drawerOpen.value = false;
         await tester.pumpAndSettle();
-        expect(tester.element(indicator), same(element));
+        expect(
+          tester.element(
+            find.byKey(
+              const ValueKey<String>('conversation-running-indicator'),
+              skipOffstage: false,
+            ),
+          ),
+          same(element),
+        );
         expect(TickerMode.valuesOf(element).enabled, isFalse);
         expect(tester.binding.transientCallbackCount, 0);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -737,7 +834,24 @@ void main() {
       (tester) async {
         final drawerOpen = ValueNotifier<bool>(false);
         final conversations = ValueNotifier<DrawerConversationState>(
-          const DrawerConversationState(loading: false),
+          DrawerConversationState(
+            loading: false,
+            histories: [
+              for (var index = 0; index < 100; index++)
+                core.ChatHistoryListItem(
+                  id: 'retained-$index',
+                  title: 'retained query $index',
+                  updatedAt: '0',
+                  displayOrder: index,
+                  parentChatId: null,
+                  group: null,
+                  workspaceId: null,
+                  workspaceName: null,
+                  locked: false,
+                  pinned: true,
+                ),
+            ],
+          ),
         );
         addTearDown(drawerOpen.dispose);
         addTearDown(conversations.dispose);
@@ -769,26 +883,41 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
-        final drawerState = tester.state(find.byType(DrawerContent));
+        expect(find.byType(DrawerContent, skipOffstage: false), findsNothing);
 
         drawerOpen.value = true;
         await tester.pumpAndSettle();
-        expect(tester.state(find.byType(DrawerContent)), same(drawerState));
+        final drawerState = tester.state(find.byType(DrawerContent));
 
         await tester.tap(find.byTooltip('搜索对话'));
         await tester.pumpAndSettle();
         await tester.enterText(find.byType(TextField), 'retained query');
         await tester.pumpAndSettle();
+        final scroll = tester
+            .widget<CustomScrollView>(find.byType(CustomScrollView))
+            .controller!;
+        scroll.jumpTo(500);
+        await tester.pumpAndSettle();
 
         for (var cycle = 0; cycle < 3; cycle++) {
           drawerOpen.value = false;
           await tester.pumpAndSettle();
-          expect(tester.state(find.byType(DrawerContent)), same(drawerState));
+          expect(
+            tester.state(find.byType(DrawerContent, skipOffstage: false)),
+            same(drawerState),
+          );
 
           drawerOpen.value = true;
           await tester.pumpAndSettle();
           expect(tester.state(find.byType(DrawerContent)), same(drawerState));
-          expect(find.text('retained query'), findsOneWidget);
+          expect(scroll.position.pixels, 500);
+          expect(
+            tester
+                .widget<TextField>(find.byType(TextField, skipOffstage: false))
+                .controller!
+                .text,
+            'retained query',
+          );
         }
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
@@ -826,6 +955,7 @@ Future<void> _pumpSwipeTestLayout(
   DrawerConversationState drawerState = const DrawerConversationState(
     loading: false,
   ),
+  ValueNotifier<DrawerConversationState>? conversationState,
   SidebarDockController? dock,
   MainLayoutController? mainLayout,
   ValueChanged<NavigationEntrySpec>? onNavigationEntrySelected,
@@ -834,8 +964,9 @@ Future<void> _pumpSwipeTestLayout(
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
-  final conversations = ValueNotifier<DrawerConversationState>(drawerState);
-  addTearDown(conversations.dispose);
+  final conversations =
+      conversationState ?? ValueNotifier<DrawerConversationState>(drawerState);
+  if (conversationState == null) addTearDown(conversations.dispose);
   Widget buildLayout(List<NavigationEntrySpec> entries) => PhoneLayout(
     bridge: NativeSidebarBridge(),
     content: content,
