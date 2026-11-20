@@ -84,6 +84,10 @@ jobs:
       FVM_VERSION: 4.3.0
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: core
       - name: Install Node.js
         uses: actions/setup-node@v4
         with:
@@ -110,6 +114,13 @@ jobs:
       - name: Install project Flutter SDK
         working-directory: apps/flutter/app
         run: fvm install --skip-pub-get
+      - name: Generate runtime assets and Dart proxies
+        run: |
+          python plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload
+          python tools/build_scripts/models_dev_bundle.py
+          cargo check --locked --manifest-path core/crates/proxy/local/Cargo.toml --quiet
+          test -s apps/flutter/app/lib/core/proxy/generated/CoreProxyClients.g.dart
+          test -s apps/flutter/app/lib/core/proxy/generated/CoreProxyModels.g.dart
       - name: Verify update progress and user actions
         working-directory: apps/flutter/app
         run: fvm flutter test test/update/core_app_update_backend_test.dart test/update/app_update_test.dart test/update/app_update_base_prompt_test.dart
