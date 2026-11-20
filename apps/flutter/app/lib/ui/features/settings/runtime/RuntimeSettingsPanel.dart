@@ -407,10 +407,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
     final projected = _projectedDevice(deviceId);
     final displayState = _pairedDisplayState(probeState, projected);
     final name = _pairedDeviceName(device, projected);
-    final incompatible = deviceProtocolMismatch(
-      _projectedDevice(_topology?.currentDeviceId ?? '')?.protocolVersion,
-      projected?.protocolVersion,
-    );
+    final incompatible = deviceSpaceVersionMismatch(_topology, projected);
     final status = incompatible
         ? deviceCompatibilityLabel(context)
         : '${_remoteProbeLabel(displayState, l10n)}'
@@ -540,10 +537,7 @@ class _RuntimeSettingsPanelState extends State<RuntimeSettingsPanel>
   ) {
     final scheme = Theme.of(context).colorScheme;
     final icon = device.online ? Icons.lan_outlined : Icons.link_off_outlined;
-    final incompatible = deviceProtocolMismatch(
-      _projectedDevice(_topology?.currentDeviceId ?? '')?.protocolVersion,
-      device.protocolVersion,
-    );
+    final incompatible = deviceSpaceVersionMismatch(_topology, device);
     final status = incompatible
         ? deviceCompatibilityLabel(context)
         : '${_onlineText(l10n, device.online)}'

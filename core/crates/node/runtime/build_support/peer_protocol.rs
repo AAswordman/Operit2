@@ -1,13 +1,12 @@
-//! Compatibility fingerprint for route, authenticated session and synchronization contracts.
+//! Route fingerprint supporting the single published peer protocol version.
 use sha2::{Digest, Sha256};
-use std::{collections::BTreeSet, fs, path::Path};
+use std::{fs, path::Path};
 
-/// Hashes route signatures with explicit session and synchronization wire revisions.
+/// Hashes route signatures and the authenticated session wire contract.
 pub fn fingerprint(routes: &str) -> String {
     let mut hash = Sha256::new();
     hash.update(b"operit-peer-route-signatures-v1\0");
     hash.update(b"operit-peer-session-fragments-v1\0");
-    hash.update(b"operit-sync-consistency-v8\0");
     hash.update(routes.as_bytes());
     format!("{:x}", hash.finalize())
 }
@@ -16,14 +15,12 @@ pub fn fingerprint(routes: &str) -> String {
 pub fn validate_revisions(revisions: &serde_json::Value, hash: &str) -> Result<u32, String> {
     let revisions = revisions.as_array().ok_or("Protocol revisions must be an array")?;
     let mut last = 0;
-    let mut hashes = BTreeSet::new();
     for revision in revisions {
         let version = revision["version"].as_u64().filter(|v| *v <= u32::MAX as u64)
             .ok_or("Protocol version must be a positive u32")? as u32;
         let fingerprint = revision["hash"].as_str().ok_or("Protocol hash must be a string")?;
-        if version <= last || fingerprint.len() != 64 || !fingerprint.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
-            || !hashes.insert(fingerprint) {
-            return Err("Protocol revisions must append increasing versions with unique SHA-256 hashes".into());
+        if version <= last || fingerprint.len() != 64 || !fingerprint.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+            return Err("Protocol revisions must append increasing versions with lowercase SHA-256 hashes".into());
         }
         last = version;
     }
@@ -58,5 +55,14 @@ mod tests {
         assert!(validate_revisions(&json!([{ "version": 1, "hash": first }]), &next).is_err());
         assert!(validate_revisions(&json!([{ "version": 1, "hash": first }, { "version": 1, "hash": next }]), &next).is_err());
         assert_eq!(validate_revisions(&json!([{ "version": 1, "hash": first }, { "version": 2, "hash": next }]), &next).unwrap(), 2);
+    }
+
+    /// Semantic wire changes can advance compatibility without changing a route signature.
+    #[test]
+    fn semantic_changes_advance_the_same_protocol_version_ledger() {
+        let hash = "a".repeat(64);
+        assert_eq!(validate_revisions(&json!([
+            { "version": 25, "hash": hash }, { "version": 26, "hash": hash }
+        ]), &hash).unwrap(), 26);
     }
 }

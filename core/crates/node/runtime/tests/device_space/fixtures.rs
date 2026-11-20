@@ -33,6 +33,7 @@ struct ApprovalMeshPeer {
     changes: tokio::sync::broadcast::Sender<()>,
     faults: StdMutex<BTreeMap<String, CallFault>>,
     calls: StdMutex<Vec<(String, String)>>,
+    protocolFailures: StdMutex<BTreeMap<String, CoreLinkError>>,
 }
 
 impl ApprovalMeshPeer {
@@ -47,6 +48,7 @@ impl ApprovalMeshPeer {
             changes: tokio::sync::broadcast::channel(16).0,
             faults: StdMutex::new(BTreeMap::new()),
             calls: StdMutex::new(Vec::new()),
+            protocolFailures: StdMutex::new(BTreeMap::new()),
         })
     }
     /// Exercises link through the device-space contract fixture. The handshake
@@ -205,6 +207,10 @@ impl RuntimePeerService for ApprovalMeshPeer {
     /// Exercises activePeerNodeIds through the device-space contract fixture.
     fn activePeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> {
         Ok(self.active.lock().unwrap().clone())
+    }
+    /// Exposes negotiated failures independently of synchronized device metadata.
+    fn peerProtocolFailures(&self) -> BTreeMap<String, CoreLinkError> {
+        self.protocolFailures.lock().unwrap().clone()
     }
     /// Exercises subscribePeerChanges through the device-space contract fixture.
     fn subscribePeerChanges(&self) -> tokio::sync::broadcast::Receiver<()> {

@@ -1,5 +1,43 @@
 use super::*;
 
+/// Negotiation rejections appear even when the cached profile still advertises compatibility.
+#[tokio::test]
+async fn protocol_rejection_projects_an_unavailable_connection_without_mutating_profiles() {
+    let _guard = routeTestGlobalLock().lock().await;
+    installTestRuntimeScheduler();
+    let (a, access) = approvalService("protocol-projection-a");
+    let (b, _) = approvalService("protocol-projection-b");
+    mergedChainFixture(&[&a, &b]);
+    let peer = ApprovalMeshPeer::new(a.localNodeId());
+    peer.link(&b);
+    peer.disconnectPeer(&b.localNodeId()).await.unwrap();
+    let failure = CoreLinkError::new("PEER_PROTOCOL_MISMATCH", "Negotiated peer is incompatible");
+    peer.protocolFailures.lock().unwrap().insert(b.localNodeId(), failure.clone());
+    peer.protocolFailures.lock().unwrap().insert("foreign-peer".into(), failure.clone());
+    a.installNodeServices(NodeServices::new(peer.clone())).unwrap();
+    let profiles = a.spaceStore.deviceProfiles().unwrap();
+
+    let topology = access.deviceSpaceTopology().unwrap();
+    assert_eq!(topology.connections.len(), 1);
+    assert_eq!(topology.connections[0].status,
+        crate::RuntimeRemoteLinkService::RuntimeDeviceSpaceConnectionStatus::VersionMismatch);
+    assert!(topology.connections[0].reason.contains(&failure.message));
+    assert!(!topology.devices.iter().find(|device| device.deviceId == b.localNodeId()).unwrap().online);
+    assert_eq!(a.spaceStore.deviceProfiles().unwrap(), profiles);
+
+    crate::NodeSpaceService::space_topology::publishLocalTopology(
+        &a.spaceStore, &a.networkControlStore, &a.localNodeId(), &BTreeSet::from([b.localNodeId()]),
+    ).unwrap();
+    assert_eq!(access.deviceSpaceTopology().unwrap().connections, topology.connections);
+
+    peer.link(&b);
+    let topology = access.deviceSpaceTopology().unwrap();
+    assert_eq!(topology.connections.len(), 1);
+    assert!(topology.devices.iter().find(|device| device.deviceId == b.localNodeId()).unwrap().online);
+    assert!(topology.connections.iter().all(|connection|
+        connection.status != crate::RuntimeRemoteLinkService::RuntimeDeviceSpaceConnectionStatus::VersionMismatch));
+}
+
 /// Publishes every device's adjacency through the production helper, then carries the
 /// records the way the Space snapshot exchange does.
 fn publishTree(routers: &[CoreNodeRouter], peers: &[Arc<ApprovalMeshPeer>]) {

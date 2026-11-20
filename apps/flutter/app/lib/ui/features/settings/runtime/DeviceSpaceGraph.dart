@@ -426,7 +426,7 @@ class _DeviceSpaceGraphState extends State<DeviceSpaceGraph>
       motion: motion,
       frame: () => layout.frameAt(index, _mode.value, _orbit.value),
       current: current,
-      incompatible: _deviceVersionMismatch(widget.topology, device),
+      incompatible: deviceSpaceVersionMismatch(widget.topology, device),
       selected: _selectedId == id,
       topologyMode: _topologyMode,
       reduceMotion: _reduceMotion,
@@ -892,7 +892,7 @@ class _GraphDeviceDetails extends StatelessWidget {
                     ),
                     Text(
                       [
-                        _deviceVersionMismatch(topology, device)
+                        deviceSpaceVersionMismatch(topology, device)
                             ? deviceCompatibilityLabel(context)
                             : device.online
                             ? l10n.settingsRuntimePairedOnline
@@ -1028,16 +1028,29 @@ class _GraphCopy {
   };
 }
 
-/// Reads version compatibility relative to the local device, including offline peers.
-bool _deviceVersionMismatch(
-  generated.RuntimeDeviceSpaceTopology topology,
-  generated.RuntimeDeviceSpaceDevice device,
-) => deviceProtocolMismatch(
-  topology.devices
-      .firstWhere((item) => item.deviceId == topology.currentDeviceId)
-      .protocolVersion,
-  device.protocolVersion,
-);
+/// Shares negotiated connection failures and advertised compatibility across device views.
+bool deviceSpaceVersionMismatch(
+  generated.RuntimeDeviceSpaceTopology? topology,
+  generated.RuntimeDeviceSpaceDevice? device,
+) {
+  if (topology == null || device == null) return false;
+  return topology.connections.any(
+        (connection) =>
+            connection.status ==
+                generated.RuntimeDeviceSpaceConnectionStatus.versionMismatch &&
+            ((connection.firstDeviceId == topology.currentDeviceId &&
+                    connection.secondDeviceId == device.deviceId) ||
+                (connection.secondDeviceId == topology.currentDeviceId &&
+                    connection.firstDeviceId == device.deviceId)),
+      ) ||
+      topology.devices.any(
+        (local) =>
+            local.deviceId == topology.currentDeviceId &&
+            local.protocolVersion != null &&
+            device.protocolVersion != null &&
+            local.protocolVersion != device.protocolVersion,
+      );
+}
 
 Color _connectionColor(
   generated.RuntimeDeviceSpaceConnectionStatus status,

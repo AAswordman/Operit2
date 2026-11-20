@@ -47,7 +47,6 @@ struct GateTestApplicationClient {
     control: operit_store::NetworkControlStore::NetworkControlStore,
     storage: Arc<dyn operit_host_api::RuntimeStorageHost>,
     pendingFailure: Arc<std::sync::atomic::AtomicBool>,
-    consistencyVersion: Option<u64>,
 }
 
 impl GateTestApplicationClient {
@@ -89,14 +88,13 @@ impl operit_link::CoreLinkSharedClient for GateTestApplicationClient {
                 )
                 .map_err(|error| error.to_string()),
                 "syncClock" => operit_link::toCoreValue(
-                    serde_json::json!({"ranges":self.gateClock()?.ranges, "protocolVersion":1, "consistencyVersion":self.consistencyVersion, "stateSummary":format!("digest:{}",self.gateSummary()?), "pending":0, "pendingBlobs":[], "errors":self.gateErrors()}),
+                    serde_json::json!({"ranges":self.gateClock()?.ranges, "stateSummary":format!("digest:{}",self.gateSummary()?), "pending":0, "pendingBlobs":[], "errors":self.gateErrors()}),
                 )
                 .map_err(|error| error.to_string()),
                 "syncConsistency" => operit_link::toCoreValue(
                     serde_json::json!({"manifests":[], "errors":self.gateErrors(), "pendingOwners":[], "boundary":operit_store::Transaction::digest(&self.gateClock()?)?}),
                 ).map_err(|error| error.to_string()),
                 "syncClockDigest" => operit_link::toCoreValue(serde_json::json!({
-                    "protocolVersion": 1,
                     "digest": self.gateSummary()?,
                 }))
                 .map_err(|error| error.to_string()),
@@ -201,7 +199,6 @@ pub(super) fn installControlSyncTestApplication(router: &mut CoreNodeRouter) {
         control,
         storage: router.localCore.runtimeStorageHost(),
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        consistencyVersion: Some(9),
     }));
 }
 
@@ -230,7 +227,6 @@ fn gateMesh(
                 control,
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: pendingFailure.clone(),
-                consistencyVersion: Some(9),
             }));
         } else {
             installControlSyncTestApplication(router);
@@ -369,37 +365,19 @@ async fn idle_cycles_probe_clocks_without_repeating_full_exchanges() {
     );
 }
 
-/// Unsupported peers must upgrade before receiving initialization transactions.
+/// Admitted peers exchange and verify contents without a separate receipt protocol.
 #[tokio::test]
-async fn a_peer_without_consistency_support_cannot_complete_until_upgraded() {
+async fn the_unified_protocol_admits_receipts_without_secondary_versions() {
     let _guard = routeTestGlobalLock().lock().await;
     installTestRuntimeScheduler();
-    let (mut routers, _access, peers, _) = gateMesh("sync-old-consistency");
-    let control = routers[0].networkControlStore.clone();
-    let storage = routers[0].localCore.runtimeStorageHost();
-    routers[0].installTestApplicationClient(Arc::new(GateTestApplicationClient {
-        control, storage,
-        pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        consistencyVersion: None,
-    }));
-    peers[1].link(&routers[0]);
+    let (routers, _access, peers, _) = gateMesh("sync-unified-protocol");
     let observer = idleObserver(&routers[1]);
-    let error = observer.synchronizeOnce().await.unwrap_err();
-    assert!(error.contains("compatible version is required"), "{error}");
-    assert_eq!(synchronizedMethodCount(&peers[1], "syncApplyOperations"), 0);
-    assert_eq!(synchronizedMethodCount(&peers[1], "syncConsistency"), 0);
-    assert!(!observer.progressFlow().value().is_empty());
-    peers[1].disconnectPeer(&routers[0].localNodeId()).await.unwrap();
-    observer.synchronizeOnce().await.unwrap();
-    assert!(observer.progressFlow().value().is_empty(), "offline peers must not leave stale errors visible");
-    installControlSyncTestApplication(&mut routers[0]);
-    peers[1].link(&routers[0]);
-    observer.testExpirePeerSyncBackoff(&routers[0].localNodeId());
     observer.synchronizeOnce().await.unwrap();
     assert!(
         synchronizedMethodCount(&peers[1], "syncConsistency") > 0,
-        "upgraded peers must verify contents before the round completes"
+        "unified protocol admission must still require content verification"
     );
+    assert!(observer.progressFlow().value().is_empty());
 }
 
 /// Verifies a failed pass arms the exponential backoff: the immediate retry is
@@ -557,7 +535,6 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
                 control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(9),
             }
             .gateClock()
             .unwrap()
@@ -619,7 +596,6 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
                 control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(9),
             }
             .gateClock()
             .unwrap(),
@@ -858,7 +834,7 @@ async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retr
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(9) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)) },
                 snapshot: snapshots[index].clone(), fault, reports: std::sync::atomic::AtomicUsize::new(0),
                 authority: Arc::new(StdMutex::new(snapshots[usize::from(fault == "larger-older")].lock().unwrap().clone())), faultPending: std::sync::atomic::AtomicBool::new(true),
             }));
@@ -916,7 +892,7 @@ async fn metadata_differences_and_new_incremental_writes_never_start_a_full_tran
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(9) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)) },
                 snapshot: snapshots[index].clone(),
                 fault: if scenario == "new-write" { "new-write" } else { "" },
                 reports: std::sync::atomic::AtomicUsize::new(0),

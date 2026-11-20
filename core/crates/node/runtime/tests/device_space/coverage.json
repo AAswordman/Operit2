@@ -202,10 +202,10 @@
       "level": "real-router-isolated-host",
       "cases": [
         "idle_cycles_probe_clocks_without_repeating_full_exchanges",
-        "a_peer_without_consistency_support_cannot_complete_until_upgraded",
+        "the_unified_protocol_admits_receipts_without_secondary_versions",
         "a_failed_pass_backs_off_before_retrying_the_full_exchange",
         "a_lost_clock_probe_backs_off_instead_of_forcing_a_full_exchange",
-        "rejected_digest_probes_do_not_retry_full_exchanges",
+        "rejected_digest_probes_force_full_correction",
         "preference_edits_reopen_a_settled_storage_provider_gate",
         "preference_edit_during_business_receipt_is_delivered_before_the_gate_settles",
         "partial_plugin_failure_keeps_healthy_replication_moving",
@@ -220,6 +220,7 @@
       "file": "topology_publication.rs",
       "level": "real-router-isolated-host",
       "cases": [
+        "protocol_rejection_projects_an_unavailable_connection_without_mutating_profiles",
         "tree_topology_publication_routes_between_leaves",
         "tree_topology_prunes_a_dropped_direct_link"
       ]

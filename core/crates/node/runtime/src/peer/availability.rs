@@ -18,6 +18,30 @@ pub(super) struct AvailabilityWorker {
 }
 
 impl HostRuntimePeerService {
+    /// Reuses a known protocol rejection without opening another transport connection.
+    pub(super) fn requirePeerProtocolAllowed(&self, node: &str) -> Result<(), CoreLinkError> {
+        match self.state.protocolFailures.lock().unwrap_or_else(|p| p.into_inner()).get(node) {
+            Some(failure) => Err(failure.clone()),
+            None => Ok(()),
+        }
+    }
+
+    /// Retains only outbound negotiation failures; live authenticated channels remain authoritative.
+    pub(super) fn recordPeerProtocolFailure(&self, node: &str, failure: &CoreLinkError) {
+        if !crate::PeerProtocol::PeerProtocol::rejectsConnection(failure) { return; }
+        let mut failures = self.state.protocolFailures.lock().unwrap_or_else(|p| p.into_inner());
+        if self.hasLiveChannel(node) { return; }
+        failures.insert(node.to_owned(), failure.clone());
+        drop(failures);
+        self.changed();
+    }
+
+    /// Allows a new negotiation after an explicit retry or a successful incoming handshake.
+    pub(super) fn clearPeerProtocolFailure(&self, node: &str) {
+        let removed = self.state.protocolFailures.lock().unwrap_or_else(|p| p.into_inner()).remove(node);
+        if removed.is_some() { self.changed(); }
+    }
+
     /// Rejects transport use forbidden by the current shared Space policy.
     pub(super) fn requirePeerConnectionAllowed(&self, node: &str) -> Result<(), CoreLinkError> {
         let storage = self.state.host.runtimeStorageHost.clone()
@@ -110,6 +134,7 @@ impl HostRuntimePeerService {
                                 continue;
                             }
                             if !peer.outbound || service.hasLiveChannel(&peer.nodeId) { continue; }
+                            if service.requirePeerProtocolAllowed(&peer.nodeId).is_err() { continue; }
                             if service.outbound(&peer.nodeId).ok().and_then(|record| parseTransport(&record.transport).ok())
                                 .is_some_and(isNetworkTransport) { needsDiscovery = true; }
                             if connecting.contains(&peer.nodeId) { continue; }

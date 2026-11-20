@@ -10,6 +10,7 @@ pub struct PeerProtocol {
 }
 
 impl PeerProtocol {
+    /// Returns the sole compatibility identity published by the revision ledger.
     pub fn current() -> Self {
         Self { version: VERSION }
     }
@@ -25,6 +26,12 @@ impl PeerProtocol {
         Ok(())
     }
 
+    /// Identifies handshake rejections that keep a peer unavailable until renegotiation.
+    pub(crate) fn rejectsConnection(error: &CoreLinkError) -> bool {
+        matches!(error.code.as_str(), "PEER_PROTOCOL_MISMATCH" | "PEER_PROTOCOL_UPGRADE_REQUIRED")
+    }
+
+    /// Requires every handshake and projection to advertise the unified protocol.
     pub(crate) fn requireAdvertised(protocol: Option<&Self>, phase: &str) -> Result<(), CoreLinkError> {
         let result = protocol.ok_or_else(|| CoreLinkError::new("PEER_PROTOCOL_UPGRADE_REQUIRED",
             "Peer message is missing the required protocol identity"))

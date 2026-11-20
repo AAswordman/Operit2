@@ -944,8 +944,6 @@ impl OperitApplication {
             }
         }
         let mut result = serde_json::to_value(receipt).map_err(|error| error.to_string())?;
-        result["protocolVersion"] = serde_json::json!(1);
-        result["consistencyVersion"] = serde_json::json!(9);
         result["stateSummary"] = serde_json::json!(format!("digest:{summary}"));
         result["pending"] = serde_json::json!(pending.len());
         result["pendingOperationIds"] = serde_json::json!(pending.into_iter().map(|op|op.opId).collect::<Vec<_>>());
@@ -991,7 +989,7 @@ impl OperitApplication {
     #[allow(non_snake_case)]
     pub fn syncClockDigest(&self) -> Result<serde_json::Value, String> {
         let digest = self.runtimeSyncOperationStore()?.synchronizationSummary().map_err(|e|e.to_string())?;
-        Ok(serde_json::json!({"protocolVersion":1,"digest":digest}))
+        Ok(serde_json::json!({"digest":digest}))
     }
 
     /// Exports missing operations while reporting independently unavailable storage engines.

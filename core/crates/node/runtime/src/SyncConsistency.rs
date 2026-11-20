@@ -16,18 +16,6 @@ struct Report {
     skipped: BTreeMap<String, BTreeSet<String>>,
 }
 
-/// Exchanging every known original does not prove equal contents on an older peer.
-pub(super) fn requireConsistencySupport(local: &Value, remote: &Value) -> Result<(), String> {
-    for (side, clock) in [("Local", local), ("Remote", remote)] {
-        if clock.get("consistencyVersion").and_then(Value::as_u64) != Some(9) {
-            return Err(format!(
-                "{side} peer cannot verify synchronized contents; a compatible version is required"
-            ));
-        }
-    }
-    Ok(())
-}
-
 impl SpacePersistenceSyncService {
     async fn consistencyReports(&self, target: &str) -> Result<(Report, Report), String> {
         let (remote, local) = tokio::join!(
@@ -283,14 +271,4 @@ mod tests {
         }
     }
 
-    /// Every peer must support business byte counts and the same correction authority rule.
-    #[test]
-    fn consistency_requires_the_current_protocol() {
-        let current = json!({"consistencyVersion":9});
-        assert!(requireConsistencySupport(&current,&current).is_ok());
-        for previous in (0..9).map(|version|json!({"consistencyVersion":version})).chain([Value::Null,json!({})]) {
-            assert!(requireConsistencySupport(&previous,&current).is_err());
-            assert!(requireConsistencySupport(&current,&previous).is_err());
-        }
-    }
 }

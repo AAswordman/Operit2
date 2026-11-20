@@ -72,7 +72,7 @@ class _GraphPainter extends CustomPainter {
             end.dx,
             end.dy,
           );
-        final color = _deviceVersionMismatch(topology, device)
+        final color = deviceSpaceVersionMismatch(topology, device)
             ? deviceCompatibilityColor(scheme)
             : device.online
             ? scheme.primary

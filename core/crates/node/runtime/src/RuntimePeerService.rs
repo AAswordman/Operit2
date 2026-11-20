@@ -140,6 +140,11 @@ pub trait RuntimePeerService: Send + Sync {
     /// Returns neighbors reachable through the sole authenticated channel, excluding anonymous connections.
     fn activePeerNodeIds(&self) -> Result<std::collections::BTreeSet<String>, CoreLinkError>;
 
+    /// Reports local handshake rejections without changing synchronized device profiles.
+    fn peerProtocolFailures(&self) -> std::collections::BTreeMap<String, CoreLinkError> {
+        std::collections::BTreeMap::new()
+    }
+
     /// 订阅待确认配对、授权或可用性变化；先订阅再读取快照，避免启动时漏掉变化。
     /// 通知不含传输细节；落后接收者重新读取快照，停止服务时唤醒接收者。
     fn subscribePeerChanges(&self) -> tokio::sync::broadcast::Receiver<()>;

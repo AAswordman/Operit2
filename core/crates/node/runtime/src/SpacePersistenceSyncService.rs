@@ -928,7 +928,6 @@ impl SpacePersistenceSyncService {
         let mut seen = BTreeSet::new();
         let mut boundary = None;
         let mut failed = BTreeMap::<String, BTreeSet<String>>::new();
-        let mut compatible = true;
         loop {
             for page in 0..MAX_SYNC_PAGES_PER_PASS {
                 if !self.storageReplicationAllowed(targetNodeId)? { return Ok(false); }
@@ -938,12 +937,8 @@ impl SpacePersistenceSyncService {
                         self.callLocal::<Value>("syncClock", Value::Null),
                     );
                     let (mut local, mut remote) = (local?, remote?);
-                    validateDomainClock(&local, domains, "local")?;
-                    validateDomainClock(&remote, domains, "remote")?;
-                    if let Err(error) = consistency::requireConsistencySupport(&local, &remote) {
-                        compatible = false;
-                        return Err(error);
-                    }
+                    validateSyncReceipt(&local, "local")?;
+                    validateSyncReceipt(&remote, "remote")?;
                     boundary = Some((local.clone(), remote.clone()));
                     self.recordPendingWork(targetNodeId, "local receipt", &local);
                     self.recordPendingWork(targetNodeId, "remote receipt", &remote);
@@ -987,7 +982,7 @@ impl SpacePersistenceSyncService {
                     Ok(false) => continue,
                     Ok(true) => break,
                     Err(error) => {
-                        if !compatible || SYNC_NETWORK_FAILURE.try_with(std::cell::Cell::get).unwrap_or(false) { return Err(error); }
+                        if SYNC_NETWORK_FAILURE.try_with(std::cell::Cell::get).unwrap_or(false) { return Err(error); }
                         self.recordPendingWork(targetNodeId, "incremental exchange", &json!({"errors":[error]}));
                         break;
                     }
@@ -1430,12 +1425,9 @@ fn persistenceServices() -> &'static Mutex<BTreeMap<String, Weak<SpacePersistenc
     SPACE_SYNC_SERVICES.get_or_init(|| Mutex::new(BTreeMap::new()))
 }
 
-/// Rejects only the requested domains whose durable clocks could not be read.
+/// Validates receipt intervals after the unified peer protocol has been admitted.
 #[allow(non_snake_case)]
-fn validateDomainClock(clock: &Value, _domains: &[&str], side: &str) -> Result<(), String> {
-    if clock.get("protocolVersion").and_then(Value::as_u64) != Some(1) {
-        return Err(format!("{side} synchronization receipt protocol mismatch"));
-    }
+fn validateSyncReceipt(clock: &Value, side: &str) -> Result<(), String> {
     let receipt: operit_store::SyncOperationStore::SyncReceipt =
         serde_json::from_value(clock.clone())
             .map_err(|error| format!("{side} synchronization receipt: {error}"))?;
@@ -1728,10 +1720,10 @@ mod page_budget_tests {
     #[test]
     fn plugin_clock_failures_are_isolated_from_core_domains() {
         let clock = json!({
-            "protocolVersion": 1, "ranges": {"core": [[1,7]]},
+            "ranges": {"core": [[1,7]]},
             "errors": ["invalid plugin catalog"],
         });
-        assert!(validateDomainClock(&clock, &SYNC_DOMAINS, "local").is_ok());
+        assert!(validateSyncReceipt(&clock, "local").is_ok());
         let durable: operit_store::SyncOperationStore::SyncReceipt = serde_json::from_value(clock).unwrap();
         assert_eq!(durable.ranges["core"], vec![[1,7]]);
     }
@@ -1739,8 +1731,8 @@ mod page_budget_tests {
     /// Clears a plugin clock error only when the actual clock can be read again.
     #[test]
     fn recovered_plugin_clock_can_synchronize_again() {
-        let clock = json!({"protocolVersion": 1, "ranges": {"plugin": [[1,2]]}, "errors": []});
-        assert!(validateDomainClock(&clock, &SYNC_DOMAINS, "local").is_ok());
+        let clock = json!({"ranges": {"plugin": [[1,2]]}, "errors": []});
+        assert!(validateSyncReceipt(&clock, "local").is_ok());
     }
 
 

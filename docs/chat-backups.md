@@ -57,8 +57,9 @@ restore lineage; rolling database sequence counters back cannot reuse an old
 operation identity. Peers that have adopted the baseline can exchange new edits
 normally. Older initializers cannot replace a newer restore lineage.
 
-Consistency protocol version 9 requires both endpoints to understand this authority
-rule. Incompatible endpoints are refused before operation exchange.
+The unified peer protocol requires both endpoints to understand this authority
+rule. Incompatible endpoints are refused during connection negotiation; routed
+synchronization checks the same protocol on its final target before operation exchange.
 
 ## Scheduling and retention
 

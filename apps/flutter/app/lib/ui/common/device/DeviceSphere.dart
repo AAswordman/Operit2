@@ -4,10 +4,6 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
-/// Compares advertised protocol versions without inferring missing identities.
-bool deviceProtocolMismatch(int? local, int? remote) =>
-    local != null && remote != null && local != remote;
-
 /// Uses an amber accent for connections rejected by protocol negotiation.
 Color deviceCompatibilityColor(ColorScheme scheme) =>
     scheme.brightness == Brightness.dark

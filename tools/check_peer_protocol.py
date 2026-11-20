@@ -15,18 +15,16 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def check_revisions(current, previous=None):
+    """Require immutable history and increasing compatibility versions."""
     revisions = current["revisions"]
     last = 0
-    hashes = set()
     for revision in revisions:
         version, fingerprint = revision["version"], revision["hash"]
         if (type(version) is not int or not last < version <= 0xFFFFFFFF
                 or len(fingerprint) != 64
-                or any(c not in "0123456789abcdef" for c in fingerprint)
-                or fingerprint in hashes):
-            raise ValueError("Protocol revisions require increasing positive u32 versions and unique lowercase SHA-256 hashes")
+                or any(c not in "0123456789abcdef" for c in fingerprint)):
+            raise ValueError("Protocol revisions require increasing positive u32 versions and lowercase SHA-256 hashes")
         last = version
-        hashes.add(fingerprint)
     if not revisions:
         raise ValueError("Protocol revisions cannot be empty")
     if previous is not None:

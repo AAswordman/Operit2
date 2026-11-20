@@ -261,6 +261,8 @@ struct State {
     discovery: discovery::DiscoveryState,
     lifecycle: AsyncMutex<()>,
     connectLocks: Mutex<BTreeMap<String, Weak<AsyncMutex<()>>>>,
+    /// Local protocol rejections pause dialing without persisting a Space policy change.
+    protocolFailures: Mutex<BTreeMap<String, CoreLinkError>>,
     /// Cross-session budgets for unauthenticated pairing work.
     pairingThrottle: Mutex<PairingThrottle>,
     invitation: Mutex<Option<PairingInvitation>>,
@@ -318,6 +320,7 @@ impl HostRuntimePeerService {
                 discovery: discovery::DiscoveryState::default(),
                 lifecycle: AsyncMutex::new(()),
                 connectLocks: Mutex::new(BTreeMap::new()),
+                protocolFailures: Mutex::new(BTreeMap::new()),
                 pairingThrottle: Mutex::new(PairingThrottle::default()),
             invitation: Mutex::new(None),
                 mutation: Mutex::new(()),
@@ -448,6 +451,7 @@ impl HostRuntimePeerService {
     fn forgetPairingRecordsLocked(&self, nodeIds: &[String]) -> Result<(), CoreLinkError> {
         for nodeId in nodeIds {
             self.state.store.removePairedPeer(nodeId).map_err(error)?;
+            self.clearPeerProtocolFailure(nodeId);
         }
         Ok(())
     }
@@ -491,7 +495,11 @@ impl HostRuntimePeerService {
                 .unwrap_or_else(|_| Err(CoreLinkError::new("PEER_CONNECT_TIMEOUT", "Peer authentication timed out")));
             match result {
                 Ok(value) => return Ok((value, raw, address.clone(), *transport)),
-                Err(error) => { raw.close().await; failure = error; }
+                Err(error) => {
+                    raw.close().await;
+                    if crate::PeerProtocol::PeerProtocol::rejectsConnection(&error) { return Err(error); }
+                    failure = error;
+                }
             }
         }
         Err(failure)
@@ -601,6 +609,7 @@ impl HostRuntimePeerService {
         }
         channels.insert(node.into(), Arc::downgrade(channel));
         drop(channels);
+        self.clearPeerProtocolFailure(node);
         self.refreshPeerAvailability(node);
         Ok(())
     }
@@ -715,6 +724,7 @@ impl HostRuntimePeerService {
     pub(super) async fn acquireChannel(&self, node: &str) -> Result<Arc<MultiplexedChannel>, CoreLinkError> {
         self.requirePeerConnectionAllowed(node)?;
         if let Some(channel) = self.peerChannel(node) { return Ok(channel); }
+        self.requirePeerProtocolAllowed(node)?;
         let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.as_ref()
             .ok_or_else(|| error("Host scheduler is not installed"))?;
         let service = self.clone();
@@ -758,12 +768,15 @@ impl HostRuntimePeerService {
             let _connect = lock.lock().await;
             self.requirePeerConnectionAllowed(node)?;
             if let Some(channel) = self.peerChannel(node) { return Ok(channel); }
+            self.requirePeerProtocolAllowed(node)?;
             let record = self.outbound(node)?;
             let root = BASE64.decode(&record.sessionSecret).map_err(|_| error("Invalid stored credential"))?;
             let endpoints = self.reconnectionEndpoints(node, &record)?;
-            let ((channel, _, _, _, _), raw, address, transport) = self.tryPeerEndpoints(node, &endpoints, |raw| {
+            let connection = self.tryPeerEndpoints(node, &endpoints, |raw| {
                 self.handshake(raw, "session", &record.sessionId, Some(&root), None, None)
-            }).await?;
+            }).await;
+            if let Err(failure) = &connection { self.recordPeerProtocolFailure(node, failure); }
+            let ((channel, _, _, _, _), raw, address, transport) = connection?;
             if let Err(failure) = self.requirePeerConnectionAllowed(node)
                 .and_then(|_| self.saveAuthenticatedEndpoint(node, &record, &address, transport)) {
                 raw.close().await;
@@ -1054,6 +1067,8 @@ impl RuntimePeerService for HostRuntimePeerService {
     /// Returns only unpaired candidates using the current state after discovery completes.
     async fn discoverPeers(&self, timeoutMs: u64) -> Result<Vec<DiscoveredPeer>, CoreLinkError> {
         if timeoutMs == 0 { return Err(error("Discovery timeout must be positive")); }
+        self.state.protocolFailures.lock().unwrap_or_else(|p| p.into_inner()).clear();
+        self.changed();
         self.refreshDiscovery(timeoutMs, false).await.scan?;
         let records = self.discoveryRecords();
         let pairedNodeIds = self.state.store.pairedPeers(&self.state.nodeId).map_err(error)?
@@ -1249,6 +1264,7 @@ impl RuntimePeerService for HostRuntimePeerService {
         for channel in channels.into_values().filter_map(|channel| channel.upgrade()) { channel.close().await; }
         let connections = std::mem::take(&mut *self.state.connections.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
         for raw in connections.into_values().flatten().filter_map(|v| v.upgrade()) { raw.close().await; }
+        self.state.protocolFailures.lock().unwrap_or_else(|p| p.into_inner()).clear();
         self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear(); self.changed(); Ok(())
     }
     /// Keeps transport authorization, exchange and reply decoding on the Host async worker.
@@ -1298,11 +1314,16 @@ impl RuntimePeerService for HostRuntimePeerService {
         }
         operit_util::AppLogger::AppLogger::i("RuntimePeerService", &format!(
             "Dial endpoint updated by operator peer={node} endpoint={}", parsed.rendered));
+        self.clearPeerProtocolFailure(node);
         let _ = self.acquireChannel(node).await;
         Ok(())
     }
     fn outboundPeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> { Ok(self.pairedPeers()?.into_iter().filter(|p| p.outbound).map(|p| p.nodeId).collect()) }
     fn activePeerNodeIds(&self) -> Result<BTreeSet<String>, CoreLinkError> { Ok(self.state.active.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()) }
+    /// Returns the same negotiation failures used to pause automatic dialing.
+    fn peerProtocolFailures(&self) -> BTreeMap<String, CoreLinkError> {
+        self.state.protocolFailures.lock().unwrap_or_else(|p| p.into_inner()).clone()
+    }
     fn subscribePeerChanges(&self) -> broadcast::Receiver<()> { self.state.changes.subscribe() }
     fn pairingPrompts(&self) -> Result<Vec<PairingPrompt>, CoreLinkError> {
         Ok(self.pendingRecords(RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH)?.into_values()
@@ -1626,6 +1647,7 @@ mod single_channel_tests {
             active: Mutex::default(), changes: broadcast::channel(32).0, availability: Mutex::new(None),
             lifecycle: AsyncMutex::new(()), mutation: Mutex::new(()),
             connectLocks: Mutex::default(),
+            protocolFailures: Mutex::default(),
             discovery: discovery::DiscoveryState::default(),
             pairingThrottle: Mutex::new(PairingThrottle::default()),
             invitation: Mutex::new(None),
@@ -1640,6 +1662,42 @@ mod single_channel_tests {
             &[7; 32], b"test", false, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES).unwrap();
         let side = dispatch::InboundSide::new(service(), "peer".into(), "test".into(), dispatch::Authorization::Inbound);
         MultiplexedChannel::start(encrypted, scheduler, side, || {}).unwrap()
+    }
+
+    /// Protocol rejection prevents every subsequent acquisition from scheduling transport work.
+    #[tokio::test]
+    async fn incompatible_peers_remain_unavailable_without_repeated_dialing() {
+        for protocol in [None, Some(crate::PeerProtocol::PeerProtocol { version: crate::PeerProtocol::VERSION - 1 })] {
+            let scheduler = Arc::new(QueuedScheduler::default());
+            let service = serviceWithScheduler(scheduler.clone());
+            let failure = crate::PeerProtocol::PeerProtocol::requireAdvertised(protocol.as_ref(), "received hello reply").unwrap_err();
+            let mut changes = service.subscribePeerChanges();
+            service.recordPeerProtocolFailure("peer", &failure);
+            changes.try_recv().unwrap();
+            for _ in 0..3 {
+                assert_eq!(service.acquireChannel("peer").await.err().unwrap(), failure);
+            }
+            assert!(scheduler.tasks.lock().unwrap().is_empty());
+            assert!(service.activePeerNodeIds().unwrap().is_empty());
+            assert_eq!(service.peerProtocolFailures()["peer"], failure);
+            service.clearPeerProtocolFailure("peer");
+            assert!(service.requirePeerProtocolAllowed("peer").is_ok());
+        }
+    }
+
+    /// An authenticated replacement clears rejection while transient network faults never latch it.
+    #[tokio::test]
+    async fn compatible_incoming_channels_restore_protocol_availability() {
+        let service = service();
+        service.recordPeerProtocolFailure("peer", &CoreLinkError::new("PEER_CONNECT_TIMEOUT", "temporary"));
+        assert!(service.peerProtocolFailures().is_empty());
+        service.recordPeerProtocolFailure("peer", &CoreLinkError::new("PEER_PROTOCOL_MISMATCH", "incompatible"));
+        let channel = callableChannel();
+        service.registerChannel("peer", &channel).unwrap();
+        assert!(service.peerProtocolFailures().is_empty());
+        assert!(Arc::ptr_eq(&service.acquireChannel("peer").await.unwrap(), &channel));
+        service.recordPeerProtocolFailure("peer", &CoreLinkError::new("PEER_PROTOCOL_MISMATCH", "stale attempt"));
+        assert!(service.peerProtocolFailures().is_empty());
     }
 
     /// A caller cancelled before dispatch cannot open transport or execute its queued request.

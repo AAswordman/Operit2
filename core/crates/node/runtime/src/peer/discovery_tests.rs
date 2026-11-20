@@ -95,6 +95,41 @@ async fn waitUntil(mut ready: impl FnMut() -> bool) {
     }).await.expect("background reconnection completed");
 }
 
+/// A rejected handshake stops dialing all endpoints until the operator explicitly retries.
+#[tokio::test]
+async fn protocol_rejection_survives_background_discovery_without_repeated_dialing() {
+    let discovery = Arc::new(Discovery::default());
+    let client = service("client", Some(discovery));
+    let original = outbound(&client, "server");
+    let listener = client.state.link.listen(client.state.host.clone(), PeerEndpoint {
+        nodeId: "server".into(), address: "127.0.0.1:0".into(),
+    }, PeerTransport::Tcp).await.unwrap();
+    client.rememberDiscoveryRecords(&[advertisement("server", &listener.localAddress().unwrap())]);
+    let rejection = CoreLinkError::new("PEER_PROTOCOL_MISMATCH", "Incompatible peer protocol");
+    let (attempt, raw) = tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::join!(client.acquireChannel("server"), async {
+            let raw = listener.accept().await.unwrap().unwrap();
+            let request = readCall(&raw, "hello").await.unwrap();
+            sendError(&raw, request.requestId, rejection.clone()).await.unwrap();
+            raw
+        })
+    }).await.expect("protocol rejection must return without trying the saved WebSocket endpoint");
+    assert_eq!(attempt.err().unwrap(), rejection);
+    raw.close().await;
+    client.refreshDiscovery(1, false).await.scan.unwrap();
+    assert_eq!(client.peerProtocolFailures()["server"], rejection);
+    for _ in 0..3 {
+        assert_eq!(client.acquireChannel("server").await.err().unwrap(), rejection);
+    }
+    assert!(tokio::time::timeout(Duration::from_millis(100), listener.accept()).await.is_err());
+    assert!(client.activePeerNodeIds().unwrap().is_empty());
+    assert_eq!(client.outbound("server").unwrap().endpoint, original.endpoint);
+    client.discoverPeers(1).await.unwrap();
+    assert!(client.peerProtocolFailures().is_empty());
+    listener.close().await;
+    client.stop().await.unwrap();
+}
+
 /// A new random listening port reconnects without opening discovery UI or entering another code.
 #[tokio::test]
 async fn mdns_reconnects_and_persists_the_authenticated_random_port() {
