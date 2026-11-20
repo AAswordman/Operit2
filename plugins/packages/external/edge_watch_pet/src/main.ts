@@ -44,7 +44,7 @@ async function request(ctx: ComposeDslContext, args: unknown[]): Promise<unknown
 }
 
 /** Mounts one offline document and exposes its typed settings bridge. */
-function studio(ctx: ComposeDslContext): ComposeNode {
+export function studio(ctx: ComposeDslContext): ComposeNode {
   const controller = ctx.createWebViewController("watch-studio");
   const [file, setFile] = ctx.useState("watch-studio-file", "");
   const [error, setError] = ctx.useState("watch-studio-error", "");

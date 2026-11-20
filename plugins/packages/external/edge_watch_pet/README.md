@@ -18,3 +18,9 @@
 tsc -p plugins/packages/external/edge_watch_pet/tsconfig.json
 .venv/Scripts/python.exe -X utf8 -c "from pathlib import Path; from plugins.tools.sync_plugin_packages import _pack_toolpkg_folder; root=Path.cwd(); _pack_toolpkg_folder(root, root/'plugins/packages/external/edge_watch_pet', root/'plugins/.out/edge_watch_pet.toolpkg')"
 ```
+
+编译后运行页面注册回归测试，验证宿主可通过模块导出重新加载桌宠页面：
+
+```sh
+node --test plugins/packages/external/edge_watch_pet/tests/registration.test.mjs
+```

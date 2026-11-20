@@ -273,8 +273,12 @@ impl PackageRegistryScanner {
         let mut result = PackageScanCandidateResult {
             phase: "external".into(), sourcePath: sourcePath.into(), ..Default::default()
         };
+        let mut packageName = None;
+        let mut displayName = packageProgressDisplayName(sourcePath);
         let scanned = (|| -> Result<Option<ToolPkgLoadResult>, String> {
             let manifest = ToolPkgArchiveParser::readToolPkgManifest(bytes)?;
+            packageName = Some(manifest.toolpkgId.clone());
+            displayName = manifest.displayName.resolve(false);
             if !isBuiltIn {
                 if let Some(issue) = activation.shadowedIssue(&manifest.toolpkgId, configScope.as_str(), sourcePath) {
                     result.issues.push(issue);
@@ -316,7 +320,7 @@ impl PackageRegistryScanner {
         match scanned {
             Ok(loaded) => result.toolPkgLoadResult = loaded,
             Err(error) => result.issues.push(newToolPkgLoadIssue(
-                sourcePath.into(), None, packageProgressDisplayName(sourcePath),
+                sourcePath.into(), packageName, displayName,
                 "toolpkg_load", error,
                 packageLoadIssueKind(sourcePath, true, sourceType == ToolPkgSourceType::MARKET),
             )),

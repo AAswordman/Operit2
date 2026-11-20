@@ -1,22 +1,18 @@
-import { onAppLifecycle, onChatState, onToolLifecycle, INDICATOR_ROUTE } from "./indicator";
-import { indicatorScreen, statusScreen } from "./ui";
+import { beginOperation, completeOperation, onAppLifecycle, onChatState, onToolLifecycle, INDICATOR_ROUTE } from "./indicator";
+import { indicatorScreen } from "./ui";
 
-export { onAppLifecycle, onChatState, onToolLifecycle, indicatorScreen, statusScreen };
+export { onAppLifecycle, onChatState, onToolLifecycle, indicatorScreen };
 
-const STATUS_ROUTE = "toolpkg:com.operit.ui_automation:ui:status";
+// Registration capture and runtime execution use different engines. IPC loads
+// this module without invoking registerToolPkg, so handlers belong at module scope.
+ToolPkg.ipc.on<{ chatId: string }, void>("ui_automation.begin", ({ chatId }) => beginOperation(chatId));
+ToolPkg.ipc.on<{ chatId: string }, void>("ui_automation.complete", ({ chatId }) => completeOperation(chatId));
 
 /** Registers the plugin-owned surfaces and their runtime hooks. */
 export function registerToolPkg(): boolean {
   ToolPkg.registerUiRoute({
     id: "indicator", route: INDICATOR_ROUTE, runtime: "compose_dsl", screen: indicatorScreen,
     title: { zh: "自动化运行提示", en: "Automation activity" },
-  });
-  const title = { zh: "UI 自动化", en: "UI Automation" };
-  ToolPkg.registerUiRoute({
-    id: "status", route: STATUS_ROUTE, runtime: "compose_dsl", screen: statusScreen, title,
-  });
-  ToolPkg.registerNavigationEntry({
-    id: "status", route: STATUS_ROUTE, surface: "toolbox", icon: "TouchApp", title,
   });
   for (const event of ["application_on_foreground", "application_on_background", "application_on_terminate"] as const) {
     ToolPkg.registerAppLifecycleHook({ id: event, event, function: onAppLifecycle });

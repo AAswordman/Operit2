@@ -5618,7 +5618,7 @@ fn packageProgressDisplayName(sourcePath: &str) -> String {
         .unwrap_or_else(|| sourcePath.to_string())
 }
 
-/// Builds one structured issue with the canonical package-manager field names.
+/// Records new diagnostics in both application and plugin logs before exposing them to the UI.
 #[allow(non_snake_case)]
 fn newToolPkgLoadIssue(
     sourcePath: String,
@@ -5628,7 +5628,7 @@ fn newToolPkgLoadIssue(
     message: String,
     packageKind: &str,
 ) -> ToolPkgLoadIssue {
-    ToolPkgLoadIssue {
+    let issue = ToolPkgLoadIssue {
         sourcePath,
         packageName,
         displayName: if displayName.trim().is_empty() {
@@ -5639,7 +5639,15 @@ fn newToolPkgLoadIssue(
         code: code.to_string(),
         message,
         packageKind: packageKind.to_string(),
+    };
+    let message = format!("event=plugin.package.load_issue {}",
+        serde_json::to_string(&issue).expect("ToolPkg load issue must serialize"));
+    if matches!(code, "duplicate_scope" | "duplicate_package") {
+        AppLogger::w("ToolPkg", &message);
+    } else {
+        AppLogger::e("ToolPkg", &message);
     }
+    issue
 }
 
 /// Appends only issues that are not already present in a package-manager list.

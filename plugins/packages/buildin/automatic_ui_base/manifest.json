@@ -6,8 +6,8 @@
   "main": "dist/main.js",
   "display_name": { "zh": "UI 自动化", "en": "UI Automation" },
   "description": {
-    "zh": "让 AI 读取和操作系统界面，在当前宿主允许的范围内显示运行状态球和边框。",
-    "en": "Lets the AI read and operate device interfaces and shows an activity orb and outline within the host's supported window scope."
+    "zh": "让 AI 读取和操作系统界面，操作时自动显示悬浮状态球和边框，并通过 complete_ui_operation 结束操作、关闭提示。",
+    "en": "Lets the AI read and operate device interfaces with an automatic activity overlay, dismissed by complete_ui_operation when operations finish."
   },
   "enabled_by_default": false,
   "subpackages": [{ "id": "Automatic_ui_base", "entry": "dist/tools.js" }]

@@ -809,6 +809,48 @@ async fn invalid_and_partial_staging_never_replace_the_owned_archive() {
     }
 }
 
+/// A registration failure visible in the manager must also be an error-level plugin log.
+#[test]
+fn registration_load_issues_are_logged_without_relogging_ui_reads() {
+    let _serial = serialTest();
+    let fixture = LocalUpdateFixture::new();
+    fixture.install("device");
+    let mut entries = packageEntries(TEST_ID, Some("device"), "2.0.0", "v2", &[]);
+    entries.iter_mut().find(|(name, _)| name == "main.js").unwrap().1 = r#"
+        function studio() {}
+        exports.registerToolPkg = function() {
+            ToolPkg.registerUiRoute({id: 'studio', screen: studio});
+        };
+    "#.into();
+    fixture.storage.writeBytes(&fixture.archiveKey(), &archiveEntries(entries)).unwrap();
+    let mut manager = fixture.manager.lock().unwrap();
+    manager.loadAvailablePackages();
+    let issue = manager.getToolPkgLoadIssues().into_iter()
+        .find(|issue| issue.message.contains("requires an exported ToolPkg function reference"))
+        .expect("broken route must remain visible as a load diagnostic");
+    assert_eq!(issue.packageName.as_deref(), Some(TEST_ID));
+    let logged = || AppLogger::entries().into_iter()
+        .filter(|entry| entry.tag == "ToolPkg" && entry.message.contains(&issue.sourcePath)
+            && entry.message.contains("requires an exported ToolPkg function reference"))
+        .collect::<Vec<_>>();
+    let logs = logged();
+    assert!(!logs.is_empty(), "UI load diagnostic was omitted from plugin logs");
+    let entry = logs.last().unwrap();
+    assert_eq!(entry.priority, operit_util::AppLogger::ERROR);
+    let payload = entry.message.strip_prefix("event=plugin.package.load_issue ").unwrap();
+    let fields: Value = serde_json::from_str(payload).unwrap();
+    assert_eq!(fields["sourcePath"], issue.sourcePath);
+    assert_eq!(fields["packageName"], TEST_ID);
+    assert_eq!(fields["code"], issue.code);
+    assert_eq!(fields["message"], issue.message);
+    let count = logs.len();
+    manager.getToolPkgLoadIssues();
+    manager.getToolPkgLoadIssues();
+    assert_eq!(logged().len(), count, "reading diagnostics must not emit new errors");
+    manager.loadAvailablePackages();
+    assert_eq!(logged().len(), count + 1, "a failed registration retry must emit its own error");
+}
+
 #[tokio::test(flavor = "current_thread")]
 async fn partial_descriptor_write_is_restored_from_original_bytes() {
     let _serial = serialTest();

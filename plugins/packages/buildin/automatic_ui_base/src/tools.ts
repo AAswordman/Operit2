@@ -16,8 +16,8 @@
         {
             "name": "usage_advice",
             "description": {
-                "zh": "先用 list_windows 发现系统窗口及其 windowId，再用 focus_window 聚焦目标窗口，用 get_page_info(window_id) 获取基于完整原生树生成的精简文本摘要。窗口 ID 只对当前系统会话有效，窗口关闭后须重新列出。根据文本、资源标识、内容描述或边界定位元素；用 index 选择同名元素，partialMatch 显式启用部分匹配。坐标使用树中的屏幕坐标系。操作后重新取摘要确认结果。未授权或平台不支持时报告实际错误。",
-                "en": "Discover system windows with list_windows, focus the target windowId with focus_window, then read a compact text summary of its complete native tree with get_page_info(window_id). Window IDs belong to the current session; refresh discovery after a window closes. Target elements by text, resource ID, description or bounds; use index for duplicates and partialMatch for explicit substring matching. Use the tree's screen coordinates and read a fresh summary after input. Report permission or platform errors."
+                "zh": "先用 list_windows 发现系统窗口及其 windowId，再用 focus_window 聚焦目标窗口，用 get_page_info(window_id) 获取基于完整原生树生成的精简文本摘要。窗口 ID 只对当前系统会话有效，窗口关闭后须重新列出。根据文本、资源标识、内容描述或边界定位元素；用 index 选择同名元素，partialMatch 显式启用部分匹配。坐标使用树中的屏幕坐标系。操作后重新取摘要确认结果。未授权或平台不支持时报告实际错误。UI 操作期间自动显示悬浮提示；完成操作或放弃操作时，必须调用 complete_ui_operation 结束当前 UI 操作并关闭提示，然后再回复用户。",
+                "en": "Discover system windows with list_windows, focus the target windowId with focus_window, then read a compact text summary of its complete native tree with get_page_info(window_id). Window IDs belong to the current session; refresh discovery after a window closes. Target elements by text, resource ID, description or bounds; use index for duplicates and partialMatch for explicit substring matching. Use the tree's screen coordinates and read a fresh summary after input. Report permission or platform errors. An activity overlay appears during UI operations. After completing or abandoning UI operations, you must call complete_ui_operation to end the current UI operation and dismiss its indicator before replying to the user."
             },
             "parameters": [],
             "advice": true,
@@ -28,6 +28,15 @@
                 },
                 "icon": "info"
             }
+        },
+        {
+            "name": "complete_ui_operation",
+            "description": {
+                "zh": "结束当前对话的 UI 自动化操作并关闭悬浮提示。完成或放弃 UI 操作后、回复用户前调用；重复调用安全。如有其他对话仍在操作，提示保留至最后一个对话完成。再次使用 UI 自动化工具会重新显示提示。",
+                "en": "Finish this chat's UI automation and dismiss its activity overlay. Call after completing or abandoning UI operations, before replying to the user. Safe to repeat. The overlay stays while other chats are still operating. A subsequent UI automation tool shows it again."
+            },
+            "parameters": [],
+            "display": { "label": { "zh": "完成 UI 操作", "en": "Complete UI operation" }, "icon": "check" }
         },
         {
             "name": "app_launch",
@@ -528,15 +537,27 @@ const UIAutomationTools = (() => {
     }
 
     /** Adapts a typed handler to the package completion boundary without alternate actions. */
-    function asTool<P>(handler: (params: P) => Promise<ToolResponse>): (params: P) => Promise<void> {
+    function asTool<P>(handler: (params: P) => Promise<ToolResponse>, startsOperation = true): (params: P) => Promise<void> {
         /** Reports the actual operation result or failure to the package caller. */
         return async function (params: P): Promise<void> {
             try {
+                const chatId = getChatId();
+                if (startsOperation && chatId) {
+                    await ToolPkg.ipc.call("ui_automation.begin", { chatId }, { targetRuntime: "main" });
+                }
                 complete(await handler(params));
             } catch (error: unknown) {
                 complete({ success: false, message: error instanceof Error ? error.message : String(error) });
             }
         };
+    }
+
+    /** Awaits the owning main runtime instead of changing isolated tool-runtime state. */
+    async function complete_ui_operation(): Promise<ToolResponse> {
+        const chatId = getChatId();
+        if (!chatId) throw new Error('当前调用没有对话上下文，无法结束 UI 操作');
+        await ToolPkg.ipc.call("ui_automation.complete", { chatId }, { targetRuntime: "main" });
+        return { success: true, message: '当前对话的 UI 操作已完成；悬浮提示已释放，其他对话仍在操作时继续显示' };
     }
 
     /** Reports package readiness without performing any device input. */
@@ -545,6 +566,7 @@ const UIAutomationTools = (() => {
     }
 
     return {
+        complete_ui_operation: asTool(complete_ui_operation, false),
         list_windows: asTool(list_windows),
         focus_window: asTool(focus_window),
         get_page_info: asTool(get_page_info),
@@ -562,6 +584,7 @@ const UIAutomationTools = (() => {
 })();
 
 exports.get_page_info = UIAutomationTools.get_page_info;
+exports.complete_ui_operation = UIAutomationTools.complete_ui_operation;
 exports.list_windows = UIAutomationTools.list_windows;
 exports.focus_window = UIAutomationTools.focus_window;
 exports.app_launch = UIAutomationTools.app_launch;

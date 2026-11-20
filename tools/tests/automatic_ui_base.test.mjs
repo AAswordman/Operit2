@@ -17,11 +17,25 @@ const compiled = ts.transpileModule(source, {
 }).outputText;
 
 /** Loads the migrated package with recorded system calls and real completion behavior. */
-function runtime(tools = {}, call = async () => { throw new Error('Unexpected tool call'); }) {
+function runtime(tools = {}, call = async () => { throw new Error('Unexpected tool call'); }, { chatId, ipc = async () => {} } = {}) {
   const results = [];
-  const context = vm.createContext({ exports: {}, Tools: tools, toolCall: call, complete: result => results.push(result) });
+  const context = vm.createContext({ exports: {}, Tools: tools, toolCall: call, getChatId: () => chatId, ToolPkg: { ipc: { call: ipc } }, complete: result => results.push(result) });
   vm.runInContext(compiled, context);
-  return { tools: context.exports, results };
+  return { context, tools: context.exports, results };
+}
+
+/** Runs the production IPC dispatcher with an explicit native-owned call context. */
+function installIpc(context, kind = 'main', invoke) {
+  context.__operitCurrentCallId = 'automation-test';
+  context.__operitGetCallState = () => ({ toolPkgContext: {
+    packageTarget: manifest.toolpkg_id,
+    contextKey: `toolpkg_main:${manifest.toolpkg_id}`,
+    runtime: kind,
+  } });
+  context.__operitNativeInvokeToolPkgIpc = invoke;
+  context.__operitInvokeHostAsync = async (binding, args, decode) => decode(await binding(...args));
+  vm.runInContext(readFileSync(new URL('../../core/crates/plugin/javascript-bridge/src/javascript/JsToolPkgIpc.script.js', import.meta.url), 'utf8'), context);
+  context.ToolPkg.ipc = context.__operitToolPkgIpc;
 }
 
 /** Converts values crossing the VM boundary into ordinary test objects. */
@@ -37,7 +51,7 @@ test('the ToolPkg preserves the existing namespace, default disabled state and t
   assert.throws(() => readFileSync(new URL('../automatic_ui_base.ts', root)), { code: 'ENOENT' });
   assert.equal(metadata.name, 'Automatic_ui_base');
   assert.equal(metadata.enabledByDefault, true);
-  assert.equal(metadata.tools.length, 13);
+  assert.equal(metadata.tools.length, 14);
   const { tools } = runtime();
   for (const tool of metadata.tools) {
     assert.ok(tool.display.label.zh.trim(), tool.name);
@@ -121,14 +135,14 @@ test('provider failures remain errors and package main performs no input', async
 });
 
 /** Loads the actual plugin modules with a recorded floating-window host. */
-function indicatorRuntime({ scope = 'system', permissionGranted = true } = {}) {
+function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFailures = 0, register = true } = {}) {
   const routes = new Map();
   const hooks = new Map();
   const windows = new Map([['other-surface', { id: 'other-surface' }]]);
   const commands = [];
   const context = vm.createContext({ console, ToolPkg: {
     registerUiRoute(definition) { routes.set(definition.id, definition); },
-    registerNavigationEntry(entry) { assert.equal(entry.route, routes.get('status').route); },
+    registerNavigationEntry() { assert.fail('Automation must not create a standalone page'); },
     registerAppLifecycleHook(definition) { hooks.set(definition.event, definition.function); },
     registerChatRuntimeHook(definition) { hooks.set('state_changed', definition.function); },
     registerToolLifecycleHook(definition) { hooks.set('tool_lifecycle', definition.function); },
@@ -142,11 +156,13 @@ function indicatorRuntime({ scope = 'system', permissionGranted = true } = {}) {
         commands.push(['open', plain(request)]);
       },
       async close(id) {
+        if (closeFailures > 0) { closeFailures--; throw new Error('Host close failed'); }
         assert.ok(windows.delete(id));
         commands.push(['close', id]);
       },
     } },
   } });
+  installIpc(context);
   const modules = new Map();
 
   /** Resolves the same relative imports used by the packaged CommonJS modules. */
@@ -163,9 +179,11 @@ function indicatorRuntime({ scope = 'system', permissionGranted = true } = {}) {
   }
 
   const main = load('main');
-  assert.equal(main.registerToolPkg(), true);
+  if (register) assert.equal(main.registerToolPkg(), true);
   assert.deepEqual(commands, []);
   return { context, commands, routes, windows,
+    begin(chatId) { return context.ToolPkg.ipc.call('ui_automation.begin', { chatId }); },
+    complete(chatId) { return context.ToolPkg.ipc.call('ui_automation.complete', { chatId }); },
     /** Delivers a normalized application lifecycle event. */
     app(state) {
       const eventName = `application_on_${state}`;
@@ -182,49 +200,151 @@ function indicatorRuntime({ scope = 'system', permissionGranted = true } = {}) {
   };
 }
 
-test('a background automation indicator belongs to the plugin and follows concurrent turns', async () => {
+test('a cold main module registers IPC without replaying the registration entry point', async () => {
+  // Production activation captures registerToolPkg in a temporary engine; the
+  // runtime IPC entry loads main.js but never calls registerToolPkg again.
+  const plugin = indicatorRuntime({ register: false });
+  assert.equal(plugin.routes.size, 0);
+  await plugin.complete('chat');
+  await plugin.begin('chat');
+  await plugin.complete('chat');
+  assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close']);
+});
+
+test('sandbox tools reach cold main IPC before provider calls and complete closes the overlay', async () => {
+  const plugin = indicatorRuntime({ register: false });
+  const calls = [];
+  const instance = runtime({ UI: {
+    async listWindows() { calls.push('list'); return { windows: [] }; },
+    async getPageInfo() { calls.push('tree'); return { summary: 'test' }; },
+  }, Media: { async registerFromPath() { return { link: 'image:test' }; } } },
+  async () => { calls.push('capture'); return '/test.png'; }, { chatId: 'chat' });
+  installIpc(instance.context, 'sandbox', async (owner, caller, target, kind, channel, payload) => {
+    assert.equal(owner, manifest.toolpkg_id);
+    assert.equal(kind, 'main');
+    try {
+      const value = await plugin.context.__operitInvokeToolPkgIpcLocal(channel, payload, caller);
+      return { success: true, value };
+    } catch (error) { return { success: false, message: error.message }; }
+  });
+  await instance.tools.list_windows({});
+  await instance.tools.get_page_info({});
+  await instance.tools.get_page_screenshot_image({});
+  await instance.tools.complete_ui_operation({});
+  assert.deepEqual(calls, ['list', 'tree', 'capture']);
+  assert.ok(instance.results.every(result => result.success), JSON.stringify(instance.results));
+  assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close']);
+});
+
+test('automation appears immediately without an independent page and stays across foreground changes', async () => {
   const plugin = indicatorRuntime();
-  await plugin.app('foreground');
+  assert.deepEqual([...plugin.routes.keys()], ['indicator']);
   await plugin.tool('elsewhere:tap', 'unrelated');
-  await plugin.tool('Automatic_ui_base:tap', 'blocked', 'tool_call_requested');
+  await plugin.tool('tap', 'blocked', 'tool_call_requested');
   await plugin.tool('tap', undefined);
-  await plugin.app('background');
   assert.deepEqual(plugin.commands, []);
-  await plugin.app('foreground');
-  await plugin.tool('Automatic_ui_base:tap', 'first');
-  assert.deepEqual(plugin.commands, []);
-  await plugin.app('background');
+  await plugin.begin('first');
   assert.deepEqual(plugin.commands, [['open', {
     id: 'automation-activity', route: plugin.routes.get('indicator').route, fill: true,
     options: { clickThrough: true, focusable: false },
   }]]);
-  await plugin.tool('get_page_info', 'second');
-  await plugin.finish('first');
-  assert.equal(plugin.commands.length, 1);
   await plugin.app('foreground');
-  assert.deepEqual(plugin.commands.at(-1), ['close', 'automation-activity']);
   await plugin.app('background');
-  await plugin.finish('second');
-  assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
+  await plugin.app('foreground');
+  await plugin.tool('get_page_info', 'second');
+  await plugin.complete('first');
+  assert.equal(plugin.commands.length, 1);
+  await plugin.complete('second');
+  assert.deepEqual(plugin.commands.at(-1), ['close', 'automation-activity']);
+  await plugin.complete('second');
+  assert.equal(plugin.commands.length, 2);
   assert.deepEqual([...plugin.windows.keys()], ['other-surface']);
+  await plugin.begin('first');
+  await plugin.finish('first');
+  assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
 });
 
-test('application scope is visible only while Operit is in use, and missing permission never prompts', async () => {
+test('application scope follows visibility and termination cleans up even without explicit completion', async () => {
   const local = indicatorRuntime({ scope: 'application' });
   await local.app('background');
-  await local.tool('Automatic_ui_base:double_tap', 'chat');
+  await local.begin('chat');
   assert.deepEqual(local.commands, []);
   await local.app('foreground');
-  await local.app('terminate');
-  assert.deepEqual(local.commands.map(([command]) => command), ['open', 'close']);
+  await local.app('background');
   await local.app('foreground');
-  assert.equal(local.commands.length, 2);
+  await local.app('terminate');
+  assert.deepEqual(local.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
+  await local.app('foreground');
+  assert.equal(local.commands.length, 4);
 
-  const denied = indicatorRuntime({ permissionGranted: false });
-  await denied.app('background');
-  await denied.tool('tap', 'chat');
-  await denied.finish('chat');
-  assert.deepEqual(denied.commands, []);
+  for (const options of [{ permissionGranted: false }, { scope: 'unsupported' }]) {
+    const denied = indicatorRuntime(options);
+    await denied.begin('chat');
+    await denied.complete('chat');
+    assert.deepEqual(denied.commands, []);
+  }
+});
+
+test('concurrent starts and completions serialize host operations and permit later automation', async () => {
+  const plugin = indicatorRuntime();
+  await Promise.all([plugin.begin('first'), plugin.begin('second'), plugin.begin('first')]);
+  assert.equal(plugin.commands.length, 1);
+  await Promise.all([plugin.complete('first'), plugin.complete('second')]);
+  assert.equal(plugin.commands.length, 2);
+  await plugin.begin('first');
+  await plugin.app('terminate');
+  assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
+});
+
+test('packaged tools await the overlay before input and completion reaches its owning main runtime', async () => {
+  const plugin = indicatorRuntime();
+  const calls = [];
+  const instance = runtime({ UI: {
+    async tap() { assert.ok(plugin.windows.has('automation-activity')); calls.push('tap'); return {}; },
+  } }, undefined, { chatId: 'chat', async ipc(channel, payload, options) {
+    calls.push([channel, plain(payload), plain(options)]);
+    if (channel === 'ui_automation.begin') await plugin.begin(payload.chatId);
+    else if (channel === 'ui_automation.complete') await plugin.complete(payload.chatId);
+    else assert.fail(channel);
+  } });
+  await instance.tools.tap({ x: 1, y: 2 });
+  await instance.tools.complete_ui_operation({});
+  assert.deepEqual(calls, [
+    ['ui_automation.begin', { chatId: 'chat' }, { targetRuntime: 'main' }],
+    'tap',
+    ['ui_automation.complete', { chatId: 'chat' }, { targetRuntime: 'main' }],
+  ]);
+  assert.ok(instance.results.every(result => result.success));
+  assert.ok(!plugin.windows.has('automation-activity'));
+  await instance.tools.complete_ui_operation({});
+  assert.equal(plugin.commands.length, 2);
+  await instance.tools.tap({ x: 3, y: 4 });
+  assert.equal(plugin.commands.length, 3);
+});
+
+test('completion reports missing context and host cleanup failures without starting an overlay', async () => {
+  const noChat = runtime();
+  await noChat.tools.complete_ui_operation({});
+  assert.equal(noChat.results[0].success, false);
+  const failed = runtime({}, undefined, { chatId: 'chat', async ipc(channel) {
+    assert.equal(channel, 'ui_automation.complete');
+    throw new Error('Host close failed');
+  } });
+  await failed.tools.complete_ui_operation({});
+  assert.equal(failed.results[0].success, false);
+  assert.match(failed.results[0].message, /Host close failed/);
+});
+
+test('failed host cleanup can be retried without losing ownership or poisoning the queue', async () => {
+  const plugin = indicatorRuntime({ closeFailures: 1 });
+  await plugin.begin('chat');
+  await assert.rejects(plugin.complete('chat'), /Host close failed/);
+  assert.ok(plugin.windows.has('automation-activity'));
+  await plugin.complete('chat');
+  assert.ok(!plugin.windows.has('automation-activity'));
+  await plugin.begin('chat');
+  await plugin.finish('chat');
+  assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
 });
 
 test('the indicator route renders a full-size outline with a separate activity orb', async () => {

@@ -39,26 +39,35 @@ transport resource errors are reported explicitly, never as complete partial
 snapshots. Accessibility can only reveal what each application's provider
 exposes; virtualized or custom-drawn content may not have materialized nodes.
 
-## Plugin and background indicator
+## Plugin and operation overlay
 
 Enable **UI Automation** (`com.operit.ui_automation`) in plugin management. The
 built-in ToolPkg is disabled by default. Its tool subpackage retains the
 `Automatic_ui_base` namespace for existing calls and permissions.
 
 The plugin owns the status orb, the transparent gradient outline and the
-display lifecycle. It marks a chat turn when an exact UI automation tool starts
-executing, keeps the indicator across successive tool calls and model steps in
-that turn, and releases it when the last marked turn completes, fails or is
-stopped. Disabling the plugin closes its surfaces. The orb and outline share one
+display lifecycle. There is no separate automation page or toolbox entry.
+Packaged automation tools await the main runtime's overlay reconciliation before
+executing device operations. Native UI tools also mark their chat through the
+tool lifecycle hook. The indicator stays across successive tool calls and model
+steps. After completing or abandoning UI operations, the AI must call
+`Automatic_ui_base:complete_ui_operation` (no parameters) before replying to the
+user. This tool releases the calling chat's operation and waits for window
+cleanup; it is safe to repeat. If other chats are still operating, their indicator
+remains. A subsequent UI tool starts a new operation and displays the overlay
+again. Turn completion, failure, cancellation and application termination also
+clean up automatically. Disabling the plugin closes its surfaces. The orb and outline share one
 click-through window that leaves input and focus on the underlying application.
 
 | Window scope | When and where the indicator appears |
 | --- | --- |
-| System (Windows, macOS, Linux/X11 with composition, Android with permission) | Covers the primary display while Operit is in the background. Returning to Operit closes it. System surfaces and system security restrictions still apply. |
+| System (Windows, macOS, Linux/X11 with composition, Android with permission) | Covers the primary display during UI automation, including while Operit is in the foreground. Switching applications keeps it visible. System surfaces and system security restrictions still apply. |
 | Application (iOS, OpenHarmony, Web, Linux/Wayland) | Covers the Operit view while Operit is active. This scope is limited to the app's own view. |
 
-Open **Toolbox → UI Automation** to see the host's current scope and grant
-overlay permission when required. The UI uses the shared
+On Android, grant the overlay permission through the application's existing
+onboarding permission flow or Android system settings. Automation never opens a
+permission prompt by itself. Unsupported scopes or missing overlay permission
+do not open an indicator. The overlay uses the shared
 [floating-window API](../plugins/docs/FLOATING_WINDOWS.md). Window presentation
 and the device's accessibility provider are separate host capabilities.
 
