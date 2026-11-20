@@ -4,6 +4,8 @@ declare namespace Jimp {
     class JimpWrapper {
         readonly id: string;
         crop(x: number, y: number, w: number, h: number): Promise<JimpWrapper>;
+        /** Returns a new image resized and center-cropped to fill the requested dimensions. */
+        cover(w: number, h: number): Promise<JimpWrapper>;
         composite(src: JimpWrapper, x: number, y: number): Promise<this>;
         getWidth(): Promise<number>;
         getHeight(): Promise<number>;
@@ -16,4 +18,4 @@ declare namespace Jimp {
 
     const MIME_JPEG: 'image/jpeg';
     const MIME_PNG: 'image/png';
-} 
+}

@@ -3,6 +3,7 @@ import type { JsonValue } from "./model";
 import { readSelectorData, loadSelectorAvatars, type SelectorData, type SelectorOption } from "./ui-selector";
 import { chatIdentity } from "./ui-contributions";
 import { chatUiRoutes } from "./definition";
+import { renderGroupAvatar } from "./group-avatar";
 
 /** Keeps the plugin's authoritative selection and avatar resource inside its own DSL runtime. */
 interface MenuState { data: SelectorData | null; unboundAvatar: string | null; error: string }
@@ -31,7 +32,7 @@ function menuAvatar(ctx: ComposeDslContext, option: SelectorOption | null, unbou
       ? ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "Person", size: 24, tint: ctx.MaterialTheme.colorScheme.onSurfaceVariant }))
       : ctx.UI.Image({ ...props, path: option.avatar.path, contentDescription: option.title });
     case "model": return ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "SmartToy", size: 24, tint: ctx.MaterialTheme.colorScheme.onSurfaceVariant }));
-    case "group": return ctx.UI.Box({ width: 32, height: 32, contentAlignment: "center" }, ctx.UI.Icon({ name: "Groups", size: 24, tint: ctx.MaterialTheme.colorScheme.onSurfaceVariant }));
+    case "group": return renderGroupAvatar(ctx, option.avatar.portrait, option.avatar.defaultAvatar, 32);
   }
 }
 
@@ -79,12 +80,12 @@ export function renderChatInputMenu(ctx: ComposeDslContext): ComposeNode {
     onClick: (): JsonValue => {
       assertOwner();
       return { type: "toolpkg.ui.present", routeId: chatUiRoutes.selection,
-        input: { mode: "select", chatId, openLatestChat: true, kind: "card", selected: option !== null && option.kind !== "group" ? option.selection : null } };
+        input: { mode: "select", chatId, openLatestChat: true, kind: "all", selected: option?.selection ?? null } };
     },
   }, [
     menuAvatar(ctx, option, state.unboundAvatar), ctx.UI.Spacer({ width: 10 }),
     ctx.UI.Column({ weight: 1 }, [
-      ctx.UI.Text({ text: "当前角色卡", style: "labelSmall", color: colors.onSurfaceVariant }),
+      ctx.UI.Text({ text: "当前角色 / 群组", style: "labelSmall", color: colors.onSurfaceVariant }),
       ctx.UI.Text({ text: option === null ? "未绑定" : option.title, style: "bodySmall", color: colors.onSurface, fontWeight: "600", maxLines: 1, overflow: "ellipsis" }),
     ]),
     ctx.UI.Icon({ name: "ChevronRight", size: 20, tint: colors.onSurfaceVariant }),

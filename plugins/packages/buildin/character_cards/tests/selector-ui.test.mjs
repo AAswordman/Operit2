@@ -83,13 +83,13 @@ test("one native row click commits the current chat exactly once before real SDK
 
 /** Selects a genuine stored role group with the same immediate-click flow and no editor/confirmation substitution. */
 test("native group selector shows genuine groups and commits the selected group immediately", async t => {
-  const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "Group member" } });
+  const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "Group member", avatarUri: "member-avatar.png" } });
   const group = await runtime.api("group.create", { values: { name: "Native role group", description: "Saved group description", members: [{ characterCardId: card.id, orderIndex: 0 }] } });
   const ui = await ready(runtime, presentation("native-group", "selector-chat", "group"));
   const tree = ui.render().tree; assert.equal(keyedNode(tree, "group:" + group.id).type, "Row");
   assert.equal(composeNodes(tree,
-    /** Requires the group glyph and does not fabricate a character image for a group. */
-    node => node.type === "Icon" && node.props.name === "Groups",
+    /** Requires the actual member portrait in the group composition. */
+    node => node.type === "Image" && node.props.uri === card.avatarUri,
   ).length, 1);
   assert.equal(composeNodes(tree,
     /** The original UX contains no newly invented confirmation button. */

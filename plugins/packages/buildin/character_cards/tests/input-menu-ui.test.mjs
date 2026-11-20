@@ -26,7 +26,7 @@ test("registered TS input menu reproduces one avatar and two-line character row 
   const ui = menu(runtime, "selector-chat"); await ui.load(); const tree = ui.render().tree;
   assert.equal(tree.type, "Row"); assert.equal(tree.props.paddingHorizontal, 12); assert.equal(tree.props.paddingVertical, 6);
   assert.deepEqual(plain(tree.props.modifier.__modifierOps), [{ name: "heightIn", args: [{ minHeight: 48 }] }]);
-  assert.deepEqual(texts(tree), ["当前角色卡", card.name]);
+  assert.deepEqual(texts(tree), ["当前角色 / 群组", card.name]);
   const avatars = composeNodes(tree,
     /** Requires the persisted avatar and circular crop in the actual native menu row. */
     node => node.type === "Image",
@@ -35,7 +35,7 @@ test("registered TS input menu reproduces one avatar and two-line character row 
   assert.equal(avatars[0].props.uri, card.avatarUri); assert.equal(avatars[0].props.contentScale, "crop");
   const response = await ui.dispatch(keyedNode(tree, "current-character").props.onClick);
   assert.deepEqual(plain(response.actionResult), { type: "toolpkg.ui.present", routeId: "toolpkg:com.operit.character_cards:ui:selection",
-    input: { mode: "select", chatId: "selector-chat", openLatestChat: true, kind: "card", selected: { CharacterCard: { id: card.id } } } });
+    input: { mode: "select", chatId: "selector-chat", openLatestChat: true, kind: "all", selected: { CharacterCard: { id: card.id } } } });
   const selector = mountRegisteredSelector(runtime, { requestId: "menu-click", input: response.actionResult.input }); await selector.load();
   assert.equal(selector.render().tree.type, "Dialog");
 });
@@ -44,7 +44,7 @@ test("registered TS input menu reproduces one avatar and two-line character row 
 test("unbound TS menu opens a separate role conversation without rebinding its history", async t => {
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "User-selected role" } });
   const ui = menu(runtime, "selector-chat"); await ui.load(); const tree = ui.render().tree;
-  assert.deepEqual(texts(tree), ["当前角色卡", "仅使用模型"]);
+  assert.deepEqual(texts(tree), ["当前角色 / 群组", "仅使用模型"]);
   assert.equal(runtime.records.get("selector-chat").extension, null);
   const response = await ui.dispatch(keyedNode(tree, "current-character").props.onClick);
   assert.deepEqual(plain(response.actionResult.input.selected), { Model: { id: "chat" } });
@@ -56,18 +56,22 @@ test("unbound TS menu opens a separate role conversation without rebinding its h
 });
 
 /** Ensures a group binding never expands the single original menu slot into extra group controls. */
-test("group-bound TS menu retains one original row and only the character-switch action", async t => {
+test("group-bound TS menu opens the shared selector with its group selected", async t => {
   const runtime = await selectorEnvironment(t), participant = await runtime.api("character.create", { values: { name: "Actual participant" } });
   const group = await runtime.api("group.create", { values: { name: "Actual group", members: [{ characterCardId: participant.id, orderIndex: 0 }] } });
   await runtime.api("chat.configuration.binding.write", { chatId: "selector-chat", selection: "group:" + group.id });
   const ui = menu(runtime, "selector-chat"); await ui.load(); const tree = ui.render().tree;
-  assert.deepEqual(texts(tree), ["当前角色卡", group.name]);
+  assert.deepEqual(texts(tree), ["当前角色 / 群组", group.name]);
   assert.equal(composeNodes(tree,
     /** Counts genuine native menu rows that can issue a presentation request. */
     node => node.props.onClick !== undefined,
   ).length, 1);
   const response = await ui.dispatch(tree.props.onClick);
-  assert.equal(response.actionResult.input.kind, "card"); assert.equal(response.actionResult.input.selected, null);
+  assert.equal(response.actionResult.input.kind, "all"); assert.deepEqual(plain(response.actionResult.input.selected), { CharacterGroup: { id: group.id } });
+  const selector = mountRegisteredSelector(runtime, { requestId: "menu-group", input: response.actionResult.input }); await selector.load();
+  assert.ok(keyedNode(selector.render().tree, "group:" + group.id));
+  const completion = await selector.dispatch(keyedNode(selector.render().tree, "group:" + group.id).props.onClick);
+  assert.equal(completion.actionResult.value.chatId, "selector-chat");
 });
 
 /** Preserves the explicit global new-session mode while keeping all rendering in the plugin DSL. */
@@ -75,7 +79,7 @@ test("new-session TS menu reads global active and requests a selector with an ex
   const runtime = await selectorEnvironment(t), card = await runtime.api("character.create", { values: { name: "New-session role" } });
   await runtime.api("activePrompt.setCard", { id: card.id });
   const ui = menu(runtime, null); await ui.load(); const tree = ui.render().tree;
-  assert.deepEqual(texts(tree), ["当前角色卡", card.name]);
+  assert.deepEqual(texts(tree), ["当前角色 / 群组", card.name]);
   const response = await ui.dispatch(tree.props.onClick);
   assert.equal(response.actionResult.input.chatId, null);
   assert.equal(runtime.records.get("selector-chat").extension, null);
@@ -111,7 +115,7 @@ test("input menu labels and selector action do not wait for any avatar resource"
   };
   const ui = menu(runtime, "selector-chat");
   const loaded = await ui.load();
-  assert.deepEqual(texts(loaded.tree), ["当前角色卡", "仅使用模型"]);
+  assert.deepEqual(texts(loaded.tree), ["当前角色 / 群组", "仅使用模型"]);
   const response = await ui.dispatch(keyedNode(loaded.tree, "current-character").props.onClick);
   assert.equal(response.actionResult.type, "toolpkg.ui.present");
   complete();

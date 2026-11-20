@@ -4,8 +4,10 @@ import { renderManagedEntityScreen, type ManagedEntityRequest, type NativeEntity
 import { initializationRecoveryUi } from "./ui-initialization-recovery";
 import { nativeUi, readUiJson, uiRequest, uiState } from "./ui-controls";
 import { renderMemoryWorkspace, type MemoryTarget } from "./ui-memory-workspace";
+import { groupPortrait, renderGroupAvatar } from "./group-avatar";
+import { requireChatSelection } from "./chat-bindings";
 
-interface BindingDraft { cardId: string; query: string; unbound: boolean; chats: BindableChat[]; selected: string[]; failures: Record<string, string>; completed: number; total: number }
+interface BindingDraft { selection: string; query: string; unbound: boolean; chats: BindableChat[]; selected: string[]; failures: Record<string, string>; completed: number; total: number }
 type ManagementPanel = { type: "store"; store: StoreValues; create: boolean }
   | { type: "delete-store"; id: string; name: string }
   | { type: "import"; entity: "card" | "group"; format: "operit" | "tavern" }
@@ -64,8 +66,8 @@ export function renderManagement(ctx: ComposeDslContext, view: "characters" | "m
   /** Retains the selected owner explicitly when moving into memory management. */
   function memory(target: MemoryTarget, initial: "browse" | "profile" | "settings" = "browse"): void { update({ memory: { ...target, initial }, navigation: live.current.navigation + 1, error: "" }); }
   /** Opens a batch picker only after the canonical conversation list is available. */
-  async function bindings(cardId: string): Promise<void> {
-    await act(async () => { update({ panel: { type: "binding", draft: { cardId, query: "", unbound: false, chats: await uiRequest({ action: "listBindableChats" }), selected: [], failures: {}, completed: 0, total: 0 } } }); });
+  async function bindings(selection: string): Promise<void> {
+    await act(async () => { update({ panel: { type: "binding", draft: { selection, query: "", unbound: false, chats: await uiRequest({ action: "listBindableChats" }), selected: [], failures: {}, completed: 0, total: 0 } } }); });
   }
   /** Applies draft changes without capturing a previously rendered batch selection. */
   function bindingChange(patch: Partial<BindingDraft>): void {
@@ -76,8 +78,9 @@ export function renderManagement(ctx: ComposeDslContext, view: "characters" | "m
   async function submitBindings(): Promise<void> {
     await act(async () => {
       const panel = live.current.panel; if (panel?.type !== "binding") return;
-      const draft = panel.draft, selection = "card:" + draft.cardId;
-      if (!live.current.snapshot?.cards.some(card => card.id === draft.cardId)) throw new Error("请选择角色卡");
+      const draft = panel.draft, selection = draft.selection, snapshot = live.current.snapshot!;
+      if (selection === "") throw new Error("请选择角色卡或群组");
+      requireChatSelection(selection, snapshot.cards, snapshot.groups);
       const ids = draft.selected.filter(id => draft.chats.some(chat => chat.id === id && chat.selection !== selection));
       if (ids.length === 0) throw new Error("请选择要绑定的对话");
       const next = { ...draft, chats: draft.chats.map(chat => ({ ...chat })), failures: {} as Record<string, string>, completed: 0, total: ids.length, selected: [...ids] };
@@ -107,15 +110,15 @@ export function renderManagement(ctx: ComposeDslContext, view: "characters" | "m
         const draft = panel.draft, snapshot = state.snapshot!;
         const query = draft.query.trim().toLocaleLowerCase();
         const visible = draft.chats.filter(chat => (!draft.unbound || chat.selection === null) && (query === "" || [chat.title, chatBindingLabel(chat.selection, snapshot)].some(text => text.toLocaleLowerCase().includes(query))));
-        const selectable = visible.filter(chat => chat.selection !== "card:" + draft.cardId);
+        const selectable = visible.filter(chat => chat.selection !== draft.selection);
         const all = selectable.length > 0 && selectable.every(chat => draft.selected.includes(chat.id));
-        return [ui.text("为已有对话指定角色", true), ui.text("绑定后，对话将使用所选角色的设定继续交流。已有角色绑定会被替换。"),
-          ui.choose("binding-card", "绑定到角色卡", draft.cardId, snapshot.cards.map(card => ({ id: card.id, label: card.name })), cardId => bindingChange({ cardId, selected: draft.selected.filter(id => draft.chats.some(chat => chat.id === id && chat.selection !== "card:" + cardId)), failures: {} })),
+        return [ui.text("为已有对话指定角色卡或群组", true), ui.text("绑定后，对话将使用所选角色卡或群组继续交流。已有绑定会被替换。"),
+          ui.choose("binding-selection", "绑定到角色卡或群组", draft.selection, [...snapshot.cards.map(card => ({ id: "card:" + card.id, label: "角色卡 · " + card.name })), ...snapshot.groups.map(group => ({ id: "group:" + group.id, label: "群组 · " + group.name }))], selection => bindingChange({ selection, selected: draft.selected.filter(id => draft.chats.some(chat => chat.id === id && chat.selection !== selection)), failures: {} })),
           ui.field("binding-query", "搜索对话或当前角色", draft.query, query => bindingChange({ query })), ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [ctx.UI.Box({ weight: 1 }, ui.choices("binding-filter", "", draft.unbound ? "unbound" : "all", [{ id: "all", label: "全部对话" }, { id: "unbound", label: "未绑定" }], value => bindingChange({ unbound: value === "unbound" }))),
-          ui.button("binding-select-visible", all ? "取消全选结果" : "全选结果", () => { const selected = new Set(draft.selected); for (const chat of selectable) { if (all) selected.delete(chat.id); else selected.add(chat.id); } bindingChange({ selected: [...selected] }); }, draft.cardId !== "")]),
+          ui.button("binding-select-visible", all ? "取消全选结果" : "全选结果", () => { const selected = new Set(draft.selected); for (const chat of selectable) { if (all) selected.delete(chat.id); else selected.add(chat.id); } bindingChange({ selected: [...selected] }); }, draft.selection !== "")]),
           ui.text(state.busy ? `正在绑定 ${draft.completed}/${draft.total}` : `已选择 ${draft.selected.length} 条 · 筛选出 ${visible.length} 条`, false, "binding-status"),
-          ...visible.map(chat => ctx.UI.Row({ key: "binding-chat:" + chat.id, fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [ctx.UI.Checkbox({ key: "binding-check:" + chat.id, checked: draft.selected.includes(chat.id), enabled: !state.busy && draft.cardId !== "" && chat.selection !== "card:" + draft.cardId, onCheckedChange: checked => bindingChange({ selected: checked ? [...new Set([...draft.selected, chat.id])] : draft.selected.filter(id => id !== chat.id) }) }), ctx.UI.Column({ weight: 1, spacing: 4 }, [ui.text(chat.title + (chat.isCurrent ? " · 当前对话" : ""), true), ui.text(chatBindingLabel(chat.selection, snapshot) + ` · ${chat.messageCount} 条消息`), ...(draft.failures[chat.id] ? [ui.text(draft.failures[chat.id])] : [])])])),
-          ...(visible.length === 0 ? [ui.text("没有符合条件的对话")] : []), ui.primary("binding-submit", state.busy ? "绑定中…" : draft.selected.length > 0 ? `绑定 ${draft.selected.length} 条对话` : "绑定对话", submitBindings, draft.cardId !== "" && draft.selected.length > 0)];
+          ...visible.map(chat => ctx.UI.Row({ key: "binding-chat:" + chat.id, fillMaxWidth: true, verticalAlignment: "center", spacing: 8 }, [ctx.UI.Checkbox({ key: "binding-check:" + chat.id, checked: draft.selected.includes(chat.id), enabled: !state.busy && draft.selection !== "" && chat.selection !== draft.selection, onCheckedChange: checked => bindingChange({ selected: checked ? [...new Set([...draft.selected, chat.id])] : draft.selected.filter(id => id !== chat.id) }) }), ctx.UI.Column({ weight: 1, spacing: 4 }, [ui.text(chat.title + (chat.isCurrent ? " · 当前对话" : ""), true), ui.text(chatBindingLabel(chat.selection, snapshot) + ` · ${chat.messageCount} 条消息`), ...(draft.failures[chat.id] ? [ui.text(draft.failures[chat.id])] : [])])])),
+          ...(visible.length === 0 ? [ui.text("没有符合条件的对话")] : []), ui.primary("binding-submit", state.busy ? "绑定中…" : draft.selected.length > 0 ? `绑定 ${draft.selected.length} 条对话` : "绑定对话", submitBindings, draft.selection !== "" && draft.selected.length > 0)];
       }
     }
   }
@@ -130,18 +133,18 @@ export function renderManagement(ctx: ComposeDslContext, view: "characters" | "m
       const cards = snapshot.cards.map(card => {
         const active = "CharacterCard" in snapshot.active && snapshot.active.CharacterCard.id === card.id;
         return ui.tile("card:" + card.id, card.name, card.description, [card.chatModelBindingMode === "FIXED_MODEL" ? "固定模型配置" : "跟随全局模型", card.memoryBindingMode === "SHARED" ? "共享记忆" : "角色记忆", ...snapshot.tags.filter(tag => card.attachedTagIds.includes(tag.id)).map(tag => tag.name)], [
-          ui.iconButton("card-bind:" + card.id, "绑定对话", "ChatBubbleOutline", () => bindings(card.id)),
+          ui.iconButton("card-bind:" + card.id, "绑定对话", "ChatBubbleOutline", () => bindings("card:" + card.id)),
           ui.iconButton("card-memory:" + card.id, "打开记忆图谱", "AccountTreeOutlined", () => act(async () => memory(cardMemoryTarget(card)))),
           ui.iconButton("card-user:" + card.id, "编辑用户资料", "AccountBoxOutlined", () => act(async () => memory(cardMemoryTarget(card), "profile"))),
           active ? ui.activePill() : ui.sectionAction("card-activate:" + card.id, "使用", "", () => act(async () => update({ snapshot: await uiRequest({ action: "activate", type: "card", id: card.id }) }))),
         ], active, () => entity({ mode: "edit", entity: "card", id: card.id }), card.avatarUri ?? state.defaultAvatar);
       });
-      children.push(ui.section("character-section", "角色卡", "BadgeOutlined", [ui.sectionAction("bind-chats", "绑定对话", "ChatBubbleOutline", () => bindings(""), snapshot.cards.length > 0), ui.menu("add-card", "添加", "Add", [{ key: "create-card", label: "新建角色卡", name: "Add", action: () => entity({ mode: "create", entity: "card", id: "" }) }, { key: "import-card", label: "导入角色卡", name: "Upload", action: () => update({ panel: { type: "import", entity: "card", format: "operit" } }) }])], cards.length === 0 ? [ui.text("还没有角色卡，点击创建添加角色。")] : cards));
+      children.push(ui.section("character-section", "角色卡", "BadgeOutlined", [ui.sectionAction("bind-chats", "绑定对话", "ChatBubbleOutline", () => bindings(""), snapshot.cards.length + snapshot.groups.length > 0), ui.menu("add-card", "添加", "Add", [{ key: "create-card", label: "新建角色卡", name: "Add", action: () => entity({ mode: "create", entity: "card", id: "" }) }, { key: "import-card", label: "导入角色卡", name: "Upload", action: () => update({ panel: { type: "import", entity: "card", format: "operit" } }) }])], cards.length === 0 ? [ui.text("还没有角色卡，点击创建添加角色。")] : cards));
       const groups = snapshot.groups.map(group => {
         const active = "CharacterGroup" in snapshot.active && snapshot.active.CharacterGroup.id === group.id;
-        return ui.tile("group:" + group.id, group.name, group.members.map(member => snapshot.cards.find(card => card.id === member.characterCardId)?.name ?? "已删除角色").join("、"), [`${group.members.length} 个角色`], [active ? ui.activePill() : ui.sectionAction("group-activate:" + group.id, "使用", "", () => act(async () => update({ snapshot: await uiRequest({ action: "activate", type: "group", id: group.id }) })))], active, () => entity({ mode: "edit", entity: "group", id: group.id }), null, "GroupsOutlined");
+        return ui.tile("group:" + group.id, group.name, group.members.map(member => snapshot.cards.find(card => card.id === member.characterCardId)?.name ?? "已删除角色").join("、"), [`${group.members.length} 个角色`], [ui.iconButton("group-bind:" + group.id, "绑定对话", "ChatBubbleOutline", () => bindings("group:" + group.id)), active ? ui.activePill() : ui.sectionAction("group-activate:" + group.id, "使用", "", () => act(async () => update({ snapshot: await uiRequest({ action: "activate", type: "group", id: group.id }) })))], active, () => entity({ mode: "edit", entity: "group", id: group.id }), null, "GroupsOutlined", renderGroupAvatar(ctx, groupPortrait(group, snapshot.cards), state.defaultAvatar, 32, "management-avatar:" + group.id));
       });
-      children.push(ui.section("group-section", "群组", "GroupsOutlined", [ui.sectionAction("import-group", "导入 JSON", "Upload", () => update({ panel: { type: "import", entity: "group", format: "operit" } })), ui.sectionAction("create-group", "创建", "Add", () => entity({ mode: "create", entity: "group", id: "" }))], groups.length === 0 ? [ui.text("还没有群组，创建后可编排多个角色参与对话。")] : groups));
+      children.push(ui.section("group-section", "群组", "GroupsOutlined", [ui.sectionAction("group-bind-chats", "绑定对话", "ChatBubbleOutline", () => bindings(""), snapshot.groups.length > 0), ui.sectionAction("import-group", "导入 JSON", "Upload", () => update({ panel: { type: "import", entity: "group", format: "operit" } })), ui.sectionAction("create-group", "创建", "Add", () => entity({ mode: "create", entity: "group", id: "" }))], groups.length === 0 ? [ui.text("还没有群组，创建后可编排多个角色参与对话。")] : groups));
     } else {
       const global: ComposeNode[] = [];
       for (const [key, label, description] of [["userDescriptionEnabled", "向模型提供用户资料", "聊天执行时提供用户资料；关闭不会删除 USER.md 或改写历史记录。"], ["autoUpdateEnabled", "自动更新记忆库", "允许自动候选入队和定时提取；关闭不会取消手动历史重建。"]] as const) global.push(ctx.UI.Row({ fillMaxWidth: true, spacing: 16, paddingVertical: 10, verticalAlignment: "center" }, [ctx.UI.Column({ weight: 1, spacing: 4 }, [ctx.UI.Text({ text: label, fontSize: 14 }), ctx.UI.Text({ text: description, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })]), ctx.UI.Switch({ key: "memory-preference:" + key, checked: snapshot.memoryPreferences[key], enabled: !state.busy, onCheckedChange: value => act(async () => { const memoryPreferences = await uiRequest({ action: "writeGlobalMemoryPreference", key, value }); update({ snapshot: { ...live.current.snapshot!, memoryPreferences } }); }) })]));

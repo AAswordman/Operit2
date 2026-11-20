@@ -14,7 +14,7 @@ export function createCharacterDraft(): Card {
 
 /** Initializes an explicit new-group form before the host assigns its identity and timestamps. */
 export function createGroupDraft(): Group {
-  return { id: "", name: "", description: "", members: [], themeConfigId: null, createdAt: 0, updatedAt: 0 };
+  return { id: "", name: "", description: "", avatarUri: null, members: [], themeConfigId: null, createdAt: 0, updatedAt: 0 };
 }
 
 /** Initializes editable fields for an intentional newly created prompt tag. */

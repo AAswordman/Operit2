@@ -46,7 +46,7 @@ async function environment(t) {
 async function bindGroup(runtime) {
   const first = await runtime.api("character.create", { values: { name: "Hook participant A" } });
   const second = await runtime.api("character.create", { values: { name: "Hook participant B" } });
-  const group = await runtime.api("group.create", { values: { name: "Hook group", members: [{ characterCardId: first.id, orderIndex: 0 }, { characterCardId: second.id, orderIndex: 1 }] } });
+  const group = await runtime.api("group.create", { values: { name: "Hook group", avatarUri: "hook-group.png", members: [{ characterCardId: first.id, orderIndex: 0 }, { characterCardId: second.id, orderIndex: 1 }] } });
   await runtime.api("chat.configuration.binding.write", { chatId: "selector-chat", selection: "group:" + group.id });
   return { first, second, group };
 }

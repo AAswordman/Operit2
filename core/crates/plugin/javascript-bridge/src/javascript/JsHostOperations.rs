@@ -224,6 +224,29 @@ pub fn imageProcessing(
                 .insert(newId.clone(), cropped);
             Ok(serde_json::Value::String(newId))
         }
+        "cover" => {
+            let id = jsonStringArg(args, 0)?;
+            let width = jsonIntArg(args, 1)?;
+            let height = jsonIntArg(args, 2)?;
+            if width == 0 || height == 0 || width > 4096 || height > 4096 {
+                return Err("Image cover dimensions must be between 1 and 4096".to_string());
+            }
+            let resized = {
+                let guard = bitmapRegistry()
+                    .lock()
+                    .expect("bitmap registry mutex poisoned");
+                let image = guard
+                    .get(&id)
+                    .ok_or_else(|| format!("Source bitmap not found for cover (ID: {id})"))?;
+                image.resize_to_fill(width, height, image::imageops::FilterType::Triangle)
+            };
+            let newId = uuid::Uuid::new_v4().to_string();
+            bitmapRegistry()
+                .lock()
+                .expect("bitmap registry mutex poisoned")
+                .insert(newId.clone(), resized);
+            Ok(serde_json::Value::String(newId))
+        }
         "composite" => {
             let baseId = jsonStringArg(args, 0)?;
             let srcId = jsonStringArg(args, 1)?;
@@ -380,6 +403,52 @@ mod tests {
     use super::{toolExecutionResultValue, BINARY_DATA_THRESHOLD, BINARY_HANDLE_PREFIX};
     use operit_plugin_sdk::javascript::{JsToolCallResult, JsToolCallResultData};
     use serde_json::Value;
+
+    /// Verifies cover crops the center at exact dimensions without mutating its source handle.
+    #[test]
+    fn image_cover_preserves_source_and_center_crop() {
+        let id = uuid::Uuid::new_v4().to_string();
+        let source = image::ImageBuffer::from_fn(6, 2, |x, _y| {
+            if x < 2 {
+                image::Rgba([255, 0, 0, 255])
+            } else if x < 4 {
+                image::Rgba([0, 255, 0, 255])
+            } else {
+                image::Rgba([0, 0, 255, 255])
+            }
+        });
+        super::bitmapRegistry()
+            .lock()
+            .unwrap()
+            .insert(id.clone(), image::DynamicImage::ImageRgba8(source));
+        let resized = super::imageProcessing(
+            "cover",
+            &[serde_json::json!(id), serde_json::json!(2), serde_json::json!(2)],
+        )
+        .unwrap();
+        let resizedId = resized.as_str().unwrap();
+        assert_ne!(resizedId, id);
+        {
+            let images = super::bitmapRegistry().lock().unwrap();
+            assert_eq!((images[&id].width(), images[&id].height()), (6, 2));
+            let result = images[resizedId].to_rgba8();
+            assert_eq!(result.dimensions(), (2, 2));
+            assert!(result.pixels().all(|pixel| pixel.0 == [0, 255, 0, 255]));
+        }
+        for dimensions in [(0, 2), (2, 4097)] {
+            assert!(super::imageProcessing(
+                "cover",
+                &[
+                    serde_json::json!(id),
+                    serde_json::json!(dimensions.0),
+                    serde_json::json!(dimensions.1),
+                ],
+            )
+            .is_err());
+        }
+        super::imageProcessing("release", &[serde_json::json!(resizedId)]).unwrap();
+        super::imageProcessing("release", &[serde_json::json!(id)]).unwrap();
+    }
 
     /// Builds a successful SDK tool result for serialization tests.
     fn successResult(data: JsToolCallResultData) -> JsToolCallResult {

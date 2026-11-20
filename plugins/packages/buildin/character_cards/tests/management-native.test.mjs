@@ -57,6 +57,31 @@ test("native batch binding preserves hidden selections, writes only on submit an
   assert.deepEqual(plain((await plugin.web({ action: "snapshot" })).active), active);
 });
 
+/** Exercises the same batch transaction for group and card targets through the real management controls. */
+test("native group batch binding supports existing assignments and switching to a card", async t => {
+  const plugin = await environment(t), card = await plugin.api("character.create", { values: { name: "绑定角色" } });
+  const group = await plugin.api("group.create", { values: { name: "绑定群组", members: [{ characterCardId: card.id, orderIndex: 0 }] } });
+  plugin.records.set("other-chat", { extension: null });
+  await plugin.api("chat.configuration.binding.write", { chatId: "other-chat", selection: "group:" + group.id });
+  const active = plain(await plugin.api("activePrompt.get", {}));
+  const ui = mountRegisteredComposeRoute(plugin, null, "main"); await ui.load();
+  await action(ui, "group-bind:" + group.id);
+  assert.equal(keyedNode(ui.render().tree, "binding-check:other-chat").props.enabled, false);
+  await action(ui, "binding-check:selector-chat", "onCheckedChange", true);
+  await action(ui, "binding-submit");
+  assert.equal((await plugin.binding()).selection, "group:" + group.id);
+  assert.equal((await plugin.binding("other-chat")).selection, "group:" + group.id);
+  await action(ui, "group-bind:" + group.id);
+  const picker = keyedNode(ui.render().tree, "binding-selection");
+  const choices = [...(await plugin.api("character.list", {})).map(card => "card:" + card.id), ...(await plugin.api("group.list", {})).map(group => "group:" + group.id)];
+  await ui.dispatch(picker.props.onClick, choices.indexOf("card:" + card.id));
+  assert.equal(keyedNode(ui.render().tree, "binding-check:selector-chat").props.enabled, true);
+  await action(ui, "binding-select-visible"); await action(ui, "binding-submit");
+  assert.equal((await plugin.binding()).selection, "card:" + card.id);
+  assert.equal((await plugin.binding("other-chat")).selection, "card:" + card.id);
+  assert.deepEqual(plain(await plugin.api("activePrompt.get", {})), active);
+});
+
 test("native memory libraries persist global switches and shared store CRUD", async t => {
   const plugin = await environment(t), ui = mountRegisteredComposeRoute(plugin, null, "memory"); await ui.load(); nativeOnly(ui);
   const initial = (await plugin.web({ action: "snapshot" })).memoryPreferences;
@@ -196,7 +221,7 @@ test("original action catalog retains independent owner entries, dialog forms an
   const role = mountRegisteredComposeRoute(plugin, null, "main"); await role.load();
   await action(role, "bind-chats");
   keyedNode(role.render().tree, "character-section"); keyedNode(role.render().tree, "management-dialog");
-  for (const key of ["binding-card", "binding-query", "binding-filter:all", "binding-filter:unbound", "binding-select-visible", "binding-submit"]) keyedNode(role.render().tree, key);
+  for (const key of ["binding-selection", "binding-query", "binding-filter:all", "binding-filter:unbound", "binding-select-visible", "binding-submit"]) keyedNode(role.render().tree, key);
   await action(role, "management-back");
   await action(role, "import-card"); assert.equal(keyedNode(role.render().tree, "import-format").type, "DropdownMenu");
   await action(role, "management-back");

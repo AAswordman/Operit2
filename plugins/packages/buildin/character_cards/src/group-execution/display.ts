@@ -11,21 +11,27 @@ function identity(card: CharacterRecord): ChatDisplayParticipant {
 }
 
 /** Reads each genuine member in its saved order and rejects deleted or duplicate references. */
-export async function orderedGroupParticipants(group: GroupRecord, service: ChatConfigurationService): Promise<ChatDisplayParticipant[]> {
+async function orderedGroupCards(group: GroupRecord, service: ChatConfigurationService): Promise<CharacterRecord[]> {
   if (group.members.length === 0) throw new Error("Selected group has no participants: " + group.id);
   const members = [...group.members].sort(
     /** Uses the saved order without choosing an execution participant. */
     (left, right) => left.orderIndex - right.orderIndex,
   );
-  const ids = new Set<string>(), participants: ChatDisplayParticipant[] = [];
+  const ids = new Set<string>(), cards: CharacterRecord[] = [];
   for (const member of members) {
     if (ids.has(member.characterCardId)) throw new Error("Duplicate group participant: " + member.characterCardId);
     ids.add(member.characterCardId);
     const card = await service.getCharacter(member.characterCardId);
     if (card.id !== member.characterCardId) throw new Error("Group participant read returned a different identity");
-    participants.push(identity(card));
+    identity(card);
+    cards.push(card);
   }
-  return participants;
+  return cards;
+}
+
+/** Projects the saved member identities without generating an image or reading execution catalogs. */
+export async function orderedGroupParticipants(group: GroupRecord, service: ChatConfigurationService): Promise<ChatDisplayParticipant[]> {
+  return (await orderedGroupCards(group, service)).map(identity);
 }
 
 /** Resolves presentation without selecting a group executor or reading model, voice and memory catalogs. */
@@ -41,7 +47,8 @@ export async function resolveChatDisplay(
   if (selection.kind === "group") {
     const group = await service.getGroup(selection.id);
     if (group.id !== selection.id || group.name.trim().length === 0) throw new Error("Display group identity is invalid");
-    return { contextKey: marker.selection, identity: { title: group.name, avatarUri: null }, participants: await orderedGroupParticipants(group, service), initialMessages: [] };
+    const cards = await orderedGroupCards(group, service);
+    return { contextKey: marker.selection, identity: { title: group.name, avatarUri: await service.groupAvatar(group, cards) }, participants: cards.map(identity), initialMessages: [] };
   }
   const card = await service.getCharacter(selection.id);
   if (card.id !== selection.id) throw new Error("Display character read returned a different identity");

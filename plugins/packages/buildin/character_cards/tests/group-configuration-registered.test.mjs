@@ -31,9 +31,9 @@ test("registered configuration: actual main handler resolves a multi-group displ
   assert.equal(plugin.apis.get("chat.configuration.resolve").function, plugin.main.chatConfigurationResolveApi);
   const a = await plugin.api("character.create", { values: { name: "Registered participant A", openingStatement: "Not group initialization" } });
   const b = await plugin.api("character.create", { values: { name: "Registered participant B", avatarUri: "actual-b.png" } });
-  const group = await plugin.api("group.create", { values: { name: "Registered group", members: [{ characterCardId: a.id, orderIndex: 8 }, { characterCardId: b.id, orderIndex: 1 }] } });
+  const group = await plugin.api("group.create", { values: { name: "Registered group", avatarUri: "registered-group.png", members: [{ characterCardId: a.id, orderIndex: 8 }, { characterCardId: b.id, orderIndex: 1 }] } });
   const selection = "group:" + group.id, result = plain(await resolveDraft(plugin, request("display", selection)));
-  assert.deepEqual(result, { contextKey: selection, identity: { title: "Registered group", avatarUri: null },
+  assert.deepEqual(result, { contextKey: selection, identity: { title: "Registered group", avatarUri: "registered-group.png" },
     participants: [{ id: b.id, name: b.name, avatarUri: b.avatarUri }, { id: a.id, name: a.name, avatarUri: a.avatarUri }], initialMessages: [] });
   assert.equal(settings.calls.length, 0, "Group presentation must not read model/TTS/tool directories");
   await assert.rejects(() => plugin.api("chat.configuration.draft.resolve", request("execution", selection)), /display identity/);
@@ -71,7 +71,7 @@ test("registered configuration: group prompts preserve each speaker and saved me
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directories), plugin = openPlugin(settings.harness);
   const a = await plugin.api("character.create", { values: { name: "Prompt speaker A", characterSetting: "Exact A setting" } });
   const b = await plugin.api("character.create", { values: { name: "Prompt speaker B", characterSetting: "Exact B setting" } });
-  const group = await plugin.api("group.create", { values: { name: "Prompt group", members: [{ characterCardId: a.id, orderIndex: 9 }, { characterCardId: b.id, orderIndex: 2 }] } });
+  const group = await plugin.api("group.create", { values: { name: "Prompt group", avatarUri: "prompt-group.png", members: [{ characterCardId: a.id, orderIndex: 9 }, { characterCardId: b.id, orderIndex: 2 }] } });
   const selection = "group:" + group.id, result = await committedConfiguration(plugin, selection, a.id);
   assert.equal(result.profile.id, a.id);
   assert.deepEqual(result.historyPolicy, { isolateParticipants: true, labelUserMessages: true });
@@ -95,7 +95,7 @@ test("registered configuration: single cards and single-member groups retain the
   const single = await committedConfiguration(plugin, "card:" + card.id);
   assert.deepEqual(single.historyPolicy, { isolateParticipants: false, labelUserMessages: false });
   assert.doesNotMatch(single.profile.introPrompt, /Role response plan hint|Group participants/);
-  const group = await plugin.api("group.create", { values: { name: "One member", members: [{ characterCardId: card.id, orderIndex: 0 }] } });
+  const group = await plugin.api("group.create", { values: { name: "One member", avatarUri: "single-member.png", members: [{ characterCardId: card.id, orderIndex: 0 }] } });
   const grouped = await committedConfiguration(plugin, "group:" + group.id, card.id, "single-member-group-chat");
   assert.deepEqual(grouped.historyPolicy, { isolateParticipants: true, labelUserMessages: true });
   assert.ok(grouped.profile.introPrompt.includes("Stay in role as " + card.name));

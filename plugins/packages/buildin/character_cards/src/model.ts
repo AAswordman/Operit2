@@ -41,6 +41,8 @@ export interface Group {
   id: string;
   name: string;
   description: string;
+  /** Stores an explicit custom portrait; released records without this field use member portraits. */
+  avatarUri?: string | null;
   members: GroupMember[];
   themeConfigId: string | null;
   createdAt: number;
@@ -64,7 +66,7 @@ export interface ConversationGroupRecord {
 /** Reports explicit membership without inventing an ungrouped record. */
 /** Releases all manual memberships without deleting any host chats. */
 
-export type GroupValues = Pick<Group, "id" | "name" | "description" | "members" | "themeConfigId">;
+export type GroupValues = Pick<Group, "id" | "name" | "description" | "avatarUri" | "members" | "themeConfigId">;
 
 /** Matches the complete serde record in operit_model::Memory::SharedMemoryStore. */
 export interface Store { id: string; name: string; createdAt: number; updatedAt: number }

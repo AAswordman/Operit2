@@ -128,7 +128,7 @@ export interface CharacterRecord {
   createdAt: number; updatedAt: number;
 }
 /** Defines the complete stored group record. */
-export interface GroupRecord { id: string; name: string; description: string; themeConfigId: string | null; members: { characterCardId: string; orderIndex: number }[]; createdAt: number; updatedAt: number }
+export interface GroupRecord { id: string; name: string; description: string; avatarUri?: string | null; themeConfigId: string | null; members: { characterCardId: string; orderIndex: number }[]; createdAt: number; updatedAt: number }
 /** Defines a stored prompt tag. */
 export interface TagRecord { id: string; name: string; description: string; promptContent: string; tagType: "TONE" | "CHARACTER" | "FUNCTION" | "CUSTOM"; createdAt: number; updatedAt: number }
 /** Defines a shared memory library. */

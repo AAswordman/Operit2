@@ -22,11 +22,11 @@ async function fileService(t) {
 test("display: persisted multi-member group returns ordered identities and no execution snapshot or catalog reads", async t => {
   const { service, disk } = await fileService(t);
   const card = await service.dispatchDomain("character.create", { values: { name: "Second real member", avatarUri: "resources/second.png", openingStatement: "Must not be group initialization" } });
-  const group = await service.dispatchDomain("group.create", { values: { name: "Real group", members: [{ characterCardId: "default", orderIndex: 8 }, { characterCardId: card.id, orderIndex: 2 }] } });
+  const group = await service.dispatchDomain("group.create", { values: { name: "Real group", avatarUri: "resources/group.png", members: [{ characterCardId: "default", orderIndex: 8 }, { characterCardId: card.id, orderIndex: 2 }] } });
   const defaultCard = await service.dispatchDomain("character.get", { id: "default" });
   const input = domain.parseChatConfigurationRequest(displayRequest("group:" + group.id));
   const result = plain(await service.dispatchDomain("chat.configuration.resolve", input));
-  assert.deepEqual(result, { contextKey: "group:" + group.id, identity: { title: "Real group", avatarUri: null },
+  assert.deepEqual(result, { contextKey: "group:" + group.id, identity: { title: "Real group", avatarUri: "resources/group.png" },
     participants: [{ id: card.id, name: "Second real member", avatarUri: "resources/second.png" }, { id: "default", name: defaultCard.name, avatarUri: defaultCard.avatarUri }], initialMessages: [] });
   assert.equal(Object.hasOwn(result, "profile"), false); assert.equal(Object.hasOwn(result, "executionData"), false);
   assert.equal(disk.calls.some(

@@ -7,7 +7,7 @@ import { decodeChatMarker, encodeExecutionData, markerObject } from "./chat-mark
 import { resolveChatDisplay } from "./group-execution/display";
 import { modelParticipant } from "./model-participant";
 import { withGroupParticipantPrompt } from "./group-execution/prompts";
-import type { MemoryQueryRequest, JsonValue, ChatConfigurationExecutionResult, ChatConfigurationRequest, ChatConfigurationResult, ChatParticipantProfile, CharacterRecord, DomainInput, DomainOperation, DomainOutput } from "./api";
+import type { MemoryQueryRequest, JsonValue, ChatConfigurationExecutionResult, ChatConfigurationRequest, ChatConfigurationResult, ChatParticipantProfile, CharacterRecord, GroupRecord, DomainInput, DomainOperation, DomainOutput } from "./api";
 export type { DomainInput, DomainOperation, DomainOutput, DomainOperations } from "./api";
 
 type Validator = (value: unknown, path: string) => void;
@@ -126,7 +126,7 @@ const characterFields: Fields = {
   sharedMemoryId: optional(nullable(text)), sharedMemoryMounts: optional(array(mount)), toolAccessConfig: optional(toolAccess),
   createdAt: optional(integer), updatedAt: optional(integer),
 };
-const groupFields: Fields = { name: optional(nonblank), description: optional(text), themeConfigId: optional(nullable(text)), members: optional(array(member)), createdAt: optional(integer), updatedAt: optional(integer) };
+const groupFields: Fields = { name: optional(nonblank), description: optional(text), avatarUri: optional(nullable(text)), themeConfigId: optional(nullable(text)), members: optional(array(member)), createdAt: optional(integer), updatedAt: optional(integer) };
 const tagFields: Fields = { name: optional(nonblank), description: optional(text), promptContent: optional(text), tagType: optional(enumeration("TONE", "CHARACTER", "FUNCTION", "CUSTOM")), createdAt: optional(integer), updatedAt: optional(integer) };
 const memoryFields: Fields = {
   uuid: optional(text), title: optional(nonblank), content: optional(text), contentType: optional(text), source: optional(text),
@@ -282,6 +282,8 @@ export function jsonValue(value: unknown, path = "result"): JsonValue {
 export interface ChatConfigurationService extends Pick<CharacterRepository,
   "getCharacter" | "getGroup" | "getTag" | "getStore" | "listModels" | "listTtsConfigs" | "readGlobalMemoryPreferences"
 > {
+  /** Resolves group portrait bytes through the main runtime's existing image services. */
+  groupAvatar(group: GroupRecord, cards: readonly CharacterRecord[]): Promise<string | null>;
   /** Calls a typed business operation without invoking another command. */
   dispatchDomain<K extends DomainOperation>(operation: K, input: DomainInput<K>): Promise<DomainOutput<K>>;
 }

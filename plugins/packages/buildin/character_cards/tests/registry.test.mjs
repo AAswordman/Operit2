@@ -152,7 +152,7 @@ test("one character-and-memory package registers native selection, embedded side
     { id: "memory-attachment", route: attachmentRoute, runtime: "compose_dsl", keepAlive: false, title: { zh: "记忆附件", en: "Memory attachment" } },
     { id: "chat-sidebar", route: "toolpkg:com.operit.character_cards:ui:chat-sidebar", runtime: "compose_dsl", keepAlive: true, title: { zh: "会话侧边栏", en: "Chat sidebar" } },
     { id: "chat-input-menu", route: "toolpkg:com.operit.character_cards:ui:chat-input-menu", runtime: "compose_dsl", keepAlive: false, title: { zh: "当前角色卡", en: "Current character" } },
-    { id: "selection", route: "toolpkg:com.operit.character_cards:ui:selection", runtime: "compose_dsl", keepAlive: false, title: { zh: "切换角色卡", en: "Switch character" } },
+    { id: "selection", route: "toolpkg:com.operit.character_cards:ui:selection", runtime: "compose_dsl", keepAlive: false, title: { zh: "切换角色卡或群组", en: "Switch character or group" } },
     { id: "group-execution", route: "toolpkg:com.operit.character_cards:ui:group-execution", runtime: "compose_dsl", keepAlive: false, title: { zh: "群组执行", en: "Group execution" } },
     { id: "memory", route: "toolpkg:com.operit.character_cards:ui:memory", runtime: "compose_dsl", keepAlive: true, title: { zh: "记忆", en: "Memory" } },
     { id: "chat-input-memory", route: "toolpkg:com.operit.character_cards:ui:chat-input-memory", runtime: "compose_dsl", keepAlive: false, title: { zh: "记忆", en: "Memory" } },

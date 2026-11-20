@@ -20,7 +20,7 @@ export function register(definition: Definition, screen: (ctx: ComposeDslContext
   ToolPkg.registerUiRoute({ id: "chat-input-menu", route: inputMenuRoute, screen: inputMenuScreen, runtime: "compose_dsl", keepAlive: false, title: { zh: "当前角色卡", en: "Current character" } });
   ToolPkg.registerNavigationEntry({ id: "current-character", route: inputMenuRoute, surface: "chat_input_menu", title: { zh: "当前角色卡", en: "Current character" }, order: definition.order, params: {} });
   const selectionRoute = `toolpkg:${definition.id}:ui:selection`;
-  ToolPkg.registerUiRoute({ id: "selection", route: selectionRoute, screen: selectionScreen, runtime: "compose_dsl", keepAlive: false, title: { zh: "切换角色卡", en: "Switch character" } });
+  ToolPkg.registerUiRoute({ id: "selection", route: selectionRoute, screen: selectionScreen, runtime: "compose_dsl", keepAlive: false, title: { zh: "切换角色卡或群组", en: "Switch character or group" } });
   ToolPkg.registerUiRoute({ id: "group-execution", route: `toolpkg:${definition.id}:ui:group-execution`, screen: groupExecutionScreen, runtime: "compose_dsl", keepAlive: false, title: { zh: "群组执行", en: "Group execution" } });
   ToolPkg.registerUiRoute({ id: "memory", route: memoryRoute, screen: memoryScreen, runtime: "compose_dsl", keepAlive: true, title: { zh: "记忆", en: "Memory" } });
   ToolPkg.registerNavigationEntry({ id: "sidebar-characters", route: sidebarRoute, surface: "chat_sidebar_tabs", title: { zh: "角色卡", en: "Characters" }, icon: "Badge", order: definition.order, params: { view: "characters" } });

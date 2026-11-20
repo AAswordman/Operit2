@@ -1,4 +1,5 @@
 import { SidebarChatTree } from './sidebar-chat-tree';
+import { renderGroupAvatar } from './group-avatar';
 import type { ComposeDslContext, ComposeNode } from '../../../../types/compose-dsl';
 import type { CharacterSidebarSection, ConversationSidebarGroup, CurrentSidebar, SidebarCatalog, SidebarChatSummary } from './ui-sidebar';
 
@@ -143,7 +144,7 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
 
   function category(section: CharacterSidebarSection): ComposeNode {
     const collapsed = state.collapsed.includes(section.id);
-    const avatar = section.kind === 'card' ? ctx.UI.Image({ key: 'sidebar-avatar-' + section.id,
+    const avatar = section.groupPortrait !== undefined ? renderGroupAvatar(ctx, section.groupPortrait, defaultAvatar, m.categoryAvatar, 'sidebar-avatar-' + section.id) : section.kind === 'card' ? ctx.UI.Image({ key: 'sidebar-avatar-' + section.id,
       uri: section.avatarUri ?? defaultAvatar ?? '', width: m.categoryAvatar, height: m.categoryAvatar, contentScale: 'crop',
       contentDescription: section.title, modifier: ctx.Modifier.clip({ type: 'circle' }) })
       : ctx.UI.Box({ width: m.categoryAvatar, height: m.categoryAvatar, contentAlignment: 'center',
@@ -182,7 +183,7 @@ function sidebarRowBuilders(ctx: ComposeDslContext, current: CurrentSidebar, sta
   }
 
   const sections: CharacterSidebarSection[] = state.data.view === 'characters' ? state.data.sections : state.data.scopes.map(scope => ({
-    id: scope.id, title: scope.title, kind: scope.kind ?? 'unbound', selection: scope.ownerSelection, avatarUri: scope.avatarUri ?? null,
+    id: scope.id, title: scope.title, kind: scope.kind ?? 'unbound', selection: scope.ownerSelection, avatarUri: scope.avatarUri ?? null, groupPortrait: scope.groupPortrait,
     chats: [...scope.ungrouped, ...scope.groups.flatMap(group => group.chats)], conversationGroups: scope.groups, ungroupedChats: scope.ungrouped,
   }));
   for (const section of sections) {

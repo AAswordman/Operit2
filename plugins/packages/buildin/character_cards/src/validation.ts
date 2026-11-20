@@ -103,6 +103,7 @@ export function assertConversationGroups(value: unknown): asserts value is Conve
 /** Validates all editable group fields without inventing canonical timestamps for UI drafts. */
 export function assertGroupValues(value: unknown): asserts value is GroupValues {
   assertObject(value, "角色群组");
+  if (value.avatarUri !== undefined && value.avatarUri !== null) requireId(value.avatarUri, "群组头像");
   for (const field of ["id", "name", "description"] as const) assertString(value[field], field);
   assertNullableString(value.themeConfigId, "group.themeConfigId");
   if (value.themeConfigId !== null) requireId(value.themeConfigId, "群组主题配置");

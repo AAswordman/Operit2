@@ -15,6 +15,7 @@ import { independentConfigurations } from "./selection-settings";
 import { getRepository, recoverRepository } from "./repository-runtime";
 import type { InitializationRecoverySource } from "./storage/initialization";
 import { traceCharacterLoad } from "./diagnostics";
+import { groupAvatarUri } from "./group-avatar-image";
 export { connectDirectorySources } from "./repository-runtime";
 
 export interface CharacterCardsService extends ChatConfigurationService {
@@ -100,6 +101,7 @@ export function createCharacterCardsService(
     );
   }
   const service: CharacterCardsService = {
+    groupAvatar: groupAvatarUri,
     /** Applies the exact persisted actor through the same validated operations used by explicit selection. */
     async activateChatSelection(chatId: string): Promise<void> {
       requireId(chatId, "chat id");

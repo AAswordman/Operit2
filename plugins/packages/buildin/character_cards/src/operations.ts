@@ -1,4 +1,5 @@
 import { readCharacter, createCharacterDraft, createGroupDraft, createTagDraft } from "./drafts";
+import { groupAvatarUri } from "./group-avatar-image";
 import { characterModelBindingMode, sameCharacterModelBinding } from "./model-binding";
 import type { DomainInput, DomainOperation, DomainOutput } from "./api";
 import type { ChatConfigurationService } from "./domain";
@@ -331,6 +332,7 @@ export async function saveGroup(
       id: "",
       name,
       description: group.description.trim(),
+      avatarUri: group.avatarUri ?? null,
       members,
       themeConfigId: group.themeConfigId,
       createdAt: 0,
@@ -343,6 +345,7 @@ export async function saveGroup(
       ...original,
       name,
       description: group.description.trim(),
+      avatarUri: group.avatarUri ?? null,
       members,
       themeConfigId: group.themeConfigId,
     };
@@ -948,6 +951,7 @@ const handlers: DomainHandlers = {
   "memory.candidates.clearFailed": async (input, repository) => ({ cleared: await repository.recoverFailedCandidates(input.ownerKey, null) }),
   /** Resolves chat configuration using this operation's existing repository snapshot. */
   "chat.configuration.resolve": (input, repository) => resolveConfiguration(input, {
+    groupAvatar: groupAvatarUri,
     /** Reads only the requested character. */
     getCharacter: (id) => repository.getCharacter(id),
     /** Reads only the requested group. */

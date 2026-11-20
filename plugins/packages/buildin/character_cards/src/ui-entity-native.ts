@@ -8,6 +8,7 @@ import { createCharacterDraft, createGroupDraft } from "./drafts";
 import { MAX_AVATAR_BYTES, readAvatarImport } from "./image-source";
 import { renderEntityPreview } from "./ui-entity-preview";
 import { characterModelBindingMode, characterModelBindingStatus, sameCharacterModelBinding } from "./model-binding";
+import { groupPortrait, renderGroupAvatar } from "./group-avatar";
 
 interface ExpandedField { key: string; label: string; value: string; apply: (value: string) => void }
 interface NativePicker { title: string; key: string; value: string | null; choices: readonly { id: string; label: string; subtitle?: string }[]; apply: (id: string | null) => void; query: string }
@@ -236,7 +237,9 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
       const created = await Tools.Files.mkdir(directory, true); if (!created.successful) throw new Error(created.details);
       const uri = directory + "/" + Date.now() + "-" + Math.random().toString(36).slice(2) + ".image";
       const written = await Tools.Files.writeBinary(uri, contentBase64);
-      if (!written.successful) throw new Error(written.details); assertOwner(); update({ card: { ...card(), avatarUri: uri } });
+      if (!written.successful) throw new Error(written.details); assertOwner();
+      if (input.entity === "card") update({ card: { ...card(), avatarUri: uri } });
+      else update({ group: { ...group(), avatarUri: uri } });
     });
   }
   // Geometry below follows main's OperitDialogScaffold / CharacterCardEditorDialog,
@@ -409,7 +412,14 @@ function renderNativeEntity(ctx: ComposeDslContext, input: NativeEntityInput, li
       if (!state.editing) pages[0].push(...renderEntityPreview(ctx, { card: null, group: draft, snapshot, tags: state.tags, avatar: state.avatar, themes: state.themes,
         themeError: state.themeError, configurationExpanded: state.previewConfigurationExpanded, onToggleConfiguration: togglePreviewConfiguration }));
       else {
-        pages[0].push(field("name", "群组名称", draft.name, name => changeGroup({ name })), field("description", "描述", draft.description, description => changeGroup({ description })), select("entity-theme-picker", "主题配置", draft.themeConfigId, state.themes ?? [], themeConfigId => changeGroup({ themeConfigId })), ctx.UI.Text({ text: "组内角色", style: "titleSmall", fontWeight: "700", paddingTop: 8, paddingBottom: 8 }));
+        pages[0].push(field("name", "群组名称", draft.name, name => changeGroup({ name })), field("description", "描述", draft.description, description => changeGroup({ description })),
+          ctx.UI.Box({ fillMaxWidth: true, paddingBottom: 12 }, ctx.UI.InputDecorator({ label: "群组头像", enabled }, ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12 }, [
+            renderGroupAvatar(ctx, groupPortrait(draft, snapshot.cards), state.avatar, 44, "entity-edit-avatar"),
+            ctx.UI.Text({ text: draft.avatarUri == null ? "按成员顺序自动拼图（最多 9 位）" : "自定义头像", style: "bodyMedium", weight: 1 }),
+            standardButton("entity-choose-avatar", "选择", chooseAvatar),
+            ...(draft.avatarUri == null ? [] : [standardButton("entity-clear-avatar", "使用成员拼图", () => changeGroup({ avatarUri: null }))]),
+          ]))),
+          select("entity-theme-picker", "主题配置", draft.themeConfigId, state.themes ?? [], themeConfigId => changeGroup({ themeConfigId })), ctx.UI.Text({ text: "组内角色", style: "titleSmall", fontWeight: "700", paddingTop: 8, paddingBottom: 8 }));
         for (const option of snapshot.cards) {
           const selected = draft.members.some(member => member.characterCardId === option.id);
           pages[0].push(ctx.UI.Box({ fillMaxWidth: true, paddingBottom: 6 }, ctx.UI.Surface({ key: "entity-member-" + option.id, fillMaxWidth: true, color: selected ? colors.primaryContainer.copy({ alpha: 0.16 }) : colors.surfaceContainerHighest.copy({ alpha: 0.28 }), shape: { cornerRadius: 10 }, modifier: ctx.Modifier.border(1, selected ? colors.primary.copy({ alpha: 0.45 }) : colors.outlineVariant.copy({ alpha: 0.28 }), { cornerRadius: 10 }),

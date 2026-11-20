@@ -18,6 +18,10 @@ const Jimp = (function () {
             const newId = await _nativeImage('crop', [this.id, x, y, w, h]);
             return new JimpWrapper(newId);
         }
+        /** Returns a separately owned image resized and center-cropped to fill its bounds. */
+        async cover(w, h) {
+            return new JimpWrapper(await _nativeImage('cover', [this.id, w, h]));
+        }
         /** Composites another owned image through the structured host binding. */
         async composite(srcWrapper, x, y) {
             if (!(srcWrapper instanceof JimpWrapper)) throw new Error("Source image must be a Jimp object.");

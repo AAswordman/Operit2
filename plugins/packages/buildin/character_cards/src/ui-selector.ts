@@ -4,13 +4,14 @@ import { createUiScreenSession, chatIdentity, type UiPresentation, type UiScreen
 import { requireChatSelection } from "./chat-bindings";
 import type { ToolPkg as ToolPkgTypes } from "../../../../types/toolpkg";
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
+import { groupPortrait, renderGroupAvatar, type GroupPortrait } from "./group-avatar";
 
 /** Distinguishes an explicitly global choice from a real existing chat, never a missing target. */
 export interface SelectorInput extends SelectScreen { readonly chatId: string | null }
 /** Projects a persisted record into one native row without changing its identity, description or avatar. */
 export interface SelectorOption {
   key: string; kind: "card" | "group" | "model"; id: string; title: string; description: string;
-  selection: ActivePrompt; token: string; avatar: { type: "uri"; uri: string } | { type: "resource"; path: string | null } | { type: "group" } | { type: "model" };
+  selection: ActivePrompt; token: string; avatar: { type: "uri"; uri: string } | { type: "resource"; path: string | null } | { type: "group"; portrait: GroupPortrait; defaultAvatar: string | null } | { type: "model" };
 }
 /** Returns real list records and the freshly read authoritative target selection, not the caller's stale check mark. */
 export interface SelectorData { options: SelectorOption[]; selected: string | null }
@@ -61,7 +62,7 @@ export async function readSelectorData(input: SelectorInput): Promise<SelectorDa
   }
   if (input.kind === "group" || input.kind === "all") for (const group of groups) options.push({
     key: "group:" + group.id, token: "group:" + group.id, kind: "group", id: group.id, title: group.name, description: group.description,
-    selection: { CharacterGroup: { id: group.id } }, avatar: { type: "group" },
+    selection: { CharacterGroup: { id: group.id } }, avatar: { type: "group", portrait: groupPortrait(group, cards), defaultAvatar: null },
   });
   const keys = new Set<string>();
   for (const option of options) { if (keys.has(option.key)) throw new Error("Duplicate selector row identity: " + option.key); keys.add(option.key); }
@@ -70,11 +71,11 @@ export async function readSelectorData(input: SelectorInput): Promise<SelectorDa
 
 /** Resolves image references separately from the authoritative selector records. */
 export async function loadSelectorAvatars(data: SelectorData): Promise<SelectorData> {
-  if (!data.options.some(option => option.avatar.type === "resource" && option.avatar.path === null)) return data;
+  if (!data.options.some(option => option.avatar.type === "resource" && option.avatar.path === null || option.avatar.type === "group" && option.avatar.portrait.uri === null && option.avatar.portrait.members.some(member => member.avatarUri === null))) return data;
   const path = await ToolPkg.readResource("character_default_avatar", "operit-avatar.png");
   if (path.trim() === "") throw new Error("Declared character default-avatar resource did not resolve");
   return { ...data, options: data.options.map(option => option.avatar.type === "resource" && option.avatar.path === null
-    ? { ...option, avatar: { type: "resource", path } } : option) };
+    ? { ...option, avatar: { type: "resource", path } } : option.avatar.type === "group" ? { ...option, avatar: { ...option.avatar, defaultAvatar: path } } : option) };
 }
 
 /** Owns one pure-DSL modal request and uses the existing single-write presentation session for every real switch. */
@@ -148,7 +149,7 @@ export function selectorAvatar(ctx: ComposeDslContext, option: SelectorOption): 
       ? ctx.UI.Box({ width: 28, height: 28, contentAlignment: "center" }, ctx.UI.Icon({ name: "Person", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }))
       : ctx.UI.Image({ ...props, path: option.avatar.path });
     case "model": return ctx.UI.Box({ width: 28, height: 28, contentAlignment: "center" }, ctx.UI.Icon({ name: "SmartToy", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }));
-    case "group": return ctx.UI.Box({ width: 28, height: 28, contentAlignment: "center" }, ctx.UI.Icon({ name: "Groups", size: 22, tint: "onSurfaceVariant", contentDescription: option.title }));
+    case "group": return renderGroupAvatar(ctx, option.avatar.portrait, option.avatar.defaultAvatar, 28);
   }
 }
 

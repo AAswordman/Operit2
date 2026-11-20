@@ -5,6 +5,7 @@ import { bindingsForChats } from "./chat-storage";
 import { parseChatSelection } from "./chat-bindings";
 import { getService } from "./service-runtime";
 import { traceCharacterLoad } from "./diagnostics";
+import { groupPortrait, type GroupPortrait } from "./group-avatar";
 
 /** Selects one plugin-owned embedded sidebar view without creating a modal presentation. */
 export interface SidebarInput { view: "characters" | "groups" }
@@ -23,6 +24,7 @@ export interface ChatActivateAction { type: "toolpkg.chat.activate"; chatId: str
 export interface CharacterSidebarSection {
   id: string; title: string; avatarUri: string | null; kind: "card" | "group" | "unbound";
   selection: string | null; chats: SidebarChatSummary[];
+  groupPortrait?: GroupPortrait;
   conversationGroups?: ConversationSidebarGroup[]; ungroupedChats?: SidebarChatSummary[];
 }
 /** Supplies explicit plugin selection state to a pure view without defining a storage or namespace protocol. */
@@ -33,7 +35,7 @@ export interface CharacterSidebarData { directory: SnapshotRecord; selections: S
 /** Projects canonical native folder membership for role presentation only. */
 export interface ConversationSidebarGroup { id: string; name: string; pinned: boolean; displayOrder: number; chats: SidebarChatSummary[] }
 /** Describes a role category containing native folders; no folder storage belongs to the plugin. */
-export interface ConversationSidebarScope { id: string; title: string; ownerSelection: string | null; avatarUri?: string | null; kind?: CharacterSidebarSection["kind"]; groups: ConversationSidebarGroup[]; ungrouped: SidebarChatSummary[] }
+export interface ConversationSidebarScope { id: string; title: string; ownerSelection: string | null; avatarUri?: string | null; groupPortrait?: GroupPortrait; kind?: CharacterSidebarSection["kind"]; groups: ConversationSidebarGroup[]; ungrouped: SidebarChatSummary[] }
 /** Returns only the actual catalog of the explicitly registered sidebar tab. */
 export type SidebarCatalog = { view: "characters"; sections: CharacterSidebarSection[] } | { view: "groups"; scopes: ConversationSidebarScope[] };
 
@@ -156,7 +158,7 @@ export function characterSidebarSections(directory: Pick<SnapshotRecord, "cards"
   for (const group of directory.groups) {
     const selection = encodeSelection({ CharacterGroup: { id: group.id } });
     if (bySelection.has(selection)) throw new Error("Duplicate persisted role-group category: " + selection);
-    const section: CharacterSidebarSection = { id: selection, title: group.name, avatarUri: null, kind: "group", selection, chats: [] };
+    const section: CharacterSidebarSection = { id: selection, title: group.name, avatarUri: group.avatarUri ?? null, groupPortrait: groupPortrait(group, directory.cards), kind: "group", selection, chats: [] };
     sections.push(section); bySelection.set(selection, section);
   }
   const selectionByChat = new Map<string, SidebarChatSelection>();
@@ -194,14 +196,14 @@ export function conversationSidebarScope(section: CharacterSidebarSection): Conv
   }));
   groups.sort((a,b) => Number(b.pinned)-Number(a.pinned) || a.displayOrder-b.displayOrder || a.name.localeCompare(b.name));
   return { id: section.id, title: section.title, ownerSelection: section.selection, avatarUri: section.avatarUri,
-    kind: section.kind, groups, ungrouped: ungrouped.sort(compareSidebarChats) };
+    ...(section.groupPortrait === undefined ? {} : { groupPortrait: section.groupPortrait }), kind: section.kind, groups, ungrouped: ungrouped.sort(compareSidebarChats) };
 }
 
 /** Reuses known role identities while applying live native metadata; unknown chats await authoritative classification. */
 export function reconcileSidebarCatalog(catalog: SidebarCatalog, current: CurrentSidebar): SidebarCatalog {
   const live = new Map(current.chatSidebar.chats.map(chat => [chat.id, chat] as const));
   const sections: CharacterSidebarSection[] = catalog.view === "characters" ? catalog.sections : catalog.scopes.map(scope => ({
-    id: scope.id, title: scope.title, kind: scope.kind ?? "unbound", selection: scope.ownerSelection, avatarUri: scope.avatarUri ?? null,
+    id: scope.id, title: scope.title, kind: scope.kind ?? "unbound", selection: scope.ownerSelection, avatarUri: scope.avatarUri ?? null, ...(scope.groupPortrait === undefined ? {} : { groupPortrait: scope.groupPortrait }),
     chats: [...scope.ungrouped, ...scope.groups.flatMap(group => group.chats)], conversationGroups: scope.groups,
   }));
   const projected = sections.map(section => {

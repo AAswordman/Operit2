@@ -24,6 +24,8 @@ export function configurationReadScope(service: ChatConfigurationService): ChatC
   let tts: ReturnType<ChatConfigurationService["listTtsConfigs"]> | undefined;
   let preferences: ReturnType<ChatConfigurationService["readGlobalMemoryPreferences"]> | undefined;
   return {
+    /** Keeps image IO in the owning runtime while sharing the already-read member records. */
+    groupAvatar: (group, cards) => service.groupAvatar(group, cards),
     /** Reads each requested character once. */
     getCharacter: id => recordRead(cards, id, service.getCharacter.bind(service, id)),
     /** Reads each requested group once. */

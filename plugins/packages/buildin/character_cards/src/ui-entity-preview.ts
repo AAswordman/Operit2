@@ -2,6 +2,7 @@ import { characterModelBindingStatus } from "./model-binding";
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
 import type { Card, Group, Snapshot, TagEdit } from "./model";
 import type { ThemeChoice } from "./selection-application";
+import { groupPortrait, renderGroupAvatar } from "./group-avatar";
 
 interface PreviewContent {
   card: Card | null;
@@ -30,7 +31,7 @@ export function renderEntityPreview(ctx: ComposeDslContext, input: PreviewConten
   const identity = ctx.UI.Column({ key: "entity-preview-identity", fillMaxWidth: true, spacing: 14, paddingBottom: 22 }, [
     ctx.UI.Row({ fillMaxWidth: true, spacing: 16, verticalAlignment: "center" }, [
       card === null
-        ? ctx.UI.Box({ width: 72, height: 72, contentAlignment: "center", backgroundColor: colors.primaryContainer.copy({ alpha: 0.48 }), backgroundShape: { cornerRadius: 20 } }, ctx.UI.Icon({ name: "GroupsOutlined", size: 34, tint: colors.primary }))
+        ? renderGroupAvatar(ctx, groupPortrait(input.group!, input.snapshot.cards), input.avatar, 72, "entity-avatar")
         : ctx.UI.Image({ key: "entity-avatar", ...(card.avatarUri === null ? { path: input.avatar ?? undefined } : { uri: card.avatarUri }), width: 72, height: 72,
           contentScale: "crop", contentDescription: card.name, modifier: ctx.Modifier.clip({ cornerRadius: 20 }) }),
       ctx.UI.Column({ weight: 1, spacing: 6 }, [
