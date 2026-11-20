@@ -3058,9 +3058,20 @@ pub struct ToolPkgPublicApiRegistration<TPayload, TResult> {
     /// Handles a request in the provider's main runtime.
     pub function: Arc<dyn Fn(ToolPkgPublicApiEvent<TPayload>) -> JsFuture<TResult> + Send + Sync>,
 }
-/// Window geometry in logical pixels; position uses the host desktop's top-left origin.
+/// Bounds returned by a native accessibility provider in screen coordinates.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgFloatingScreenBounds {
+    pub left: f64,
+    pub top: f64,
+    pub right: f64,
+    pub bottom: f64,
+}
+/// Window geometry in logical pixels, or an explicit native screen rectangle.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolPkgFloatingWindowOptions {
+    /// Native accessibility bounds; takes precedence over logical geometry.
+    /// Pixels on Windows/Android, screen points on macOS, AT-SPI desktop units on X11. System scope only.
+    pub screenBounds: Option<ToolPkgFloatingScreenBounds>,
     /// Sets the left coordinate, when positioning is supported.
     pub x: Option<f64>,
     /// Sets the top coordinate, when positioning is supported.

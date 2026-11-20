@@ -59,6 +59,7 @@ const _composeNodeTypes = <String, String>{
   'inkwell': 'InkWell',
   'svg': 'Svg',
   'gradientrule': 'GradientRule',
+  'glowborder': 'GlowBorder',
   'loadingindicator': 'LoadingIndicator',
   'activitydots': 'ActivityDots',
   'draggable': 'Draggable',

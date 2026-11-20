@@ -86,7 +86,7 @@ class RuntimeFloatingWindowController {
       );
       final fill = (request['fill'] as bool?) ?? false;
       final support = await FloatingWindows.capabilities();
-      if ((options.x != null || options.y != null) &&
+      if ((options.x != null || options.y != null || options.screenBounds != null) &&
           support['positioning'] != true) {
         throw UnsupportedError(
           'This host does not support absolute window positioning',

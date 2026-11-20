@@ -49,9 +49,11 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         FlutterEngine engine;
         FlutterView view;
         WindowManager manager;
+        Context windowContext;
         WindowManager.LayoutParams params;
         boolean attached, configured, closed, draggable, pointerDown, dragging;
         boolean fill;
+        boolean screenBounded;
         float downX, downY;
         int windowX, windowY;
         float opacity = 1.0f;
@@ -114,6 +116,10 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
     }
     private boolean permitted() { return Settings.canDrawOverlays(context); }
     private int pixels(double value) { return (int)Math.round(value * context.getResources().getDisplayMetrics().density); }
+    private float density(Surface surface) {
+        return (surface.windowContext != null ? surface.windowContext : context)
+            .getResources().getDisplayMetrics().density;
+    }
     private double number(Map<?, ?> args, String key, double fallback, boolean dimension) {
         Object raw = args.get(key);
         if (raw == null) return fallback;
@@ -135,27 +141,55 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
         if (!flag(args,"alwaysOnTop",true)) throw new UnsupportedOperationException("Android overlays are always above applications");
         surface.draggable = flag(args, "draggable", surface.draggable);
         if (!surface.draggable) { surface.pointerDown = false; surface.dragging = false; }
-        float density = context.getResources().getDisplayMetrics().density;
+        float density = density(surface);
         WindowManager.LayoutParams next = new WindowManager.LayoutParams();
         next.copyFrom(surface.params);
+        if (args.containsKey("screenBounds")) {
+            if (surface.fill || !(args.get("screenBounds") instanceof Map)) throw new IllegalArgumentException("Invalid screen bounds mode");
+            Map<?, ?> bounds = (Map<?, ?>)args.get("screenBounds");
+            for (String edge : new String[] {"left", "top", "right", "bottom"}) {
+                if (!bounds.containsKey(edge)) throw new IllegalArgumentException("Missing screen edge");
+            }
+            int left = (int)Math.round(number(bounds,"left",0,false));
+            int top = (int)Math.round(number(bounds,"top",0,false));
+            int right = (int)Math.round(number(bounds,"right",0,false));
+            int bottom = (int)Math.round(number(bounds,"bottom",0,false));
+            if (right <= left || bottom <= top) throw new IllegalArgumentException("Empty screen bounds");
+            next.x = left; next.y = top; next.width = right - left; next.height = bottom - top;
+            surface.screenBounded = true;
+        }
         if (surface.fill) {
             next.width = WindowManager.LayoutParams.MATCH_PARENT;
             next.height = WindowManager.LayoutParams.MATCH_PARENT;
+            next.x = 0;
+            next.y = 0;
+            // An IME belongs to the controlled app, not to this indicator.
+            next.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING;
             if (Build.VERSION.SDK_INT >= 30) {
                 next.setFitInsetsTypes(0);
                 next.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
             } else if (Build.VERSION.SDK_INT >= 28) {
                 next.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
             }
-        } else {
-            next.width = pixels(number(args,"width",next.width/density,true));
-            next.height = pixels(number(args,"height",next.height/density,true));
-            next.x = pixels(number(args,"x",next.x/density,false));
-            next.y = pixels(number(args,"y",next.y/density,false));
+        } else if (!surface.screenBounded) {
+            next.width = (int)Math.round(number(args,"width",next.width/density,true) * density);
+            next.height = (int)Math.round(number(args,"height",next.height/density,true) * density);
+            next.x = (int)Math.round(number(args,"x",next.x/density,false) * density);
+            next.y = (int)Math.round(number(args,"y",next.y/density,false) * density);
+        }
+        if (surface.screenBounded) {
+            next.softInputMode = WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING;
+            if (Build.VERSION.SDK_INT >= 30) {
+                next.setFitInsetsTypes(0);
+                next.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS;
+            } else if (Build.VERSION.SDK_INT >= 28) {
+                next.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES;
+            }
         }
         boolean focus = flag(args,"focusable",(next.flags & WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)==0);
         boolean through = flag(args,"clickThrough",(next.flags & WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)!=0);
         next.flags = WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            | (surface.fill || surface.screenBounded ? WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS : 0)
             | (focus ? 0 : WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE)
             | (through ? WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE : 0);
         // Android 12+ blocks touch delivery through untrusted overlays whose
@@ -219,11 +253,22 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 FlutterLoader loader = FlutterInjector.instance().flutterLoader();
                 loader.startInitialization(context); loader.ensureInitializationComplete(context,null);
                 Surface surface = new Surface(); surface.id=UUID.randomUUID().toString(); surface.owner=messenger;
-                surface.engine=new FlutterEngine(context);
-                surface.manager=(WindowManager)context.getSystemService(Context.WINDOW_SERVICE);
-                FlutterTextureView texture = new FlutterTextureView(context);
+                // A window context supplies overlay-specific density, configuration
+                // and rotation updates rather than the activity's split-screen metrics.
+                Context windowContext = context;
+                if (Build.VERSION.SDK_INT >= 30) {
+                    android.hardware.display.DisplayManager displays = (android.hardware.display.DisplayManager)
+                        context.getSystemService(Context.DISPLAY_SERVICE);
+                    windowContext = context.createDisplayContext(displays.getDisplay(android.view.Display.DEFAULT_DISPLAY))
+                        .createWindowContext(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY, null);
+                }
+                surface.windowContext = windowContext;
+                surface.engine=new FlutterEngine(windowContext);
+                surface.manager=(WindowManager)windowContext.getSystemService(Context.WINDOW_SERVICE);
+                FlutterTextureView texture = new FlutterTextureView(windowContext);
                 texture.setOpaque(false);
-                surface.view=new DragFlutterView(context,texture,surface);
+                surface.view=new DragFlutterView(windowContext,texture,surface);
+                surface.view.setFitsSystemWindows(false);
                 surface.view.setBackgroundColor(Color.TRANSPARENT);
                 surface.params=new WindowManager.LayoutParams(pixels(240),pixels(240),
                     Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY : WindowManager.LayoutParams.TYPE_PHONE,
@@ -266,10 +311,19 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 if (!surface.configured) throw new IllegalStateException("Configure the floating window first");
                 switch (call.method) {
                 case "getBounds": {
-                    float density = context.getResources().getDisplayMetrics().density;
+                    float density = density(surface);
                     Map<String,Object> bounds = new HashMap<>();
-                    bounds.put("x",surface.params.x / density); bounds.put("y",surface.params.y / density);
-                    Point size = surface.fill ? displaySize(surface.manager) : new Point(surface.params.width, surface.params.height);
+                    int x = surface.params.x, y = surface.params.y;
+                    Point size;
+                    if (surface.attached && surface.view.getWidth() > 0 && surface.view.getHeight() > 0) {
+                        int[] origin = new int[2];
+                        surface.view.getLocationOnScreen(origin);
+                        x = origin[0]; y = origin[1];
+                        size = new Point(surface.view.getWidth(), surface.view.getHeight());
+                    } else {
+                        size = surface.fill ? displaySize(surface.manager) : new Point(surface.params.width, surface.params.height);
+                    }
+                    bounds.put("x",x / density); bounds.put("y",y / density);
                     bounds.put("width",size.x / density); bounds.put("height",size.y / density);
                     result.success(bounds); return;
                 }

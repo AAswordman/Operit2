@@ -45,7 +45,7 @@ Enable **UI Automation** (`com.operit.ui_automation`) in plugin management. The
 built-in ToolPkg is disabled by default. Its tool subpackage retains the
 `Automatic_ui_base` namespace for existing calls and permissions.
 
-The plugin owns the status orb, the transparent gradient outline and the
+The plugin owns the status orb, the transparent animated edge glow and the
 display lifecycle. There is no separate automation page or toolbox entry.
 Packaged automation tools await the main runtime's overlay reconciliation before
 executing device operations. Native UI tools also mark their chat through the
@@ -58,10 +58,37 @@ remains. A subsequent UI tool starts a new operation and displays the overlay
 again. Turn completion, failure, cancellation and application termination also
 clean up automatically. Disabling the plugin closes its surfaces. The orb and outline share one
 click-through window that leaves input and focus on the underlying application.
+The edge combines flowing aurora colors, a wide inward bloom, a slow breathing
+intensity and two moving perimeter glints. Its center remains transparent.
+Flutter paints animation frames locally without plugin IPC and respects reduced
+motion. Geometry uses the host's full display/view bounds and logical pixels;
+display scaling, resolution changes and device rotation do not stretch a fixed
+size image. A square perimeter fills all four corners of rectangular screens
+and windows. Android fill surfaces avoid system insets and keyboard resizing;
+macOS fill surfaces include the menu bar and Dock, and Windows re-fits after DPI
+changes. Operating-system-owned bars and protected surfaces may still appear
+above Android application overlays.
+
+`focus_window(window_id)` and `get_page_info(window_id)` select the indicated
+window for the calling chat. A snapshot without an ID also binds the packaged
+tools' indicator to the actual returned window. Subsequent input tools retain
+that target. Its indicator follows native window bounds, hides while the target
+is minimized, closed or temporarily unavailable, and reappears when valid again.
+Selected targets never fall back to another window or the full display. A shared,
+non-overlapping refresh loop runs only while selected system windows are active.
+Chats selecting the same window share an indicator; different targets retain
+separate indicators. Until a target is selected, operations use the full scope.
+
+For a native macOS fill-window smoke check, run from `apps/flutter/app`:
+`flutter run -d macos -t tool/floating_windows_smoke.dart --no-pub --dart-define=OPERIT_FLOATING_SMOKE_FILL=true`.
+It compares the window with the display's full logical size, reports the Flutter
+viewport, exercises hide/show and confirms child-engine removal after closing.
+Use `OPERIT_FLOATING_SMOKE_REGION=true` instead of the fill define to check native
+screen-coordinate positioning, movement, resizing and Retina viewport sizing.
 
 | Window scope | When and where the indicator appears |
 | --- | --- |
-| System (Windows, macOS, Linux/X11 with composition, Android with permission) | Covers the primary display during UI automation, including while Operit is in the foreground. Switching applications keeps it visible. System surfaces and system security restrictions still apply. |
+| System (Windows, macOS, Linux/X11 with composition, Android with permission) | Marks the selected native window; covers the primary display until a target is selected. Switching applications keeps it visible. System surfaces and system security restrictions still apply. |
 | Application (iOS, OpenHarmony, Web, Linux/Wayland) | Covers the Operit view while Operit is active. This scope is limited to the app's own view. |
 
 On Android, grant the overlay permission through the application's existing

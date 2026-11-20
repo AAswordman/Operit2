@@ -13,6 +13,11 @@ extension WindowId {
 public class CustomWindow: NSWindow {
     /// Nil preserves ordinary window focus; floating content explicitly opts in.
     public var floatingWindowFocusable: Bool?
+    /// Host-sized overlays must include the menu bar and Dock, even on Retina displays.
+    public var floatingWindowFillsDisplay = false
+    public override func constrainFrameRect(_ frameRect: NSRect, to screen: NSScreen?) -> NSRect {
+        floatingWindowFillsDisplay ? frameRect : super.constrainFrameRect(frameRect, to: screen)
+    }
     public override var canBecomeKey: Bool { floatingWindowFocusable ?? super.canBecomeKey }
     public override var canBecomeMain: Bool { floatingWindowFocusable == nil && super.canBecomeMain }
 

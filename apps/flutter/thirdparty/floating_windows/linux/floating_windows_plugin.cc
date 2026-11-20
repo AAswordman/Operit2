@@ -10,6 +10,8 @@ struct WidgetHost {
   FlView* view;
   bool configured = false;
   bool fill = false;
+  bool screen_bounded = false;
+  double screen_left = 0, screen_top = 0, screen_right = 0, screen_bottom = 0;
   bool pointer_down = false;
   guint button = 0;
   guint32 time = 0;
@@ -104,7 +106,8 @@ gboolean CloseWindow(gpointer data) {
 void FillDisplay(GtkWindow* window) {
   GdkScreen* screen = gtk_window_get_screen(window);
   GdkRectangle bounds;
-  gdk_screen_get_monitor_geometry(screen, gdk_screen_get_primary_monitor(screen), &bounds);
+  const int primary = gdk_screen_get_primary_monitor(screen);
+  gdk_screen_get_monitor_geometry(screen, primary >= 0 ? primary : 0, &bounds);
   gtk_window_move(window, bounds.x, bounds.y);
   gtk_window_resize(window, bounds.width, bounds.height);
 }
@@ -137,8 +140,29 @@ void Apply(WidgetHost* host, GtkWindow* window, FlValue* args) {
     host->draggable = fl_value_get_bool(value);
     if (!host->draggable) { host->pointer_down = false; host->dragging = false; }
   }
+  if (FlValue* bounds = fl_value_lookup_string(args, "screenBounds")) {
+    if (host->fill) throw std::invalid_argument("Invalid screen bounds mode");
+    if (fl_value_get_type(bounds) != FL_VALUE_TYPE_MAP) throw std::invalid_argument("Invalid screen bounds");
+    const auto edge = [&](const char* key) {
+      FlValue* value = fl_value_lookup_string(bounds, key);
+      const double number = value && fl_value_get_type(value) == FL_VALUE_TYPE_FLOAT ? fl_value_get_float(value) :
+          value && fl_value_get_type(value) == FL_VALUE_TYPE_INT ? fl_value_get_int(value) : NAN;
+      if (!std::isfinite(number) || std::abs(number) > 1000000) throw std::invalid_argument("Invalid screen edge");
+      return number;
+    };
+    const double left = edge("left"), top = edge("top"), right = edge("right"), bottom = edge("bottom");
+    if (right <= left || bottom <= top) throw std::invalid_argument("Empty screen bounds");
+    host->screen_left = left; host->screen_top = top; host->screen_right = right; host->screen_bottom = bottom;
+    host->screen_bounded = true;
+  }
   if (host->fill) FillDisplay(window);
-  else ApplyBounds(window, args);
+  else if (host->screen_bounded) {
+    // AT-SPI desktop extents from GTK already use GDK's logical coordinates.
+    // Dividing by the GTK scale again would shrink the indicator on HiDPI X11.
+    gtk_window_move(window, std::lround(host->screen_left), std::lround(host->screen_top));
+    gtk_window_resize(window, std::lround(host->screen_right - host->screen_left),
+        std::lround(host->screen_bottom - host->screen_top));
+  } else ApplyBounds(window, args);
   for (const auto* key : {"alwaysOnTop", "focusable", "clickThrough"}) {
     FlValue* value = fl_value_lookup_string(args,key);
     if (!value) continue;
@@ -218,7 +242,12 @@ void HandleMethod(FlMethodChannel*, FlMethodCall* call, gpointer data) {
       }
       Apply(host, window, args);
       if (host->fill) {
+        // Indicator geometry includes desktop panels; do not let the WM apply
+        // its normal work-area limits to a non-interactive display overlay.
+        gtk_window_set_type_hint(window, GDK_WINDOW_TYPE_HINT_NOTIFICATION);
         g_signal_connect_object(gtk_window_get_screen(window), "monitors-changed",
+            G_CALLBACK(FillDisplay), window, G_CONNECT_SWAPPED);
+        g_signal_connect_object(gtk_window_get_screen(window), "size-changed",
             G_CALLBACK(FillDisplay), window, G_CONNECT_SWAPPED);
       }
       host->configured = true;

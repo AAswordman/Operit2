@@ -453,12 +453,15 @@ const UIAutomationTools = (() => {
 
     /** Activates exactly the native window chosen by the caller. */
     async function focus_window(params: { window_id: string }): Promise<ToolResponse> {
-        return { success: true, message: '成功聚焦系统窗口', data: await Tools.UI.focusWindow(params.window_id) };
+        const data = await Tools.UI.focusWindow(params.window_id);
+        await markTarget(params.window_id);
+        return { success: true, message: '成功聚焦系统窗口', data };
     }
 
     /** Returns the complete accessibility tree of the selected native window. */
     async function get_page_info(params: { window_id?: string }): Promise<ToolResponse> {
         const page = await Tools.UI.getPageInfo(params.window_id);
+        if (page.windowId) await markTarget(page.windowId);
         return {
             success: true, message: '成功获取窗口 UI 摘要',
             data: {
@@ -537,19 +540,26 @@ const UIAutomationTools = (() => {
     }
 
     /** Adapts a typed handler to the package completion boundary without alternate actions. */
-    function asTool<P>(handler: (params: P) => Promise<ToolResponse>, startsOperation = true): (params: P) => Promise<void> {
+    function asTool<P>(handler: (params: P) => Promise<ToolResponse>, startsOperation = true, target?: (params: P) => string | undefined): (params: P) => Promise<void> {
         /** Reports the actual operation result or failure to the package caller. */
         return async function (params: P): Promise<void> {
             try {
                 const chatId = getChatId();
                 if (startsOperation && chatId) {
-                    await ToolPkg.ipc.call("ui_automation.begin", { chatId }, { targetRuntime: "main" });
+                    const windowId = target?.(params);
+                    await ToolPkg.ipc.call("ui_automation.begin", { chatId, ...(windowId ? { windowId } : {}) }, { targetRuntime: "main" });
                 }
                 complete(await handler(params));
             } catch (error: unknown) {
                 complete({ success: false, message: error instanceof Error ? error.message : String(error) });
             }
         };
+    }
+
+    /** Reconciles a focused/restored window or the actual window returned by a snapshot. */
+    async function markTarget(windowId: string): Promise<void> {
+        const chatId = getChatId();
+        if (chatId) await ToolPkg.ipc.call("ui_automation.begin", { chatId, windowId }, { targetRuntime: "main" });
     }
 
     /** Awaits the owning main runtime instead of changing isolated tool-runtime state. */
@@ -568,8 +578,8 @@ const UIAutomationTools = (() => {
     return {
         complete_ui_operation: asTool(complete_ui_operation, false),
         list_windows: asTool(list_windows),
-        focus_window: asTool(focus_window),
-        get_page_info: asTool(get_page_info),
+        focus_window: asTool(focus_window, true, params => params.window_id),
+        get_page_info: asTool(get_page_info, true, params => params.window_id),
         app_launch: asTool(app_launch),
         get_page_screenshot_image: asTool(get_page_screenshot_image),
         tap: asTool(tap),

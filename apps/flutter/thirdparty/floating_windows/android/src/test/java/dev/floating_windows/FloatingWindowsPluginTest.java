@@ -112,6 +112,81 @@ public class FloatingWindowsPluginTest {
         verify(bounds, never()).error(anyString(), any(), any());
     }
 
+    /** Fill geometry ignores bars and the controlled application's keyboard. */
+    @Test
+    public void fillExtendsBeyondInsetsWithoutFocusOrTouchInterception() {
+        Map<String, Object> options = new HashMap<>();
+        options.put("role", "floating_windows.window");
+        options.put("fill", true);
+        options.put("clickThrough", true);
+        MethodChannel.Result result = mock(MethodChannel.Result.class);
+        child.onMethodCall(new MethodCall("configure", options), result);
+        verify(result).success(null);
+        WindowManager.LayoutParams params = ReflectionHelpers.getField(surface, "params");
+        assertEquals(WindowManager.LayoutParams.MATCH_PARENT, params.width);
+        assertEquals(WindowManager.LayoutParams.MATCH_PARENT, params.height);
+        assertEquals(0, params.x);
+        assertEquals(0, params.y);
+        assertEquals(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING, params.softInputMode);
+        int flags = WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN
+            | WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
+            | WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE;
+        assertEquals(flags, params.flags & flags);
+        assertEquals(WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES, params.layoutInDisplayCutoutMode);
+    }
+
+    /** Modern overlays also opt out of WindowManager's inset fitting. */
+    @Test
+    @Config(sdk = 30)
+    public void modernFillIncludesCutoutsAndAllSystemInsets() {
+        MethodChannel.Result result = mock(MethodChannel.Result.class);
+        child.onMethodCall(new MethodCall("configure", Map.of(
+            "role", "floating_windows.window", "fill", true, "clickThrough", true)), result);
+        verify(result).success(null);
+        WindowManager.LayoutParams params = ReflectionHelpers.getField(surface, "params");
+        assertEquals(0, params.getFitInsetsTypes());
+        assertEquals(WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS, params.layoutInDisplayCutoutMode);
+    }
+
+    /** Accessibility bounds already use physical pixels and must not be scaled twice. */
+    @Test
+    public void nativeScreenBoundsPreservePhysicalWindowCoordinates() {
+        MethodChannel.Result result = mock(MethodChannel.Result.class);
+        child.onMethodCall(new MethodCall("configure", Map.of(
+            "role", "floating_windows.window", "clickThrough", true,
+            "screenBounds", Map.of("left", 80, "top", 120, "right", 1280, "bottom", 920))), result);
+        verify(result).success(null);
+        WindowManager.LayoutParams params = ReflectionHelpers.getField(surface, "params");
+        assertEquals(80, params.x);
+        assertEquals(120, params.y);
+        assertEquals(1200, params.width);
+        assertEquals(800, params.height);
+        assertEquals(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING, params.softInputMode);
+        child.onMethodCall(new MethodCall("update", Map.of(
+            "screenBounds", Map.of("left", 0, "top", 0, "right", 2400, "bottom", 1080))), result);
+        params = ReflectionHelpers.getField(surface, "params");
+        assertEquals(2400, params.width);
+        assertEquals(1080, params.height);
+    }
+
+    /** Returns actual view measurements, including after a configuration change. */
+    @Test
+    public void fillReportsMeasuredBoundsAfterRotation() {
+        ReflectionHelpers.setField(surface, "configured", true);
+        ReflectionHelpers.setField(surface, "attached", true);
+        ReflectionHelpers.setField(surface, "fill", true);
+        when(view.getWidth()).thenReturn(1080, 1080, 2400, 2400);
+        when(view.getHeight()).thenReturn(2400, 2400, 1080, 1080);
+        for (int[] size : new int[][] {{1080, 2400}, {2400, 1080}}) {
+            MethodChannel.Result result = mock(MethodChannel.Result.class);
+            child.onMethodCall(new MethodCall("getBounds", null), result);
+            float density = RuntimeEnvironment.getApplication().getResources().getDisplayMetrics().density;
+            verify(result).success(Map.of("x", 0.0f, "y", 0.0f,
+                "width", size[0] / density, "height", size[1] / density));
+        }
+    }
+
     /** Prevents the owning main engine and unrelated engines from configuring a child's surface. */
     @Test
     public void otherEnginesCannotControlCurrentSurface() {

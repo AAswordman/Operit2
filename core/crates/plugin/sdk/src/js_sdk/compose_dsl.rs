@@ -2409,6 +2409,23 @@ pub struct BoxProps {
     /// Default placement of children within the box bounds.
     pub contentAlignment: Option<ComposeAlignment>,
 }
+/// Transparent animated perimeter, painted by the host without JavaScript frames.
+pub struct GlowBorderProps {
+    /// Shared layout, drawing and identity properties.
+    pub base_compose_common_props: ComposeCommonProps,
+    /// Ordered colors that flow around the perimeter.
+    pub colors: Vec<ComposeColor>,
+    /// Corner radius in logical pixels, default 0 (square corners).
+    pub cornerRadius: Option<f64>,
+    /// Crisp edge width in logical pixels, default 3.
+    pub strokeWidth: Option<f64>,
+    /// Soft inward bloom width in logical pixels, default 56.
+    pub glowWidth: Option<f64>,
+    /// One full circuit in milliseconds, default 6000.
+    pub durationMillis: Option<u32>,
+    /// Whether to animate; respects the host's reduced motion preference.
+    pub running: Option<bool>,
+}
 /// Empty layout element that reserves explicit width and height.
 pub struct SpacerProps {
     /// Horizontal space reserved by the element.
@@ -3369,6 +3386,8 @@ pub struct AlertDialogProps {
 }
 /// Core component factories available through `ComposeDslContext::UI`.
 pub struct ComposeUiFactoryRegistry {
+    /// Paints a host-animated gradient perimeter with a transparent center.
+    pub GlowBorder: ComposeNodeFactory<GlowBorderProps>,
     /// Creates one native paragraph with individually styled spans.
     pub RichText: ComposeNodeFactory<RichTextProps>,
     /// Renders source text using the shared native syntax palette and font metrics.

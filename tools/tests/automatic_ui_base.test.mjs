@@ -135,12 +135,18 @@ test('provider failures remain errors and package main performs no input', async
 });
 
 /** Loads the actual plugin modules with a recorded floating-window host. */
-function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFailures = 0, register = true } = {}) {
+function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFailures = 0, register = true, nativeWindows = [], onQuery } = {}) {
   const routes = new Map();
   const hooks = new Map();
   const windows = new Map([['other-surface', { id: 'other-surface' }]]);
   const commands = [];
-  const context = vm.createContext({ console, ToolPkg: {
+  const timers = new Map();
+  let timerSerial = 0;
+  const context = vm.createContext({ console,
+    setTimeout(callback) { const id = ++timerSerial; timers.set(id, callback); return id; },
+    clearTimeout(id) { timers.delete(id); },
+    Tools: { UI: { async listWindows() { await onQuery?.(); return { windows: nativeWindows }; } } },
+    ToolPkg: {
     registerUiRoute(definition) { routes.set(definition.id, definition); },
     registerNavigationEntry() { assert.fail('Automation must not create a standalone page'); },
     registerAppLifecycleHook(definition) { hooks.set(definition.event, definition.function); },
@@ -160,6 +166,13 @@ function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFai
         assert.ok(windows.delete(id));
         commands.push(['close', id]);
       },
+      async update(id, options) {
+        assert.ok(windows.has(id));
+        windows.get(id).options = { ...windows.get(id).options, ...plain(options) };
+        commands.push(['update', id, plain(options)]);
+      },
+      async hide(id) { assert.ok(windows.has(id)); commands.push(['hide', id]); },
+      async show(id) { assert.ok(windows.has(id)); commands.push(['show', id]); },
     } },
   } });
   installIpc(context);
@@ -181,8 +194,14 @@ function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFai
   const main = load('main');
   if (register) assert.equal(main.registerToolPkg(), true);
   assert.deepEqual(commands, []);
-  return { context, commands, routes, windows,
-    begin(chatId) { return context.ToolPkg.ipc.call('ui_automation.begin', { chatId }); },
+  return { context, commands, routes, windows, timers,
+    async poll() {
+      assert.equal(timers.size, 1);
+      const [id, callback] = timers.entries().next().value;
+      timers.delete(id); callback();
+      await new Promise(resolve => setImmediate(resolve));
+    },
+    begin(chatId, windowId) { return context.ToolPkg.ipc.call('ui_automation.begin', { chatId, ...(windowId ? { windowId } : {}) }); },
     complete(chatId) { return context.ToolPkg.ipc.call('ui_automation.complete', { chatId }); },
     /** Delivers a normalized application lifecycle event. */
     app(state) {
@@ -190,8 +209,8 @@ function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFai
       return hooks.get(eventName)({ eventName });
     },
     /** Delivers the concrete tool identity and its authenticated turn context. */
-    tool(toolName, chatId, eventName = 'tool_execution_started') {
-      return hooks.get('tool_lifecycle')({ eventName, eventPayload: { toolName, runtimeContext: chatId ? { chatId } : null } });
+    tool(toolName, chatId, eventName = 'tool_execution_started', parameters) {
+      return hooks.get('tool_lifecycle')({ eventName, eventPayload: { toolName, parameters, runtimeContext: chatId ? { chatId } : null } });
     },
     /** Delivers the terminal state for one conversation. */
     finish(chatId) {
@@ -347,7 +366,7 @@ test('failed host cleanup can be retried without losing ownership or poisoning t
   assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
 });
 
-test('the indicator route renders a full-size outline with a separate activity orb', async () => {
+test('the indicator route renders host-animated glow with a separate activity orb', async () => {
   const { context, routes } = indicatorRuntime();
   context.module = { exports: { default: routes.get('indicator').screen } };
   vm.runInContext(readSdkScript('ToolPkgComposeDslBridge.rs'), context);
@@ -359,8 +378,124 @@ test('the indicator route renders a full-size outline with a separate activity o
   assert.equal(tree.type, 'Box');
   assert.equal(tree.props.fillMaxSize, true);
   assert.equal(tree.children[0].props.fillMaxSize, true);
+  assert.equal(tree.children[0].type, 'GlowBorder');
+  assert.ok(tree.children[0].props.glowWidth > tree.children[0].props.strokeWidth * 5);
+  assert.ok(tree.children[0].props.durationMillis > 0);
   assert.equal(tree.children[1].children[0].type, 'CircularProgressIndicator');
   if (process.env.OPERIT_AUTOMATION_PREVIEW_TREE) {
     writeFileSync(process.env.OPERIT_AUTOMATION_PREVIEW_TREE, JSON.stringify(tree));
   }
+});
+
+/** Makes a real provider-shaped native window with mutable state for tracking tests. */
+function nativeWindow(windowId, bounds = '[120,80][920,680]') {
+  return { windowId, bounds, title: windowId, packageName: 'editor', isActive: true, isFocused: true, isMinimized: false };
+}
+
+test('selected windows use native screen bounds, follow movement and hide when minimized or closed', async () => {
+  const target = nativeWindow('editor:1');
+  const nativeWindows = [target];
+  const plugin = indicatorRuntime({ nativeWindows });
+  await plugin.begin('chat');
+  await plugin.begin('chat', target.windowId);
+  const opened = plugin.commands.filter(([command]) => command === 'open').at(-1)[1];
+  assert.equal(opened.fill, undefined);
+  assert.deepEqual(opened.options.screenBounds, { left: 120, top: 80, right: 920, bottom: 680 });
+  assert.ok(!plugin.windows.has('automation-activity'));
+  assert.equal(plugin.timers.size, 1);
+  target.bounds = '[-150,24][850,724]';
+  await plugin.poll();
+  assert.deepEqual(plugin.commands.at(-1), ['update', opened.id, { screenBounds: { left: -150, top: 24, right: 850, bottom: 724 } }]);
+  const count = plugin.commands.length;
+  await plugin.begin('chat');
+  assert.equal(plugin.commands.length, count, 'ordinary input retains the target without reopening it');
+  target.isMinimized = true;
+  await plugin.poll();
+  assert.deepEqual(plugin.commands.at(-1), ['hide', opened.id]);
+  target.isMinimized = false;
+  target.bounds = '[0,0][7680,4320]';
+  await plugin.poll();
+  assert.deepEqual(plugin.commands.at(-2), ['update', opened.id, { screenBounds: { left: 0, top: 0, right: 7680, bottom: 4320 } }]);
+  assert.deepEqual(plugin.commands.at(-1), ['show', opened.id]);
+  nativeWindows.length = 0;
+  await plugin.poll();
+  assert.deepEqual(plugin.commands.at(-1), ['hide', opened.id]);
+  assert.ok(!plugin.windows.has('automation-activity'), 'a missing selected window never marks the whole display');
+  await plugin.complete('chat');
+  assert.deepEqual(plugin.commands.at(-1), ['close', opened.id]);
+  assert.equal(plugin.timers.size, 0);
+});
+
+test('different chats share equal targets and retain independent indicators for different windows', async () => {
+  const plugin = indicatorRuntime({ nativeWindows: [nativeWindow('a'), nativeWindow('b')] });
+  await plugin.begin('first', 'a');
+  await plugin.begin('second', 'a');
+  assert.equal(plugin.commands.length, 1);
+  await plugin.begin('second', 'b');
+  assert.equal(plugin.commands.filter(([command]) => command === 'open').length, 2);
+  const a = plugin.commands[0][1].id;
+  const b = plugin.commands[1][1].id;
+  await plugin.complete('first');
+  assert.ok(!plugin.windows.has(a));
+  assert.ok(plugin.windows.has(b));
+  await plugin.app('terminate');
+  assert.ok(!plugin.windows.has(b));
+  assert.equal(plugin.timers.size, 0);
+});
+
+test('stale IDs, empty bounds and provider errors never fall back to another window', async () => {
+  let fail = false;
+  const windows = [nativeWindow('other'), nativeWindow('empty', '[0,0][0,0]')];
+  const plugin = indicatorRuntime({ nativeWindows: windows, onQuery() { if (fail) throw new Error('Provider unavailable'); } });
+  await plugin.begin('chat', 'missing');
+  await plugin.begin('chat', 'empty');
+  assert.deepEqual(plugin.commands, []);
+  await plugin.begin('chat', 'other');
+  const id = plugin.commands[0][1].id;
+  fail = true;
+  await plugin.poll();
+  assert.deepEqual(plugin.commands.at(-1), ['hide', id]);
+  await plugin.complete('chat');
+  assert.equal(plugin.timers.size, 0);
+});
+
+test('native lifecycle parameters select the target and the provider refresh does not recurse', async () => {
+  let plugin;
+  plugin = indicatorRuntime({ nativeWindows: [nativeWindow('native:42')],
+    onQuery: () => plugin.tool('list_windows', 'chat'),
+  });
+  await plugin.tool('focus_window', 'chat', 'tool_execution_started', { window_id: 'native:42' });
+  assert.equal(plugin.commands[0][1].options.screenBounds.left, 120);
+  await plugin.finish('chat');
+  assert.equal(plugin.timers.size, 0);
+});
+
+test('packaged focus and snapshots propagate the selected and actual active windows through IPC', async () => {
+  const plugin = indicatorRuntime({ nativeWindows: [nativeWindow('a'), nativeWindow('b')] });
+  const instance = runtime({ UI: {
+    async focusWindow(id) {
+      assert.equal(id, 'a');
+      assert.ok([...plugin.windows.values()].some(window => window.options?.screenBounds));
+      return {};
+    },
+    async getPageInfo() { return { windowId: 'b', summary: 'Active window B' }; },
+  } }, undefined, { chatId: 'chat', async ipc(channel, payload) {
+    if (channel === 'ui_automation.begin') return plugin.begin(payload.chatId, payload.windowId);
+    return plugin.complete(payload.chatId);
+  } });
+  await instance.tools.focus_window({ window_id: 'a' });
+  const first = plugin.commands[0][1].id;
+  await instance.tools.get_page_info({});
+  assert.ok(!plugin.windows.has(first));
+  assert.ok(instance.results.every(result => result.success));
+  await instance.tools.complete_ui_operation({});
+  assert.equal(plugin.timers.size, 0);
+});
+
+test('application-only hosts keep their own full view and never request external window bounds', async () => {
+  const plugin = indicatorRuntime({ scope: 'application', onQuery() { assert.fail('External provider must not be queried'); } });
+  await plugin.begin('chat', 'external-window');
+  assert.equal(plugin.commands[0][1].fill, true);
+  assert.equal(plugin.timers.size, 0);
+  await plugin.complete('chat');
 });

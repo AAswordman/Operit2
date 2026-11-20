@@ -5,7 +5,7 @@ export { onAppLifecycle, onChatState, onToolLifecycle, indicatorScreen };
 
 // Registration capture and runtime execution use different engines. IPC loads
 // this module without invoking registerToolPkg, so handlers belong at module scope.
-ToolPkg.ipc.on<{ chatId: string }, void>("ui_automation.begin", ({ chatId }) => beginOperation(chatId));
+ToolPkg.ipc.on<{ chatId: string; windowId?: string }, void>("ui_automation.begin", ({ chatId, windowId }) => beginOperation(chatId, windowId));
 ToolPkg.ipc.on<{ chatId: string }, void>("ui_automation.complete", ({ chatId }) => completeOperation(chatId));
 
 /** Registers the plugin-owned surfaces and their runtime hooks. */

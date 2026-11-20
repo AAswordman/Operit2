@@ -6,6 +6,8 @@ Vendored from desktop_multi_window 0.3.1 in the local pub cache. Upstream Apache
 
 - Allow explicit keyboard focus on borderless macOS CustomWindow instances. The optional floatingWindowFocusable property defaults to nil, preserving ordinary window behavior.
 
+- Allow host-sized macOS floating windows to bypass AppKit's work-area frame constraint, covering the full display including the menu bar and Dock.
+
 - Keep hidden-at-launch macOS windows hidden until their content is prepared.
 
 - Add a transparent configuration hint for GTK, selecting RGBA visuals for the native window and Flutter view before realization.

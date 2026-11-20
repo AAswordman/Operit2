@@ -2908,6 +2908,36 @@ export interface BoxProps extends ComposeCommonProps {
 }
 
 /**
+ * Transparent animated perimeter, painted by the host without JavaScript frames.
+ */
+export interface GlowBorderProps extends ComposeCommonProps {
+  /**
+   * Ordered colors that flow around the perimeter.
+   */
+  colors: ComposeColor[];
+  /**
+   * Corner radius in logical pixels, default 0 (square corners).
+   */
+  cornerRadius?: number;
+  /**
+   * Crisp edge width in logical pixels, default 3.
+   */
+  strokeWidth?: number;
+  /**
+   * Soft inward bloom width in logical pixels, default 56.
+   */
+  glowWidth?: number;
+  /**
+   * One full circuit in milliseconds, default 6000.
+   */
+  durationMillis?: number;
+  /**
+   * Whether to animate; respects the host's reduced motion preference.
+   */
+  running?: boolean;
+}
+
+/**
  * Empty layout element that reserves explicit width and height.
  */
 export interface SpacerProps {
@@ -4457,6 +4487,10 @@ export interface AlertDialogProps extends ComposeCommonProps {
  * Core component factories available through `ComposeDslContext::UI`.
  */
 export interface ComposeUiFactoryRegistry {
+  /**
+   * Paints a host-animated gradient perimeter with a transparent center.
+   */
+  GlowBorder: ComposeNodeFactory<GlowBorderProps>;
   /**
    * Creates one native paragraph with individually styled spans.
    */

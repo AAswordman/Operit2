@@ -10,6 +10,7 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
     private var topmost = true
     private var draggable = false
     private var fill = false
+    private var screenBounds: NSRect?
     private var pointerDown: NSPoint?
     private var windowDown: NSPoint?
     private var dragging = false
@@ -55,9 +56,13 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
 
     /// Keeps host-sized surfaces aligned with the primary display after display changes.
     @objc private func displayDidChange(_ notification: Notification) {
-        guard configured, fill, let window = view?.window,
+        guard configured, let window = view?.window,
               let display = NSScreen.screens.first else { return }
-        window.setFrame(display.frame, display: true)
+        if fill { window.setFrame(display.frame, display: true) }
+        else if let bounds = screenBounds {
+            window.setFrame(NSRect(x: bounds.minX, y: display.frame.maxY - bounds.maxY,
+                width: bounds.width, height: bounds.height), display: true)
+        }
     }
 
     /// Applies input and appearance flags and resolves the chosen geometry.
@@ -75,6 +80,14 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
         if let height = values["height"] as? NSNumber { size.height = CGFloat(height.doubleValue) }
         // AppKit y points upward; the public API uses the primary screen's top-left.
         let desktopTop = NSScreen.screens.first?.frame.maxY ?? 0
+        if let bounds = values["screenBounds"] as? [String: Any] {
+            let keys = ["left", "top", "right", "bottom"]
+            let edges = keys.compactMap { (bounds[$0] as? NSNumber)?.doubleValue }
+            guard !fill, edges.count == 4, edges.allSatisfy({ $0.isFinite && abs($0) <= 1000000 }),
+                  edges[2] > edges[0], edges[3] > edges[1] else { throw failure() }
+            screenBounds = NSRect(x: CGFloat(edges[0]), y: CGFloat(edges[1]),
+                width: CGFloat(edges[2] - edges[0]), height: CGFloat(edges[3] - edges[1]))
+        }
         var origin = window.frame.origin
         if let x = values["x"] as? NSNumber { origin.x = CGFloat(x.doubleValue) }
         let top = values["y"] as? NSNumber
@@ -86,13 +99,21 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
             if !value { pointerDown = nil; windowDown = nil; dragging = false }
         }
         if let value = values["clickThrough"] as? Bool { window.ignoresMouseEvents = value }
-        window.level = topmost ? .floating : .normal
-        if let floating = window as? CustomWindow { floating.floatingWindowFocusable = focusable }
+        window.level = topmost
+            ? (fill ? NSWindow.Level(rawValue: NSWindow.Level.statusBar.rawValue + 1) : .floating)
+            : .normal
+        if let floating = window as? CustomWindow {
+            floating.floatingWindowFocusable = focusable
+            floating.floatingWindowFillsDisplay = fill || screenBounds != nil
+        }
         if fill {
             guard let display = NSScreen.screens.first else {
                 throw NSError(domain: "floating_windows", code: 4, userInfo: [NSLocalizedDescriptionKey: "No primary display"])
             }
             window.setFrame(display.frame, display: true)
+        } else if let bounds = screenBounds {
+            window.setFrame(NSRect(x: bounds.minX, y: desktopTop - bounds.maxY,
+                width: bounds.width, height: bounds.height), display: true)
         } else {
             window.setFrame(NSRect(origin: origin, size: size), display: true)
         }

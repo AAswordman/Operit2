@@ -314,6 +314,29 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
         );
       case 'ActivityDots':
         return _ComposeActivityDots(props: props);
+      case 'GlowBorder':
+        final colors = (props['colors'] as List? ?? const [])
+            .map((value) => _color(context, value))
+            .whereType<Color>()
+            .toList();
+        return ComposeGlowBorder(
+          colors: colors.length < 2
+              ? [
+                  Theme.of(context).colorScheme.primary,
+                  Theme.of(context).colorScheme.tertiary,
+                ]
+              : colors,
+          cornerRadius: (_number(props['cornerRadius']) ?? 0).clamp(0, 200),
+          strokeWidth: (_number(props['strokeWidth']) ?? 3).clamp(0.5, 12),
+          glowWidth: (_number(props['glowWidth']) ?? 56).clamp(1, 80),
+          duration: Duration(
+            milliseconds: (_int(props['durationMillis']) ?? 6000).clamp(
+              1000,
+              60000,
+            ),
+          ),
+          running: _boolOrDefault(props['running'], true),
+        );
       case 'Draggable':
         return _ComposeDraggable(
           props: props,

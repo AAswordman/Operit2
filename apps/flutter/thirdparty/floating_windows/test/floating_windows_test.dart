@@ -131,6 +131,64 @@ void main() {
   });
 
   test(
+    'native screen rectangles preserve negative origins and large physical sizes across transport',
+    () async {
+      const bounds = FloatingScreenBounds(-1920, 24, 7680, 4320);
+      final window = await FloatingWindows.open(
+        payload: {},
+        options: const FloatingWindowOptions(
+          screenBounds: bounds,
+          clickThrough: true,
+        ),
+      );
+      final arguments =
+          calls.singleWhere((call) => call.method == 'create').arguments as Map;
+      final launch = FloatingWindows.parseLaunch([
+        'floating_windows.window',
+        arguments['arguments'] as String,
+      ])!;
+      expect(launch.options.screenBounds!.toMap(), bounds.toMap());
+      expect(
+        launch.options.width,
+        isNull,
+        reason: 'Native regions must not inherit the default 240 px size',
+      );
+      await window.update(
+        const FloatingWindowOptions(
+          screenBounds: FloatingScreenBounds(40, 80, 1080, 1920),
+        ),
+      );
+      final update = calls
+          .where((call) => call.method == 'invoke')
+          .map((call) => call.arguments as Map)
+          .last;
+      expect(update['arguments'], {
+        'screenBounds': {
+          'left': 40.0,
+          'top': 80.0,
+          'right': 1080.0,
+          'bottom': 1920.0,
+        },
+      });
+      await window.close();
+      for (final invalid in [
+        const FloatingScreenBounds(10, 0, 0, 20),
+        FloatingScreenBounds(0, 0, double.nan, 20),
+      ]) {
+        expect(invalid.toMap, throwsArgumentError);
+      }
+      await expectLater(
+        FloatingWindows.open(
+          payload: {},
+          fill: true,
+          options: const FloatingWindowOptions(screenBounds: bounds),
+        ),
+        throwsArgumentError,
+      );
+    },
+  );
+
+  test(
     'unsupported hosts report capabilities without invoking native methods',
     () async {
       debugDefaultTargetPlatformOverride = TargetPlatform.iOS;

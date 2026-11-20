@@ -26,6 +26,8 @@ struct WidgetWindow {
   bool focusable = false;
   bool draggable = false;
   bool fill = false;
+  bool screen_bounded = false;
+  RECT screen_bounds{};
   bool pointer_down = false;
   bool dragging = false;
   POINT pointer_start{};
@@ -131,10 +133,15 @@ LRESULT CALLBACK WatchDisplay(HWND window, UINT message, WPARAM wparam, LPARAM l
     UINT_PTR id, DWORD_PTR data) {
   auto* owner = reinterpret_cast<WidgetWindow*>(data);
   if (message == WM_NCDESTROY) RemoveWindowSubclass(window, WatchDisplay, id);
-  if (message == WM_DISPLAYCHANGE && owner->configured && owner->fill && !FillDisplay(*owner)) {
+  // Let Flutter receive the new DPI first. The standard runner applies the
+  // suggested DPI rect, which must then be replaced by the complete monitor rect.
+  const auto result = DefSubclassProc(window, message, wparam, lparam);
+  if ((message == WM_DISPLAYCHANGE || message == WM_DPICHANGED || message == WM_SETTINGCHANGE) &&
+      owner->configured && (owner->fill || owner->screen_bounded) &&
+      !(owner->fill ? FillDisplay(*owner) : PlaceWindow(*owner, owner->screen_bounds))) {
     OutputDebugStringW(L"Unable to resize the floating window to the display\n");
   }
-  return DefSubclassProc(window, message, wparam, lparam);
+  return result;
 }
 
 /// Applies partial updates without resetting unrelated window state.
@@ -179,8 +186,25 @@ void Apply(WidgetWindow& owner, const Map& args) {
   }
   const LONG left = coordinate("x", rect.left);
   const LONG top = coordinate("y", rect.top);
-  const bool placed = owner.fill ? FillDisplay(owner) :
-      PlaceWindow(owner, RECT{left, top, left + width, top + height});
+  RECT target{left, top, left + width, top + height};
+  if (auto entry = args.find(Value("screenBounds")); entry != args.end()) {
+    const auto* bounds = std::get_if<Map>(&entry->second);
+    if (!bounds || owner.fill) throw std::invalid_argument("Invalid screen bounds mode");
+    const auto edge = [&](const char* key) -> LONG {
+      const auto value = bounds->find(Value(key));
+      if (value == bounds->end()) throw std::invalid_argument("Missing screen edge");
+      double number = std::get_if<double>(&value->second) ? std::get<double>(value->second) :
+          std::get_if<int32_t>(&value->second) ? std::get<int32_t>(value->second) : NAN;
+      if (!std::isfinite(number) || std::abs(number) > 1000000) throw std::invalid_argument("Invalid screen edge");
+      return static_cast<LONG>(std::lround(number));
+    };
+    target = RECT{edge("left"), edge("top"), edge("right"), edge("bottom")};
+    if (target.right <= target.left || target.bottom <= target.top) throw std::invalid_argument("Empty screen bounds");
+    owner.screen_bounds = target;
+    owner.screen_bounded = true;
+  }
+  if (owner.screen_bounded) target = owner.screen_bounds;
+  const bool placed = owner.fill ? FillDisplay(owner) : PlaceWindow(owner, target);
   if (!placed) throw std::runtime_error("Unable to update floating window geometry");
 }
 
@@ -202,10 +226,15 @@ void Configure(WidgetWindow& owner, const Map& arguments) {
     owner.fill = *value;
   }
   Apply(owner, arguments);
-  if (owner.fill && !SetWindowSubclass(owner.window, WatchDisplay, 1, reinterpret_cast<DWORD_PTR>(&owner))) {
+  if (!SetWindowSubclass(owner.window, WatchDisplay, 1, reinterpret_cast<DWORD_PTR>(&owner))) {
     throw std::runtime_error("Unable to observe display changes");
   }
   owner.configured = true;
+  // Moving a new child onto another monitor may synchronously apply Windows'
+  // suggested DPI rectangle. Reassert the provider's physical frame afterwards.
+  if (owner.screen_bounded && !PlaceWindow(owner, owner.screen_bounds)) {
+    throw std::runtime_error("Unable to place native screen bounds");
+  }
 }
 }  // namespace
 
@@ -278,7 +307,7 @@ class FloatingWindowsPlugin : public flutter::Plugin {
   /// Releases ownership while engine teardown clears its detached messenger.
   ~FloatingWindowsPlugin() override {
     if (owner_ && IsWindow(owner_->view)) RemoveWindowSubclass(owner_->view, DragInput, 1);
-    if (owner_ && owner_->fill && IsWindow(owner_->window)) RemoveWindowSubclass(owner_->window, WatchDisplay, 1);
+    if (owner_ && IsWindow(owner_->window)) RemoveWindowSubclass(owner_->window, WatchDisplay, 1);
   }
 
  private:
