@@ -2,6 +2,7 @@ use std::sync::{Mutex, OnceLock};
 
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
+use operit_util::AppLogger::AppLogger;
 use serde::{Deserialize, Serialize};
 
 pub const PLUGIN_LOAD_STATUS_WAITING: &str = "waiting";
@@ -162,6 +163,7 @@ pub fn showPluginLoading() -> u64 {
         pluginsTotal: 0,
         plugins: Vec::new(),
     });
+    AppLogger::trace("PluginLoading", &format!("event=session_start generation={generation}"));
     generation
 }
 
@@ -288,6 +290,11 @@ pub fn completePluginLoadingSession(generation: u64) {
     }
     session.active = false;
     let current = pluginLoadingProgressFlow().value();
+    AppLogger::trace("PluginLoading", &format!(
+        "event=session_complete generation={generation} visible={} started={} total={} failures={}",
+        current.visible, current.pluginsStarted, current.pluginsTotal,
+        current.plugins.iter().filter(|item| item.status == PLUGIN_LOAD_STATUS_FAILED).count(),
+    ));
     if !current.visible {
         return;
     }
@@ -328,12 +335,17 @@ fn hidePluginLoadingIfSessionComplete(generation: u64) {
         .expect("plugin loading session mutex poisoned");
     let current = pluginLoadingProgressFlow().value();
     if !canHideCompletedPluginLoadingSession(&session, &current, generation) {
+        AppLogger::trace("PluginLoading", &format!(
+            "event=hide_rejected generation={generation} currentGeneration={} active={} visible={} phase={}",
+            session.generation, session.active, current.visible, current.phase,
+        ));
         return;
     }
     updatePluginLoadingProgress(|progress| {
         progress.visible = false;
         progress.forceExpanded = false;
     });
+    AppLogger::trace("PluginLoading", &format!("event=overlay_hidden generation={generation}"));
 }
 
 #[cfg(test)]

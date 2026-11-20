@@ -110,6 +110,16 @@ class _RuntimeActivityOverlayState extends State<RuntimeActivityOverlay> {
         .pluginLoadingProgressFlow()
         .listen((progress) {
           if (!_isCurrentSubscription(generation)) return;
+          if (_packages?.phase != progress.phase ||
+              _packages?.visible != progress.visible) {
+            ClientLogger.v(
+              'event=plugin_loading_snapshot visible=${progress.visible} '
+              'phase=${progress.phase} started=${progress.pluginsStarted} '
+              'total=${progress.pluginsTotal}',
+              tag: 'RuntimeActivity',
+              verboseLevel: VerboseLevel.level4,
+            );
+          }
           setState(() {
             _packages = progress;
             if (!_loadingPackages && _visibleSync.isEmpty) _expanded = false;

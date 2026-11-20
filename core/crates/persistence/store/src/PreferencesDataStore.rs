@@ -564,7 +564,24 @@ struct StateFlowInner<T> {
 
 struct StateFlowSubscribers<T> {
     nextId: usize,
-    callbacks: HashMap<usize, Arc<Mutex<dyn FnMut(T) + Send>>>,
+    callbacks: HashMap<usize, Arc<Mutex<StateFlowSubscriber<T>>>>,
+}
+
+/// Serializes one observer without retaining another copy of its state value.
+struct StateFlowSubscriber<T> {
+    callback: Box<dyn FnMut(T) + Send>,
+    lastVersion: Option<u64>,
+}
+
+impl<T> StateFlowSubscriber<T> {
+    /// Delivers a snapshot only when this observer has not received its revision.
+    fn emit(&mut self, (value, version): (T, u64)) {
+        if self.lastVersion.is_some_and(|previous| previous >= version) {
+            return;
+        }
+        self.lastVersion = Some(version);
+        (self.callback)(value);
+    }
 }
 
 struct StateFlowUpstreamSubscription {
@@ -661,6 +678,22 @@ where
             .clone()
     }
 
+    /// Reads a value and its publication revision under the writer's lock order.
+    #[allow(non_snake_case)]
+    fn versionedValue(&self) -> (T, u64) {
+        let value = self
+            .inner
+            .value
+            .lock()
+            .expect("StateFlow value mutex must not be poisoned");
+        let version = *self
+            .inner
+            .version
+            .lock()
+            .expect("StateFlow version mutex must not be poisoned");
+        (value.clone(), version)
+    }
+
     /// Reads the current state value.
     pub fn first(&self) -> FlowResult<T> {
         Ok(self.value())
@@ -755,8 +788,7 @@ where
         if *guard == value {
             return;
         }
-        *guard = value.clone();
-        drop(guard);
+        *guard = value;
         let mut version = self
             .inner
             .version
@@ -765,6 +797,7 @@ where
         *version += 1;
         self.inner.changed.notify_all();
         drop(version);
+        drop(guard);
         let subscribers = self
             .inner
             .subscribers
@@ -776,7 +809,8 @@ where
             .collect::<Vec<_>>();
         for subscriber in subscribers {
             if let Ok(mut subscriber) = subscriber.lock() {
-                subscriber(value.clone());
+                // A later writer may have published while this callback was busy.
+                subscriber.emit(self.versionedValue());
             }
         }
     }
@@ -789,8 +823,7 @@ where
             .lock()
             .expect("StateFlow value mutex must not be poisoned");
         if *guard == expect {
-            *guard = update.clone();
-            drop(guard);
+            *guard = update;
             let mut version = self
                 .inner
                 .version
@@ -799,6 +832,7 @@ where
             *version += 1;
             self.inner.changed.notify_all();
             drop(version);
+            drop(guard);
             let subscribers = self
                 .inner
                 .subscribers
@@ -810,7 +844,7 @@ where
                 .collect::<Vec<_>>();
             for subscriber in subscribers {
                 if let Ok(mut subscriber) = subscriber.lock() {
-                    subscriber(update.clone());
+                    subscriber.emit(self.versionedValue());
                 }
             }
             true
@@ -824,9 +858,12 @@ where
     where
         F: FnMut(T) + Send + 'static,
     {
-        let callback = Arc::new(Mutex::new(subscriber));
+        let callback = Arc::new(Mutex::new(StateFlowSubscriber {
+            callback: Box::new(subscriber),
+            lastVersion: None,
+        }));
         if let Ok(mut subscriber) = callback.lock() {
-            subscriber(self.value());
+            subscriber.emit(self.versionedValue());
         }
         let mut subscribers = self
             .inner
@@ -835,7 +872,13 @@ where
             .expect("StateFlow subscribers mutex must not be poisoned");
         let id = subscribers.nextId;
         subscribers.nextId += 1;
-        subscribers.callbacks.insert(id, callback);
+        subscribers.callbacks.insert(id, callback.clone());
+        drop(subscribers);
+        // Reconcile after registration so an update during the initial callback
+        // cannot leave a live observer permanently holding the old snapshot.
+        if let Ok(mut subscriber) = callback.lock() {
+            subscriber.emit(self.versionedValue());
+        }
         id
     }
 

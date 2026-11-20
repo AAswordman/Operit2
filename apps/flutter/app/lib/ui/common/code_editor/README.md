@@ -36,3 +36,9 @@ zoom, focal anchoring, panning and inertia. Diff parsing, row decorations and fo
 editor, with optional `CodeTextHighlight` intervals for intraline changes.
 It uses an explicit source style and the same forced line strut as the text
 layout, keeping empty lines and fallback-font glyphs at the editor's row height.
+
+Viewport deactivation retires the current touch/trackpad sequence and cancels
+pending zoom geometry and inertia. Flutter can continue dispatching events to
+the cached hit-test target of an existing pointer after that target leaves the
+tree; these events no longer own an active editor interaction. A reattached
+viewport acquires a fresh gesture sequence before it uses its new geometry.

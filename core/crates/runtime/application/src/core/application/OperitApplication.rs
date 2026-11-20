@@ -453,6 +453,9 @@ impl OperitApplication {
         let startup = move || {
             Box::pin(async move {
                 let loadingGeneration = showPluginLoading();
+                AppLogger::trace("PluginStartup", &format!(
+                    "event=registry_start generation={loadingGeneration}",
+                ));
                 let loadOutcome = RuntimePackageManager::reloadRegistry(packageManager).await;
                 if let Err(error) = loadOutcome {
                     taskReadiness.fail(error.clone());
@@ -460,13 +463,22 @@ impl OperitApplication {
                     AppLogger::e("OperitApplication", &error);
                     return;
                 }
+                AppLogger::trace("PluginStartup", &format!(
+                    "event=registry_ready generation={loadingGeneration}",
+                ));
                 let starter = MCPStarter::new(hostManager);
                 let timeoutSeconds = ApiPreferences::getInstance()
                     .getMcpStartupTimeoutSeconds()
                     .expect("api preferences must provide mcp startup timeout seconds");
-                let _ = starter
+                AppLogger::trace("PluginStartup", &format!(
+                    "event=mcp_start generation={loadingGeneration} timeoutSeconds={timeoutSeconds}",
+                ));
+                let (started, total, status) = starter
                     .startAllDeployedPluginsWithTimeout(timeoutSeconds)
                     .await;
+                AppLogger::trace("PluginStartup", &format!(
+                    "event=mcp_complete generation={loadingGeneration} started={started} total={total} status={status:?}",
+                ));
                 completePluginLoadingSession(loadingGeneration);
             }) as std::pin::Pin<Box<dyn std::future::Future<Output = ()>>>
         };

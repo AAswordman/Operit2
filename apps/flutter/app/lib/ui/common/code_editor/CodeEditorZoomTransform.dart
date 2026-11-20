@@ -225,6 +225,7 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
   double _startScale = 1;
   double? _startDistance;
   bool _trackpadPinching = false;
+  bool _pointerEventsActive = true;
   RenderBox? _target;
   Offset? _sceneAnchor;
   TextPosition? _textAnchor;
@@ -255,18 +256,39 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
     super.didUpdateWidget(oldWidget);
     _scale = (widget.scale ?? _scale).clamp(widget.minScale, widget.maxScale);
     if (widget.identity != oldWidget.identity) {
-      _touches.clear();
-      _startDistance = null;
-      _target = null;
-      _sceneAnchor = null;
-      _textAnchor = null;
-      _localFocalPoint = null;
+      _retirePointerSequence();
       _horizontal = 0;
-      _trackpadPinching = false;
       oldWidget.scrollController?.cancelZoomAnchor();
-      _scroll.cancelZoomAnchor();
-      _inertia.stop();
     }
+  }
+
+  /// Retires geometry and pointer ownership before the document or viewport leaves.
+  void _retirePointerSequence() {
+    _touches.clear();
+    _startDistance = null;
+    _trackpadPinching = false;
+    _target = null;
+    _sceneAnchor = null;
+    _textAnchor = null;
+    _localFocalPoint = null;
+    widget.scrollController?.cancelZoomAnchor();
+    _ownedScroll?.cancelZoomAnchor();
+    _inertia.stop();
+  }
+
+  /// Ends gestures before cached Flutter hit tests can deliver events to a removed viewport.
+  @override
+  void deactivate() {
+    _pointerEventsActive = false;
+    _retirePointerSequence();
+    super.deactivate();
+  }
+
+  /// Allows a reattached viewport to acquire a fresh pointer sequence.
+  @override
+  void activate() {
+    super.activate();
+    _pointerEventsActive = true;
   }
 
   /// Locates the active text renderer or lazy viewport through its render contract.
@@ -375,6 +397,7 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
   }
 
   void _pointerDown(PointerDownEvent event) {
+    if (!_pointerEventsActive) return;
     _inertia.stop();
     if (event.kind != PointerDeviceKind.touch) return;
     final wasPinching = _pinching;
@@ -400,7 +423,7 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
   }
 
   void _pan(Offset delta) {
-    if (_pinching) return;
+    if (!_pointerEventsActive || _pinching) return;
     _scroll.jumpTo(
       (_scroll.offset - delta.dy / _scale).clamp(
         0.0,
@@ -450,7 +473,7 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
         behavior: HitTestBehavior.opaque,
         onPanUpdate: (details) => _pan(details.delta),
         onPanEnd: (details) {
-          if (_pinching || _touches.isNotEmpty) return;
+          if (!_pointerEventsActive || _pinching || _touches.isNotEmpty) return;
           final velocity = details.velocity.pixelsPerSecond;
           if (velocity.distance < 50) return;
           _flingDirection = velocity / velocity.distance;
@@ -467,22 +490,27 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
       onPointerUp: _pointerUp,
       onPointerCancel: _pointerUp,
       onPointerPanZoomStart: (event) {
+        if (!_pointerEventsActive) return;
         _startScale = _scale;
         _trackpadPinching = true;
         _capture(event.position);
         setState(() {});
       },
-      onPointerPanZoomUpdate: (event) =>
-          _zoom(_startScale * event.scale, event.position + event.pan),
-      onPointerPanZoomEnd: (_) => setState(() {
-        _trackpadPinching = false;
-      }),
+      onPointerPanZoomUpdate: (event) {
+        if (!_trackpadPinching) return;
+        _zoom(_startScale * event.scale, event.position + event.pan);
+      },
+      onPointerPanZoomEnd: (_) {
+        if (!_trackpadPinching) return;
+        setState(() => _trackpadPinching = false);
+      },
       onPointerSignal: widget.panEnabled
           ? (event) {
               if (event is! PointerScrollEvent) return;
               GestureBinding.instance.pointerSignalResolver.register(event, (
                 event,
               ) {
+                if (!_pointerEventsActive) return;
                 final scroll = event as PointerScrollEvent;
                 _inertia.stop();
                 if (HardwareKeyboard.instance.isControlPressed ||

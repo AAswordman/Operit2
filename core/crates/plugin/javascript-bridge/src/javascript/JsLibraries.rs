@@ -587,7 +587,8 @@ fn assembleRuntimeBootstrapScript() -> String {
                     'function=' + callState.lastExecFunction +
                         ' package=' + __operitText(params && (params.__operit_ui_package_name || params.toolPkgId || params.__operit_package_name)) +
                         ' screen=' + __operitText(params && params.__operit_script_screen) +
-                        ' context=' + __operitText(params && params.__operit_execution_context_key)
+                        ' context=' + __operitText(toolPkgContext && toolPkgContext.contextKey) +
+                        ' session=' + __operitText(params && params.__operit_compose_session_id)
                 );
             }}
             function markRequire(request, fromPath, resolvedPath) {{

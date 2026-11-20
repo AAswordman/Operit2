@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/ui/common/code_editor/CodeEditor.dart';
@@ -171,4 +172,135 @@ void main() {
       await tester.pumpWidget(const SizedBox());
     },
   );
+
+  testWidgets('removing a pinching editor retires the old touch sequence', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      app(const CodeEditor(text: 'const review = true;', readOnly: true)),
+    );
+    await tester.pumpAndSettle();
+    final center = tester.getCenter(find.byType(CodeEditorZoomTransform));
+    final first = await tester.startGesture(
+      center - const Offset(40, 0),
+      pointer: 10,
+    );
+    final second = await tester.startGesture(
+      center + const Offset(40, 0),
+      pointer: 11,
+    );
+    await first.moveBy(const Offset(-10, 0));
+    await tester.pump();
+    expect(
+      tester
+          .widget<CodeEditorZoomTransform>(find.byType(CodeEditorZoomTransform))
+          .scale,
+      greaterThan(1),
+    );
+    await tester.pumpWidget(app(const SizedBox()));
+    await first.moveBy(const Offset(-10, 0));
+    await second.moveBy(const Offset(10, 0));
+    await first.up();
+    await second.up();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('removing a zooming editor retires the old trackpad sequence', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      app(const CodeEditor(text: 'const review = true;', readOnly: true)),
+    );
+    await tester.pumpAndSettle();
+    final center = tester.getCenter(find.byType(CodeEditorZoomTransform));
+    final trackpad = await tester.createGesture(
+      kind: PointerDeviceKind.trackpad,
+      pointer: 20,
+    );
+    await trackpad.panZoomStart(center);
+    await trackpad.panZoomUpdate(center, scale: 1.1);
+    await tester.pump();
+    await tester.pumpWidget(app(const SizedBox()));
+    await trackpad.panZoomUpdate(center, scale: 1.2);
+    await trackpad.panZoomEnd();
+    await tester.pump();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('reattaching an editor acquires a fresh pinch sequence', (
+    tester,
+  ) async {
+    final key = GlobalKey<CodeEditorState>();
+
+    /// Moves the same editor State between parents while a pointer is still down.
+    Widget host(bool right) => app(
+      Row(
+        children: [
+          for (final slot in [false, true])
+            Expanded(
+              child: slot == right
+                  ? CodeEditor(
+                      key: key,
+                      text: 'const review = true;',
+                      readOnly: true,
+                    )
+                  : const SizedBox(),
+            ),
+        ],
+      ),
+    );
+
+    await tester.pumpWidget(host(false));
+    await tester.pumpAndSettle();
+    final original = key.currentState;
+    final center = tester.getCenter(find.byType(CodeEditorZoomTransform));
+    final first = await tester.startGesture(
+      center - const Offset(40, 0),
+      pointer: 30,
+    );
+    final second = await tester.startGesture(
+      center + const Offset(40, 0),
+      pointer: 31,
+    );
+    await first.moveBy(const Offset(-10, 0));
+    await tester.pump();
+    final scale = tester
+        .widget<CodeEditorZoomTransform>(find.byType(CodeEditorZoomTransform))
+        .scale;
+    await tester.pumpWidget(host(true));
+    expect(key.currentState, same(original));
+    await first.moveBy(const Offset(-10, 0));
+    await second.moveBy(const Offset(10, 0));
+    await first.up();
+    await second.up();
+    await tester.pump();
+    expect(
+      tester
+          .widget<CodeEditorZoomTransform>(find.byType(CodeEditorZoomTransform))
+          .scale,
+      scale,
+    );
+    final movedCenter = tester.getCenter(find.byType(CodeEditorZoomTransform));
+    final freshFirst = await tester.startGesture(
+      movedCenter - const Offset(40, 0),
+      pointer: 32,
+    );
+    final freshSecond = await tester.startGesture(
+      movedCenter + const Offset(40, 0),
+      pointer: 33,
+    );
+    await freshFirst.moveBy(const Offset(-10, 0));
+    await tester.pump();
+    expect(
+      tester
+          .widget<CodeEditorZoomTransform>(find.byType(CodeEditorZoomTransform))
+          .scale,
+      greaterThan(scale),
+    );
+    await freshFirst.up();
+    await freshSecond.up();
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
 }
