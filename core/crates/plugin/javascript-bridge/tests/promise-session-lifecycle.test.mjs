@@ -159,3 +159,48 @@ test("absent handlers forward settlement without activating a cancelled call", a
   assert.equal(await env.run("work"), "unchanged value");
   assert.equal(env.activations.some(/** Detects an unnecessary cancelled-owner activation. */ entry => entry.cancelled), false);
 });
+
+/** Cleanup must use its own native owner while preserving another suspended call's identity. */
+test("session cleanup restores its own owner before releasing subscriptions", () => {
+  for (const cancelled of [false, true]) {
+    const env = environment();
+    env.start("cleanup-owner");
+    env.start("surviving-owner");
+    env.run(`
+      var cleanupOwner;
+      __operitGetCallState('cleanup-owner').cleanupCallbacks.add(function() {
+        cleanupOwner = __operitCurrentCallId;
+      });
+      ${cancelled ? "__operitCancelCallSession" : "__operitCleanupCallSession"}('cleanup-owner');
+    `);
+    assert.equal(env.context.cleanupOwner, "cleanup-owner");
+    assert.equal(env.context.__operitCurrentCallId, "surviving-owner");
+    assert.notEqual(env.context.__operitGetCallState("surviving-owner"), null);
+    assert.equal(env.context.__operitGetCallState("cleanup-owner"), null);
+    assert.equal(env.activations.at(-1).id, "surviving-owner");
+  }
+});
+
+/** A throwing cleanup cannot leave its capabilities installed or retain its retired registry entry. */
+test("failed session cleanup releases ownership and restores the surviving call", () => {
+  const env = environment();
+  env.start("failing-owner");
+  env.start("surviving-owner");
+  env.run(`__operitGetCallState('failing-owner').cleanupCallbacks.add(function() { throw Error('cleanup failed'); });`);
+  assert.throws(/** Executes the real cancellation finalizer. */ () => env.run("__operitCancelCallSession('failing-owner')"), /cleanup failed/u);
+  assert.equal(env.context.__operitCurrentCallId, "surviving-owner");
+  assert.equal(env.context.__operitGetCallState("failing-owner"), null);
+  assert.notEqual(env.context.__operitGetCallState("surviving-owner"), null);
+});
+
+/** Cancelling the active call preserves the explicitly recorded parent before another live session. */
+test("active cancellation restores its recorded parent after owned cleanup", () => {
+  const env = environment();
+  env.start("parent");
+  env.start("other-live-call");
+  env.start("child");
+  env.run("__operitGetCallState('child').previousCallId = 'parent'; __operitCancelCallSession('child');");
+  assert.equal(env.context.__operitCurrentCallId, "parent");
+  assert.equal(env.context.__operitGetCallState("child"), null);
+  assert.notEqual(env.context.__operitGetCallState("other-live-call"), null);
+});

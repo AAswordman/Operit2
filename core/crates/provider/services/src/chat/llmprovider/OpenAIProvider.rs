@@ -1,4 +1,5 @@
 use super::ApiKeyProvider::KeyGetter;
+use super::FirstOutputDeadline::FirstOutputDeadline;
 use super::ProviderHttp::KeyAuthentication;
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -21,7 +22,6 @@ use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
     SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
-use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use crate::chat::llmprovider::MediaLinkParser::{MediaLink, MediaLinkParser};
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
@@ -97,6 +97,8 @@ pub struct StreamingState {
     pub isInReasoningMode: bool,
     pub hasEmittedThinkStart: bool,
     pub hasEmittedRegularContent: bool,
+    /// Distinguishes decoded model output from protocol and usage metadata.
+    pub hasModelOutput: bool,
     pub reasoningObserved: bool,
     pub isFirstResponse: bool,
     pub streamCompletionConfirmed: bool,
@@ -1279,6 +1281,7 @@ impl OpenAIProvider {
         on_tool_invocation: Option<&Arc<dyn Fn(String) + Send + Sync>>,
         output: &SharedAiResponseStream,
         emitter: &mut StreamEmitter,
+        first_output: &FirstOutputDeadline,
     ) -> Result<(), AiServiceError> {
         let mut state = StreamingState {
             chunks: Vec::new(),
@@ -1291,6 +1294,7 @@ impl OpenAIProvider {
             isInReasoningMode: false,
             hasEmittedThinkStart: false,
             hasEmittedRegularContent: false,
+            hasModelOutput: false,
             reasoningObserved: false,
             isFirstResponse: true,
             streamCompletionConfirmed: false,
@@ -1347,6 +1351,9 @@ impl OpenAIProvider {
                 for data in decoder.push(&bytes)? {
                     let emitted_before = state.chunks.len();
                     self.process_streaming_line(&format!("data: {data}"), &mut state, on_tool_invocation)?;
+                    if state.hasModelOutput {
+                        first_output.mark_output();
+                    }
                     for chunk in state.chunks[emitted_before..].iter().cloned() {
                         output.emit_chunk(chunk.clone());
                         emitter.emit_chunk(&chunk);
@@ -1516,6 +1523,14 @@ impl OpenAIProvider {
             .get("name")
             .and_then(Value::as_str)
             .unwrap_or("");
+        if !name.is_empty()
+            || deltaFunction
+                .get("arguments")
+                .and_then(Value::as_str)
+                .is_some_and(|arguments| !arguments.is_empty())
+        {
+            state.hasModelOutput = true;
+        }
         if !name.is_empty() {
             if let Some(accumulated) = state.accumulatedToolCalls.get_mut(&index) {
                 accumulated["function"]["name"] = json!(name);
@@ -1759,6 +1774,7 @@ impl OpenAIProvider {
     ) {
         let hasReasoning = !reasoningContent.is_empty() && reasoningContent != "null";
         let hasRegular = !regularContent.is_empty() && regularContent != "null";
+        state.hasModelOutput |= hasReasoning || hasRegular;
 
         if hasReasoning && !state.hasEmittedRegularContent {
             if !state.isInReasoningMode {
@@ -1890,6 +1906,7 @@ impl OpenAIProvider {
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 if !delta.is_empty() {
+                    state.hasModelOutput = true;
                     let outputIndex = normalized
                         .get("output_index")
                         .and_then(Value::as_i64)
@@ -1944,6 +1961,7 @@ impl OpenAIProvider {
                 };
                 let itemType = item.get("type").and_then(Value::as_str).unwrap_or("");
                 if itemType == "web_search_call" {
+                    state.hasModelOutput = true;
                     if outputIndex >= 0 {
                         state
                             .responsesWebSearchItems
@@ -2326,6 +2344,7 @@ impl OpenAIProvider {
     fn processImageGenerationEvent(&self, jsonResponse: &Value, state: &mut StreamingState) {
         if let Some(delta) = jsonResponse.get("delta").and_then(Value::as_str) {
             if !delta.is_empty() {
+                state.hasModelOutput = true;
                 let outputIndex = jsonResponse
                     .get("output_index")
                     .and_then(Value::as_i64)
@@ -2337,6 +2356,7 @@ impl OpenAIProvider {
         }
         if let Some(completed) = jsonResponse.get("b64_json").and_then(Value::as_str) {
             if !completed.is_empty() {
+                state.hasModelOutput = true;
                 let outputIndex = jsonResponse
                     .get("output_index")
                     .and_then(Value::as_i64)
@@ -2601,31 +2621,32 @@ impl OpenAIProvider {
                                 ),
                                 operit_util::AppLogger::VERBOSE_LEVEL_3,
                             );
-                            let response = provider
-                                .sendHttpRequest(
-                                    super::ProviderHttp::post(&api_endpoint)
-                                        .headers(headers.clone())
-                                        .body(request_body_bytes.clone()),
-                                )
-                                .await;
-                            let result = match response {
-                                Ok(response) if response.status().is_success() => provider
-                                    .read_streaming_response(
-                                        response,
-                                        on_tool_invocation.as_ref(),
-                                        &producer,
-                                        &mut emitter,
-                                    )
-                                    .await,
-                                Ok(response) => {
+                            let first_output = FirstOutputDeadline::default();
+                            let result = first_output
+                                .run(async {
+                                    let response = provider
+                                        .sendHttpRequest(
+                                            super::ProviderHttp::post(&api_endpoint)
+                                                .headers(headers.clone())
+                                                .body(request_body_bytes.clone()),
+                                        )
+                                        .await?;
                                     let status = response.status();
-                                    match provider.readResponseText(response).await {
-                                        Ok(body) => Err(AiServiceError::RequestFailed(format!("{status}: {body}"))),
-                                        Err(error) => Err(error),
+                                    if !status.is_success() {
+                                        let body = provider.readResponseText(response).await?;
+                                        return Err(AiServiceError::RequestFailed(format!("{status}: {body}")));
                                     }
-                                }
-                                Err(error) => Err(error),
-                            };
+                                    provider
+                                        .read_streaming_response(
+                                            response,
+                                            on_tool_invocation.as_ref(),
+                                            &producer,
+                                            &mut emitter,
+                                            &first_output,
+                                        )
+                                        .await
+                                })
+                                .await;
                             match result {
                                 Ok(()) => break Ok(()),
                                 Err(AiServiceError::RequestCancelled) => break Err(AiServiceError::RequestCancelled),
@@ -2700,6 +2721,7 @@ impl OpenAIProvider {
         Ok(Box::new(output))
     }
 
+    /// Retries complete buffered attempts under the same first-output deadline as streaming.
     async fn sendNonStreamingPreparedRequest(
         &self,
         api_endpoint: String,
@@ -2710,19 +2732,30 @@ impl OpenAIProvider {
     ) -> Result<Vec<String>, AiServiceError> {
         let request_body_bytes = serde_json::to_vec(&request_body)
             .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-        let response = {
+        let json_response = {
             let maxRetries = super::LlmRetryPolicy::LlmRetryPolicy::MAX_RETRY_ATTEMPTS;
             let mut retryCount = 0;
             loop {
-                let response = match self
-                    .sendHttpRequest(
-                        super::ProviderHttp::post(&api_endpoint)
-                            .headers(headers.clone())
-                            .body(request_body_bytes.clone()),
-                    )
-                    .await
-                {
-                    Ok(response) => response,
+                let first_output = FirstOutputDeadline::default();
+                let result = first_output
+                    .run(async {
+                        let response = self
+                            .sendHttpRequest(
+                                super::ProviderHttp::post(&api_endpoint)
+                                    .headers(headers.clone())
+                                    .body(request_body_bytes.clone()),
+                            )
+                            .await?;
+                        let status = response.status();
+                        if !status.is_success() {
+                            let message = self.readResponseText(response).await?;
+                            return Err(AiServiceError::RequestFailed(format!("{status}: {message}")));
+                        }
+                        self.readResponseJson(response).await
+                    })
+                    .await;
+                match result {
+                    Ok(json) => break json,
                     Err(AiServiceError::RequestCancelled) => {
                         return Err(AiServiceError::RequestCancelled);
                     }
@@ -2742,32 +2775,9 @@ impl OpenAIProvider {
                         retryCount = newRetryCount;
                         continue;
                     }
-                };
-
-                let status = response.status();
-                if !status.is_success() {
-                    let message = self.readResponseText(response).await?;
-                    let error = AiServiceError::RequestFailed(format!("{status}: {message}"));
-                    let errorText = retry_error_text(&error);
-                    if !enable_retry {
-                        return Err(error);
-                    }
-                    let newRetryCount = retryCount + 1;
-                    if newRetryCount > maxRetries {
-                        return Err(error);
-                    }
-                    if let Some(on_non_fatal_error) = on_non_fatal_error.as_ref() {
-                        on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                    }
-                    self.delayRetryOrCancel(newRetryCount).await?;
-                    retryCount = newRetryCount;
-                    continue;
                 }
-                break response;
             }
         };
-
-        let json_response = self.readResponseJson(response).await?;
         let token_counts = json_response
             .get("usage")
             .map(parse_usage_counts)

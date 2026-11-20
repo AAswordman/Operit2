@@ -75,7 +75,14 @@ use `llmprovider/ProviderHttp.rs` to encode requests and consume asynchronous
 clients. The Host owns sockets, TLS, proxy handling and connection pools;
 the native Host shares pools across streaming and buffered requests with the
 same request policy. Model requests use a shared 60-second connection timeout
-and 1000-second read-idle timeout, without a total generation deadline.
+and 1000-second read-idle timeout. Each OpenAI, Claude and Gemini generation
+attempt also has a 120-second first-output deadline, starting before HTTP dispatch
+and covering the wait for response headers. Parsed text, reasoning, tool calls
+or image output release that deadline; heartbeats and metadata do not. Buffered
+requests stay bounded through complete JSON decoding. Expiry drops the owning
+HTTP request before entering the existing retry policy. There is no total
+generation deadline after first output. See `docs/model-first-output-timeout.md`
+for retry limits, evidence and regression scenarios.
 
 Model connection tests use the application's current streaming-output preference
 for chat, tool-call, image, audio, and video probes. Streaming is enabled by default.

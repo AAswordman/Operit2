@@ -48,6 +48,8 @@ pub enum AiServiceError {
     ProviderNotImplemented(String),
     #[error("request cancelled")]
     RequestCancelled,
+    #[error("AI first output timed out after 120 seconds")]
+    FirstOutputTimeout,
     #[error("connection failed: {0}")]
     ConnectionFailed(String),
     #[error("request failed: {0}")]
@@ -89,6 +91,9 @@ pub fn ensure_response_completed(stream: &dyn RevisableTextStreamLike) -> Result
 
 /// Converts provider errors into user-facing retry status text.
 pub fn retry_error_text(error: &AiServiceError) -> String {
+    if matches!(error, AiServiceError::FirstOutputTimeout) {
+        return "AI 首字等待超过 120 秒".to_string();
+    }
     let message = error.to_string();
     let lower = message.to_ascii_lowercase();
     if lower.contains("timeout") || lower.contains("timed out") {

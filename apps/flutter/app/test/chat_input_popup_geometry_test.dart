@@ -23,9 +23,264 @@ void main() {
   setUp(ClientLogger.initialize);
   for (final agent in [false, true]) {
     testWidgets(
-      '${agent ? 'agent' : 'classic'} mention overlay tolerates suggestions disappearing during rebuild',
+      '${agent ? 'agent' : 'classic'} mention moves with its composer between page overlays',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(900, 800);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final controller = TextEditingController();
+        final focus = FocusNode();
+        addTearDown(controller.dispose);
+        addTearDown(focus.dispose);
+        final composer = _composer(
+          key: GlobalKey(),
+          agent: agent,
+          controller: controller,
+          focus: focus,
+          viewModel: ChatViewModel(bridge: _PendingModelBridge()),
+          mention: const SizedBox(
+            key: ValueKey('moving-mention'),
+            height: 64,
+            child: Text('Moving suggestion'),
+          ),
+        );
+        late StateSetter update;
+        var onRight = false;
+        await tester.pumpWidget(
+          OperitTheme(
+            initialThemePreferenceSnapshot:
+                UserPreferencesManager.defaultThemePreferenceSnapshot,
+            initialThemeIsReady: false,
+            unconfiguredChildEnabled: true,
+            hostInteractionHostsEnabled: false,
+            child: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  update = setState;
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      SizedBox(
+                        width: 340,
+                        height: 500,
+                        child: RetainedPage(
+                          active: true,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            child: onRight ? const SizedBox.shrink() : composer,
+                          ),
+                        ),
+                      ),
+                      SizedBox(
+                        key: const ValueKey('right-page'),
+                        width: 420,
+                        height: 700,
+                        child: RetainedPage(
+                          active: true,
+                          child: Align(
+                            alignment: Alignment.bottomCenter,
+                            child: onRight ? composer : const SizedBox.shrink(),
+                          ),
+                        ),
+                      ),
+                    ],
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final inputState = tester.state(find.byType(EditableText));
+        expect(find.byKey(const ValueKey('moving-mention')), findsOneWidget);
+        update(() => onRight = true);
+        await tester.pump();
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        final anchor = tester.getRect(find.byType(ThemeComposerCard));
+        final popup = tester.getRect(
+          find.byKey(const ValueKey('moving-mention')),
+        );
+        final page = tester.getRect(find.byKey(const ValueKey('right-page')));
+        expect(tester.state(find.byType(EditableText)), same(inputState));
+        expect(popup.left, greaterThanOrEqualTo(page.left + 12));
+        expect(popup.right, lessThanOrEqualTo(page.right - 12));
+        expect(anchor.top - popup.bottom, closeTo(8, 0.1));
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      '${agent ? 'agent' : 'classic'} mention closes with its composer during a page rebuild',
       (tester) async {
         final controller = TextEditingController();
+        final focus = FocusNode();
+        final viewModel = ChatViewModel(bridge: _PendingModelBridge());
+        addTearDown(controller.dispose);
+        addTearDown(focus.dispose);
+        late StateSetter update;
+        var showComposer = true;
+        await tester.pumpWidget(
+          OperitTheme(
+            initialThemePreferenceSnapshot:
+                UserPreferencesManager.defaultThemePreferenceSnapshot,
+            initialThemeIsReady: false,
+            unconfiguredChildEnabled: true,
+            hostInteractionHostsEnabled: false,
+            child: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  update = setState;
+                  return showComposer
+                      ? Align(
+                          alignment: Alignment.bottomCenter,
+                          child: _composer(
+                            agent: agent,
+                            controller: controller,
+                            focus: focus,
+                            viewModel: viewModel,
+                            mention: const SizedBox(
+                              key: ValueKey('departing-mention'),
+                              height: 64,
+                              child: Text('Departing suggestion'),
+                            ),
+                          ),
+                        )
+                      : const Text('Another page');
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        expect(find.byKey(const ValueKey('departing-mention')), findsOneWidget);
+        update(() => showComposer = false);
+        final reassembled = tester.binding.reassembleApplication();
+        await tester.pump();
+        await reassembled;
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(find.byKey(const ValueKey('departing-mention')), findsNothing);
+        expect(find.text('Another page'), findsOneWidget);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      '${agent ? 'agent' : 'classic'} mention parks and resumes with its retained page',
+      (tester) async {
+        tester.view.devicePixelRatio = 1;
+        tester.view.physicalSize = const Size(400, 800);
+        addTearDown(tester.view.resetDevicePixelRatio);
+        addTearDown(tester.view.resetPhysicalSize);
+        final controller = TextEditingController(text: '@draft');
+        final focus = FocusNode();
+        addTearDown(controller.dispose);
+        addTearDown(focus.dispose);
+        final viewModel = ChatViewModel(bridge: _PendingModelBridge());
+        var selections = 0;
+        var composer = _composer(
+          agent: agent,
+          controller: controller,
+          focus: focus,
+          viewModel: viewModel,
+          mention: SizedBox(
+            key: const ValueKey('retained-mention'),
+            height: 64,
+            child: TextButton(
+              onPressed: () => selections++,
+              child: const Text('Select suggestion'),
+            ),
+          ),
+        );
+        late StateSetter update;
+        var active = true;
+        var pageSize = const Size(340, 500);
+        await tester.pumpWidget(
+          OperitTheme(
+            initialThemePreferenceSnapshot:
+                UserPreferencesManager.defaultThemePreferenceSnapshot,
+            initialThemeIsReady: false,
+            unconfiguredChildEnabled: true,
+            hostInteractionHostsEnabled: false,
+            child: Scaffold(
+              body: StatefulBuilder(
+                builder: (context, setState) {
+                  update = setState;
+                  return Align(
+                    alignment: Alignment.topLeft,
+                    child: SizedBox(
+                      width: pageSize.width,
+                      height: pageSize.height,
+                      child: RetainedPage(
+                        active: active,
+                        child: Align(
+                          alignment: Alignment.bottomCenter,
+                          child: composer,
+                        ),
+                      ),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ),
+        );
+        await tester.pump();
+        final inputState = tester.state(find.byType(EditableText));
+        final popupFinder = find.byKey(const ValueKey('retained-mention'));
+        final popupRender = tester.renderObject(popupFinder);
+        update(() => active = false);
+        await tester.pump();
+        await tester.pump();
+        expect(popupRender.attached, isFalse);
+        expect(popupFinder, findsNothing);
+        tester.view.physicalSize = const Size(480, 900);
+        update(() => pageSize = const Size(380, 650));
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(popupRender.attached, isFalse);
+        update(() => active = true);
+        await tester.pump();
+        await tester.pump();
+        expect(tester.takeException(), isNull);
+        expect(tester.state(find.byType(EditableText)), same(inputState));
+        expect(popupRender.attached, isTrue);
+        final anchor = tester.getRect(find.byType(ThemeComposerCard));
+        final popup = tester.getRect(popupFinder);
+        expect(anchor.top - popup.bottom, closeTo(8, 0.1));
+        expect(popup.width, closeTo(356, 0.1));
+        await tester.tap(find.text('Select suggestion'));
+        await tester.pump();
+        expect(selections, 1);
+        expect(popupFinder, findsOneWidget);
+        await tester.tapAt(const Offset(20, 20));
+        await tester.pump();
+        expect(popupFinder, findsNothing);
+        update(() {
+          composer = _composer(
+            agent: agent,
+            controller: controller,
+            focus: focus,
+            viewModel: viewModel,
+            mention: const SizedBox(
+              key: ValueKey('updated-mention'),
+              height: 80,
+              child: Text('Updated suggestion'),
+            ),
+          );
+        });
+        await tester.pump();
+        expect(find.byKey(const ValueKey('updated-mention')), findsOneWidget);
+        expect(tester.state(find.byType(EditableText)), same(inputState));
+        expect(controller.text, '@draft');
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      '${agent ? 'agent' : 'classic'} mention overlay tolerates suggestions disappearing during rebuild',
+      (tester) async {
+        final controller = TextEditingController(text: '@draft');
         final focus = FocusNode();
         final viewModel = ChatViewModel(bridge: _PendingModelBridge());
         addTearDown(controller.dispose);
@@ -66,6 +321,16 @@ void main() {
           ),
         );
         await tester.pump();
+        focus.requestFocus();
+        await tester.pump();
+        const draft = TextEditingValue(
+          text: '@draft',
+          selection: TextSelection.collapsed(offset: 6),
+          composing: TextRange(start: 1, end: 6),
+        );
+        tester.testTextInput.updateEditingValue(draft);
+        await tester.pump();
+        final inputState = tester.state(find.byType(EditableText));
         expect(find.byKey(const ValueKey('transient-mention')), findsOneWidget);
         tester.view.viewInsets = const FakeViewPadding(bottom: 260);
         update(() => showSuggestions = false);
@@ -75,10 +340,16 @@ void main() {
         await tester.pump();
         expect(tester.takeException(), isNull);
         expect(find.byKey(const ValueKey('transient-mention')), findsNothing);
+        expect(controller.value, draft);
+        expect(focus.hasFocus, isTrue);
+        expect(tester.state(find.byType(EditableText)), same(inputState));
         update(() => showSuggestions = true);
         await tester.pump();
         await tester.pump();
         expect(find.byKey(const ValueKey('transient-mention')), findsOneWidget);
+        expect(controller.value, draft);
+        expect(focus.hasFocus, isTrue);
+        expect(tester.state(find.byType(EditableText)), same(inputState));
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },
@@ -295,6 +566,7 @@ void main() {
 
 /// Builds either composer with the same dependencies and optional mention panel.
 Widget _composer({
+  Key? key,
   required bool agent,
   required TextEditingController controller,
   required FocusNode focus,
@@ -304,6 +576,7 @@ Widget _composer({
   List<PendingQueueMessageItem> queue = const [],
 }) => agent
     ? AgentChatInputSection(
+        key: key,
         controller: controller,
         focusNode: focus,
         isLoading: false,
@@ -320,6 +593,7 @@ Widget _composer({
         onSpeechInput: () {},
       )
     : ClassicChatInputSection(
+        key: key,
         controller: controller,
         focusNode: focus,
         isLoading: false,

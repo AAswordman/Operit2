@@ -36,6 +36,14 @@ implements `JsExecutionHost` with the real tool and package logic.
 
 See `core/CRATE_BOUNDARIES.md` for the full dependency direction.
 
+## Call Ownership
+
+Every asynchronous handoff selects the exact call's complete `JsCallContext`, including its Host,
+module resources, environment and cancellation budget. Pending and detached work retain their own
+context until cleanup, and nested execution restores the enclosing realm's capabilities.
+See [JavaScript call context ownership](../../../../docs/js-call-context.md) for the lifecycle,
+historical cause and regression coverage.
+
 ## Prepared Page Engines
 
 Native execution uses the four existing affine workers, with one shared V8 isolate per worker.

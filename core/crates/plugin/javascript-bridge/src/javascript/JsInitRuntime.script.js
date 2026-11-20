@@ -341,7 +341,7 @@
         callState.timerIds = {};
     }
 
-    /** Releases owned subscriptions and timers before removing the call registry entry. */
+    /** Releases subscriptions under their exact owner and restores any surviving caller. */
     function cleanupCallSession(callId) {
         var resolvedCallId = normalizeCallId(callId);
         if (!resolvedCallId) {
@@ -349,12 +349,24 @@
         }
         var registry = ensureCallRegistry();
         var callState = registry[resolvedCallId];
-        if (callState) {
+        if (!callState) return;
+        var previousCallId = normalizeCallId(root.__operitCurrentCallId);
+        var restoreCallId = previousCallId === resolvedCallId ? callState.previousCallId : previousCallId;
+        root.__operitCurrentCallId = resolvedCallId;
+        root.__operit_call_runtime_ref = callState.callRuntime;
+        try {
             callState.cleanupCallbacks.forEach(/** Releases subscriptions owned by this exact call. */ function(cleanup) { cleanup(); });
             callState.cleanupCallbacks.clear();
+        } finally {
+            try {
+                clearCallTimers(callState);
+            } finally {
+                delete registry[resolvedCallId];
+                if (normalizeCallId(root.__operitCurrentCallId) === resolvedCallId) {
+                    restoreCallContext(restoreLiveCallId(restoreCallId, resolvedCallId));
+                }
+            }
         }
-        clearCallTimers(callState);
-        delete registry[resolvedCallId];
     }
 
     /** Cancels one call and restores identity and runtime from the same surviving session. */
@@ -368,9 +380,6 @@
             return;
         }
         callState.completed = true;
-        if (root.__operitCurrentCallId === resolvedCallId) {
-            restoreCallContext(restoreLiveCallId(callState.previousCallId, resolvedCallId));
-        }
         cleanupCallSession(resolvedCallId);
     }
 

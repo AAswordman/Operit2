@@ -1,4 +1,5 @@
 use super::ApiKeyProvider::KeyGetter;
+use super::FirstOutputDeadline::FirstOutputDeadline;
 use super::ProviderHttp::KeyAuthentication;
 use async_trait::async_trait;
 use base64::{engine::general_purpose, Engine as _};
@@ -16,7 +17,6 @@ use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
     SendMessageRequest, SharedAiResponseStream, TokenCounts,
 };
-use crate::chat::llmprovider::LlmRetryPolicy::delay_retry_ms;
 use crate::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_host_api::HostRuntimeTaskSchedulerHost;
@@ -770,6 +770,7 @@ impl GeminiProvider {
         Ok(headers)
     }
 
+    /// Bounds each buffered attempt through complete JSON decoding and preserves cancellation.
     async fn send_non_streaming_message(
         &mut self,
         request: SendMessageRequest,
@@ -778,16 +779,28 @@ impl GeminiProvider {
         let mut retryCount = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let response = match super::ProviderHttp::post(self.request_url(false)?)
-                .key_getter(self.key_getter.clone(), self.key_authentication())
-                .headers(self.headers()?)
-                .json(&request_body)
-                .send()
-                .await
-            {
-                Ok(response) => response,
+            let first_output = FirstOutputDeadline::default();
+            let result = first_output
+                .run(async {
+                    let response = self
+                        .sendHttpRequest(
+                            super::ProviderHttp::post(self.request_url(false)?)
+                                .headers(self.headers()?)
+                                .json(&request_body),
+                        )
+                        .await?;
+                    let status = response.status();
+                    if !status.is_success() {
+                        let text = self.readResponseText(response).await?;
+                        return Err(AiServiceError::RequestFailed(format!("{status}: {text}")));
+                    }
+                    self.readResponseJson(response).await
+                })
+                .await;
+            let json = match result {
+                Ok(json) => json,
+                Err(AiServiceError::RequestCancelled) => return Err(AiServiceError::RequestCancelled),
                 Err(error) => {
-                    let error = AiServiceError::ConnectionFailed(error.to_string());
                     let errorText = retry_error_text(&error);
                     if !request.enable_retry {
                         return Err(error);
@@ -799,32 +812,12 @@ impl GeminiProvider {
                     if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
                         on_non_fatal_error(retry_message(&errorText, newRetryCount));
                     }
-                    delay_retry_ms(newRetryCount).await;
+                    self.delayRetryOrCancel(newRetryCount).await?;
                     retryCount = newRetryCount;
                     continue;
                 }
             };
-            let status = response.status();
-            if !status.is_success() {
-                let text = response.text().await?;
-                let error = AiServiceError::RequestFailed(format!("{status}: {text}"));
-                let errorText = retry_error_text(&error);
-                if !request.enable_retry {
-                    return Err(error);
-                }
-                let newRetryCount = retryCount + 1;
-                if newRetryCount > maxRetries {
-                    return Err(error);
-                }
-                if let Some(on_non_fatal_error) = request.on_non_fatal_error.as_ref() {
-                    on_non_fatal_error(retry_message(&errorText, newRetryCount));
-                }
-                delay_retry_ms(newRetryCount).await;
-                retryCount = newRetryCount;
-                continue;
-            }
-            let json: Value = response.json().await?;
-            let content = self.extract_content_from_json(&json)?;
+            let (content, _) = self.extract_content_from_json(&json)?;
             return Ok(response_stream_from_chunks(vec![content]));
         }
     }
@@ -843,24 +836,27 @@ impl GeminiProvider {
         let mut retry_count = 0;
         loop {
             let request_body = self.create_request_body(&request)?;
-            let result = async {
-                let response = self
-                    .sendHttpRequest(
-                        super::ProviderHttp::post(self.request_url(true)?)
-                            .headers(self.headers()?)
-                            .json(&request_body),
-                    )
-                    .await?;
-                if !response.status().is_success() {
-                    let status = response.status();
-                    return Err(AiServiceError::RequestFailed(format!(
-                        "{status}: {}",
-                        self.readResponseText(response).await?
-                    )));
-                }
-                self.process_streaming_response(response, output).await
-            }
-            .await;
+            let first_output = FirstOutputDeadline::default();
+            let result = first_output
+                .run(async {
+                    let response = self
+                        .sendHttpRequest(
+                            super::ProviderHttp::post(self.request_url(true)?)
+                                .headers(self.headers()?)
+                                .json(&request_body),
+                        )
+                        .await?;
+                    if !response.status().is_success() {
+                        let status = response.status();
+                        return Err(AiServiceError::RequestFailed(format!(
+                            "{status}: {}",
+                            self.readResponseText(response).await?
+                        )));
+                    }
+                    self.process_streaming_response(response, output, &first_output)
+                        .await
+                })
+                .await;
             match result {
                 Ok(()) => return Ok(()),
                 Err(AiServiceError::RequestCancelled) => {
@@ -892,6 +888,7 @@ impl GeminiProvider {
         &mut self,
         response: super::ProviderHttp::Response,
         output: &SharedAiResponseStream,
+        first_output: &FirstOutputDeadline,
     ) -> Result<(), AiServiceError> {
         let mut decoder = SseDecoder::default();
         let mut bytes_stream = response.bytes_stream();
@@ -911,7 +908,10 @@ impl GeminiProvider {
             for data in decoder.push(&item?)? {
                 let json: Value = serde_json::from_str(&data)
                     .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-                let content = self.extract_content_from_json(&json)?;
+                let (content, has_output) = self.extract_content_from_json(&json)?;
+                if has_output {
+                    first_output.mark_output();
+                }
                 if !content.is_empty() {
                     output.emit_chunk(content);
                 }
@@ -930,15 +930,16 @@ impl GeminiProvider {
         ))
     }
 
-    /// Decodes Gemini text, tool calls and metadata from one response object.
+    /// Decodes content and distinguishes model output from usage and signature metadata.
     fn extract_content_from_json(
         &mut self,
         json_response: &Value,
-    ) -> Result<String, AiServiceError> {
+    ) -> Result<(String, bool), AiServiceError> {
         if let Some(error) = json_response.get("error") {
             return Err(AiServiceError::RequestFailed(error.to_string()));
         }
         let mut content_builder = String::new();
+        let mut has_output = false;
         let mut search_sources_builder = String::new();
         if self.gemini_google_search_enabled() {
             if let Some(metadata) = json_response.pointer("/candidates/0/groundingMetadata") {
@@ -990,7 +991,7 @@ impl GeminiProvider {
             .and_then(Value::as_array)
         else {
             self.apply_usage(json_response.get("usageMetadata"));
-            return Ok(String::new());
+            return Ok((String::new(), false));
         };
         let mut pending_thought_signatures = Vec::new();
         for (index, part) in parts.iter().enumerate() {
@@ -1009,6 +1010,7 @@ impl GeminiProvider {
                         .and_then(Value::as_str)
                         .unwrap_or("");
                     if !tool_name.is_empty() {
+                        has_output = true;
                         let tag = ChatMarkupRegex::generate_random_tool_tag_name();
                         content_builder.push_str(&format!("\n<{tag} name=\"{tool_name}\">"));
                         if let Some(args) = function_call.get("args") {
@@ -1041,6 +1043,7 @@ impl GeminiProvider {
                     .and_then(Value::as_str)
                     .unwrap_or("");
                 if mime_type.starts_with("image/") && !b64.is_empty() {
+                    has_output = true;
                     if self.isInThinkingMode {
                         content_builder.push_str("</think>");
                         self.isInThinkingMode = false;
@@ -1052,6 +1055,7 @@ impl GeminiProvider {
             }
             if let Some(text) = part.get("text").and_then(Value::as_str) {
                 if !text.is_empty() {
+                    has_output = true;
                     if is_thought && !self.isInThinkingMode {
                         content_builder.push_str("<think>");
                         self.isInThinkingMode = true;
@@ -1076,7 +1080,7 @@ impl GeminiProvider {
             }
         }
         self.apply_usage(json_response.get("usageMetadata"));
-        Ok(format!("{search_sources_builder}{content_builder}"))
+        Ok((format!("{search_sources_builder}{content_builder}"), has_output))
     }
 
     fn apply_usage(&mut self, usage: Option<&Value>) {

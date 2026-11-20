@@ -24,6 +24,7 @@ import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
 import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatInputEnterShortcuts.dart';
+import '../common/ChatMentionSuggestionPopup.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/InputProcessingStatusLane.dart';
@@ -126,12 +127,10 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   final LayerLink _inputMenuPopupLink = LayerLink();
   final GlobalKey _modelPopupTargetKey = GlobalKey();
   final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
-  final GlobalKey _mentionPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _modelPopupEntry;
   OverlayEntry? _inputMenuPopupEntry;
   int _inputMenuContextGeneration = 0;
-  OverlayEntry? _mentionPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
   final GlobalKey _modelPopupWidgetKey = GlobalKey();
   StreamSubscription<
@@ -157,9 +156,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     widget.controller.addListener(_handleInputChanged);
     _watchCurrentModelLabel();
     PluginHotReload.revision.addListener(_requestModelRefresh);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _syncMentionSuggestionPopup();
-    });
   }
 
   /// Expires input menu requests when the actual chat or runtime owner changes.
@@ -183,9 +179,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
       oldWidget.controller.removeListener(_handleInputChanged);
       widget.controller.addListener(_handleInputChanged);
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _syncMentionSuggestionPopup();
-    });
   }
 
   void _handleInputChanged() {
@@ -206,66 +199,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   void _markOpenPopupsForBuild() {
     _modelPopupEntry?.markNeedsBuild();
     _inputMenuPopupEntry?.markNeedsBuild();
-    _mentionPopupEntry?.markNeedsBuild();
     _attachmentPopupEntry?.markNeedsBuild();
-  }
-
-  /// Synchronizes the mention suggestion overlay with the active input token.
-  void _syncMentionSuggestionPopup() {
-    if (!mounted) {
-      return;
-    }
-    if (widget.mentionSuggestionPanel == null) {
-      _dismissMentionSuggestionPopup();
-      return;
-    }
-    if (_mentionPopupEntry == null) {
-      _showMentionSuggestionPopup();
-    } else {
-      _mentionPopupEntry!.markNeedsBuild();
-    }
-  }
-
-  /// Shows the mention suggestion panel above the rendered input surface.
-  void _showMentionSuggestionPopup() {
-    final overlay = Overlay.of(context);
-    _mentionPopupEntry = OverlayEntry(
-      builder: (context) {
-        final panel = widget.mentionSuggestionPanel;
-        if (!mounted || panel == null) return const SizedBox.shrink();
-        final placement = _popupPlacement(
-          context,
-          targetKey: _mentionPopupTargetKey,
-          alignEnd: false,
-          maxWidth: 700,
-        );
-        return Stack(
-          children: <Widget>[
-            Positioned.fill(
-              child: Listener(
-                behavior: HitTestBehavior.translucent,
-                onPointerDown: (_) => _dismissMentionSuggestionPopup(),
-                child: const SizedBox.expand(),
-              ),
-            ),
-            Positioned(
-              left: placement.left,
-              bottom: placement.bottom,
-              width: placement.width,
-              child: GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: () {},
-                child: ConstrainedBox(
-                  constraints: BoxConstraints(maxHeight: placement.maxHeight),
-                  child: panel,
-                ),
-              ),
-            ),
-          ],
-        );
-      },
-    );
-    overlay.insert(_mentionPopupEntry!);
   }
 
   /// Toggles the input height while preserving the active draft and focus.
@@ -643,12 +577,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     _inputMenuPopupEntry = null;
   }
 
-  /// Removes the mention suggestion popup.
-  void _dismissMentionSuggestionPopup() {
-    _mentionPopupEntry?.remove();
-    _mentionPopupEntry = null;
-  }
-
   void _dismissAttachmentPopup() {
     _attachmentPopupEntry?.remove();
     _attachmentPopupEntry = null;
@@ -667,7 +595,6 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     _modelLabelGeneration++;
     _dismissModelSettingsPopup();
     _dismissInputMenuPopup();
-    _dismissMentionSuggestionPopup();
     _dismissAttachmentPopup();
     super.dispose();
   }
@@ -714,8 +641,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                   onGuideMessage: widget.onGuidePendingQueueMessage,
                   canGuide: processing,
                 ),
-              KeyedSubtree(
-                key: _mentionPopupTargetKey,
+              ChatMentionSuggestionPopup(
+                panel: widget.mentionSuggestionPanel,
+                dismissBehavior: HitTestBehavior.translucent,
                 child: ThemeComposerCard(
                   inputStyle: ThemePreferenceDefaults.INPUT_STYLE_AGENT,
                   floating: themePreferenceSnapshot.chatInputFloating,

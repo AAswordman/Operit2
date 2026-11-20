@@ -2,6 +2,7 @@ use super::*;
 use crate::chat::llmprovider::AIService::{AIService, SharedAiResponseStream};
 use crate::chat::llmprovider::ClaudeProvider::ClaudeProvider;
 use crate::chat::llmprovider::GeminiProvider::GeminiProvider;
+use crate::chat::llmprovider::FirstOutputDeadline::FirstOutputDeadline;
 use crate::chat::llmprovider::OpenAIProvider::{OpenAIProvider, StreamEmitter};
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
@@ -146,7 +147,8 @@ async fn claude_emits_before_completion_and_stops_without_eof() {
         .unwrap();
     let mut provider = claude();
     let output = output();
-    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    let first_output = FirstOutputDeadline::default();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output, &first_output));
     assert!(futures_util::poll!(&mut read).is_pending());
     assert_eq!(output.current_render_content(), "你好😀");
     host.emit("data: {\"type\":\"message_stop\"}\n\n");
@@ -167,7 +169,8 @@ async fn claude_streams_tool_arguments_with_split_surrogate_pairs() {
     );
     let mut provider = claude();
     let output = output();
-    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    let first_output = FirstOutputDeadline::default();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output, &first_output));
     assert!(futures_util::poll!(&mut read).is_pending());
     for fragment in [r#"{"text":"hello\uD8"#, r#"3D\uDE"#, r#"00"}"#] {
         let event = serde_json::json!({
@@ -204,7 +207,7 @@ async fn claude_rejects_truncation_and_keeps_partial_output() {
     host.finish();
     let output = output();
     let error = claude()
-        .process_streaming_response(response, &output)
+        .process_streaming_response(response, &output, &FirstOutputDeadline::default())
         .await
         .unwrap_err();
     assert!(error.to_string().contains("before completion"));
@@ -220,7 +223,7 @@ async fn claude_propagates_upstream_error_events() {
         .await
         .unwrap();
     let error = claude()
-        .process_streaming_response(response, &output())
+        .process_streaming_response(response, &output(), &FirstOutputDeadline::default())
         .await
         .unwrap_err();
     assert!(error.to_string().contains("overloaded_error"));
@@ -239,7 +242,8 @@ async fn gemini_emits_before_completion_and_stops_without_eof() {
         .unwrap();
     let mut provider = gemini();
     let output = output();
-    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    let first_output = FirstOutputDeadline::default();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output, &first_output));
     assert!(futures_util::poll!(&mut read).is_pending());
     assert_eq!(output.current_render_content(), "live");
     host.emit("data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n");
@@ -260,7 +264,7 @@ async fn gemini_rejects_truncation_and_keeps_partial_output() {
     host.finish();
     let output = output();
     let error = gemini()
-        .process_streaming_response(response, &output)
+        .process_streaming_response(response, &output, &FirstOutputDeadline::default())
         .await
         .unwrap_err();
     assert!(error.to_string().contains("before completion"));
@@ -278,7 +282,8 @@ async fn cancelling_idle_claude_releases_the_host_stream() {
     let mut provider = claude();
     let mut control = provider.clone();
     let output = output();
-    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    let first_output = FirstOutputDeadline::default();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output, &first_output));
     assert!(futures_util::poll!(&mut read).is_pending());
     control.cancel_streaming();
     assert_eq!(read.await.unwrap_err(), AiServiceError::RequestCancelled);
@@ -298,7 +303,8 @@ async fn paused_claude_keeps_streamed_usage() {
     let mut provider = claude();
     let mut control = provider.clone();
     let output = output();
-    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    let first_output = FirstOutputDeadline::default();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output, &first_output));
     assert!(futures_util::poll!(&mut read).is_pending());
     control.cancel_streaming();
     assert_eq!(read.await.unwrap_err(), AiServiceError::RequestCancelled);
@@ -315,7 +321,8 @@ async fn paused_gemini_keeps_streamed_usage() {
     let mut provider = gemini();
     let mut control = provider.clone();
     let output = output();
-    let mut read = Box::pin(provider.process_streaming_response(response, &output));
+    let first_output = FirstOutputDeadline::default();
+    let mut read = Box::pin(provider.process_streaming_response(response, &output, &first_output));
     assert!(futures_util::poll!(&mut read).is_pending());
     control.cancel_streaming();
     assert_eq!(read.await.unwrap_err(), AiServiceError::RequestCancelled);
@@ -332,7 +339,8 @@ async fn paused_openai_keeps_live_output_count() {
     let mut control = provider.clone();
     let output = output();
     let mut emitter = StreamEmitter::new(output.clone());
-    let mut read = Box::pin(provider.read_streaming_response(response, None, &output, &mut emitter));
+    let first_output = FirstOutputDeadline::default();
+    let mut read = Box::pin(provider.read_streaming_response(response, None, &output, &mut emitter, &first_output));
     assert!(futures_util::poll!(&mut read).is_pending());
     let count = control.output_token_count();
     assert!(count > 0);
@@ -398,7 +406,7 @@ async fn openai_accepts_multiline_events_and_logs_invalid_json() {
     let output = output();
     let mut emitter = StreamEmitter::new(output.clone());
     provider
-        .read_streaming_response(response, None, &output, &mut emitter)
+        .read_streaming_response(response, None, &output, &mut emitter, &FirstOutputDeadline::default())
         .await
         .unwrap();
     assert_eq!(output.current_render_content(), "完整😀");
@@ -429,6 +437,7 @@ async fn openai_invalid_event_still_requires_completion() {
             None,
             &output,
             &mut StreamEmitter::new(output.clone()),
+            &FirstOutputDeadline::default(),
         )
         .await
         .unwrap_err();

@@ -56,15 +56,9 @@ thread_local! {
     static CURRENT_CLEANUP_OWNER: RefCell<Option<(String, HostJavaScriptExecutionInterrupt)>> = RefCell::new(None);
     static CURRENT_INTERRUPT_SCOPE: RefCell<Option<InterruptScopeState>> = RefCell::new(None);
     static CURRENT_ACTIVE_CALL_CONTEXTS: RefCell<BTreeMap<String, JsCallContext>> = RefCell::new(BTreeMap::new());
-    static CURRENT_EXECUTION_HOST: RefCell<Option<Arc<dyn JsExecutionHost>>> = RefCell::new(None);
+    static CURRENT_CALL_CONTEXT: RefCell<Option<JsCallContext>> = RefCell::new(None);
     static CURRENT_REGISTRATION_CONFIG_PARAMS: RefCell<Option<BTreeMap<String, Value>>> = RefCell::new(None);
-    static CURRENT_INTERMEDIATE_CALLBACK: RefCell<Option<Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>>> = RefCell::new(None);
-    static CURRENT_EXECUTION_LISTENER: RefCell<Option<JsExecutionListenerRef>> = RefCell::new(None);
-    static CURRENT_DETACHED_INTERMEDIATE_CALLBACKS: RefCell<BTreeMap<String, Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>>> =
-        RefCell::new(BTreeMap::new());
-    static CURRENT_ENV_OVERRIDES: RefCell<BTreeMap<String, String>> = RefCell::new(BTreeMap::new());
     static CURRENT_CALL_RESULTS: RefCell<BTreeMap<String, JsExecutionResult<Value>>> = RefCell::new(BTreeMap::new());
-    static CURRENT_TEXT_RESOURCE_SOURCE: RefCell<Option<JsTextResourceSource>> = RefCell::new(None);
 }
 
 #[derive(Clone)]
@@ -648,7 +642,6 @@ fn scriptRequestStepTask(
             executeWithInterrupt(state, interrupt, "Before hook execution", |state| {
                 state.executeScriptRequestStep(step, stepInterrupt)
             });
-        clearThreadLocalCallState();
         Ok(Box::new(output) as HostJavaScriptRuntimeStateOutput)
     })
 }
@@ -694,8 +687,12 @@ fn downcastJavaScriptStateOutput<T: 'static>(
     *output
 }
 
-/// Switches cancellation ownership at the same host boundary as JavaScript call context.
+/// Selects one exact call's capabilities and cancellation budget at every JavaScript handoff.
 fn selectScriptExecution(owner: Option<(String, HostJavaScriptExecutionInterrupt)>) {
+    let context = owner.as_ref().and_then(|(callId, _)| {
+        CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().get(callId).cloned())
+    });
+    CURRENT_CALL_CONTEXT.with(|current| *current.borrow_mut() = context);
     let cleanup = CURRENT_CLEANUP_OWNER.with(|current| current.borrow().clone());
     let owner = owner.map(|(id, token)| {
         let token = cleanup.as_ref().filter(|(cleanupId, _)| cleanupId == &id)
@@ -739,9 +736,13 @@ struct ExecutionScope {
     previous: Option<InterruptScopeState>,
     owner: Option<(String, HostJavaScriptExecutionInterrupt)>,
     cleanupOwner: Option<(String, HostJavaScriptExecutionInterrupt)>,
+    callContext: Option<JsCallContext>,
+    activeCallContexts: BTreeMap<String, JsCallContext>,
+    registrationConfigParams: Option<BTreeMap<String, Value>>,
 }
 
 impl ExecutionScope {
+    /// Captures the enclosing realm before a short execution or cancellation step begins.
     fn enter(state: &JsEngineState, interrupt: Option<HostJavaScriptExecutionInterrupt>) -> Self {
         let scope = InterruptScopeState {
             controller: state.runtime.interruptController(),
@@ -755,11 +756,15 @@ impl ExecutionScope {
             previous: CURRENT_INTERRUPT_SCOPE.with(|current| current.replace(Some(scope))),
             owner: CURRENT_SCRIPT_OWNER.with(|owner| owner.take()),
             cleanupOwner: CURRENT_CLEANUP_OWNER.with(|owner| owner.take()),
+            callContext: CURRENT_CALL_CONTEXT.with(|context| context.take()),
+            activeCallContexts: CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().clone()),
+            registrationConfigParams: CURRENT_REGISTRATION_CONFIG_PARAMS.with(|params| params.borrow().clone()),
         }
     }
 }
 
 impl Drop for ExecutionScope {
+    /// Restores the enclosing realm's capabilities even when a nested execution fails.
     fn drop(&mut self) {
         let previous = self.previous.take();
         CURRENT_INTERRUPT_SCOPE.with(|scope| {
@@ -767,8 +772,11 @@ impl Drop for ExecutionScope {
                 scope.controller.replace(Vec::new());
             }
         });
+        CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| *contexts.borrow_mut() = std::mem::take(&mut self.activeCallContexts));
+        CURRENT_REGISTRATION_CONFIG_PARAMS.with(|params| *params.borrow_mut() = self.registrationConfigParams.take());
         CURRENT_CLEANUP_OWNER.with(|owner| *owner.borrow_mut() = self.cleanupOwner.take());
         selectScriptExecution(self.owner.take());
+        CURRENT_CALL_CONTEXT.with(|context| *context.borrow_mut() = self.callContext.take());
     }
 }
 
@@ -1140,9 +1148,8 @@ impl JsEngineState {
     /// Installs every active owner so callbacks advanced by another call retain their context.
     #[allow(non_snake_case)]
     fn installActiveCallContexts(&self) {
-        CURRENT_EXECUTION_HOST.with(|host| {
-            *host.borrow_mut() = self.executionHost.clone();
-        });
+        CURRENT_CALL_CONTEXT.with(|context| context.take());
+        CURRENT_REGISTRATION_CONFIG_PARAMS.with(|params| params.take());
         CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| {
             *contexts.borrow_mut() = self
                 .detachedCallContexts
@@ -1438,12 +1445,6 @@ impl JsEngineState {
             Some(resources) => JsTextResourceSource::Snapshot(resources),
             None => packageTextResourceSource(self.toolPkgContext.as_ref()),
         };
-        CURRENT_TEXT_RESOURCE_SOURCE.with(|current| {
-            *current.borrow_mut() = Some(source);
-        });
-        CURRENT_EXECUTION_HOST.with(|host| {
-            *host.borrow_mut() = self.executionHost.clone();
-        });
         // Bind trusted scope/owner parameters before any top-level module code can query paths.
         CURRENT_REGISTRATION_CONFIG_PARAMS.with(|current| {
             *current.borrow_mut() = Some(params.clone());
@@ -1487,25 +1488,19 @@ impl JsEngineState {
                 "operit_registration_{}",
                 Uuid::new_v4().to_string().replace('-', "")
             );
-            let textResourceSource = CURRENT_TEXT_RESOURCE_SOURCE
-                .with(|source| source.borrow().clone())
-                .ok_or_else(|| {
-                    JsExecutionError::invalid_request("Registration resource owner is unavailable")
-                })?;
+            let context = JsCallContext {
+                interrupt: HostJavaScriptExecutionInterrupt::unlimited(),
+                executionHost: self.executionHost.clone(),
+                intermediateCallback: None,
+                executionListener: None,
+                envOverrides: Arc::new(Mutex::new(BTreeMap::new())),
+                environmentOwner,
+                textResourceSource: source,
+                ipcTiming: None,
+            };
+            installThreadLocalCallContext(&context);
             CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| {
-                contexts.borrow_mut().insert(
-                    callId.clone(),
-                    JsCallContext {
-                    interrupt: HostJavaScriptExecutionInterrupt::unlimited(),
-                        executionHost: self.executionHost.clone(),
-                        intermediateCallback: None,
-                        executionListener: None,
-                        envOverrides: Arc::new(Mutex::new(BTreeMap::new())),
-                        environmentOwner,
-                        textResourceSource,
-                        ipcTiming: None,
-                    },
-                );
+                *contexts.borrow_mut() = BTreeMap::from([(callId.clone(), context)]);
             });
             clearNativeExecutionSession(&callId);
             if let Err(error) =
@@ -1609,7 +1604,6 @@ impl JsEngineState {
                 token.shouldInterrupt().then(|| (owner.clone(), token.didTimeOut()))
             })
         });
-        drop(scope);
         let advanced = if let Some((_, timedOut)) = interruptedCall.as_ref() {
             Err(if *timedOut {
                 JsExecutionError::timeout("Before hook execution timed out")
@@ -1664,6 +1658,7 @@ impl JsEngineState {
             }
         }
         clearThreadLocalCallState();
+        drop(scope);
         if interruptedCall.is_some() { Ok(()) } else { advanced }
     }
 
@@ -2544,49 +2539,17 @@ fn buildToolPkgIpcRequest(
     })
 }
 
+/// Clears this engine step without retaining capabilities between affine tasks.
 #[allow(non_snake_case)]
 fn clearThreadLocalCallState() {
     selectScriptExecution(None);
     CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow_mut().clear());
-    CURRENT_EXECUTION_HOST.with(|host| {
-        *host.borrow_mut() = None;
-    });
-    CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
-        *callback.borrow_mut() = None;
-    });
-    CURRENT_EXECUTION_LISTENER.with(|listener| {
-        *listener.borrow_mut() = None;
-    });
-    CURRENT_ENV_OVERRIDES.with(|overrides| {
-        overrides.borrow_mut().clear();
-    });
-    CURRENT_TEXT_RESOURCE_SOURCE.with(|source| {
-        *source.borrow_mut() = None;
-    });
 }
 
 /// Installs one engine-owned call context for the next Host JavaScript execution step.
 #[allow(non_snake_case)]
 fn installThreadLocalCallContext(context: &JsCallContext) {
-    CURRENT_EXECUTION_HOST.with(|host| {
-        *host.borrow_mut() = context.executionHost.clone();
-    });
-    CURRENT_INTERMEDIATE_CALLBACK.with(|callback| {
-        *callback.borrow_mut() = context.intermediateCallback.clone();
-    });
-    CURRENT_EXECUTION_LISTENER.with(|listener| {
-        *listener.borrow_mut() = context.executionListener.clone();
-    });
-    CURRENT_ENV_OVERRIDES.with(|overrides| {
-        *overrides.borrow_mut() = context
-            .envOverrides
-            .lock()
-            .expect("JavaScript call environment mutex poisoned")
-            .clone();
-    });
-    CURRENT_TEXT_RESOURCE_SOURCE.with(|source| {
-        *source.borrow_mut() = Some(context.textResourceSource.clone());
-    });
+    CURRENT_CALL_CONTEXT.with(|current| *current.borrow_mut() = Some(context.clone()));
 }
 
 /// Selects the module owner from the engine's explicit bound package identity.
@@ -2868,15 +2831,15 @@ fn textIntermediateCallback(callback: Option<Arc<dyn Fn(String) + Send + Sync>>)
     }) as Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>)
 }
 
-/// Delivers DSL values to their active or detached execution owner without JSON text.
-fn sendStructuredIntermediate(callId: &str, value: operit_host_api::HostJavaScriptValue) {
-    let active = CURRENT_ACTIVE_CALL_CONTEXTS.with(|contexts| contexts.borrow().get(callId).and_then(|context| context.intermediateCallback.clone()));
-    let detached = CURRENT_DETACHED_INTERMEDIATE_CALLBACKS.with(|callbacks| callbacks.borrow().get(callId).cloned());
-    match (active, detached) {
-        (Some(callback), _) => callback(value),
-        (None, Some(callback)) => callback(value),
-        (None, None) => {},
+/// Delivers DSL values through the same registered owner used by active and detached calls.
+fn sendStructuredIntermediate(callId: &str, value: operit_host_api::HostJavaScriptValue) -> HostResult<()> {
+    let context = CURRENT_ACTIVE_CALL_CONTEXTS
+        .with(|contexts| contexts.borrow().get(callId).cloned())
+        .ok_or_else(|| HostError::new("Compose response requires an active owning call"))?;
+    if let Some(callback) = context.intermediateCallback {
+        callback(value);
     }
+    Ok(())
 }
 
 #[allow(non_snake_case)]
@@ -2886,7 +2849,7 @@ fn executeHostOperation(name: &str, arguments: Vec<impl Into<operit_host_api::Ho
     if name == "__operitNativeSendStructuredIntermediate" {
         let [call_id, value]: [_; 2] = arguments.try_into().map_err(|_| HostError::new("Compose response requires its owner and one binary frame"))?;
         let call_id = hostJavaScriptStringArgument(call_id.into_json()?)?;
-        sendStructuredIntermediate(&call_id, value);
+        sendStructuredIntermediate(&call_id, value)?;
         return Ok(Value::Null);
     }
     let arguments = arguments.into_iter().map(HostJavaScriptValue::into_json).collect::<HostResult<Vec<_>>>()?;
@@ -2987,8 +2950,8 @@ fn executeHostOperation(name: &str, arguments: Vec<impl Into<operit_host_api::Ho
             let [package, path] = exactHostJavaScriptJsonArguments(name, arguments)?;
             let package = hostJavaScriptStringArgument(package)?;
             let path = hostJavaScriptStringArgument(path)?;
-            let source = CURRENT_TEXT_RESOURCE_SOURCE
-                .with(|current| current.borrow().clone())
+            let source = CURRENT_CALL_CONTEXT
+                .with(|current| current.borrow().as_ref().map(|context| context.textResourceSource.clone()))
                 .ok_or_else(|| HostError::new("Module read requires an active resource owner"))?;
             let text = match source {
                 JsTextResourceSource::Snapshot(resources) => Ok(resources
@@ -3511,11 +3474,6 @@ fn setHostEnvironmentValue(callId: &str, key: &str, value: &str) -> HostResult<(
         .lock()
         .expect("JavaScript call environment mutex poisoned")
         .insert(key.to_string(), value.to_string());
-    CURRENT_ENV_OVERRIDES.with(|overrides| {
-        overrides
-            .borrow_mut()
-            .insert(key.to_string(), value.to_string());
-    });
     Ok(())
 }
 
@@ -3555,9 +3513,10 @@ fn scopedPluginConfigDirectory(ownerId: String, pluginId: String) -> Result<Stri
 /// Returns the execution host bound to the active JavaScript call.
 #[allow(non_snake_case)]
 fn currentExecutionHost() -> Result<Arc<dyn JsExecutionHost>, String> {
-    CURRENT_EXECUTION_HOST.with(|host| {
-        host.borrow()
-            .clone()
+    CURRENT_CALL_CONTEXT.with(|context| {
+        context.borrow()
+            .as_ref()
+            .and_then(|context| context.executionHost.clone())
             .ok_or_else(|| "JavaScript execution host is unavailable".to_string())
     })
 }

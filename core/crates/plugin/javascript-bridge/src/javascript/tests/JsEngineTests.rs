@@ -30,6 +30,9 @@ use std::sync::OnceLock;
 #[cfg(not(target_arch = "wasm32"))]
 use std::time::{Duration, Instant};
 
+#[path = "JsCallContextTests.rs"]
+mod call_context_tests;
+
 /// Direct package script calls read metadata while the bound ToolPkg manifest remains authoritative.
 #[tokio::test(flavor = "current_thread")]
 async fn standalone_metadata_selects_api_contract_for_each_execution() {

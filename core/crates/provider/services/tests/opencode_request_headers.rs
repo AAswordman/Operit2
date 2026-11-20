@@ -9,11 +9,13 @@ use operit_providers::{chat, runtime_support};
 
 #[path = "../../tests/ProviderMediaTestSupport.rs"]
 mod fixtures;
+#[path = "../../tests/ImmediateResponseScheduler.rs"]
+mod scheduler;
 use crate::chat::llmprovider::AIServiceFactory::{
     AIServiceFactory, ProviderCreateParams, ProviderCreateRequest,
 };
 use fixtures::{send_request, test_runtime_context};
-use operit_host_api::HostManager::{setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost};
+use operit_host_api::HostManager::setDefaultHttpHost;
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadProgressCallback, HttpDownloadRequest,
     HttpDownloadResult, HttpHost, HttpImageDelivery, HttpRequestData, HttpResponseData,
@@ -26,70 +28,6 @@ use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 struct CapturingHost(Mutex<Vec<HttpRequestData>>);
-
-struct TestScheduler(std::time::Instant);
-
-impl operit_host_api::HostRuntimeTaskSchedulerHost for TestScheduler {
-    /// Reads elapsed fixture time for provider diagnostics.
-    fn monotonicTimeMillis(&self) -> HostResult<u64> {
-        Ok(self.0.elapsed().as_millis() as u64)
-    }
-
-    /// Executes synchronous fixture work on a separate thread.
-    fn scheduleHostRuntimeTask(
-        &self,
-        _: &str,
-        task: operit_host_api::HostRuntimeTask,
-    ) -> HostResult<()> {
-        std::thread::spawn(task);
-        Ok(())
-    }
-
-    /// Creates each local provider future on the executor that owns it.
-    fn scheduleHostRuntimeAsyncTask(
-        &self,
-        _: &str,
-        task: operit_host_api::HostRuntimeAsyncTask,
-    ) -> HostResult<()> {
-        std::thread::spawn(move || {
-            tokio::runtime::Builder::new_current_thread()
-                .enable_all()
-                .build()
-                .unwrap()
-                .block_on(task());
-        });
-        Ok(())
-    }
-
-    /// Dispatches cooperative fixture work on the same test execution policy.
-    fn scheduleHostRuntimeCooperativeAsyncTask(
-        &self,
-        name: &str,
-        task: operit_host_api::HostRuntimeAsyncTask,
-    ) -> HostResult<()> {
-        self.scheduleHostRuntimeAsyncTask(name, task)
-    }
-
-    /// Excludes retry scheduling from the header regression fixture.
-    fn scheduleDelayedHostRuntimeTask(
-        &self,
-        _: &str,
-        _: u64,
-        _: operit_host_api::HostRuntimeTask,
-    ) -> HostResult<()> {
-        panic!("header fixture must not retry")
-    }
-
-    /// Provides a completed turn boundary for this deterministic fixture.
-    fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
-
-    /// Excludes retry delays from the header regression fixture.
-    fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
-        panic!("header fixture must not retry")
-    }
-}
 
 impl HttpStreamHost for CapturingHost {
     /// Requires the production response metadata contract.
@@ -202,7 +140,7 @@ fn assert_header(request: &HttpRequestData, name: &str, expected: &str) {
 async fn opencode_go_preserves_identity_headers_for_every_protocol() {
     let host = Arc::new(CapturingHost::default());
     setDefaultHttpHost(host.clone());
-    setDefaultHostRuntimeTaskSchedulerHost(Arc::new(TestScheduler(std::time::Instant::now())));
+    scheduler::install();
     for stream in [false, true] {
         for endpoint in [
             "https://opencode.ai/zen/go",

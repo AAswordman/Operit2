@@ -21,6 +21,7 @@ import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
 import '../common/ChatComposerSlotHost.dart';
 import '../common/ChatInputEnterShortcuts.dart';
+import '../common/ChatMentionSuggestionPopup.dart';
 import '../common/ChatPendingMessageQueuePanel.dart';
 import '../common/ChatPastedImageHandler.dart';
 import '../common/InputProcessingStatusLane.dart';
@@ -115,11 +116,9 @@ class ClassicChatInputSection extends StatefulWidget {
 class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     with WidgetsBindingObserver {
   final GlobalKey _inputMenuPopupTargetKey = GlobalKey();
-  final GlobalKey _mentionPopupTargetKey = GlobalKey();
   final GlobalKey _attachmentPopupTargetKey = GlobalKey();
   OverlayEntry? _inputMenuPopupEntry;
   int _inputMenuContextGeneration = 0;
-  OverlayEntry? _mentionPopupEntry;
   OverlayEntry? _attachmentPopupEntry;
   bool _draggingFiles = false;
   bool _inputExpanded = false;
@@ -130,9 +129,6 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     widget.controller.addListener(_handleInputChanged);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _syncMentionSuggestionPopup();
-    });
   }
 
   /// Rebinds input listeners and expires menu requests when their chat changes.
@@ -148,9 +144,6 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
       oldWidget.controller.removeListener(_handleInputChanged);
       widget.controller.addListener(_handleInputChanged);
     }
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _syncMentionSuggestionPopup();
-    });
   }
 
   /// Refreshes action button state after text changes.
@@ -171,50 +164,7 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   /// Invalidates the placement of every open input popup.
   void _markOpenPopupsForBuild() {
     _inputMenuPopupEntry?.markNeedsBuild();
-    _mentionPopupEntry?.markNeedsBuild();
     _attachmentPopupEntry?.markNeedsBuild();
-  }
-
-  /// Synchronizes the mention suggestion overlay with the active input token.
-  void _syncMentionSuggestionPopup() {
-    if (!mounted) {
-      return;
-    }
-    if (widget.mentionSuggestionPanel == null) {
-      _dismissMentionSuggestionPopup();
-      return;
-    }
-    if (_mentionPopupEntry == null) {
-      _showMentionSuggestionPopup();
-    } else {
-      _mentionPopupEntry!.markNeedsBuild();
-    }
-  }
-
-  /// Shows the mention suggestion panel above the rendered input surface.
-  void _showMentionSuggestionPopup() {
-    final overlay = Overlay.of(context);
-    _mentionPopupEntry = OverlayEntry(
-      builder: (context) {
-        final panel = widget.mentionSuggestionPanel;
-        if (!mounted || panel == null) return const SizedBox.shrink();
-        final placement = _popupPlacement(
-          context,
-          targetKey: _mentionPopupTargetKey,
-          alignEnd: false,
-          maxWidth: 700,
-        );
-        return _ClassicPopupShell(
-          left: placement.left,
-          bottom: placement.bottom,
-          width: placement.width,
-          maxHeight: placement.maxHeight,
-          onDismiss: _dismissMentionSuggestionPopup,
-          child: panel,
-        );
-      },
-    );
-    overlay.insert(_mentionPopupEntry!);
   }
 
   /// Toggles the input height while preserving the active draft and focus.
@@ -421,12 +371,6 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     _inputMenuPopupEntry = null;
   }
 
-  /// Removes the mention suggestion popup.
-  void _dismissMentionSuggestionPopup() {
-    _mentionPopupEntry?.remove();
-    _mentionPopupEntry = null;
-  }
-
   /// Removes the attachment popup.
   void _dismissAttachmentPopup() {
     _attachmentPopupEntry?.remove();
@@ -440,7 +384,6 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
     WidgetsBinding.instance.removeObserver(this);
     widget.controller.removeListener(_handleInputChanged);
     _dismissInputMenuPopup();
-    _dismissMentionSuggestionPopup();
     _dismissAttachmentPopup();
     super.dispose();
   }
@@ -485,8 +428,8 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                   onGuideMessage: widget.onGuidePendingQueueMessage,
                   canGuide: processing,
                 ),
-              KeyedSubtree(
-                key: _mentionPopupTargetKey,
+              ChatMentionSuggestionPopup(
+                panel: widget.mentionSuggestionPanel,
                 child: ThemeComposerCard(
                   inputStyle: ThemePreferenceDefaults.INPUT_STYLE_CLASSIC,
                   floating: snapshot.chatInputFloating,

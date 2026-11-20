@@ -1,5 +1,7 @@
 #[path = "../../tests/ApiKeyPoolTestSupport.rs"]
 mod support;
+#[path = "../../tests/ImmediateResponseScheduler.rs"]
+mod scheduler;
 
 use operit_model::ModelConfigData::{ApiProviderType, ProviderProfile};
 use operit_providers::chat::llmprovider::ApiKeyProvider::{ApiKeyPoolState, KeyGetter};
@@ -12,6 +14,7 @@ async fn key_pool_cached_chat_and_discovery_share_affinity() {
     use operit_providers::chat::llmprovider::ClaudeProvider::ClaudeProvider;
     use operit_providers::chat::llmprovider::ThinkingDialect::RequestThinking;
     use operit_util::stream::Stream::Stream as TextStream;
+    scheduler::install();
     let (session, _) = fixture();
     let host = ScriptHost::new(&[
         (200, false),

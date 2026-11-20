@@ -16,6 +16,8 @@ pub mod DeepseekProvider;
 pub mod DoubaoAIProvider;
 #[path = "EndpointCompleter.rs"]
 pub mod EndpointCompleter;
+#[path = "FirstOutputDeadline.rs"]
+mod FirstOutputDeadline;
 #[path = "FourRouterProvider.rs"]
 pub mod FourRouterProvider;
 #[path = "GeminiProvider.rs"]

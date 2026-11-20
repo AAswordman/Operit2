@@ -23,6 +23,7 @@ fn streamingState() -> StreamingState {
         isInReasoningMode: false,
         hasEmittedThinkStart: false,
         hasEmittedRegularContent: false,
+        hasModelOutput: false,
         reasoningObserved: false,
         isFirstResponse: true,
         streamCompletionConfirmed: false,
