@@ -154,8 +154,15 @@ See `core/CRATE_BOUNDARIES.md` for the full dependency direction.
 
 ## Local chat inference and routing
 
-In Settings > Local models, download a chat model, open **Inference & settings**,
-set CPU threads and (for llama.cpp) context/batch sizes, and run a prompt.
+In Settings > Local models, **Import from device** accepts one complete GGUF
+chat model for llama.cpp or the files of an extracted, flat MNN text model bundle.
+Select the MNN configuration, tokenizer, weights, and any external embeddings
+together. Import copies and checks the files in runtime storage on this device.
+Deleting the installed copy removes its catalog entry and leaves the selected
+original files on the device.
+
+After importing or downloading a chat model, open **Run and configure**, set
+CPU threads and (for llama.cpp) context/batch sizes, and run a prompt.
 **Use for chat** saves its runtime settings and selects it for the CHAT function.
 **Release model memory** frees cached weights. Only one LLM is cached at a time;
 inference is serialized and runs off the runtime event loop.

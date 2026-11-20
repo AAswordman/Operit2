@@ -765,7 +765,24 @@
       "error": {}
     }
   },
-  "localModelsAddModel": "添加模型",
+  "localModelsAddModel": "在线找模型",
+  "localModelsImportFromDevice": "从设备导入",
+  "localModelsImportGgufHint": "选择一个适用于 llama.cpp 的完整 GGUF 聊天模型。",
+  "localModelsImportMnnHint": "一次选中解压后的 MNN 模型文件，包括 config.json 和权重。",
+  "localModelsImportInvalidGguf": "请只选择一个 .gguf 文件。",
+  "localModelsImportMissingConfig": "所选文件中缺少 config.json。",
+  "localModelsImportFileSizeRequired": "所选文件必须非空，并且能读取文件大小。",
+  "localModelsImportChangeFiles": "重新选择",
+  "localModelsImportFileCount": "已选择 {count} 个文件",
+  "@localModelsImportFileCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "localModelsImportName": "模型名称",
+  "localModelsImportCopyNotice": "文件将复制到应用存储，并保留在当前设备。",
+  "localModelsImportCopying": "正在复制模型文件…",
+  "localModelsImportFinishing": "正在校验并登记模型…",
+  "localModelsImportComplete": "模型已导入，打开「推理与设置」即可试跑。",
+  "localModelsImportedFile": "设备导入",
   "localModelsFilterDownloads": "下载任务",
   "localModelsAllTypes": "全部类型",
   "localModelsNoMatches": "没有符合条件的模型",

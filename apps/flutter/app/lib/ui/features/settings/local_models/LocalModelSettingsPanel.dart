@@ -2,10 +2,12 @@
 
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
+import '../../../../core/host/SelectedFileInput.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
@@ -13,6 +15,8 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../common/components/PageActivityMixin.dart';
 import '../../../common/components/OperitDialog.dart';
 import '../../../theme/OperitGlassSurface.dart';
+
+part 'LocalModelFileImportDialog.dart';
 
 class LocalModelSettingsPanel extends StatefulWidget {
   const LocalModelSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -117,6 +121,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
       service.getRegistry(),
       service.getPlatformTarget(),
       service.getInstallStatuses(),
+      service.getFileImportEngines(),
     ]);
     _installStatuses = results[3] as List<core_proxy.LocalModelInstallStatus>;
     return _LocalModelSettingsData(
@@ -124,6 +129,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
       registry: results[1] as core_proxy.LocalModelRegistrySnapshot,
       target: results[2] as core_proxy.LocalPlatformTarget,
       installStatuses: results[3] as List<core_proxy.LocalModelInstallStatus>,
+      fileImportEngines: results[4] as List<core_proxy.LocalEngineKind>,
     );
   }
 
@@ -218,6 +224,31 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
         clients: widget.clients,
         initialSource: defaultSource,
         onImportSuccess: _reload,
+      ),
+    );
+  }
+
+  /// Imports model files and brings the installed chat models into view.
+  Future<void> _openFileImport(List<core_proxy.LocalEngineKind> engines) async {
+    final imported = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => _LocalModelFileImportDialog(
+        clients: widget.clients,
+        engines: engines,
+      ),
+    );
+    if (!mounted || imported != true) return;
+    _searchController.clear();
+    setState(() {
+      _catalogQuery = '';
+      _scope = _CatalogScope.installed;
+      _kind = core_proxy.LocalModelKind.chat;
+    });
+    _reload();
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(AppLocalizations.of(context)!.localModelsImportComplete),
       ),
     );
   }
@@ -433,6 +464,13 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
           return (_kind == null || m.kind == _kind) &&
               searchable.contains(query);
         }).toList();
+        if (_scope == _CatalogScope.installed) {
+          visible.sort(
+            (first, second) => second.installedModel!.installedAtMs.compareTo(
+              first.installedModel!.installedAtMs,
+            ),
+          );
+        }
         final colors = Theme.of(context).colorScheme;
         return CustomScrollView(
           slivers: [
@@ -442,62 +480,12 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    LayoutBuilder(
-                      builder: (context, constraints) => Row(
-                        children: [
-                          Expanded(
-                            child: Text(
-                              l10n.localModelsCatalog,
-                              style: Theme.of(context).textTheme.titleMedium
-                                  ?.copyWith(fontWeight: FontWeight.w700),
-                            ),
-                          ),
-                          PopupMenuButton<core_proxy.LocalModelSourceKind>(
-                            tooltip:
-                                '${l10n.localModelsDownloadSource}: ${_sourceKindTitle(l10n, source)}',
-                            icon: const Icon(
-                              Icons.cloud_download_outlined,
-                              size: 20,
-                            ),
-                            initialValue: source,
-                            onSelected: _setPreferredSource,
-                            itemBuilder: (_) => [
-                              for (final kind in [
-                                core_proxy.LocalModelSourceKind.huggingFace,
-                                core_proxy.LocalModelSourceKind.modelScope,
-                                core_proxy.LocalModelSourceKind.hfMirror,
-                              ])
-                                CheckedPopupMenuItem(
-                                  value: kind,
-                                  checked: source == kind,
-                                  child: Text(_sourceKindTitle(l10n, kind)),
-                                ),
-                            ],
-                          ),
-                          IconButton(
-                            onPressed: _reload,
-                            icon: const Icon(Icons.refresh, size: 20),
-                            tooltip: l10n.refresh,
-                          ),
-                          const SizedBox(width: 4),
-                          if (constraints.maxWidth < 320)
-                            IconButton.filled(
-                              tooltip: l10n.localModelsAddModel,
-                              onPressed: () =>
-                                  _openHubExploreDialog(context, source),
-                              icon: const Icon(Icons.add),
-                            )
-                          else
-                            FilledButton.icon(
-                              onPressed: () =>
-                                  _openHubExploreDialog(context, source),
-                              icon: const Icon(Icons.add, size: 18),
-                              label: Text(l10n.localModelsAddModel),
-                            ),
-                        ],
-                      ),
+                    _buildCatalogHeader(
+                      context,
+                      source,
+                      data.fileImportEngines,
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 12),
                     TextField(
                       controller: _searchController,
                       onChanged: (value) =>
@@ -680,6 +668,87 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
     );
   }
 
+  /// Keeps both add actions labeled while moving them below the title on phones.
+  Widget _buildCatalogHeader(
+    BuildContext context,
+    core_proxy.LocalModelSourceKind source,
+    List<core_proxy.LocalEngineKind> fileImportEngines,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final actions = Wrap(
+      spacing: 8,
+      runSpacing: 4,
+      children: [
+        if (fileImportEngines.isNotEmpty)
+          FilledButton.icon(
+            onPressed: () => _openFileImport(fileImportEngines),
+            style: FilledButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+            ),
+            icon: const Icon(Icons.file_upload_outlined, size: 18),
+            label: Text(l10n.localModelsImportFromDevice),
+          ),
+        OutlinedButton.icon(
+          onPressed: () => _openHubExploreDialog(context, source),
+          style: OutlinedButton.styleFrom(
+            padding: const EdgeInsets.symmetric(horizontal: 14),
+          ),
+          icon: const Icon(Icons.travel_explore, size: 18),
+          label: Text(l10n.localModelsAddModel),
+        ),
+      ],
+    );
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final inline =
+            constraints.maxWidth >= MediaQuery.textScalerOf(context).scale(640);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    l10n.localModelsCatalog,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                if (inline) ...[actions, const SizedBox(width: 8)],
+                PopupMenuButton<core_proxy.LocalModelSourceKind>(
+                  tooltip:
+                      '${l10n.localModelsDownloadSource}: ${_sourceKindTitle(l10n, source)}',
+                  icon: const Icon(Icons.cloud_download_outlined, size: 20),
+                  initialValue: source,
+                  onSelected: _setPreferredSource,
+                  itemBuilder: (_) => [
+                    for (final kind in [
+                      core_proxy.LocalModelSourceKind.huggingFace,
+                      core_proxy.LocalModelSourceKind.modelScope,
+                      core_proxy.LocalModelSourceKind.hfMirror,
+                    ])
+                      CheckedPopupMenuItem(
+                        value: kind,
+                        checked: source == kind,
+                        child: Text(_sourceKindTitle(l10n, kind)),
+                      ),
+                  ],
+                ),
+                IconButton(
+                  onPressed: _reload,
+                  icon: const Icon(Icons.refresh, size: 20),
+                  tooltip: l10n.refresh,
+                ),
+              ],
+            ),
+            if (!inline) ...[const SizedBox(height: 4), actions],
+          ],
+        );
+      },
+    );
+  }
+
   /// Shows secondary metadata without crowding the model list.
   Future<void> _showModelDetails(
     core_proxy.LocalModelCatalogStatus status,
@@ -724,12 +793,15 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                     icon: Icons.translate_outlined,
                     label: m.languages.join(' / '),
                   ),
-                if (m.sources.isNotEmpty)
-                  _buildTagChip(
-                    context,
-                    icon: Icons.cloud_outlined,
-                    label: _modelSourcesLabel(l10n, m.sources),
-                  ),
+                _buildTagChip(
+                  context,
+                  icon: m.sources.isEmpty
+                      ? Icons.description_outlined
+                      : Icons.cloud_outlined,
+                  label: m.sources.isEmpty
+                      ? l10n.localModelsImportedFile
+                      : _modelSourcesLabel(l10n, m.sources),
+                ),
                 if (status.installedEngine != null)
                   _buildTagChip(
                     context,
@@ -772,6 +844,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
     final isCustomModel = registry.customModels.any(
       (m) => m.id == manifest.id && m.version == manifest.version,
     );
+    final isFileImport = manifest.sources.isEmpty;
     final colors = Theme.of(context).colorScheme;
 
     final stateLabel = !status.platformCompatible
@@ -857,7 +930,7 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
               style: TextStyle(color: colors.error),
             ),
           ),
-        if (isCustomModel)
+        if (isCustomModel && !isFileImport)
           PopupMenuItem(
             value: _ModelAction.remove,
             enabled: !isBusy,
@@ -907,15 +980,17 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      _localModelDescription(l10n, manifest),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
+                    if (!isFileImport) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        _localModelDescription(l10n, manifest),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
                       ),
-                    ),
+                    ],
                     const SizedBox(height: 8),
                     Wrap(
                       spacing: 10,
@@ -937,7 +1012,12 @@ class _LocalModelSettingsPanelState extends State<LocalModelSettingsPanel>
                             _formatBytes(_modelByteSize(manifest)),
                             style: Theme.of(context).textTheme.labelSmall,
                           ),
-                        if (isCustomModel)
+                        if (isFileImport)
+                          Text(
+                            l10n.localModelsImportedFile,
+                            style: Theme.of(context).textTheme.labelSmall,
+                          )
+                        else if (isCustomModel)
                           Text(
                             l10n.localModelsCustomBadge,
                             style: Theme.of(context).textTheme.labelSmall,
@@ -1270,12 +1350,14 @@ class _LocalModelSettingsData {
     required this.registry,
     required this.target,
     required this.installStatuses,
+    required this.fileImportEngines,
   });
 
   final List<core_proxy.LocalModelCatalogStatus> catalog;
   final core_proxy.LocalModelRegistrySnapshot registry;
   final core_proxy.LocalPlatformTarget target;
   final List<core_proxy.LocalModelInstallStatus> installStatuses;
+  final List<core_proxy.LocalEngineKind> fileImportEngines;
 }
 
 /// Finds the active or persisted installation status for one exact model release.

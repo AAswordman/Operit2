@@ -772,7 +772,24 @@
       "error": {}
     }
   },
-  "localModelsAddModel": "Add model",
+  "localModelsAddModel": "Browse online",
+  "localModelsImportFromDevice": "Import from device",
+  "localModelsImportGgufHint": "Choose one complete GGUF chat model for llama.cpp.",
+  "localModelsImportMnnHint": "Select the extracted MNN model files together, including config.json and the weights.",
+  "localModelsImportInvalidGguf": "Select a single .gguf file.",
+  "localModelsImportMissingConfig": "The selected files are missing config.json.",
+  "localModelsImportFileSizeRequired": "Each selected file must be non-empty and report its size.",
+  "localModelsImportChangeFiles": "Choose again",
+  "localModelsImportFileCount": "{count} files selected",
+  "@localModelsImportFileCount": {
+    "placeholders": { "count": { "type": "int" } }
+  },
+  "localModelsImportName": "Model name",
+  "localModelsImportCopyNotice": "The files are copied into app storage and stay on this device.",
+  "localModelsImportCopying": "Copying model files…",
+  "localModelsImportFinishing": "Checking and registering model…",
+  "localModelsImportComplete": "Model imported. Open Run and configure to try it.",
+  "localModelsImportedFile": "Device import",
   "localModelsFilterDownloads": "Downloads",
   "localModelsAllTypes": "All types",
   "localModelsNoMatches": "No matching models",

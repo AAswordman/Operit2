@@ -2993,8 +2993,92 @@ abstract class AppLocalizations {
   /// No description provided for @localModelsAddModel.
   ///
   /// In en, this message translates to:
-  /// **'Add model'**
+  /// **'Browse online'**
   String get localModelsAddModel;
+
+  /// No description provided for @localModelsImportFromDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Import from device'**
+  String get localModelsImportFromDevice;
+
+  /// No description provided for @localModelsImportGgufHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose one complete GGUF chat model for llama.cpp.'**
+  String get localModelsImportGgufHint;
+
+  /// No description provided for @localModelsImportMnnHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select the extracted MNN model files together, including config.json and the weights.'**
+  String get localModelsImportMnnHint;
+
+  /// No description provided for @localModelsImportInvalidGguf.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a single .gguf file.'**
+  String get localModelsImportInvalidGguf;
+
+  /// No description provided for @localModelsImportMissingConfig.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected files are missing config.json.'**
+  String get localModelsImportMissingConfig;
+
+  /// No description provided for @localModelsImportFileSizeRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Each selected file must be non-empty and report its size.'**
+  String get localModelsImportFileSizeRequired;
+
+  /// No description provided for @localModelsImportChangeFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose again'**
+  String get localModelsImportChangeFiles;
+
+  /// No description provided for @localModelsImportFileCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} files selected'**
+  String localModelsImportFileCount(int count);
+
+  /// No description provided for @localModelsImportName.
+  ///
+  /// In en, this message translates to:
+  /// **'Model name'**
+  String get localModelsImportName;
+
+  /// No description provided for @localModelsImportCopyNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'The files are copied into app storage and stay on this device.'**
+  String get localModelsImportCopyNotice;
+
+  /// No description provided for @localModelsImportCopying.
+  ///
+  /// In en, this message translates to:
+  /// **'Copying model files…'**
+  String get localModelsImportCopying;
+
+  /// No description provided for @localModelsImportFinishing.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking and registering model…'**
+  String get localModelsImportFinishing;
+
+  /// No description provided for @localModelsImportComplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Model imported. Open Run and configure to try it.'**
+  String get localModelsImportComplete;
+
+  /// No description provided for @localModelsImportedFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Device import'**
+  String get localModelsImportedFile;
 
   /// No description provided for @localModelsFilterDownloads.
   ///

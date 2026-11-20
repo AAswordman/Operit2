@@ -224,13 +224,8 @@ impl LocalEngineInstaller {
             installedAtMs: request.installedAtMs,
             verifiedAtMs: Some(request.installedAtMs),
         };
-        let mut registry = self
-            .registryStore
-            .read()
-            .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
-        registry.upsertEngine(installedEngine.clone());
         self.registryStore
-            .write(&registry)
+            .update(|registry| registry.upsertEngine(installedEngine.clone()))
             .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
         onProgress(LocalEngineDownloadProgress::Completed {
             engineId: installedEngine.manifest.id.clone(),
@@ -262,13 +257,8 @@ impl LocalEngineInstaller {
             installedAtMs: request.installedAtMs,
             verifiedAtMs: Some(request.installedAtMs),
         };
-        let mut registry = self
-            .registryStore
-            .read()
-            .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
-        registry.upsertEngine(installedEngine.clone());
         self.registryStore
-            .write(&registry)
+            .update(|registry| registry.upsertEngine(installedEngine.clone()))
             .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
         onProgress(LocalEngineDownloadProgress::Completed {
             engineId: installedEngine.manifest.id.clone(),
@@ -288,41 +278,40 @@ impl LocalEngineInstaller {
         target: &LocalPlatformTarget,
         verifiedAtMs: i64,
     ) -> Result<InstalledLocalEngine, LocalEngineDownloadError> {
-        let mut registry = self
-            .registryStore
-            .read()
-            .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
-        let index = registry
-            .installedEngines
-            .iter()
-            .position(|engine| {
-                engine.manifest.id == engineId.trim()
-                    && engine.manifest.version == version.trim()
-                    && engine.artifact.target == *target
-            })
-            .ok_or_else(|| {
-                LocalEngineDownloadError::EngineNotInstalled(format!(
-                    "{}@{}#{}",
-                    engineId.trim(),
-                    version.trim(),
-                    target.storageSegment()
-                ))
-            })?;
-        if registry.installedEngines[index].artifact.delivery
-            == LocalEngineDelivery::DownloadArchive
-        {
-            let installDir = runtimeLayoutPath(
-                &self.runtimeRoot,
-                &registry.installedEngines[index].storagePath,
-            )?;
-            self.verifyEngineRuntimeFiles(&installDir, &registry.installedEngines[index].artifact)?;
+        let notInstalled = || {
+            LocalEngineDownloadError::EngineNotInstalled(format!(
+                "{}@{}#{}",
+                engineId.trim(),
+                version.trim(),
+                target.storageSegment()
+            ))
+        };
+        let registry = self.readRegistry()?;
+        let engine = registry
+            .getInstalledEngine(engineId, version, target)
+            .ok_or_else(notInstalled)?;
+        if engine.artifact.delivery == LocalEngineDelivery::DownloadArchive {
+            let installDir = runtimeLayoutPath(&self.runtimeRoot, &engine.storagePath)?;
+            self.verifyEngineRuntimeFiles(&installDir, &engine.artifact)?;
         }
-        registry.installedEngines[index].verifiedAtMs = Some(verifiedAtMs);
-        let installedEngine = registry.installedEngines[index].clone();
         self.registryStore
-            .write(&registry)
-            .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
-        Ok(installedEngine)
+            .update(|registry| {
+                registry
+                    .installedEngines
+                    .iter_mut()
+                    .find(|current| {
+                        current.manifest == engine.manifest
+                            && current.artifact == engine.artifact
+                            && current.storagePath == engine.storagePath
+                            && current.installedAtMs == engine.installedAtMs
+                    })
+                    .map(|current| {
+                        current.verifiedAtMs = Some(verifiedAtMs);
+                        current.clone()
+                    })
+            })
+            .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?
+            .ok_or_else(notInstalled)
     }
 
     /// Deletes one installed engine target and its registry record.
@@ -332,7 +321,7 @@ impl LocalEngineInstaller {
         version: &str,
         target: &LocalPlatformTarget,
     ) -> Result<LocalEngineDeleteResult, LocalEngineDownloadError> {
-        let mut registry = self
+        let registry = self
             .registryStore
             .read()
             .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
@@ -351,9 +340,8 @@ impl LocalEngineInstaller {
             let installDir = runtimeLayoutPath(&self.runtimeRoot, &installedEngine.storagePath)?;
             self.removePath(&installDir)?;
         }
-        registry.removeEngine(engineId, version, target);
         self.registryStore
-            .write(&registry)
+            .update(|registry| registry.removeEngine(engineId, version, target))
             .map_err(|error| LocalEngineDownloadError::Registry(error.to_string()))?;
         Ok(LocalEngineDeleteResult {
             removedStoragePath: installedEngine.storagePath.clone(),

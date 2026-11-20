@@ -1561,7 +1561,52 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get localModelsAddModel => '添加模型';
+  String get localModelsAddModel => '在线找模型';
+
+  @override
+  String get localModelsImportFromDevice => '从设备导入';
+
+  @override
+  String get localModelsImportGgufHint => '选择一个适用于 llama.cpp 的完整 GGUF 聊天模型。';
+
+  @override
+  String get localModelsImportMnnHint =>
+      '一次选中解压后的 MNN 模型文件，包括 config.json 和权重。';
+
+  @override
+  String get localModelsImportInvalidGguf => '请只选择一个 .gguf 文件。';
+
+  @override
+  String get localModelsImportMissingConfig => '所选文件中缺少 config.json。';
+
+  @override
+  String get localModelsImportFileSizeRequired => '所选文件必须非空，并且能读取文件大小。';
+
+  @override
+  String get localModelsImportChangeFiles => '重新选择';
+
+  @override
+  String localModelsImportFileCount(int count) {
+    return '已选择 $count 个文件';
+  }
+
+  @override
+  String get localModelsImportName => '模型名称';
+
+  @override
+  String get localModelsImportCopyNotice => '文件将复制到应用存储，并保留在当前设备。';
+
+  @override
+  String get localModelsImportCopying => '正在复制模型文件…';
+
+  @override
+  String get localModelsImportFinishing => '正在校验并登记模型…';
+
+  @override
+  String get localModelsImportComplete => '模型已导入，打开「推理与设置」即可试跑。';
+
+  @override
+  String get localModelsImportedFile => '设备导入';
 
   @override
   String get localModelsFilterDownloads => '下载任务';

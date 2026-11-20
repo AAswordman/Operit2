@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 #[cfg(test)]
 use std::{
     fs,
@@ -14,6 +14,8 @@ use operit_util::RuntimeStorageLayout::{
 use thiserror::Error;
 
 use crate::LocalModelRegistry::LocalModelRegistrySnapshot;
+
+static REGISTRY_UPDATE: Mutex<()> = Mutex::new(());
 
 #[derive(Clone, Debug, PartialEq, Eq, Error)]
 pub enum LocalModelRegistryStoreError {
@@ -100,8 +102,22 @@ impl LocalModelRegistryStore {
         let content = serde_json::to_vec_pretty(snapshot)
             .map_err(|error| LocalModelRegistryStoreError::Json(error.to_string()))?;
         self.storageHost
-            .writeBytes(&self.path, &content)
+            .writeBytesAtomically(&self.path, &content)
             .map_err(|error| LocalModelRegistryStoreError::Storage(error.to_string()))
+    }
+
+    /// Applies and publishes a change against the latest registry snapshot.
+    pub fn update<T>(
+        &self,
+        change: impl FnOnce(&mut LocalModelRegistrySnapshot) -> T,
+    ) -> Result<T, LocalModelRegistryStoreError> {
+        let _guard = REGISTRY_UPDATE
+            .lock()
+            .map_err(|error| LocalModelRegistryStoreError::Storage(error.to_string()))?;
+        let mut snapshot = self.read()?;
+        let result = change(&mut snapshot);
+        self.write(&snapshot)?;
+        Ok(result)
     }
 }
 

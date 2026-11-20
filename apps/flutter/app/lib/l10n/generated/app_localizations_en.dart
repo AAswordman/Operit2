@@ -1623,7 +1623,57 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get localModelsAddModel => 'Add model';
+  String get localModelsAddModel => 'Browse online';
+
+  @override
+  String get localModelsImportFromDevice => 'Import from device';
+
+  @override
+  String get localModelsImportGgufHint =>
+      'Choose one complete GGUF chat model for llama.cpp.';
+
+  @override
+  String get localModelsImportMnnHint =>
+      'Select the extracted MNN model files together, including config.json and the weights.';
+
+  @override
+  String get localModelsImportInvalidGguf => 'Select a single .gguf file.';
+
+  @override
+  String get localModelsImportMissingConfig =>
+      'The selected files are missing config.json.';
+
+  @override
+  String get localModelsImportFileSizeRequired =>
+      'Each selected file must be non-empty and report its size.';
+
+  @override
+  String get localModelsImportChangeFiles => 'Choose again';
+
+  @override
+  String localModelsImportFileCount(int count) {
+    return '$count files selected';
+  }
+
+  @override
+  String get localModelsImportName => 'Model name';
+
+  @override
+  String get localModelsImportCopyNotice =>
+      'The files are copied into app storage and stay on this device.';
+
+  @override
+  String get localModelsImportCopying => 'Copying model files…';
+
+  @override
+  String get localModelsImportFinishing => 'Checking and registering model…';
+
+  @override
+  String get localModelsImportComplete =>
+      'Model imported. Open Run and configure to try it.';
+
+  @override
+  String get localModelsImportedFile => 'Device import';
 
   @override
   String get localModelsFilterDownloads => 'Downloads';

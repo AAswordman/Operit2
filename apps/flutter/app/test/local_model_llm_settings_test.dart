@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +12,7 @@ import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/settings/local_models/LocalModelSettingsPanel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'package:operit_folder_access/operit_folder_access.dart';
 
 void main() {
   setUp(ClientLogger.initialize);
@@ -138,12 +140,7 @@ void main() {
         await _tapVisible(tester, find.text(l10n.localModelsFilterDownloads));
         await tester.pumpAndSettle();
         expect(find.text(l10n.localModelsNoMatches), findsOneWidget);
-        await _tapVisible(
-          tester,
-          width < 360
-              ? find.byTooltip(l10n.localModelsAddModel)
-              : find.text(l10n.localModelsAddModel),
-        );
+        await _tapVisible(tester, find.text(l10n.localModelsAddModel));
         await tester.pumpAndSettle();
         expect(find.text(l10n.localModelsExploreHub), findsOneWidget);
         expect(tester.takeException(), isNull, reason: 'Hub search layout');
@@ -163,6 +160,128 @@ void main() {
       });
     }
   }
+
+  testWidgets(
+    'GGUF import streams the selection and reveals the installed model',
+    (tester) async {
+      final bridge = _Bridge()..importCommit = Completer<void>();
+      _useFilePicker([
+        [],
+        [
+          _modelFile('notes.txt', [1]),
+        ],
+        [
+          _modelFile('Qwen3-0.6B-Q4_K_M.gguf', [71, 71, 85, 70]),
+        ],
+      ]);
+      final l10n = await _pumpCatalog(tester, bridge, 320, const Locale('zh'));
+      await _tapVisible(tester, find.text(l10n.localModelsImportFromDevice));
+      await tester.pumpAndSettle();
+      expect(find.text('GGUF · llama.cpp'), findsOneWidget);
+      expect(find.text('MNN'), findsOneWidget);
+      final importButton = find.widgetWithText(
+        FilledButton,
+        l10n.localModelsHubImport,
+      );
+      expect(tester.widget<FilledButton>(importButton).onPressed, isNull);
+
+      await tester.tap(find.text(l10n.selectFile));
+      await tester.pumpAndSettle();
+      expect(bridge.fileImport, isNull);
+      await tester.tap(find.text(l10n.selectFile));
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.localModelsImportInvalidGguf), findsOneWidget);
+
+      await tester.tap(find.text(l10n.selectFile));
+      await tester.pumpAndSettle();
+      expect(find.text('Qwen3-0.6B-Q4_K_M.gguf'), findsOneWidget);
+      expect(find.text('Qwen3-0.6B-Q4_K_M'), findsOneWidget);
+      expect(tester.takeException(), isNull, reason: 'compact import layout');
+      await tester.tap(importButton);
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.localModelsImportFinishing), findsOneWidget);
+      expect(bridge.fileImport, {
+        'engine': 'LlamaCpp',
+        'displayName': 'Qwen3-0.6B-Q4_K_M',
+        'files': [
+          {'name': 'Qwen3-0.6B-Q4_K_M.gguf', 'byteLength': 4},
+        ],
+      });
+      expect(bridge.importChunks, [
+        [71, 71, 85, 70],
+        [],
+      ]);
+
+      bridge.importCommit!.complete();
+      await tester.pumpAndSettle();
+      expect(find.byType(Dialog), findsNothing);
+      expect(find.text('Qwen3-0.6B-Q4_K_M'), findsOneWidget);
+      expect(find.text(l10n.localModelsImportedFile), findsOneWidget);
+      expect(find.text(l10n.localModelsImportComplete), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pump(const Duration(seconds: 4));
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'MNN file import preserves the bundle and shows commit failures',
+    (tester) async {
+      final bridge = _Bridge()..importCommit = Completer<void>();
+      _useFilePicker([
+        [
+          _modelFile('config.json', [123, 125]),
+          _modelFile('llm.mnn', [1, 2, 3]),
+        ],
+      ]);
+      final l10n = await _pumpCatalog(tester, bridge, 900, const Locale('en'));
+      await _tapVisible(tester, find.text(l10n.localModelsImportFromDevice));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(ChoiceChip, 'MNN'));
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.localModelsImportMnnHint), findsOneWidget);
+      await tester.tap(find.text(l10n.selectFile));
+      await tester.pumpAndSettle();
+      expect(find.text(l10n.localModelsImportFileCount(2)), findsOneWidget);
+      final nameField = find.widgetWithText(
+        TextField,
+        l10n.localModelsImportName,
+      );
+      await tester.enterText(nameField, 'My MNN model');
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.widgetWithText(FilledButton, l10n.localModelsHubImport),
+      );
+      await tester.pumpAndSettle();
+      expect(bridge.fileImport?['engine'], 'Mnn');
+      expect(bridge.importChunks, [
+        [123, 125],
+        [1, 2, 3],
+        [],
+      ]);
+
+      bridge.importCommit!.completeError(StateError('Missing bundle weight'));
+      await tester.pumpAndSettle();
+      expect(find.textContaining('Missing bundle weight'), findsOneWidget);
+      expect(find.text(l10n.selectFile), findsOneWidget);
+      expect(find.text(l10n.localModelsImportComplete), findsNothing);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'online discovery remains available without a file import engine',
+    (tester) async {
+      final bridge = _Bridge()..importEngines = const [];
+      final l10n = await _pumpCatalog(tester, bridge, 390, const Locale('en'));
+      expect(find.text(l10n.localModelsImportFromDevice), findsNothing);
+      expect(find.text(l10n.localModelsAddModel), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   for (final size in [const Size(520, 360), const Size(320, 280)]) {
     testWidgets('catalog header scrolls out of a short viewport at $size', (
       tester,
@@ -190,9 +309,7 @@ void main() {
       );
       expect(tester.takeException(), isNull, reason: 'short catalog layout');
       expect(find.text('Catalog Model 49'), findsNothing);
-      final initialModelTop = tester
-          .getTopLeft(find.text('Catalog Model 0'))
-          .dy;
+      expect(find.byType(TextField).hitTestable(), findsOneWidget);
       final catalogScroll = find.descendant(
         of: find.byType(LocalModelSettingsPanel),
         matching: find.byWidgetPredicate(
@@ -207,17 +324,18 @@ void main() {
       expect(find.byType(TextField).hitTestable(), findsNothing);
       final visibleModels = find.textContaining('Catalog Model').hitTestable();
       expect(visibleModels, findsWidgets);
-      expect(
-        tester.getTopLeft(visibleModels.first).dy,
-        lessThan(initialModelTop),
-      );
       expect(tester.takeException(), isNull, reason: 'scrolled catalog layout');
       tester.state<ScrollableState>(catalogScroll).position.jumpTo(0);
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextField).first, 'catalog-49');
       await tester.pumpAndSettle();
       expect(find.text(l10n.localModelsResultCount(1, 50)), findsOneWidget);
-      expect(find.text('Catalog Model 49'), findsOneWidget);
+      await tester.scrollUntilVisible(
+        find.text('Catalog Model 49'),
+        160,
+        scrollable: catalogScroll,
+      );
+      expect(find.text('Catalog Model 49').hitTestable(), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
     });
@@ -311,6 +429,7 @@ void main() {
   );
 }
 
+/// Taps a control after revealing it in its scrollable viewport.
 Future<void> _tapVisible(WidgetTester tester, Finder finder) async {
   await tester.ensureVisible(finder);
   await tester.pumpAndSettle();
@@ -377,6 +496,13 @@ List<core.LocalModelCatalogStatus> _catalog() => [
 class _Bridge extends OperitRuntimeBridge {
   List<core.LocalModelCatalogStatus>? catalog;
   List<core.LocalModelInstallStatus> installStatuses = [];
+  List<core.LocalEngineKind> importEngines = const [
+    core.LocalEngineKind.llamaCpp,
+    core.LocalEngineKind.mnn,
+  ];
+  Map<String, Object?>? fileImport;
+  final importChunks = <Uint8List>[];
+  Completer<void>? importCommit;
   Map<String, Object?>? inference, saved, chat;
   static final manifest = core.LocalModelManifest(
     id: 'tiny',
@@ -391,7 +517,15 @@ class _Bridge extends OperitRuntimeBridge {
     tags: const ['llm'],
     engineRequirement: null,
     driver: core.LocalModelDriver.llamaCpp(model: 'tiny.gguf'),
-    sources: const [],
+    sources: const [
+      core.LocalModelSource(
+        id: 'hf',
+        kind: core.LocalModelSourceKind.huggingFace,
+        repository: 'operit/tiny',
+        revision: 'v1',
+        baseUrl: 'https://huggingface.co/operit/tiny/resolve/v1',
+      ),
+    ],
     installSource: core.LocalModelInstallSource.files(),
     files: const [],
   );
@@ -461,6 +595,8 @@ class _Bridge extends OperitRuntimeBridge {
         ).toJson();
       case 'getInstallStatuses':
         result = installStatuses.map((status) => status.toJson()).toList();
+      case 'getFileImportEngines':
+        result = importEngines.map((engine) => engine.toJson()).toList();
       case 'getProviderProfiles':
         result = [
           <String, Object?>{
@@ -502,13 +638,117 @@ class _Bridge extends OperitRuntimeBridge {
     return encodeCoreLink(<Object?>[0, result]);
   }
 
+  /// Captures the import wire contract and publishes a catalog row after commit.
   @override
-  Future<CorePushSink> push(CorePushRequest request) =>
-      throw UnsupportedError('unused');
+  Future<CorePushSink> push(CorePushRequest request) async {
+    if (request.methodName != 'importModelFromFiles') {
+      throw UnsupportedError('Unexpected push: ${request.methodName}');
+    }
+    final args = Map<String, Object?>.from(request.args as Map);
+    fileImport = args;
+    return _ImportSink(importChunks, () async {
+      await importCommit?.future;
+      final imported = core.LocalModelManifest.fromJson({
+        ...manifest.toJson(),
+        'id': 'local-file-test',
+        'displayName': args['displayName'],
+        'sources': <Object?>[],
+      });
+      catalog = [
+        ...(catalog ?? _catalog()),
+        core.LocalModelCatalogStatus(
+          manifest: imported,
+          installedModel: core.InstalledLocalModel(
+            manifest: imported,
+            storagePath: 'runtime/models/local/chat/local-file-test',
+            installedAtMs: 2,
+            verifiedAtMs: 2,
+          ),
+          engineManifest: null,
+          installedEngine: null,
+          platformCompatible: true,
+          inferenceBindingKey: 'local-llm:test-node:local-file-test@v1',
+        ),
+      ];
+    });
+  }
+
   @override
   Future<CoreEvent> watchSnapshot(CoreWatchRequest request) =>
       throw UnsupportedError('unused');
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) =>
       const Stream.empty();
+}
+
+class _ImportSink implements CorePushSink {
+  /// Records bytes until the simulated runtime finishes the import.
+  _ImportSink(this.chunks, this.onClose);
+
+  final List<Uint8List> chunks;
+  final Future<void> Function() onClose;
+
+  /// Records one ordered stream item.
+  @override
+  Future<void> add(Object? args) async => chunks.add(args! as Uint8List);
+
+  /// Completes the fake runtime operation.
+  @override
+  Future<void> close() => onClose();
+}
+
+/// Substitutes and restores the registered picker for this widget test.
+void _useFilePicker(List<List<SelectedFileInput>> picks) {
+  final original = OperitFolderAccessPlatform.instance;
+  OperitFolderAccessPlatform.instance = _ModelFilePicker(picks);
+  addTearDown(() => OperitFolderAccessPlatform.instance = original);
+}
+
+/// Supplies selected metadata and bytes without opening a system dialog.
+SelectedFileInput _modelFile(String name, List<int> bytes) =>
+    _ModelInput(name, Uint8List.fromList(bytes));
+
+class _ModelInput extends SelectedFileInput {
+  /// Implements document reads inside the widget test's fake clock.
+  _ModelInput(String filename, this._contents)
+    : super.fromStream(
+        name: filename,
+        byteLength: _contents.length,
+        stream: const Stream.empty(),
+      );
+
+  final Uint8List _contents;
+
+  /// Emits the document payload as one bounded chunk.
+  @override
+  Stream<Uint8List> chunks() async* {
+    yield _contents;
+  }
+
+  /// Releases this in-memory picker result.
+  @override
+  Future<void> close() async {}
+}
+
+class _ModelFilePicker extends OperitFolderAccessPlatform {
+  /// Returns one selection per picker invocation.
+  _ModelFilePicker(this.picks);
+
+  final List<List<SelectedFileInput>> picks;
+
+  /// Pops the next fake file selection.
+  @override
+  Future<List<SelectedFileInput>> pickFileInputs({
+    bool imagesOnly = false,
+  }) async => picks.removeAt(0);
+
+  /// Marks directory selection as outside this test's contract.
+  @override
+  Future<String?> pickDirectory({String? initialDirectory}) =>
+      throw UnsupportedError('unused');
+
+  /// Marks multi-directory selection as outside this test's contract.
+  @override
+  Future<List<String>> pickDirectories({String? initialDirectory}) =>
+      throw UnsupportedError('unused');
 }

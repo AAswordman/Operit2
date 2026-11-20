@@ -207,9 +207,9 @@ impl LocalModelInstaller {
             installedAtMs: request.installedAtMs,
             verifiedAtMs: Some(request.installedAtMs),
         };
-        let mut registry = self.readRegistry()?;
-        registry.upsert(installedModel.clone());
-        self.writeRegistry(&registry)?;
+        self.registryStore
+            .update(|registry| registry.upsert(installedModel.clone()))
+            .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?;
         onProgress(LocalModelDownloadProgress::Completed {
             modelId: installedModel.manifest.id.clone(),
             downloadedBytes,
@@ -382,22 +382,35 @@ impl LocalModelInstaller {
     ) -> Result<LocalModelVerifyResult, LocalModelDownloadError> {
         let modelId = modelId.trim();
         let version = version.trim();
-        let mut registry = self.readRegistry()?;
-        let index = registry
-            .installedModels
-            .iter()
-            .position(|model| model.manifest.id == modelId && model.manifest.version == version)
-            .ok_or_else(|| LocalModelDownloadError::ModelNotInstalled {
-                modelId: modelId.to_string(),
-                version: version.to_string(),
-            })?;
-        let installDir = self.runtimeStoragePath(&registry.installedModels[index].storagePath)?;
-        let manifest = registry.installedModels[index].manifest.clone();
-        validateManifestStorageSegments(&manifest)?;
-        let verifiedBytes = self.verifyInstalledFiles(&manifest, &installDir)?;
-        registry.installedModels[index].verifiedAtMs = Some(verifiedAtMs);
-        let installedModel = registry.installedModels[index].clone();
-        self.writeRegistry(&registry)?;
+        let notInstalled = || LocalModelDownloadError::ModelNotInstalled {
+            modelId: modelId.to_string(),
+            version: version.to_string(),
+        };
+        let registry = self.readRegistry()?;
+        let model = registry
+            .getInstalledModel(modelId, version)
+            .ok_or_else(notInstalled)?;
+        let installDir = self.runtimeStoragePath(&model.storagePath)?;
+        validateManifestStorageSegments(&model.manifest)?;
+        let verifiedBytes = self.verifyInstalledFiles(&model.manifest, &installDir)?;
+        let installedModel = self
+            .registryStore
+            .update(|registry| {
+                registry
+                    .installedModels
+                    .iter_mut()
+                    .find(|current| {
+                        current.manifest == model.manifest
+                            && current.storagePath == model.storagePath
+                            && current.installedAtMs == model.installedAtMs
+                    })
+                    .map(|current| {
+                        current.verifiedAtMs = Some(verifiedAtMs);
+                        current.clone()
+                    })
+            })
+            .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?
+            .ok_or_else(notInstalled)?;
         Ok(LocalModelVerifyResult {
             installedModel,
             verifiedBytes,
@@ -412,7 +425,7 @@ impl LocalModelInstaller {
     ) -> Result<LocalModelDeleteResult, LocalModelDownloadError> {
         let modelId = modelId.trim();
         let version = version.trim();
-        let mut registry = self.readRegistry()?;
+        let registry = self.readRegistry()?;
         let installedModel = registry
             .getInstalledModel(modelId, version)
             .cloned()
@@ -422,8 +435,14 @@ impl LocalModelInstaller {
             })?;
         let installDir = self.runtimeStoragePath(&installedModel.storagePath)?;
         self.removePath(&installDir)?;
-        registry.remove(modelId, version);
-        self.writeRegistry(&registry)?;
+        self.registryStore
+            .update(|registry| {
+                registry.remove(modelId, version);
+                if installedModel.manifest.sources.is_empty() {
+                    registry.removeCustomModel(modelId, version);
+                }
+            })
+            .map_err(|error| LocalModelDownloadError::Storage(error.to_string()))?;
         Ok(LocalModelDeleteResult {
             removedStoragePath: installedModel.storagePath.clone(),
             removedModel: installedModel,

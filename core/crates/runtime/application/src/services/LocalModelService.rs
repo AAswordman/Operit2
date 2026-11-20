@@ -13,7 +13,7 @@ use operit_local_models::LocalEngineDownload::{
     LocalEngineInstaller,
 };
 use operit_local_models::LocalEngineManifest::{
-    LocalEngineDelivery, LocalEngineManifest, LocalPlatformTarget,
+    LocalEngineArtifact, LocalEngineDelivery, LocalEngineManifest, LocalPlatformTarget,
 };
 use operit_local_models::LocalModelCatalog::LocalModelCatalog;
 use operit_local_models::LocalModelHub::{LocalModelHubClient, LocalModelHubRepoSummary};
@@ -21,12 +21,20 @@ use operit_local_models::LocalModelDownload::{
     LocalModelDownloadProgress, LocalModelDownloadProgressCallback, LocalModelInstallRequest,
     LocalModelInstaller,
 };
-use operit_local_models::LocalModelManifest::{LocalModelManifest, LocalModelSourceKind};
+use operit_local_models::LocalModelManifest::{
+    LocalEngineKind, LocalModelManifest, LocalModelSourceKind,
+};
 use operit_local_models::LocalModelRegistry::{
     InstalledLocalEngine, InstalledLocalModel, LocalModelRegistrySnapshot,
 };
 use operit_local_models::LocalModelRegistryStore::LocalModelRegistryStore;
+use operit_local_models::LocalModelStorage::buildLocalEngineStoragePath;
+use operit_util::stream::ReverseStream::ReverseStream;
 use serde::{Deserialize, Serialize};
+
+#[path = "LocalModelFileImport.rs"]
+mod file_import;
+use file_import::LocalModelFileImport;
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -46,6 +54,13 @@ pub struct LocalModelBundleInstallResult {
     pub installedEngine: InstalledLocalEngine,
     pub modelDownloadedBytes: u64,
     pub engineDownloadedBytes: u64,
+}
+
+/// Describes one selected file in the order its bytes will arrive.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalModelImportFile {
+    pub name: String,
+    pub byteLength: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,11 +217,12 @@ impl LocalModelService {
         &self,
         sourceKind: LocalModelSourceKind,
     ) -> Result<LocalModelRegistrySnapshot, String> {
-        let store = self.registryStore()?;
-        let mut registry = store.read().map_err(errorString)?;
-        registry.setPreferredSource(sourceKind);
-        store.write(&registry).map_err(errorString)?;
-        Ok(registry)
+        self.registryStore()?
+            .update(|registry| {
+                registry.setPreferredSource(sourceKind);
+                registry.clone()
+            })
+            .map_err(errorString)
     }
 
     /// Searches Hugging Face or ModelScope for compatible model repositories.
@@ -240,11 +256,106 @@ impl LocalModelService {
             &repository,
             revision.as_deref(),
         )?;
-        let store = self.registryStore()?;
-        let mut registry = store.read().map_err(errorString)?;
-        registry.upsertCustomModel(manifest.clone());
-        store.write(&registry).map_err(errorString)?;
+        self.registryStore()?
+            .update(|registry| registry.upsertCustomModel(manifest.clone()))
+            .map_err(errorString)?;
         self.catalogStatus(&manifest.id, &manifest.version)
+    }
+
+    /// Lists embedded engines that can accept model files on this runtime.
+    pub fn getFileImportEngines(&self) -> Result<Vec<LocalEngineKind>, String> {
+        let target = LocalPlatformTarget::current()?;
+        Ok([LocalEngineKind::LlamaCpp, LocalEngineKind::Mnn]
+            .into_iter()
+            .filter(|engine| self.fileImportEngine(engine, &target).is_some())
+            .collect())
+    }
+
+    /// Streams files in selection order, followed by an empty completion chunk, into a new installed chat model.
+    pub async fn importModelFromFiles(
+        &self,
+        engine: LocalEngineKind,
+        displayName: String,
+        files: Vec<LocalModelImportFile>,
+        bytes: ReverseStream<Vec<u8>>,
+    ) -> Result<(), String> {
+        let target = LocalPlatformTarget::current()?;
+        let (engineManifest, artifact) = self
+            .fileImportEngine(&engine, &target)
+            .ok_or("This runtime cannot import files for the selected local engine")?;
+        let writers = self
+            .context
+            .runtimeStorageWriteHost
+            .as_ref()
+            .ok_or("Local model imports require runtime file storage")?;
+        let import = LocalModelFileImport::new(engine, &engineManifest, displayName, files)?;
+        let enginePath = buildLocalEngineStoragePath(&engineManifest.id, &engineManifest.version, &target)
+            .map_err(errorString)?;
+        let engineLock = engineInstallLock(engineInstallLockKey(
+            self.storageIdentity,
+            &engineManifest.id,
+            &engineManifest.version,
+            &target,
+        ))?;
+        let store = self.registryStore()?;
+        let result = import
+            .receive(self.runtimeStorageHost.as_ref(), writers.as_ref(), bytes)
+            .await
+            .and_then(|manifest| {
+                let _guard = engineLock.lock().map_err(errorString)?;
+                let installedAtMs = currentTimeMillis();
+                store
+                    .update(|registry| {
+                        let registered = registry.getInstalledEngine(
+                            &engineManifest.id,
+                            &engineManifest.version,
+                            &target,
+                        );
+                        if !registered.is_some_and(|installed| installed.artifact == artifact) {
+                            registry.upsertEngine(InstalledLocalEngine {
+                                manifest: engineManifest,
+                                artifact,
+                                storagePath: enginePath,
+                                installedAtMs,
+                                verifiedAtMs: Some(installedAtMs),
+                            });
+                        }
+                        registry.upsertCustomModel(manifest.clone());
+                        registry.upsert(InstalledLocalModel {
+                            manifest,
+                            storagePath: import.storagePath.clone(),
+                            installedAtMs,
+                            verifiedAtMs: Some(installedAtMs),
+                        });
+                    })
+                    .map_err(errorString)
+            });
+        if result.is_err() {
+            if let Err(cleanup) = self.runtimeStorageHost.delete(&import.storagePath, true) {
+                operit_host_api::logHostError("LocalModelImport", &cleanup.to_string());
+            }
+        }
+        result
+    }
+
+    /// Resolves the bundled engine artifact for one supported file import format.
+    fn fileImportEngine(
+        &self,
+        engine: &LocalEngineKind,
+        target: &LocalPlatformTarget,
+    ) -> Option<(LocalEngineManifest, LocalEngineArtifact)> {
+        if self.context.localInferenceHost.is_none()
+            || self.context.runtimeStorageWriteHost.is_none()
+        {
+            return None;
+        }
+        let manifest = match engine {
+            LocalEngineKind::LlamaCpp => LocalEngineCatalog::llamaCpp(),
+            LocalEngineKind::Mnn => LocalEngineCatalog::mnn(),
+            _ => return None,
+        };
+        let artifact = manifest.artifactForTarget(target)?.clone();
+        (artifact.delivery == LocalEngineDelivery::Embedded).then_some((manifest, artifact))
     }
 
     /// Removes one custom imported model from the local catalog and deletes any installed artifacts.
@@ -259,9 +370,9 @@ impl LocalModelService {
             ));
         }
         self.deleteModel(modelId.clone(), version.clone())?;
-        let mut updatedRegistry = store.read().map_err(errorString)?;
-        updatedRegistry.removeCustomModel(&modelId, &version);
-        store.write(&updatedRegistry).map_err(errorString)?;
+        store
+            .update(|registry| registry.removeCustomModel(&modelId, &version))
+            .map_err(errorString)?;
         Ok(())
     }
 
@@ -277,6 +388,9 @@ impl LocalModelService {
         version: String,
     ) -> Result<LocalModelBundleInstallResult, String> {
         let manifest = self.catalogModel(&modelId, &version)?;
+        if manifest.sources.is_empty() {
+            return Err("This model was imported from device files. Select the files to import it again.".into());
+        }
         self.requirePlatformCompatibleModel(&manifest)?;
         let requirement = manifest.engineRequirement.as_ref().ok_or_else(|| {
             format!(
@@ -297,7 +411,8 @@ impl LocalModelService {
         let operationId = installOperationId(&manifest.id, &manifest.version);
         let engineLock = engineInstallLock(engineInstallLockKey(
             self.storageIdentity,
-            &engineManifest,
+            &engineManifest.id,
+            &engineManifest.version,
             &target,
         ))?;
         let (engineControl, modelControl, engineResult) = {
@@ -547,6 +662,13 @@ impl LocalModelService {
     /// Deletes one engine target that is not required by installed models.
     pub fn deleteEngine(&self, engineId: String, version: String) -> Result<(), String> {
         let target = LocalPlatformTarget::current()?;
+        let engineLock = engineInstallLock(engineInstallLockKey(
+            self.storageIdentity,
+            &engineId,
+            &version,
+            &target,
+        ))?;
+        let _guard = engineLock.lock().map_err(errorString)?;
         let registry = self.modelInstaller()?.readRegistry().map_err(errorString)?;
         let dependentModels = registry
             .installedModels
@@ -654,7 +776,7 @@ impl LocalModelService {
     }
 }
 
-/// Merges built-in catalog manifests with custom Hub-imported manifests.
+/// Merges built-in catalog manifests with custom imported manifests.
 fn allCatalogManifests(registry: &LocalModelRegistrySnapshot) -> Vec<LocalModelManifest> {
     let mut manifests = LocalModelCatalog::manifests();
     for custom in &registry.customModels {
@@ -697,13 +819,14 @@ fn engineInstallLock(key: LocalEngineInstallLockKey) -> Result<Arc<Mutex<()>>, S
 /// Builds the exact engine artifact location identity used for installation exclusion.
 fn engineInstallLockKey(
     storageIdentity: usize,
-    engineManifest: &LocalEngineManifest,
+    engineId: &str,
+    version: &str,
     target: &LocalPlatformTarget,
 ) -> LocalEngineInstallLockKey {
     LocalEngineInstallLockKey {
         storageIdentity,
-        engineId: engineManifest.id.trim().to_string(),
-        version: engineManifest.version.trim().to_string(),
+        engineId: engineId.trim().to_string(),
+        version: version.trim().to_string(),
         target: target.storageSegment(),
     }
 }
