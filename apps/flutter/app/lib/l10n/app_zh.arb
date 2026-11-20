@@ -2696,6 +2696,7 @@
   "chatBackupLater": "稍后设置",
   "chatBackupChange": "更改备份目录",
   "chatBackupMissing": "尚未设置备份目录，或原目录已不存在、无法访问。请选择目录以开启每日聊天备份。",
+  "chatBackupDirectoryUnavailable": "无法使用所选文件夹。请在可用的文件夹（如“文档”或“下载”）下新建目录，并选择该目录。",
   "chatBackupReady": "备份目录已就绪。应用启动、回到前台及运行期间会检查每日备份。",
   "chatBackupNow": "立即备份聊天",
   "chatBackupNever": "尚无成功备份",

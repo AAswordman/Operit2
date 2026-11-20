@@ -1,12 +1,16 @@
 // ignore_for_file: file_names
 
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import 'package:mime/mime.dart';
 import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
+import 'package:xml/xml_events.dart';
 
 import '../interactions/MessagePressShield.dart';
 import '../../features/packages/screens/ComposeDslImageSource.dart';
@@ -73,7 +77,7 @@ class MarkdownRemoteImage extends StatelessWidget {
         final Widget image;
         if (isDataImage && dataBytes == null) {
           image = error;
-        } else if (vfsPath != null) {
+        } else if (vfsPath != null && !_markdownSvgSource(trimmed)) {
           image = Image(
             key: ValueKey((trimmed, owner.bridge)),
             gaplessPlayback: true,
@@ -100,6 +104,8 @@ class MarkdownRemoteImage extends StatelessWidget {
             cacheWidth: cacheWidth,
             cacheHeight: cacheHeight,
             error: error,
+            vfsPath: vfsPath,
+            readVfsBytes: readBytes,
           );
         }
         if (!enablePreview) {
@@ -150,7 +156,7 @@ const _imageClients = GeneratedCoreProxyClients(
   ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
 );
 
-/// Renders the image source explicitly selected by the runtime host.
+/// Renders vector and raster images loaded through the runtime services.
 class _RuntimeImage extends StatefulWidget {
   /// Creates a renderer with the requested decode dimensions.
   const _RuntimeImage({
@@ -161,6 +167,8 @@ class _RuntimeImage extends StatefulWidget {
     required this.cacheWidth,
     required this.cacheHeight,
     required this.error,
+    required this.vfsPath,
+    required this.readVfsBytes,
   });
 
   final GeneratedCoreProxyClients clients;
@@ -170,6 +178,8 @@ class _RuntimeImage extends StatefulWidget {
   final int? cacheWidth;
   final int? cacheHeight;
   final Widget error;
+  final String? vfsPath;
+  final Future<Uint8List> Function(String path) readVfsBytes;
 
   /// Creates state that retains the request across layout changes.
   @override
@@ -191,13 +201,22 @@ class _RuntimeImageState extends State<_RuntimeImage> {
   void didUpdateWidget(covariant _RuntimeImage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.url != widget.url ||
-        oldWidget.clients.bridge != widget.clients.bridge) {
+        oldWidget.clients.bridge != widget.clients.bridge ||
+        oldWidget.vfsPath != widget.vfsPath) {
       _load();
     }
   }
 
-  /// Creates the cold proxy stream owned by the image subscription.
+  /// Retains one source request across image layout and presentation changes.
   void _load() {
+    final vfsPath = widget.vfsPath;
+    if (vfsPath != null) {
+      _request = Stream.fromFuture(widget.readVfsBytes(vfsPath)).map(
+        (bytes) =>
+            RuntimeImageData(bytes: bytes, displayUrl: null, error: null),
+      );
+      return;
+    }
     final bytes = markdownDataImageBytes(widget.url);
     if (bytes != null) {
       _request =
@@ -218,7 +237,7 @@ class _RuntimeImageState extends State<_RuntimeImage> {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<RuntimeImageData>(
-      key: ValueKey(widget.url),
+      key: ValueKey((widget.url, widget.clients.bridge, widget.vfsPath)),
       stream: _request,
       builder: (context, snapshot) {
         if (snapshot.hasError || snapshot.data?.error != null) {
@@ -247,6 +266,19 @@ class _RuntimeImageState extends State<_RuntimeImage> {
             errorBuilder: (context, failure, stackTrace) => widget.error,
           );
         }
+        if (_markdownSvgSource(widget.url) || _markdownSvgBytes(data.bytes)) {
+          return SvgPicture.memory(
+            data.bytes,
+            key: ValueKey((widget.url, widget.clients.bridge)),
+            fit: widget.fit,
+            semanticsLabel: widget.alt.trim().isEmpty
+                ? null
+                : widget.alt.trim(),
+            placeholderBuilder: (context) =>
+                const _MarkdownImageStatus(icon: null, label: ''),
+            errorBuilder: (context, failure, stackTrace) => widget.error,
+          );
+        }
         return Image.memory(
           data.bytes,
           key: ValueKey((widget.url, widget.clients.bridge)),
@@ -260,6 +292,27 @@ class _RuntimeImageState extends State<_RuntimeImage> {
       },
     );
   }
+}
+
+/// Selects vector decoding from an explicit SVG MIME type or URI path.
+bool _markdownSvgSource(String source) {
+  final uri = Uri.tryParse(source);
+  if (uri == null) return false;
+  if (uri.scheme == 'data') return uri.data?.mimeType == 'image/svg+xml';
+  return uri.path.toLowerCase().endsWith('.svg');
+}
+
+/// Recognizes extensionless SVG responses by their XML root element.
+bool _markdownSvgBytes(Uint8List bytes) {
+  if (lookupMimeType('', headerBytes: bytes) != null) return false;
+  try {
+    for (final event in parseEvents(utf8.decode(bytes))) {
+      if (event is XmlStartElementEvent) return event.localName == 'svg';
+    }
+  } on FormatException {
+    return false;
+  }
+  return false;
 }
 
 /// Limits decoded image dimensions to the available physical pixel extent.

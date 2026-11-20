@@ -16,7 +16,7 @@ abstract class PersistentDirectoryStorage {
   /// Selects a directory, returning null when the user cancels.
   Future<PersistentDirectory?> select();
 
-  /// Checks that the selected directory remains accessible.
+  /// Verifies directory listing and probe file writing, reading and deletion.
   Future<void> check(PersistentDirectory directory);
 
   /// Copies the complete database file to the selected folder.

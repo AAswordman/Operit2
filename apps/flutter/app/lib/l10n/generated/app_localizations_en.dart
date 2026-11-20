@@ -5332,6 +5332,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The backup directory is not configured, no longer exists or cannot be accessed. Select a directory to enable daily chat backups.';
 
   @override
+  String get chatBackupDirectoryUnavailable =>
+      'The selected folder cannot be used. Create a new directory inside an accessible folder, such as Documents or Downloads, and select that directory.';
+
+  @override
   String get chatBackupReady =>
       'The backup directory is ready. Daily backups are checked at startup, on resume and while the app is running.';
 

@@ -402,7 +402,7 @@ impl MCPBridge {
         successResponse("register", json!({ "name": name }))
     }
 
-    /// Registers a remote MCP service endpoint with optional authentication headers.
+    /// Registers remote configuration without cancelling an identical session or startup.
     #[allow(non_snake_case)]
     pub fn registerRemoteMcpService(
         &self,
@@ -421,6 +421,18 @@ impl MCPBridge {
             );
         }
         let mut state = bridgeState().lock().expect("mcp bridge mutex poisoned");
+        if let Some(current) = state.services.get_mut(&name) {
+            if current.serviceType == "remote"
+                && current.endpoint.as_ref() == Some(&endpoint)
+                && current.connectionType == connectionType
+                && current.bearerToken == bearerToken
+                && current.headers == headers
+            {
+                current.description =
+                    description.unwrap_or_else(|| format!("Remote MCP Service: {name}"));
+                return successResponse("register", json!({ "name": name }));
+            }
+        }
         if let Some(previous) = state.active.remove(&name) {
             previous.cancel();
         }

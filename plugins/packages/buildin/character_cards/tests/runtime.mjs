@@ -6,6 +6,9 @@ const require = createRequire(import.meta.url);
 const { buildSync } = require("esbuild");
 const ts = require("typescript");
 
+/** Implements the plugin console contract while keeping verbose test diagnostics silent. */
+export const runtimeConsole = { ...console, verbose(_level, ..._data) {} };
+
 /** Reads the current TypeScript syntax tree without evaluating a production service or replacing dependencies. */
 function typescriptSource(relative) {
   const file = fileURLToPath(new URL(relative, import.meta.url));
@@ -25,7 +28,7 @@ export function loadModule(relative, globals = {}) {
     /** Rejects every invocation of the removed CLI or lossy summary-tool bridge. */
     get(_target, property) { throw new Error(`Forbidden production Tools access: ${String(property)}`); },
   });
-  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, console, Uint8Array, Float32Array, Float64Array, BigUint64Array, ArrayBuffer, DataView, WebAssembly, TextEncoder, TextDecoder, setTimeout, clearTimeout, Tools: forbidden, ...globals }, { filename: file });
+  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, console: runtimeConsole, Uint8Array, Float32Array, Float64Array, BigUint64Array, ArrayBuffer, DataView, WebAssembly, TextEncoder, TextDecoder, setTimeout, clearTimeout, Tools: forbidden, ...globals }, { filename: file });
   return module.exports;
 }
 

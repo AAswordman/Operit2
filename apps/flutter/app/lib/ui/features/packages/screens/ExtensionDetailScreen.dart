@@ -129,6 +129,7 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
   bool _useEnglish = false;
   bool _active = false;
   bool _mcpBusy = false;
+  String? _mcpLifecycleError;
   bool _describing = false;
   final Set<String> _togglingSubpackages = <String>{};
 
@@ -341,9 +342,11 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
       if (entry.authors.isNotEmpty) entry.authors.join('、'),
       storeSourceLabel(entry.source),
     ].join(' · ');
-    final mcpError = entry.runtimeState.startsWith('error:')
-        ? entry.runtimeState.substring('error:'.length)
-        : null;
+    final mcpError =
+        _mcpLifecycleError ??
+        (entry.runtimeState.startsWith('error:')
+            ? entry.runtimeState.substring('error:'.length)
+            : null);
     final wide = MediaQuery.sizeOf(context).width >= 600;
     return StoreDetailScaffold(
       header: StoreDetailHeader(
@@ -1294,13 +1297,20 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     await _loadDetails();
   }
 
+  /// Keeps lifecycle failures visible in the detail page after the toast closes.
   Future<void> _runMcpLifecycle(Future<String> Function() action) async {
     setState(() => _mcpBusy = true);
     try {
       await action();
+      if (mounted) {
+        setState(() => _mcpLifecycleError = null);
+      }
       await _afterMcpChange();
     } catch (error, stackTrace) {
       debugPrint('Failed to update MCP lifecycle: $error\n$stackTrace');
+      if (mounted) {
+        setState(() => _mcpLifecycleError = error.toString());
+      }
       _showError(error);
     } finally {
       if (mounted) {

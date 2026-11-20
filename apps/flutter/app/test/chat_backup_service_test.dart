@@ -194,6 +194,114 @@ void main() {
     },
   );
 
+  for (final operation in ['selection', 'access']) {
+    test(
+      'failed directory $operation rejects selection and preserves the saved destination',
+      () async {
+        final storage = _DirectoryStorage()
+          ..selectFailure = operation == 'selection'
+              ? StateError('Directory selection denied')
+              : null
+          ..checkFailure = operation == 'access'
+              ? StateError('Directory access denied')
+              : null;
+        final service = ChatBackupService(storage: storage);
+        expect(await service.selectDirectory(), isFalse);
+        expect(manager.config.chatBackupDirectory, isNull);
+        expect(service.directory, isNull);
+        expect(service.needsDirectory, isTrue);
+        expect(service.directorySelectionFailed, isTrue);
+        expect(storage.creates, 0);
+
+        storage.checkFailure = null;
+        storage.selectFailure = null;
+        expect(await service.selectDirectory(), isTrue);
+        expect(service.directorySelectionFailed, isFalse);
+        expect(service.error, isNull);
+        final saved = manager.config.chatBackupDirectory;
+        final original = service.directory;
+        storage.selection = const PersistentDirectory(
+          path: '/virtual/local/folders/unusable',
+          label: 'Unusable folder',
+        );
+        storage.selectFailure = operation == 'selection'
+            ? StateError('Directory selection denied')
+            : null;
+        storage.checkFailure = operation == 'access'
+            ? StateError('Directory access denied')
+            : null;
+        expect(await service.selectDirectory(), isFalse);
+        expect(manager.config.chatBackupDirectory, saved);
+        expect(service.directory, same(original));
+        expect(service.needsDirectory, isFalse);
+        expect(service.directorySelectionFailed, isTrue);
+        service.dispose();
+      },
+    );
+  }
+
+  testWidgets(
+    'unusable backup selection shows actionable folder guidance and stays on setup',
+    (tester) async {
+      final storage = _DirectoryStorage()
+        ..checkFailure = StateError('Directory access denied');
+      final service = ChatBackupService(storage: storage);
+      var selections = 0;
+      await tester.pumpWidget(
+        MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: Scaffold(
+            body: ChatBackupDirectoryPanel(
+              service: service,
+              onSelected: () => selections++,
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('选择备份目录'));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('无法使用所选文件夹。请在可用的文件夹（如“文档”或“下载”）下新建目录，并选择该目录。'),
+        findsOneWidget,
+      );
+      expect(find.textContaining('Directory access denied'), findsNothing);
+      expect(selections, 0);
+      expect(manager.config.chatBackupDirectory, isNull);
+      expect(find.text('选择备份目录'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+      service.dispose();
+    },
+  );
+
+  test(
+    'lost write access is reported even after a successful backup today',
+    () async {
+      final storage = _DirectoryStorage();
+      final service = ChatBackupService(storage: storage);
+      expect(await service.selectDirectory(), isTrue);
+      await service.checkAndBackup();
+      expect(storage.creates, 1);
+      final saved = manager.config.chatBackupDirectory;
+      storage.checkFailure = StateError('Probe file write denied');
+      await service.checkAndBackup();
+      expect(service.needsDirectory, isTrue);
+      expect(service.error, contains('Probe file write denied'));
+      expect(manager.config.chatBackupDirectory, saved);
+      expect(storage.creates, 1);
+      expect(storage.files, hasLength(1));
+
+      storage.checkFailure = null;
+      await service.checkAndBackup();
+      expect(service.needsDirectory, isFalse);
+      expect(service.error, isNull);
+      expect(storage.creates, 1);
+      service.dispose();
+    },
+  );
+
   test(
     'retention follows successful publication and never deletes manual or foreign backups',
     () async {
@@ -370,6 +478,8 @@ class _DirectoryStorage implements PersistentDirectoryStorage {
     label: 'User backups',
   );
   bool available = true;
+  Object? selectFailure;
+  Object? checkFailure;
   bool failWrite = false;
   int creates = 0;
   final files = <String, ChatBackupSnapshot?>{};
@@ -380,12 +490,18 @@ class _DirectoryStorage implements PersistentDirectoryStorage {
 
   /// Returns the explicit selection or user cancellation.
   @override
-  Future<PersistentDirectory?> select() async => selection;
+  Future<PersistentDirectory?> select() async {
+    final failure = selectFailure;
+    if (failure != null) throw failure;
+    return selection;
+  }
 
   /// Models revocation without removing retained backup bytes.
   @override
   Future<void> check(PersistentDirectory directory) async {
     if (!available) throw StateError('Directory authorization revoked');
+    final failure = checkFailure;
+    if (failure != null) throw failure;
   }
 
   /// Exposes partial-write failure before reporting success.

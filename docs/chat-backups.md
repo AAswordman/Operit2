@@ -76,8 +76,16 @@ The machine-local bootstrap field `chatBackupDirectory` stores the mount path an
 its display label. Users select storage outside the removable app container, such
 as an independent iCloud Drive folder on iOS. After reinstalling, they select the
 original external folder again to regain access. Missing folders are reported
-without being recreated. Accessibility checks list the folder; they do not write,
-read back or delete probe files. Actual copy failures report filesystem errors.
+without being recreated. Accessibility checks list the folder, write a uniquely
+named `.operit-backup-probe-*` file, read it back to verify its contents, and delete
+it. All steps must succeed before saving a selected destination. Cleanup is also
+attempted for a probe left by a failed write or read; a cleanup failure rejects
+the directory. These checks run on selection, startup, foreground resume and every
+five minutes while the application is active, even when today's backup exists.
+Actual copy failures report filesystem errors and recheck directory usability.
+Directory selection and access failures show guidance in onboarding and data
+settings to create and select a new directory inside an accessible folder, such
+as Documents or Downloads. Failed selection keeps the previous backup destination.
 
 Directory selection uses the shared external workspace mount capability. In this
 checkout Web's generic picker returns no selection and OpenHarmony's picker is

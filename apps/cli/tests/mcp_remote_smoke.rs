@@ -22,6 +22,59 @@ use operit_host_windows_native::{
     WindowsHostRuntimeTaskSchedulerHost as NativeTaskScheduler, WindowsHttpHost as NativeHttpHost,
 };
 
+/// Verifies both supported credential fields against GitHub's authenticated remote endpoint.
+#[tokio::test]
+#[ignore = "requires OPERIT_MCP_GITHUB_TOKEN and network access"]
+async fn authenticated_github_remote_mcp() {
+    let token = std::env::var("OPERIT_MCP_GITHUB_TOKEN")
+        .expect("set OPERIT_MCP_GITHUB_TOKEN to a GitHub MCP access token");
+    let context = HostManager {
+        httpHost: Some(Arc::new(NativeHttpHost::new())),
+        hostRuntimeTaskSchedulerHost: Some(Arc::new(NativeTaskScheduler::new())),
+        ..HostManager::default()
+    };
+    let bridge = MCPBridge::getInstance(&context);
+    for explicit_header in [false, true] {
+        let name = format!("github-auth-smoke-{explicit_header}");
+        let mut headers = BTreeMap::new();
+        let bearer = if explicit_header {
+            headers.insert("Authorization".into(), format!("Bearer {token}"));
+            None
+        } else {
+            Some(token.clone())
+        };
+        bridge.registerRemoteMcpService(
+            name.clone(),
+            "https://api.githubcopilot.com/mcp/".into(),
+            Some("streamable-http".into()),
+            None,
+            bearer,
+            headers,
+        );
+        let client = MCPBridgeClient::new(context.clone(), name.clone());
+        let connected = client.connectWithSpawnTimeoutMs(10_000).await;
+        let connection_error = client.getLastConnectionFailureDetail();
+        let tools = client.getTools();
+        let mut calls = Vec::new();
+        if connected {
+            for _ in 0..2 {
+                calls.push(client.callTool("get_me", json!({})).await);
+            }
+        }
+        bridge.unregisterMcpService(&name);
+        assert!(connected, "GitHub MCP startup failed: {connection_error:?}");
+        assert!(tools.iter().any(|tool| tool["name"] == "get_me"));
+        assert_eq!(calls.len(), 2);
+        for response in calls {
+            assert_eq!(response["success"], true, "{}", summarize(&response));
+            assert_ne!(response["result"]["isError"], true, "{}", summarize(&response));
+            assert!(response["result"]["content"]
+                .as_array()
+                .is_some_and(|items| !items.is_empty()));
+        }
+    }
+}
+
 #[tokio::test]
 #[ignore = "requires public MCP services and network access"]
 async fn public_remote_mcp_services() {

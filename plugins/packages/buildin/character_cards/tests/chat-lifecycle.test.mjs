@@ -4,7 +4,7 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 import { createDiskHarness } from "./disk-files.mjs";
-import { loadModule, plain } from "./runtime.mjs";
+import { loadModule, plain, runtimeConsole } from "./runtime.mjs";
 
 /** Builds only the explicitly labelled generic lifecycle event input, not a production source or result. */
 function event(changes = {}) {
@@ -118,7 +118,7 @@ async function callbackEnvironment(t) {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), module = { exports: {} };
   const result = buildSync({ absWorkingDir: fileURLToPath(new URL("../", import.meta.url)), stdin: { contents: 'export { beforeChatCreate } from "./chat-lifecycle"; export { dispatchDomain } from "./service-runtime";', resolveDir: fileURLToPath(new URL("../src", import.meta.url)), sourcefile: "chat-lifecycle-callback-check.ts", loader: "ts" }, bundle: true, format: "cjs", platform: "neutral", target: "es2020", write: false });
   assert.equal(result.outputFiles.length, 1);
-  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, ...disk.globals, console, TextEncoder, TextDecoder, setTimeout, clearTimeout });
+  vm.runInNewContext(result.outputFiles[0].text, { module, exports: module.exports, ...disk.globals, console: runtimeConsole, TextEncoder, TextDecoder, setTimeout, clearTimeout });
   return { disk, ...module.exports };
 }
 /** Executes the real exported handler with the genuine SDK envelope and authoritative persisted active/card operations. */

@@ -5101,6 +5101,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatBackupMissing => '尚未设置备份目录，或原目录已不存在、无法访问。请选择目录以开启每日聊天备份。';
 
   @override
+  String get chatBackupDirectoryUnavailable =>
+      '无法使用所选文件夹。请在可用的文件夹（如“文档”或“下载”）下新建目录，并选择该目录。';
+
+  @override
   String get chatBackupReady => '备份目录已就绪。应用启动、回到前台及运行期间会检查每日备份。';
 
   @override

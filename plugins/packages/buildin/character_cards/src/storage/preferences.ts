@@ -6,6 +6,7 @@ const merge = declarations as Record<keyof typeof declarations, StoragePreferenc
 import { clone } from "./records";
 import { finishOperit1Import } from "./operit1-import-repair";
 import { CharacterMemoryDatabase } from "./memory";
+import { traceCharacterLoad } from "../diagnostics";
 
 export const configurationNames = ["cards", "groups", "tags", "stores", "conversationGroups"] as const;
 export type ConfigurationName = typeof configurationNames[number];
@@ -41,17 +42,19 @@ export class CharacterStorage {
     try {
       /** Opens a declared JSON owner through the native preferences interface. */
       async function open(name: keyof typeof merge): Promise<Storage.DataStore> {
-        const store = await Tools.Storage.dataStore.open({ path: directory + "/" + name + ".preferences.json", merge: merge[name] });
+        const store = await traceCharacterLoad(1, "storage.open." + name,
+          () => Tools.Storage.dataStore.open({ path: directory + "/" + name + ".preferences.json", merge: merge[name] }));
         handles.push(store);
         return store;
       }
       const configuration = {} as Record<ConfigurationName, Storage.DataStore>;
       for (const name of configurationNames) configuration[name] = await open(name);
       const metadata = await open("meta"), chats = await open("chats");
-      memory = await CharacterMemoryDatabase.open();
+      memory = await traceCharacterLoad(1, "storage.open.memory", () => CharacterMemoryDatabase.open());
       return new CharacterStorage(configuration, metadata, chats, memory);
     } catch (error) {
-      const closed = await Promise.allSettled([...handles.map(handle => handle.close()), ...(memory === undefined ? [] : [memory.close()])]);
+      const closed = await traceCharacterLoad(1, "storage.open.cleanup",
+        () => Promise.allSettled([...handles.map(handle => handle.close()), ...(memory === undefined ? [] : [memory.close()])]));
       const failures = closed.filter((result): result is PromiseRejectedResult => result.status === "rejected").map(result => result.reason);
       if (failures.length !== 0) throw Object.assign(new Error("Character storage open and handle cleanup failed"), { cause: error, cleanupErrors: failures });
       throw error;
@@ -63,11 +66,11 @@ export class CharacterStorage {
     const storage = await CharacterStorage.openForRecovery();
     try {
       storage.metadata.withSchema(schema.version, schema.steps as Storage.MigrationRule[][]);
-      await storage.metadata.data();
-      await finishOperit1Import(storage);
+      await traceCharacterLoad(1, "storage.metadata.migrate", () => storage.metadata.data());
+      await traceCharacterLoad(1, "storage.import.complete", () => finishOperit1Import(storage));
       return storage;
     } catch (error) {
-      try { await storage.close(); }
+      try { await traceCharacterLoad(1, "storage.close", () => storage.close()); }
       catch (cleanupError) { throw Object.assign(new Error("Character storage open and handle cleanup failed"), { cause: error, cleanupError }); }
       throw error;
     }

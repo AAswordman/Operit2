@@ -4,6 +4,7 @@ import { encodeSelection, requireUiCaller } from "./ui-contributions";
 import { bindingsForChats } from "./chat-storage";
 import { parseChatSelection } from "./chat-bindings";
 import { getService } from "./service-runtime";
+import { traceCharacterLoad } from "./diagnostics";
 
 /** Selects one plugin-owned embedded sidebar view without creating a modal presentation. */
 export interface SidebarInput { view: "characters" | "groups" }
@@ -215,28 +216,30 @@ export function reconcileSidebarCatalog(catalog: SidebarCatalog, current: Curren
 
 /** Reads the actual sidebar catalog from namespace extensions and the same database-backed service used by every other plugin surface. */
 export async function readSidebarCatalog(value: CurrentSidebar): Promise<SidebarCatalog> {
-  const current = parseCurrentSidebar(value), service = await getService();
-  // Resolve stored selections against the current directory when projecting categories.
-  const [directory, selections] = await Promise.all([service.sidebarDirectory(), readSidebarSelections(current.chatSidebar.chats)]);
-  const sections = characterSidebarSections(directory, selections, current.chatSidebar.chats);
-  if (!sections.some(
-    /** Ensures an explicit unbound grouping scope remains available for real empty group creation. */
-    section => section.selection === null,
-  )) {
-    const unbound: CharacterSidebarSection = { id: "unbound", title: "未绑定角色", avatarUri: null, kind: "unbound", selection: null, chats: [] };
-    sections.push(unbound);
-  }
-  if (current.input.view === "characters") {
-    for (const section of sections) {
-      const scope = conversationSidebarScope(section);
-      section.conversationGroups = scope.groups;
-      section.ungroupedChats = scope.ungrouped;
+  return traceCharacterLoad(3, "main.sidebar.catalog", async () => {
+    const current = parseCurrentSidebar(value), service = await getService();
+    // Resolve stored selections against the current directory when projecting categories.
+    const [directory, selections] = await Promise.all([service.sidebarDirectory(), readSidebarSelections(current.chatSidebar.chats)]);
+    const sections = characterSidebarSections(directory, selections, current.chatSidebar.chats);
+    if (!sections.some(
+      /** Ensures an explicit unbound grouping scope remains available for real empty group creation. */
+      section => section.selection === null,
+    )) {
+      const unbound: CharacterSidebarSection = { id: "unbound", title: "未绑定角色", avatarUri: null, kind: "unbound", selection: null, chats: [] };
+      sections.push(unbound);
     }
-    return { view: "characters", sections };
-  }
-  const scopes = [];
-  for (const section of sections) scopes.push(conversationSidebarScope(section));
-  return { view: "groups", scopes };
+    if (current.input.view === "characters") {
+      for (const section of sections) {
+        const scope = conversationSidebarScope(section);
+        section.conversationGroups = scope.groups;
+        section.ungroupedChats = scope.ungrouped;
+      }
+      return { view: "characters", sections };
+    }
+    const scopes = [];
+    for (const section of sections) scopes.push(conversationSidebarScope(section));
+    return { view: "groups", scopes };
+  });
 }
 /** Reads authoritative extensions with bounded overlap, independently of the role directory query. */
 async function readSidebarSelections(chats: readonly SidebarChatSummary[]): Promise<SidebarChatSelection[]> {

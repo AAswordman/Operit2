@@ -4,6 +4,7 @@ import { callMainDomain, encodeSelection } from "./ui-contributions";
 import { createChatInput } from "./chat-lifecycle";
 import { nativeSidebarRows } from "./ui-sidebar-native-layout";
 import { deleteConversationGroupMembers, type SidebarDeletionProgress } from "./sidebar-group-delete";
+import { traceCharacterLoad } from "./diagnostics";
 
 /** Native local state, with no browser controller, resource, or DOM lifecycle. */
 interface SidebarState {
@@ -55,7 +56,8 @@ export function renderSidebarScreen(ctx: ComposeDslContext): ComposeNode {
     async function load(): Promise<void> {
     update({ loading: latest.current.data === null || latest.current.data.view !== request.input.view, error: "" });
     try {
-      const data = await ToolPkg.ipc.call<CurrentSidebar, SidebarCatalog>("character-sidebar.catalog", request, { targetRuntime: "main" });
+      const data = await traceCharacterLoad(3, "ipc.sidebar.catalog",
+        () => ToolPkg.ipc.call<CurrentSidebar, SidebarCatalog>("character-sidebar.catalog", request, { targetRuntime: "main" }));
       if (catalogKey(current.current) === key) {
         if (data.view !== request.input.view) throw new Error("The sidebar catalog belongs to another view");
         update({ data, context: key, loading: false });

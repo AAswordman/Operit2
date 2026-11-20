@@ -9360,6 +9360,12 @@ abstract class AppLocalizations {
   /// **'The backup directory is not configured, no longer exists or cannot be accessed. Select a directory to enable daily chat backups.'**
   String get chatBackupMissing;
 
+  /// No description provided for @chatBackupDirectoryUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The selected folder cannot be used. Create a new directory inside an accessible folder, such as Documents or Downloads, and select that directory.'**
+  String get chatBackupDirectoryUnavailable;
+
   /// No description provided for @chatBackupReady.
   ///
   /// In en, this message translates to:

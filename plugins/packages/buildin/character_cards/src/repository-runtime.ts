@@ -1,6 +1,7 @@
 import type { CharacterDirectories } from "./model";
 import { DatabaseCharacterRepository } from "./storage/database";
 import { repairCharacterInitialization, type InitializationRecoverySource } from "./storage/initialization";
+import { traceCharacterLoad } from "./diagnostics";
 
 let directories: CharacterDirectories | null = null;
 let repository: Promise<DatabaseCharacterRepository> | undefined;
@@ -13,7 +14,7 @@ export function connectDirectorySources(sources: CharacterDirectories): void {
 
 /** Owns migration, first-install initialization and all handles for this main runtime. */
 export function getRepository(): Promise<DatabaseCharacterRepository> {
-  return repository ??= Promise.resolve().then(() => DatabaseCharacterRepository.open(directories));
+  return repository ??= Promise.resolve().then(() => traceCharacterLoad(1, "repository.open", () => DatabaseCharacterRepository.open(directories)));
 }
 
 /** Serializes explicit repair with the failed opener so requests share the recovered owner. */

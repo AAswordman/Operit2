@@ -79,7 +79,9 @@ class _ChatBackupDirectoryPanelState extends State<ChatBackupDirectoryPanel> {
           if (_service.error != null) ...[
             const SizedBox(height: 8),
             SelectableText(
-              _service.error!,
+              _service.directorySelectionFailed || _service.needsDirectory
+                  ? l10n.chatBackupDirectoryUnavailable
+                  : _service.error!,
               style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ],

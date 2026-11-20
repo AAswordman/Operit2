@@ -454,7 +454,38 @@ ANN 是近似检索，文件夹、时间和排除条件传入 WASM 过滤器；�
 ## Runtime diagnostics
 
 `[character_cards]` prints short send checks/decisions, group takeover, native
-send starts and group completion. Normal storage, role validation and UI reads
-are silent. Completed operations taking at least one second report their duration.
+send starts and group completion. Completed send operations taking at least one
+second report their duration.
 Failures include the await stage, short chat ID and task ID; the same error is
 printed once, without JSON payloads, message text or full stacks.
+
+Startup loading also records paired `load` events through the existing plugin
+console. V1 covers the retained repository opener, each preference store, memory
+database opening, metadata migration, import completion, initialization and
+handle cleanup after a failure. V3
+covers UI domain/sidebar IPC submission and main-runtime request handling. Each
+boundary records `id`, `operation`, `phase=start|complete|error` and elapsed time
+on settlement. These events contain no card, chat or storage payloads. They
+observe the original await; they do not introduce deadlines, retries or change
+the retained initializer after a failure. File logs retain verbose events even
+when the default console only shows Info and above.
+
+When a startup hangs, preserve both `/operitapp/data/logs/toolpkg.log` and
+`/operitapp/data/logs/operit.log` (current runtime VFS paths) before restarting,
+together with app/package versions,
+platform and the exact loading surface. Compare starts with settlements for the
+same operation and ID. A pending `storage.open.*` or `storage.initialize` locates
+the initialization dependency. A client `ipc.*` start with no main handler start
+points to an earlier IPC/runtime boundary. A completed main handler with a
+pending client call points to return delivery; a completed client call with a
+loading UI requires the Compose/render logs. An outstanding boundary narrows
+the wait; it does not by itself establish a deadlock. Also distinguish reopening
+only the page from restarting the process: reopening a page normally reuses the
+main-runtime repository Promise, whereas a process restart recreates it.
+
+`node --test tests/startup-loading.test.mjs` pauses every actual storage-open
+boundary while lifecycle, domain and sidebar calls overlap. It checks one opener,
+pending-phase visibility, completion after release, and propagation of the same
+failure without an implicit reopen. The file/SQLite harness does not exercise
+native Rust thread scheduling, host locks or device IPC; passing it does not
+reproduce or rule out the reported device hang.

@@ -11,6 +11,7 @@ import type { ChatModelBinding } from "./api";
 import type { ChatConfigurationService } from "./domain";
 import { uiRequest } from "./ui-controls";
 import { createChatInput } from "./chat-lifecycle";
+import { traceCharacterLoad } from "./diagnostics";
 
 /** Describes every possible sender's model without choosing a group executor. */
 export interface ModelSelection { participants: { id: string; name: string; binding: ChatModelBinding; followsGlobal: boolean }[] }
@@ -98,7 +99,8 @@ export function parseDomainMessage(value: unknown): DomainMessage {
 /** Calls the same main-runtime owner rather than constructing a Compose-runtime repository. */
 export function callMainDomain<K extends DomainOperation>(operation: K, input: DomainInput<K>): Promise<DomainOutput<K>> {
   const checked = parseDomainPayload(operation, input);
-  return ToolPkg.ipc.call<DomainMessage<K>, DomainOutput<K>>("character-memory.domain", { operation, input: checked }, { targetRuntime: "main" });
+  return traceCharacterLoad(3, "ipc.domain." + operation,
+    () => ToolPkg.ipc.call<DomainMessage<K>, DomainOutput<K>>("character-memory.domain", { operation, input: checked }, { targetRuntime: "main" }));
 }
 
 /** Requires a nonblank generic identity without normalizing or inferring another chat. */

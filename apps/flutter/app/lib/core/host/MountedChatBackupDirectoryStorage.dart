@@ -28,7 +28,7 @@ class MountedChatBackupDirectoryStorage implements PersistentDirectoryStorage {
     return PersistentDirectory(path: path, label: source.name);
   }
 
-  /// Checks accessibility of the mounted directory.
+  /// Verifies listing and probe file writing, reading and deletion through VFS.
   @override
   Future<void> check(PersistentDirectory directory) async {
     await clients.servicesChatBackupDirectoryService.checkDirectory(

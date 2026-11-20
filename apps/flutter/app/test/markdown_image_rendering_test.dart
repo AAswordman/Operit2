@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
@@ -28,8 +29,126 @@ const _url =
     'data:image/png;base64,'
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAANSURBVBhXY2Bg+P8fAAMCAf/Jsq3uAAAAAElFTkSuQmCC';
 const _markdown = '![图片说明]($_url)';
+const _svg =
+    '<?xml version="1.0" encoding="UTF-8"?>\n'
+    '<!-- Markdown vector fixture -->\n'
+    '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100" '
+    'viewBox="0 0 200 100"><rect width="200" height="100" fill="#4488cc"/>'
+    '<text x="10" y="50">SVG 图片</text></svg>';
 
 void main() {
+  for (final source in [
+    './diagram.svg',
+    '/operitapp/outputs/diagram.SVG',
+    'core-other:/operitapp/outputs/diagram.svg',
+    'https://example.com/diagram.svg?version=2#figure',
+    'https://example.com/image/42',
+    Uri.dataFromString(
+      _svg,
+      mimeType: 'image/svg+xml',
+      encoding: utf8,
+    ).toString(),
+    Uri.dataFromString(
+      _svg,
+      mimeType: 'image/svg+xml',
+      encoding: utf8,
+      base64: true,
+    ).toString(),
+  ]) {
+    testWidgets(
+      'SVG Markdown renders and previews through its owner: $source',
+      (tester) async {
+        final bridge = _ImageBridge(
+          bytes: Uint8List.fromList(utf8.encode(_svg)),
+        );
+        final clients = GeneratedCoreProxyClients(bridge);
+
+        /// Changes layout while retaining the same image source and owner.
+        Future<void> render(double width) => tester.pumpWidget(
+          MaterialApp(
+            home: Scaffold(
+              body: Center(
+                child: SizedBox(
+                  width: width,
+                  child: MarkdownFileScope(
+                    basePath: '/operitapp/outputs',
+                    nodeId: null,
+                    clients: clients,
+                    child: MarkdownImageRenderer(
+                      imageMarkdown: '![矢量图]($source)',
+                      textColor: Colors.black,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        );
+
+        await render(400);
+        await _settleImages(tester);
+        expect(find.byType(SvgPicture), findsOneWidget);
+        expect(find.byType(Image), findsNothing);
+        expect(find.byType(CircularProgressIndicator), findsNothing);
+        expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+        final picture = tester.widget<SvgPicture>(find.byType(SvgPicture));
+        expect(picture.semanticsLabel, '矢量图');
+        final size = tester.getSize(find.byType(SvgPicture));
+        expect(size.width / size.height, closeTo(2, 0.01));
+        expect(size.height, lessThanOrEqualTo(140));
+        final readCount = source.startsWith('data:') ? 0 : 1;
+        expect(bridge.sources, hasLength(readCount));
+        if (readCount > 0) {
+          expect(
+            bridge.sources.single,
+            source == './diagram.svg'
+                ? '/operitapp/outputs/diagram.svg'
+                : source,
+          );
+        }
+        await render(280);
+        await _settleImages(tester);
+        expect(bridge.sources, hasLength(readCount));
+        expect(
+          tester.widget<SvgPicture>(find.byType(SvgPicture)).bytesLoader,
+          picture.bytesLoader,
+        );
+
+        await tester.tap(find.byType(SvgPicture));
+        await _settleImages(tester);
+        expect(find.byType(MarkdownImagePreview), findsOneWidget);
+        final previewImage = tester.widget<MarkdownRemoteImage>(
+          find.descendant(
+            of: find.byType(MarkdownImagePreview),
+            matching: find.byType(MarkdownRemoteImage),
+          ),
+        );
+        expect(previewImage.clients, same(clients));
+        expect(previewImage.decodeAtFullResolution, isTrue);
+        expect(
+          find.descendant(
+            of: find.byType(MarkdownImagePreview),
+            matching: find.byType(SvgPicture),
+          ),
+          findsOneWidget,
+        );
+        await tester.tap(find.byIcon(Icons.zoom_in));
+        await tester.pumpAndSettle();
+        expect(
+          tester
+              .widget<InteractiveViewer>(find.byType(InteractiveViewer))
+              .transformationController!
+              .value
+              .getMaxScaleOnAxis(),
+          closeTo(1.5, 0.001),
+        );
+        expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
   for (final live in [false, true]) {
     testWidgets('Core image blocks render with surrounding text, live=$live', (
       tester,
@@ -437,18 +556,30 @@ Future<void> _pumpBubble(
   await _settleImages(tester);
 }
 
+/// Waits for raster decoding and vector compilation before checking the frame.
 Future<void> _settleImages(WidgetTester tester) async {
   await tester.pumpAndSettle();
   for (final element in find.byType(Image).evaluate()) {
     final image = element.widget as Image;
     await tester.runAsync(() => precacheImage(image.image, element));
   }
+  for (final element in find.byType(SvgPicture).evaluate()) {
+    final image = element.widget as SvgPicture;
+    await tester.runAsync(() async {
+      final picture = await vg.loadPicture(image.bytesLoader, element);
+      picture.picture.dispose();
+    });
+  }
   await tester.pumpAndSettle();
 }
 
-/// Serves actual PNG bytes over both runtime contracts used by Markdown images.
+/// Serves image bytes over both runtime contracts used by Markdown images.
 class _ImageBridge extends OperitRuntimeBridge {
-  final bytes = UriData.parse(_url).contentAsBytes();
+  /// Serves the selected format over the same VFS and HTTP proxy contracts.
+  _ImageBridge({Uint8List? bytes})
+    : bytes = bytes ?? UriData.parse(_url).contentAsBytes();
+
+  final Uint8List bytes;
   final sources = <String>[];
 
   @override

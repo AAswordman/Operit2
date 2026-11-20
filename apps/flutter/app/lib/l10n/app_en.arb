@@ -2788,6 +2788,7 @@
   "chatBackupLater": "Set up later",
   "chatBackupChange": "Change backup directory",
   "chatBackupMissing": "The backup directory is not configured, no longer exists or cannot be accessed. Select a directory to enable daily chat backups.",
+  "chatBackupDirectoryUnavailable": "The selected folder cannot be used. Create a new directory inside an accessible folder, such as Documents or Downloads, and select that directory.",
   "chatBackupReady": "The backup directory is ready. Daily backups are checked at startup, on resume and while the app is running.",
   "chatBackupNow": "Back up chats now",
   "chatBackupNever": "No successful backup yet",

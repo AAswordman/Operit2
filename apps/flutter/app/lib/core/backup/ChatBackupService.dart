@@ -30,6 +30,7 @@ class ChatBackupService extends ChangeNotifier {
   bool _restoring = false;
   bool needsDirectory = false;
   bool promptDeferred = false;
+  bool directorySelectionFailed = false;
   String? error;
   DateTime? lastSuccess;
   PersistentDirectory? _directory;
@@ -92,6 +93,7 @@ class ChatBackupService extends ChangeNotifier {
     needsDirectory = false;
     promptDeferred = false;
     error = null;
+    directorySelectionFailed = false;
     notifyListeners();
     try {
       final now = DateTime.now();
@@ -155,11 +157,14 @@ class ChatBackupService extends ChangeNotifier {
   Future<bool> selectDirectory() async {
     if (_selecting || _restoring) return false;
     _selecting = true;
+    var validatingDirectory = false;
     try {
       await _active;
+      validatingDirectory = true;
       final selected = await _storage.select();
       if (selected == null) return false;
       await _storage.check(selected);
+      validatingDirectory = false;
       await RuntimeBootstrapManager.instance.saveChatBackupDirectory(
         jsonEncode({'path': selected.path, 'label': selected.label}),
       );
@@ -167,10 +172,12 @@ class ChatBackupService extends ChangeNotifier {
       needsDirectory = false;
       promptDeferred = false;
       error = null;
+      directorySelectionFailed = false;
       lastSuccess = null;
       notifyListeners();
       return true;
     } catch (failure, stack) {
+      directorySelectionFailed = validatingDirectory;
       _report(
         failure,
         stack,

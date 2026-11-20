@@ -672,7 +672,9 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
             Text(l10n.chatBackupNever),
           if (service.error != null)
             SelectableText(
-              service.error!,
+              service.directorySelectionFailed || service.needsDirectory
+                  ? l10n.chatBackupDirectoryUnavailable
+                  : service.error!,
               style: TextStyle(color: theme.colorScheme.error),
             ),
           const SizedBox(height: 12),

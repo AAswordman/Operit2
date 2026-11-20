@@ -1,6 +1,23 @@
-/** Compact send diagnostics; normal repository and UI reads stay silent. */
+/** Compact diagnostics without character, message or storage payloads. */
 export type DiagnosticFields = Record<string, string | number | boolean | null>;
 const reportedErrors = new WeakSet<object>();
+let loadSequence = 0;
+
+/** Records an outstanding load boundary and preserves its exact value or original rejection. */
+export async function traceCharacterLoad<T>(level: 1 | 3, operation: string, work: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now(), id = startedAt.toString(36) + ":" + (++loadSequence);
+  const label = "load id=" + id + " operation=" + operation;
+  console.verbose(level, "[character_cards] " + label + " phase=start");
+  try {
+    const result = await work();
+    console.verbose(level, "[character_cards] " + label + " phase=complete elapsedMs=" + (Date.now() - startedAt));
+    return result;
+  } catch (error) {
+    console.verbose(level, "[character_cards] " + label + " phase=error elapsedMs=" + (Date.now() - startedAt));
+    logCharacterFailure(label + " failed", {}, error, Date.now() - startedAt);
+    throw error;
+  }
+}
 
 /** Keeps just enough identity to correlate a send without dumping its payload. */
 export function logCharacterStatus(message: string, fields: DiagnosticFields, elapsedMs?: number): void {

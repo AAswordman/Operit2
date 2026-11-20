@@ -14,6 +14,7 @@ import { createSelectionApplication, readSelectionReferences, readThemeChoices, 
 import { independentConfigurations } from "./selection-settings";
 import { getRepository, recoverRepository } from "./repository-runtime";
 import type { InitializationRecoverySource } from "./storage/initialization";
+import { traceCharacterLoad } from "./diagnostics";
 export { connectDirectorySources } from "./repository-runtime";
 
 export interface CharacterCardsService extends ChatConfigurationService {
@@ -255,12 +256,12 @@ export async function recoverService(source: InitializationRecoverySource | null
 
 /** Dispatches a UI operation only after the retained initialization has succeeded. */
 export async function dispatch<R extends Request>(request: R): Promise<RequestOutput<R>> {
-  return (await getService()).dispatch(request);
+  return traceCharacterLoad(3, "main.request." + request.action, async () => (await getService()).dispatch(request));
 }
 
 /** Executes a typed domain method on the same initialized business service. */
 export async function dispatchDomain<K extends DomainOperation>(operation: K, input: DomainInput<K>): Promise<DomainOutput<K>> {
-  return (await getService()).dispatchDomain(operation, input);
+  return traceCharacterLoad(3, "main.domain." + operation, async () => (await getService()).dispatchDomain(operation, input));
 }
 
 /** Advances genuine memory jobs through the one retained main-runtime business service. */

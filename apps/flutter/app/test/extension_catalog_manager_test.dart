@@ -916,6 +916,59 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  testWidgets('MCP startup error stays visible until a successful retry', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    const detail =
+        'MCP start failed: mcp\n'
+        'Remote MCP HTTP request failed with status 401: Bad credentials';
+    final bridge = _CatalogBridge()..mcpStartupFailure = StateError(detail);
+    await tester.pumpWidget(
+      _manager(
+        bridge,
+        child: ExtensionDetailScreen(
+          kind: 'mcp',
+          id: 'mcp',
+          clients: GeneratedCoreProxyClients(bridge),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('启动'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('启动'));
+    await tester.pumpAndSettle();
+    // Let the transient message disappear before inspecting the detail page.
+    await tester.pump(const Duration(seconds: 6));
+    await tester.pumpAndSettle();
+    final scrollable = find.descendant(
+      of: find.byType(ExtensionDetailScreen),
+      matching: find.byWidgetPredicate(
+        (widget) =>
+            widget is Scrollable && widget.axisDirection == AxisDirection.down,
+      ),
+    ).first;
+    tester.state<ScrollableState>(scrollable).position.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.text('MCP 服务启动失败'), findsOneWidget);
+    expect(find.textContaining('Bad credentials'), findsOneWidget);
+    expect(bridge.mcpStartAttempts, 1);
+
+    bridge.mcpStartupFailure = null;
+    await tester.scrollUntilVisible(find.text('启动'), 500, scrollable: scrollable);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('启动'));
+    await tester.pumpAndSettle();
+    tester.state<ScrollableState>(scrollable).position.jumpTo(0);
+    await tester.pumpAndSettle();
+    expect(find.text('MCP 服务启动失败'), findsNothing);
+    expect(find.textContaining('Bad credentials'), findsNothing);
+    expect(bridge.mcpStartAttempts, 2);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('library groups every kind and regroups by status', (
     tester,
   ) async {
@@ -1362,6 +1415,8 @@ class _CatalogBridge extends OperitRuntimeBridge {
   int? failedMarketPage;
   final categories = <core_proxy.MarketCategoryInfo>[];
   bool enabled = false;
+  Object? mcpStartupFailure;
+  int mcpStartAttempts = 0;
   final imports = <String>[];
   final scopeMoves = <String>[];
   final scopeMoveRequests = <({String kind, String id, String scope})>[];
@@ -1422,6 +1477,19 @@ class _CatalogBridge extends OperitRuntimeBridge {
   @override
   Future<Object?> call(CoreCallRequest request) async {
     switch (request.methodName) {
+      case 'getAllMCPServers':
+        return <String, Object?>{
+          'mcp': <String, Object?>{'url': 'https://api.githubcopilot.com/mcp/'},
+        };
+      case 'getAllPluginMetadata':
+      case 'getAllServerStatus':
+        return <String, Object?>{};
+      case 'runCoreCommand':
+        expect((request.args as Map)['args'], <String>['mcp', 'start', 'mcp']);
+        mcpStartAttempts += 1;
+        final failure = mcpStartupFailure;
+        if (failure != null) throw failure;
+        return <String, Object?>{'stdout': 'MCP server started: mcp', 'stderr': ''};
       case 'readSkillContent':
         return '# Demo skill';
       case 'deleteSkill':

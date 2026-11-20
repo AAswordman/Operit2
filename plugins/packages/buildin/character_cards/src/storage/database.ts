@@ -48,6 +48,7 @@ import {
   requireId,
 } from "../validation";
 import { userDocumentPath } from "./state";
+import { traceCharacterLoad } from "../diagnostics";
 
 /** Requires the original Files operation result for actual user document writes. */
 function completed(result: { successful: boolean; details: string }): void {
@@ -112,11 +113,11 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
     const storage = await CharacterStorage.open();
     const repository = new DatabaseCharacterRepository(storage, directory, directories);
     try {
-      await initializeCharacterStorage(storage, directory);
-      await repository.readMetadata();
+      await traceCharacterLoad(1, "storage.initialize", () => initializeCharacterStorage(storage, directory));
+      await traceCharacterLoad(1, "storage.metadata.read", () => repository.readMetadata());
       return repository;
     } catch (error) {
-      try { await storage.close(); }
+      try { await traceCharacterLoad(1, "storage.close", () => storage.close()); }
       catch (cleanupError) { throw Object.assign(new Error("Character initialization and handle cleanup failed"), { cause: error, cleanupError }); }
       throw error;
     }

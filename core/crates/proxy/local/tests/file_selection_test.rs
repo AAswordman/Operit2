@@ -66,6 +66,9 @@ fn backup_directory_publication_and_missing_directory_checks() {
     }).to_string();
     let directory = fixture.service.mountDirectory(source).unwrap();
     fixture.backup.checkDirectory(directory.clone()).unwrap();
+    fixture.backup.checkDirectory(directory.clone()).unwrap();
+    assert_eq!(std::fs::read_dir(&selected).unwrap().count(), 1);
+    assert_eq!(std::fs::read_to_string(selected.join("unrelated.txt")).unwrap(), "keep");
     assert!(fixture.backup.checkDirectory(selected.to_string_lossy().into_owned()).is_err());
     let name = "operit-chats-source-2026-11-19-123.sqlite";
     std::fs::write(selected.join(name), b"incomplete database").unwrap();

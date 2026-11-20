@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import vm from "node:vm";
 import { installTestJavaScriptCompiler } from "../../../../../tools/tests/fixtures/production_bootstrap.mjs";
+import { runtimeConsole } from "./runtime.mjs";
 
 /** Reads an actual Rust-owned SDK script; the Node harness does not execute Rust or native hosts. */
 export function sdkScript(file) { return readSdkScript(file); }
@@ -24,7 +25,7 @@ function engineModuleHelpers() {
 
 /** Loads package JS through the SDK source compiler with real engine metadata tagging. */
 export function packageRuntime(modules, globals = {}, registrationOnly = false) {
-  const context = vm.createContext({ console, TextEncoder, TextDecoder, setTimeout, clearTimeout, ...globals });
+  const context = vm.createContext({ console: runtimeConsole, TextEncoder, TextDecoder, setTimeout, clearTimeout, ...globals });
   vm.runInContext(engineModuleHelpers(), context);
   // Built screen functions close over their defining realm, just like the real
   // engine. Supply the production runtime in that realm, not a second VM.

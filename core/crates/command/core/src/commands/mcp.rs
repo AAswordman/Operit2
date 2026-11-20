@@ -239,7 +239,17 @@ async fn start_mcp_server(
         statusItems.push(start_status_json(status));
     }
     if !started {
-        return Err(format!("MCP start failed: {id}"));
+        let errors = statuses
+            .iter()
+            .filter_map(|status| match status {
+                StartStatus::Error(message)
+                | StartStatus::TerminalServiceUnavailable(message)
+                | StartStatus::PnpmMissing(message) => Some(message.as_str()),
+                StartStatus::InProgress(_) | StartStatus::Success(_) => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        return Err(format!("MCP start failed: {id}\n{errors}"));
     }
     mcp_local_server(&context).updateServerStatus(
         id.to_string(),
