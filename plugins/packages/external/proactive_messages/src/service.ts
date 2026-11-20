@@ -16,12 +16,13 @@ function serial<T>(action: () => Promise<T>): Promise<T> {
   queue = result.catch(error => { console.error("[proactive messages]", errorText(error)); });
   return result;
 }
+/** Owns a mutable state copy while keeping the DataStore's immutable snapshot untouched. */
 async function open(): Promise<State> {
   if (storageFailure) throw storageFailure;
   if (state) return state;
   store = await Tools.Storage.dataStore.open({ path: `${ToolPkg.getLocalDataDir()}/proactive-messages.preferences.json` });
   const saved = (await store.data()).get<State>("state");
-  const loaded: State = saved === undefined ? { version: 1, generationVersion: 2, rules: [], jobs: [] } : validateState(saved);
+  const loaded: State = saved === undefined ? { version: 1, generationVersion: 2, rules: [], jobs: [] } : clone(validateState(saved));
   if (loaded.generationVersion !== 2) {
     // Retire every old text-only appointment before enabling contextual generation.
     for (const receipt of (await Tools.Chat.listScheduledMessages()).messages) {

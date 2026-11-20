@@ -55,6 +55,8 @@ iOS 在预约时将已生成内容提交系统本地通知，到点由系统展�
 
 插件的规则和准备记录通过 `Tools.Storage.dataStore` 保存。宿主的已接受预约单独保存在设备本地 `runtime/scheduled_chat_messages.json` 中，不要求插件运行时保持存活。插件不跨设备同步发送状态。
 
+`DataStore.data().get("state")` 返回深度只读快照。插件校验后复制为自己持有的可修改运行状态，再通过 `DataStore.edit` 显式保存。0.1.3 修复了旧版直接修改只读快照导致的重启、重新打开设置、旧数据升级和计划恢复报错；保留原有规则和预约 ID，无需清除插件数据。
+
 插件写入成功后才提交预约；宿主先原子保存预约身份，再调用系统。iOS 预约结果未知时保留身份，宿主在前台使用相同 ID 重试。撤销意图先持久化，失败可恢复。聊天文本提交使用真实数据库的完成消息，重试不会重复写入；通知失败在结果中单独记录。
 
 ## 构建与测试
@@ -62,8 +64,9 @@ iOS 在预约时将已生成内容提交系统本地通知，到点由系统展�
 该插件需要包含这些正式 SDK 和宿主实现的应用版本，不能单独安装到旧应用中。由仓库既有的 `plugins/tools/sync_plugin_packages.py` 编译和打包，无额外前端依赖。
 
 ```sh
-plugins/packages/buildin/workflow/node_modules/.bin/tsc --project plugins/packages/external/proactive_messages/tsconfig.json
+node plugins/packages/buildin/workflow/node_modules/typescript/bin/tsc --project plugins/packages/external/proactive_messages/tsconfig.json --noEmit
 node --test plugins/packages/external/proactive_messages/tests/*.test.mjs
+node --test core/crates/plugin/javascript-bridge/tests/storage-preferences.test.mjs
 node --test core/crates/plugin/javascript-bridge/tests/chat-prepared-delivery.test.mjs
 cargo test --manifest-path core/Cargo.toml -p operit-plugin-sdk prepared_delivery_tests
 cargo test --manifest-path core/Cargo.toml -p operit-runtime --test prepared_chat_delivery --features operit-host-native-scheduler/javascript
@@ -71,4 +74,6 @@ cargo check --manifest-path core/Cargo.toml -p operit-runtime --target aarch64-a
 cargo check --manifest-path core/Cargo.toml -p operit-runtime --target wasm32-unknown-unknown
 ```
 
-插件测试使用不提供任何平台查询的宿主模拟，验证相同调用链、概率与间隔、存储失败、预约响应丢失、前后台切换、撤销、重启和计划上限。SDK 测试验证实际生成绑定和错误传播；原生集成测试验证真实数据库、去重、预约持久化、隔离、恢复投递和撤销。iOS 实际通知展示、权限交互与点击跳转需真机验证。
+插件测试直接读取当前 TypeScript 源码，在内存中转译执行，无需预先生成 `dist`。存储使用生产 SDK 的 DataStore facade，保留深度只读快照和显式编辑语义；仅模拟宿主持久化和聊天预约。设置页测试运行实际 Compose 渲染、动作分发和 `withContext`，覆盖重启后的页面加载、编辑保存、删除及预约撤销。其他用例验证概率与间隔、存储失败、预约响应丢失、前后台切换、撤销、升级、重启和计划上限。
+
+SDK 测试验证实际生成绑定和错误传播；原生集成测试验证真实数据库、去重、预约持久化、隔离、恢复投递和撤销。iOS 实际通知展示、权限交互与点击跳转需真机验证。

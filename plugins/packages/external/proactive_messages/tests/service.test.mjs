@@ -5,26 +5,73 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { composeContextScript, wrapComposeScript } from '../../../../../tools/runtime/compose_scripts.mjs';
+import { composeStreamFixture } from '../../../../../tools/tests/support/compose_stream_fixture.mjs';
 const root = fileURLToPath(new URL('..', import.meta.url));
-const require = createRequire(import.meta.url);
-const model = require('../dist/model.js');
+const require = createRequire(new URL('../../../buildin/workflow/package.json', import.meta.url));
+const ts = require('typescript');
+const storageSource = readFileSync(new URL('../../../../../core/crates/plugin/sdk/src/js_sdk/storage_runtime.js', import.meta.url), 'utf8');
+const contextSource = readFileSync(new URL('../../../../../core/crates/plugin/javascript-bridge/src/javascript/RuntimeContext.script.js', import.meta.url), 'utf8');
+
+/** Evaluates current TypeScript sources without depending on an older dist directory. */
+function sourceLoader(context) {
+  const modules = new Map();
+  /** Loads each CommonJS module once inside its owning runtime realm. */
+  function load(filename) {
+    if (modules.has(filename)) return modules.get(filename).exports;
+    const module = { exports: {} }; modules.set(filename, module);
+    const source = ts.transpileModule(readFileSync(filename, 'utf8'), {
+      compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }, fileName: filename,
+    }).outputText;
+    const wrapper = vm.runInContext(`(function(exports, require, module) {${source}\n})`, context, { filename });
+    wrapper(module.exports, specifier => load(path.resolve(path.dirname(filename), specifier + '.ts')), module);
+    return module.exports;
+  }
+  return load;
+}
+const model = sourceLoader(vm.createContext({}))(path.join(root, 'src/model.ts'));
 
 /** No platform API exists in this mock: the production plugin must use only unified message scheduling. */
 function host() {
   let now = 1800000000000, saved, failStorage = false, failCancel = false, lostResponse = false, modelError = false, modelHook;
   const scheduled = new Map(), calls = [];
   const chats = [{ id: 'chat-1', title: '测试对话' }, { id: 'chat-2', title: '第二个对话' }];
-  function runtime() {
+  /** Boots an isolated plugin realm using the production DataStore facade. */
+  function boot() {
     class Clock extends Date { constructor(...args) { super(...(args.length ? args : [now])); } static now() { return now; } }
-    const modules = new Map();
-    const tools = {
-      Storage: { dataStore: { async open() { return {
-        async data() { return { get: () => saved === undefined ? undefined : structuredClone(saved) }; },
-        async edit(callback) {
+    const handles = new Map();
+    let handleSequence = 0;
+    /** Supplies native preference operations while the production SDK owns immutable snapshots and edits. */
+    async function storageRequest(request) {
+      const snapshot = () => ({ values: saved === undefined ? {} : { state: structuredClone(saved) }, schemaVersion: 0 });
+      if (request.op === 'open_preferences') {
+        const handle = String(++handleSequence); handles.set(handle, { edit: null });
+        return { op: 'open', handle, path: request.path };
+      }
+      const handle = handles.get(request.handle);
+      assert.ok(handle, 'Storage handle must belong to this runtime');
+      switch (request.op) {
+        case 'preferences_data': return { op: request.op, snapshot: snapshot() };
+        case 'preferences_begin_edit':
+          assert.equal(handle.edit, null);
+          handle.edit = String(++handleSequence);
+          return { op: request.op, edit: { token: handle.edit, snapshot: snapshot() } };
+        case 'preferences_cancel_edit':
+          assert.equal(request.token, handle.edit); handle.edit = null;
+          return { op: request.op };
+        case 'preferences_finish_edit':
+          assert.equal(request.token, handle.edit); handle.edit = null;
           if (failStorage) throw Error('disk failed');
-          let next = saved; callback({ set: (_, value) => { next = structuredClone(value); } }); saved = next;
-        },
-      }; } } },
+          for (const edit of request.edits) {
+            assert.equal(edit.op, 'set'); assert.equal(edit.key, 'state');
+            saved = structuredClone(edit.value);
+          }
+          return { op: request.op, snapshot: snapshot() };
+        default: assert.fail('Unexpected storage operation: ' + request.op);
+      }
+    }
+    const tools = {
+      Storage: { request: storageRequest },
       Chat: {
         async scheduleMessage(value) {
           calls.push(['schedule', structuredClone(value)]);
@@ -53,23 +100,58 @@ function host() {
       },
     };
     const context = vm.createContext({ Tools: tools, ToolPkg: { getLocalDataDir: () => '/device/plugin' }, Date: Clock, console: { error() {} } });
-    function load(filename) {
-      if (modules.has(filename)) return modules.get(filename).exports;
-      const module = { exports: {} }; modules.set(filename, module);
-      const wrapper = vm.runInContext(`(function(exports, require, module) {${readFileSync(filename, 'utf8')}\n})`, context, { filename });
-      wrapper(module.exports, specifier => load(path.resolve(path.dirname(filename), specifier + '.js')), module);
-      return module.exports;
-    }
-    return load(path.join(root, 'dist/service.js'));
+    vm.runInContext(storageSource + '\n__operitInstallStorageFacade();', context);
+    const load = sourceLoader(context);
+    return { context, load, service: load(path.join(root, 'src/service.ts')) };
   }
-  return { runtime, calls, scheduled, chats, state: () => structuredClone(saved), advance: delta => { now += delta; },
+  return { boot, runtime: () => boot().service, calls, scheduled, chats, state: () => structuredClone(saved), advance: delta => { now += delta; },
     storageFail: value => { failStorage = value; }, cancelFail: value => { failCancel = value; }, loseResponse: value => { lostResponse = value; },
     modelFail: value => { modelError = value; }, modelHook: value => { modelHook = value; }, seed: value => { saved = structuredClone(value); },
     complete() { for (const value of scheduled.values()) if (value.status === 'scheduled' && value.timestamp <= now) value.status = 'delivered'; },
   };
 }
+/** Creates a deterministic chat rule for scheduling and restart scenarios. */
 function rule(patch = {}) { return { ...model.defaultRule('chat-1', '测试对话'), enabled: true, intervalMinutes: 1, prepareCount: 2, probability: 100, ...patch }; }
 const count = (h, name) => h.calls.filter(call => call[0] === name).length;
+
+/** Collects the host-facing children and named slots of a rendered settings page. */
+function descendants(node) {
+  return [node, ...(node.children ?? []).flatMap(descendants), ...Object.values(node.slots ?? {}).flatMap(nodes => nodes.flatMap(descendants))];
+}
+
+/** Renders the actual settings page with main-runtime calls crossing the production context bridge. */
+async function screenDriver(h) {
+  const main = h.boot(), channels = new Map();
+  /** Installs the real runner serialization with an explicit in-process IPC transport. */
+  function bridge(context) {
+    context.ToolPkg.ipc = {
+      on(name, handler) { if (context === main.context) channels.set(name, handler); },
+      async call(name, request, options) {
+        assert.equal(options.targetRuntime, 'main');
+        assert.ok(channels.has(name));
+        const result = await channels.get(name)(structuredClone(request));
+        return result === undefined ? undefined : structuredClone(result);
+      },
+    };
+    vm.runInContext('globalThis.__operitExpose = (name, value) => { globalThis[name] = value; }; globalThis.__operitCompileJavaScript = source => new Function(source);', context);
+    vm.runInContext(contextSource + '\nRuntimeContext.__operitEnsureContextRunnerRegistered();', context);
+  }
+  bridge(main.context);
+  main.load(path.join(root, 'src/main.ts'));
+  const context = vm.createContext({ console, Date: main.context.Date, ToolPkg: {}, module: { exports: {} } });
+  bridge(context);
+  vm.runInContext(composeContextScript() + wrapComposeScript(), context);
+  context.module.exports = sourceLoader(context)(path.join(root, 'src/ui.ts'));
+  composeStreamFixture(context).adapt();
+  let frame = await context.__operit_render_compose_dsl({});
+  /** Dispatches only actions from the latest committed settings page. */
+  async function invoke(action, payload) {
+    assert.ok(action?.__actionId, 'Expected a settings action');
+    frame = await context.__operit_dispatch_compose_dsl_action({ actionId: action.__actionId, payload });
+  }
+  await invoke(frame.tree.props.onLoad);
+  return { invoke, find: predicate => descendants(frame.tree).find(predicate) };
+}
 
 test('zero probability never invokes AI or schedules a message; random intervals and probability are bounded', async () => {
   const h = host(), service = h.runtime(); await service.setForeground(true); await service.saveRule(rule({ probability: 0 }));
@@ -169,4 +251,56 @@ test('validation rejects invalid rules and corrupt persisted state', () => {
   assert.throws(() => model.validateRule(rule({ probability: 101 })));
   assert.throws(() => model.validateRule(rule({ intervalMinutes: 0 })));
   assert.throws(() => model.validateState({ version: 1, rules: [], jobs: [{ id: 'bad' }] }));
+});
+
+test('production DataStore snapshots stay deeply immutable while the service owns a detached mutable copy', async () => {
+  const h = host();
+  h.seed({ version: 1, generationVersion: 2, rules: [rule({ enabled: false })], jobs: [] });
+  const { context, service } = h.boot();
+  const store = await context.Tools.Storage.dataStore.open({ path: '/device/plugin/proactive-messages.preferences.json' });
+  const saved = (await store.data()).get('state');
+  assert.ok(Object.isFrozen(saved)); assert.ok(Object.isFrozen(saved.rules)); assert.ok(Object.isFrozen(saved.rules[0]));
+  await service.setForeground(true);
+  await service.saveRule(rule({ intervalMinutes: 2 }));
+  assert.equal(saved.rules[0].enabled, false); assert.equal(saved.jobs.length, 0);
+  assert.equal(h.state().rules[0].intervalMinutes, 2); assert.equal(h.scheduled.size, 2);
+  const snapshot = await service.snapshot();
+  snapshot.state.rules[0].prompt = 'Unsaved UI edit'; snapshot.state.jobs.length = 0;
+  assert.notEqual(h.state().rules[0].prompt, 'Unsaved UI edit'); assert.equal(h.state().jobs.length, 2);
+});
+
+test('restart recovers delivering records and continues from the accepted host receipt', async () => {
+  const h = host(), initial = h.runtime();
+  await initial.setForeground(true); await initial.saveRule(rule()); initial.stop();
+  const saved = h.state(); saved.jobs[0].status = 'delivering'; h.seed(saved);
+  const restarted = h.runtime(); await restarted.setForeground(true);
+  assert.ok(h.state().jobs.every(job => job.status === 'scheduled')); assert.equal(count(h, 'schedule'), 2);
+  await restarted.removeRule('chat-1');
+  assert.equal(h.state().rules.length, 0); assert.ok(h.state().jobs.every(job => job.status === 'cancelled'));
+});
+
+test('corrupt stored state is rejected without replacing rules or creating appointments', async () => {
+  const h = host(), saved = { version: 1, generationVersion: 2, rules: [rule({ probability: 101 })], jobs: [] };
+  h.seed(saved);
+  await assert.rejects(h.runtime().setForeground(true), /触发概率/);
+  assert.deepEqual(h.state(), saved); assert.equal(count(h, 'schedule'), 0);
+});
+
+test('settings reopen persisted rules, save edits and cancel appointments when deleting through the UI', async () => {
+  const h = host(), initial = h.runtime();
+  await initial.setForeground(true); await initial.saveRule(rule()); initial.stop();
+  const ui = await screenDriver(h);
+  assert.ok(ui.find(node => node.props.text === '下次发送'));
+  await ui.invoke(ui.find(node => node.props.key === 'rules').props.onClick);
+  await ui.invoke(ui.find(node => node.props.key === 'chat-1').props.onClick);
+  await ui.invoke(ui.find(node => node.props.label === '固定间隔（1～10080 分钟）').props.onValueChange, '2');
+  await ui.invoke(ui.find(node => node.props.text === '保存规则').props.onClick);
+  assert.equal(h.state().rules[0].intervalMinutes, 2);
+  assert.equal(h.state().jobs.filter(job => job.status === 'scheduled').length, 2);
+  assert.equal(count(h, 'cancel'), 2);
+  await ui.invoke(ui.find(node => node.props.key === 'chat-1').props.onClick);
+  await ui.invoke(ui.find(node => node.props.text === '删除规则').props.onClick);
+  await ui.invoke(ui.find(node => node.type === 'AlertDialog').props.onConfirm);
+  assert.equal(h.state().rules.length, 0); assert.ok(h.state().jobs.every(job => job.status === 'cancelled'));
+  assert.ok(ui.find(node => node.props.text === '还没有规则。返回首页添加第一个对话。'));
 });
