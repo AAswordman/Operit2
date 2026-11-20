@@ -84,6 +84,14 @@ jobs:
       FVM_VERSION: 4.3.0
     steps:
       - uses: actions/checkout@v4
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Prepare plugin build dependencies
+        run: |
+          corepack enable pnpm
+          npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
       - name: Install bootstrap Dart
         uses: dart-lang/setup-dart@v1
         with:
