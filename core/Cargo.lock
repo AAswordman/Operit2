@@ -2668,7 +2668,7 @@ dependencies = [
 
 [[package]]
 name = "operit-runtime"
-version = "2.0.0-preview.41"
+version = "2.0.0-preview.42"
 dependencies = [
  "aes",
  "async-trait",
