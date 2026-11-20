@@ -7,6 +7,7 @@ type WithoutChannel<T> = T extends unknown ? Omit<T, "channel"> : never;
 type ChannelRequest = WithoutChannel<RouteRequest>;
 export interface ChannelConfig {enabled:boolean;projectPath:string;parentChatId:string;conversationId:string;notifySince:number}
 interface Port {
+  connectorIssue(): Promise<string|null>;
   chats(): Promise<AvailableChat[]>;
   binding(chatId:string):Promise<Omit<ChatBinding,"chatId">|null>;
   workspace(chatId:string):Promise<string>;
@@ -18,7 +19,7 @@ interface Port {
 const states=new Set(["ready","connecting","stopped","error"]);
 /** Bot routing is authoritative. Maintenance only subscribes enabled software chats. */
 export class ChannelCoordinator {
-  private timer:number|null=null;
+  private dependencyCheck:Promise<string|null>|null=null;
   private readonly busy=new Map<Channel,Promise<void>>();
   private readonly reports=new Map<Channel,ChannelReport>();
   private readonly epochs={qq:0,wechat:0,feishu:0};
@@ -26,7 +27,16 @@ export class ChannelCoordinator {
   private readonly migrated=new Set<Channel>();
   private readonly knownBotChats=new Set<string>();
   constructor(private readonly port:Port){}
-  private bot<R extends ChannelRequest>(channel:Channel,payload:R):Promise<Responses[R["action"]]>{
+  /** Shares concurrent registry reads without retaining a stale enablement decision. */
+  private connectorIssue():Promise<string|null>{
+    if(this.dependencyCheck!==null)return this.dependencyCheck;
+    const check=this.port.connectorIssue();this.dependencyCheck=check;
+    void check.finally(()=>{if(this.dependencyCheck===check)this.dependencyCheck=null;}).catch(()=>{});
+    return check;
+  }
+  /** Rejects unavailable optional dependencies before entering native IPC dispatch. */
+  private async bot<R extends ChannelRequest>(channel:Channel,payload:R):Promise<Responses[R["action"]]>{
+    const issue=await this.connectorIssue();if(issue!==null)throw Error(issue);
     return request({ ...payload, channel } as RouteRequest) as Promise<Responses[R["action"]]>;
   }
   private async observe(channel:Channel):Promise<ChannelReport>{
@@ -45,8 +55,7 @@ export class ChannelCoordinator {
       this.reports.set(channel,report);return report;
     }catch(error){
       const previous=this.reports.get(channel), diagnostic=String(error instanceof Error?error.message:error);
-      const missingHub=/com\.operit\.connector_hub/i.test(diagnostic);
-      const report:ChannelReport={channel,availability:"unavailable",service:"unknown",enabled:previous?.enabled??false,sessions:previous?.sessions??[],lastError:missingHub?"请先安装并启用「外部连接器」。":diagnostic,observedAt:Date.now()};
+      const report:ChannelReport={channel,availability:"unavailable",service:"unknown",enabled:previous?.enabled??false,sessions:previous?.sessions??[],lastError:diagnostic,observedAt:Date.now()};
       this.reports.set(channel,report);return report;
     }
   }
@@ -133,6 +142,6 @@ export class ChannelCoordinator {
       return this.port.status({channel,parentChatId:session.chatId,projectPath,accountId:context.accountId,conversationId:context.conversationId,authorId:context.authorId});
     }return null;
   }
-  start():void{if(this.timer!==null)return;this.timer=setInterval(()=>void this.sync(),3000);void this.sync();}
-  stop():void{for(const channel of CHANNELS)this.epochs[channel]++;if(this.timer!==null)clearInterval(this.timer);this.timer=null;}
+  /** Fences in-flight deliveries when the service is stopped. */
+  stop():void{for(const channel of CHANNELS)this.epochs[channel]++;}
 }

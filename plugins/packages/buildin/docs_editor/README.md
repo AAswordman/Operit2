@@ -1,5 +1,7 @@
 # Office documents
 
+This built-in plugin is packaged from `plugins/packages/buildin/docs_editor` and is disabled by default.
+
 Enable Office documents in the current space and open a `.docx`, `.pptx` or `.pdf` in the workspace. The `office` tool subpackage is enabled by default when the plugin is enabled. Use the fixed three-dot button at the right of a file tab, or right-click the tab, to choose **Open with** and switch between Office and the built-in preview. Office edits the file in the tab, and saves back to the original workspace path. Working copies are limited to 128 MiB. Reading failures report their actual cause separately from size-limit errors.
 
 Save, quote selection, and save status share the editor's toolbar. The plugin does not add a separate filename header above it; the workspace file tab identifies the document.

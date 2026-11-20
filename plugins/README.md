@@ -27,6 +27,8 @@ are displayed as API `1.0.0`.
 
 `packages/external/image_workbench/` provides the optional official Image Workbench, available from "more plugins" and disabled by default. It owns the unified image-generation tools and six internal provider adapters.
 
+`packages/buildin/docs_editor/` provides the built-in Office documents editor for DOCX, PPTX and PDF. It is disabled by default and can be enabled in the current space.
+
 `packages/buildin/`, `packages/external/`, and `packages/examples/` use the same source layout. The difference is packaging: `buildin` is loaded as current built-in plugins, `external` is bundled as optional official plugins, while `examples` is kept for development samples.
 
 Bundled Skill sources may include `skill.include.json`. The runtime build script resolves each declared source into the final bundled Skill tree, so shared resources such as `types/` and docs can stay in their canonical locations. PackageBuilder provides VFS entry paths for browsing installed plugins on demand instead of bundling package examples or indexing their archive members.

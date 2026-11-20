@@ -54,7 +54,7 @@ for (const asset of JSON.parse(entries['manifest.json']).resources) {
 }
 const archive = zipSync(entries, { level: 6, mtime: new Date(1980, 0, 1) });
 await writeFile(join(dist, 'docs_editor.toolpkg'), archive);
-const destination = resolve(root, '../../../../core/crates/runtime/application/assets/plugins/external/docs_editor.toolpkg');
+const destination = resolve(root, '../../../../core/crates/runtime/application/assets/plugins/buildin/docs_editor.toolpkg');
 await mkdir(resolve(destination, '..'), { recursive: true });
 await writeFile(destination, archive);
 console.log(`Packed Office documents (${archive.length} bytes)`);

@@ -7,7 +7,7 @@ const message={key:'source',channel:'qq',accountId:'bot',messageId:'m',conversat
 const session={key:'canonical-key',channel:'qq',accountId:'bot',scene:'group',conversationId:'group',title:'QQ group',chatId:'parent',contextChatIds:['member-chat'],lastMessageAt:100};
 function fixture(){
  const storage=objectStorage(),calls=[],events=[],bindings=new Map([['parent',{projectPath:'/game',since:1}]]);
- let workspace='/game',failStatus=false,failCapture=false,peekGate,noticesGate,pending=true,source=message;
+ let workspace='/game',failStatus=false,failCapture=false,peekGate,noticesGate,pending=true,source=message,connectorIssue=null;
  globalThis.Tools={Storage:{objects:storage}};
  globalThis.ToolPkg={getLocalDataDir:()=>'/test-local',async callDependency(provider,method,payload){
   calls.push({provider,method,payload});if(payload.channel!=='qq')throw Error('Bot not installed');
@@ -24,6 +24,7 @@ function fixture(){
   }
  }};
  const coordinator=new ChannelCoordinator({
+  async connectorIssue(){return connectorIssue;},
   async chats(){return [{id:'parent',title:'真实 Bot 聊天',workspaceId:workspace?'w':null,workspacePath:workspace}];},
   async binding(id){return bindings.get(id)??null;},
   async workspace(){if(!workspace)throw Error('聊天尚未绑定工作区');return workspace;},
@@ -32,8 +33,22 @@ function fixture(){
   async notices(){if(noticesGate)await noticesGate;return [{eventId:'n',messageKey:'source',text:'done'}];},
   async status(scope){return {scope};},
  });
- return {coordinator,calls,events,bindings,workspace(value){workspace=value;},failStatus(value){failStatus=value;},failCapture(value){failCapture=value;},gate(value){peekGate=value;},noticeGate(value){noticesGate=value;},message(value){source=value;}};
+ return {coordinator,calls,events,bindings,connectorIssue(value){connectorIssue=value;},workspace(value){workspace=value;},failStatus(value){failStatus=value;},failCapture(value){failCapture=value;},gate(value){peekGate=value;},noticeGate(value){noticesGate=value;},message(value){source=value;}};
 }
+test('absent or disabled optional connectors never enter IPC and enablement is observed on the next tick',async()=>{
+ const f=fixture();
+ for(const issue of ['请先安装并启用「外部连接器」。','请先启用「外部连接器」。']){
+  f.connectorIssue(issue);await f.coordinator.sync();
+  assert.equal(await f.coordinator.isBotChat('unrelated'),false);
+  assert.equal(await f.coordinator.conversationStatus('unrelated'),null);
+  await assert.rejects(f.coordinator.prepare('qq',session.key),{message:issue});
+  const reports=await f.coordinator.status();
+  assert.ok(reports.every(report=>report.availability==='unavailable'&&report.lastError===issue));
+ }
+ assert.equal(f.calls.length,0);f.connectorIssue(null);
+ await f.coordinator.tick('qq');assert.deepEqual(f.events,['capture','ack','reply']);
+ f.calls.length=0;f.connectorIssue('请先启用「外部连接器」。');await f.coordinator.sync();assert.equal(f.calls.length,0);
+});
 test('maintenance derives routing from Bot and subscribes without rewriting global capture',async()=>{
  const f=fixture();await f.coordinator.tick('qq');assert.deepEqual(f.events,['capture','ack','reply']);
  assert.ok(f.calls.every(c=>c.provider==='com.operit.connector_hub'&&c.method==='connectors.v1'));

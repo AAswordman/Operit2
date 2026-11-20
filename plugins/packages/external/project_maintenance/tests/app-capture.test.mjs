@@ -7,6 +7,7 @@ const storage = objectStorage();
 let handler, hook;
 const workspacePaths = new Map([['feedback','/game'],['panel-chat','/game-panel'],['resume-chat','/game-resume'],['status-summary','/status-game']]);
 globalThis.Tools = {Storage:{objects:storage}, SoftwareSettings:{async exec(args){
+ if(args[1]==='plugin'&&args[2]==='list')return '[]';
  if(args[1]==='chat'&&args[2]==='list')return JSON.stringify([...workspacePaths].map(([id,path])=>({id,title:id,workspaceId:'ws-'+id,workspacePrimaryPath:path})));
  if(args[1]==='workspace'&&args[2]==='exec')return JSON.stringify({exitCode:0,stdout:args[3]+'\n\n'});
  throw Error('Unexpected command '+JSON.stringify(args));
@@ -16,9 +17,9 @@ globalThis.CryptoJS = {binary:{randomHex:()=>String(++nextRandom).padStart(32,"0
 globalThis.ToolPkg = {
  getSpaceDataDir:()=>'/app-test', ipc:{on(_channel,fn){handler=fn;},async call(_channel,request){return handler(request);}},
  registerChatMessageHook(def){hook=def.function;}, registerPromptFinalizeHook(){}, registerApi(){},registerUiRoute(){},registerNavigationEntry(){},
+ registerAppLifecycleHook(){},registerHostEventHook(){},
 };
-const originalTimer=globalThis.setInterval; globalThis.setInterval=()=>1;
-const main=require('../dist/main.js'); main.registerToolPkg(); globalThis.setInterval=originalTimer;
+const main=require('../dist/main.js'); main.registerToolPkg();
 const {Repository}=require('../dist/storage.js');
 const {CaptureCoordinator}=require('../dist/capture.js');
 const {MaintenanceEngine}=require('../dist/engine.js');

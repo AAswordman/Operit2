@@ -11,6 +11,7 @@ import { Repository } from "./storage.js";
 import { GitVerifier } from "./git-verifier.js";
 import { inspect } from "./inspection.js";
 import { prepareRetry } from "./retry-check.js";
+import { connectorIssue } from "./connectors.js";
 
 interface AgentsResponse { timed_out: boolean; agents: Agent[] }
 const workers: Workers = {
@@ -60,13 +61,11 @@ const engine = new MaintenanceEngine(repository, workers, {
   git: new GitVerifier(command => Tools.System.terminal.hiddenExec(command, {executorKey: "project-maintenance-git", timeoutMs: 15000})),
 });
 const capture = new CaptureCoordinator(repository, engine, () => Date.now(), error => console.error("[project_maintenance.capture]", error));
-const channels = new ChannelCoordinator({chats:workspaceChats,binding:chatId=>repository.chatBinding(chatId),
+const channels = new ChannelCoordinator({connectorIssue,chats:workspaceChats,binding:chatId=>repository.chatBinding(chatId),
   resetBinding:(chatId,path)=>repository.bindChat(chatId,path,Date.now()),workspace: chatWorkspace, capture: (parentChatId, projectPath, message) => capture.capture(parentChatId, projectPath, message),
   notices: (channel, config) => repository.channelNotifications(channel, config.parentChatId, config.projectPath, config.conversationId, config.notifySince),
   status: scope => receive({action: "channel_status", ...scope})});
 const recovery = new AppRecovery(repository, capture, error => console.error("[project_maintenance.app_recovery]", error), chatWorkspace, chatId=>channels.isBotChat(chatId));
-let timer: number | null = null;
-let recoveryTimer: number | null = null;
 export async function receive(request: Request): Promise<Responses[Request["action"]]> {
   if (request === null || typeof request !== "object") throw new Error("Invalid maintenance request");
   switch (request.action) {
@@ -153,17 +152,19 @@ function verifiedPullRequest(ticket: Ticket): string | null {
     return pr && pr.state === "OPEN" && typeof pr.url === "string" ? pr.url : null;
   } catch { return null; }
 }
-export function registerService(): void {
-  channels.start();
+/** Declares IPC without opening storage or starting work during module evaluation. */
+export function registerRequestChannel(): void {
   ToolPkg.ipc.on<Request, unknown>(CHANNEL, receive);
-  if (timer === null) {
-    const run = () => { void capture.tick().catch(error => console.error("[project_maintenance.capture]", error)); };
-    timer = setInterval(run, 3000); run();
-  }
-  if (recoveryTimer === null) {
-    const run = () => { void recovery.run().catch(error => console.error("[project_maintenance.app_recovery]", error)); };
-    recoveryTimer = setInterval(run, 30000); run();
-  }
+}
+
+/** Runs collection in the authenticated main runtime selected by the host event dispatcher. */
+export async function tickService(): Promise<void> {
+  await Promise.all([channels.sync(), capture.tick().catch(error => console.error("[project_maintenance.capture]", error))]);
+}
+
+/** Replays persisted feedback from an authenticated host lifecycle or interval callback. */
+export async function recoverService(): Promise<void> {
+  await recovery.run().catch(error => console.error("[project_maintenance.app_recovery]", error));
 }
 
 export function channelConversationStatus(chatId: string): Promise<unknown | null> { return channels.conversationStatus(chatId); }
