@@ -12,7 +12,7 @@ class ChatScrollRailGeometry {
        assert(viewportHeight > 0 && viewportHeight < double.infinity);
 
   static const double tickSpacing = 16;
-  static const double interactionWidth = 48;
+  static const double interactionWidth = 32;
   static const double rightInset = 8;
   static const double maximumTickWidth = 18;
   // Reach full width before the pointer touches the longest tick's left edge.

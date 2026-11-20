@@ -473,7 +473,7 @@ void main() {
         const ValueKey<String>('chat-scroll-rail-hit-target'),
       );
       final rect = tester.getRect(target);
-      expect(tester.getSize(target).width, greaterThanOrEqualTo(44));
+      expect(tester.getSize(target).width, 32);
       expect(
         find.byKey(const ValueKey<String>('chat-scroll-rail-paint')),
         findsOneWidget,
@@ -492,7 +492,7 @@ void main() {
     },
   );
 
-  testWidgets('the rail only captures the rightmost 48 pixels', (tester) async {
+  testWidgets('the rail only captures the rightmost 32 pixels', (tester) async {
     final transcript = ScrollController();
     addTearDown(transcript.dispose);
     final jumps = <int>[];
@@ -509,14 +509,14 @@ void main() {
       find.byKey(const ValueKey('chat-scroll-rail-hit-target')),
     );
     await tester.dragFrom(
-      Offset(rect.right - 52, rect.center.dy),
+      Offset(rect.right - 36, rect.center.dy),
       const Offset(0, -60),
     );
     await tester.pumpAndSettle();
     expect(transcript.offset, greaterThan(200));
     expect(underlyingDowns, 1);
     expect(jumps, isEmpty);
-    expect(rect.width, 48);
+    expect(rect.width, 32);
   });
 
   testWidgets('moving immediately selects and release jumps without a hold', (
