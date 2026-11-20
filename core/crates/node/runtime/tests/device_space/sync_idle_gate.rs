@@ -201,7 +201,7 @@ pub(super) fn installControlSyncTestApplication(router: &mut CoreNodeRouter) {
         control,
         storage: router.localCore.runtimeStorageHost(),
         pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-        consistencyVersion: Some(8),
+        consistencyVersion: Some(9),
     }));
 }
 
@@ -230,7 +230,7 @@ fn gateMesh(
                 control,
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: pendingFailure.clone(),
-                consistencyVersion: Some(8),
+                consistencyVersion: Some(9),
             }));
         } else {
             installControlSyncTestApplication(router);
@@ -557,7 +557,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
                 control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(8),
+                consistencyVersion: Some(9),
             }
             .gateClock()
             .unwrap()
@@ -619,7 +619,7 @@ async fn preference_edits_reopen_a_settled_storage_provider_gate() {
                 control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
                 pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)),
-                consistencyVersion: Some(8),
+                consistencyVersion: Some(9),
             }
             .gateClock()
             .unwrap(),
@@ -858,7 +858,7 @@ async fn snapshot_changes_finish_in_the_same_pass_and_storage_errors_do_not_retr
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(8) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(9) },
                 snapshot: snapshots[index].clone(), fault, reports: std::sync::atomic::AtomicUsize::new(0),
                 authority: Arc::new(StdMutex::new(snapshots[usize::from(fault == "larger-older")].lock().unwrap().clone())), faultPending: std::sync::atomic::AtomicBool::new(true),
             }));
@@ -916,7 +916,7 @@ async fn metadata_differences_and_new_incremental_writes_never_start_a_full_tran
             router.installTestApplicationClient(Arc::new(CorrectionRaceApplication {
                 inner: GateTestApplicationClient { control: router.networkControlStore.clone(),
                 storage: router.localCore.runtimeStorageHost(),
-                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(8) },
+                    pendingFailure: Arc::new(std::sync::atomic::AtomicBool::new(false)), consistencyVersion: Some(9) },
                 snapshot: snapshots[index].clone(),
                 fault: if scenario == "new-write" { "new-write" } else { "" },
                 reports: std::sync::atomic::AtomicUsize::new(0),

@@ -28,7 +28,7 @@ class MountedChatBackupDirectoryStorage implements PersistentDirectoryStorage {
     return PersistentDirectory(path: path, label: source.name);
   }
 
-  /// Verifies the saved capability and an actual write/read/delete round trip.
+  /// Checks accessibility of the mounted directory.
   @override
   Future<void> check(PersistentDirectory directory) async {
     await clients.servicesChatBackupDirectoryService.checkDirectory(
@@ -36,9 +36,9 @@ class MountedChatBackupDirectoryStorage implements PersistentDirectoryStorage {
     );
   }
 
-  /// Publishes through the runtime's verified temporary-file protocol.
+  /// Copies the database through the runtime's filesystem Host.
   @override
-  Future<ChatBackupSnapshot?> create(
+  Future<ChatBackupSnapshot> create(
     PersistentDirectory directory,
     String name,
   ) => clients.servicesChatBackupDirectoryService.createBackup(
@@ -52,17 +52,7 @@ class MountedChatBackupDirectoryStorage implements PersistentDirectoryStorage {
       .servicesChatBackupDirectoryService
       .listBackups(directory: directory.path);
 
-  /// Reads a previous archive for integrity verification.
-  @override
-  Future<ChatBackupSnapshot> inspect(
-    PersistentDirectory directory,
-    String name,
-  ) => clients.servicesChatBackupDirectoryService.inspectBackup(
-    directory: directory.path,
-    name: name,
-  );
-
-  /// Applies the snapshot inside Core without replacing open database files in Flutter.
+  /// Copies the selected backup over the closed database inside Core.
   @override
   Future<ChatBackupSnapshot> restore(
     PersistentDirectory directory,

@@ -5,18 +5,16 @@ import 'package:flutter/material.dart';
 import '../../core/backup/ChatBackupService.dart';
 import '../../l10n/generated/app_localizations.dart';
 
-/// Shares directory selection and status across onboarding, repair and data settings.
+/// Shares directory selection and status across onboarding and repair.
 class ChatBackupDirectoryPanel extends StatefulWidget {
-  /// Accepts the process owner and optionally exposes the manual backup action.
+  /// Reports setup or deferral of the scheduled backup directory.
   const ChatBackupDirectoryPanel({
     super.key,
     this.service,
-    this.showBackupAction = false,
     this.onSelected,
     this.onDeferred,
   });
   final ChatBackupService? service;
-  final bool showBackupAction;
   final VoidCallback? onSelected;
   final VoidCallback? onDeferred;
 
@@ -31,7 +29,7 @@ class _ChatBackupDirectoryPanelState extends State<ChatBackupDirectoryPanel> {
   ChatBackupService get _service =>
       widget.service ?? ChatBackupService.instance;
 
-  /// Revalidates a stored directory whenever onboarding or settings opens this panel.
+  /// Revalidates a stored directory when onboarding or repair opens this panel.
   @override
   void initState() {
     super.initState();
@@ -48,16 +46,6 @@ class _ChatBackupDirectoryPanelState extends State<ChatBackupDirectoryPanel> {
         widget.onSelected?.call();
         unawaited(_service.checkAndBackup());
       }
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  /// Forces a separate manual chat export while sharing daily backup serialization.
-  Future<void> _backup() async {
-    setState(() => _busy = true);
-    try {
-      await _service.checkAndBackup(force: true);
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -114,15 +102,6 @@ class _ChatBackupDirectoryPanelState extends State<ChatBackupDirectoryPanel> {
                       : l10n.chatBackupChange,
                 ),
               ),
-              if (widget.showBackupAction)
-                OutlinedButton.icon(
-                  onPressed:
-                      _busy || selected == null || _service.needsDirectory
-                      ? null
-                      : _backup,
-                  icon: const Icon(Icons.backup_outlined),
-                  label: Text(l10n.chatBackupNow),
-                ),
               if (widget.onDeferred != null)
                 TextButton(
                   onPressed: _busy
@@ -135,16 +114,6 @@ class _ChatBackupDirectoryPanelState extends State<ChatBackupDirectoryPanel> {
                 ),
             ],
           ),
-          if (widget.showBackupAction) ...[
-            const SizedBox(height: 12),
-            Text(
-              _service.lastSuccess == null
-                  ? l10n.chatBackupNever
-                  : l10n.chatBackupLastSuccess(
-                      _service.lastSuccess!.toLocal().toString(),
-                    ),
-            ),
-          ],
         ],
       );
     },

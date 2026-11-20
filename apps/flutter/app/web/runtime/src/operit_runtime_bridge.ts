@@ -4282,11 +4282,6 @@ self.onmessage = (event) => {
         sqliteConnection(id).db.close();
         sqliteConnections.delete(id);
       },
-      /** Publishes a standalone SQLite image without translating tables or records. */
-      snapshotDatabase(id: string, destination: string): void {
-        if (storageHasFile(runtimePrefix, destination)) throw new Error("SQLite snapshot destination already exists");
-        storageWrite(runtimePrefix, destination, exportSqliteDatabase(sqliteConnection(id)));
-      },
       open(path: string): string {
         if (!SQLite) {
           throw new Error("sqlite host is not initialized");

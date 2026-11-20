@@ -259,7 +259,17 @@ export namespace Chat {
   }
 
   /**
-   * Schedules prepared assistant text; the host owns persistence, delivery, notifications and resume recovery.
+   * Requests a proactive reply from the target conversation's actual execution profile.
+   */
+  export interface ScheduledGeneration {
+    /**
+     * Supplies instructions for a proactive reply using the target conversation's resolved participant and context.
+     */
+    instruction: string;
+  }
+
+  /**
+   * Schedules supplied text or asks the host to prepare a contextual assistant reply.
    */
   export interface ScheduledMessageRequest {
     /**
@@ -269,6 +279,10 @@ export namespace Chat {
     chatId: string;
     title: string;
     text: string;
+    /**
+     * Requires empty text. The host saves the actual author, model usage and generation timing with the prepared reply.
+     */
+    generation?: ScheduledGeneration;
     /**
      * Absolute Unix milliseconds, from one second to 30 days ahead.
      */

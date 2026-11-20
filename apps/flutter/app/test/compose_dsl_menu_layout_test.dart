@@ -10,8 +10,9 @@ import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dar
 Future<void> mountMenu(
   WidgetTester tester,
   Map<String, Object?> tree,
-  List<(String, Object?)> actions,
-) async {
+  List<(String, Object?)> actions, {
+  ValueChanged<String>? onAction,
+}) async {
   await tester.pumpWidget(
     MaterialApp(
       home: Scaffold(
@@ -23,6 +24,7 @@ Future<void> mountMenu(
             executionContextKey: 'menu-regression',
             dispatchAction: (id, [payload]) async {
               actions.add((id, payload));
+              onAction?.call(id);
               return null;
             },
             runtimeOptionsProvider: () => {},
@@ -37,8 +39,159 @@ Future<void> mountMenu(
   expect(tester.takeException(), isNull);
 }
 
+/// Reproduces the market plugin's own button and separately controlled popup.
+Map<String, Object?> controlledMenu(bool expanded) => {
+  'type': 'LazyColumn',
+  'props': {'padding': 16},
+  'children': [
+    {
+      'type': 'Box',
+      'props': {'fillMaxWidth': true},
+      'children': [
+        {
+          'type': 'OutlinedButton',
+          'props': {
+            'text': '全局默认',
+            'fillMaxWidth': true,
+            'onClick': {'__actionId': 'toggle'},
+          },
+        },
+        {
+          'type': 'DropdownMenu',
+          'props': {
+            'expanded': expanded,
+            'onDismissRequest': {'__actionId': 'dismiss'},
+            'properties': {'focusable': true},
+          },
+          'children': [
+            for (var index = 0; index < 30; index++)
+              {
+                'type': 'Box',
+                'props': {
+                  'fillMaxWidth': true,
+                  'modifier': {
+                    '__modifierOps': [
+                      {
+                        'name': 'clickable',
+                        'args': [
+                          {'__actionId': 'choose-$index'},
+                        ],
+                      },
+                      {
+                        'name': 'padding',
+                        'args': [16, 12],
+                      },
+                    ],
+                  },
+                },
+                'children': [
+                  {
+                    'type': 'Text',
+                    'props': {'text': '角色 $index'},
+                  },
+                ],
+              },
+          ],
+        },
+      ],
+    },
+    {
+      'type': 'Text',
+      'props': {'text': '表情包路径'},
+    },
+  ],
+};
+
 /// Covers intrinsic measurement used by Material popup menus and unbounded rows.
 void main() {
+  testWidgets('controlled dropdown uses only the plugin trigger', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 640));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final actions = <(String, Object?)>[];
+    var expanded = false;
+
+    /// Applies the plugin's toggle, selection, and dismissal state transitions.
+    Future<void> render() => mountMenu(
+      tester,
+      controlledMenu(expanded),
+      actions,
+      onAction: (id) => expanded = id == 'toggle',
+    );
+
+    await render();
+    final trigger = find.byType(OutlinedButton);
+    final nextSection = find.text('表情包路径');
+    final triggerBounds = tester.getRect(trigger);
+    final sectionPosition = tester.getTopLeft(nextSection);
+    expect(find.byType(InputDecorator), findsNothing);
+    expect(find.text('角色 0'), findsNothing);
+
+    await tester.tap(trigger);
+    expect(actions.single.$1, 'toggle');
+    await render();
+    expect(tester.getRect(trigger), triggerBounds);
+    expect(tester.getTopLeft(nextSection), sectionPosition);
+    expect(find.byType(InputDecorator), findsNothing);
+    final menuBounds = tester.getRect(find.byType(SingleChildScrollView));
+    expect(menuBounds.left, triggerBounds.left);
+    expect(menuBounds.width, triggerBounds.width);
+    expect(menuBounds.top, greaterThan(triggerBounds.bottom));
+    expect(menuBounds.bottom, lessThanOrEqualTo(640));
+
+    await tester.drag(
+      find.byType(SingleChildScrollView),
+      const Offset(0, -500),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('角色 17'));
+    expect(actions.last.$1, 'choose-17');
+    await render();
+    expect(find.byType(SingleChildScrollView), findsNothing);
+
+    await tester.tap(trigger);
+    await render();
+    await tester.tapAt(const Offset(8, 200));
+    expect(actions.last.$1, 'dismiss');
+    await render();
+
+    await tester.tap(trigger);
+    await render();
+    await tester.binding.handlePopRoute();
+    expect(actions.last.$1, 'dismiss');
+    await render();
+    expect(trigger, findsOneWidget);
+    expect(find.text('角色 0'), findsNothing);
+  });
+
+  testWidgets(
+    'indexed dropdown keeps its own trigger and dispatches a choice',
+    (tester) async {
+      final actions = <(String, Object?)>[];
+      await mountMenu(tester, {
+        'type': 'DropdownMenu',
+        'props': {
+          'label': 'Profile',
+          'text': 'Global',
+          'onClick': {'__actionId': 'select'},
+        },
+        'children': [
+          {
+            'type': 'Text',
+            'props': {'text': 'Character'},
+          },
+        ],
+      }, actions);
+      expect(find.byType(InputDecorator), findsOneWidget);
+      await tester.tap(find.text('Global'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Character'));
+      await tester.pumpAndSettle();
+      expect(actions, [('select', 0)]);
+    },
+  );
+
   final workspace = Map<String, Object?>.from(
     (jsonDecode(
               File(

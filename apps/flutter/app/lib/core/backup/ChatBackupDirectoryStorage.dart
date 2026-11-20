@@ -16,25 +16,16 @@ abstract class PersistentDirectoryStorage {
   /// Selects a directory, returning null when the user cancels.
   Future<PersistentDirectory?> select();
 
-  /// Verifies that the original directory still exists and permits read/write access.
+  /// Checks that the selected directory remains accessible.
   Future<void> check(PersistentDirectory directory);
 
-  /// Captures and verifies a physical SQLite snapshot without transferring chat records to Flutter.
-  Future<ChatBackupSnapshot?> create(
-    PersistentDirectory directory,
-    String name,
-  );
+  /// Copies the complete database file to the selected folder.
+  Future<ChatBackupSnapshot> create(PersistentDirectory directory, String name);
 
   /// Lists direct regular filenames without including subdirectories.
   Future<List<String>> list(PersistentDirectory directory);
 
-  /// Checks SQLite integrity and returns only the snapshot's lightweight metadata.
-  Future<ChatBackupSnapshot> inspect(
-    PersistentDirectory directory,
-    String name,
-  );
-
-  /// Restores chat tables atomically from one verified physical database snapshot.
+  /// Copies the selected file over the application database.
   Future<ChatBackupSnapshot> restore(
     PersistentDirectory directory,
     String name,

@@ -2,10 +2,10 @@
 //! Repository metadata and LFS SHA-256 values checked on 2026-11-01.
 //! Quantized repositories may be maintained by the authors or community publishers.
 
+use crate::LocalEngineCatalog::LocalEngineCatalog;
 use crate::LocalModelManifest::{
-    LocalEngineKind, LocalEngineRequirement, LocalModelDriver, LocalModelFile,
-    LocalModelInstallSource, LocalModelKind, LocalModelManifest, LocalModelSource,
-    LocalModelSourceKind,
+    LocalEngineKind, LocalModelDriver, LocalModelFile, LocalModelInstallSource,
+    LocalModelKind, LocalModelManifest, LocalModelSource, LocalModelSourceKind,
 };
 
 struct GgufChatModel {
@@ -43,10 +43,7 @@ pub(crate) fn chatManifests() -> Vec<LocalModelManifest> {
                     .chain(entry.tags.iter().copied())
                     .map(str::to_string)
                     .collect(),
-                engineRequirement: Some(LocalEngineRequirement {
-                    engineId: "llama-cpp".to_string(),
-                    version: "b11829".to_string(),
-                }),
+                engineRequirement: Some(LocalEngineCatalog::llamaCppRequirement()),
                 driver: Some(LocalModelDriver::LlamaCpp {
                     model: entry.filename.to_string(),
                 }),

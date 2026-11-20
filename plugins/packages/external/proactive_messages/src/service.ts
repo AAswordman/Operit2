@@ -21,9 +21,18 @@ async function open(): Promise<State> {
   if (state) return state;
   store = await Tools.Storage.dataStore.open({ path: `${ToolPkg.getLocalDataDir()}/proactive-messages.preferences.json` });
   const saved = (await store.data()).get<State>("state");
-  state = saved === undefined ? { version: 1, rules: [], jobs: [] } : validateState(saved);
+  const loaded: State = saved === undefined ? { version: 1, generationVersion: 2, rules: [], jobs: [] } : validateState(saved);
+  if (loaded.generationVersion !== 2) {
+    // Retire every old text-only appointment before enabling contextual generation.
+    for (const receipt of (await Tools.Chat.listScheduledMessages()).messages) {
+      if (["scheduled", "preparing"].includes(receipt.status)) await Tools.Chat.cancelScheduledMessage(receipt.id);
+    }
+    for (const job of loaded.jobs) if (pending(job) || job.dueAt > Date.now()) job.status = "cancelled";
+    for (const rule of loaded.rules) rule.nextAt = 0;
+    loaded.generationVersion = 2;
+  }
+  state = loaded;
   for (const job of state.jobs) {
-    if (job.status === "preparing") { job.status = "failed"; job.error = "内容准备被中断，请重新准备计划"; }
     // Accepted scheduling is recovered from the host-owned receipt after interruption.
     if (job.status === "delivering") job.status = "scheduling";
   }
@@ -44,7 +53,7 @@ function ruleFor(job: Job): Rule | undefined { return liveState().rules.find(rul
 function planned(job: Job): boolean { return pending(job) || job.status === "skipped" || job.status === "failed"; }
 
 async function cancelJob(job: Job): Promise<void> {
-  if (["scheduled", "scheduling"].includes(job.status)) {
+  if (["preparing", "scheduled", "scheduling"].includes(job.status)) {
     try { await Tools.Chat.cancelScheduledMessage(job.id); }
     catch (error) { job.error = `预约撤销失败，稍后重试：${errorText(error)}`; await persist(); throw error; }
   }
@@ -58,46 +67,59 @@ async function cancelChat(chatId: string): Promise<void> {
 
 async function schedule(job: Job): Promise<void> {
   if (!foreground) return;
+  if (job.dueAt <= Date.now() + 1000) {
+    job.status = "skipped";
+    job.error = "准备或恢复时已错过预约时间";
+    await persist();
+    return;
+  }
+  if (job.instruction === undefined) {
+    const rule = ruleFor(job);
+    if (!rule) throw new Error("主动消息规则已不存在");
+    const previous = liveState().jobs.filter(item => item.chatId === job.chatId && item.dueAt < job.dueAt && item.text && pending(item)).slice(-8);
+    job.instruction = `${rule.prompt}\n避免重复以下已准备内容：\n${previous.map(item => item.text).join("\n")}`;
+  }
   job.status = "scheduling";
   await persist();
   try {
-    const receipt = await Tools.Chat.scheduleMessage({ id: job.id, chatId: job.chatId, title: job.title || "Operit", text: job.text, timestamp: job.dueAt });
+    const receipt = await Tools.Chat.scheduleMessage({ id: job.id, chatId: job.chatId, title: job.title || "Operit", text: "", generation: { instruction: job.instruction }, timestamp: job.dueAt });
+    job.text = receipt.message.text;
     job.status = receipt.message.status as Job["status"];
     job.error = receipt.message.error || "";
   } catch (error) {
-    // The host may have accepted a request before its response was lost. The same ID is retryable.
     job.error = errorText(error);
+    // Confirm acceptance after a lost response before deciding that preparation failed.
+    try {
+      const receipt = (await Tools.Chat.listScheduledMessages()).messages.find(item => item.id === job.id);
+      if (receipt) { job.status = receipt.status as Job["status"]; job.text = receipt.text; job.error = receipt.error || ""; }
+      else job.status = "failed";
+    } catch { /* Retain scheduling until the host can confirm acceptance. */ }
   }
   await persist();
 }
 async function reconcile(): Promise<void> {
   const receipts = new Map((await Tools.Chat.listScheduledMessages()).messages.map(message => [message.id, message]));
+  const replacements: Job[] = [];
   for (const job of liveState().jobs) {
     if (!pending(job)) continue;
     if (!ruleFor(job)?.enabled) { await cancelJob(job); continue; }
     const receipt = receipts.get(job.id);
     if (receipt) {
       job.status = receipt.status as Job["status"];
+      job.text = receipt.text;
       job.error = receipt.error || "";
+      if (job.status === "invalidated" && job.dueAt > Date.now() + 1000) {
+        replacements.push({ id: `${job.chatId}:${job.dueAt}:${Math.random().toString(36).slice(2, 10)}`, chatId: job.chatId,
+          title: job.title, dueAt: job.dueAt, text: "", status: "ready", error: "" });
+      }
       await persist();
-    } else if (job.status === "ready" || job.status === "scheduling") {
+    } else if (["preparing", "ready", "scheduling"].includes(job.status)) {
       if (foreground) await schedule(job);
     }
   }
-}
-
-/** Calls the functional chat model without creating a fake user message in the chat. */
-async function generate(rule: Rule, dueAt: number): Promise<string> {
-  const history = await Tools.Chat.getMessages(rule.chatId, { order: "desc", limit: 20 });
-  const previous = liveState().jobs.filter(job => job.chatId === rule.chatId && job.text && pending(job)).slice(-8);
-  const result = await Tools.Chat.call({ functionType: "CHAT", recordTokenUsage: true, enableThinking: false, turns: [
-    { kind: "system", content: `${rule.prompt}\n你正在提前准备一条主动消息，预计发送时间：${new Date(dueAt).toISOString()}。参考对话中的称呼、语气和语言。不要声称掌握准备时尚未知的实时信息。只输出消息正文。` },
-    ...[...history.messages].reverse().map(message => ({ kind: message.sender === "user" ? "user" : "assistant", content: message.content.slice(0, 6000) })),
-    { kind: "user", content: "请为上述时间准备一条主动消息。避免重复以下已准备内容：\n" + previous.map(job => job.text).join("\n") },
-  ] });
-  const text = result.text.trim();
-  if (!text || text.length > 12000) throw new Error("AI 返回了空白或过长的主动消息");
-  return text;
+  liveState().jobs.push(...replacements);
+  if (replacements.length) await persist();
+  for (const job of replacements) if (foreground) await schedule(job);
 }
 
 async function fill(): Promise<void> {
@@ -118,10 +140,10 @@ async function fill(): Promise<void> {
       await persist();
       if (job.status === "skipped") continue;
       try {
-        job.text = await generate(rule, dueAt);
         job.status = "ready";
         await persist();
         await schedule(job);
+        if (["failed", "scheduling"].includes(job.status)) break;
       } catch (error) {
         if (storageFailure) throw storageFailure;
         job.status = "failed";

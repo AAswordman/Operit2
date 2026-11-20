@@ -2,23 +2,23 @@
 
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::RuntimeStorageHost;
-use operit_store::ChatDatabaseSnapshot;
+use operit_store::db::AppDatabase::AppDatabase;
+use operit_store::sync::SqlChatSyncStore::SqlChatSyncStore;
+use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+use operit_store::SqliteStore::SqliteStoreError;
 use operit_vfs::MountRegistry::MountRegistry;
 use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
 
-/// Identifies one verified standalone SQLite chat snapshot for the restore UI.
+/// Identifies a database backup by its filename and timestamp.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ChatBackupSnapshot {
     pub name: String,
     pub createdAt: i64,
-    pub chatCount: i64,
-    pub messageCount: i64,
 }
 
-/// Accesses explicitly selected backup folders through the owning filesystem Host.
+/// Copies database files through the selected folder's filesystem Host.
 #[derive(Clone)]
 pub struct ChatBackupDirectoryService {
     storage: Arc<dyn RuntimeStorageHost>,
@@ -26,7 +26,7 @@ pub struct ChatBackupDirectoryService {
 }
 
 impl ChatBackupDirectoryService {
-    /// Binds directory operations to the same storage and VFS as the local runtime.
+    /// Binds directory operations to the local runtime's storage and VFS.
     pub fn getInstance(host: &HostManager) -> Result<Self, String> {
         Ok(Self {
             storage: host
@@ -37,146 +37,97 @@ impl ChatBackupDirectoryService {
         })
     }
 
-    /// Verifies the selected directory without recreating a missing or revoked destination.
+    /// Checks that the selected folder is still accessible without writing probe files.
     pub fn checkDirectory(&self, directory: String) -> Result<(), String> {
-        let root = self.directory(&directory)?;
-        self.files.listFiles(&root)?;
-        let name = format!(".operit-backup-probe-{}", uuid::Uuid::new_v4().simple());
-        let path = format!("{root}/{name}");
-        self.files.writeFile(&path, &name, false)?;
-        let checked = self.files.readFile(&path).and_then(|read| {
-            if read == name {
-                Ok(())
-            } else {
-                Err("Backup directory write verification failed".into())
-            }
-        });
-        self.files.deleteFile(&path, false)?;
-        checked
+        self.files.listFiles(&self.directory(&directory)?)?;
+        Ok(())
     }
 
-    /// Captures SQLite pages and publishes their verified bytes through the external mount.
+    /// Closes the database, copies its file directly to the selected folder, and reopens it.
     pub fn createBackup(
         &self,
         directory: String,
         name: String,
-    ) -> Result<Option<ChatBackupSnapshot>, String> {
+    ) -> Result<ChatBackupSnapshot, String> {
         validateName(&name)?;
-        let root = self.directory(&directory)?;
-        let destination = format!("{root}/{name}");
+        let info = snapshot(name.clone())?;
+        let destination = format!("{}/{}", self.directory(&directory)?, name);
         if self.files.fileExists(&destination)?.exists {
             return Err("Backup filename already exists".into());
         }
-        let temporary = format!(
-            "{root}/.operit-backup-{}.tmp",
-            uuid::Uuid::new_v4().simple()
-        );
-        let stage = stagingPath();
-        let result = (|| {
-            let createdAt = operit_host_api::TimeUtils::currentTimeMillis();
-            let Some(info) = ChatDatabaseSnapshot::create(&stage, createdAt)? else {
-                return Ok(None);
-            };
-            self.files.copyFile(&stage, &temporary, false)?;
-            let expected = self.digest(&stage)?;
-            if self.digest(&temporary)? != expected {
-                return Err("Backup copy verification failed".into());
+        let database = AppDatabase::default().map_err(|e| e.to_string())?;
+        let path = RuntimeStorePaths::default().sqlite_database_path();
+        let result = database.store().withDatabaseFile(|| {
+            self.files
+                .copyFile(&path.to_string_lossy(), &destination, false)
+                .map_err(SqliteStoreError::Message)
+        });
+        if let Err(error) = result {
+            if self.files.fileExists(&destination)?.exists {
+                self.files.deleteFile(&destination, false)?;
             }
-            self.files.moveFile(&temporary, &destination)?;
-            if self.digest(&destination)? != expected {
-                return Err("Published backup verification failed".into());
-            }
-            Ok(Some(snapshot(name, info)))
-        })();
-        self.cleanup(&temporary)?;
-        self.cleanup(&stage)?;
-        result
+            return Err(error.to_string());
+        }
+        Ok(info)
     }
 
-    /// Lists direct files; callers may only prune their exact source and backup naming scheme.
+    /// Lists direct files without opening or scanning any database.
     pub fn listBackups(&self, directory: String) -> Result<Vec<String>, String> {
-        let root = self.directory(&directory)?;
         Ok(self
             .files
-            .listFiles(&root)?
+            .listFiles(&self.directory(&directory)?)?
             .into_iter()
             .filter(|entry| !entry.isDirectory)
             .map(|entry| entry.name)
             .collect())
     }
 
-    /// Verifies a snapshot in isolated staging without interpreting conversation records.
-    pub fn inspectBackup(
-        &self,
-        directory: String,
-        name: String,
-    ) -> Result<ChatBackupSnapshot, String> {
-        validateName(&name)?;
-        let root = self.directory(&directory)?;
-        let stage = stagingPath();
-        let result = (|| {
-            self.files
-                .copyFile(&format!("{root}/{name}"), &stage, false)?;
-            ChatDatabaseSnapshot::inspect(&stage).map(|info| snapshot(name, info))
-        })();
-        self.cleanup(&stage)?;
-        result
-    }
-
-    /// Restores only chat tables atomically while leaving other runtime data and the source intact.
+    /// Copies beside the database and atomically renames it over the closed live file.
     pub fn restoreBackup(
         &self,
         directory: String,
         name: String,
     ) -> Result<ChatBackupSnapshot, String> {
         validateName(&name)?;
-        let root = self.directory(&directory)?;
-        let stage = stagingPath();
+        let info = snapshot(name.clone())?;
+        let source = format!("{}/{}", self.directory(&directory)?, name);
+        let database = AppDatabase::default().map_err(|e| e.to_string())?;
+        let previous = SqlChatSyncStore::default()
+            .map_err(|e| e.to_string())?
+            .restoration()
+            .map_err(|e| e.to_string())?;
+        let path = RuntimeStorePaths::default().sqlite_database_path();
+        let path = path.to_string_lossy();
+        let temporary = format!("{path}.restore-{}", uuid::Uuid::new_v4().simple());
         let result = (|| {
-            self.files
-                .copyFile(&format!("{root}/{name}"), &stage, false)?;
-            ChatDatabaseSnapshot::restore(&stage).map(|info| snapshot(name, info))
+            self.files.copyFile(&source, &temporary, false)?;
+            database
+                .restoreDatabaseFile(|| {
+                    self.files
+                        .moveFile(&temporary, &path)
+                        .map_err(SqliteStoreError::Message)
+                })
+                .map_err(|e| e.to_string())
         })();
-        self.cleanup(&stage)?;
-        result
+        if self.files.fileExists(&temporary)?.exists {
+            self.files.deleteFile(&temporary, false)?;
+        }
+        result?;
+        SqlChatSyncStore::default()
+            .map_err(|e| e.to_string())?
+            .establishRestoreBaseline(previous)
+            .map_err(|e| e.to_string())?;
+        Ok(info)
     }
 
-    /// Removes one owned backup filename while rejecting traversal and unrelated files.
+    /// Removes one backup file selected by the retention policy.
     pub fn removeBackup(&self, directory: String, name: String) -> Result<(), String> {
         validateName(&name)?;
-        let root = self.directory(&directory)?;
-        self.files.deleteFile(&format!("{root}/{name}"), false)
+        self.files
+            .deleteFile(&format!("{}/{}", self.directory(&directory)?, name), false)
     }
 
-    /// Hashes bounded file ranges to verify physical copies without materializing the database.
-    fn digest(&self, path: &str) -> Result<Vec<u8>, String> {
-        let size = u64::try_from(self.files.fileExists(path)?.size).map_err(|e| e.to_string())?;
-        let mut hash = Sha256::new();
-        let mut offset = 0;
-        while offset < size {
-            let bytes = self.files.readFileBytesRange(
-                path,
-                offset,
-                (size - offset).min(64 * 1024) as usize,
-            )?;
-            if bytes.is_empty() {
-                return Err("Unexpected end of database snapshot".into());
-            }
-            offset += bytes.len() as u64;
-            hash.update(bytes);
-        }
-        Ok(hash.finalize().to_vec())
-    }
-
-    /// Removes an operation-owned temporary file after closing all SQLite handles.
-    fn cleanup(&self, path: &str) -> Result<(), String> {
-        if self.files.fileExists(path)?.exists {
-            self.files.deleteFile(path, false)?;
-        }
-        Ok(())
-    }
-
-    /// Resolves an existing user mount without registering sources or interpreting platform paths.
+    /// Resolves an existing external mount outside live application storage.
     fn directory(&self, directory: &str) -> Result<String, String> {
         let mount = MountRegistry::withStorage(self.storage.clone())
             .list()?
@@ -199,7 +150,7 @@ impl ChatBackupDirectoryService {
     }
 }
 
-/// Limits deletion and publication to direct chat database snapshot filenames.
+/// Restricts file operations to direct backup filenames.
 fn validateName(name: &str) -> Result<(), String> {
     if !name.starts_with("operit-chats-")
         || !name.ends_with(".sqlite")
@@ -210,23 +161,13 @@ fn validateName(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// Allocates isolated runtime-owned staging for a physical SQLite image.
-fn stagingPath() -> String {
-    format!(
-        "/operitapp/data/temp/clean_on_exit/chat_backups/{}.sqlite",
-        uuid::Uuid::new_v4().simple()
-    )
-}
-
-/// Projects database header metadata into a lightweight restore-list entry.
-fn snapshot(
-    name: String,
-    info: ChatDatabaseSnapshot::ChatDatabaseSnapshotInfo,
-) -> ChatBackupSnapshot {
-    ChatBackupSnapshot {
-        name,
-        createdAt: info.createdAt,
-        chatCount: info.chatCount,
-        messageCount: info.messageCount,
-    }
+/// Reads the creation timestamp from the backup filename without accessing its contents.
+fn snapshot(name: String) -> Result<ChatBackupSnapshot, String> {
+    let createdAt = name
+        .strip_suffix(".sqlite")
+        .and_then(|stem| stem.rsplit('-').next())
+        .ok_or("Backup timestamp is missing")?
+        .parse::<i64>()
+        .map_err(|e| e.to_string())?;
+    Ok(ChatBackupSnapshot { name, createdAt })
 }

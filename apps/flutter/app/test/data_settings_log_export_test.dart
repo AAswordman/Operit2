@@ -6,6 +6,7 @@ import 'package:file_selector_platform_interface/file_selector_platform_interfac
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
+import 'package:operit2/core/host/AppToastController.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/logging/DiagnosticLogExporter.dart';
@@ -20,6 +21,35 @@ void main() {
   final originalFileSelector = FileSelectorPlatform.instance;
 
   tearDown(() => FileSelectorPlatform.instance = originalFileSelector);
+
+  testWidgets('JSON import writes only after the selected file is confirmed', (
+    tester,
+  ) async {
+    FileSelectorPlatform.instance = _JsonPicker();
+    final bridge = _JsonImportBridge();
+    final l10n = await _pumpPanel(tester, bridge, showLogs: false);
+    final action = find.text(l10n.settingsDataImportChatJson);
+    await _reveal(tester, action);
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    expect(find.text('chats.json'), findsOneWidget);
+    expect(bridge.imports, 0);
+    await tester.tap(find.text(l10n.cancel));
+    await tester.pumpAndSettle();
+    expect(bridge.imports, 0);
+    await tester.tap(action);
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.widgetWithText(FilledButton, l10n.settingsDataImportAction),
+    );
+    await tester.pumpAndSettle();
+    expect(bridge.imports, 1);
+    expect(
+      find.text(l10n.settingsDataBackupImportResult(1, 2, 0)),
+      findsOneWidget,
+    );
+    AppToastController.instance.clearSnackBars();
+  });
 
   testWidgets('exports both logs even when the overview cannot load', (
     tester,
@@ -42,6 +72,7 @@ void main() {
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
+    AppToastController.instance.clearSnackBars();
   });
 
   testWidgets('cancelled save restores the button without a success message', (
@@ -56,6 +87,7 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
     expect(_exportButton(tester, l10n).onPressed, isNotNull);
     expect(tester.takeException(), isNull);
+    AppToastController.instance.clearSnackBars();
   });
 
   testWidgets('a partial export is saved and visibly marked as partial', (
@@ -79,6 +111,7 @@ void main() {
       findsOneWidget,
     );
     expect(tester.takeException(), isNull);
+    AppToastController.instance.clearSnackBars();
   });
 
   testWidgets('save errors show a localized failure and restore the button', (
@@ -94,6 +127,7 @@ void main() {
     );
     expect(_exportButton(tester, l10n).onPressed, isNotNull);
     expect(tester.takeException(), isNull);
+    AppToastController.instance.clearSnackBars();
   });
 
   testWidgets('the export button is disabled while collection is pending', (
@@ -118,6 +152,7 @@ void main() {
     expect(saver.calls, 1);
     expect(_exportButton(tester, l10n).onPressed, isNotNull);
     expect(tester.takeException(), isNull);
+    AppToastController.instance.clearSnackBars();
   });
 
   testWidgets('narrow settings keep the export action accessible', (
@@ -130,13 +165,15 @@ void main() {
     final l10n = await _pumpPanel(tester, _LogBridge());
     expect(_exportButton(tester, l10n).onPressed, isNotNull);
     expect(tester.takeException(), isNull);
+    AppToastController.instance.clearSnackBars();
   });
 }
 
 Future<AppLocalizations> _pumpPanel(
   WidgetTester tester,
-  _LogBridge bridge,
-) async {
+  _LogBridge bridge, {
+  bool showLogs = true,
+}) async {
   await tester.pumpWidget(
     OperitTheme(
       initialThemePreferenceSnapshot:
@@ -156,7 +193,25 @@ Future<AppLocalizations> _pumpPanel(
     ),
   );
   await tester.pumpAndSettle();
-  return AppLocalizations.of(tester.element(find.byType(DataSettingsPanel)))!;
+  final l10n = AppLocalizations.of(
+    tester.element(find.byType(DataSettingsPanel)),
+  )!;
+  if (showLogs) {
+    await _reveal(tester, find.text(l10n.settingsDataExportLogs));
+  }
+  return l10n;
+}
+
+/// Reveals an action inside the settings list before tapping it.
+Future<void> _reveal(WidgetTester tester, Finder action) async {
+  await tester.scrollUntilVisible(
+    action,
+    240,
+    scrollable: find.byType(Scrollable).first,
+  );
+  await tester.pumpAndSettle();
+  await tester.ensureVisible(action);
+  await tester.pumpAndSettle();
 }
 
 FilledButton _exportButton(WidgetTester tester, AppLocalizations l10n) =>
@@ -196,6 +251,42 @@ class _LogSavePlatform extends FileSelectorPlatform {
     }
     text = utf8.decode(await file.readAsBytes());
     return FileSaveLocation('/selected/diagnostics.log');
+  }
+}
+
+class _JsonPicker extends FileSelectorPlatform {
+  /// Supplies the file selected through the JSON import action.
+  @override
+  Future<XFile?> openFile({
+    List<XTypeGroup>? acceptedTypeGroups,
+    String? initialDirectory,
+    String? confirmButtonText,
+  }) async {
+    expect(acceptedTypeGroups?.single.extensions, ['json']);
+    return XFile.fromData(
+      Uint8List.fromList(utf8.encode('{}')),
+      path: 'chats.json',
+      name: 'chats.json',
+    );
+  }
+}
+
+class _JsonImportBridge extends _LogBridge {
+  int imports = 0;
+
+  /// Records the actual import request independently of opening the picker.
+  @override
+  Future<Uint8List> callBytes(CoreCallRequest request) async {
+    if (request.methodName == 'coreVersion') {
+      return encodeCoreLink([0, 'test']);
+    }
+    expect(request.methodName, 'importChatHistoriesFromJson');
+    imports++;
+    expect(request.args, {'jsonString': '{}'});
+    return encodeCoreLink([
+      0,
+      {'new': 1, 'updated': 2, 'skipped': 0},
+    ]);
   }
 }
 

@@ -10,6 +10,39 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Keeps complete response metadata visible on narrow screens and at large fonts.
 void main() {
+  test('prepared text does not invent token, timing or speed measurements', () {
+    final message = metadataMessage();
+    final snapshot = ThemePreferenceSnapshot.fromJson({
+      ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
+      'showMessageTokenStats': true,
+      'showMessageTimingStats': true,
+      'showMessageTimestamp': false,
+    });
+    expect(formatCompactTokenStats(message), isEmpty);
+    expect(formatCompactTimingStats(message), isEmpty);
+    expect(formatTokenSpeed(message), isEmpty);
+    expect(formatMessageStatsText(message, snapshot), isEmpty);
+    expect(formatMessageMetadataTooltip(message, snapshot), isEmpty);
+  });
+  test(
+    'scheduled replies display delivery time while retaining preparation measurements',
+    () {
+      final due = DateTime(2026, 11, 20, 12).millisecondsSinceEpoch;
+      final message = metadataMessage(timestamp: due, scheduled: true);
+      expect(
+        formatSmartMessageTimestamp(message, now: DateTime(2026, 11, 20, 13)),
+        '12:00',
+      );
+      final snapshot = ThemePreferenceSnapshot.fromJson({
+        ...UserPreferencesManager.defaultThemePreferenceSnapshot.toJson(),
+        'showMessageTimestamp': true,
+      });
+      expect(
+        formatMessageMetadataTooltip(message, snapshot),
+        contains('2026-11-20 12:00:00'),
+      );
+    },
+  );
   for (final style in ['cursor', 'bubble', 'bubble-wide']) {
     for (final width in [280.0, 380.0]) {
       for (final textScale in [1.0, 1.6]) {
@@ -136,4 +169,33 @@ void main() {
       }
     }
   }
+}
+
+/// Creates a completed text-only message with no provider measurements.
+ChatMessage metadataMessage({int timestamp = 2000, bool scheduled = false}) {
+  return ChatMessage(
+    sender: 'ai',
+    parts: const [],
+    timestamp: timestamp,
+    roleName: '',
+    pluginExtensions: scheduled
+        ? {
+            'host.chat.scheduled': {'preparedAt': 1000},
+          }
+        : const {},
+    selectedVariantIndex: 0,
+    variantCount: 1,
+    provider: '',
+    modelName: '',
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    sentAt: 0,
+    outputDurationMs: 0,
+    waitDurationMs: 0,
+    completedAt: 1000,
+    displayMode: ChatMessageDisplayMode.normal,
+    isFavorite: false,
+    contentStream: null,
+  );
 }

@@ -2,6 +2,8 @@
 
 Enable Office documents in the current space and open a `.docx`, `.pptx` or `.pdf` in the workspace. The `office` tool subpackage is enabled by default when the plugin is enabled. Use the fixed three-dot button at the right of a file tab, or right-click the tab, to choose **Open with** and switch between Office and the built-in preview. Office edits the file in the tab, and saves back to the original workspace path. Working copies are limited to 128 MiB. Reading failures report their actual cause separately from size-limit errors.
 
+Save, quote selection, and save status share the editor's toolbar. The plugin does not add a separate filename header above it; the workspace file tab identifies the document.
+
 Documents support two-finger touch, Ctrl+wheel, trackpad pinch, zoom buttons and fit width. Word centers its pages in the pane and keeps fitting as the pane width changes, until a manual zoom is chosen. Zoom changes the view without marking the file as edited.
 
 The quote button adds the selection as an additional-information attachment to the current conversation draft, without changing the message text or sending it. To edit through the conversation, call `office:list`, `office:read`, and then `office:edit` using the exact revision and a structured edit. `office:save` explicitly persists the result. The plugin never invokes a model and does not configure or restrict the host model. The editors and their assets run offline.

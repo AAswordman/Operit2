@@ -23,7 +23,7 @@ interface View {
   advanced: boolean;
 }
 const titles = { home: "AI 主动消息", picker: "选择对话", rules: "对话规则", editor: "编辑规则", activity: "发送计划与记录" };
-const labels = { preparing: "正在准备", ready: "已准备", scheduling: "预约待确认", scheduled: "系统已预约", delivering: "正在发送", delivered: "已写入对话", skipped: "已跳过", failed: "失败", cancelled: "已撤销" };
+const labels = { preparing: "正在准备", ready: "待准备", scheduling: "正在准备并预约", scheduled: "系统已预约", delivering: "正在发送", delivered: "已写入对话", skipped: "已跳过", failed: "失败", cancelled: "已撤销", invalidated: "上下文已变化" };
 const pageSize = 6;
 
 function planTime(timestamp: number): string {
@@ -159,7 +159,7 @@ export default function screen(ctx: ComposeDslContext): ComposeNode {
       ...(view.advanced ? [numericField("随机追加（0～10080 分钟）", "randomMinutes"), numericField("提前准备次数（1～8）", "prepareCount")] : []),
     ]), panel([
       UI.Text({ text: "消息内容", style: "titleMedium" }), field("提示词", draft.prompt, prompt => patchDraft({ prompt }), 4),
-      note("AI 会参考最近 20 条对话。可以在提示词中指定话题和语气。"),
+      note("AI 使用目标对话的角色、模型、记忆和摘要后的上下文。对话或角色变化后，旧计划会失效并在前台重新准备。"),
     ]), note("保存会撤销原有预约。已开启的规则会重新准备消息。"),
     UI.Button({ text: view.busy ? "处理中…" : "保存规则", enabled: !view.busy, onClick: () => run(async () => {
       const input = live.current.draft!;

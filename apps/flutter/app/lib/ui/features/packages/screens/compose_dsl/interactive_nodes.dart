@@ -65,53 +65,49 @@ extension _ComposeInteractiveNodes on _ComposeProgramExecutorState {
     );
   }
 
-  /// Builds a dropdown menu using the shared application menu surface defaults.
-  Widget _dropdownMenu(BuildContext context) {
+  /// Renders controlled Compose popups and host-owned select fields.
+  Widget _dropdownMenu() {
+    if (_isControlledDropdown(node.type, props)) {
+      if (!_bool(props['expanded'])) return const SizedBox.shrink();
+      return _ComposeControlledDropdown(
+        properties: _stringMap(props['properties']),
+        verticalOffset: _number(props['offset']) ?? 4,
+        onDismiss: () => _invokeAction(props['onDismissRequest']),
+        menuBuilder: (context, anchorWidth) => _trackBuild(() {
+          final theme = Theme.of(context);
+          return _withModifier(
+            context,
+            SizedBox(
+              width: math.max(anchorWidth, 160),
+              child: Material(
+                color:
+                    _color(context, props['containerColor']) ??
+                    theme.colorScheme.surfaceContainerHigh,
+                elevation: _number(props['tonalElevation']) ?? 4,
+                shape: RoundedRectangleBorder(
+                  borderRadius:
+                      _borderRadius(props['shape']) ??
+                      BorderRadius.circular(12),
+                  side: BorderSide(color: theme.colorScheme.outlineVariant),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.symmetric(vertical: 4),
+                  child: _slotOrChildren('content'),
+                ),
+              ),
+            ),
+            props,
+            onAction,
+            nodeType: node.type,
+            modifierScope: _ComposeDslModifierScope.normal,
+          );
+        }),
+      );
+    }
     final items = _slotChildren('content', useChildren: true);
     final label = _plainSlotText('label') ?? _string(props['label']);
     final anchor = _dropdownMenuAnchor(label);
-    final colorScheme = Theme.of(context).colorScheme;
-    if (_bool(props['expanded'])) {
-      final offset = _number(props['offset']) ?? 0;
-      final selectActionId = _actionId(props['onClick']);
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisSize: MainAxisSize.min,
-        children: <Widget>[
-          anchor,
-          SizedBox(height: offset),
-          Material(
-            color:
-                _color(context, props['containerColor']) ??
-                colorScheme.surfaceContainerHigh,
-            elevation: _number(props['tonalElevation']) ?? 3,
-            shape: RoundedRectangleBorder(
-              borderRadius:
-                  _borderRadius(props['shape']) ?? BorderRadius.circular(8),
-            ),
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                minWidth: _number(props['menuMinWidth']) ?? 160,
-                maxWidth: _number(props['menuMaxWidth']) ?? 360,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: <Widget>[
-                  for (var index = 0; index < items.length; index += 1)
-                    selectActionId == null
-                        ? items[index]
-                        : InkWell(
-                            onTap: () => onAction(selectActionId, index),
-                            child: items[index],
-                          ),
-                ],
-              ),
-            ),
-          ),
-        ],
-      );
-    }
     return PopupMenuButton<int>(
       enabled: _enabled(),
       tooltip: label.isEmpty ? null : label,

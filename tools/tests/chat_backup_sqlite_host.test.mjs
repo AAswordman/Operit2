@@ -22,7 +22,7 @@ function fixture() {
   const methodsStart = source.indexOf('      close(id: string): void {', source.indexOf('    sqlite: registerWorkerHostModule({'));
   const methodsEnd = source.indexOf('      open(path: string): string {', methodsStart);
   assert.ok(helperStart >= 0 && helperEnd > helperStart && methodsEnd > methodsStart);
-  const code = `${source.slice(helperStart, helperEnd)}\nconst host = {${source.slice(methodsStart, methodsEnd)}}; host;`;
+  const code = `${source.slice(helperStart, helperEnd)}\nconst host = {${source.slice(methodsStart, methodsEnd)}}; ({ ...host, saveSqliteDatabase });`;
   const host = vm.runInNewContext(stripTypeScriptTypes(code), {
     runtimePrefix: 'runtime',
     sqliteConnections: connections,
@@ -33,16 +33,14 @@ function fixture() {
   return { host, image, writes, connections, foreignKeys: () => foreignKeys, closed: () => closed };
 }
 
-test('physical snapshot export preserves live foreign keys and refuses overwrites', () => {
+test('database persistence preserves foreign keys before file copying', () => {
   const f = fixture();
-  f.host.snapshotDatabase('source', 'runtime/backup.sqlite');
-  assert.equal(f.writes.get('runtime/backup.sqlite'), f.image);
+  f.host.saveSqliteDatabase(f.connections.get('source'));
+  assert.equal(f.writes.get('runtime/live.sqlite'), f.image);
   assert.equal(f.foreignKeys(), '1');
-  assert.equal(f.writes.has('runtime/live.sqlite'), false);
-  assert.throws(() => f.host.snapshotDatabase('source', 'runtime/backup.sqlite'), /already exists/);
 });
 
-test('closing staged snapshots releases their database memory and registry entry', () => {
+test('closing the database before file copying releases memory and its registry entry', () => {
   const f = fixture();
   f.host.close('source');
   assert.equal(f.closed(), true);

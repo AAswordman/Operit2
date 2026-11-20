@@ -765,7 +765,16 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     }
     fn scheduleChatMessage<'a>(&'a self, owner: &'a str, request: operit_plugin_sdk::js_sdk::chat::ChatScheduledMessageRequest)
         -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatScheduleMessageResultData, String>> {
-        Box::pin(async move { self.preparedChatDelivery.schedule(&self.hostManager, self.runtimeChatHistoryManager()?, owner, request).await })
+        Box::pin(async move {
+            let service = match &request.generation {
+                Some(_) => {
+                    let bindings = self.runtimeBindings()?.clone();
+                    Some(EnhancedAIService::new(bindings.toolHandler, bindings.providerRuntimeContext))
+                }
+                None => None,
+            };
+            self.preparedChatDelivery.schedule(&self.hostManager, self.runtimeChatHistoryManager()?, owner, request, &self.chatRuntimeHolder, service).await
+        })
     }
     fn cancelScheduledChatMessage<'a>(&'a self, owner: &'a str, id: String)
         -> futures_util::future::BoxFuture<'a, Result<operit_plugin_sdk::js_sdk::results::ChatCancelScheduledMessageResultData, String>> {

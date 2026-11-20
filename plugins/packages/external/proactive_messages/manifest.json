@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.proactive_messages",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": { "zh": "AI 主动消息", "en": "AI Proactive Messages" },

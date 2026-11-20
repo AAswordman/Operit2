@@ -128,9 +128,7 @@ async function bootstrap() {
   chinese = init.locale.startsWith('zh');
   document.documentElement.lang = chinese ? 'zh' : 'en';
   document.body.dataset.format = info.format;
-  document.querySelector('#format')!.textContent = info.format.toUpperCase();
-  const filename = document.querySelector<HTMLElement>('#filename')!;
-  filename.textContent = filename.title = info.name;
+  document.title = info.name;
   for (const [button, label] of [[save, phrase('Save', '保存')], [quote, phrase('Quote selection in chat', '引用选区到聊天')]] as const) {
     button.title = label;
     button.setAttribute('aria-label', label);
@@ -150,7 +148,7 @@ async function bootstrap() {
     bytes.set(part, index);
     index += part.length;
   }
-  editor = await mount[info.format]({ bytes, info, chinese, root: document.querySelector('#editor')!, toolbar: document.querySelector('#toolbar')!, changed,
+  editor = await mount[info.format]({ bytes, info, chinese, root: document.querySelector('#editor')!, toolbar: document.querySelector('#toolbar')!, actions: document.querySelector('#actions')!, changed,
     saveBytes: data => saveBytes(() => Promise.resolve(data)).catch(error => { showError(error); throw error; }) });
   if (editor.zoom) mountZoom(document.querySelector('#editor')!, editor.zoom, info.format !== 'pdf');
   window.OfficeEditor = {

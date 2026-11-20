@@ -1062,10 +1062,14 @@ export interface ChatScheduledMessage {
   chatId: string;
   timestamp: number;
   /**
-   * scheduled, delivered, cancelled, skipped, or failed.
+   * preparing, scheduled, delivered, cancelled, invalidated, skipped, or failed.
    */
   status: string;
   error: string | null;
+  /**
+   * Contains the accepted prepared body, including host-generated replies.
+   */
+  text: string;
 }
 
 export interface ChatScheduleMessageResultData {

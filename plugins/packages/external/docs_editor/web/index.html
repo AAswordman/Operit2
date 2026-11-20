@@ -9,15 +9,15 @@
   <script src="app.js" defer></script>
 </head>
 <body>
-  <header class="office-bar">
-    <span id="format" class="office-format"></span>
-    <strong id="filename">Office</strong>
-    <span id="status" role="status" aria-live="polite"></span>
-    <button type="button" id="quote" disabled><i data-lucide="message-square-quote"></i></button>
-    <button type="button" id="save" disabled><i data-lucide="save"></i></button>
-  </header>
+  <div id="tools" hidden>
+    <div id="toolbar"></div>
+    <div id="actions" class="office-actions">
+      <span id="status" role="status" aria-live="polite"></span>
+      <button type="button" id="quote" disabled><i data-lucide="message-square-quote"></i></button>
+      <button type="button" id="save" disabled><i data-lucide="save"></i></button>
+    </div>
+  </div>
   <div id="error" role="alert" hidden></div>
-  <div id="toolbar" hidden></div>
   <main id="editor" aria-label="Document"></main>
 </body>
 </html>

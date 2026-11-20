@@ -2289,10 +2289,6 @@ fn visit_sqlite_pages(sql:&str, params:Vec<SqliteValue>, mut query:impl FnMut(&s
 }
 
 pub trait RuntimeSqliteConnection: Send {
-    /// Writes a consistent standalone SQLite image to a logical runtime-storage path.
-    fn snapshotDatabase(&mut self, _destination: &str) -> HostResult<()> {
-        Err(HostError::new("SQLite Host does not implement database snapshots"))
-    }
     fn executeBatch(&mut self, sql: &str) -> HostResult<()>;
     fn execute(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<usize>;
     fn query(&mut self, sql: &str, params: Vec<SqliteValue>) -> HostResult<Vec<SqliteRow>>;

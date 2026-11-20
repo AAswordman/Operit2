@@ -3,12 +3,13 @@ export interface Rule {
   intervalMinutes: number; randomMinutes: number; probability: number;
   prepareCount: number; prompt: string; nextAt: number;
 }
-export type JobStatus = "preparing" | "ready" | "scheduling" | "scheduled" | "delivering" | "delivered" | "skipped" | "failed" | "cancelled";
+export type JobStatus = "preparing" | "ready" | "scheduling" | "scheduled" | "delivering" | "delivered" | "skipped" | "failed" | "cancelled" | "invalidated";
 export interface Job {
   id: string; chatId: string; title: string; dueAt: number; text: string;
   status: JobStatus; error: string;
+  instruction?: string;
 }
-export interface State { version: 1; rules: Rule[]; jobs: Job[] }
+export interface State { version: 1; generationVersion?: 2; rules: Rule[]; jobs: Job[] }
 export const MAX_PENDING = 32;
 export const DEFAULT_PROMPT = "根据最近的对话，自然地向用户发起一次简短交流，可以关心近况、延续话题或分享一个想法。不要假装用户刚刚发送了消息，不要解释定时机制，不要编造当前发生的事情。只输出要发送的消息正文。";
 export function defaultRule(chatId: string, title: string): Rule {
@@ -47,11 +48,13 @@ export function validateState(value: unknown): State {
     if (chats.has(rule.chatId) || !Number.isSafeInteger(rule.nextAt) || rule.nextAt < 0) throw new Error("主动消息规则损坏");
     chats.add(rule.chatId);
   }
-  const statuses: JobStatus[] = ["preparing", "ready", "scheduling", "scheduled", "delivering", "delivered", "skipped", "failed", "cancelled"];
+  if (state.generationVersion !== undefined && state.generationVersion !== 2) throw new Error("主动消息生成版本错误");
+  const statuses: JobStatus[] = ["preparing", "ready", "scheduling", "scheduled", "delivering", "delivered", "skipped", "failed", "cancelled", "invalidated"];
   for (const job of state.jobs) {
     if (!job || typeof job.id !== "string" || !job.id || ids.has(job.id) || typeof job.chatId !== "string" || !job.chatId ||
         typeof job.title !== "string" || typeof job.text !== "string" || typeof job.error !== "string" ||
-        !statuses.includes(job.status) || !Number.isSafeInteger(job.dueAt) || job.dueAt <= 0) throw new Error("主动消息发送计划损坏");
+        !statuses.includes(job.status) || !Number.isSafeInteger(job.dueAt) || job.dueAt <= 0 ||
+        (job.instruction !== undefined && (typeof job.instruction !== "string" || !job.instruction.trim()))) throw new Error("主动消息发送计划损坏");
     ids.add(job.id);
   }
   if (state.jobs.filter(pending).length > MAX_PENDING) throw new Error("待发送消息数量超过上限");

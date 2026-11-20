@@ -63,7 +63,8 @@ fn recordInTransaction(
     payload: &ChatSyncPayload,
     createdAt: i64,
 ) -> Result<(), SqliteStoreError> {
-    let sequence = sequenceFor(transaction, origin)? + 1;
+    let origin = localOrigin(transaction, origin)?;
+    let sequence = sequenceFor(transaction, &origin)? + 1;
     let chatId = &payload.chatRows[0].id;
     let operation = SyncOperation {
         opId: format!("{origin}:{sequence}"),

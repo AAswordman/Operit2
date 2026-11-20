@@ -1559,9 +1559,11 @@ pub struct ChatScheduledMessage {
     pub id: String,
     pub chatId: String,
     pub timestamp: i64,
-    /// scheduled, delivered, cancelled, skipped, or failed.
+    /// preparing, scheduled, delivered, cancelled, invalidated, skipped, or failed.
     pub status: String,
     pub error: JsNullable<String>,
+    /// Contains the accepted prepared body, including host-generated replies.
+    pub text: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

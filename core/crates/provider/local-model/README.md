@@ -184,7 +184,9 @@ GPU backends, multimodal inputs, and split GGUF files are not supported.
 
 The platform Host's default `native-llm` feature builds CPU backends with CMake 3.22+,
 a C++17 compiler, and Ninja for Android/OpenHarmony cross builds. The first native build downloads SHA-256 checked source archives
-for llama.cpp `b11829` and MNN `3.6.1`. Set `OPERIT_LLAMA_SOURCE` and
+for llama.cpp `v1.0.0` and MNN `3.6.1`. Existing GGUF installations keep their
+model files and use the updated embedded engine when the app reads the registry.
+Set `OPERIT_LLAMA_SOURCE` and
 `OPERIT_MNN_SOURCE` to pre-extracted source directories for offline builds.
 Android builds require `ANDROID_NDK_HOME` (or `ANDROID_NDK_ROOT`/`ANDROID_NDK`);
 OpenHarmony builds require `OHOS_NATIVE_HOME`. Their SDK CMake toolchains are

@@ -9,18 +9,19 @@ import 'package:file_selector/file_selector.dart';
 import 'package:operit_folder_access/operit_folder_access.dart';
 import 'package:flutter/material.dart';
 
+import '../../../../core/backup/ChatBackupService.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/bridge/PlatformCoreProxy.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/logging/DiagnosticLogExporter.dart';
 import '../../../../core/host/FileSaveService.dart';
+import '../../../../core/host/SelectedFileInput.dart' show SelectedFileInput;
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../core/runtime/RuntimeBootstrapManager.dart';
 import '../../../../core/snapshot/SnapshotImportUploader.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/StorageDirectorySelectionError.dart';
-import '../../../common/ChatBackupDirectoryPanel.dart';
 import '../../../common/ChatBackupRestorePanel.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
@@ -48,21 +49,23 @@ class DataSettingsPanel extends StatefulWidget {
     super.key,
     GeneratedCoreProxyClients? clients,
     this.diagnosticLogExporter,
+    this.backupService,
   }) : clients =
            clients ?? const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
   final GeneratedCoreProxyClients clients;
   final DiagnosticLogExporter? diagnosticLogExporter;
+  final ChatBackupService? backupService;
 
   @override
   State<DataSettingsPanel> createState() => _DataSettingsPanelState();
 }
 
 class _DataSettingsPanelState extends State<DataSettingsPanel> {
-  Future<_DataSettingsData>? _future;
+  late Future<_DataSettingsData> _future;
   bool _busy = false;
   bool _exportingLogs = false;
-  int? _lastSnapshotBytes;
+  String? _activeTransfer;
   StreamSubscription<Operit1SnapshotImportProgress>?
   _operit1ImportProgressSubscription;
   Operit1SnapshotImportProgress? _operit1ImportProgress;
@@ -113,19 +116,13 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         );
   }
 
-  /// Loads ordinary host data counts without querying plugin-owned entities.
+  /// Loads runtime details independently of backup and file transfer actions.
   Future<_DataSettingsData> _load() async {
-    final modelConfigManager = widget.clients.preferencesModelConfigManager;
     final storagePaths = await RuntimeBootstrapManager.instance
         .localRuntimeStorageBasePaths();
     return _DataSettingsData(
       coreVersion: await widget.clients.application.coreVersion(),
       storagePaths: storagePaths,
-      chatHistoryCount:
-          (await widget.clients.chatRuntimeHolderMain.chatHistoriesFlow().first)
-              .length,
-      modelConfigCount:
-          (await modelConfigManager.getAllModelSummaries()).length,
     );
   }
 
@@ -237,322 +234,217 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     );
   }
 
-  /// Reads one JSON backup from a user-selected file.
-  Future<String?> _readBackupJson() async {
-    final file = await openFile(
-      acceptedTypeGroups: const <XTypeGroup>[_backupJsonFileTypeGroup],
-    );
-    if (file == null) {
-      return null;
-    }
-    return file.readAsString();
-  }
-
   /// Saves a streamed raw snapshot and releases its host-owned staging file.
-  Future<void> _exportRawSnapshot() async {
+  Future<void> _exportRawSnapshot() {
     final l10n = AppLocalizations.of(context)!;
     final suggestedName = _rawSnapshotSuggestedName();
-    setState(() => _busy = true);
-    StagedArchiveFile? exported;
-    try {
-      final savedPath = await FileSaveService.saveGeneratedFile(
-        // Generate the snapshot only after the registered output implementation is ready.
-        generate: () async {
-          final file = await widget.clients.servicesSnapshotImportManager
-              .exportRawSnapshot();
-          exported = file;
-          return XFile(
-            file.fileReference,
+    return _runTransfer(
+      l10n.settingsDataExportRawSnapshot,
+      l10n.settingsDataSnapshotExportError,
+      () async {
+        StagedArchiveFile? exported;
+        try {
+          final savedPath = await FileSaveService.saveGeneratedFile(
+            generate: () async {
+              final file = await widget.clients.servicesSnapshotImportManager
+                  .exportRawSnapshot();
+              exported = file;
+              return XFile(
+                file.fileReference,
+                name: suggestedName,
+                mimeType: 'application/zip',
+                length: file.archive.byteLength,
+              );
+            },
             name: suggestedName,
-            mimeType: 'application/zip',
-            length: file.archive.byteLength,
+            acceptedTypeGroups: const <XTypeGroup>[_rawSnapshotFileTypeGroup],
           );
-        },
-        name: suggestedName,
-        acceptedTypeGroups: const <XTypeGroup>[_rawSnapshotFileTypeGroup],
-      );
-      if (savedPath == null || !mounted) {
-        return;
-      }
-      setState(() {
-        _lastSnapshotBytes = exported!.archive.byteLength;
-      });
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(savedPath))));
-    } catch (error) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(l10n.settingsDataSnapshotExportError('$error')),
-          ),
-        );
-      }
-    } finally {
-      try {
-        final file = exported;
-        if (file != null) {
-          await widget.clients.servicesArchiveTransferManager
-              .discardArchiveUpload(archiveId: file.archive.archiveId);
+          if (savedPath != null && mounted)
+            _showMessage(l10n.savedTo(savedPath));
+        } finally {
+          final file = exported;
+          if (file != null) {
+            await widget.clients.servicesArchiveTransferManager
+                .discardArchiveUpload(archiveId: file.archive.archiveId);
+          }
         }
-      } finally {
-        if (mounted) {
-          setState(() => _busy = false);
-        }
-      }
-    }
-  }
-
-  Future<void> _importRawSnapshot() async {
-    final l10n = AppLocalizations.of(context)!;
-    final file = await SelectedFileInput.pickSnapshot();
-    if (file == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    SnapshotImportSession? stagedSession;
-    late final RawSnapshotManifest manifest;
-    try {
-      stagedSession = await SnapshotImportUploader(widget.clients).stage(file);
-      manifest = await stagedSession.completeRaw();
-    } catch (error) {
-      final session = stagedSession;
-      if (session != null) {
-        await session.discard();
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataSnapshotImportError('$error'))),
-      );
-      return;
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-    final session = stagedSession;
-    if (!mounted) {
-      await session.discard();
-      return;
-    }
-    final confirmed = await _RawSnapshotRestoreDialog.show(
-      context: context,
-      manifest: manifest,
-      byteCount: session.byteLength,
+      },
     );
-    if (confirmed != true) {
-      await session.discard();
-      return;
-    }
-    setState(() => _busy = true);
+  }
+
+  /// Locks data actions for the picker, review, and execution of one transfer.
+  Future<void> _runTransfer(
+    String title,
+    String Function(String) errorMessage,
+    Future<void> Function() action,
+  ) async {
+    if (_busy) return;
+    setState(() {
+      _busy = true;
+      _activeTransfer = title;
+    });
     try {
-      await session.commitRaw();
-      await session.discard();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(l10n.settingsDataSnapshotImported)),
+      await action();
+    } catch (error, stackTrace) {
+      if (ClientLogger.isInitialized) {
+        ClientLogger.e(
+          'Data transfer failed',
+          tag: 'DataSettings',
+          error: error,
+          stackTrace: stackTrace,
         );
       }
-      await platformCoreProxy.restartApplication();
-    } catch (error) {
-      await session.discard();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataSnapshotImportError('$error'))),
-      );
+      if (mounted) _showMessage(errorMessage('$error'));
     } finally {
       if (mounted) {
-        setState(() => _busy = false);
+        setState(() {
+          _busy = false;
+          _activeTransfer = null;
+          _operit1ImportProgress = null;
+        });
       }
     }
   }
 
-  /// Publishes a local progress state for the file-selection and staging phase.
+  /// Pauses progress while waiting for the user to approve the transfer.
+  Future<bool> _confirmTransfer(Future<bool?> Function() showReview) async {
+    final title = _activeTransfer;
+    setState(() {
+      _activeTransfer = null;
+      _operit1ImportProgress = null;
+    });
+    final confirmed = await showReview();
+    if (confirmed != true || !mounted) return false;
+    setState(() => _activeTransfer = title);
+    return true;
+  }
+
+  /// Reviews a portable archive and restarts the application after replacing runtime data.
+  Future<void> _importRawSnapshot() {
+    final l10n = AppLocalizations.of(context)!;
+    return _runTransfer(
+      l10n.settingsDataImportRawSnapshot,
+      l10n.settingsDataSnapshotImportError,
+      () async {
+        final file = await SelectedFileInput.pickSnapshot();
+        if (file == null) return;
+        if (!mounted) {
+          await file.close();
+          return;
+        }
+        final session = await SnapshotImportUploader(
+          widget.clients,
+        ).stage(file);
+        var restored = false;
+        try {
+          final manifest = await session.completeRaw();
+          if (!mounted) return;
+          final confirmed = await _confirmTransfer(
+            () => _RawSnapshotRestoreDialog.show(
+              context: context,
+              manifest: manifest,
+              byteCount: session.byteLength,
+            ),
+          );
+          if (!confirmed) return;
+          await session.commitRaw();
+          restored = true;
+        } finally {
+          try {
+            await session.discard();
+          } finally {
+            if (restored) await platformCoreProxy.restartApplication();
+          }
+        }
+        if (mounted) _showMessage(l10n.settingsDataSnapshotImported);
+      },
+    );
+  }
+
+  /// Shows progress while the selected Operit1 file is read and migrated.
   void _setOperit1ImportProgress({
-    required String stage,
     required String title,
     required String detail,
     required double progress,
   }) {
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
     setState(() {
       _operit1ImportProgress = Operit1SnapshotImportProgress(
-        stage: stage,
+        stage: '',
         title: title,
         detail: detail,
-        progress: progress.clamp(0.0, 1.0).toDouble(),
+        progress: progress,
         active: true,
       );
     });
   }
 
-  /// Selects, previews, confirms, and imports a complete Operit1 snapshot.
-  Future<void> _importOperit1Snapshot() async {
+  /// Selects, previews, and imports a complete Operit1 snapshot into the current data.
+  Future<void> _importOperit1Snapshot() {
     final l10n = AppLocalizations.of(context)!;
-    final file = await SelectedFileInput.pickSnapshot();
-    if (file == null) {
-      return;
-    }
-    if (!mounted) {
-      await file.close();
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _operit1ImportProgress = const Operit1SnapshotImportProgress(
-        stage: 'prepare',
-        title: '准备导入',
-        detail: '正在准备 Operit1 快照。',
-        progress: 0.0,
-        active: true,
-      );
-    });
-    ClientLogger.v(
-      'settings snapshot selected name=${file.name} bytes=${file.byteLength}',
-      tag: _operit1SnapshotImportLogTag,
-      verboseLevel: VerboseLevel.level2,
-    );
-    SnapshotImportSession? stagedSession;
-    late final Operit1SnapshotPreview preview;
-    var lastUploadPercent = -1;
-    try {
-      stagedSession = await SnapshotImportUploader(widget.clients).stage(
-        file,
-        onProgress: (uploadedBytes, totalBytes) {
-          final uploadPercent = totalBytes <= 0
-              ? 100
-              : (uploadedBytes * 100 / totalBytes).floor().clamp(0, 100);
-          if (uploadPercent == lastUploadPercent) {
-            return;
-          }
-          lastUploadPercent = uploadPercent;
+    return _runTransfer(
+      l10n.settingsDataImportOperit1Snapshot,
+      l10n.settingsDataOperit1SnapshotImportError,
+      () async {
+        final file = await SelectedFileInput.pickSnapshot();
+        if (file == null) return;
+        if (!mounted) {
+          await file.close();
+          return;
+        }
+        var lastUploadPercent = -1;
+        final session = await SnapshotImportUploader(widget.clients).stage(
+          file,
+          onProgress: (uploadedBytes, totalBytes) {
+            final percent = totalBytes == 0
+                ? 100
+                : 100 * uploadedBytes ~/ totalBytes;
+            if (percent == lastUploadPercent) return;
+            lastUploadPercent = percent;
+            _setOperit1ImportProgress(
+              title: l10n.settingsDataReadingSnapshot,
+              detail: file.name,
+              progress: 0.18 * percent / 100,
+            );
+          },
+        );
+        try {
           _setOperit1ImportProgress(
-            stage: 'upload',
-            title: '上传快照',
-            detail: '正在读取并上传快照文件（$uploadPercent%）。',
-            progress: 0.18 * uploadPercent / 100,
+            title: l10n.settingsDataPreparingPreview,
+            detail: file.name,
+            progress: 0.20,
           );
-        },
-      );
-      _setOperit1ImportProgress(
-        stage: 'inspect',
-        title: '检查快照',
-        detail: '正在检查 Operit1 快照内容，请稍候。',
-        progress: 0.20,
-      );
-      ClientLogger.v(
-        'settings snapshot upload completed bytes=${stagedSession.byteLength}; inspection started',
-        tag: _operit1SnapshotImportLogTag,
-        verboseLevel: VerboseLevel.level3,
-      );
-      preview = await stagedSession.completeOperit1();
-      ClientLogger.i(
-        'settings snapshot inspection completed format=${preview.formatVersion} configs=${preview.modelConfig.configs.length} chats=${preview.chatCount} messages=${preview.messageCount}',
-        tag: _operit1SnapshotImportLogTag,
-      );
-    } catch (error, stackTrace) {
-      ClientLogger.e(
-        'settings snapshot selection, upload, or inspection failed',
-        tag: _operit1SnapshotImportLogTag,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      final session = stagedSession;
-      if (session != null) {
-        await session.discard();
-      }
-      if (mounted) {
-        setState(() => _operit1ImportProgress = null);
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.settingsDataOperit1SnapshotImportError('$error')),
-        ),
-      );
-      return;
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
-    final session = stagedSession;
-    if (!mounted) {
-      await session.discard();
-      return;
-    }
-    setState(() => _operit1ImportProgress = null);
-    final confirmed = await _Operit1SnapshotImportDialog.show(
-      context: context,
-      fileName: file.name,
-      preview: preview,
-      byteCount: session.byteLength,
+          final preview = await session.completeOperit1();
+          if (!mounted) return;
+          final confirmed = await _confirmTransfer(
+            () => _Operit1SnapshotImportDialog.show(
+              context: context,
+              fileName: file.name,
+              preview: preview,
+              byteCount: session.byteLength,
+            ),
+          );
+          if (!confirmed) return;
+          _subscribeOperit1ImportProgress();
+          final result = await session.commitOperit1();
+          if (mounted) {
+            _showMessage(
+              l10n.settingsDataOperit1ImportResult(
+                result.importedChats,
+                result.importedMessages,
+              ),
+            );
+          }
+        } finally {
+          try {
+            await _operit1ImportProgressSubscription?.cancel();
+            _operit1ImportProgressSubscription = null;
+          } finally {
+            await session.discard();
+          }
+        }
+      },
     );
-    if (confirmed != true) {
-      await session.discard();
-      return;
-    }
-    setState(() {
-      _busy = true;
-      _operit1ImportProgress = const Operit1SnapshotImportProgress(
-        stage: 'start',
-        title: '开始导入',
-        detail: '正在启动 Operit1 数据迁移。',
-        progress: 0.02,
-        active: true,
-      );
-    });
-    try {
-      ClientLogger.i(
-        'settings snapshot import started bytes=${session.byteLength}',
-        tag: _operit1SnapshotImportLogTag,
-      );
-      _subscribeOperit1ImportProgress();
-      final result = await session.commitOperit1();
-      ClientLogger.i(
-        'settings snapshot import completed chats=${result.importedChats} messages=${result.importedMessages} memories=${result.importedMemories} files=${result.importedFiles + result.importedExternalFiles + result.importedWorkspaceFiles}',
-        tag: _operit1SnapshotImportLogTag,
-      );
-      await session.discard();
-      if (mounted) {
-        setState(() => _operit1ImportProgress = null);
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataOperit1SnapshotImported)),
-      );
-      _reload();
-    } catch (error, stackTrace) {
-      ClientLogger.e(
-        'settings snapshot import failed',
-        tag: _operit1SnapshotImportLogTag,
-        error: error,
-        stackTrace: stackTrace,
-      );
-      await session.discard();
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(l10n.settingsDataOperit1SnapshotImportError('$error')),
-        ),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
   }
 
   /// Exports merged Core/client diagnostics through the platform save dialog.
@@ -612,152 +504,96 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     }
   }
 
-  /// Exports all chat histories to a JSON file.
-  Future<void> _exportChatHistoriesBackup() async {
+  /// Exports only the selected data type in its portable JSON format.
+  Future<void> _exportJson({required bool chat}) {
     final l10n = AppLocalizations.of(context)!;
-    setState(() => _busy = true);
-    try {
-      final jsonText = await widget.clients.chatRuntimeHolderMain
-          .exportChatHistoriesToJson();
+    final title = chat
+        ? l10n.settingsDataExportChatJson
+        : l10n.settingsDataExportModelJson;
+    return _runTransfer(title, l10n.settingsDataBackupExportError, () async {
+      final jsonText = chat
+          ? await widget.clients.chatRuntimeHolderMain
+                .exportChatHistoriesToJson()
+          : await widget.clients.preferencesModelConfigManager
+                .exportAllProviders();
+      if (!mounted) return;
       final savedPath = await _saveBackupJson(
         jsonText: jsonText,
-        suggestedName: _backupJsonSuggestedName('chat-histories'),
+        suggestedName: _backupJsonSuggestedName(
+          chat ? 'chat-histories' : 'model-configs',
+        ),
       );
-      if (savedPath == null) {
-        return;
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(savedPath))));
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupExportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
+      if (savedPath != null && mounted) _showMessage(l10n.savedTo(savedPath));
+    });
   }
 
-  /// Imports all chat histories from a JSON file.
-  Future<void> _importChatHistoriesBackup() async {
+  /// Confirms which JSON file will update matching records before applying it.
+  Future<void> _importJson({required bool chat}) {
     final l10n = AppLocalizations.of(context)!;
-    final jsonText = await _readBackupJson();
-    if (jsonText == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final result = await widget.clients.chatRuntimeHolderMain
-          .importChatHistoriesFromJson(jsonString: jsonText);
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.settingsDataBackupImportResult(
-              result.newValue,
-              result.updated,
-              result.skipped,
+    final title = chat
+        ? l10n.settingsDataImportChatJson
+        : l10n.settingsDataImportModelJson;
+    final description = chat
+        ? l10n.settingsDataImportChatJsonDescription
+        : l10n.settingsDataImportModelJsonDescription;
+    return _runTransfer(title, l10n.settingsDataBackupImportError, () async {
+      final file = await openFile(
+        acceptedTypeGroups: const [_backupJsonFileTypeGroup],
+      );
+      if (file == null || !mounted) return;
+      final confirmed = await _confirmTransfer(
+        () => showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: Text(title),
+            scrollable: true,
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(file.name, style: Theme.of(context).textTheme.titleSmall),
+                const SizedBox(height: 8),
+                Text(description),
+              ],
             ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: Text(l10n.cancel),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: Text(l10n.settingsDataImportAction),
+              ),
+            ],
           ),
         ),
       );
-      _reload();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupImportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
+      if (!confirmed) return;
+      final jsonText = await file.readAsString();
+      if (!mounted) return;
+      final (added, updated, skipped) = chat
+          ? await _importChatJson(jsonText)
+          : await _importModelJson(jsonText);
+      if (mounted)
+        _showMessage(
+          l10n.settingsDataBackupImportResult(added, updated, skipped),
+        );
+    });
   }
 
-  /// Imports model configurations from a JSON file.
-  Future<void> _importModelConfigsBackup() async {
-    final l10n = AppLocalizations.of(context)!;
-    final jsonText = await _readBackupJson();
-    if (jsonText == null) {
-      return;
-    }
-    setState(() => _busy = true);
-    try {
-      final result = await widget.clients.preferencesModelConfigManager
-          .importAllProvidersFromBackupContent(jsonContent: jsonText);
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            l10n.settingsDataBackupImportResult(
-              result.newValue,
-              result.updated,
-              result.skipped,
-            ),
-          ),
-        ),
-      );
-      _reload();
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupImportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
+  /// Applies a chat archive and returns its change counts.
+  Future<(int, int, int)> _importChatJson(String jsonText) async {
+    final result = await widget.clients.chatRuntimeHolderMain
+        .importChatHistoriesFromJson(jsonString: jsonText);
+    return (result.newValue, result.updated, result.skipped);
   }
 
-  /// Exports all model configurations to a JSON file.
-  Future<void> _exportModelConfigsBackup() async {
-    final l10n = AppLocalizations.of(context)!;
-    setState(() => _busy = true);
-    try {
-      final jsonText = await widget.clients.preferencesModelConfigManager
-          .exportAllProviders();
-      final savedPath = await _saveBackupJson(
-        jsonText: jsonText,
-        suggestedName: _backupJsonSuggestedName('model-configs'),
-      );
-      if (savedPath == null) {
-        return;
-      }
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(l10n.savedTo(savedPath))));
-    } catch (error) {
-      if (!mounted) {
-        return;
-      }
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(l10n.settingsDataBackupExportError('$error'))),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _busy = false);
-      }
-    }
+  /// Applies a model configuration archive and returns its change counts.
+  Future<(int, int, int)> _importModelJson(String jsonText) async {
+    final result = await widget.clients.preferencesModelConfigManager
+        .importAllProvidersFromBackupContent(jsonContent: jsonText);
+    return (result.newValue, result.updated, result.skipped);
   }
 
   /// Keeps diagnostics usable even if the overview cannot connect to Core.
@@ -788,148 +624,284 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     );
   }
 
-  /// Keeps snapshot recovery accessible independently of overview and model counts.
-  Widget _buildChatRestoreCard(AppLocalizations l10n) => _SectionCard(
-    title: l10n.chatRestoreTitle,
-    children: [
-      ChatBackupRestorePanel(
-        enabled: !_busy,
-        onBusyChanged: (busy) {
-          if (mounted) setState(() => _busy = busy);
-        },
-        onRestored: _reload,
-      ),
-    ],
+  /// Resolves the service that owns the scheduled backup destination.
+  ChatBackupService get _backupService =>
+      widget.backupService ?? ChatBackupService.instance;
+
+  /// Runs one explicit database action at a time from the settings panel.
+  Future<void> _runBackupAction(Future<void> Function() action) async {
+    if (_busy) return;
+    setState(() => _busy = true);
+    try {
+      await action();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  /// Shows the saved destination and the latest successful database copy.
+  Widget _buildBackupCard(AppLocalizations l10n) => ListenableBuilder(
+    listenable: _backupService,
+    builder: (context, _) {
+      final service = _backupService;
+      final directory = service.directory;
+      final ready = directory != null && !service.needsDirectory;
+      final lastSuccess = service.lastSuccess?.toLocal();
+      final material = MaterialLocalizations.of(context);
+      final theme = Theme.of(context);
+      return _SectionCard(
+        title: l10n.settingsDataDatabaseBackup,
+        children: [
+          Text(l10n.settingsDataDatabaseBackupDescription),
+          const SizedBox(height: 12),
+          Text(
+            ready
+                ? l10n.settingsDataBackupScheduled
+                : l10n.settingsDataBackupUnavailable,
+            style: theme.textTheme.titleSmall,
+          ),
+          if (directory != null) SelectableText(directory.label),
+          if (lastSuccess != null)
+            Text(
+              l10n.chatBackupLastSuccess(
+                '${material.formatMediumDate(lastSuccess)} · '
+                '${material.formatTimeOfDay(TimeOfDay.fromDateTime(lastSuccess))}',
+              ),
+            )
+          else if (ready)
+            Text(l10n.chatBackupNever),
+          if (service.error != null)
+            SelectableText(
+              service.error!,
+              style: TextStyle(color: theme.colorScheme.error),
+            ),
+          const SizedBox(height: 12),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              if (ready)
+                FilledButton.icon(
+                  onPressed: _busy || service.backingUp
+                      ? null
+                      : () => _runBackupAction(() async {
+                          await service.checkAndBackup(force: true);
+                          if (mounted && service.error == null) {
+                            _showMessage(l10n.settingsDataBackupSaved);
+                          }
+                        }),
+                  icon: const Icon(Icons.backup_outlined),
+                  label: Text(l10n.settingsDataBackupNow),
+                ),
+              OutlinedButton.icon(
+                onPressed: _busy || service.backingUp
+                    ? null
+                    : () => _runBackupAction(() async {
+                        await service.selectDirectory();
+                      }),
+                icon: const Icon(Icons.folder_open_outlined),
+                label: Text(
+                  ready ? l10n.chatBackupChange : l10n.chatBackupChoose,
+                ),
+              ),
+            ],
+          ),
+          if (service.backingUp) ...[
+            const SizedBox(height: 12),
+            const LinearProgressIndicator(),
+          ],
+        ],
+      );
+    },
   );
 
-  /// Builds host-owned backups and restore controls without plugin backup duplicates.
+  /// Shows application feedback for completed or failed operations.
+  void _showMessage(String message) {
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  /// Shows a named operation with feedback next to the action that started it.
+  Widget _action({
+    required IconData icon,
+    required String title,
+    String? description,
+    required VoidCallback onTap,
+    Widget? progress,
+  }) {
+    final working = _activeTransfer == title;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ListTile(
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
+          title: Text(title),
+          subtitle: description == null ? null : Text(description),
+          trailing: working
+              ? const M3LoadingIndicator(size: 20)
+              : const Icon(Icons.chevron_right),
+          onTap: _busy ? null : onTap,
+        ),
+        if (working && progress != null)
+          Padding(padding: const EdgeInsets.only(bottom: 12), child: progress),
+      ],
+    );
+  }
+
+  /// Places backup, recovery, and data import before storage and support tools.
   @override
   Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
     return FutureBuilder<_DataSettingsData>(
       future: _future,
-      builder: (context, snapshot) {
-        final data = snapshot.data;
-        if (data == null) {
-          return ListView(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            children: <Widget>[
-              _buildDiagnosticLogsCard(l10n, colorScheme),
-              _buildChatRestoreCard(l10n),
-              if (snapshot.hasError)
-                _SectionCard(
-                  title: l10n.settingsDataRuntimeSection,
-                  children: <Widget>[
-                    Text(
-                      l10n.settingsDataOverviewLoadError('${snapshot.error}'),
+      builder: _buildPage,
+    );
+  }
+
+  /// Keeps backup and transfer controls available while the runtime details load.
+  Widget _buildPage(
+    BuildContext context,
+    AsyncSnapshot<_DataSettingsData> runtime,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    final operit1Progress = _operit1ImportProgress;
+    return Center(
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 760),
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+          children: [
+            _buildBackupCard(l10n),
+            _SectionCard(
+              title: l10n.settingsDataRecoverySection,
+              children: [
+                _action(
+                  icon: Icons.restore_outlined,
+                  title: l10n.chatRestoreTitle,
+                  description: l10n.settingsDataRestoreDatabaseDescription,
+                  onTap: () => _runBackupAction(() async {
+                    await ChatBackupRestorePanel.show(context, _backupService);
+                  }),
+                ),
+                const Divider(height: 1),
+                _action(
+                  icon: Icons.folder_zip_outlined,
+                  title: l10n.settingsDataImportRawSnapshot,
+                  description: l10n.settingsDataRestoreArchiveDescription,
+                  onTap: _importRawSnapshot,
+                ),
+              ],
+            ),
+            _SectionCard(
+              title: l10n.settingsDataImportSection,
+              children: [
+                _action(
+                  icon: Icons.move_to_inbox_outlined,
+                  title: l10n.settingsDataImportOperit1Snapshot,
+                  description: l10n.settingsDataImportOperit1Description,
+                  onTap: _importOperit1Snapshot,
+                  progress: operit1Progress == null
+                      ? null
+                      : _Operit1SnapshotImportProgressPanel(
+                          progress: operit1Progress,
+                        ),
+                ),
+                const Divider(height: 1),
+                _action(
+                  icon: Icons.chat_bubble_outline,
+                  title: l10n.settingsDataImportChatJson,
+                  description: l10n.settingsDataImportChatJsonDescription,
+                  onTap: () => _importJson(chat: true),
+                ),
+                const Divider(height: 1),
+                _action(
+                  icon: Icons.tune_outlined,
+                  title: l10n.settingsDataImportModelJson,
+                  description: l10n.settingsDataImportModelJsonDescription,
+                  onTap: () => _importJson(chat: false),
+                ),
+              ],
+            ),
+            _SectionCard(
+              children: [
+                ExpansionTile(
+                  tilePadding: EdgeInsets.zero,
+                  shape: const Border(),
+                  collapsedShape: const Border(),
+                  title: Text(
+                    l10n.settingsDataExportSection,
+                    style: SettingsControlStyles.sectionTitleTextStyle(context),
+                  ),
+                  expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _action(
+                      icon: Icons.folder_zip_outlined,
+                      title: l10n.settingsDataExportRawSnapshot,
+                      description:
+                          l10n.settingsDataExportRawSnapshotDescription,
+                      onTap: _exportRawSnapshot,
+                    ),
+                    _action(
+                      icon: Icons.chat_bubble_outline,
+                      title: l10n.settingsDataExportChatJson,
+                      onTap: () => _exportJson(chat: true),
+                    ),
+                    _action(
+                      icon: Icons.tune_outlined,
+                      title: l10n.settingsDataExportModelJson,
+                      onTap: () => _exportJson(chat: false),
                     ),
                   ],
-                )
-              else
-                const SizedBox(height: 160, child: M3LoadingPane()),
-            ],
-          );
-        }
-        return ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          children: <Widget>[
+                ),
+              ],
+            ),
+            _buildRuntimeCard(l10n, runtime),
             _buildDiagnosticLogsCard(l10n, colorScheme),
-            _buildChatRestoreCard(l10n),
-            _SectionCard(
-              title: l10n.settingsDataBackupSection,
-              children: <Widget>[
-                const ChatBackupDirectoryPanel(showBackupAction: true),
-                const Divider(height: 20),
-                _SnapshotBackupLine(
-                  lastSnapshotBytes: _lastSnapshotBytes,
-                  onExport: _busy ? null : _exportRawSnapshot,
-                  onImport: _busy ? null : _importRawSnapshot,
-                  onImportOperit1: _busy ? null : _importOperit1Snapshot,
-                  operit1ImportProgress: _operit1ImportProgress,
-                ),
-                const Divider(height: 20),
-                Theme(
-                  data: Theme.of(
-                    context,
-                  ).copyWith(dividerColor: Colors.transparent),
-                  child: ExpansionTile(
-                    tilePadding: EdgeInsets.zero,
-                    childrenPadding: EdgeInsets.zero,
-                    shape: const Border(),
-                    collapsedShape: const Border(),
-                    leading: Icon(
-                      Icons.tune_outlined,
-                      color: colorScheme.primary,
-                    ),
-                    title: Text(
-                      l10n.settingsDataAdvancedBackupOptions,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text(
-                      l10n.settingsDataAdvancedBackupOptionsDescription,
-                    ),
-                    children: <Widget>[
-                      _BackupLine(
-                        title: l10n.settingsDataChatHistoriesBackup,
-                        subtitle: l10n.settingsDataBackupCount(
-                          data.chatHistoryCount,
-                        ),
-                        description:
-                            l10n.settingsDataChatHistoriesBackupDescription,
-                        onExport: _busy ? null : _exportChatHistoriesBackup,
-                        onImport: _busy ? null : _importChatHistoriesBackup,
-                      ),
-                      const Divider(height: 20),
-                      _BackupLine(
-                        title: l10n.settingsDataModelConfigsBackup,
-                        subtitle: l10n.settingsDataBackupCount(
-                          data.modelConfigCount,
-                        ),
-                        description:
-                            l10n.settingsDataModelConfigsBackupDescription,
-                        onExport: _busy ? null : _exportModelConfigsBackup,
-                        onImport: _busy ? null : _importModelConfigsBackup,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            _SectionCard(
-              title: l10n.settingsDataRuntimeSection,
-              children: <Widget>[
-                _InfoLine(
-                  label: l10n.settingsDataCoreVersion,
-                  value: data.coreVersion,
-                ),
-                const Divider(height: 20),
-                _StorageLocationLine(
-                  paths: data.storagePaths,
-                  onChange: _busy ? null : _changeStorageLocation,
-                ),
-              ],
-            ),
           ],
-        );
-      },
+        ),
+      ),
+    );
+  }
+
+  /// Displays runtime details without delaying display of backup and recovery.
+  Widget _buildRuntimeCard(
+    AppLocalizations l10n,
+    AsyncSnapshot<_DataSettingsData> runtime,
+  ) {
+    final data = runtime.data;
+    return _SectionCard(
+      title: l10n.settingsDataRuntimeSection,
+      children: [
+        if (data != null) ...[
+          _InfoLine(
+            label: l10n.settingsDataCoreVersion,
+            value: data.coreVersion,
+          ),
+          const Divider(height: 20),
+          _StorageLocationLine(
+            paths: data.storagePaths,
+            onChange: _busy ? null : _changeStorageLocation,
+          ),
+        ] else if (runtime.hasError)
+          Text(l10n.settingsDataOverviewLoadError('${runtime.error}'))
+        else
+          const LinearProgressIndicator(),
+      ],
     );
   }
 }
 
 class _DataSettingsData {
-  /// Retains only ordinary runtime, conversation, and model overview values.
+  /// Holds the current runtime version and local storage paths.
   const _DataSettingsData({
     required this.coreVersion,
     required this.storagePaths,
-    required this.chatHistoryCount,
-    required this.modelConfigCount,
   });
 
   final String coreVersion;
   final RuntimeStoragePaths storagePaths;
-  final int chatHistoryCount;
-  final int modelConfigCount;
 }
 
 class _StorageLocationLine extends StatelessWidget {
@@ -975,84 +947,10 @@ class _StorageLocationLine extends StatelessWidget {
   }
 }
 
-class _SnapshotBackupLine extends StatelessWidget {
-  const _SnapshotBackupLine({
-    required this.lastSnapshotBytes,
-    required this.onExport,
-    required this.onImport,
-    required this.onImportOperit1,
-    required this.operit1ImportProgress,
-  });
-
-  final int? lastSnapshotBytes;
-  final VoidCallback? onExport;
-  final VoidCallback? onImport;
-  final VoidCallback? onImportOperit1;
-  final Operit1SnapshotImportProgress? operit1ImportProgress;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(
-            l10n.settingsDataSnapshotBackupTitle,
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 6),
-          Text(
-            l10n.settingsDataExportRawSnapshotDescription,
-            style: TextStyle(color: colorScheme.onSurfaceVariant),
-          ),
-          if (lastSnapshotBytes != null) ...<Widget>[
-            const SizedBox(height: 8),
-            Text(
-              l10n.settingsDataSnapshotBytes(lastSnapshotBytes!),
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
-            ),
-          ],
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: <Widget>[
-              FilledButton.icon(
-                onPressed: onExport,
-                icon: const Icon(Icons.download_outlined),
-                label: Text(l10n.settingsDataExportRawSnapshot),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: onImport,
-                icon: const Icon(Icons.restore_outlined),
-                label: Text(l10n.settingsDataImportRawSnapshot),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: onImportOperit1,
-                icon: const Icon(Icons.move_to_inbox_outlined),
-                label: Text(l10n.settingsDataImportOperit1Snapshot),
-              ),
-            ],
-          ),
-          if (operit1ImportProgress != null) ...<Widget>[
-            const SizedBox(height: 16),
-            _Operit1SnapshotImportProgressPanel(
-              progress: operit1ImportProgress!,
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-}
-
 class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.children});
+  const _SectionCard({this.title, required this.children});
 
-  final String title;
+  final String? title;
   final List<Widget> children;
 
   @override
@@ -1073,87 +971,17 @@ class _SectionCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Text(
-                title,
-                style: SettingsControlStyles.sectionTitleTextStyle(context),
-              ),
-              const SizedBox(height: 6),
+              if (title != null) ...[
+                Text(
+                  title!,
+                  style: SettingsControlStyles.sectionTitleTextStyle(context),
+                ),
+                const SizedBox(height: 8),
+              ],
               ...children,
             ],
           ),
         ),
-      ),
-    );
-  }
-}
-
-class _BackupLine extends StatelessWidget {
-  const _BackupLine({
-    required this.title,
-    required this.subtitle,
-    required this.description,
-    required this.onExport,
-    required this.onImport,
-  });
-
-  final String title;
-  final String subtitle;
-  final String description;
-  final VoidCallback? onExport;
-  final VoidCallback? onImport;
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Row(
-            children: <Widget>[
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      title,
-                      style: const TextStyle(fontWeight: FontWeight.w700),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      subtitle,
-                      style: TextStyle(color: colorScheme.onSurfaceVariant),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            description,
-            style: TextStyle(color: colorScheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 10),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: <Widget>[
-              OutlinedButton.icon(
-                onPressed: onExport,
-                icon: const Icon(Icons.download_outlined),
-                label: Text(l10n.settingsDataExportBackupJson),
-              ),
-              FilledButton.tonalIcon(
-                onPressed: onImport,
-                icon: const Icon(Icons.upload_file_outlined),
-                label: Text(l10n.settingsDataImportBackupJson),
-              ),
-            ],
-          ),
-        ],
       ),
     );
   }
@@ -1457,6 +1285,7 @@ class _RawSnapshotRestoreDialog extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
       title: Text(l10n.settingsDataSnapshotRestoreConfirmTitle),
+      scrollable: true,
       content: Text(
         l10n.settingsDataSnapshotRestoreConfirmMessage(
           manifest.formatVersion,
@@ -1513,6 +1342,7 @@ class _Operit1SnapshotImportDialog extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
       title: Text(l10n.settingsDataImportOperit1Snapshot),
+      scrollable: true,
       content: SizedBox(
         width: 560,
         child: Text(

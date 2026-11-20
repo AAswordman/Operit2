@@ -3,16 +3,16 @@
 *, *::before, *::after { box-sizing: border-box; }
 html, body { margin: 0; width: 100%; height: 100%; }
 body { display: flex; flex-direction: column; overflow: hidden; background: var(--canvas); color: var(--ink); }
-.office-bar { display: flex; align-items: center; gap: 8px; min-height: 42px; flex: none; padding: 4px 8px; background: var(--paper); border-bottom: 1px solid var(--border); }
-.office-format { flex: none; color: var(--accent); font-size: 11px; font-weight: 700; }
-#filename { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-#status { margin-inline-start: auto; text-align: end; color: var(--muted); font-size: 11px; line-height: 1.1; }
-.office-bar button { display: grid; place-items: center; width: 34px; height: 32px; padding: 0; flex: none; border: 0; border-radius: 4px; color: inherit; background: transparent; cursor: pointer; }
-.office-bar button:hover:not(:disabled) { background: var(--canvas); }
-.office-bar button:disabled { opacity: .38; cursor: default; }
-.office-bar svg { width: 17px; height: 17px; }
+#tools:not([hidden]) { display: flex; align-items: center; flex: none; min-width: 0; background: #fff; color-scheme: light; color: #1c2229; border-bottom: 1px solid var(--border); }
+.office-actions { display: flex; align-items: center; gap: 4px; flex: none; padding: 0 4px; font: 13px/1.4 system-ui, sans-serif; color: inherit; }
+#status { max-width: 88px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: end; opacity: .72; font-size: 11px; }
+.office-actions button { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; flex: none; border: 0; border-radius: 4px; color: inherit; background: transparent; cursor: pointer; }
+.office-actions button:hover:not(:disabled) { background: rgb(128 128 128 / 16%); }
+.office-actions button:disabled { opacity: .38; cursor: default; }
+.office-actions svg { width: 17px; height: 17px; }
 #error { background: var(--paper); border-bottom: 1px solid var(--border); padding: 7px 12px; color: var(--ink); overflow-wrap: anywhere; max-height: 22vh; overflow: auto; }
-#toolbar { flex: none; background: #fff; color-scheme: light; color: #1c2229; }
+#toolbar { flex: 1; min-width: 0; }
+@media (max-width: 480px) { #status { max-width: 56px; } }
 #editor { flex: 1; min-height: 0; min-width: 0; overflow: hidden; position: relative; }
 body[data-format="docx"] #editor {
   overflow: auto;

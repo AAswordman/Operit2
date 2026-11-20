@@ -521,7 +521,7 @@ pub(crate) fn save_initialization(
     tx.execute("INSERT INTO _operit_transaction_initialization(id,operation_id,origin,sequence,original) VALUES(1,?1,?2,?3,?4)
         ON CONFLICT(id) DO UPDATE SET operation_id=excluded.operation_id,origin=excluded.origin,sequence=excluded.sequence,original=excluded.original",
         vec![text(&operation.opId),text(&operation.originDeviceId),SqliteValue::Integer(operation.sequence),SqliteValue::Text(original)])?;
-    tx.execute("INSERT INTO _operit_initialization_metadata VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",vec![text(&serde_json::to_string(&serde_json::json!({"owner":data.owner,"revision":data.revision,"originalFingerprint":super::digest(operation).map_err(fail)?})).map_err(|e|fail(e.to_string()))?)])?;
+    tx.execute("INSERT INTO _operit_initialization_metadata VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data",vec![text(&serde_json::to_string(&serde_json::json!({"owner":data.owner,"revision":data.revision,"restoration":data.restoration,"originalFingerprint":super::digest(operation).map_err(fail)?})).map_err(|e|fail(e.to_string()))?)])?;
     tx.execute("DELETE FROM _operit_initialization_coverage", vec![])?;
     for id in covered {
         tx.execute(

@@ -16,6 +16,7 @@ export interface DocumentZoom {
 export type EditorOptions = {
   root: HTMLElement;
   toolbar: HTMLElement;
+  actions: HTMLElement;
   bytes: Bytes;
   info: DocumentInfo;
   chinese: boolean;

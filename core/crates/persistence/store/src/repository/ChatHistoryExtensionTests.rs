@@ -39,65 +39,31 @@ fn chatTarget() -> PluginExtensionTarget {
     }
 }
 
-/// Preserves committed WAL rows and revisions in a standalone chat-only SQLite image.
+/// Copies committed WAL contents and restores every database table through the same shared store.
 #[test]
-fn chat_database_snapshot_preserves_revisions_and_restores_without_other_data() {
+fn database_file_copy_preserves_all_tables_and_live_readers() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
-    let (manager, database) = fixture("daily-chat-backup");
-    database.store().execute(
-        "UPDATE chats SET workspaceId = ?1, pinned = 1 WHERE id = ?2",
-        sqliteParams!["private-workspace", "extensions-chat"],
-    ).unwrap();
-    database.store().executeBatch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE backup_private_data(value TEXT); INSERT INTO backup_private_data VALUES('private-data-before');").unwrap();
+    let (manager, database) = fixture("daily-database-backup");
+    database.store().executeBatch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE backup_private_data(value TEXT); INSERT INTO backup_private_data VALUES('before');").unwrap();
     manager.updateChatTitle("extensions-chat".into(), "Committed in WAL".into()).unwrap();
-    let path = "/operitapp/data/temp/chat-snapshot-test.sqlite";
-    let info = crate::ChatDatabaseSnapshot::create(path, 1234).unwrap().unwrap();
-    assert_eq!((info.createdAt, info.chatCount, info.messageCount), (1234,1,1));
-    let image = crate::SqliteStore::SqliteStore::open(path.into()).unwrap();
-    assert_eq!(image.queryScalar::<String>("SELECT title FROM chats",vec![]).unwrap(), "Committed in WAL");
-    assert_eq!(image.queryScalar::<i64>("SELECT count(*) FROM backup_private_data",vec![]).unwrap(),0);
-    assert_eq!(image.queryScalar::<i64>("SELECT count(*) FROM sync_sql_operations",vec![]).unwrap(),0);
-    assert_eq!(image.queryScalar::<i64>("SELECT count(*) FROM message_variants",vec![]).unwrap(),3);
-    assert!(image.queryOne("SELECT workspaceId FROM chats",vec![]).unwrap().unwrap().get::<_,Option<String>>(0).unwrap().is_none());
-    let bytes = crate::RuntimeStorageHost::defaultRuntimeStorageHost().readBytes("runtime/temp/chat-snapshot-test.sqlite").unwrap();
+    let host = crate::RuntimeStorageHost::defaultRuntimeStorageHost();
+    let key = crate::RuntimeStorageHost::runtimeStoragePath(database.store().path());
+    let bytes = database.store().withDatabaseFile(|| Ok(host.readBytes(&key)?)).unwrap();
     assert!(bytes.starts_with(b"SQLite format 3\0"));
-    assert!(!bytes.windows(b"private-data-before".len()).any(|v|v==b"private-data-before"));
-    drop(image);
-    manager.updateChatTitle("extensions-chat".into(), "After backup".into()).unwrap();
-    let operations = manager.syncStore.operationsSince(&crate::SyncOperationStore::SyncClock::default(),&["chat".into()],100).unwrap();
-    database.store().execute("UPDATE backup_private_data SET value='private-data-now'",vec![]).unwrap();
-    database.chatDao().insertChat(ChatEntity::new("created-after-backup".into(),"New chat".into(),2)).unwrap();
-    database.store().executeBatch("CREATE TRIGGER reject_restore BEFORE INSERT ON chats BEGIN SELECT RAISE(ABORT,'injected restore failure'); END;").unwrap();
-    assert!(crate::ChatDatabaseSnapshot::restore(path).is_err());
-    assert_eq!(database.store().queryScalar::<String>("SELECT title FROM chats WHERE id='extensions-chat'",vec![]).unwrap(), "After backup");
-    assert_eq!(database.store().queryScalar::<i64>("SELECT count(*) FROM chats",vec![]).unwrap(),2);
-    database.store().executeBatch("DROP TRIGGER reject_restore").unwrap();
     let lease = database.store().beginChatExecution("extensions-chat").unwrap();
-    assert!(crate::ChatDatabaseSnapshot::restore(path).is_err());
+    assert!(database.restoreDatabaseFile(|| Ok(())).is_err());
     lease.release().unwrap();
-    crate::ChatDatabaseSnapshot::restore(path).unwrap();
-    assert_eq!(database.store().queryScalar::<i64>("SELECT count(*) FROM chats",vec![]).unwrap(),1);
-    assert_eq!(database.store().queryScalar::<String>("SELECT title FROM chats",vec![]).unwrap(), "Committed in WAL");
-    assert_eq!(database.store().queryScalar::<String>("SELECT value FROM backup_private_data",vec![]).unwrap(),"private-data-now");
-    manager.syncStore.applyOperations(&operations).unwrap();
-    assert_eq!(database.store().queryScalar::<String>("SELECT title FROM chats",vec![]).unwrap(), "Committed in WAL");
-    let variant = database.messageVariantDao().getVariantForMessage("extensions-chat",42,3).unwrap().unwrap();
-    assert_eq!(variant.pluginExtensions["actor"],json!({"revision":3}));
-    manager.deleteChatHistory("extensions-chat".into()).unwrap();
-    assert!(manager.chatIsDeleted("extensions-chat").unwrap());
-    let deletions = manager.syncStore.operationsSince(&crate::SyncOperationStore::SyncClock::default(),&["chat".into()],100).unwrap();
-    crate::ChatDatabaseSnapshot::restore(path).unwrap();
-    manager.syncStore.applyOperations(&deletions).unwrap();
-    assert!(!manager.chatIsDeleted("extensions-chat").unwrap());
-    assert!(manager.chatExists("extensions-chat".into()).unwrap());
-    assert!(crate::CoreNodeBindingStore::CoreNodeBindingStore::default().unwrap().binding("extensions-chat").is_ok());
-    let image = crate::SqliteStore::SqliteStore::open(path.into()).unwrap();
-    image.setUserVersion(crate::db::AppDatabase::DATABASE_VERSION+1).unwrap();
-    assert!(crate::ChatDatabaseSnapshot::restore(path).is_err());
-    assert_eq!(database.store().queryScalar::<String>("SELECT title FROM chats",vec![]).unwrap(), "Committed in WAL");
-    image.setUserVersion(crate::db::AppDatabase::DATABASE_VERSION).unwrap();
-    image.executeBatch("CREATE VIEW untrusted_view AS SELECT * FROM chats").unwrap();
-    assert!(crate::ChatDatabaseSnapshot::restore(path).is_err());
+    manager.updateChatTitle("extensions-chat".into(), "After backup".into()).unwrap();
+    database.store().executeBatch("UPDATE backup_private_data SET value='after'").unwrap();
+    database.restoreDatabaseFile(|| Ok(host.writeBytes(&key, &bytes)?)).unwrap();
+    assert_eq!(database.store().queryScalar::<String>("SELECT title FROM chats", vec![]).unwrap(), "Committed in WAL");
+    assert_eq!(database.store().queryScalar::<String>("SELECT value FROM backup_private_data", vec![]).unwrap(), "before");
+    assert_eq!(database.store().queryScalar::<i64>("SELECT count(*) FROM message_variants", vec![]).unwrap(), 3);
+    let variant = database.messageVariantDao().getVariantForMessage("extensions-chat", 42, 3).unwrap().unwrap();
+    assert_eq!(variant.pluginExtensions["actor"], json!({"revision": 3}));
+    assert_eq!(database.store().queryScalar::<i64>("PRAGMA foreign_keys", vec![]).unwrap(), 1);
+    assert!(database.store().withDatabaseFile::<()>(|| Err(crate::SqliteStore::SqliteStoreError::Message("copy failed".into()))).is_err());
+    assert_eq!(database.store().queryScalar::<String>("SELECT value FROM backup_private_data", vec![]).unwrap(), "before");
 }
 
 /// Selects an exact persisted message revision without implicit selected-state resolution.

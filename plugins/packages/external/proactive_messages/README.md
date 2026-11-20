@@ -9,11 +9,13 @@
 
 ## 插件与宿主的分工
 
-插件在前台计算时间、抽取概率并生成内容，随后统一调用 `Tools.Chat.scheduleMessage`。插件没有平台探测、平台分支或发送定时器，也不使用 `exec`。到点投递、持久化、取消、重启恢复、系统通知和 iOS 恢复同步全部由宿主处理。
+插件在前台计算时间、抽取概率，通过 `Tools.Chat.scheduleMessage` 提交生成指令。宿主复用正式聊天的输入处理、角色配置、提示词、模型请求与用量统计流程准备消息，随后持久化预约。插件不自行拼接历史、不直接调用功能模型，没有平台分支或发送定时器。
 
-准备使用默认 `CHAT` 功能模型，参考目标对话最近 20 条消息和已准备文本。准备消耗正常模型调用额度，未命中概率不调用模型。当前不会自动解析角色卡的独立模型和角色设定，可在提示词中填写角色语气。生成内容不伪造用户发言、不切换当前对话。
+准备使用目标对话实际绑定的角色、模型、记忆输入处理和摘要后的正式历史，保留角色头像、发言者身份、模型、token 与生成耗时。准备消耗正常模型调用额度，未命中概率不调用模型。生成过程不写入用户发言、不切换当前对话，不执行工具。
 
-应用前台启动、恢复、打开设置页和分钟时钟会补充计划。准备过的正文不会在发送时重新调用模型或查询未来实时信息。计划耗尽后需要回到前台补充。
+当前规则未提供多人群聊的发言者选择；需要明确参与者的对话会停止准备并显示错误。角色配置解析失败同样停止准备，避免发送其他身份的内容。
+
+应用前台启动、恢复、打开设置页和分钟时钟会补充计划。宿主定期及投递前检查对话和角色配置；变化后撤销旧计划并返回 `invalidated`，插件在前台按原预约时间重新准备，已过期的计划跳过。准备过程中对话变化会拒绝该结果。升级时先撤销旧版纯文本预约。后台无法调用模型时，需要回到前台补充。
 
 ## 统一正式接口
 
@@ -24,7 +26,8 @@ await Tools.Chat.scheduleMessage({
   id: "unique-message-id",
   chatId,
   title: "Operit",
-  text: preparedText,
+  text: "",
+  generation: { instruction: "根据最近对话自然地延续话题，只输出主动消息正文。" },
   timestamp: dueAt, // Unix 毫秒，未来 1 秒至 30 天
 });
 
@@ -32,7 +35,7 @@ const { messages } = await Tools.Chat.listScheduledMessages();
 await Tools.Chat.cancelScheduledMessage("unique-message-id");
 ```
 
-`scheduleMessage` 返回 `{ message: { id, chatId, timestamp, status, error } }`。`listScheduledMessages` 只列出调用插件自己的预约及结果。状态为 `scheduled`、`delivered`、`cancelled`、`skipped` 或 `failed`，`error` 为字符串或 `null`。`cancelScheduledMessage` 返回 `{ id, cancelled: true }`，重复撤销安全。
+`scheduleMessage` 返回 `{ message: { id, chatId, timestamp, status, error, text } }`，`text` 是宿主实际准备的正文。传入 `generation` 时要求 `text` 为空；已有纯文本调用仍使用非空 `text`。`listScheduledMessages` 只列出调用插件自己的预约及结果。终态包括 `delivered`、`cancelled`、`skipped`、`invalidated` 和 `failed`，`error` 为字符串或 `null`。`cancelScheduledMessage` 返回 `{ id, cancelled: true }`，重复撤销安全。
 
 ID 自动按已认证的插件身份隔离。相同 ID 和相同参数可安全重试，即使调用响应丢失或预约已到期；相同 ID 与不同内容冲突时拒绝。需要新计划时使用新 ID。宿主保留最多 60 条待处理消息和最近 256 条结果。
 
@@ -42,7 +45,7 @@ ID 自动按已认证的插件身份隔离。相同 ID 和相同参数可安全�
 
 Android、HarmonyOS、Windows、macOS、Linux、Web 使用宿主调度器，在可执行时将内容写入指定对话，并通过已有的平台通知实现展示通知。对话忙时宿主自动延后；恢复后同一对话的多条过期消息仅投递最近一条，超过一天的旧消息跳过。
 
-iOS 在预约时将已生成内容提交系统本地通知，到点由系统展示。宿主在应用恢复前台后自动把同一内容同步到对话，不再次通知。这个过程不依赖插件恢复执行，也不要求插件作者针对 iOS 编写代码。iOS 的通知权限交互和实际展示仍受系统设置约束。
+iOS 在预约时将已生成内容提交系统本地通知，到点由系统展示。宿主在应用恢复前台后检查上下文并同步有效消息，不再次通知。应用挂起期间不能更新或撤回已经展示的系统通知，恢复后检测到上下文变化的正文不会再写入对话。iOS 的通知权限交互和实际展示仍受系统设置约束。
 
 所有平台的预约均保存在宿主设备本地存储中，宿主重启后自动恢复。应用退出、设备休眠、浏览器后台节流等会影响非 iOS 的实际投递时间；iOS 的系统通知不会唤醒插件调用 AI。接口不承诺绕过操作系统的执行限制。
 

@@ -4,6 +4,7 @@ use operit_host_api::{HttpHost, HttpRequestData};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::LocalEngineCatalog::LocalEngineCatalog;
 use crate::LocalModelManifest::{
     LocalEngineKind, LocalEngineRequirement, LocalModelDriver, LocalModelFile,
     LocalModelInstallSource, LocalModelKind, LocalModelManifest, LocalModelSource,
@@ -570,7 +571,7 @@ pub fn buildManifestFromRepoFiles(
             displayName: format!("{displayName} ({})", file.relativePath),
             description: format!("Imported GGUF chat model ({repository})"), kind: LocalModelKind::Chat,
             engine: LocalEngineKind::LlamaCpp, license: license.to_string(), homepage: homepage.to_string(),
-            languages, tags, engineRequirement: Some(LocalEngineRequirement { engineId: "llama-cpp".to_string(), version: "b11829".to_string() }),
+            languages, tags, engineRequirement: Some(LocalEngineCatalog::llamaCppRequirement()),
             driver: Some(LocalModelDriver::LlamaCpp { model: file.relativePath.clone() }),
             files: vec![toModelFile(&sourceId, file)], sources, installSource: LocalModelInstallSource::Files,
         });

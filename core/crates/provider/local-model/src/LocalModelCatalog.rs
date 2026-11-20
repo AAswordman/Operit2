@@ -1,3 +1,4 @@
+use crate::LocalEngineCatalog::LocalEngineCatalog;
 use crate::LocalModelManifest::{
     LocalEngineKind, LocalEngineRequirement, LocalModelArchive, LocalModelArchiveFormat,
     LocalModelDriver, LocalModelFile, LocalModelInstallSource, LocalModelKind, LocalModelManifest,
@@ -37,7 +38,7 @@ impl LocalModelCatalog {
             kind: LocalModelKind::Chat, engine: LocalEngineKind::LlamaCpp,
             license: "apache-2.0".to_string(), homepage: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF".to_string(),
             languages: vec!["zh".to_string(), "en".to_string()], tags: vec!["llm".to_string(), "offline".to_string()],
-            engineRequirement: Some(LocalEngineRequirement { engineId: "llama-cpp".to_string(), version: "b11829".to_string() }),
+            engineRequirement: Some(LocalEngineCatalog::llamaCppRequirement()),
             driver: Some(LocalModelDriver::LlamaCpp { model: "Qwen3-0.6B-Q8_0.gguf".to_string() }),
             sources: vec![LocalModelSource { id: "huggingface".to_string(), kind: LocalModelSourceKind::HuggingFace,
                 repository: "Qwen/Qwen3-0.6B-GGUF".to_string(), revision: "23749fefcc72300e3a2ad315e1317431b06b590a".to_string(), baseUrl: "https://huggingface.co/Qwen/Qwen3-0.6B-GGUF/resolve/23749fefcc72300e3a2ad315e1317431b06b590a".to_string() }],

@@ -1518,6 +1518,69 @@ fn correction_replaces_chat_payloads_with_an_exportable_initializer_and_replays_
     AppDatabase::closeDatabase();
 }
 
+/// A restore supersedes larger and newer peers, rejects old lineage, and resumes ordinary edits.
+#[test]
+fn restored_database_baseline_overrides_peers_and_rejects_old_history() {
+    use crate::Transaction::{compare_manifests, Source};
+    let _guard = DATABASE_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    let (_, restored_db, restored) = openTestStore("restore-authority");
+    let mut original = upsertOperation(1, "restored");
+    original.createdAt = i64::MAX - 10;
+    restored.applyOperation(&original).unwrap();
+    let old_snapshot = restored.syncSnapshot().unwrap();
+    restored.establishRestoreBaseline(None).unwrap();
+    assert_eq!(restored_db.store().queryScalar::<i64>("SELECT count(*) FROM _operit_transaction_initialization", vec![]).unwrap(), 0);
+    let baseline = restored.syncSnapshot().unwrap();
+    let initializers = restored.operationsSince(&SyncClock::empty(), &[], 100).unwrap();
+    assert_eq!(initializers.len(), 1);
+    assert_eq!(initializers[0].operation, "initialize");
+    assert_eq!(sqlOperationCount(&restored_db), 0);
+
+    let (_, peer_db, peer) = openTestStore("restore-peer");
+    peer.applyOperation(&original).unwrap();
+    let mut future = upsertOperation(2, "much larger remote history that must be replaced");
+    future.createdAt = i64::MAX - 1;
+    peer.applyOperation(&future).unwrap();
+    insertChatMessage(&peer_db, "remote-only", 3000, "must not survive restore");
+    peer.recordChatSnapshot("remote-only").unwrap();
+    let larger = peer.syncSnapshot().unwrap();
+    let a = baseline.manifest().unwrap();
+    let b = larger.manifest().unwrap();
+    assert!(a.contentBytes < b.contentBytes);
+    assert_eq!(compare_manifests(&a, &b).unwrap(), Source::Local);
+    assert_eq!(compare_manifests(&b, &a).unwrap(), Source::Remote);
+    let required = restored.operationsSince(&peer.receipt().unwrap(), &[], 100).unwrap();
+    assert_eq!(required, initializers);
+
+    peer.applyOperation(&initializers[0]).unwrap();
+    assert_eq!(peer.syncSnapshot().unwrap().data, baseline.data);
+    assert!(peer_db.chatDao().getChatById("remote-only").unwrap().is_none());
+    peer.applyOperation(&future).unwrap();
+    restored.applyOperation(&future).unwrap();
+    let stale_initializer = crate::Transaction::compaction::Initialization::from_snapshot(old_snapshot).operation(CHAT_SYNC_DOMAIN, false).unwrap();
+    peer.applyOperation(&stale_initializer).unwrap();
+    assert_eq!(peer.syncSnapshot().unwrap().data, baseline.data);
+    assert_eq!(restored.syncSnapshot().unwrap().data, baseline.data);
+
+    let receipt = restored.receipt().unwrap();
+    insertChatMessage(&peer_db, "chat-remote", 4000, "edit after receiving restored baseline");
+    peer.recordMessageSnapshot("chat-remote", 4000).unwrap();
+    let edits = peer.operationsSince(&receipt, &[], 100).unwrap();
+    assert!(edits.iter().any(|operation| operationRestoration(&operation.originDeviceId).unwrap() == baseline.data.restoration));
+    restored.applyOperations(&edits).unwrap();
+    assert_eq!(restored_db.messagePartDao().getPartsForMessage("chat-remote", 4000, 0).unwrap()[0].content, "edit after receiving restored baseline");
+    assert_eq!(SqlChatSyncStore::snapshotContentSummary(&restored.syncSnapshot().unwrap()).unwrap(),
+        SqlChatSyncStore::snapshotContentSummary(&peer.syncSnapshot().unwrap()).unwrap());
+
+    let previous = restored.restoration().unwrap();
+    restored_db.store().withDatabaseFile(|| Ok(())).unwrap();
+    assert_eq!(restored.restoration().unwrap(), previous);
+    restored.establishRestoreBaseline(previous.clone()).unwrap();
+    assert!(restored.restoration().unwrap() > previous);
+    assert_ne!(restored.operationsSince(&SyncClock::empty(), &[], 100).unwrap()[0].opId, initializers[0].opId);
+    AppDatabase::closeDatabase();
+}
+
 /// A newer desktop title edit cannot make its smaller chat database authoritative.
 #[test]
 fn correction_preserves_larger_phone_history_after_a_newer_desktop_edit() {

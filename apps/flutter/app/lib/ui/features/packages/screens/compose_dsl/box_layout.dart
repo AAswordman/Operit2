@@ -96,6 +96,7 @@ class _ComposeBoxRenderObject extends RenderBox
 
   /// Identifies overlays that must not contribute to the parent's measured size.
   bool _matchesParent(int index) =>
+      _isControlledDropdown(nodes[index].type, nodes[index].props) ||
       nodes[index].props['matchParentSize'] == true ||
       _hasModifierOp(nodes[index].props['modifier'], 'matchparentsize');
 

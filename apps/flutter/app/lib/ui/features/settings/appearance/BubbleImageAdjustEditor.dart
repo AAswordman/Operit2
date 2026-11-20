@@ -6,9 +6,9 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../chat/components/style/bubble/BubbleSurface.dart';
 import '../components/SettingsControlStyles.dart';
 
-/// Keeps the original image visible while editing crop and nine-slice boundaries.
+/// Shows the zoomable original and live bubble preview while editing.
 class BubbleImageAdjustEditor extends StatefulWidget {
-  /// Creates a source-first editor with a separate optional result preview.
+  /// Creates an editor with a pinned side-by-side comparison.
   const BubbleImageAdjustEditor({
     super.key,
     required this.initialStyle,
@@ -114,47 +114,81 @@ class _BubbleImageAdjustEditorState extends State<BubbleImageAdjustEditor> {
     );
   }
 
-  /// Builds the pinned, zoomable source and the compact parameter tabs.
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final source = Column(
+  /// Builds the comparison with the original on the left and the draft on the right.
+  Widget _comparison(BuildContext context, AppLocalizations l10n) {
+    final theme = Theme.of(context);
+    return Column(
       children: <Widget>[
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
-          child: Row(
-            children: <Widget>[
-              Expanded(
-                child: Text(
-                  l10n.settingsAppearanceBubbleImageSourceHint,
-                  style: Theme.of(context).textTheme.bodySmall,
+        Row(
+          children: <Widget>[
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsetsDirectional.only(start: 12),
+                child: Row(
+                  children: <Widget>[
+                    Expanded(
+                      child: Text(
+                        l10n.settingsAppearanceBubbleImageSource,
+                        style: theme.textTheme.titleSmall,
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: l10n.settingsAppearanceBubbleImageFitSource,
+                      onPressed: () => _transform.value = Matrix4.identity(),
+                      icon: const Icon(Icons.fit_screen),
+                    ),
+                  ],
                 ),
               ),
-              IconButton(
-                tooltip: l10n.settingsAppearanceBubbleImageFitSource,
-                onPressed: () => _transform.value = Matrix4.identity(),
-                icon: const Icon(Icons.fit_screen),
+            ),
+            Expanded(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text(
+                  l10n.settingsAppearanceBubbleImagePreview,
+                  style: theme.textTheme.titleSmall,
+                ),
+              ),
+            ),
+          ],
+        ),
+        Expanded(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              Expanded(
+                child: ColoredBox(
+                  color: theme.colorScheme.surfaceContainerHighest,
+                  child: InteractiveViewer(
+                    transformationController: _transform,
+                    minScale: 1,
+                    maxScale: 8,
+                    child: SizedBox.expand(
+                      child: BubbleSliceSourceGuide(imageStyle: _style),
+                    ),
+                  ),
+                ),
+              ),
+              const VerticalDivider(width: 1),
+              Expanded(
+                child: Center(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(12),
+                    child: widget.previewBuilder(context, _style),
+                  ),
+                ),
               ),
             ],
           ),
         ),
-        Expanded(
-          child: ClipRect(
-            child: ColoredBox(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest,
-              child: InteractiveViewer(
-                transformationController: _transform,
-                minScale: 1,
-                maxScale: 8,
-                child: SizedBox.expand(
-                  child: BubbleSliceSourceGuide(imageStyle: _style),
-                ),
-              ),
-            ),
-          ),
-        ),
       ],
     );
+  }
+
+  /// Keeps the comparison above the scrollable parameter tabs.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final controls = Column(
       children: <Widget>[
         TabBar(
@@ -163,7 +197,6 @@ class _BubbleImageAdjustEditorState extends State<BubbleImageAdjustEditor> {
             Tab(text: l10n.settingsAppearanceBubbleImageCrop),
             Tab(text: l10n.settingsAppearanceBubbleImageGrid),
             Tab(text: l10n.settingsAppearanceBubbleImageScale),
-            Tab(text: l10n.settingsAppearanceBubbleImagePreview),
           ],
         ),
         Expanded(
@@ -190,7 +223,7 @@ class _BubbleImageAdjustEditorState extends State<BubbleImageAdjustEditor> {
                   _style.cropBottomRatio,
                   (value) => _change(cropBottom: value),
                 ),
-              ]),
+              ], hint: l10n.settingsAppearanceBubbleImageSourceHint),
               _controls(<Widget>[
                 _slider(
                   l10n.settingsAppearanceBubbleImageRepeatStart,
@@ -245,38 +278,23 @@ class _BubbleImageAdjustEditorState extends State<BubbleImageAdjustEditor> {
                   ),
                 ],
               ),
-              SingleChildScrollView(
-                padding: const EdgeInsets.all(12),
-                child: widget.previewBuilder(context, _style),
-              ),
             ],
           ),
         ),
       ],
     );
     return DefaultTabController(
-      length: 4,
+      length: 3,
       child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (constraints.maxWidth >= 720) {
-            return Row(
-              children: <Widget>[
-                Expanded(child: source),
-                const VerticalDivider(width: 1),
-                SizedBox(width: 360, child: controls),
-              ],
-            );
-          }
-          return Column(
-            children: <Widget>[
-              Expanded(child: source),
-              SizedBox(
-                height: (constraints.maxHeight * 0.44).clamp(0.0, 280.0),
-                child: controls,
-              ),
-            ],
-          );
-        },
+        builder: (context, constraints) => Column(
+          children: <Widget>[
+            SizedBox(
+              height: (constraints.maxHeight * 0.5).clamp(0.0, 320.0),
+              child: _comparison(context, l10n),
+            ),
+            Expanded(child: controls),
+          ],
+        ),
       ),
     );
   }

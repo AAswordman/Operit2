@@ -101,7 +101,7 @@ String formatCompactTokenStats(
       message.inputTokens > 0 ||
       message.outputTokens > 0 ||
       message.cachedInputTokens > 0;
-  if (!hasTokens && message.completedAt <= 0) {
+  if (!hasTokens) {
     return '';
   }
   final inputText = formatCompactTokenCount(message.inputTokens);
@@ -152,7 +152,7 @@ String formatCompactTokenCount(int count) {
 /// Formats wait and output durations into a compact timing segment.
 String formatCompactTimingStats(ChatUiMessage message) {
   final hasTiming = message.waitDurationMs > 0 || message.outputDurationMs > 0;
-  if (!hasTiming && message.completedAt <= 0) {
+  if (!hasTiming) {
     return '';
   }
   final waitText = formatDurationSeconds(message.waitDurationMs);
@@ -172,7 +172,7 @@ String formatTokenSpeed(ChatUiMessage message) {
     return '';
   }
   if (message.outputTokens <= 0 || message.outputDurationMs <= 0) {
-    return '0 t/s';
+    return '';
   }
   final speed = (message.outputTokens * 1000.0) / message.outputDurationMs;
   if (!speed.isFinite || speed <= 0) {
@@ -197,11 +197,17 @@ String formatDurationSeconds(int durationMs) {
   return '${(durationMs / 1000).toStringAsFixed(1)}s';
 }
 
+/// Uses delivery time for prepared messages and completion time for ordinary replies.
+int _messageDisplayTimestamp(ChatUiMessage message) =>
+    message.pluginExtensions.containsKey('host.chat.scheduled')
+    ? message.timestamp
+    : message.completedAt > 0
+    ? message.completedAt
+    : message.timestamp;
+
 /// Formats the message timestamp relative to the current date to avoid truncation.
 String formatSmartMessageTimestamp(ChatUiMessage message, {DateTime? now}) {
-  final rawTimestamp = message.completedAt > 0
-      ? message.completedAt
-      : message.timestamp;
+  final rawTimestamp = _messageDisplayTimestamp(message);
   if (rawTimestamp <= 0) {
     return '';
   }
@@ -244,8 +250,7 @@ String formatMessageMetadataTooltip(
   if (snapshot.showMessageTokenStats &&
       (message.inputTokens > 0 ||
           message.outputTokens > 0 ||
-          message.cachedInputTokens > 0 ||
-          message.completedAt > 0)) {
+          message.cachedInputTokens > 0)) {
     final inputStr = message.inputTokens.toString();
     final cacheRate = formatCacheHitRate(message);
     final cachedStr = '${message.cachedInputTokens} ($cacheRate)';
@@ -259,9 +264,7 @@ String formatMessageMetadataTooltip(
     );
   }
   if (snapshot.showMessageTimingStats &&
-      (message.waitDurationMs > 0 ||
-          message.outputDurationMs > 0 ||
-          message.completedAt > 0)) {
+      (message.waitDurationMs > 0 || message.outputDurationMs > 0)) {
     final waitSec = '${(message.waitDurationMs / 1000).toStringAsFixed(2)}s';
     final outSec = '${(message.outputDurationMs / 1000).toStringAsFixed(2)}s';
     lines.add(
@@ -270,9 +273,7 @@ String formatMessageMetadataTooltip(
     );
   }
   if (snapshot.showMessageTimestamp) {
-    final rawTimestamp = message.completedAt > 0
-        ? message.completedAt
-        : message.timestamp;
+    final rawTimestamp = _messageDisplayTimestamp(message);
     if (rawTimestamp > 0) {
       final dateTime = DateTime.fromMillisecondsSinceEpoch(rawTimestamp);
       String twoDigits(int value) => value.toString().padLeft(2, '0');

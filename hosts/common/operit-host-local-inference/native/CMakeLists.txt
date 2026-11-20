@@ -25,6 +25,7 @@ endforeach()
 file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/operit_cxx_runtime.txt" "${operit_cxx_runtime}")
 include(FetchContent)
 set(BUILD_SHARED_LIBS OFF CACHE BOOL "" FORCE)
+set(LLAMA_BUILD_IS_DEV OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(LLAMA_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
@@ -38,8 +39,8 @@ set(GGML_AVX512 OFF CACHE BOOL "" FORCE)
 set(GGML_AVX2 OFF CACHE BOOL "" FORCE)
 set(GGML_FMA OFF CACHE BOOL "" FORCE)
 set(GGML_F16C OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(llama URL https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/b11829
-    URL_HASH SHA256=70281a1798762c91045a304cddb64016f605db3290de3c4b28c385b2da051961)
+FetchContent_Declare(llama URL https://codeload.github.com/ggml-org/llama.cpp/zip/refs/tags/v1.0.0
+    URL_HASH SHA256=b8d90ec2be080e8834d05e4449793160d68d62518f614be4248d380f3b7c118b)
 FetchContent_MakeAvailable(llama)
 if(OHOS)
     # OHOS exposes current-thread affinity through sched_setaffinity.

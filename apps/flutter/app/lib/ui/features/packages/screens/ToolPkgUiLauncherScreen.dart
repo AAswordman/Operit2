@@ -42,6 +42,7 @@ import '../../../common/components/SwipeActions.dart';
 
 part 'compose_dsl/compose_host.dart';
 part 'compose_dsl/dialog_host.dart';
+part 'compose_dsl/dropdown_menu.dart';
 part 'compose_dsl/lazy_list.dart';
 part 'compose_dsl/gesture_region.dart';
 part 'compose_dsl/text_field.dart';

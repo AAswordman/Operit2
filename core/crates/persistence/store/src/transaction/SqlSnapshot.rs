@@ -194,12 +194,13 @@ pub(crate) struct DataWire<'a> { pub data:&'a Data, pub canonical:bool }
 impl Serialize for DataWire<'_> {
     fn serialize<S:Serializer>(&self, serializer:S) -> std::result::Result<S::Ok,S::Error> {
         let d=self.data;
-        let mut map=serializer.serialize_map(Some(7))?;
-        let keys=if self.canonical { ["additions","aliases","deleted","owner","revision","values","versions"] } else { ["owner","values","revision","deleted","aliases","versions","additions"] };
+        let mut map=serializer.serialize_map(Some(7 + usize::from(d.restoration.is_some())))?;
+        let keys=if self.canonical { ["additions","aliases","deleted","owner","restoration","revision","values","versions"] } else { ["owner","values","revision","restoration","deleted","aliases","versions","additions"] };
         for key in keys { match key {
             "owner"=>if self.canonical { map.serialize_entry(key,&serde_json::to_value(&d.owner).map_err(serde::ser::Error::custom)?)?; } else { map.serialize_entry(key,&d.owner)?; },
             "values"=>if let Some(sql)=&d.sql { map.serialize_entry(key,&sql.values())?; } else { map.serialize_entry(key,&d.values)?; },
             "revision"=>map.serialize_entry(key,&d.revision)?, "deleted"=>map.serialize_entry(key,&d.deleted)?,
+            "restoration"=>if let Some(restoration)=&d.restoration { map.serialize_entry(key,restoration)?; },
             "aliases"=>map.serialize_entry(key,&d.aliases)?, "versions"=>map.serialize_entry(key,&d.versions)?,
             _=>map.serialize_entry(key,&d.additions)?,
         } }

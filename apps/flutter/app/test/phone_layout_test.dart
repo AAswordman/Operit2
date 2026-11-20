@@ -6,7 +6,11 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditor.dart';
+import 'package:operit2/ui/common/code_editor/CodeEditorZoomTransform.dart';
+import 'package:operit2/ui/common/components/AdaptiveSidePanel.dart';
 import 'package:operit2/ui/common/interactions/DrawerGestureExclusion.dart';
+import 'package:operit2/ui/features/chat/components/workspace/WorkspacePanelSurface.dart';
 import 'package:operit2/ui/main/components/DrawerContent.dart';
 import 'package:operit2/ui/main/components/DrawerConversationState.dart';
 import 'package:operit2/ui/main/layout/DrawerMotionScope.dart';
@@ -224,6 +228,128 @@ void main() {
         await tester.dragFrom(const Offset(12, 400), const Offset(100, 0));
         expect(moves, greaterThan(0));
         expect(drawerOpen.value, isFalse);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      'workspace keeps direct single-finger code pans (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        final scroll = CodeEditorScrollController();
+        addTearDown(drawerOpen.dispose);
+        addTearDown(scroll.dispose);
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: WorkspacePanelSurface(
+            transparentSurface: false,
+            child: CodeEditor(
+              text: List.generate(
+                200,
+                (index) => 'const line$index = true;',
+              ).join('\n'),
+              readOnly: true,
+              wrapToViewport: false,
+              contentWidth: 1200,
+              scrollController: scroll,
+            ),
+          ),
+        );
+        final transform = find.byType(CodeEditorZoomTransform);
+
+        /// Reads the actual content translation after each single-finger drag.
+        double horizontalOffset() =>
+            tester.widget<CodeEditorZoomTransform>(transform).horizontalOffset;
+
+        await tester.dragFrom(const Offset(260, 400), const Offset(-120, 0));
+        await tester.pumpAndSettle();
+        final left = horizontalOffset();
+        expect(left, lessThan(0));
+        expect(drawerOpen.value, isFalse);
+
+        await tester.dragFrom(const Offset(150, 400), const Offset(80, 0));
+        await tester.pumpAndSettle();
+        expect(horizontalOffset(), greaterThan(left));
+        expect(drawerOpen.value, isFalse);
+
+        await tester.dragFrom(const Offset(12, 400), const Offset(120, 0));
+        await tester.pumpAndSettle();
+        expect(drawerOpen.value, isFalse);
+
+        await tester.dragFrom(const Offset(200, 500), const Offset(0, -120));
+        await tester.pumpAndSettle();
+        expect(scroll.offset, greaterThan(0));
+        expect(drawerOpen.value, isFalse);
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+    testWidgets(
+      'workspace excludes blank and eager content until closed (effects: $enableNavigationAnimation)',
+      (tester) async {
+        final drawerOpen = ValueNotifier<bool>(false);
+        final workspaceOpen = ValueNotifier<bool>(true);
+        addTearDown(drawerOpen.dispose);
+        addTearDown(workspaceOpen.dispose);
+        var moves = 0;
+        var releases = 0;
+        await _pumpSwipeTestLayout(
+          tester,
+          drawerOpen: drawerOpen,
+          enableNavigationAnimation: enableNavigationAnimation,
+          content: ValueListenableBuilder<bool>(
+            valueListenable: workspaceOpen,
+            builder: (context, open, _) => AdaptiveSidePanel(
+              layout: SidePanelLayout.overlay,
+              animate: false,
+              open: open,
+              onOpenChanged: (value) => workspaceOpen.value = value,
+              panel: WorkspacePanelSurface(
+                transparentSurface: false,
+                child: Column(
+                  children: [
+                    const SizedBox(height: 64),
+                    IconButton(
+                      tooltip: 'Close workspace',
+                      onPressed: () => workspaceOpen.value = false,
+                      icon: const Icon(Icons.close),
+                    ),
+                    Expanded(
+                      child: _eagerPage(
+                        onPointerMove: (_) => moves++,
+                        onPointerUp: (_) => releases++,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              child: const SizedBox.expand(),
+            ),
+          ),
+        );
+        await tester.dragFrom(const Offset(150, 32), const Offset(120, 0));
+        expect(drawerOpen.value, isFalse);
+        await tester.dragFrom(const Offset(12, 32), const Offset(120, 0));
+        expect(drawerOpen.value, isFalse);
+
+        await tester.dragFrom(const Offset(12, 400), const Offset(120, 0));
+        expect(drawerOpen.value, isFalse);
+        expect(moves, greaterThan(0));
+        expect(releases, 1);
+
+        await tester.tap(find.byTooltip('Close workspace'));
+        await tester.pumpAndSettle();
+        expect(workspaceOpen.value, isFalse);
+        await tester.dragFrom(const Offset(150, 400), const Offset(120, 0));
+        expect(drawerOpen.value, isTrue);
+        await tester.pumpAndSettle();
+        drawerOpen.value = false;
+        await tester.pumpAndSettle();
+        await tester.dragFrom(const Offset(12, 400), const Offset(120, 0));
+        expect(drawerOpen.value, isTrue);
+        await tester.pumpAndSettle();
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },

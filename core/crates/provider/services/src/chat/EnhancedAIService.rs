@@ -347,6 +347,8 @@ pub struct SendMessageOptions {
     pub chatModelIdOverride: Option<String>,
     pub stream: bool,
     pub disableWarning: bool,
+    /// Restricts preparation calls to assistant text without exposing or executing tools.
+    pub textOnly: bool,
 }
 
 /// Describes the model round that should resume after a completed route change.
@@ -386,6 +388,7 @@ impl SendMessageOptions {
             chatModelIdOverride: None,
             stream: true,
             disableWarning: false,
+            textOnly: false,
         }
     }
 }
@@ -518,6 +521,7 @@ pub struct SendMessageExecution {
 }
 
 pub struct SendMessageRuntime {
+    pub textOnly: bool,
     pub chatConfiguration: ChatConfigurationResult,
     pub promptMetadata: BTreeMap<String, String>,
     pub useEnglish: bool,
@@ -1062,6 +1066,62 @@ impl EnhancedAIService {
             .await
     }
 
+    /// Prepares a text-only assistant reply through the real conversation prompt and accounting pipeline.
+    pub async fn prepareScheduledReply(
+        &mut self,
+        options: SendMessageOptions,
+        configuration: ChatConfigurationResult,
+    ) -> Result<operit_model::ChatMessage::ChatMessage, AiServiceError> {
+        let mut service = self.clone();
+        let (sender, receiver) = tokio::sync::oneshot::channel();
+        defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeAsyncTask("prepare-scheduled-reply", Box::new(move || Box::pin(async move {
+            let _ = sender.send(service.generateScheduledReply(options, configuration).await);
+        }))).map_err(|e| AiServiceError::RequestFailed(e.to_string()))?;
+        receiver.await.map_err(|_| AiServiceError::RequestFailed("Scheduled reply preparation was interrupted".into()))?
+    }
+
+    /// Collects an ordinary chat execution without adding a user or assistant row.
+    async fn generateScheduledReply(
+        &mut self,
+        mut options: SendMessageOptions,
+        configuration: ChatConfigurationResult,
+    ) -> Result<operit_model::ChatMessage::ChatMessage, AiServiceError> {
+        options.message = crate::chat::enhance::InputProcessor::InputProcessor::process_user_input(
+            crate::chat::enhance::InputProcessor::ProcessUserInputRequest {
+                input: options.message, chat_id: options.chatId.clone(),
+                participant_id: Some(configuration.profile.id.clone()),
+            },
+        ).await.map_err(AiServiceError::RequestFailed)?;
+        options.textOnly = true;
+        let sentAt = currentTimeMillis();
+        let response = self.sendMessageWithConfiguration(options, configuration.clone()).await?;
+        let mut firstChunkAt = None;
+        response.chunk_stream().collect(&mut |chunk| {
+            if !chunk.is_empty() { firstChunkAt.get_or_insert_with(currentTimeMillis); }
+        }).await;
+        if let Some(error) = response.terminal_failure() { return Err(AiServiceError::RequestFailed(error)); }
+        let parts = operit_model::MessagePartCodec::MessagePartCodec::parseAssistantMarkup(&response.current_render_content())
+            .map_err(AiServiceError::RequestFailed)?;
+        let text = operit_model::MessagePartCodec::MessagePartCodec::visibleText(&parts).trim().to_string();
+        if text.is_empty() || text.len() > 65536 { return Err(AiServiceError::RequestFailed("Scheduled reply is empty or too long".into())); }
+        let identity = self.getLastTurnModelIdentity().ok_or_else(|| AiServiceError::RequestFailed("Scheduled reply has no model identity".into()))?;
+        let tokens = self.captureCurrentTurnTokenSnapshot();
+        let mut message = operit_model::ChatMessage::ChatMessage::new_with_markdown("ai".into(), text);
+        message.provider = identity.providerName;
+        message.modelName = identity.modelName;
+        message.roleName = configuration.profile.name;
+        message.inputTokens = tokens.inputTokens;
+        message.outputTokens = tokens.outputTokens;
+        message.cachedInputTokens = tokens.cachedInputTokens;
+        message.sentAt = sentAt;
+        message.completedAt = currentTimeMillis();
+        if let Some(firstChunkAt) = firstChunkAt {
+            message.waitDurationMs = (firstChunkAt - sentAt).max(0);
+            message.outputDurationMs = (message.completedAt - firstChunkAt).max(0);
+        }
+        Ok(message)
+    }
+
     /// Runs chat summaries under the already-selected native participant, including all plugin hooks.
     pub async fn generateSummaryForConfiguration(
         &mut self,
@@ -1163,6 +1223,27 @@ impl EnhancedAIService {
         available_tools
     }
 
+    /// Composes the same tool surface for estimates and execution, while keeping prepared text tool-free.
+    async fn composeAvailableTools(
+        &mut self,
+        functionType: FunctionType,
+        chatId: Option<String>,
+        promptFunctionType: PromptFunctionType,
+        workspacePath: Option<String>,
+        workspaceFolders: Vec<String>,
+        runtime: &SendMessageRuntime,
+    ) -> Result<Vec<ToolPrompt>, AiServiceError> {
+        if runtime.textOnly { return Ok(Vec::new()); }
+        let tools = self.getAvailableToolsForFunction(
+            functionType.clone(), chatId.clone(), Some(promptFunctionType.clone()),
+            Some(runtime.chatConfiguration.profile.id.clone()), None, None, runtime,
+        );
+        applyToolPromptComposeHooksToAvailableTools(
+            tools, chatId, functionType, Some(promptFunctionType), runtime.useEnglish,
+            &runtime.chatConfiguration, workspacePath, workspaceFolders, &runtime.toolExposureMode,
+        ).await
+    }
+
     /// Estimates the request window using the same workspace context as message sending.
     #[allow(clippy::too_many_arguments)]
     pub async fn estimateRequestWindowFromMemory(
@@ -1199,27 +1280,10 @@ impl EnhancedAIService {
                 &runtime,
             )
             .await?;
-        let availableTools = self.getAvailableToolsForFunction(
-            FunctionType::CHAT,
-            chatId.clone(),
-            Some(promptFunctionType.clone()),
-            participantId,
-            chatProviderIdOverride.clone(),
-            chatModelIdOverride.clone(),
-            &runtime,
-        );
-        let availableTools = applyToolPromptComposeHooksToAvailableTools(
-            availableTools,
-            chatId.clone(),
-            FunctionType::CHAT,
-            Some(promptFunctionType.clone()),
-            runtime.useEnglish,
-            &runtime.chatConfiguration,
-            workspacePath.clone(),
-            workspaceFolders,
-            &runtime.toolExposureMode,
-        )
-        .await?;
+        let availableTools = self.composeAvailableTools(
+            FunctionType::CHAT, chatId.clone(), promptFunctionType.clone(),
+            workspacePath.clone(), workspaceFolders, &runtime,
+        ).await?;
         let modelParameters = self.getModelParametersForFunction(
             FunctionType::CHAT,
             chatProviderIdOverride.clone(),
@@ -1494,7 +1558,7 @@ impl EnhancedAIService {
     #[allow(non_snake_case)]
     pub fn createSendMessageRuntime(
         &mut self,
-        _options: &SendMessageOptions,
+        options: &SendMessageOptions,
         configuration: ChatConfigurationResult,
     ) -> Result<SendMessageRuntime, AiServiceError> {
         configuration
@@ -1511,6 +1575,7 @@ impl EnhancedAIService {
         let userPreferencesText = profile.userPreferencesText.clone();
 
         Ok(SendMessageRuntime {
+            textOnly: options.textOnly,
             chatConfiguration: configuration,
             promptMetadata: BTreeMap::new(),
             useEnglish: false,
@@ -1775,27 +1840,10 @@ impl EnhancedAIService {
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
         lifecycle.push(SendMessageLifecycleStage::GetAvailableToolsForFunction);
-        let availableTools = self.getAvailableToolsForFunction(
-            functionType.clone(),
-            chatId.clone(),
-            Some(promptFunctionType.clone()),
-            participantId.clone(),
-            chatProviderIdOverride.clone(),
-            chatModelIdOverride.clone(),
-            &runtime,
-        );
-        let availableTools = applyToolPromptComposeHooksToAvailableTools(
-            availableTools,
-            chatId.clone(),
-            functionType.clone(),
-            Some(promptFunctionType.clone()),
-            runtime.useEnglish,
-            &runtime.chatConfiguration,
-            workspacePath.clone(),
-            options.workspaceFolders.clone(),
-            &runtime.toolExposureMode,
-        )
-        .await?;
+        let availableTools = self.composeAvailableTools(
+            functionType.clone(), chatId.clone(), promptFunctionType.clone(),
+            workspacePath.clone(), options.workspaceFolders.clone(), &runtime,
+        ).await?;
         let tAfterGetTools = runtimeSupport.messageTimingNow();
         AppLogger::v_with_level(
             TAG,
@@ -2414,27 +2462,10 @@ impl EnhancedAIService {
             runtime,
         );
 
-        let availableTools = self.getAvailableToolsForFunction(
-            functionType.clone(),
-            chatId.clone(),
-            Some(promptFunctionType.clone()),
-            participantId.clone(),
-            chatProviderIdOverride.clone(),
-            chatModelIdOverride.clone(),
-            runtime,
-        );
-        let availableTools = applyToolPromptComposeHooksToAvailableTools(
-            availableTools,
-            chatId.clone(),
-            functionType.clone(),
-            Some(promptFunctionType.clone()),
-            runtime.useEnglish,
-            &runtime.chatConfiguration,
-            context.workspacePath.clone(),
-            context.workspaceFolders.clone(),
-            &runtime.toolExposureMode,
-        )
-        .await?;
+        let availableTools = self.composeAvailableTools(
+            functionType.clone(), chatId.clone(), promptFunctionType.clone(),
+            context.workspacePath.clone(), context.workspaceFolders.clone(), runtime,
+        ).await?;
 
         let currentTokens = self
             .estimatePreparedRequestWindow(
@@ -2711,6 +2742,7 @@ impl EnhancedAIService {
                 ResponseRoundAction::Complete => return Ok(()),
                 ResponseRoundAction::Continue(continuation) => continuation,
                 ResponseRoundAction::ExecuteTools(invocations) => {
+                    if runtime.textOnly { return Err(AiServiceError::RequestFailed("Text-only replies cannot execute tools".into())); }
                     let Some(continuation) = self
                         .handleToolInvocation(
                             collector,

@@ -16,7 +16,20 @@ use std::sync::Arc;
 /// Runs in its own test process because runtime storage defaults are process-global.
 #[test]
 fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
-    let root = std::env::temp_dir().join(format!("operit-prepared-chat-{}", std::process::id()));
+    // Native runtime globals retain SQLite readers until process exit; the parent owns cleanup.
+    let root = match std::env::var_os("OPERIT_PREPARED_TEST_ROOT") {
+        Some(root) => std::path::PathBuf::from(root),
+        None => {
+            let root = std::env::temp_dir().join(format!("operit-prepared-chat-{}", uuid::Uuid::new_v4()));
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "prepared_delivery_persists_an_assistant_once_without_switching_chats"])
+                .env("OPERIT_PREPARED_TEST_ROOT", &root).output().unwrap();
+            assert!(result.status.success(), "{}\n{}", String::from_utf8_lossy(&result.stdout), String::from_utf8_lossy(&result.stderr));
+            assert!(root.is_absolute() && root.starts_with(std::env::temp_dir()));
+            std::fs::remove_dir_all(&root).unwrap();
+            return;
+        }
+    };
     let storage = Arc::new(NativeRuntimeStorageHost::new(
         root.join("runtime"),
         root.join("workspaces"),
@@ -76,13 +89,33 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
         assert_eq!(messages[0].sender, "ai");
         assert_eq!(messages[0].displayText(), "Hello from a prepared message");
         assert!(messages[0].completedAt > 0);
+        // Genuine generation measurements and immutable author metadata survive delayed persistence.
+        let mut snapshot = operit_model::ChatMessage::ChatMessage::new_with_markdown_timestamp("ai".into(), "Contextual reply".into(), 125);
+        snapshot.roleName = "Tea companion".into();
+        snapshot.modelName = "role-model".into();
+        snapshot.provider = "role-provider".into();
+        snapshot.inputTokens = 321;
+        snapshot.outputTokens = 24;
+        snapshot.cachedInputTokens = 200;
+        snapshot.waitDurationMs = 50;
+        snapshot.outputDurationMs = 120;
+        snapshot.sentAt = 10;
+        snapshot.completedAt = 180;
+        snapshot.pluginExtensions.insert("host.chat.identity".into(), serde_json::json!({"title":"Tea companion","avatarUri":"/virtual/avatar.png"}));
+        snapshot.pluginExtensions.insert("com.operit.character_cards".into(), serde_json::json!({"participantId":"tea-role"}));
+        assert!(!core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap());
+        assert!(core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap());
+        let mut persisted = core.chatHistoryDelegate.chatHistoryManager.loadChatMessageVariant("prepared-target", 125, 0).unwrap();
+        // The repository adds canonical VFS attachment locators independently of generation metadata.
+        for part in &mut persisted.parts { part.attributes.clear(); }
+        assert_eq!(persisted, snapshot);
         // A later summary hides older turns from model context, but must not erase
         // the canonical delivery receipt used by a retry after a restart.
         core.chatHistoryDelegate.addMessageToChat(
             operit_model::ChatMessage::ChatMessage::new_with_markdown_timestamp(
                 "summary".into(),
                 "A later summary".into(),
-                124,
+                126,
             ),
             Some("prepared-target".into()),
         );
@@ -113,6 +146,7 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
             chatId: "prepared-target".into(),
             title: "Title".into(),
             text: "Scheduled hello".into(),
+            generation: None,
             timestamp: operit_host_api::TimeUtils::currentTimeMillis() + 60000,
         };
         let first = support
@@ -277,8 +311,28 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
             .unwrap();
         assert_eq!(committed.sender, "ai");
         assert_eq!(committed.displayText(), "Scheduled hello");
+        drop(holder);
+
+        // A restored prepared reply must be withdrawn when its participant cannot be resolved.
+        let stale = ChatScheduledMessageRequest {
+            id: "unresolved-participant".into(), chatId: "prepared-target".into(),
+            title: "Title".into(), text: "Obsolete reply".into(), generation: None,
+            timestamp: operit_host_api::TimeUtils::currentTimeMillis() + 60000,
+        };
+        support.scheduleChatMessage("plugin-a", stale.clone()).await.unwrap();
+        snapshot.timestamp = stale.timestamp;
+        let mut ledger: serde_json::Value = serde_json::from_slice(&storage.readBytes("runtime/scheduled_chat_messages.json").unwrap()).unwrap();
+        let entry = ledger.as_array_mut().unwrap().iter_mut().find(|entry| entry["request"]["id"] == stale.id).unwrap();
+        entry["prepared"] = serde_json::json!({ "message": snapshot, "historyFingerprint": "old-history", "configurationFingerprint": "old-participant" });
+        storage.writeBytesAtomically("runtime/scheduled_chat_messages.json", &serde_json::to_vec(&ledger).unwrap()).unwrap();
+        // A fresh reconciler checks future appointments immediately, even without the plugin polling.
+        let restored_service = PreparedChatDeliveryService::default();
+        restored_service.reconcile(&application.hostManager, &application.chatRuntimeHolder).await.unwrap();
+        let receipts = restored_service.list(&application.hostManager, "plugin-a").await.unwrap();
+        let receipt = receipts.messages.iter().find(|receipt| receipt.id == stale.id).unwrap();
+        assert_eq!(receipt.status, "invalidated");
     });
     drop(application);
     AppDatabase::closeDatabase();
-    std::fs::remove_dir_all(root).unwrap();
+    drop(database);
 }

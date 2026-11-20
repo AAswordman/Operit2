@@ -1,7 +1,13 @@
 use serde::{Deserialize, Serialize};
 
-use crate::LocalEngineManifest::{LocalEngineArtifact, LocalEngineManifest, LocalPlatformTarget};
+use crate::LocalEngineCatalog::LocalEngineCatalog;
+use crate::LocalEngineManifest::{
+    LocalEngineArtifact, LocalEngineDelivery, LocalEngineManifest, LocalPlatformTarget,
+};
 use crate::LocalModelManifest::{LocalModelInstallSource, LocalModelKind, LocalModelManifest, LocalModelSourceKind};
+use crate::LocalModelStorage::{buildLocalEngineStoragePath, LocalModelStorageError};
+
+const LEGACY_LLAMA_CPP_VERSION: &str = "b11829";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -54,6 +60,67 @@ pub struct LocalModelRegistrySnapshot {
 }
 
 impl LocalModelRegistrySnapshot {
+    /// Moves legacy GGUF models and embedded engine records to the bundled llama.cpp version.
+    pub(crate) fn migrateEmbeddedLlamaCpp(&mut self) -> Result<(), LocalModelStorageError> {
+        let current = LocalEngineCatalog::llamaCppRequirement();
+        for model in self
+            .installedModels
+            .iter_mut()
+            .map(|installed| &mut installed.manifest)
+            .chain(self.customModels.iter_mut())
+        {
+            if let Some(requirement) = model.engineRequirement.as_mut() {
+                if requirement.engineId == current.engineId
+                    && requirement.version == LEGACY_LLAMA_CPP_VERSION
+                {
+                    requirement.version.clone_from(&current.version);
+                }
+            }
+        }
+
+        let legacyEngines: Vec<_> = self
+            .installedEngines
+            .iter()
+            .filter(|engine| {
+                engine.manifest.id == current.engineId
+                    && engine.manifest.version == LEGACY_LLAMA_CPP_VERSION
+                    && engine.artifact.delivery == LocalEngineDelivery::Embedded
+            })
+            .map(|engine| {
+                (
+                    engine.artifact.target.clone(),
+                    engine.installedAtMs,
+                    engine.verifiedAtMs,
+                )
+            })
+            .collect();
+        if legacyEngines.is_empty() {
+            return Ok(());
+        }
+        let manifest = LocalEngineCatalog::llamaCpp();
+        for (target, installedAtMs, verifiedAtMs) in legacyEngines {
+            let Some(artifact) = manifest.artifactForTarget(&target).cloned() else {
+                continue;
+            };
+            if self
+                .getInstalledEngine(&current.engineId, &current.version, &target)
+                .is_none()
+            {
+                let storagePath =
+                    buildLocalEngineStoragePath(&current.engineId, &current.version, &target)?;
+                self.upsertEngine(InstalledLocalEngine {
+                    manifest: manifest.clone(),
+                    artifact,
+                    storagePath,
+                    installedAtMs,
+                    verifiedAtMs,
+                });
+            }
+            self.removeEngine(&current.engineId, LEGACY_LLAMA_CPP_VERSION, &target);
+        }
+        Ok(())
+    }
+
     /// Corrects the legacy AISHELL-3 speaker count for the exact pinned model files.
     pub(crate) fn migrateAishell3SpeakerCount(&mut self) {
         let manifest = crate::LocalModelCatalog::LocalModelCatalog::sherpaOnnxVitsTts();
@@ -211,12 +278,60 @@ impl LocalModelRegistrySnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::LocalEngineManifest::{LocalArchitecture, LocalPlatform};
     use crate::LocalModelCatalog::LocalModelCatalog;
     use crate::LocalModelManifest::{
         LocalEngineKind, LocalModelDriver, LocalModelFile, LocalModelKind, LocalModelManifest,
         LocalModelSource, LocalModelSourceKind,
     };
     use operit_util::RuntimeStorageLayout::RUNTIME_LOCAL_MODELS_DIR_PATH;
+
+    /// Keeps installed GGUF files and custom model requirements usable after an engine upgrade.
+    #[test]
+    fn llamaCppMigrationPreservesModelInstallations() {
+        let manifest = LocalEngineCatalog::llamaCpp();
+        let target = LocalPlatformTarget {
+            platform: LocalPlatform::Windows,
+            architecture: LocalArchitecture::X86_64,
+        };
+        let mut legacyManifest = manifest.clone();
+        legacyManifest.version = LEGACY_LLAMA_CPP_VERSION.to_string();
+        let mut registry = LocalModelRegistrySnapshot::empty();
+        registry.upsertEngine(InstalledLocalEngine {
+            artifact: legacyManifest.artifactForTarget(&target).unwrap().clone(),
+            storagePath: buildLocalEngineStoragePath(&manifest.id, LEGACY_LLAMA_CPP_VERSION, &target)
+                .unwrap(),
+            manifest: legacyManifest,
+            installedAtMs: 100,
+            verifiedAtMs: Some(200),
+        });
+        let mut installed = installedModel("gguf", "legacy", 100);
+        installed.manifest = LocalModelCatalog::qwen3LlamaCpp();
+        installed.manifest.engineRequirement.as_mut().unwrap().version =
+            LEGACY_LLAMA_CPP_VERSION.to_string();
+        registry.upsert(installed.clone());
+        registry.upsertCustomModel(installed.manifest.clone());
+
+        registry.migrateEmbeddedLlamaCpp().unwrap();
+
+        installed.manifest = LocalModelCatalog::qwen3LlamaCpp();
+        assert_eq!(registry.installedModels, vec![installed.clone()]);
+        assert_eq!(registry.customModels, vec![installed.manifest]);
+        assert_eq!(registry.installedEngines.len(), 1);
+        let engine = registry
+            .getInstalledEngine(&manifest.id, &manifest.version, &target)
+            .unwrap();
+        assert_eq!(engine.manifest, manifest);
+        assert_eq!(
+            engine.storagePath,
+            buildLocalEngineStoragePath(&manifest.id, &manifest.version, &target).unwrap(),
+        );
+        assert_eq!(engine.installedAtMs, 100);
+        assert_eq!(engine.verifiedAtMs, Some(200));
+        let migrated = registry.clone();
+        registry.migrateEmbeddedLlamaCpp().unwrap();
+        assert_eq!(registry, migrated);
+    }
 
     /// Reproduces installed and imported manifests saved before the AISHELL-3 correction.
     fn legacyAishell3Manifest() -> LocalModelManifest {

@@ -2,6 +2,7 @@ import EmbedPDF, { PdfAnnotationIcon, PdfAnnotationSubtype, ZoomMode, type ZoomP
 import { natural, text } from '../src/protocol';
 import { pageText, type Editor, type EditorOptions } from './editor';
 
+/** Mounts the PDF editor and slots host actions into its main toolbar. */
 export async function mountPdf(options: EditorOptions): Promise<Editor> {
   const viewer = EmbedPDF.init({ type: 'container', target: options.root, wasmUrl: new URL('pdfium.wasm', location.href).href, worker: false,
     fontFallback: null, fonts: { ui: null, signature: null }, tabBar: 'never',
@@ -18,6 +19,26 @@ export async function mountPdf(options: EditorOptions): Promise<Editor> {
   if (!manager || !selectionApi || !annotations || !exporter || !engine) throw new Error('PDF editing modules are unavailable');
   const loaded = await manager.openDocumentBuffer({ name: options.info.name, buffer: options.bytes.buffer, documentId: options.info.id }).toPromise();
   const document = await loaded.task.toPromise();
+  const surface = viewer.shadowRoot!;
+  const toolbar = await new Promise<HTMLElement>(resolve => {
+    /** Waits for the PDF viewer's asynchronous toolbar render. */
+    function mounted() {
+      const toolbar = surface.querySelector<HTMLElement>('[data-epdf-i="main-toolbar"]');
+      if (!toolbar) return;
+      observer.disconnect();
+      resolve(toolbar);
+    }
+    const observer = new MutationObserver(mounted);
+    observer.observe(surface, { childList: true, subtree: true });
+    mounted();
+  });
+  const slot = window.document.createElement('slot');
+  slot.name = options.actions.slot = 'office-actions';
+  const style = window.document.createElement('style');
+  style.textContent = '[data-epdf-i="main-toolbar"] { overflow-x: auto; scrollbar-width: none; } slot[name="office-actions"] { display: flex; flex: none; position: sticky; right: 0; margin-inline-start: auto; background: var(--ep-background-surface); color: var(--ep-foreground-primary); }';
+  surface.append(style);
+  toolbar.append(slot);
+  viewer.append(options.actions);
   const textSelection = selectionApi.forDocument(document.id);
   const annotation = annotations.forDocument(document.id);
   const save = exporter.forDocument(document.id);

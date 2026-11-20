@@ -245,14 +245,17 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
   Widget build(BuildContext context) {
     _clearDependencies();
     return _trackBuild(() {
-      final content = _withModifier(
-        context,
-        _executeInstruction(context),
-        props,
-        onAction,
-        nodeType: node.type,
-        modifierScope: modifierScope,
-      );
+      final instruction = _executeInstruction(context);
+      final content = _isControlledDropdown(node.type, props)
+          ? instruction
+          : _withModifier(
+              context,
+              instruction,
+              props,
+              onAction,
+              nodeType: node.type,
+              modifierScope: modifierScope,
+            );
       _dispatchOnLoad();
       return operitDesignBridgeEnabled
           ? OperitDesignSource(source: {
@@ -736,7 +739,7 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
       case 'PullToRefreshBox':
         return _pullToRefreshBox(context);
       case 'DropdownMenu':
-        return _dropdownMenu(context);
+        return _dropdownMenu();
       case 'TimePickerDialog':
         return _timePickerDialog(context);
       case 'VerticalDragHandle':

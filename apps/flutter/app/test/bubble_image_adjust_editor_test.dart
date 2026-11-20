@@ -8,9 +8,9 @@ import 'package:operit_ui/operit_ui.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/settings/appearance/BubbleImageAdjustEditor.dart';
 
-/// Checks source visibility, compact controls, and the rendered nine-slice grid.
+/// Checks live draft rendering, compact controls, and the source nine-slice grid.
 void main() {
-  testWidgets('phone keeps the original pinned while changing parameter tabs', (
+  testWidgets('phone shows the live draft beside the original across tabs', (
     tester,
   ) async {
     final sourceImage = _sourceImage();
@@ -25,31 +25,54 @@ void main() {
     );
     await tester.pumpAndSettle();
     final source = find.byType(BubbleSliceSourceGuide);
+    final preview = find.byType(BubbleSurface);
+    final tabs = find.byType(TabBar);
     final sourceBounds = tester.getRect(source);
-    expect(sourceBounds.height, greaterThan(280));
+    final previewBounds = tester.getRect(preview);
+    expect(find.text('原图'), findsOneWidget);
+    expect(find.text('实时预览'), findsOneWidget);
+    expect(find.byType(Tab), findsNWidgets(3));
+    expect(sourceBounds.right, lessThan(previewBounds.left));
+    expect(sourceBounds.bottom, tester.getTopLeft(tabs).dy);
+    expect(previewBounds.bottom, lessThan(tester.getTopLeft(tabs).dy));
+    expect(sourceBounds.height, lessThan(280));
     final sliders = find.byType(Slider);
     expect(sliders, findsNWidgets(4));
     expect(
       tester.getTopLeft(sliders.at(0)).dy,
       tester.getTopLeft(sliders.at(1)).dy,
     );
-    await tester.tap(sliders.first);
-    await tester.pumpAndSettle();
+    final drag = await tester.startGesture(tester.getCenter(sliders.first));
+    await drag.moveBy(const Offset(24, 0));
+    await tester.pump();
     expect(draft!.cropLeftRatio, greaterThan(0));
+    expect(tester.widget<BubbleSurface>(preview).imageStyle, same(draft));
+    await drag.up();
+    await tester.pumpAndSettle();
     expect(tester.getRect(source), sourceBounds);
 
     await tester.tap(find.text('九宫格'));
     await tester.pumpAndSettle();
     expect(tester.getRect(source), sourceBounds);
-    expect(find.byType(Slider), findsNWidgets(4));
+    expect(tester.getRect(preview), previewBounds);
+    expect(sliders, findsNWidgets(4));
+    await tester.tap(sliders.first);
+    await tester.pumpAndSettle();
+    expect(draft!.repeatXStartRatio, isNot(0.35));
+    expect(tester.widget<BubbleSurface>(preview).imageStyle, same(draft));
     final viewer = tester.widget<InteractiveViewer>(
       find.byType(InteractiveViewer),
     );
     viewer.transformationController!.value = Matrix4.diagonal3Values(2, 2, 1);
     await tester.pump();
-    await tester.tap(find.text('预览'));
+    await tester.tap(find.text('图片缩放'));
     await tester.pumpAndSettle();
-    expect(find.text('preview result'), findsOneWidget);
+    expect(sliders, findsOneWidget);
+    await tester.tap(sliders);
+    await tester.pumpAndSettle();
+    expect(draft!.imageScale, isNot(1));
+    expect(tester.widget<BubbleSurface>(preview).imageStyle, same(draft));
+    expect(tester.getRect(preview), previewBounds);
     expect(
       tester
           .widget<InteractiveViewer>(find.byType(InteractiveViewer))
@@ -76,10 +99,13 @@ void main() {
       await tester.pumpAndSettle();
       await tester.tap(find.text('九宫格'));
       await tester.pumpAndSettle();
-      expect(find.byType(BubbleSliceSourceGuide), findsOneWidget);
+      final source = tester.getRect(find.byType(BubbleSliceSourceGuide));
+      final preview = tester.getRect(find.byType(BubbleSurface));
+      expect(source.height, greaterThan(100));
+      expect(source.right, lessThan(preview.left));
       expect(
-        tester.getSize(find.byType(BubbleSliceSourceGuide)).height,
-        greaterThan(100),
+        preview.bottom,
+        lessThan(tester.getTopLeft(find.byType(TabBar)).dy),
       );
       expect(tester.takeException(), isNull);
     });
@@ -173,7 +199,15 @@ Widget _editor(
         child: BubbleImageAdjustEditor(
           initialStyle: const BubbleImageStyle(imagePath: 'source.png'),
           onChanged: onChanged ?? (_) {},
-          previewBuilder: (context, style) => const Text('preview result'),
+          previewBuilder: (context, style) => BubbleSurface(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            imageStyle: style,
+            child: const Padding(
+              padding: EdgeInsets.all(12),
+              child: Text('preview result'),
+            ),
+          ),
         ),
       ),
     ),

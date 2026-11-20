@@ -5889,7 +5889,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsAppearanceBubbleImagePreview.
   ///
   /// In en, this message translates to:
-  /// **'Preview'**
+  /// **'Live preview'**
   String get settingsAppearanceBubbleImagePreview;
 
   /// No description provided for @settingsAppearanceBubbleImagePreviewText.
@@ -5897,6 +5897,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This is a bubble preview message.\nCheck the corners, edges, and center at their rendered size.'**
   String get settingsAppearanceBubbleImagePreviewText;
+
+  /// No description provided for @settingsAppearanceBubbleImageSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Original'**
+  String get settingsAppearanceBubbleImageSource;
 
   /// No description provided for @settingsAppearanceBubbleImageSourceHint.
   ///
@@ -6760,20 +6766,152 @@ abstract class AppLocalizations {
   /// No description provided for @settingsDataExportRawSnapshot.
   ///
   /// In en, this message translates to:
-  /// **'Export snapshot'**
+  /// **'Export full snapshot'**
   String get settingsDataExportRawSnapshot;
 
   /// No description provided for @settingsDataImportRawSnapshot.
   ///
   /// In en, this message translates to:
-  /// **'Restore snapshot'**
+  /// **'Restore a full snapshot'**
   String get settingsDataImportRawSnapshot;
 
   /// No description provided for @settingsDataExportRawSnapshotDescription.
   ///
   /// In en, this message translates to:
-  /// **'Pack chats, plugin data, model settings, and local files into one backup file. Restoring replaces current data with the backup.'**
+  /// **'Package chats, plugin data, model settings, and local files as an .opsnapshot file.'**
   String get settingsDataExportRawSnapshotDescription;
+
+  /// No description provided for @settingsDataDatabaseBackup.
+  ///
+  /// In en, this message translates to:
+  /// **'Database backup'**
+  String get settingsDataDatabaseBackup;
+
+  /// No description provided for @settingsDataDatabaseBackupDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Save a copy of the database daily and keep the 10 most recent automatic backups. Attachments and workspace files are stored separately.'**
+  String get settingsDataDatabaseBackupDescription;
+
+  /// No description provided for @settingsDataBackupScheduled.
+  ///
+  /// In en, this message translates to:
+  /// **'Daily backup is on'**
+  String get settingsDataBackupScheduled;
+
+  /// No description provided for @settingsDataBackupUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose an accessible folder to turn on daily backups'**
+  String get settingsDataBackupUnavailable;
+
+  /// No description provided for @settingsDataBackupNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Back up now'**
+  String get settingsDataBackupNow;
+
+  /// No description provided for @settingsDataBackupSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Database backup saved.'**
+  String get settingsDataBackupSaved;
+
+  /// No description provided for @settingsDataRecoverySection.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore data'**
+  String get settingsDataRecoverySection;
+
+  /// No description provided for @settingsDataRestoreDatabaseDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a dated database backup. The restored data becomes the source of truth for sync with other devices.'**
+  String get settingsDataRestoreDatabaseDescription;
+
+  /// No description provided for @settingsDataRestoreArchiveDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Replace current runtime data with an Operit2 full snapshot and restart the app.'**
+  String get settingsDataRestoreArchiveDescription;
+
+  /// No description provided for @settingsDataImportSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Import data'**
+  String get settingsDataImportSection;
+
+  /// No description provided for @settingsDataImportOperit1Description.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview an Operit1 snapshot before migrating chats, model settings, and files.'**
+  String get settingsDataImportOperit1Description;
+
+  /// No description provided for @settingsDataImportChatJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Import chat JSON'**
+  String get settingsDataImportChatJson;
+
+  /// No description provided for @settingsDataImportChatJsonDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Add chats and update existing chats with matching IDs.'**
+  String get settingsDataImportChatJsonDescription;
+
+  /// No description provided for @settingsDataImportModelJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Import model settings JSON'**
+  String get settingsDataImportModelJson;
+
+  /// No description provided for @settingsDataImportModelJsonDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Add model provider settings and update existing providers with matching IDs.'**
+  String get settingsDataImportModelJsonDescription;
+
+  /// No description provided for @settingsDataImportAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Import'**
+  String get settingsDataImportAction;
+
+  /// No description provided for @settingsDataReadingSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading snapshot'**
+  String get settingsDataReadingSnapshot;
+
+  /// No description provided for @settingsDataPreparingPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing preview'**
+  String get settingsDataPreparingPreview;
+
+  /// No description provided for @settingsDataOperit1ImportResult.
+  ///
+  /// In en, this message translates to:
+  /// **'Imported {chatCount} chats and {messageCount} messages.'**
+  String settingsDataOperit1ImportResult(int chatCount, int messageCount);
+
+  /// No description provided for @settingsDataExportSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Export files'**
+  String get settingsDataExportSection;
+
+  /// No description provided for @settingsDataExportChatJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Export chat JSON'**
+  String get settingsDataExportChatJson;
+
+  /// No description provided for @settingsDataExportModelJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Export model settings JSON'**
+  String get settingsDataExportModelJson;
 
   /// No description provided for @settingsDataSnapshotBytes.
   ///
@@ -9111,32 +9249,38 @@ abstract class AppLocalizations {
   /// No description provided for @chatBackupDescription.
   ///
   /// In en, this message translates to:
-  /// **'Save a SQLite chat database snapshot daily while the app is running and keep the latest 10 automatic backups. Includes conversations and messages only, excluding attachment files, workspaces, characters, memories and app settings.'**
+  /// **'Copy the complete SQLite database file daily while the app is running and keep the latest 10 automatic backups. Includes all data stored in this database. External attachments, workspaces and separate configuration files are not copied.'**
   String get chatBackupDescription;
 
   /// No description provided for @chatRestoreTitle.
   ///
   /// In en, this message translates to:
-  /// **'Restore chat records'**
+  /// **'Restore from a database backup'**
   String get chatRestoreTitle;
 
   /// No description provided for @chatRestoreDescription.
   ///
   /// In en, this message translates to:
-  /// **'Select the external folder containing your previous backups, then choose a dated chat database snapshot. After reinstalling, select the original backup folder again to recover your chats.'**
+  /// **'Open the folder containing your backups and choose the date you want to restore from.'**
   String get chatRestoreDescription;
 
   /// No description provided for @chatRestoreChooseFolder.
   ///
   /// In en, this message translates to:
-  /// **'Choose existing backup folder'**
+  /// **'Choose backup source'**
   String get chatRestoreChooseFolder;
 
   /// No description provided for @chatRestoreRefresh.
   ///
   /// In en, this message translates to:
-  /// **'Refresh snapshots'**
+  /// **'Refresh list'**
   String get chatRestoreRefresh;
+
+  /// No description provided for @chatRestoreSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Restore selected backup'**
+  String get chatRestoreSelected;
 
   /// No description provided for @chatRestoreAction.
   ///
@@ -9153,31 +9297,25 @@ abstract class AppLocalizations {
   /// No description provided for @chatRestoreEmpty.
   ///
   /// In en, this message translates to:
-  /// **'This folder contains no restorable chat database snapshots.'**
+  /// **'This folder contains no database backups.'**
   String get chatRestoreEmpty;
-
-  /// No description provided for @chatRestoreCounts.
-  ///
-  /// In en, this message translates to:
-  /// **'{chats} conversations · {messages} messages'**
-  String chatRestoreCounts(int chats, int messages);
 
   /// No description provided for @chatRestoreConfirmTitle.
   ///
   /// In en, this message translates to:
-  /// **'Restore this chat snapshot?'**
+  /// **'Restore this database backup?'**
   String get chatRestoreConfirmTitle;
 
   /// No description provided for @chatRestoreConfirmDescription.
   ///
   /// In en, this message translates to:
-  /// **'Replace all current chat records with {name}. Current chats will first be saved as a separate snapshot; restoration stops if that save fails. Stop running conversations first. Other settings are preserved.'**
+  /// **'Replace the current database file with {name}. This replaces all data stored in this database. Stop running conversations first. Restoring establishes a new synchronization baseline that replaces older data on other devices.'**
   String chatRestoreConfirmDescription(String name);
 
   /// No description provided for @chatRestoreSuccess.
   ///
   /// In en, this message translates to:
-  /// **'Chat records restored.'**
+  /// **'Database restored. The next sync will use this copy as the source of truth.'**
   String get chatRestoreSuccess;
 
   /// No description provided for @chatRestoreOnboardingTitle.

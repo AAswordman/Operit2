@@ -10,7 +10,7 @@ const w = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main';
 
 /** Mounts the paginated Word editor and exposes view and editing controls. */
 export async function mountDocx(options: EditorOptions): Promise<Editor> {
-  options.toolbar.hidden = false;
+  options.toolbar.parentElement!.hidden = false;
   let live = false;
   let instance!: SuperDoc;
   await new Promise<void>((resolve, reject) => {
@@ -20,7 +20,7 @@ export async function mountDocx(options: EditorOptions): Promise<Editor> {
       documentMode: 'editing', contained: true, telemetry: { enabled: false },
       zoom: { mode: 'fit-width', fitWidth: { min: 10, max: 100, padding: 26 } },
       user: { name: 'Operit', email: 'workspace@operit.local' },
-      toolbar: '#toolbar',
+      modules: { toolbar: { selector: '#toolbar', responsiveToContainer: true } },
       onReady: () => resolve(),
       onEditorUpdate: () => { if (live) options.changed(); },
       onException: event => { if (!live) reject(event.error ?? new Error('DOCX failed to open')); },

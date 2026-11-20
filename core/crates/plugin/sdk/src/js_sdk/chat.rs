@@ -345,7 +345,15 @@ pub fn validatePreparedMessageRequest(request: &ChatPreparedMessageRequest, now:
         Ok(())
     }
 
-/// Schedules prepared assistant text; the host owns persistence, delivery, notifications and resume recovery.
+/// Requests a proactive reply from the target conversation's actual execution profile.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChatScheduledGeneration {
+    /// Supplies instructions for a proactive reply using the target conversation's resolved participant and context.
+    pub instruction: String,
+}
+
+/// Schedules supplied text or asks the host to prepare a contextual assistant reply.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChatScheduledMessageRequest {
@@ -354,12 +362,21 @@ pub struct ChatScheduledMessageRequest {
     pub chatId: String,
     pub title: String,
     pub text: String,
+    /// Requires empty text. The host saves the actual author, model usage and generation timing with the prepared reply.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generation: Option<ChatScheduledGeneration>,
     /// Absolute Unix milliseconds, from one second to 30 days ahead.
     pub timestamp: i64,
 }
 pub fn validateChatScheduledMessageRequest(request: &ChatScheduledMessageRequest, now: i64) -> Result<(), String> {
         validatePreparedNotificationId(&request.id)?;
-        validatePreparedChatText(&request.chatId, &request.text)?;
+        match &request.generation {
+            Some(generation) => {
+                if !request.text.is_empty() { return Err("Generated scheduled replies require empty text".into()); }
+                validatePreparedChatText(&request.chatId, &generation.instruction)?;
+            }
+            None => validatePreparedChatText(&request.chatId, &request.text)?,
+        }
         if request.title.len() > 1024 { return Err("Notification title exceeds 1024 bytes".into()); }
         let delay = request.timestamp.saturating_sub(now);
         if !(1000..=2_592_000_000).contains(&delay) {
@@ -668,6 +685,22 @@ mod chat_extension_contract_tests {
 #[cfg(test)]
 mod prepared_delivery_tests {
     use super::*;
+    /// Requires exactly one content source and validates contextual generation before model invocation.
+    #[test]
+    fn scheduled_generation_rejects_mixed_empty_and_oversized_instructions() {
+        let mut request = ChatScheduledMessageRequest {
+            id: "contextual".into(), chatId: "chat".into(), title: "Title".into(), text: String::new(),
+            timestamp: 2000, generation: Some(ChatScheduledGeneration { instruction: "Continue our topic".into() }),
+        };
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_ok());
+        request.text = "Forged prewritten body".into();
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_err());
+        request.text.clear();
+        request.generation.as_mut().unwrap().instruction = " ".into();
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_err());
+        request.generation.as_mut().unwrap().instruction = "x".repeat(65537);
+        assert!(validateChatScheduledMessageRequest(&request, 1000).is_err());
+    }
     #[test]
     fn prepared_requests_reject_future_blank_oversized_and_unknown_fields() {
         let mut request = ChatPreparedMessageRequest { chatId: "chat".into(), text: "hello".into(), timestamp: 1, notify: false };
@@ -682,7 +715,7 @@ mod prepared_delivery_tests {
     }
     #[test]
     fn notification_requests_enforce_identical_time_and_identity_bounds_on_every_platform() {
-        let mut request = ChatScheduledMessageRequest { id: "slot".into(), chatId: "chat".into(), title: "Title".into(), text: "Text".into(), timestamp: 2000 };
+        let mut request = ChatScheduledMessageRequest { id: "slot".into(), chatId: "chat".into(), title: "Title".into(), text: "Text".into(), generation: None, timestamp: 2000 };
         assert!(validateChatScheduledMessageRequest(&request, 1000).is_ok());
         request.timestamp = 1999;
         assert!(validateChatScheduledMessageRequest(&request, 1000).is_err());

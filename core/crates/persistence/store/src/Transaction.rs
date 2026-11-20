@@ -354,6 +354,9 @@ pub struct Data {
     #[serde(skip)]
     pub sql: Option<std::sync::Arc<sql_snapshot::SqlSnapshot>>,
     pub revision: Option<Revision>,
+    /// Identifies an explicit restore that supersedes every earlier synchronization lineage.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restoration: Option<Revision>,
     pub deleted: BTreeSet<String>,
     pub aliases: BTreeMap<String, String>,
     #[serde(default)]
@@ -371,7 +374,7 @@ impl Serialize for Data {
 #[cfg(feature="full")]
 impl PartialEq for Data {
     fn eq(&self, other:&Self) -> bool {
-        self.owner == other.owner && self.revision == other.revision && self.deleted == other.deleted
+        self.owner == other.owner && self.revision == other.revision && self.restoration == other.restoration && self.deleted == other.deleted
             && self.aliases == other.aliases && self.versions == other.versions && self.additions == other.additions
             && if self.sql.is_none() && other.sql.is_none() { self.values == other.values } else {
                 matches!((self.values_digest(),other.values_digest()),(Ok(a),Ok(b)) if a==b)
@@ -398,6 +401,7 @@ impl Data {
             #[cfg(feature="full")]
             sql: None,
             revision: None,
+            restoration: None,
             deleted: BTreeSet::new(),
             aliases: BTreeMap::new(),
             versions: BTreeMap::new(),
@@ -1312,6 +1316,8 @@ pub struct Manifest {
     pub owner: Owner,
     pub node: String,
     pub revision: Option<Revision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restoration: Option<Revision>,
     pub token: String,
     pub digest: String,
     /// Canonical synchronized content bytes, excluding local bookkeeping and journal history.
@@ -1327,7 +1333,7 @@ pub enum Source {
     Remote,
 }
 
-/// Chooses complete, larger business contents before revision and deterministic node order.
+/// Gives explicit restore baselines priority, then compares ordinary synchronized contents.
 pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> {
     if local.owner != remote.owner {
         return Err("Snapshots are not at the same format/layout".into());
@@ -1337,6 +1343,9 @@ pub fn compare_manifests(local: &Manifest, remote: &Manifest) -> Result<Source> 
         (false, true) => return Ok(Source::Local),
         (true, true) => return Err(format!("Neither peer has a complete synchronized file: {}", local.owner.path)),
         _ => {},
+    }
+    if local.restoration != remote.restoration {
+        return Ok(if local.restoration > remote.restoration { Source::Local } else { Source::Remote });
     }
     if local.digest == remote.digest {
         return Ok(Source::Equal);
@@ -1362,6 +1371,7 @@ impl Snapshot {
             owner: self.data.owner.clone(),
             node: self.node.clone(),
             revision: self.data.revision.clone(),
+            restoration: self.data.restoration.clone(),
             token: self.token()?,
             digest,
             contentBytes,
@@ -1543,25 +1553,34 @@ impl SqlDataset<'_> {
         let mut data = Data::empty(self.owner.clone());
         let mut covered = BTreeSet::new();
         let mut damage = None;
-        if let Some(row)=tx.queryOne("SELECT i.operation_id,m.data,i.original FROM _operit_transaction_initialization i JOIN _operit_initialization_metadata m ON m.id=i.id WHERE i.id=1",vec![])? {
+        if let Some(row)=tx.queryOne("SELECT i.operation_id,m.data,i.original FROM _operit_initialization_metadata m LEFT JOIN _operit_transaction_initialization i ON m.id=i.id WHERE m.id=1",vec![])? {
             let metadata:Value=serde_json::from_str(&row.get::<_,String>(1)?).map_err(sql_error)?;
             let owner:Owner=serde_json::from_value(metadata["owner"].clone()).map_err(sql_error)?;
-            let original:String=row.get(2)?;
-            let fingerprint=serde_json::from_str::<crate::SyncOperationStore::SyncOperation>(&original).map_err(|e|e.to_string()).and_then(|op|digest(&op));
-            if owner!=self.owner || fingerprint.as_ref().ok().map(String::as_str)!=metadata["originalFingerprint"].as_str() {
-                damage=Some(digest(&original).map_err(sql_error)?);
-            } else { data.revision=serde_json::from_value(metadata["revision"].clone()).map_err(sql_error)?; }
+            let original:Option<String>=row.get(2)?;
+            let pending = metadata["pendingRestoration"] == Value::Bool(true);
+            let fingerprint = match &original {
+                Some(original) => serde_json::from_str::<crate::SyncOperationStore::SyncOperation>(original).map_err(|e|e.to_string()).and_then(|op|digest(&op)),
+                None => Err("Missing initialization original".into()),
+            };
+            if owner!=self.owner || (!pending && fingerprint.as_ref().ok().map(String::as_str)!=metadata["originalFingerprint"].as_str()) {
+                damage=Some(digest(&metadata).map_err(sql_error)?);
+            } else {
+                data.revision=serde_json::from_value(metadata["revision"].clone()).map_err(sql_error)?;
+                data.restoration=serde_json::from_value(metadata["restoration"].clone()).map_err(sql_error)?;
+            }
             tx.visitRows("SELECT id FROM _operit_initialization_coverage",vec![], &mut |row| {
                 covered.insert(row.valueAt(0)?.asString()?); Ok(())
             })?;
-            covered.insert(row.get(0)?);
+            if let Some(id) = row.get::<_,Option<String>>(0)? { covered.insert(id); }
         }
         data.sql=Some(sql_snapshot::SqlSnapshot::capture(self.store.storage.clone().ok_or_else(||sql_error("SQL host requires disk-backed synchronization staging"))?,tx,self.tables)?);
+        let restorationSuffix = data.restoration.as_ref().map(|baseline| format!(":restore:{}:{}", baseline.createdAt, baseline.originDeviceId));
         tx.visitRows(self.revisions, vec![], &mut |row| {
             let id = row.get::<_, String>(0).map_err(|e|operit_host_api::HostError::new(e.to_string()))?;
             let revision = Revision { createdAt: row.get(1).map_err(|e|operit_host_api::HostError::new(e.to_string()))?, originDeviceId: row.get(2).map_err(|e|operit_host_api::HostError::new(e.to_string()))?, sequence: row.get(3).map_err(|e|operit_host_api::HostError::new(e.to_string()))? };
             // Sealed history supplies receipts; only uncovered edits advance the restored data.
-            if !covered.contains(&id) && !revision.originDeviceId.starts_with("~init:") {
+            if !covered.contains(&id) && !revision.originDeviceId.starts_with("~init:")
+                && restorationSuffix.as_ref().is_none_or(|suffix| revision.originDeviceId.ends_with(suffix)) {
                 data.revision = data.revision.take().max(Some(revision));
             }
             covered.insert(id);
@@ -1581,6 +1600,47 @@ impl SqlDataset<'_> {
         self.store
             .transaction(|tx| self.snapshot_in(tx))
             .map_err(|e| e.to_string())
+    }
+
+    /// Establishes restore authority using metadata only; synchronization exports its contents later.
+    pub fn rebase(&self, mut restoration: Revision, resetTables: &[&str],
+        retire: impl FnOnce(&mut crate::SqliteStore::SqliteTransaction<'_>) -> std::result::Result<(),crate::SqliteStore::SqliteStoreError>) -> Result<()> {
+        self.prepare()?;
+        self.store.transaction(|tx| {
+            if let Some(row) = tx.queryOne("SELECT data FROM _operit_initialization_metadata WHERE id=1", vec![])? {
+                let metadata:Value = serde_json::from_str(&row.get::<_,String>(0)?).map_err(sql_error)?;
+                let previous:Option<Revision> = serde_json::from_value(metadata["restoration"].clone()).map_err(sql_error)?;
+                if let Some(previous) = previous {
+                    restoration.createdAt = restoration.createdAt.max(previous.createdAt.saturating_add(1));
+                }
+            }
+            for table in resetTables {
+                tx.execute(&format!("DELETE FROM {}", sql_identifier(table)), vec![])?;
+            }
+            let origin = format!("~restore:{}:{}", restoration.createdAt, restoration.originDeviceId);
+            let id = format!("{origin}:1");
+            compaction::seal_identity(tx.raw(), &id, &origin, 1, restoration.createdAt, "")?;
+            tx.execute("INSERT OR IGNORE INTO _operit_initialization_coverage SELECT opId FROM sync_sql_operations", vec![])?;
+            tx.execute("INSERT OR IGNORE INTO _operit_initialization_coverage SELECT operation_id FROM _operit_transaction_initialization", vec![])?;
+            tx.execute("INSERT OR IGNORE INTO _operit_initialization_coverage VALUES(?1)", vec![crate::SqliteStore::SqliteValue::Text(id)])?;
+            tx.execute("DELETE FROM _operit_transaction_initialization", vec![])?;
+            let metadata = serde_json::to_string(&serde_json::json!({"owner":self.owner,"revision":restoration,"restoration":restoration,"pendingRestoration":true})).map_err(sql_error)?;
+            tx.execute("INSERT INTO _operit_initialization_metadata VALUES(1,?1) ON CONFLICT(id) DO UPDATE SET data=excluded.data", vec![crate::SqliteStore::SqliteValue::Text(metadata)])?;
+            retire(tx)
+        }).map_err(|e| e.to_string())
+    }
+
+    /// Materializes a pending restore initializer only when synchronization requests an export.
+    pub fn publishRestoration(&self) -> Result<()> {
+        self.prepare()?;
+        self.store.transaction(|tx| {
+            let Some(row) = tx.queryOne("SELECT data FROM _operit_initialization_metadata WHERE id=1", vec![])? else { return Ok(()); };
+            let metadata:Value = serde_json::from_str(&row.get::<_,String>(0)?).map_err(sql_error)?;
+            if metadata["pendingRestoration"] != Value::Bool(true) { return Ok(()); }
+            let snapshot = self.snapshot_in(tx)?;
+            let operation = compaction::Initialization::from_snapshot(&snapshot).operation(self.domain(), false).map_err(sql_error)?;
+            compaction::save_initialization(tx, &operation, &snapshot.covered, &snapshot.data)
+        }).map_err(|e| e.to_string())
     }
 
     pub fn repair(&self, expected: &str, source: &Snapshot) -> Result<bool> {
@@ -1607,9 +1667,11 @@ impl SqlDataset<'_> {
         if initialization.data.owner != self.owner || operation.domain != self.domain() { return Err("Initialization owner differs".into()); }
         if self.coverage()?.contains(&operation.opId) { return Ok(false); }
         let current = self.snapshot()?;
+        if initialization.data.restoration < current.data.restoration { return Ok(false); }
         if let Some(previous) = if current.damage.is_none() { self.initialization()? } else { None } {
 
-            if !initialization.covered.contains(&previous.opId)
+            if initialization.data.restoration == current.data.restoration
+                && !initialization.covered.contains(&previous.opId)
                 && (current.data.revision.as_ref(), &previous.opId) >= (initialization.data.revision.as_ref(), &operation.opId) {
                 return Ok(false);
             }

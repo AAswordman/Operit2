@@ -86,6 +86,9 @@ impl LocalModelRegistryStore {
         let mut snapshot: LocalModelRegistrySnapshot = serde_json::from_str(&content)
             .map_err(|error| LocalModelRegistryStoreError::Json(error.to_string()))?;
         snapshot.migrateAishell3SpeakerCount();
+        snapshot.migrateEmbeddedLlamaCpp().map_err(|error| {
+            LocalModelRegistryStoreError::InvalidStoragePath(error.to_string())
+        })?;
         Ok(snapshot)
     }
 

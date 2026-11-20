@@ -2,13 +2,17 @@ import { mountEditor } from '@office-kit/pptx-editor';
 import { natural, record, text } from '../src/protocol';
 import { pageText, type Editor, type EditorOptions } from './editor';
 
+/** Mounts the presentation editor with host actions in its existing toolbar. */
 export async function mountPptx(options: EditorOptions): Promise<Editor> {
-  const deck = mountEditor(options.root, { source: options.bytes, fileName: options.info.name, locale: 'en', compact: true, onSave: async bytes => options.saveBytes(new Uint8Array(bytes)) });
+  const deck = mountEditor(options.root, { source: options.bytes, fileName: options.info.name, locale: 'en', compact: true, status: options.actions, onSave: async bytes => options.saveBytes(new Uint8Array(bytes)) });
   await deck.ready;
   deck.on('change', options.changed);
   // The pinned editor exposes zoom through its accessible status-bar controls.
   // Driving those controls uses its own layout and pointer-coordinate pipeline.
   const surface = options.root.firstElementChild!.shadowRoot!;
+  const style = document.createElement('style');
+  style.textContent = '.topbar.compact .filename { display: none; } slot[name="office-kit-status"] { display: flex; flex: none; position: sticky; right: 0; margin-inline-start: auto; background: var(--ok-ribbon); color: var(--ok-text); }';
+  surface.append(style);
   const zoomSlider = () => surface.querySelector<HTMLInputElement>('input[type="range"][aria-label="Zoom percentage"]');
   let lastZoom = 100;
   const zoomValue = () => {

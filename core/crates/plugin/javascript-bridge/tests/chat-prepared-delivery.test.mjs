@@ -43,3 +43,14 @@ test('native scheduling errors propagate and strict SDK calls reject incorrect a
     await assert.rejects(async () => vm.runInContext(expression, c));
   } assert.equal(calls, previous);
 });
+test('contextual scheduling forwards instructions and returns the host-prepared body', async () => {
+  const request = { id: 'contextual', chatId: 'bound-chat', title: 'Title', text: '', generation: { instruction: 'Continue our topic' }, timestamp: 999999 };
+  const c = runtime((name, parameters) => {
+    assert.equal(name, 'chat_schedule_message');
+    assert.deepEqual(parameters, { request });
+    return { message: { id: request.id, chatId: request.chatId, timestamp: request.timestamp, status: 'scheduled', error: null, text: 'A reply from the actual role' } };
+  });
+  const receipt = plain(await vm.runInContext(`Tools.Chat.scheduleMessage(${JSON.stringify(request)})`, c));
+  assert.equal(receipt.message.text, 'A reply from the actual role');
+  assert.equal(c.refs, 0);
+});

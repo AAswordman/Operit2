@@ -32,15 +32,41 @@ pub enum SqliteStoreError {
 /// Shared SQLite connection wrapper backed by the registered runtime host.
 pub struct SqliteStore {
     path: PathBuf,
+    storagePath: String,
     pub(crate) storage: Option<Arc<dyn operit_host_api::RuntimeStorageHost>>,
-    connection: Arc<Mutex<Box<dyn RuntimeSqliteConnection>>>,
+    sqliteHost: Arc<dyn operit_host_api::RuntimeSqliteHost>,
+    connection: Arc<Mutex<Option<Box<dyn RuntimeSqliteConnection>>>>,
     observers: Arc<Mutex<Vec<Arc<dyn Fn(&SqliteStore) -> Result<(), SqliteStoreError> + Send + Sync>>>>,
     pub(crate) executionLeases: Arc<Mutex<crate::ChatExecutionLease::ChatExecutionLeaseState>>,
 }
 
+/// Holds an open connection for the lifetime of a serialized database operation.
+struct LockedConnection<'a>(std::sync::MutexGuard<'a, Option<Box<dyn RuntimeSqliteConnection>>>);
+
+impl std::ops::Deref for LockedConnection<'_> {
+    type Target = dyn RuntimeSqliteConnection;
+
+    /// Borrows the connection whose presence was checked when acquiring the guard.
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("locked SQLite connection").as_ref()
+    }
+}
+
+impl std::ops::DerefMut for LockedConnection<'_> {
+    /// Mutably borrows the connection while all other store access is blocked.
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.0.as_mut().expect("locked SQLite connection").as_mut()
+    }
+}
+
 impl SqliteStore {
-    fn lockedConnection(&self) -> Result<std::sync::MutexGuard<'_ ,Box<dyn RuntimeSqliteConnection>>,SqliteStoreError> {
-        self.connection.lock().map_err(|_|SqliteStoreError::MutexPoisoned)
+    /// Locks the currently open database connection.
+    fn lockedConnection(&self) -> Result<LockedConnection<'_>, SqliteStoreError> {
+        let guard = self.connection.lock().map_err(|_| SqliteStoreError::MutexPoisoned)?;
+        if guard.is_none() {
+            return Err(SqliteStoreError::Message("SQLite database is closed".into()));
+        }
+        Ok(LockedConnection(guard))
     }
 
     /// Opens a runtime-hosted SQLite database and enables foreign keys.
@@ -57,8 +83,10 @@ impl SqliteStore {
         connection.execute("PRAGMA foreign_keys = ON", Vec::new())?;
         Ok(Self {
             path: PathBuf::from(storagePath),
+            storagePath: storagePath.to_string(),
             storage: host.runtimeStorage(),
-            connection: Arc::new(Mutex::new(connection)),
+            sqliteHost: host,
+            connection: Arc::new(Mutex::new(Some(connection))),
             observers: Arc::new(Mutex::new(Vec::new())),
             executionLeases: Arc::new(Mutex::new(
                 crate::ChatExecutionLease::ChatExecutionLeaseState::default(),
@@ -71,9 +99,18 @@ impl SqliteStore {
         &self.path
     }
 
-    /// Serializes snapshot capture with writes on the shared SQLite connection.
-    pub fn snapshotDatabase(&self, destination: &str) -> Result<(), SqliteStoreError> {
-        Ok(self.lockedConnection()?.snapshotDatabase(destination)?)
+    /// Closes SQLite while copying its file and reopens the same shared connection afterward.
+    pub fn withDatabaseFile<T>(&self, copy: impl FnOnce() -> Result<T, SqliteStoreError>) -> Result<T, SqliteStoreError> {
+        let mut guard = self.connection.lock().map_err(|_| SqliteStoreError::MutexPoisoned)?;
+        if guard.is_none() {
+            return Err(SqliteStoreError::Message("SQLite database is closed".into()));
+        }
+        drop(guard.take());
+        let result = copy();
+        let connection = self.sqliteHost.openSqliteDatabase(&self.storagePath)?;
+        *guard = Some(connection);
+        guard.as_mut().expect("reopened SQLite connection").execute("PRAGMA foreign_keys = ON", Vec::new())?;
+        result
     }
 
     #[allow(non_snake_case)]
@@ -436,6 +473,18 @@ mod transaction_lifecycle_tests {
         state: Arc<Mutex<LifecycleState>>,
     }
 
+    /// Supplies isolated connections without using global runtime registration.
+    struct LifecycleHost {
+        state: Arc<Mutex<LifecycleState>>,
+    }
+
+    impl operit_host_api::RuntimeSqliteHost for LifecycleHost {
+        /// Opens another connection that records the same lifecycle calls.
+        fn openSqliteDatabase(&self, _: &str) -> HostResult<Box<dyn RuntimeSqliteConnection>> {
+            Ok(Box::new(LifecycleConnection { state: self.state.clone() }))
+        }
+    }
+
     impl RuntimeSqliteConnection for LifecycleConnection {
         /// Rejects batch statements outside the lifecycle under test.
         fn executeBatch(&mut self, _: &str) -> HostResult<()> {
@@ -512,9 +561,11 @@ mod transaction_lifecycle_tests {
         let store = SqliteStore {
             storage: None,
             path: PathBuf::from("transaction-lifecycle-test"),
-            connection: Arc::new(Mutex::new(Box::new(LifecycleConnection {
+            storagePath: "transaction-lifecycle-test".into(),
+            sqliteHost: Arc::new(LifecycleHost { state: state.clone() }),
+            connection: Arc::new(Mutex::new(Some(Box::new(LifecycleConnection {
                 state: state.clone(),
-            }))),
+            })))),
             observers: Arc::new(Mutex::new(Vec::new())),
             executionLeases: Arc::new(Mutex::new(
                 crate::ChatExecutionLease::ChatExecutionLeaseState::default(),

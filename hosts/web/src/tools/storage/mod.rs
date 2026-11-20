@@ -284,11 +284,6 @@ macro_rules! sqlite_access {
 }
 
 impl RuntimeSqliteConnection for WebRuntimeSqliteConnection {
-    /// Exports SQLite's standalone database image through the browser storage owner.
-    fn snapshotDatabase(&mut self, destination: &str) -> HostResult<()> {
-        call_sqlite("snapshotDatabase", &[JsValue::from_str(&self.id), JsValue::from_str(destination)])?;
-        Ok(())
-    }
     fn executeBatch(&mut self, sql: &str) -> HostResult<()> {
         call_sqlite(
             "executeBatch",

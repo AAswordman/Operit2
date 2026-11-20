@@ -2,7 +2,10 @@ use crate::LocalEngineManifest::{
     LocalArchitecture, LocalEngineArchiveFormat, LocalEngineArtifact, LocalEngineDelivery,
     LocalEngineManifest, LocalPlatform, LocalPlatformTarget,
 };
+use crate::LocalModelManifest::LocalEngineRequirement;
 
+const LLAMA_CPP_ENGINE_ID: &str = "llama-cpp";
+const LLAMA_CPP_ENGINE_VERSION: &str = "v1.0.0";
 const SHERPA_ONNX_ENGINE_ID: &str = "sherpa-onnx";
 const SHERPA_ONNX_ENGINE_VERSION: &str = "1.13.2";
 const SHERPA_ONNX_WEB_ASSET_BASE_URL: &str = "https://models.operit.app/sherpa-onnx/v1.13.2";
@@ -10,8 +13,17 @@ const SHERPA_ONNX_WEB_ASSET_BASE_URL: &str = "https://models.operit.app/sherpa-o
 pub struct LocalEngineCatalog;
 
 impl LocalEngineCatalog {
+    /// Returns the llama.cpp engine bundled with this application build.
     pub fn llamaCpp() -> LocalEngineManifest {
-        embeddedLlmEngine("llama-cpp", "b11829", "llama.cpp", "MIT")
+        embeddedLlmEngine(LLAMA_CPP_ENGINE_ID, LLAMA_CPP_ENGINE_VERSION, "llama.cpp", "MIT")
+    }
+
+    /// Returns the engine requirement for GGUF models using the bundled runtime.
+    pub(crate) fn llamaCppRequirement() -> LocalEngineRequirement {
+        LocalEngineRequirement {
+            engineId: LLAMA_CPP_ENGINE_ID.to_string(),
+            version: LLAMA_CPP_ENGINE_VERSION.to_string(),
+        }
     }
 
     pub fn mnn() -> LocalEngineManifest {

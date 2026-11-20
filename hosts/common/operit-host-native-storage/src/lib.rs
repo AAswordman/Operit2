@@ -1019,13 +1019,12 @@ impl RuntimeSqliteHost for NativeRuntimeStorageHost {
         }
         let connection =
             rusqlite::Connection::open(path).map_err(|error| HostError::new(error.to_string()))?;
-        Ok(Box::new(RusqliteRuntimeConnection { connection, storage: self.clone() }))
+        Ok(Box::new(RusqliteRuntimeConnection { connection }))
     }
 }
 
 struct RusqliteRuntimeConnection {
     connection: rusqlite::Connection,
-    storage: NativeRuntimeStorageHost,
 }
 
 macro_rules! sqlite_access {
@@ -1072,20 +1071,6 @@ macro_rules! sqlite_access {
 }
 
 impl RuntimeSqliteConnection for RusqliteRuntimeConnection {
-    /// Copies committed pages including WAL through SQLite's online backup API.
-    fn snapshotDatabase(&mut self, destination: &str) -> HostResult<()> {
-        let path = self.storage.resolve(destination)?;
-        if path.exists() { return Err(HostError::new("SQLite snapshot destination already exists")); }
-        if let Some(parent) = path.parent() { fs::create_dir_all(parent)?; }
-        let mut output = rusqlite::Connection::open(&path).map_err(|e|HostError::new(e.to_string()))?;
-        {
-            let backup = rusqlite::backup::Backup::new(&self.connection, &mut output).map_err(|e|HostError::new(e.to_string()))?;
-            backup.run_to_completion(256, std::time::Duration::from_millis(10), None).map_err(|e|HostError::new(e.to_string()))?;
-        }
-        output.close().map_err(|(_,e)|HostError::new(e.to_string()))?;
-        fs::OpenOptions::new().read(true).write(true).open(path)?.sync_all()?;
-        Ok(())
-    }
     fn executeBatch(&mut self, sql: &str) -> HostResult<()> {
         self.connection
             .execute_batch(sql)

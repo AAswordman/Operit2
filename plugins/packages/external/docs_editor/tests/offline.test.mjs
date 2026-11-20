@@ -227,7 +227,7 @@ test('offline DOCX, PPTX and PDF editor/tool round trips', { skip: !require && '
         const field = page.getByRole('textbox', { name: 'reviewer', exact: true });
         await field.click({ timeout: 5000 });
         await field.pressSequentially('Offline reviewer');
-        await page.locator('#filename').click();
+        await page.locator('#status').click();
         const filled = await command({ kind: 'read' });
         assert.ok(filled.revision > changed.revision, 'PDF form input changes the working copy');
         saveRevision = filled.revision;
