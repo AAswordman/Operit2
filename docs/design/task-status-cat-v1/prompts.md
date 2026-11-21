@@ -38,4 +38,4 @@ Cat has stopped typing, ears gently droop, gaze drops toward laptop, head slowly
 
 ## 生成后的编排
 
-源图集由 ImageGen 绘制，仅保存在 Codex 生成目录。`package-assets.cjs` 在内存中裁切，最终只输出一套无损透明动画 WebP。仓库与未来插件包不保留图集、静态预览或 APNG 副本。生成提示约束并不等同于生成结果的逐像素保证：首帧原图与续画存在比例及像素密度差异，v1 已在 README 中说明。动画信息详见 `manifest.json`。
+源图集由 ImageGen 绘制，仅保存在 Codex 生成目录。裁切和时间编排在内存完成，最终只输出一套无损透明动画 WebP。仓库与插件包不保留图集、静态预览或 APNG 副本。六个最终动画已移至 `plugins/packages/external/task_status_pet/resources/`，插件说明见该目录上级的 README。生成提示约束并不等同于生成结果的逐像素保证：首帧原图与续画存在比例及像素密度差异。交互网页与重复的设计素材目录已删除。

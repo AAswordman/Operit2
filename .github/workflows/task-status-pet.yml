@@ -1,0 +1,25 @@
+name: Task status pet
+on:
+  push:
+    paths:
+      - 'plugins/packages/external/task_status_pet/**'
+      - 'plugins/types/**'
+      - 'tools/tests/task_status_pet.test.mjs'
+      - '.github/workflows/task-status-pet.yml'
+  pull_request:
+    paths:
+      - 'plugins/packages/external/task_status_pet/**'
+      - 'plugins/types/**'
+      - 'tools/tests/task_status_pet.test.mjs'
+      - '.github/workflows/task-status-pet.yml'
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+      - run: .ci-tools/typescript/node_modules/.bin/tsc -p plugins/packages/external/task_status_pet/tsconfig.json
+      - run: node --test tools/tests/task_status_pet.test.mjs
