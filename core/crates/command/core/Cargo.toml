@@ -14,6 +14,7 @@ operit-host-api = { path = "../../foundation/host-api" }
 operit-local-models = { path = "../../provider/local-model" }
 operit-model = { path = "../../foundation/model" }
 operit-tools = { path = "../../tool/services" }
+operit-plugin-sdk = { version = "2.0.0-preview.17", path = "../../plugin/sdk" }
 operit-util = { path = "../../foundation/util" }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -22,6 +23,7 @@ sha2 = { workspace = true }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time"] }
 
 [dev-dependencies]
+zip.workspace = true
 operit-host-native-filesystem = { path = "../../../../hosts/common/operit-host-native-filesystem" }
 operit-host-native-scheduler = { path = "../../../../hosts/common/operit-host-native-scheduler" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
