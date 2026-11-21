@@ -2477,6 +2477,29 @@ fn readPtyFd(fd: RawFd) -> HostResult<Vec<u8>> {
     }
 }
 
+/// Completes partial writes and retries interrupts so PTY input is never truncated.
+#[cfg_attr(not(target_os = "android"), allow(dead_code))]
+fn writePtyBytesWith(
+    mut write: impl FnMut(&[u8]) -> std::io::Result<usize>,
+    data: &[u8],
+) -> std::io::Result<usize> {
+    let mut written = 0;
+    while written < data.len() {
+        match write(&data[written..]) {
+            Ok(0) => {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "PTY write accepted no bytes",
+                ));
+            }
+            Ok(count) => written += count,
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(written)
+}
+
 fn writePtyFd(fd: RawFd, data: &[u8]) -> HostResult<usize> {
     #[cfg(not(target_os = "android"))]
     {
@@ -2488,12 +2511,22 @@ fn writePtyFd(fd: RawFd, data: &[u8]) -> HostResult<usize> {
 
     #[cfg(target_os = "android")]
     {
-        let count = unsafe { libc::write(fd, data.as_ptr().cast(), data.len()) };
-        if count < 0 {
-            androidLogError(&format!("write failed fd={fd} bytes={}", data.len()));
-            return Err(HostError::new("write failed for Android PTY"));
-        }
-        Ok(count as usize)
+        writePtyBytesWith(
+            |remaining| {
+                let count =
+                    unsafe { libc::write(fd, remaining.as_ptr().cast(), remaining.len()) };
+                if count < 0 {
+                    Err(std::io::Error::last_os_error())
+                } else {
+                    Ok(count as usize)
+                }
+            },
+            data,
+        )
+        .map_err(|error| {
+            androidLogError(&format!("write failed fd={fd} bytes={}: {error}", data.len()));
+            HostError::new("write failed for Android PTY")
+        })
     }
 }
 
@@ -2880,5 +2913,63 @@ mod tests {
         let error = host.createOrGetTypedSession("chat", " ").unwrap_err();
         assert_eq!(error.message, "type parameter is required");
         assert!(host.lockState().unwrap().ptySessions.is_empty());
+    }
+
+    /// A short write must not truncate the command: the remainder is submitted in order.
+    #[test]
+    fn pty_write_completes_partial_writes() {
+        let data = b"printf '%s\\n' '327429f1'\r";
+        let mut submitted = Vec::new();
+        let written = writePtyBytesWith(
+            |remaining| {
+                let count = remaining.len().min(3);
+                submitted.extend_from_slice(&remaining[..count]);
+                Ok(count)
+            },
+            data,
+        )
+        .unwrap();
+        assert_eq!(written, data.len());
+        assert_eq!(submitted, data);
+    }
+
+    /// An interrupted write is retried instead of failing or dropping the command.
+    #[test]
+    fn pty_write_retries_interrupted_writes() {
+        let data = b"echo '5c8a733d'\r";
+        let mut calls = 0;
+        let mut submitted = Vec::new();
+        let written = writePtyBytesWith(
+            |remaining| {
+                calls += 1;
+                if calls <= 2 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Interrupted,
+                        "EINTR",
+                    ));
+                }
+                let count = remaining.len().min(4);
+                submitted.extend_from_slice(&remaining[..count]);
+                Ok(count)
+            },
+            data,
+        )
+        .unwrap();
+        assert_eq!(written, data.len());
+        assert_eq!(submitted, data);
+    }
+
+    /// Zero progress and hard failures surface as errors; empty input never writes.
+    #[test]
+    fn pty_write_rejects_zero_progress_and_hard_errors() {
+        let zero = writePtyBytesWith(|_| Ok(0), b"x").unwrap_err();
+        assert_eq!(zero.kind(), std::io::ErrorKind::WriteZero);
+        let broken = writePtyBytesWith(
+            |_| Err(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "EPIPE")),
+            b"x",
+        )
+        .unwrap_err();
+        assert_eq!(broken.kind(), std::io::ErrorKind::BrokenPipe);
+        assert_eq!(writePtyBytesWith(|_| panic!("empty input must not write"), b"").unwrap(), 0);
     }
 }
