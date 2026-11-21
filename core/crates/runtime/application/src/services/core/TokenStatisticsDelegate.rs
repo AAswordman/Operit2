@@ -253,3 +253,34 @@ impl Default for TokenStatisticsDelegate {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A background compaction refreshes its own chat's window without overwriting the
+    /// open chat's live token flows, and switching back surfaces the compacted totals.
+    #[test]
+    fn background_window_refresh_keeps_the_active_chat_ui() {
+        let mut statistics = TokenStatisticsDelegate::new();
+        statistics.setActiveChatId(Some("current".into()));
+        statistics.setTokenCounts(Some("current".into()), 100, 200, 4_321);
+        statistics.setTokenCounts(Some("origin".into()), 10, 20, 15_088);
+        assert_eq!(statistics.currentWindowSize, 4_321);
+        assert_eq!(statistics.currentWindowSizeFlow.value(), 4_321);
+        assert_eq!(statistics.cumulativeInputTokensFlow.value(), 100);
+        assert_eq!(statistics.cumulativeOutputTokensFlow.value(), 200);
+        assert_eq!(
+            statistics.getLastCurrentWindowSize(Some("origin".into())),
+            15_088,
+        );
+        assert_eq!(
+            statistics.getLastCurrentWindowSize(Some("current".into())),
+            4_321,
+        );
+        statistics.setActiveChatId(Some("origin".into()));
+        assert_eq!(statistics.currentWindowSize, 15_088);
+        assert_eq!(statistics.currentWindowSizeFlow.value(), 15_088);
+        assert_eq!(statistics.cumulativeInputTokensFlow.value(), 10);
+    }
+}

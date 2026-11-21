@@ -55,7 +55,6 @@ struct ConversationSummaryRequest {
     chatProviderIdOverride: Option<String>,
     chatModelIdOverride: Option<String>,
     autoContinue: bool,
-    requireCurrentChat: bool,
     trigger: Option<SummaryTriggerContext>,
 }
 
@@ -710,7 +709,7 @@ impl MessageCoordinationDelegate {
             &turnOptions,
             !isContinuation && !isAutoContinuation && !isResume,
             isBackgroundSend,
-        )?;
+        ).await?;
         let runtimeChatHistory = match chatHistoryOverride {
             Some(history) => history,
             None => self
@@ -782,9 +781,9 @@ impl MessageCoordinationDelegate {
 
     /// Starts snapshot compaction without delaying dispatch and retains the tool-round token guard.
     #[allow(clippy::too_many_arguments)]
-    fn prepareSummaryForSend(
+    async fn prepareSummaryForSend(
         &mut self,
-        enhancedAiService: &EnhancedAIService,
+        enhancedAiService: &mut EnhancedAIService,
         configuration: &ChatConfigurationResult,
         chatId: &str,
         participantId: Option<String>,
@@ -827,26 +826,56 @@ impl MessageCoordinationDelegate {
                     true,
                 )
             {
-                let _summaryCompletion = self.launchSummary(
-                    enhancedAiService,
-                    messages,
-                    ConversationSummaryRequest {
-                        chatId: chatId.to_string(),
-                        configuration: configuration.clone(),
-                        participantId,
-                        promptFunctionType,
-                        chatProviderIdOverride: Some(providerId),
-                        chatModelIdOverride: Some(modelId),
-                        autoContinue: false,
-                        requireCurrentChat: true,
-                        trigger: Some(SummaryTriggerContext {
-                            current_tokens: chat.currentWindowSize,
-                            max_tokens: maxTokens,
-                            token_usage_threshold: policy.tokenUsageThreshold,
-                            trigger_point: SummaryTriggerPoint::BeforeSend,
-                        }),
-                    },
-                )?;
+                // The cached chats-table window can lag behind a completed compaction, so
+                // revalidate with the fresh stable window before committing to an LLM call.
+                // If estimation is unavailable, keep the cached decision; the worker still
+                // revalidates before executing.
+                let currentTokens = match self
+                    .recalculateStableWindowSize(
+                        enhancedAiService,
+                        chatId.to_string(),
+                        participantId.clone(),
+                        promptFunctionType.clone(),
+                        Some(providerId.clone()),
+                        Some(modelId.clone()),
+                    )
+                    .await
+                {
+                    Ok(window) => window,
+                    Err(error) => {
+                        ChainLogger::warn(
+                            SEND_CHAIN,
+                            "summary.presend.recalculate.error",
+                            &[("chatId", chatId.to_string()), ("error", error)],
+                        );
+                        chat.currentWindowSize
+                    }
+                };
+                let trigger = SummaryTriggerContext {
+                    current_tokens: currentTokens,
+                    max_tokens: maxTokens,
+                    token_usage_threshold: policy.tokenUsageThreshold,
+                    trigger_point: SummaryTriggerPoint::BeforeSend,
+                };
+                if Self::summaryExecutionStillRequired(Some(trigger), currentTokens) {
+                    Self::resolveSummaryLaunchConflict(
+                        self.launchSummary(
+                            enhancedAiService,
+                            messages,
+                            ConversationSummaryRequest {
+                                chatId: chatId.to_string(),
+                                configuration: configuration.clone(),
+                                participantId,
+                                promptFunctionType,
+                                chatProviderIdOverride: Some(providerId),
+                                chatModelIdOverride: Some(modelId),
+                                autoContinue: false,
+                                trigger: Some(trigger),
+                            },
+                        ),
+                        self.messageProcessingDelegate.summaryTaskForChat(chatId),
+                    )?;
+                }
             }
         }
         Ok((maxTokens, policy.tokenUsageThreshold))
@@ -879,7 +908,7 @@ impl MessageCoordinationDelegate {
                     chatId, participantId: Some(configuration.profile.id.clone()),
                     configuration: configuration.clone(), promptFunctionType: PromptFunctionType::CHAT,
                     chatProviderIdOverride: None, chatModelIdOverride: None,
-                    autoContinue: false, requireCurrentChat: false,
+                    autoContinue: false,
                     trigger: Some(SummaryTriggerContext {
                         current_tokens: window,
                         max_tokens: settings.context.maxContextTokens(),
@@ -890,6 +919,43 @@ impl MessageCoordinationDelegate {
             }
         }
         Ok(())
+    }
+
+    /// Decides whether a captured summary request must still run against a freshly measured
+    /// window. Automatic threshold triggers revalidate; manual summaries and token-limit
+    /// recovery continuations carry no trigger and always execute.
+    fn summaryExecutionStillRequired(
+        trigger: Option<SummaryTriggerContext>,
+        currentWindow: i64,
+    ) -> bool {
+        match trigger {
+            Some(trigger) => AIMessageManager::shouldGenerateSummary(
+                currentWindow,
+                trigger.max_tokens,
+                trigger.token_usage_threshold,
+                true,
+            ),
+            None => true,
+        }
+    }
+
+    /// Resolves a summary launch result for the send path. A registration conflict means
+    /// another summary already owns the chat, so the send continues without a second
+    /// compaction; scheduler or other launch failures without an owner remain fatal.
+    fn resolveSummaryLaunchConflict(
+        launch: Result<Shared<BoxFuture<'static, Result<(), String>>>, String>,
+        registeredTask: Option<ChatSummaryTask>,
+    ) -> Result<(), String> {
+        match launch {
+            Ok(_completion) => Ok(()),
+            Err(error) => {
+                if registeredTask.is_some() {
+                    Ok(())
+                } else {
+                    Err(error)
+                }
+            }
+        }
     }
 
     /// Reports a summary failure directly to the consumable UI toast flow.
@@ -1034,6 +1100,41 @@ impl MessageCoordinationDelegate {
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
         onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<(), String> {
+        // A queued automatic summary may have been launched from a stale cached window while
+        // an earlier compaction already ran. Revalidate against the fresh stable window before
+        // paying for another LLM request; the launch wrapper's finishSummaryTask clears the
+        // compressing UI when this skips with Ok(()). Manual and token-limit recovery requests
+        // carry no trigger and always execute.
+        let mut trigger = request.trigger;
+        if let Some(captured) = trigger {
+            let window = self
+                .recalculateStableWindowSize(
+                    enhancedAiService,
+                    request.chatId.clone(),
+                    request.participantId.clone(),
+                    request.promptFunctionType.clone(),
+                    request.chatProviderIdOverride.clone(),
+                    request.chatModelIdOverride.clone(),
+                )
+                .await?;
+            if !Self::summaryExecutionStillRequired(Some(captured), window) {
+                ChainLogger::info(
+                    SEND_CHAIN,
+                    "summary.execution.skipped",
+                    &[
+                        ("chatId", request.chatId.clone()),
+                        ("window", window.to_string()),
+                        ("maxTokens", captured.max_tokens.to_string()),
+                        ("capturedTokens", captured.current_tokens.to_string()),
+                    ],
+                );
+                return Ok(());
+            }
+            trigger = Some(SummaryTriggerContext {
+                current_tokens: window,
+                ..captured
+            });
+        }
         let insertPosition = self
             .chatHistoryDelegate
             .findProperSummaryPosition(messages.clone());
@@ -1046,16 +1147,13 @@ impl MessageCoordinationDelegate {
             .map(|message| message.timestamp);
         let summary =
             AIMessageManager::summarizeMemory(
-                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger, onNonFatalError,
+                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, trigger, onNonFatalError,
             )
                 .await
                 .map_err(|error| error.to_string())?
                 .ok_or_else(|| "No valid conversation summary was generated".to_string())?;
-        if request.requireCurrentChat
-            && self.chatHistoryDelegate.currentChatIdFlow.value().as_ref() != Some(&request.chatId)
-        {
-            return Ok(());
-        }
+        // Persist for the originating chat even when the user switched away mid-generation;
+        // addSummaryMessage and refreshStableContextWindow are both scoped to the given chat.
         self.chatHistoryDelegate.addSummaryMessage(
             summary,
             beforeTimestamp,
@@ -1116,7 +1214,6 @@ impl MessageCoordinationDelegate {
                 chatProviderIdOverride: self.currentChatProviderIdOverride.clone(),
                 chatModelIdOverride: self.currentChatModelIdOverride.clone(),
                 autoContinue: false,
-                requireCurrentChat: false,
                 trigger: None,
             },
         ) {
@@ -1178,7 +1275,6 @@ impl MessageCoordinationDelegate {
                 chatProviderIdOverride: request.chatProviderIdOverride.clone(),
                 chatModelIdOverride: request.chatModelIdOverride.clone(),
                 autoContinue: true,
-                requireCurrentChat: false,
                 trigger: None,
             },
         )?
@@ -1309,5 +1405,98 @@ mod summary_send_policy_tests {
                 true,
             ));
         }
+    }
+}
+
+#[cfg(test)]
+mod summary_execution_tests {
+    use super::*;
+    use futures_util::future::ready;
+
+    /// Reproduces the device timeline: the second summary launched from a stale cached
+    /// window of 115529 tokens while the first compaction had already reduced the real
+    /// window to 15088 tokens against a 200000-token model at the default 0.85 threshold.
+    fn stale_before_send_trigger() -> SummaryTriggerContext {
+        SummaryTriggerContext {
+            current_tokens: 115_529,
+            max_tokens: 200_000,
+            token_usage_threshold: 0.85,
+            trigger_point: SummaryTriggerPoint::BeforeSend,
+        }
+    }
+
+    /// A queued automatic summary must skip the LLM call once the fresh window is compacted.
+    #[test]
+    fn queued_automatic_summary_revalidates_the_fresh_window() {
+        let trigger = stale_before_send_trigger();
+        assert!(
+            !MessageCoordinationDelegate::summaryExecutionStillRequired(Some(trigger), 15_088),
+            "a compacted window must not launch a second compression",
+        );
+        assert!(
+            !MessageCoordinationDelegate::summaryExecutionStillRequired(Some(trigger), 169_999),
+            "the threshold boundary stays exclusive below 85 percent",
+        );
+        assert!(
+            MessageCoordinationDelegate::summaryExecutionStillRequired(Some(trigger), 170_000),
+            "a genuinely full window must still compress",
+        );
+        let after_reply = SummaryTriggerContext {
+            trigger_point: SummaryTriggerPoint::AfterReply,
+            ..trigger
+        };
+        assert!(
+            !MessageCoordinationDelegate::summaryExecutionStillRequired(Some(after_reply), 15_088),
+        );
+    }
+
+    /// Manual summaries and token-limit recovery are explicit requests, not threshold guesses.
+    #[test]
+    fn manual_and_recovery_summaries_never_skip() {
+        for window in [0, 15_088, 115_529] {
+            assert!(
+                MessageCoordinationDelegate::summaryExecutionStillRequired(None, window),
+                "trigger-free requests must run at any window size",
+            );
+        }
+    }
+
+    /// Builds an identifiable registered summary without a platform executor.
+    fn registeredTask() -> ChatSummaryTask {
+        let (abortHandle, _) = AbortHandle::new_pair();
+        ChatSummaryTask {
+            taskId: Arc::new(()),
+            abortHandle,
+            completion: ready(Ok(())).boxed().shared(),
+        }
+    }
+
+    /// A concurrent summary owns the chat, so the send continues; real launch errors surface.
+    #[test]
+    fn overlap_launch_conflict_skips_but_other_errors_propagate() {
+        assert!(
+            MessageCoordinationDelegate::resolveSummaryLaunchConflict(
+                Err("Summary task already registered for chat".to_string()),
+                Some(registeredTask()),
+            )
+            .is_ok(),
+            "an already-compressing chat must not fail the user's send",
+        );
+        assert_eq!(
+            MessageCoordinationDelegate::resolveSummaryLaunchConflict(
+                Err("scheduler unavailable".to_string()),
+                None,
+            )
+            .unwrap_err(),
+            "scheduler unavailable",
+            "launch failures without a competing summary must stay fatal",
+        );
+        assert!(
+            MessageCoordinationDelegate::resolveSummaryLaunchConflict(
+                Ok(ready(Ok(())).boxed().shared()),
+                None,
+            )
+            .is_ok(),
+        );
     }
 }

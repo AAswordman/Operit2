@@ -3676,6 +3676,65 @@ mod tests {
         assert!(second.abortHandle.is_aborted());
     }
 
+    /// Retains notification tasks so state publication never needs a platform executor.
+    #[derive(Default)]
+    struct SummaryFinishScheduler(std::sync::Mutex<Vec<operit_host_api::HostRuntimeAsyncTask>>);
+
+    impl operit_host_api::HostRuntimeTaskSchedulerHost for SummaryFinishScheduler {
+        fn monotonicTimeMillis(&self) -> operit_host_api::HostResult<u64> { Ok(0) }
+        fn scheduleHostRuntimeTask(&self, _: &str, task: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> {
+            task(); Ok(())
+        }
+        fn scheduleHostRuntimeAsyncTask(&self, _: &str, task: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> {
+            self.0.lock().unwrap().push(task); Ok(())
+        }
+        fn scheduleHostRuntimeCooperativeAsyncTask(&self, name: &str, task: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> {
+            self.scheduleHostRuntimeAsyncTask(name, task)
+        }
+        fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> {
+            panic!("summary finish must not schedule timers")
+        }
+        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
+            Box::pin(async { Ok(()) })
+        }
+        fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
+            panic!("summary finish must not wait for timers")
+        }
+    }
+
+    /// A worker that skips its LLM call with Ok(()) must still leave a clean chat surface:
+    /// the launch wrapper always calls finishSummaryTask after the worker returns.
+    #[test]
+    fn finishing_a_skipped_summary_restores_the_idle_chat_surface() {
+        use operit_host_native_storage::NativeRuntimeStorageHost;
+        use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
+        operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(SummaryFinishScheduler::default()));
+        let root = std::env::temp_dir().join(format!("operit-summary-finish-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(root.join("runtime")).unwrap();
+        let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
+        setDefaultRuntimeStorageHost(host.clone());
+        setDefaultRuntimeSqliteHost(host);
+        let mut delegate = super::MessageProcessingDelegate::default();
+        let task = summaryTask();
+        delegate.registerSummaryTask("chat-a".into(), task.clone()).unwrap();
+        delegate.setPendingAsyncSummaryUiForChat("chat-a".into(), true);
+        delegate.setSuppressIdleCompletedStateForChat("chat-a".into(), true);
+        delegate.setInputProcessingStateForChat(
+            "chat-a".into(),
+            InputProcessingState::Summarizing { message: "chat_compressing_history".into() },
+        );
+        assert!(delegate.hasPendingAsyncSummaryUiForChat("chat-a"));
+
+        delegate.finishSummaryTask("chat-a", &task.taskId);
+
+        assert!(delegate.summaryTaskForChat("chat-a").is_none());
+        assert!(!delegate.hasPendingAsyncSummaryUiForChat("chat-a"));
+        assert!(!delegate.suppressIdleCompletedStateByChatId.lock().unwrap().contains_key("chat-a"));
+        let state = delegate.executionStateByChatIdFlow.value()["chat-a"].clone();
+        assert!(!state.isLoading);
+        assert!(matches!(state.inputProcessingState, InputProcessingState::Idle));
+    }
+
     /// Prevents stale cleanup from removing a newer summary for the same chat.
     #[test]
     fn summary_registry_retains_newer_task_when_old_cleanup_arrives() {
