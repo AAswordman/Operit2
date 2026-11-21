@@ -1371,7 +1371,6 @@ async fn readJsonResponse(
     timeoutMs: u64,
 ) -> Result<Value, String> {
     let deadline = StartupDeadline::new(active.scheduler.clone(), timeoutMs)?;
-    let mut seenIds = BTreeSet::new();
     loop {
         let remaining = deadline.remainingMs();
         if remaining.is_err() {
@@ -1424,7 +1423,6 @@ async fn readJsonResponse(
         let Some(id) = parsed.get("id").and_then(Value::as_u64) else {
             continue;
         };
-        seenIds.insert(id);
         if id == targetId {
             let stderr = active
                 .process
