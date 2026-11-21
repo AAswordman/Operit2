@@ -602,10 +602,11 @@ export namespace System {
     /**
      * Creates or returns an interactive terminal session with the supplied name.
      * @param sessionName Stable name used to identify the terminal session.
-     * @param type Exact interpreter type; omission requests the host's configured default terminal.
+     * @param type Legacy exact interpreter; cannot be combined with profileId.
+     * @param profileId Saved profile ID from info().profiles; omission of both selectors uses the default.
      * @returns Promise resolving to the actual session creation result.
      */
-    function create(sessionName: string, type?: TerminalType): Promise<TerminalSessionCreationResultData>;
+    function create(sessionName: string, type?: TerminalType, profileId?: string): Promise<TerminalSessionCreationResultData>;
     /**
      * Execute a command in a terminal session.
      * @param sessionId The ID of the session.
@@ -725,7 +726,14 @@ export interface TerminalExecRequest {
  */
 export interface TerminalRunRequest {
   sessionName: string;
-  terminalType: TerminalType;
+  /**
+   * Exact saved profile; omission together with terminalType uses the configured default.
+   */
+  profileId?: string;
+  /**
+   * Legacy explicit interpreter selection. Cannot be combined with profileId.
+   */
+  terminalType?: TerminalType;
   command: string;
   /**
    * Limits foreground waiting only; zero returns as soon as execution starts.

@@ -40,6 +40,7 @@ struct OhosVrootRuntime {
     runtimeRoot: PathBuf,
     workspaceRoot: PathBuf,
     installationLock: Arc<Mutex<bool>>,
+    customRootfs: Option<PathBuf>,
 }
 
 impl OhosVrootRuntime {
@@ -49,6 +50,7 @@ impl OhosVrootRuntime {
             runtimeRoot,
             workspaceRoot,
             installationLock: Arc::new(Mutex::new(false)),
+            customRootfs: None,
         }
     }
 
@@ -74,11 +76,17 @@ impl OhosVrootRuntime {
 
     /// Returns the stable destination directory for the packaged Alpine root filesystem.
     fn rootfsDirectory(&self) -> PathBuf {
-        self.assetDirectory().join(VROOT_ROOTFS_DIRECTORY)
+        match &self.customRootfs {
+            Some(path) => path.clone(),
+            None => self.assetDirectory().join(VROOT_ROOTFS_DIRECTORY),
+        }
     }
 
     /// Reports whether all immutable vroot runtime inputs are present.
     fn isAvailable(&self) -> bool {
+        if let Some(path) = &self.customRootfs {
+            return self.executablePath().is_file() && path.join("bin/sh").is_file();
+        }
         self.executablePath().is_file()
             && self.rootfsArchivePath().is_file()
             && self.rootfsSha256Path().is_file()
@@ -86,6 +94,12 @@ impl OhosVrootRuntime {
 
     /// Extracts the checksum-verified Alpine root filesystem before a vroot session starts.
     fn ensureReady(&self) -> HostResult<()> {
+        if let Some(path) = &self.customRootfs {
+            if !path.is_absolute() || !path.is_dir() || !path.join("bin/sh").is_file() || !self.executablePath().is_file() {
+                return Err(HostError::new("Custom QEMU-vroot requires its runtime and an absolute rootfs directory containing /bin/sh"));
+            }
+            return Ok(());
+        }
         let mut installed = self
             .installationLock
             .lock()
@@ -317,6 +331,87 @@ impl OhosTerminalHost {
 }
 
 impl TerminalHost for OhosTerminalHost {
+    /// Offers ARM64 Linux images executable by the registered QEMU-vroot runtime.
+    fn terminalDistributions(&self) -> HostResult<Vec<operit_host_api::TerminalDistribution>> {
+        Ok(operit_host_native_common::TerminalRootfs::distributions())
+    }
+
+    /// Installs independent rootfs instances without changing the bundled Alpine runtime.
+    fn installTerminalDistribution(
+        &self,
+        distributionId: &str,
+        instanceId: &str,
+        name: &str,
+        control: operit_host_api::HttpDownloadControl,
+        progress: operit_host_api::TerminalInstallProgressCallback,
+    ) -> HostResult<operit_host_api::TerminalProfile> {
+        let relative = operit_host_api::RuntimeStorageLayout::TERMINAL_ROOTFS_DIR_PATH
+            .strip_prefix("runtime/")
+            .ok_or_else(|| HostError::new("Invalid terminal storage definition"))?;
+        operit_host_native_common::TerminalRootfs::install(
+            &self.vrootRuntime.runtimeRoot.join(relative),
+            distributionId,
+            instanceId,
+            name,
+            QEMU_VROOT_TERMINAL,
+            SHELL_TERMINAL_TYPE,
+            control,
+            progress,
+        )
+    }
+
+    /// Removes only a fresh host-owned instance when durable profile registration fails.
+    fn discardTerminalDistribution(&self, instanceId: &str) -> HostResult<()> {
+        let runtime = self.vrootRuntime.runtimeRoot.clone();
+        let relative = operit_host_api::RuntimeStorageLayout::TERMINAL_ROOTFS_DIR_PATH
+            .strip_prefix("runtime/")
+            .ok_or_else(|| HostError::new("Invalid terminal storage definition"))?;
+        operit_host_native_common::TerminalRootfs::discard(&runtime.join(relative), instanceId)
+    }
+
+    /// Registers a separate root filesystem for the QEMU-vroot implementation.
+    fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
+        Ok(self
+            .terminalInfo()?
+            .types
+            .into_iter()
+            .map(|entry| operit_host_api::TerminalProfileSupport {
+                fields: if entry.terminal == QEMU_VROOT_TERMINAL {
+                    vec!["rootfs".into()]
+                } else {
+                    Vec::new()
+                },
+                terminal: entry.terminal,
+                terminalType: entry.terminalType,
+            })
+            .collect())
+    }
+    /// Builds a QEMU-vroot profile without applying Alpine installation steps to a foreign distro.
+    fn configuredTerminal(
+        &self,
+        profile: &operit_host_api::TerminalProfile,
+    ) -> HostResult<Arc<dyn TerminalHost>> {
+        self.backendForTerminal(&profile.terminal, &profile.terminalType)?;
+        if profile.terminal != QEMU_VROOT_TERMINAL || profile.options.len() != 1 {
+            return Err(HostError::new(
+                "Only rootfs can be configured for QEMU-vroot",
+            ));
+        }
+        let rootfs = profile
+            .options
+            .get("rootfs")
+            .ok_or_else(|| HostError::new("QEMU-vroot rootfs is required"))?;
+        let mut runtime = self.vrootRuntime.clone();
+        runtime.customRootfs = Some(PathBuf::from(rootfs));
+        runtime.ensureReady()?;
+        Ok(Arc::new(Self {
+            nativeShell: NativePtyTerminalHost::systemShell(),
+            vrootShell: createVrootShell(&runtime)?,
+            vrootRuntime: runtime,
+            sessionBackends: Arc::default(),
+        }))
+    }
+
     /// Resolves QEMU Linux guest paths separately from native OpenHarmony paths.
     fn resolveWorkingDirectory(
         &self,
@@ -456,6 +551,15 @@ impl TerminalHost for OhosTerminalHost {
         Ok(mapSessionInfo(session, backend))
     }
 
+    /// Creates sessions in the exact selected backend rather than assuming QEMU-vroot.
+    fn createOrGetTerminalSession(&self, name: &str, terminal: &str, kind: &str) -> HostResult<TerminalSessionInfo> {
+        let backend = self.backendForTerminal(terminal, kind)?;
+        self.prepareBackend(backend)?;
+        let session = self.ptyHost(backend).createOrGetTypedSession(name, kind)?;
+        self.recordSession(&session.sessionId, backend)?;
+        Ok(mapSessionInfo(session, backend))
+    }
+
     /// Executes one command in a recorded OpenHarmony terminal session.
     fn executeInSession(
         &self,
@@ -548,8 +652,7 @@ fn createVrootShell(runtime: &OhosVrootRuntime) -> HostResult<NativePtyTerminalH
             "LD_LIBRARY_PATH=".to_string(),
             "-L".to_string(),
             ".".to_string(),
-            "./bin/busybox".to_string(),
-            "sh".to_string(),
+            "./bin/sh".to_string(),
             "-c".to_string(),
             "cd \"$OPERIT_OHOS_HOST_WORKING_DIR\" && exec /bin/sh -i".to_string(),
         ],

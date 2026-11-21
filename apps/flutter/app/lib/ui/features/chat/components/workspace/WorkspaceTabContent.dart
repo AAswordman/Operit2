@@ -49,6 +49,7 @@ class WorkspaceTabContent extends StatelessWidget {
     required this.onAddFolder,
     required this.filesListingRevision,
     required this.onOpenTerminal,
+    this.onChooseTerminal,
     required this.onOpenTerminalSessions,
     required this.onOpenBrowserSessions,
     required this.onOpenBrowser,
@@ -93,6 +94,7 @@ class WorkspaceTabContent extends StatelessWidget {
   final VoidCallback onAddFolder;
   final int filesListingRevision;
   final VoidCallback onOpenTerminal;
+  final VoidCallback? onChooseTerminal;
   final VoidCallback onOpenTerminalSessions;
   final VoidCallback onOpenBrowserSessions;
   final void Function({
@@ -134,6 +136,7 @@ class WorkspaceTabContent extends StatelessWidget {
           onChooseExistingWorkspace: onChooseExistingWorkspace,
           onUnbindWorkspace: onUnbindWorkspace,
           onOpenTerminal: onOpenTerminal,
+          onChooseTerminal: onChooseTerminal,
           onOpenTerminalSessions: onOpenTerminalSessions,
           onOpenBrowserSessions: onOpenBrowserSessions,
           onOpenBrowser: () => onOpenBrowser(),

@@ -252,6 +252,19 @@ impl PtySession {
 }
 
 impl NativePtyTerminalHost {
+    /// Creates a separate configured shell while preserving this host's PTY and command protocol.
+    pub fn withProfile(&self, profile: &operit_host_api::TerminalProfile) -> HostResult<Self> {
+        let program = profile.options.get("executable").ok_or_else(|| HostError::new("Custom terminal requires executable"))?;
+        if !std::path::Path::new(program).is_absolute() || !std::path::Path::new(program).is_file() {
+            return Err(HostError::new("Terminal executable must be an existing absolute file path"));
+        }
+        let mut spec = (*self.commandSpec).clone();
+        spec.program = program.clone();
+        let mut arguments = operit_host_api::TerminalProfiles::profileArguments(profile)?;
+        arguments.extend(spec.args);
+        spec.args = arguments;
+        Ok(Self { state: Arc::default(), commandSpec: Arc::new(spec) })
+    }
     /// Creates the shared POSIX host configured for its native bash terminal.
     pub fn new() -> Self {
         Self::default()

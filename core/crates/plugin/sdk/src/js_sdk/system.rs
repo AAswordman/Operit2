@@ -229,7 +229,10 @@ pub struct TerminalExecRequest {
 #[serde(deny_unknown_fields)]
 pub struct TerminalRunRequest {
     pub sessionName: String,
-    pub terminalType: TerminalType,
+    /// Exact saved profile; omission together with terminalType uses the configured default.
+    pub profileId: Option<String>,
+    /// Legacy explicit interpreter selection. Cannot be combined with profileId.
+    pub terminalType: Option<TerminalType>,
     pub command: String,
     /// Limits foreground waiting only; zero returns as soon as execution starts.
     pub waitMs: u64,
@@ -599,13 +602,15 @@ pub trait SystemTerminalHost: Send + Sync {
     ///
     ///Creates or returns an interactive terminal session with the supplied name.
     ///@param sessionName Stable name used to identify the terminal session.
-    ///@param type Exact interpreter type; omission requests the host's configured default terminal.
+    ///@param type Legacy exact interpreter; cannot be combined with profileId.
+    ///@param profileId Saved profile ID from info().profiles; omission of both selectors uses the default.
     ///@returns Promise resolving to the actual session creation result.
     ///
     fn create(
         &self,
         sessionName: String,
         r#type: Option<TerminalType>,
+        profileId: Option<String>,
     ) -> JsFuture<TerminalSessionCreationResultData>;
     ///
     ///Execute a command in a terminal session.

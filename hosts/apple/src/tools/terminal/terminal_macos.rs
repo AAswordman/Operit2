@@ -89,6 +89,37 @@ impl AppleTerminalHost {
 }
 
 impl TerminalHost for AppleTerminalHost {
+    /// Declares custom native shell launchers without exposing emulated backend internals.
+    fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
+        Ok(self
+            .terminalInfo()?
+            .types
+            .into_iter()
+            .map(|entry| operit_host_api::TerminalProfileSupport {
+                fields: if entry.terminal == TERMINAL {
+                    vec!["executable".into(), "arguments".into()]
+                } else {
+                    Vec::new()
+                },
+                terminal: entry.terminal,
+                terminalType: entry.terminalType,
+            })
+            .collect())
+    }
+    /// Keeps platform metadata and isolation rules around a custom native shell.
+    fn configuredTerminal(
+        &self,
+        profile: &operit_host_api::TerminalProfile,
+    ) -> HostResult<std::sync::Arc<dyn TerminalHost>> {
+        let native = self
+            .hostForType(&profile.terminal, &profile.terminalType)?
+            .withProfile(profile)?;
+        let mut host = self.clone();
+        host.hosts = BTreeMap::from([(profile.terminalType.clone(), native)]);
+        host.primary = profile.terminalType.clone();
+        Ok(std::sync::Arc::new(host))
+    }
+
     /// Resolves macOS working directories through the shared native PTY host.
     fn resolveWorkingDirectory(
         &self,

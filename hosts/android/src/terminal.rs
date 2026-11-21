@@ -68,6 +68,7 @@ extern "C" {
 #[derive(Clone, Default)]
 pub struct AndroidTerminalHost {
     state: Arc<Mutex<AndroidTerminalState>>,
+    profile: Option<operit_host_api::TerminalProfile>,
 }
 
 #[derive(Default)]
@@ -148,6 +149,7 @@ impl AndroidTerminalHost {
         let normalizedTerminalType = requireAndroidTerminal(terminal, terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createAndroidPtySession(
+            self.profile.as_ref(),
             normalizedSessionName,
             normalizedTerminalType,
             workDir,
@@ -230,6 +232,97 @@ impl AndroidTerminalHost {
 }
 
 impl TerminalHost for AndroidTerminalHost {
+    /// Offers ARM64 rootfs archives only on Android devices executing that architecture.
+    fn terminalDistributions(&self) -> HostResult<Vec<operit_host_api::TerminalDistribution>> {
+        if std::env::consts::ARCH != "aarch64" {
+            return Ok(Vec::new());
+        }
+        Ok(operit_host_native_common::TerminalRootfs::distributions())
+    }
+
+    /// Installs each downloaded distribution into its own device-local rootfs directory.
+    fn installTerminalDistribution(
+        &self,
+        distributionId: &str,
+        instanceId: &str,
+        name: &str,
+        control: operit_host_api::HttpDownloadControl,
+        progress: operit_host_api::TerminalInstallProgressCallback,
+    ) -> HostResult<operit_host_api::TerminalProfile> {
+        if std::env::consts::ARCH != "aarch64" {
+            return Err(HostError::new(
+                "Downloadable rootfs images require an ARM64 Android host",
+            ));
+        }
+        let runtime = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
+        let relative = operit_host_api::RuntimeStorageLayout::TERMINAL_ROOTFS_DIR_PATH
+            .strip_prefix("runtime/")
+            .ok_or_else(|| HostError::new("Invalid terminal storage definition"))?;
+        operit_host_native_common::TerminalRootfs::install(
+            &runtime.join(relative),
+            distributionId,
+            instanceId,
+            name,
+            PROOT_TERMINAL,
+            "bash",
+            control,
+            progress,
+        )
+    }
+
+    /// Removes only a fresh host-owned instance when durable profile registration fails.
+    fn discardTerminalDistribution(&self, instanceId: &str) -> HostResult<()> {
+        let runtime = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
+        let relative = operit_host_api::RuntimeStorageLayout::TERMINAL_ROOTFS_DIR_PATH
+            .strip_prefix("runtime/")
+            .ok_or_else(|| HostError::new("Invalid terminal storage definition"))?;
+        operit_host_native_common::TerminalRootfs::discard(&runtime.join(relative), instanceId)
+    }
+
+    /// Registers user-supplied Linux root filesystems without modifying the bundled runtime.
+    fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
+        Ok(self
+            .terminalInfo()?
+            .types
+            .into_iter()
+            .map(|entry| operit_host_api::TerminalProfileSupport {
+                fields: if entry.terminal == PROOT_TERMINAL {
+                    vec!["rootfs".into()]
+                } else {
+                    Vec::new()
+                },
+                terminal: entry.terminal,
+                terminalType: entry.terminalType,
+            })
+            .collect())
+    }
+
+    /// Creates a separate PTY registry for an explicitly supplied proot root filesystem.
+    fn configuredTerminal(
+        &self,
+        profile: &operit_host_api::TerminalProfile,
+    ) -> HostResult<Arc<dyn TerminalHost>> {
+        requireAndroidTerminal(&profile.terminal, &profile.terminalType)?;
+        let rootfs = profile
+            .options
+            .get("rootfs")
+            .ok_or_else(|| HostError::new("Custom proot terminal requires rootfs"))?;
+        if profile.terminal != PROOT_TERMINAL
+            || profile.options.len() != 1
+            || !Path::new(rootfs).is_absolute()
+            || !Path::new(rootfs).is_dir()
+            || !Path::new(rootfs).join("bin/bash").is_file()
+        {
+            return Err(HostError::new(
+                "Proot rootfs must be an accessible absolute directory containing /bin/bash",
+            ));
+        }
+        Ok(Arc::new(Self {
+            state: Arc::default(),
+            profile: Some(profile.clone()),
+        }))
+    }
+
     fn resolveNativeWorkingDirectory(&self, path: &str) -> HostResult<String> {
         resolveAndroidNativeWorkingDirectory(path, &crate::document_filesystem::call)
     }
@@ -385,6 +478,7 @@ impl TerminalHost for AndroidTerminalHost {
 
         let workingDir = initialAndroidWorkingDir(&normalizedTerminalType)?;
         let session = createAndroidPtySession(
+            self.profile.as_ref(),
             normalizedSessionName.clone(),
             normalizedTerminalType.clone(),
             workingDir,
@@ -631,6 +725,7 @@ fn hiddenAndroidPtySessionId(
     }
 
     let session = createAndroidPtySession(
+        host.profile.as_ref(),
         format!("hidden:{executorLabel}"),
         terminalType.to_string(),
         initialAndroidWorkingDir(terminalType)?,
@@ -647,6 +742,7 @@ fn hiddenAndroidPtySessionId(
 }
 
 fn createAndroidPtySession(
+    profile: Option<&operit_host_api::TerminalProfile>,
     sessionName: String,
     terminalType: String,
     workingDir: String,
@@ -656,7 +752,10 @@ fn createAndroidPtySession(
     androidLogInfo(&format!(
         "createAndroidPtySession start name={sessionName} type={terminalType} workingDir={workingDir} size={rows}x{cols}"
     ));
-    let command = buildAndroidPtyCommand(&terminalType, &workingDir)?;
+    let command = match profile {
+        Some(profile) => buildAndroidProfileCommand(profile, &workingDir)?,
+        None => buildAndroidPtyCommand(&terminalType, &workingDir)?,
+    };
     let (pid, readerFd, masterFd) = startAndroidPtyProcess(&command, rows, cols)?;
     androidLogInfo(&format!(
         "createAndroidPtySession forked pid={pid:?} masterFd={masterFd} name={sessionName}"
@@ -1628,6 +1727,67 @@ struct AndroidPtyCommand {
     dropRootToShell: bool,
     workingDir: Option<String>,
     startupInput: Option<String>,
+}
+
+/// Starts bash inside the user-selected proot filesystem with the managed workspace binds.
+fn buildAndroidProfileCommand(
+    profile: &operit_host_api::TerminalProfile,
+    workingDir: &str,
+) -> HostResult<AndroidPtyCommand> {
+    let rootfs = profile
+        .options
+        .get("rootfs")
+        .ok_or_else(|| HostError::new("Proot rootfs is required"))?;
+    let mut command = crate::runtime_common::buildAndroidProotCommandWithRootfs(
+        "/bin/bash",
+        Some(workingDir),
+        Path::new(rootfs),
+    )?;
+    command.env("TERM", "xterm-256color");
+    command.env("PS1", "$PWD $ ");
+    command.env("PROMPT_COMMAND", androidPtyPromptCommand());
+    command.args(["--noprofile", "--norc", "-i"]);
+    let executable = cstring(&command.get_program().to_string_lossy())?;
+    let mut argv = vec![executable.clone()];
+    for argument in command.get_args() {
+        argv.push(cstring(&argument.to_string_lossy())?);
+    }
+    let mut environment: BTreeMap<std::ffi::OsString, std::ffi::OsString> =
+        env::vars_os().collect();
+    for (key, value) in command.get_envs() {
+        match value {
+            Some(value) => {
+                environment.insert(key.into(), value.into());
+            }
+            None => {
+                environment.remove(key);
+            }
+        }
+    }
+    let envp = environment
+        .into_iter()
+        .map(|(key, value)| {
+            cstring(&format!(
+                "{}={}",
+                key.to_string_lossy(),
+                value.to_string_lossy()
+            ))
+        })
+        .collect::<HostResult<Vec<_>>>()?;
+    Ok(AndroidPtyCommand {
+        executable,
+        argv,
+        envp,
+        cwd: cstringPath(
+            command
+                .get_current_dir()
+                .ok_or_else(|| HostError::new("Proot process directory is required"))?,
+        )?,
+        shizuku: false,
+        dropRootToShell: false,
+        workingDir: None,
+        startupInput: None,
+    })
 }
 
 /// Builds the PTY startup command for an Android terminal type.

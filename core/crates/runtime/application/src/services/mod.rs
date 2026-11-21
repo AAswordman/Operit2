@@ -1,3 +1,4 @@
+pub(crate) mod PublishingTerminalHost;
 #[path = "ExtensionRuntimeService.rs"]
 pub mod ExtensionRuntimeService;
 #[path = "PreparedChatDeliveryService.rs"]

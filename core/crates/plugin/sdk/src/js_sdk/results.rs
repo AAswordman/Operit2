@@ -1703,6 +1703,13 @@ pub struct ChatMessagesResultData {
 #[derive(Clone, Serialize, Deserialize)]
 /// Reports the primary terminal identity and available terminal implementations.
 pub struct TerminalInfoResultData {
+    /// ID of the user-selected default profile on the executing Core device.
+    #[serde(default)]
+    pub defaultProfileId: String,
+    /// Saved configurations, including multiple instances of one interpreter or distribution.
+    #[serde(default)]
+    pub profiles: Vec<TerminalProfileInfoData>,
+
     ///Current runtime platform, such as windows, linux, or android
     #[serde(rename = "platform")]
     pub platform: String,
@@ -1715,6 +1722,15 @@ pub struct TerminalInfoResultData {
     ///Terminal types known to this host
     #[serde(rename = "types")]
     pub types: Vec<TerminalTypeInfoData>,
+}
+#[derive(Clone, Serialize, Deserialize)]
+/// Describes a selectable profile without exposing device-local executable or rootfs paths.
+pub struct TerminalProfileInfoData {
+    pub id: String,
+    pub name: String,
+    pub terminal: TerminalImplementation,
+    pub terminalType: TerminalType,
+    pub available: bool,
 }
 #[derive(Clone, Serialize, Deserialize)]
 /// Reports one available terminal implementation and its shell semantics.
@@ -2670,6 +2686,12 @@ impl TerminalInfoResultData {
         sb.push_str(&format!("Platform: {}\n", self.platform));
         sb.push_str(&format!("Terminal: {}\n", self.terminal));
         sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
+        sb.push_str(&format!("Default Profile: {}\n", self.defaultProfileId));
+        for profile in &self.profiles {
+            sb.push_str(&format!("- {}: {} ({}/{}, available={})\n", profile.id, profile.name,
+                profile.terminal, profile.terminalType, profile.available));
+        }
+
         if !self.types.is_empty() {
             sb.push_str("Types:\n");
             for terminalType in &self.types {
@@ -2696,6 +2718,7 @@ impl TerminalCommandResultData {
         sb.push_str(&format!("Platform: {}\n", self.platform));
         sb.push_str(&format!("Terminal: {}\n", self.terminal));
         sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
+
         sb.push_str(&format!("Exit Code: {}\n", self.exitCode));
         if self.timedOut {
             sb.push_str("Background: true\nCommand is still running and was not canceled. The next command uses a new available session. Use Tools.System.terminal.wait(sessionId, 20000), Tools.System.terminal.screen(sessionId), Tools.System.terminal.input(sessionId, options), or Tools.System.terminal.close(sessionId) to manage this session.\n");
@@ -2732,6 +2755,7 @@ impl HiddenTerminalCommandResultData {
         sb.push_str(&format!("Platform: {}\n", self.platform));
         sb.push_str(&format!("Terminal: {}\n", self.terminal));
         sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
+
         sb.push_str(&format!("Exit Code: {}\n", self.exitCode));
         if self.timedOut {
             sb.push_str("Timed Out: true\n");
@@ -2769,6 +2793,7 @@ impl TerminalSessionScreenResultData {
         sb.push_str(&format!("Platform: {}\n", self.platform));
         sb.push_str(&format!("Terminal: {}\n", self.terminal));
         sb.push_str(&format!("Terminal Type: {}\n", self.terminalType));
+
         sb.push_str(&format!("Size: {}x{}\n", self.cols, self.rows));
         sb.push_str(&format!("Command Running: {}\n", self.commandRunning));
         sb.push('\n');

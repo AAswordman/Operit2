@@ -48,11 +48,11 @@ test('Linux guest hosts own guest working directory resolution', () => {
   assert.doesNotMatch(resolve, /target_os|target_arch|\.contains\(/);
 });
 
-/** Preserves host-owned resolution through the Flutter session-publication wrapper. */
-test('Flutter terminal wrapper delegates directory resolution to its exact host', () => {
-  const wrapper = source('apps/flutter/native/operit-flutter-bridge/src/FlutterOwnerCapabilities.rs');
+/** Preserves host-owned resolution through the shared session-publication wrapper. */
+test('shared terminal publisher delegates directory resolution to its exact host', () => {
+  const wrapper = source('core/crates/runtime/application/src/services/PublishingTerminalHost.rs');
   const resolve = section(wrapper, 'fn resolveWorkingDirectory(', 'fn terminalInfo(');
-  assert.match(resolve, /self\.inner\.resolveWorkingDirectory\(/);
+  assert.match(resolve, /self\.inner\s*\.resolveWorkingDirectory\(/);
 });
 
 test('macOS ARM64 uses the real workspace resolver instead of guest home', () => {
@@ -103,10 +103,11 @@ test('document-backed terminal directories reach Android instead of nativePath r
   const runtime = source('core/crates/runtime/application/src/services/RuntimeTerminalService.rs');
   assert.match(runtime, /filesystem\.terminalDirectory\(terminalHost, &path\)/);
   const tools = source('core/crates/tool/services/src/tools/defaultTool/standard/StandardTerminalTools.rs');
-  assert.equal((tools.match(/\.terminalDirectory\(host, path\)/g) ?? []).length, 2);
+  assert.equal((tools.match(/\.terminalDirectory\(host, path\)/g) ?? []).length, 1);
+  assert.match(tools, /self\.resolveFileDirectory\(host, &terminal, terminalType, &workspace\)/);
   const mapper = source('core/crates/foundation/vfs/src/PathMapper.rs');
   assert.match(mapper, /host\.resolveNativeWorkingDirectory\(&self\.physicalPath\)/);
-  const wrapper = source('apps/flutter/native/operit-flutter-bridge/src/FlutterOwnerCapabilities.rs');
+  const wrapper = source('core/crates/runtime/application/src/services/PublishingTerminalHost.rs');
   assert.match(wrapper, /self\.inner\.resolveNativeWorkingDirectory\(path\)/);
   const host = source('hosts/android/src/terminal.rs');
   assert.match(host, /resolveAndroidNativeWorkingDirectory\(path, &crate::document_filesystem::call\)/);

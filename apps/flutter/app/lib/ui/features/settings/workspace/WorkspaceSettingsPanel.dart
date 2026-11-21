@@ -8,6 +8,7 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+import 'TerminalProfilesSettings.dart';
 
 class WorkspaceSettingsPanel extends StatefulWidget {
   const WorkspaceSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -159,6 +160,7 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
         return ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
+            TerminalProfilesSettings(clients: widget.clients),
             _SectionCard(
               title: l10n.settingsWorkspaceBoundOverview,
               children: <Widget>[

@@ -40,6 +40,34 @@ test('managed SDK rejects invalid wait budgets before submitting any command', (
   assert.equal(f.calls.length, 0);
 });
 
+/** Preserves profile IDs without converting them into interpreter enums or guessed implementations. */
+test('managed SDK sends exact profiles and permits the configured default', async () => {
+  const f = fixture();
+  const selected = f.run("Tools.System.terminal.run({sessionName:'chat',profileId:'ubuntu_b',command:'pwd',waitMs:1000})");
+  assert.deepEqual(structuredClone(f.calls[0].parameters), {observation:{
+    op:'run',sessionName:'chat',profileId:'ubuntu_b',command:'pwd',waitMs:1000,
+  }});
+  f.settle(0,{result:{sessionId:'profile-session',output:'/work',exitCode:0,timedOut:false}});
+  await selected;
+  const defaultRun = f.run("Tools.System.terminal.run({sessionName:'chat',command:'pwd',waitMs:1000})");
+  assert.deepEqual(structuredClone(f.calls[1].parameters), {observation:{
+    op:'run',sessionName:'chat',command:'pwd',waitMs:1000,
+  }});
+  f.settle(1,{result:{sessionId:'default-session',output:'/work',exitCode:0,timedOut:false}});
+  await defaultRun;
+});
+
+/** Uses the canonical SDK argument mapping for exact-profile named session creation. */
+test('named session creation sends the profile ID through the public Tools binding', async () => {
+  const f = fixture();
+  const created = f.run("Tools.System.terminal.create('chat',undefined,'ubuntu_b')");
+  assert.deepEqual(structuredClone(f.calls[0].parameters), {
+    session_name:'chat',profile_id:'ubuntu_b',
+  });
+  f.settle(0,{sessionId:'profile-session'});
+  assert.equal((await created).sessionId,'profile-session');
+});
+
 test('generated v2 terminal iterable opens lazily, yields live output, and closes on completion', async () => {
   const f = fixture();
   f.run("var request={sessionId:'s',command:'printf sample',timeoutMs:5000}; var stream=Tools.System.terminal.execStream(request); request.command='mutated';");

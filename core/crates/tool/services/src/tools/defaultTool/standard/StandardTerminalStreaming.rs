@@ -28,7 +28,8 @@ const DEFAULT_WAIT_MS: u64 = 20_000;
 enum Operation {
     Run {
         sessionName: String,
-        terminalType: String,
+        terminalType: Option<String>,
+        profileId: Option<String>,
         command: String,
         waitMs: u64,
     },
@@ -110,22 +111,23 @@ impl TerminalStreamExecutor {
         owner: String,
         request: TerminalExecRequest,
     ) -> Result<String, String> {
+        let _admission = self.managedAdmission.lock().await;
+        self.requireIdleSession(&request.sessionId)?;
+        self.openExecution(owner, request, false)
+    }
+
+    /// Checks the exact original session before starting another command in its immutable host.
+    fn requireIdleSession(&self, sessionId: &str) -> Result<(), String> {
         let host = self.host.as_ref().ok_or("Terminal host is unavailable")?;
-        let session = host
-            .listSessions()
-            .map_err(|error| error.message)?
-            .into_iter()
-            .find(|session| session.sessionId == request.sessionId)
-            .ok_or("Terminal session does not exist")?;
-        self.startNamed(
-            owner,
-            session.sessionName,
-            session.terminalType,
-            request.command,
-            request.timeoutMs.unwrap_or(DEFAULT_WAIT_MS),
-            false,
-        )
-        .await
+        let session = host.listSessions().map_err(|error| error.message)?.into_iter()
+            .find(|session| session.sessionId == sessionId).ok_or("Terminal session does not exist")?;
+        if session.commandRunning { return Err("Terminal session already has a running command".into()); }
+        for value in self.observations.lock().map_err(|_| "Terminal observations are poisoned")?.values() {
+            if value.sessionId == sessionId && value.inner.lock().map_err(|_| "Terminal observation is poisoned")?.result.is_none() {
+                return Err("Terminal session already has a running command".into());
+            }
+        }
+        Ok(())
     }
 
     /// Reuses admission and observations whenever tool handlers share one terminal host.
@@ -379,12 +381,13 @@ impl TerminalStreamExecutor {
         &self,
         owner: String,
         name: String,
-        terminalType: String,
+        terminalType: Option<String>,
+        profileId: Option<String>,
         command: String,
         waitMs: u64,
     ) -> Result<TerminalCommandResultData, String> {
         let handle = self
-            .startNamed(owner.clone(), name, terminalType, command, waitMs, true)
+            .startNamed(owner.clone(), name, terminalType, profileId, command, waitMs, true)
             .await?;
         let observation = self.owned(&owner, &handle)?;
         self.waitManaged(&owner, &observation.sessionId, waitMs)
@@ -396,7 +399,8 @@ impl TerminalStreamExecutor {
         &self,
         owner: String,
         name: String,
-        terminalType: String,
+        terminalType: Option<String>,
+        profileId: Option<String>,
         command: String,
         waitMs: u64,
         receiptOnly: bool,
@@ -422,7 +426,7 @@ impl TerminalStreamExecutor {
             }
         }
         let session = tools
-            .availableSession(&name, &terminalType, &reserved)
+            .availableSelectedSession(&name, terminalType.as_deref(), profileId.as_deref(), &reserved)
             .map_err(|error| error.message)?;
         let opened = self.openExecution(
             owner.clone(),
@@ -457,23 +461,13 @@ impl TerminalStreamExecutor {
         owner: String,
         request: TerminalExecRequest,
     ) -> Result<TerminalCommandResultData, String> {
-        let session = self
-            .host
-            .as_ref()
-            .ok_or("Terminal host is unavailable")?
-            .listSessions()
-            .map_err(|error| error.message)?
-            .into_iter()
-            .find(|session| session.sessionId == request.sessionId)
-            .ok_or("Terminal session does not exist")?;
-        self.runManaged(
-            owner,
-            session.sessionName,
-            session.terminalType,
-            request.command,
-            request.timeoutMs.unwrap_or(DEFAULT_WAIT_MS),
-        )
-        .await
+        let _admission = self.managedAdmission.lock().await;
+        self.requireIdleSession(&request.sessionId)?;
+        let sessionId = request.sessionId.clone();
+        let waitMs = request.timeoutMs.unwrap_or(DEFAULT_WAIT_MS);
+        self.openExecution(owner.clone(), request, true)?;
+        drop(_admission);
+        self.waitManaged(&owner, &sessionId, waitMs).await
     }
 
     /// Observes the existing command without injecting a second command into its busy PTY.
@@ -637,11 +631,12 @@ impl SharedToolExecutor for TerminalStreamExecutor {
                     Operation::Run {
                         sessionName,
                         terminalType,
+                        profileId,
                         command,
                         waitMs,
                     } => TerminalObservationResultData::Run {
                         result: self
-                            .runManaged(owner, sessionName, terminalType, command, waitMs)
+                            .runManaged(owner, sessionName, terminalType, profileId, command, waitMs)
                             .await?,
                     },
                     Operation::Wait { sessionId, waitMs } => TerminalObservationResultData::Run {
@@ -917,7 +912,7 @@ mod tests {
         let second = TerminalStreamExecutor::shared(StandardTerminalTools::new(Some(host.clone())), Some(scheduler.clone()));
         assert!(Arc::ptr_eq(&first, &second));
         let name = uuid::Uuid::new_v4().to_string();
-        let handle = first.startNamed("owner".into(), name.clone(), "bash".into(), "printf queued".into(), 1000, true).await.unwrap();
+        let handle = first.startNamed("owner".into(), name.clone(), Some("bash".into()), None, "printf queued".into(), 1000, true).await.unwrap();
         let session = first.owned("owner", &handle).unwrap().sessionId.clone();
         drop(first);
         drop(second);
@@ -933,7 +928,7 @@ mod tests {
         let scheduler = Arc::new(QueuedScheduler::default());
         let tools = TerminalStreamExecutor::new(StandardTerminalTools::new(Some(host.clone())), Some(scheduler));
         let name = uuid::Uuid::new_v4().to_string();
-        let handle = tools.startNamed("owner".into(), name.clone(), "bash".into(), "printf queued".into(), 1000, true).await.unwrap();
+        let handle = tools.startNamed("owner".into(), name.clone(), Some("bash".into()), None, "printf queued".into(), 1000, true).await.unwrap();
         let session = tools.owned("owner", &handle).unwrap().sessionId.clone();
         let error = match tools.closeSession(&session, &name, true).await { Err(error) => error, Ok(_) => panic!("queued session was closed") };
         assert!(error.contains("queued or running"));
@@ -959,7 +954,7 @@ mod tests {
                 .runManaged(
                     "owner".into(),
                     name.clone(),
-                    "bash".into(),
+                    Some("bash".into()), None,
                     "printf first".into(),
                     20,
                 )
@@ -969,7 +964,7 @@ mod tests {
                 .runManaged(
                     "owner".into(),
                     name,
-                    "bash".into(),
+                    Some("bash".into()), None,
                     "printf second".into(),
                     0,
                 )
@@ -1030,7 +1025,7 @@ mod tests {
             .runManaged(
                 "owner".into(),
                 name.clone(),
-                "bash".into(),
+                Some("bash".into()), None,
                 "printf 'starting\\n'; sleep 1; printf 'finished\\n'; (exit 7)".into(),
                 20,
             )
@@ -1057,7 +1052,7 @@ mod tests {
             .runManaged(
                 "owner".into(),
                 name.clone(),
-                "bash".into(),
+                Some("bash".into()), None,
                 "printf independent".into(),
                 3000,
             )
@@ -1077,7 +1072,7 @@ mod tests {
             .runManaged(
                 "owner".into(),
                 name,
-                "bash".into(),
+                Some("bash".into()), None,
                 "printf reused".into(),
                 3000,
             )
@@ -1105,7 +1100,7 @@ mod tests {
             } else {
                 "printf 'state:%s' \"$OPERIT_REUSE_STATE\"".to_string()
             };
-            let yielded = tools.runManaged("owner".into(), name.clone(), "bash".into(), command, 0).await.unwrap();
+            let yielded = tools.runManaged("owner".into(), name.clone(), Some("bash".into()), None, command, 0).await.unwrap();
             let result = tools.waitManaged("owner", &yielded.sessionId, 8000).await.unwrap();
             assert!(!result.timedOut);
             assert_eq!(result.exitCode, 0);
@@ -1154,7 +1149,7 @@ mod tests {
             .runManaged(
                 "owner".into(),
                 uuid::Uuid::new_v4().to_string(),
-                "bash".into(),
+                Some("bash".into()), None,
                 "sleep 30".into(),
                 0,
             )

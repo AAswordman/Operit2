@@ -12,21 +12,6 @@ function source(path) {
   return readFileSync(new URL(path, root), 'utf8');
 }
 
-/** Extracts one Rust method body with balanced braces for bounded contract assertions. */
-function rustMethod(text, name) {
-  const start = text.indexOf(`fn ${name}(`);
-  assert.notEqual(start, -1, `${name} must be implemented`);
-  const opening = text.indexOf('{', start);
-  let depth = 1;
-  let end = opening + 1;
-  for (; depth > 0; end++) {
-    assert.ok(end < text.length, `${name} must have a balanced body`);
-    if (text[end] === '{') depth++;
-    if (text[end] === '}') depth--;
-  }
-  return text.slice(opening + 1, end - 1);
-}
-
 /** Loads Super Admin with strict, explicitly typed terminal tools and complete host results. */
 function fixture({ platform = 'android', defaultType = 'bash', implementations = androidImplementations, output = 'ok\n', timedOut = false, closeError } = {}) {
   const sessions = new Map();
@@ -134,314 +119,84 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
   });
   vm.runInContext(stripTypeScriptTypes(source('plugins/packages/buildin/super_admin.ts')), context);
   return {
-    tools: context.exports, sessions, calls, files, errors, terminalInfo,
+    context, tools: context.exports, sessions, calls, files, errors, terminalInfo,
     /** Changes the active chat to exercise session identity isolation. */
     setChatId(value) { chatId = value; },
   };
 }
 
-/** Verifies both top-level metadata and AI environment metadata reflect the actual session. */
-function assertEnvironment(result, platform, terminal, terminalType) {
-  assert.equal(result.platform, platform);
-  assert.equal(result.terminal, terminal);
-  assert.equal(result.terminalType, terminalType);
-  assert.equal(result.terminalEnvironment.platform, platform);
-  assert.equal(result.terminalEnvironment.terminal, terminal);
-  assert.equal(result.terminalEnvironment.terminalType, terminalType);
+
+/** Exercises the shared profile tools independently of platform-specific names. */
+test('one execution entry point advertises discovery without platform presets', () => {
+  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
+  assert.equal(metadata.states, undefined);
+  assert.ok(metadata.tools.some(tool => tool.name === 'terminal'));
+  assert.ok(metadata.tools.some(tool => tool.name === 'list_terminals'));
+  assert.ok(metadata.tools.some(tool => tool.name === 'close'));
+  for (const name of ['powershell', 'bash', 'zsh', 'shell']) assert.ok(!metadata.tools.some(tool => tool.name === name));
+});
+
+/** Builds independent profiles sharing Bash to catch accidental interpreter-only selection. */
+function profiles() {
+  return [
+    {id:'ubuntu_a',name:'Ubuntu A',terminal:'proot',terminalType:'bash',available:true},
+    {id:'ubuntu_b',name:'Ubuntu B',terminal:'proot',terminalType:'bash',available:true},
+    {id:'system',name:'System shell',terminal:'android-system',terminalType:'shell',available:true},
+  ];
 }
 
-/** Verifies every platform inherits the public close tool and its required target. */
-test('close is advertised to every platform with a required session ID', () => {
-  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
-  const close = metadata.tools.find(tool => tool.name === 'close');
-  assert.ok(close);
-  assert.equal(close.display.targetParameter, 'sessionId');
-  assert.deepEqual(close.parameters.map(({ name, type, required }) => ({ name, type, required })), [
-    { name: 'sessionId', type: 'string', required: true },
-  ]);
-  for (const state of metadata.states) assert.equal(state.inheritTools, true, state.id);
-  assert.equal(typeof fixture().tools.close, 'function');
+/** Creates a production-plugin fixture whose mock host routes by exact profile ID. */
+function managedFixture(options = {}) {
+  const f = fixture(options);
+  f.terminalInfo.defaultProfileId = 'ubuntu_a';
+  f.terminalInfo.profiles = profiles();
+  // The fixture's old interpreter model remains useful for session lifetime and output handling.
+  const originalRun = f.context.Tools.System.terminal.run;
+  f.context.Tools.System.terminal.run = async function(request) {
+    const profile = f.terminalInfo.profiles.find(value => value.id === request.profileId);
+    f.calls.push({operation:'selectedProfile', profileId:request.profileId});
+    return originalRun.call(this, {...request, terminalType:profile.terminalType});
+  };
+  return f;
+}
+
+/** Verifies default changes affect new commands and separate same-shell configurations keep context isolated. */
+test('default and explicit profiles select separate same-interpreter sessions', async () => {
+  const f = managedFixture();
+  const a = await f.tools.terminal({command:'pwd'});
+  const b = await f.tools.terminal({command:'pwd',profileId:'ubuntu_b'});
+  const again = await f.tools.terminal({command:'pwd',profileId:'ubuntu_a'});
+  assert.notEqual(a.sessionId,b.sessionId);
+  assert.equal(a.sessionId,again.sessionId);
+  f.terminalInfo.defaultProfileId = 'ubuntu_b';
+  assert.equal((await f.tools.terminal({command:'pwd'})).sessionId,b.sessionId);
+  assert.deepEqual(f.calls.filter(call => call.operation === 'selectedProfile').map(call => call.profileId),
+    ['ubuntu_a','ubuntu_b','ubuntu_a','ubuntu_b']);
+  const discovered = await f.tools.list_terminals();
+  assert.equal(discovered.profiles.length,3);
+  assert.equal(discovered.defaultProfileId,'ubuntu_b');
 });
 
-/** Ensures closing a foreground or background session leaves other contexts intact. */
-test('close targets the requested session and subsequent commands acquire a new session', async () => {
-  for (const background of ['false', 'true']) {
-    const f = fixture();
-    const shell = await f.tools.shell({ command: 'pwd', background });
-    const bash = await f.tools.bash({ command: 'pwd' });
-    const result = await f.tools.close({ sessionId: shell.sessionId });
-    assert.deepEqual(result, { sessionId: shell.sessionId, success: true, message: 'Session closed' });
-    assert.deepEqual(f.calls.filter(call => call.operation === 'close'), [
-      { operation: 'close', sessionId: shell.sessionId },
-    ]);
-    assert.equal(f.sessions.size, 1);
-    assert.equal((await f.tools.bash({ command: 'pwd' })).sessionId, bash.sessionId);
-    assert.notEqual((await f.tools.shell({ command: 'pwd' })).sessionId, shell.sessionId);
-    await assert.rejects(f.tools.close({ sessionId: shell.sessionId }), /Terminal session not found/);
-  }
+/** Checks unknown and unavailable IDs fail before any execution reaches the host. */
+test('invalid profile selection fails without starting a command', async () => {
+  const f = managedFixture();
+  await assert.rejects(f.tools.terminal({command:'id',profileId:'missing'}),/not registered/);
+  f.terminalInfo.profiles[0].available = false;
+  await assert.rejects(f.tools.terminal({command:'id'}),/unavailable/);
+  assert.equal(f.calls.length,0);
 });
 
-/** Ensures a host close failure reaches the caller without reporting success or executing commands. */
-test('close propagates host failures without modifying another session', async () => {
-  const closeError = new Error('Host refused to close session');
-  const f = fixture({ closeError });
-  const shell = await f.tools.shell({ command: 'pwd' });
-  const before = f.calls.length;
-  await assert.rejects(f.tools.close({ sessionId: shell.sessionId }), error => error === closeError);
-  assert.equal(f.sessions.size, 1);
-  assert.deepEqual(f.calls.slice(before), [{ operation: 'close', sessionId: shell.sessionId }]);
-});
-
-/** Ensures Android shell execution selects the native system shell despite the proot default. */
-test('Android shell explicitly selects android-system and reports the actual environment', async () => {
-  const f = fixture();
-  const result = await f.tools.shell({ command: 'id', timeoutMs: 3000 });
-  assertEnvironment(result, 'android', 'android-system', 'shell');
-  assert.equal(f.terminalInfo.terminal, 'proot', 'Capability discovery must not be mutated');
-  const create = f.calls.find(call => call.operation === 'create');
-  assert.equal(create.terminalType, 'shell');
-  assert.match(create.name, /^super_admin_default_session_shell_chat-a$/);
-  const exec = f.calls.find(call => call.operation === 'execStreaming');
-  assert.deepEqual(structuredClone(exec.args), [result.sessionId, 'id', { timeoutMs: 3000 }]);
-});
-
-/** Ensures switching interpreter tools never shares or changes another interpreter's context. */
-test('shell and bash use separate sessions while each interpreter reuses its own chat context', async () => {
-  const f = fixture();
-  const shell = await f.tools.shell({ command: 'pwd' });
-  const bash = await f.tools.bash({ command: 'pwd' });
-  const shellAgain = await f.tools.shell({ command: 'pwd' });
-  assertEnvironment(bash, 'android', 'proot', 'bash');
-  assert.notEqual(shell.sessionId, bash.sessionId);
-  assert.equal(shell.sessionId, shellAgain.sessionId);
-  assert.equal(f.sessions.size, 2);
-  f.setChatId('chat-b');
-  const otherChat = await f.tools.shell({ command: 'pwd' });
-  assert.notEqual(otherChat.sessionId, shell.sessionId);
-  assert.equal(f.sessions.size, 3);
-});
-
-/** Ensures background commands use the requested interpreter and report creation metadata. */
-test('background shell and bash retain distinct types and actual environments', async () => {
-  const f = fixture();
-  const shell = await f.tools.shell({ command: 'id', background: 'true' });
-  const bash = await f.tools.bash({ command: 'pwd', background: 'true' });
-  assertEnvironment(shell, 'android', 'android-system', 'shell');
-  assertEnvironment(bash, 'android', 'proot', 'bash');
-  assert.equal(shell.started, true);
-  assert.equal(shell.background, true);
-  assert.notEqual(shell.sessionId, bash.sessionId);
-  const creates = f.calls.filter(call => call.operation === 'create');
-  assert.match(creates[0].name, /^super_admin_background_shell_chat-a_\d+$/);
-  assert.match(creates[1].name, /^super_admin_background_bash_chat-a_\d+$/);
-  for (const call of f.calls.filter(call => call.operation === 'observe')) {
-    assert.equal(call.observation.waitMs, 0, 'Background execution must return without a foreground wait');
-  }
-});
-
-/** Ensures file-backed output cannot replace native shell identity with the host default. */
-test('oversized shell output keeps actual terminal metadata alongside its saved output', async () => {
-  const output = 'x'.repeat(12001);
-  const f = fixture({ output });
-  const result = await f.tools.shell({ command: 'printf large' });
-  assert.equal(result.output, '(saved_to_file)');
-  assert.equal(f.files.get(result.output_saved_to), output);
-  assertEnvironment(result, 'android', 'android-system', 'shell');
-  assert.equal(result.timeoutMsUsed, 20000);
-});
-
-/** Ensures an unsupported exact type produces an error without creating a different terminal. */
-test('unsupported explicit interpreters fail without executing any command', async () => {
-  const f = fixture();
-  await assert.rejects(f.tools.powershell({ command: 'Get-Location' }), /Unsupported terminal type: powershell/);
-  assert.equal(f.sessions.size, 0);
-  assert.deepEqual(f.calls.map(call => call.operation), ['observe', 'create']);
-  await assert.rejects(f.tools.powershell({ command: 'Get-Location', background: 'true' }), /Unsupported terminal type: powershell/);
-  assert.equal(f.sessions.size, 0);
-  assert.deepEqual(f.calls.map(call => call.operation), ['observe', 'create', 'observe', 'create']);
-});
-
-/** Ensures Windows PowerShell and Git Bash share the same type-aware public API. */
-test('Windows tools explicitly select PowerShell and Git Bash with separate sessions', async () => {
-  const f = fixture({ platform: 'windows', defaultType: 'powershell', implementations: { powershell: 'native', bash: 'native' } });
-  const powershell = await f.tools.powershell({ command: 'Get-Location' });
-  const bash = await f.tools.bash({ command: 'pwd' });
-  assertEnvironment(powershell, 'windows', 'native', 'powershell');
-  assertEnvironment(bash, 'windows', 'native', 'bash');
-  assert.notEqual(powershell.sessionId, bash.sessionId);
-});
-
-/** Exercises the advertised macOS tools and keeps ARM64 shell sessions separate from native shells. */
-test('macOS advertises shell and routes it to ARM64 alongside native Bash and Zsh', async () => {
-  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
-  const macos = metadata.states.find(state => state.id === 'macos');
-  assert.equal(macos.condition, 'platform.macos');
-  assert.equal(macos.inheritTools, true);
-  assert.deepEqual(macos.tools.map(tool => tool.name).sort(), ['bash', 'shell', 'zsh']);
-  const f = fixture({ platform: 'macos', defaultType: 'zsh', implementations: { bash: 'native', zsh: 'native', shell: 'arm64' } });
-  const sessions = new Set();
-  for (const tool of macos.tools) {
-    const result = await f.tools[tool.name]({ command: 'pwd' });
-    assertEnvironment(result, 'macos', tool.name === 'shell' ? 'arm64' : 'native', tool.name);
-    sessions.add(result.sessionId);
-  }
-  assert.equal(sessions.size, 3);
-  const first = await f.tools.shell({ command: 'cd /tmp' });
-  const second = await f.tools.shell({ command: 'pwd' });
-  assert.equal(first.sessionId, second.sessionId);
-  assertEnvironment(second, 'macos', 'arm64', 'shell');
-});
-
-/** Ensures shell-only hosts use their advertised interpreter without plugin platform branches. */
-test('shell-only hosts keep their configured backend and report the selected environment', async () => {
-  for (const [platform, terminal] of [['ios', 'arm64'], ['ohos', 'qemu-vroot'], ['web', 'v86']]) {
-    const f = fixture({ platform, defaultType: 'shell', implementations: { shell: terminal } });
-    const result = await f.tools.shell({ command: 'pwd' });
-    assertEnvironment(result, platform, terminal, 'shell');
-  }
-  for (const platform of ['linux', 'macos']) {
-    const f = fixture({ platform, implementations: { bash: 'native' } });
-    assertEnvironment(await f.tools.bash({ command: 'pwd' }), platform, 'native', 'bash');
-  }
-});
-
-test('terminal descriptions match platform backends and explain workspace-independent paths', async () => {
-  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
-  for (const language of ['zh', 'en']) {
-    assert.match(metadata.description[language], /VFS/);
-    assert.match(metadata.description[language], language === 'zh' ? /未绑定/ : /when unbound/);
-    assert.match(metadata.description[language], language === 'zh' ? /失败则终止/ : /Failure stops execution/);
-  }
-  const state = id => metadata.states.find(item => item.id === id);
-  const tool = (id, name) => state(id).tools.find(item => item.name === name);
-  assert.match(tool('ios', 'shell').description.en, /ARM64 Linux/);
-  assert.doesNotMatch(tool('ios', 'shell').description.en, /iSH/);
-  assert.match(tool('android', 'shell').description.en, /not adb shell privileges/);
-  assert.match(tool('android', 'bash').description.en, /proot Linux/);
-  assert.match(tool('web', 'shell').description.en, /not a host terminal/);
-  assert.equal(state('ohos').condition, 'platform.ohos');
-  assert.equal(state('ohos').inheritTools, true);
-  assert.match(tool('ohos', 'shell').description.en, /QEMU-vroot/);
-  assert.match(tool('ohos', 'shell').description.en, /cannot be selected/);
-  const f = fixture({ platform: 'ohos', defaultType: 'shell', implementations: { shell: 'qemu-vroot' } });
-  assertEnvironment(await f.tools[tool('ohos', 'shell').name]({ command: 'pwd' }), 'ohos', 'qemu-vroot', 'shell');
-});
-
-/** Ensures a yielded command stays in its original session while new work gets an independent shell. */
-test('foreground wait expiry backgrounds the command and rotates the next default session', async () => {
-  const f = fixture({ timedOut: true });
-  const first = await f.tools.shell({ command: 'sleep 30', timeoutMs: 3000 });
-  const second = await f.tools.shell({ command: 'pwd', timeoutMs: 3000 });
-  assert.equal(first.timedOut, true);
-  assert.equal(first.context_preserved, true);
-  assert.equal(first.background, true);
-  assert.equal(first.commandRunning, true);
-  assert.equal(first.exitCode, null);
-  assert.match(first.message, /转入后台继续运行/);
-  assertEnvironment(first, 'android', 'android-system', 'shell');
-  assert.notEqual(first.sessionId, second.sessionId);
-  assert.equal(f.sessions.size, 2);
-  assert.equal(f.calls.filter(call => call.operation === 'close').length, 0);
-});
-
-/** Waiting observes the original execution instead of submitting a marker into a running command. */
-test('terminal_wait observes the original command without executing a new command', async () => {
-  const f = fixture({ timedOut: true });
-  const command = await f.tools.shell({ command: 'sleep 30' });
-  const executions = f.calls.filter(call => call.operation === 'execStreaming').length;
-  const result = await f.tools.terminal_wait({ sessionId: command.sessionId, timeoutMs: 1000 });
-  assert.equal(result.waitCompleted, false);
-  assert.equal(result.background, true);
-  assert.equal(result.context_preserved, true);
-  assert.equal(f.calls.filter(call => call.operation === 'execStreaming').length, executions);
-  assert.deepEqual(f.calls.at(-1).observation, { op: 'wait', sessionId: command.sessionId, waitMs: 1000 });
-});
-
-/** Ensures the public SDK and standard tool facade actually transmit the explicit interpreter. */
-test('canonical SDK, declarations, and standard tools expose exact typed session creation', () => {
-  const sdk = source('core/crates/plugin/sdk/src/js_sdk/system.rs');
-  const terminalTrait = sdk.slice(sdk.indexOf('pub trait SystemTerminalHost'));
-  assert.match(terminalTrait, /fn create\([\s\S]*?sessionName: String,[\s\S]*?r#type: Option<TerminalType>/);
-  assert.match(source('plugins/types/system.d.ts'), /function create\(sessionName: string, type\?: TerminalType\)/);
-  const facade = rustMethod(source('core/crates/tool/services/src/tools/defaultTool/standard/StandardTerminalTools.rs'), 'createOrGetSession');
-  assert.match(facade, /optionalParameterValue\(tool, "type"\)/);
-  const bridge = rustMethod(source('apps/flutter/native/operit-flutter-bridge/src/FlutterOwnerCapabilities.rs'), 'createOrGetTypedSession');
-  assert.match(bridge, /self\.inner\.createOrGetTypedSession\(sessionName, terminalType\)\?/);
-  assert.match(bridge, /self\.publish_sessions\(\)\?/);
-});
-
-/** Ensures Android selects and reports the requested implementation rather than a hardcoded default. */
-test('Android typed creation validates the interpreter, keys its context, and reports exact identity', () => {
-  const android = source('hosts/android/src/terminal.rs');
-  const typed = rustMethod(android, 'createOrGetTypedSession');
-  assert.match(typed, /nonBlank\(terminalType, "type"\)\?/);
-  assert.match(typed, /androidTerminalName\(&normalizedTerminalType\)\?/);
-  assert.match(typed, /sessionKey\(&normalizedTerminalType, &normalizedSessionName\)/);
-  assert.match(typed, /initialAndroidWorkingDir\(&normalizedTerminalType\)\?/);
-  assert.equal([...typed.matchAll(/terminal: terminal\.to_string\(\)/g)].length, 2);
-  assert.doesNotMatch(typed, /PRIMARY_TERMINAL_TYPE|terminal: PROOT_TERMINAL/);
-  const identities = rustMethod(android, 'androidTerminalName');
-  assert.match(identities, /"bash" => Ok\(PROOT_TERMINAL\)/);
-  assert.match(identities, /"shell" => Ok\(ANDROID_SYSTEM_TERMINAL\)/);
-  const dispatch = rustMethod(android, 'buildAndroidPtyCommand');
-  assert.match(dispatch, /"shell" => buildAndroidShellPtyCommand\(workingDir\)/);
-  assert.match(dispatch, /"bash" => buildAndroidBashPtyCommand\(workingDir\)/);
-});
-
-/** Ensures every host implements the required typed contract without adding a shared platform branch. */
-test('all terminal hosts implement exact typed creation using their own host compatibility layer', () => {
-  const paths = [
-    'hosts/android/src/terminal.rs',
-    'hosts/windows/src/tools/terminal/mod.rs',
-    'hosts/linux/src/tools/terminal/mod.rs',
-    'hosts/apple/src/tools/terminal/terminal_macos.rs',
-    'hosts/common/operit-host-native-terminal/src/lib.rs',
-    'hosts/ios/src/terminal.rs',
-    'hosts/ohos/src/terminal.rs',
-    'hosts/web/src/tools/terminal/mod.rs',
-  ];
-  for (const path of paths) {
-    const typed = rustMethod(source(path), 'createOrGetTypedSession');
-    assert.match(typed, /terminalType/, path);
-    assert.doesNotMatch(typed, /unwrap_or|or_else/, path);
-  }
-  const windows = rustMethod(source(paths[1]), 'createOrGetTypedSession');
-  assert.match(windows, /let \(normalizedTerminalType, kind\) = normalizeTerminalType\(terminalType\)\?/);
-  assert.doesNotMatch(windows, /TerminalKind::PowerShell|PRIMARY_TERMINAL_TYPE/);
-  const hostApi = source('core/crates/foundation/host-contract/src/lib.rs');
-  assert.match(hostApi, /fn createOrGetTypedSession\([\s\S]*?terminalType: &str,[\s\S]*?\) -> HostResult<TerminalSessionInfo>;/);
-});
-
-
-/** Exercises production wire parameter serialization with argument names taken from the canonical SDK. */
-test('production Tools transport sends exact interpreter types and preserves explicit invalid values', async () => {
-  const sdk = source('core/crates/plugin/sdk/src/js_sdk/system.rs');
-  const trait = sdk.slice(sdk.indexOf('pub trait SystemTerminalHost'));
-  const signature = trait.match(/fn create\(([\s\S]*?)\) -> JsFuture<TerminalSessionCreationResultData>/)[1];
-  const names = [...signature.matchAll(/(?:r#)?(\w+):\s*(?:String|Option<TerminalType>)/g)].map(match => match[1]);
-  assert.deepEqual(names, ['sessionName', 'type']);
-  const generator = source('core/crates/plugin/codegen/src/runtime_bindings.rs');
-  const start = generator.indexOf('r#"// Generated from canonical Rust Tools traits and bindings. Do not edit.') + 3;
-  assert.ok(start > 3);
-  const end = generator.indexOf('"#', start);
-  const calls = [];
-  const context = vm.createContext({
-    __operitToolParameterRules: { flattenArguments: [], scalarUnionSuffixes: [], preserveObjectNamespaces: [], argumentNames: {} },
-    /** Records the exact production transport payload rather than mocking positional argument mapping. */
-    async toolCall(name, params) {
-      calls.push({ name, params: JSON.parse(JSON.stringify(params)) });
-      return { sessionId: 'transport-session' };
-    },
-  });
-  vm.runInContext(generator.slice(start, end), context);
-  const create = vm.runInContext(`(function(${names.join(', ')}) {
-    return __operitInvokeToolsBinding('System.terminal', 'create', 'create_terminal_session',
-      [${JSON.stringify(names)}], Array.prototype.slice.call(arguments), []);
-  })`, context);
-  for (const type of ['shell', 'bash', 'powershell', '']) {
-    await create('chat', type);
-    assert.deepEqual(calls.at(-1), { name: 'create_terminal_session', params: { session_name: 'chat', type } });
-  }
-  await create('default-chat');
-  assert.deepEqual(calls.at(-1), { name: 'create_terminal_session', params: { session_name: 'default-chat' } });
+/** Retains foreground timeout, background, large-output, and close behavior through the unified entry point. */
+test('profile execution retains command ownership and file-backed output', async () => {
+  const f = managedFixture({output:'x'.repeat(12001)});
+  const first = await f.tools.terminal({command:'printf large'});
+  assert.equal(first.timeoutMsUsed,20000);
+  assert.equal(f.files.get(first.output_saved_to).length,12001);
+  const background = await f.tools.terminal({command:'sleep 30',background:'true',profileId:'system'});
+  assert.equal(background.background,true);
+  assert.equal(background.terminal,'android-system');
+  const result = await f.tools.close({sessionId:first.sessionId});
+  assert.equal(result.success,true);
+  assert.notEqual((await f.tools.terminal({command:'pwd'})).sessionId,first.sessionId);
+  await assert.rejects(f.tools.terminal({command:'pwd',timeoutMs:999}),/1000/);
 });

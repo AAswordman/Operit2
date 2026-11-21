@@ -9,6 +9,59 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get terminalProfilesTitle => '终端配置';
+
+  @override
+  String get terminalProfilesDescription =>
+      '为当前设备添加终端配置并选择默认项。工作区和 AI 新建的终端会话共用此设置；已有会话继续使用原来的环境。';
+
+  @override
+  String get terminalProfileAdd => '添加终端配置';
+
+  @override
+  String get terminalProfileEdit => '编辑终端配置';
+
+  @override
+  String get terminalProfileDelete => '删除终端配置';
+
+  @override
+  String get terminalProfileDeleteDescription =>
+      '删除后不能再用此配置新建终端。已经运行的会话会继续保留。默认配置需要先切换到其他配置才能删除。';
+
+  @override
+  String get terminalProfileName => '配置名称';
+
+  @override
+  String get terminalProfileNameRequired => '请输入配置名称';
+
+  @override
+  String get terminalProfileImplementation => '终端实现与解释器';
+
+  @override
+  String get terminalProfileRootfs => '根文件系统目录';
+
+  @override
+  String get terminalProfileRootfsHelp =>
+      '填写当前设备可访问的、已解压的同架构 Linux 根文件系统绝对路径，例如 Ubuntu。Android 需要包含 /bin/bash，OpenHarmony 需要包含 /bin/sh。留空使用内置环境。';
+
+  @override
+  String get terminalProfileExecutable => '解释器可执行文件路径';
+
+  @override
+  String get terminalProfileArguments => '启动器参数（JSON 数组）';
+
+  @override
+  String get terminalProfileArgumentsHelp =>
+      '例如 [\"--login\"]。启动参数放在应用管理的交互参数之前；设置启动参数时需要填写程序路径。PowerShell 5 和 7 可以分别添加为独立配置。';
+
+  @override
+  String get terminalProfileArgumentsError =>
+      '请输入字符串组成的 JSON 数组，例如 [\"--login\"]';
+
+  @override
+  String get terminalProfileNoOptions => '此终端由当前平台管理，可选择为默认终端；宿主未开放额外启动参数。';
+
+  @override
   String get chatPromoteToRoot => '提升为主对话';
 
   @override
@@ -5169,4 +5222,42 @@ class AppLocalizationsZh extends AppLocalizations {
   String chatBackupLastSuccess(String time) {
     return '最近成功备份：$time';
   }
+
+  @override
+  String get terminalDistributionsTitle => '下载 Linux 发行版';
+
+  @override
+  String get terminalDistributionsDescription =>
+      '软件仅内置 Alpine。按需下载 ARM64 根文件系统，安装为独立实例后可设为默认；同一发行版可以安装多套。';
+
+  @override
+  String get terminalDistributionDownload => '下载安装';
+
+  @override
+  String get terminalInstallQueued => '等待安装';
+
+  @override
+  String get terminalInstallDownloading => '正在下载根文件系统';
+
+  @override
+  String get terminalInstallVerifying => '正在校验 SHA-256';
+
+  @override
+  String get terminalInstallExtracting => '正在安装根文件系统';
+
+  @override
+  String get terminalInstallCompleted => '安装完成，可在终端配置中选择';
+
+  @override
+  String get terminalInstallCancelled => '已取消安装';
+
+  @override
+  String get terminalInstallFailed => '安装失败';
+
+  @override
+  String get terminalProfileWslDistribution => 'WSL 发行版（可选）';
+
+  @override
+  String get terminalProfileWslHelp =>
+      '使用 WSL 时选择 Bash，填写 wsl.exe 的绝对路径及 wsl --list --quiet 列出的发行版名称，例如 Ubuntu-24.04。使用本机 Bash 时留空。';
 }

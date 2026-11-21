@@ -14,6 +14,21 @@ final _reviewFixture =
 
 /// Exercises the native overview layout and its existing workspace callbacks.
 void main() {
+  testWidgets(
+    'terminal plus creates the default and the arrow selects another profile',
+    (tester) async {
+      final fixture = _HomeFixture();
+      addTearDown(fixture.dispose);
+      await tester.pumpWidget(fixture.app());
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(find.byTooltip('新建终端'), 80);
+      await tester.tap(find.byTooltip('新建终端'));
+      expect(fixture.calls.last, 'terminal');
+      await tester.tap(find.byTooltip('选择终端配置'));
+      expect(fixture.calls.last, 'choose-terminal');
+      expect(tester.takeException(), isNull);
+    },
+  );
   for (final brightness in Brightness.values) {
     for (final width in <double>[280, 400, 900]) {
       for (final scale in <double>[1, 1.5]) {
@@ -412,6 +427,7 @@ class _HomeFixture {
           onChooseExistingWorkspace: () => calls.add('choose'),
           onUnbindWorkspace: () => calls.add('unbind'),
           onOpenTerminal: () => calls.add('terminal'),
+          onChooseTerminal: () => calls.add('choose-terminal'),
           onOpenTerminalSessions: () => calls.add('terminals'),
           onOpenBrowserSessions: () => calls.add('browsers'),
           onOpenBrowser: () => calls.add('browser'),

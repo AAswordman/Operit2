@@ -528,6 +528,11 @@ impl TerminalHost for IosTerminalHost {
         self.createOrGetTypedSession(sessionName, SHELL_TERMINAL_TYPE)
     }
 
+    /// Honors the user's explicit backend even when both implementations expose shell.
+    fn createOrGetTerminalSession(&self, name: &str, terminal: &str, kind: &str) -> HostResult<TerminalSessionInfo> {
+        self.createOrGetBackendSession(self.requestedBackend(terminal, kind)?, name)
+    }
+
     /// Creates or reuses the requested interpreter in the configured iOS terminal backend.
     fn createOrGetTypedSession(
         &self,

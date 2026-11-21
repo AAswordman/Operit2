@@ -442,6 +442,18 @@ pub const CHARACTER_GROUPS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/character_groups.preferences.json";
 pub const WORKSPACES_PREFERENCES_PATH: &str =
     "runtime/config/preferences/workspaces.preferences.json";
+/// Device-local rootfs instances and private installation staging directories.
+pub const TERMINAL_ROOTFS: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
+    "runtime/terminal/rootfs",
+    RuntimeStorageOwnership::CoreNode,
+);
+pub const TERMINAL_ROOTFS_DIR_PATH: &str = TERMINAL_ROOTFS.path;
+/// Owns terminal launch profiles and device-specific executable/rootfs paths on this Core node.
+pub const TERMINAL_PROFILES: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::exact(
+    "runtime/config/preferences/terminal_profiles.json",
+    RuntimeStorageOwnership::CoreNode,
+);
+pub const TERMINAL_PROFILES_PATH: &str = TERMINAL_PROFILES.path;
 pub const PROMPT_TAGS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/prompt_tags.preferences.json";
 pub const SHARED_MEMORY_STORES_PREFERENCES_PATH: &str =
@@ -521,6 +533,8 @@ pub const RUNTIME_STORAGE_PATH_DEFINITIONS: &[RuntimeStoragePathDefinition] = &[
     RUNTIME_SPACE_REMOVAL_EFFECTS,
     RUNTIME_SPACE_RECONCILE_CAPS,
     RUNTIME_SPACE_DOCTOR_COUNTERS,
+    TERMINAL_PROFILES,
+    TERMINAL_ROOTFS,
     RuntimeStoragePathDefinition::exact(CURRENT_CHAT_ID_PREFERENCES_PATH, RuntimeStorageOwnership::CoreNode),
     CLIENT_RUNTIME_BOOTSTRAP,
     RUNTIME_APPLICATION_ZOOM,

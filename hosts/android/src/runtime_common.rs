@@ -38,8 +38,13 @@ pub(crate) fn validateRootfsExecutable(executable: &str) -> HostResult<()> {
 
 #[allow(non_snake_case)]
 pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> HostResult<Command> {
-    let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let rootfsDir = requiredAndroidRuntimePath("OPERIT_ANDROID_ROOTFS_DIR")?;
+    buildAndroidProotCommandWithRootfs(executable, cwd, &rootfsDir)
+}
+
+/// Builds proot with one explicit rootfs while preserving the standard app/workspace mounts.
+pub(crate) fn buildAndroidProotCommandWithRootfs(executable: &str, cwd: Option<&str>, rootfsDir: &Path) -> HostResult<Command> {
+    let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let runtimeRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
     let workspaceRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_WORKSPACE_ROOT")?;
     let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;

@@ -3,3 +3,4 @@
 
 pub use operit_host_contract::*;
 pub mod HostManager;
+pub mod ProfileTerminalHost;

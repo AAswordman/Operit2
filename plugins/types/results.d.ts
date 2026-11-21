@@ -1215,6 +1215,14 @@ export interface ChatMessagesResultData {
  */
 export interface TerminalInfoResultData {
   /**
+   * ID of the user-selected default profile on the executing Core device.
+   */
+  defaultProfileId: string;
+  /**
+   * Saved configurations, including multiple instances of one interpreter or distribution.
+   */
+  profiles: TerminalProfileInfoData[];
+  /**
    * Current runtime platform, such as windows, linux, or android
    */
   platform: string;
@@ -1234,6 +1242,17 @@ export interface TerminalInfoResultData {
    * Formats the primary terminal identity and availability of each known terminal implementation.
    */
   toString(): string;
+}
+
+/**
+ * Describes a selectable profile without exposing device-local executable or rootfs paths.
+ */
+export interface TerminalProfileInfoData {
+  id: string;
+  name: string;
+  terminal: TerminalImplementation;
+  terminalType: TerminalType;
+  available: boolean;
 }
 
 /**

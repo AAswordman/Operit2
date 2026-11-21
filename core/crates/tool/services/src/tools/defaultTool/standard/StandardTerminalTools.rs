@@ -7,7 +7,7 @@ use operit_host_api::{
 
 use operit_tools::tools::ToolResultDataClasses::{
     HiddenTerminalCommandResultData, JsOptional, StringResultData, TerminalCommandResultData,
-    TerminalImplementation, TerminalInfoResultData, TerminalSessionCloseResultData,
+    TerminalImplementation, TerminalInfoResultData, TerminalProfileInfoData, TerminalSessionCloseResultData,
     TerminalSessionCreationResultData, TerminalSessionScreenResultData,
     TerminalType, TerminalTypeInfoData, ToolResultData,
 };
@@ -48,37 +48,116 @@ pub struct TerminalToolExecutor {
 
 impl StandardTerminalTools {
     /// Acquires the newest idle generation without submitting directory commands to a busy shell.
-    pub(crate) fn availableSession(&self, name: &str, terminalType: &str, reserved: &std::collections::BTreeSet<String>) -> HostResult<TerminalSessionInfo> {
+    pub(crate) fn availableSession(
+        &self,
+        name: &str,
+        terminalType: &str,
+        reserved: &std::collections::BTreeSet<String>,
+    ) -> HostResult<TerminalSessionInfo> {
+        self.availableSelectedSession(name, Some(terminalType), None, reserved)
+    }
+
+    /// Acquires a session in an exact saved profile or explicitly requested legacy interpreter.
+    pub(crate) fn availableSelectedSession(
+        &self,
+        name: &str,
+        requestedType: Option<&str>,
+        requestedProfile: Option<&str>,
+        reserved: &std::collections::BTreeSet<String>,
+    ) -> HostResult<TerminalSessionInfo> {
         let host = self.host()?;
-        let prefix = format!("{name}_generation_");
+        if requestedType.is_some() && requestedProfile.is_some() {
+            return Err(HostError::new(
+                "Specify profileId or terminalType, not both",
+            ));
+        }
+        let profile = if requestedType.is_none() {
+            let settings = host.terminalProfileSettings()?;
+            let id = requestedProfile.unwrap_or(&settings.defaultProfileId);
+            Some(
+                settings
+                    .profiles
+                    .into_iter()
+                    .find(|profile| profile.id == id)
+                    .ok_or_else(|| {
+                        HostError::new(format!("Terminal profile is not registered: {id}"))
+                    })?,
+            )
+        } else {
+            None
+        };
+        let info = host.terminalInfo()?;
+        let terminalType = match &profile {
+            Some(profile) => profile.terminalType.as_str(),
+            None => requestedType.ok_or_else(|| HostError::new("Terminal selection is missing"))?,
+        };
+        let terminal = match &profile {
+            Some(profile) => format!("profile:{}", profile.id),
+            None => info
+                .types
+                .iter()
+                .find(|entry| entry.terminalType == terminalType)
+                .ok_or_else(|| HostError::new("Terminal interpreter is not registered"))?
+                .terminal
+                .clone(),
+        };
+        let scopedName = match &profile {
+            Some(profile) => format!("{name}_profile_{}", profile.id),
+            None => name.to_string(),
+        };
+        let prefix = format!("{scopedName}_generation_");
         let sessions = host.listSessions()?;
-        let candidates = sessions.iter().filter(|session| session.terminalType == terminalType)
+        let candidates = sessions
+            .iter()
+            .filter(|session| session.terminalType == terminalType)
             .filter_map(|session| {
-                let generation = if session.sessionName == name { 0 }
-                    else { session.sessionName.strip_prefix(&prefix)?.parse::<u64>().ok()? };
-                Some((generation, session.commandRunning || reserved.contains(&session.sessionId)))
+                let generation = if session.sessionName == scopedName {
+                    0
+                } else {
+                    session
+                        .sessionName
+                        .strip_prefix(&prefix)?
+                        .parse::<u64>()
+                        .ok()?
+                };
+                Some((
+                    generation,
+                    session.commandRunning || reserved.contains(&session.sessionId),
+                ))
             });
-        let generation = match candidates.clone().filter(|(_, busy)| !busy).max_by_key(|(generation, _)| *generation) {
+        let generation = match candidates
+            .clone()
+            .filter(|(_, busy)| !busy)
+            .max_by_key(|(generation, _)| *generation)
+        {
             Some((generation, _)) => generation,
             None => match candidates.max_by_key(|(generation, _)| *generation) {
-                Some((generation, _)) => generation.checked_add(1).ok_or_else(|| HostError::new("Terminal session generation exhausted"))?,
+                Some((generation, _)) => generation
+                    .checked_add(1)
+                    .ok_or_else(|| HostError::new("Terminal session generation exhausted"))?,
                 None => 0,
             },
         };
-        let sessionName = if generation == 0 { name.to_string() } else { format!("{prefix}{generation}") };
-        let directory = self.fileDirectory()?.map(|workspace| {
-            operit_host_api::TerminalWorkingDirectory::resolveSessionDirectory(
-                host, Some(terminalType), &workspace, &|path| {
-                    self.filesystem.as_ref()
-                        .ok_or_else(|| HostError::new("Workspace VFS is not configured for terminal tools"))?
-                        .terminalDirectory(host, path).map_err(HostError::new)
-                },
-            )
-        }).transpose()?;
-        let session = host.createOrGetTypedSession(&sessionName, terminalType)?;
+        let sessionName = if generation == 0 {
+            scopedName
+        } else {
+            format!("{prefix}{generation}")
+        };
+        let directory = self
+            .fileDirectory()?
+            .map(|workspace| self.resolveFileDirectory(host, &terminal, terminalType, &workspace))
+            .transpose()?;
+        let session = match &profile {
+            Some(profile) => host.createOrGetProfileSession(&sessionName, &profile.id)?,
+            None => host.createOrGetTypedSession(&sessionName, terminalType)?,
+        };
         if let Some(directory) = directory {
-            if let Err(error) = enterTerminalDirectory(host, &session.sessionId, terminalType, &directory) {
-                if session.isNewSession { let _ = host.closeSession(&session.sessionId); }
+            if let Err(error) =
+                enterTerminalDirectory(host, &session.sessionId, terminalType, &directory)
+            {
+                if session.isNewSession {
+                    let _ = host.closeSession(&session.sessionId);
+                }
                 return Err(error);
             }
         }
@@ -133,7 +212,19 @@ impl StandardTerminalTools {
         match self
             .host()
             .and_then(|host| host.terminalInfo())
-            .and_then(|data| terminalInfoResultData(&data))
+            .and_then(|data| {
+                let mut result = terminalInfoResultData(&data)?;
+                let settings = self.host()?.terminalProfileSettings()?;
+                result.defaultProfileId = settings.defaultProfileId;
+                result.profiles = settings.profiles.into_iter().map(|profile| {
+                    Ok(TerminalProfileInfoData {
+                        available: !profile.options.is_empty() || data.types.iter().any(|entry| entry.terminal == profile.terminal && entry.terminalType == profile.terminalType && entry.available),
+                        terminal: terminalImplementation(&profile.terminal)?, terminalType: terminalType(&profile.terminalType)?,
+                        id: profile.id, name: profile.name,
+                    })
+                }).collect::<HostResult<Vec<_>>>()?;
+                Ok(result)
+            })
         {
             Ok(data) => toolSuccessData(tool, ToolResultData::TerminalInfoResultData(data)),
             Err(error) => toolError(
@@ -148,11 +239,9 @@ impl StandardTerminalTools {
     pub fn createOrGetSession(&self, tool: &AITool) -> ToolResult {
         let sessionName = parameterValue(tool, "session_name");
         let requestedType = optionalParameterValue(tool, "type");
-        let result = self.host().and_then(|host| {
-            let terminalType = match requestedType { Some(value) => value, None => host.terminalInfo()?.terminalType };
-            self.availableSession(&sessionName, &terminalType, &Default::default())
-                .and_then(|session| terminalSessionCreationResultData(&session))
-        });
+        let requestedProfile = optionalParameterValue(tool, "profile_id");
+        let result = self.availableSelectedSession(&sessionName, requestedType.as_deref(), requestedProfile.as_deref(), &Default::default())
+            .and_then(|session| terminalSessionCreationResultData(&session));
         match result
         {
             Ok(data) => toolSuccessData(
@@ -488,6 +577,7 @@ fn terminalInfoResultData(data: &TerminalInfo) -> HostResult<TerminalInfoResultD
         })
         .collect::<HostResult<Vec<_>>>()?;
     Ok(TerminalInfoResultData {
+        defaultProfileId: String::new(), profiles: Vec::new(),
         platform: data.platform.clone(),
         terminal: terminalImplementation(&data.terminal)?,
         terminalType: terminalType(&data.terminalType)?,

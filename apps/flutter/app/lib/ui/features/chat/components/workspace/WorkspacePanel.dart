@@ -1217,6 +1217,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       filesListingRevision: _filesListingRevision,
       terminalSessionsListenable: _terminalSessionsNotifier,
       onOpenTerminal: _createAndOpenTerminalSession,
+      onChooseTerminal: _chooseAndOpenTerminalSession,
       onOpenTerminalSessions: _showTerminalSessionPicker,
       onOpenBrowserSessions: _showBrowserSessionPicker,
       onOpenBrowser: _openBrowserTab,
@@ -1246,16 +1247,31 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     );
   }
 
-  /// Creates and opens a manual terminal session using the host-declared type.
+  /// Creates the configured default immediately when the user presses the plus button.
   Future<void> _createAndOpenTerminalSession() async {
-    final terminalInfo = await _terminalSessions.terminalInfo();
-    if (!mounted) {
-      return;
-    }
-    final terminal = await _selectTerminalType(terminalInfo);
-    if (!mounted || terminal == null) {
-      return;
-    }
+    final info = await _terminalSessions.terminalInfo();
+    if (!mounted) return;
+    final terminal = info.types.firstWhere(
+      (entry) =>
+          entry.terminal == info.terminal &&
+          entry.terminalType == info.terminalType,
+    );
+    await _launchTerminalProfile(terminal);
+  }
+
+  /// Opens the alternate-profile picker without changing the saved default.
+  Future<void> _chooseAndOpenTerminalSession() async {
+    final info = await _terminalSessions.terminalInfo();
+    if (!mounted) return;
+    final terminal = await _selectTerminalType(info);
+    if (!mounted || terminal == null) return;
+    await _launchTerminalProfile(terminal);
+  }
+
+  /// Starts the selected immutable profile in the current conversation's file directory.
+  Future<void> _launchTerminalProfile(
+    core_proxy.RuntimeTerminalTypeInfo terminal,
+  ) async {
     await launchWorkspaceTerminal(
       context: context,
       terminal: terminal.terminal,
@@ -1263,7 +1279,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       launch: () async {
         final workingDirectory = _manualTerminalWorkingDirectory();
         final sessionId = await _terminalSessions.startPtySession(
-          sessionName: _nextManualTerminalSessionName(),
+          sessionName:
+              '${_nextManualTerminalSessionName()} · ${terminal.description}',
           terminal: terminal.terminal,
           terminalType: terminal.terminalType,
           workingDirectory: workingDirectory,
@@ -1295,7 +1312,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
             .where((item) => item.available)
             .toList(growable: false);
         return AlertDialog(
-          title: const Text('选择终端类型'),
+          title: const Text('选择终端配置'),
           content: SizedBox(
             width: 460,
             child: availableTypes.isEmpty
@@ -1329,10 +1346,8 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                             value: '${item.terminal}\u0000${item.terminalType}',
                             enabled: item.available,
                           ),
-                          title: Text(
-                            '${item.terminal} / ${item.terminalType}',
-                          ),
-                          subtitle: Text(item.description),
+                          title: Text(item.description),
+                          subtitle: Text(item.terminalType),
                           onTap: item.available
                               ? () => Navigator.of(context).pop(item)
                               : null,

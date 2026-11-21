@@ -9,6 +9,61 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get terminalProfilesTitle => 'Terminal profiles';
+
+  @override
+  String get terminalProfilesDescription =>
+      'Add terminal profiles for this device and choose a default. New workspace and AI terminal sessions share this setting; existing sessions keep their original environment.';
+
+  @override
+  String get terminalProfileAdd => 'Add terminal profile';
+
+  @override
+  String get terminalProfileEdit => 'Edit terminal profile';
+
+  @override
+  String get terminalProfileDelete => 'Delete terminal profile';
+
+  @override
+  String get terminalProfileDeleteDescription =>
+      'This profile will no longer be available for new terminals. Running sessions stay open. Select another default before deleting the default profile.';
+
+  @override
+  String get terminalProfileName => 'Profile name';
+
+  @override
+  String get terminalProfileNameRequired => 'Enter a profile name';
+
+  @override
+  String get terminalProfileImplementation =>
+      'Terminal implementation and interpreter';
+
+  @override
+  String get terminalProfileRootfs => 'Root filesystem directory';
+
+  @override
+  String get terminalProfileRootfsHelp =>
+      'Enter an accessible absolute path to an extracted Linux root filesystem matching this device\'s architecture, such as Ubuntu. Android requires /bin/bash; OpenHarmony requires /bin/sh. Leave blank to use the built-in environment.';
+
+  @override
+  String get terminalProfileExecutable => 'Interpreter executable path';
+
+  @override
+  String get terminalProfileArguments => 'Launcher arguments (JSON array)';
+
+  @override
+  String get terminalProfileArgumentsHelp =>
+      'For example [\"--login\"]. Arguments precede the managed interactive-shell arguments. Enter an executable path when specifying launch options. PowerShell 5 and 7 can be added as separate profiles.';
+
+  @override
+  String get terminalProfileArgumentsError =>
+      'Enter a JSON array of strings, for example [\"--login\"]';
+
+  @override
+  String get terminalProfileNoOptions =>
+      'This terminal is managed by the platform and can be selected as the default. The host does not expose additional launch options.';
+
+  @override
   String get chatPromoteToRoot => 'Promote to main conversation';
 
   @override
@@ -5406,4 +5461,43 @@ class AppLocalizationsEn extends AppLocalizations {
   String chatBackupLastSuccess(String time) {
     return 'Last successful backup: $time';
   }
+
+  @override
+  String get terminalDistributionsTitle => 'Download Linux distributions';
+
+  @override
+  String get terminalDistributionsDescription =>
+      'Only Alpine is bundled. Download an ARM64 root filesystem to add a separate instance, then choose it as the default. You can install the same distribution multiple times.';
+
+  @override
+  String get terminalDistributionDownload => 'Download and install';
+
+  @override
+  String get terminalInstallQueued => 'Waiting to install';
+
+  @override
+  String get terminalInstallDownloading => 'Downloading root filesystem';
+
+  @override
+  String get terminalInstallVerifying => 'Verifying SHA-256';
+
+  @override
+  String get terminalInstallExtracting => 'Installing root filesystem';
+
+  @override
+  String get terminalInstallCompleted =>
+      'Installed · available in terminal profiles';
+
+  @override
+  String get terminalInstallCancelled => 'Installation cancelled';
+
+  @override
+  String get terminalInstallFailed => 'Installation failed';
+
+  @override
+  String get terminalProfileWslDistribution => 'WSL distribution (optional)';
+
+  @override
+  String get terminalProfileWslHelp =>
+      'For WSL, select Bash, enter the absolute path to wsl.exe and a distribution name from wsl --list --quiet, such as Ubuntu-24.04. Leave this field blank for a native Bash executable.';
 }

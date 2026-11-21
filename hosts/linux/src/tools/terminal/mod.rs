@@ -27,6 +27,7 @@ const PRIMARY_TERMINAL_TYPE: &str = "bash";
 #[derive(Clone, Default)]
 pub struct LinuxTerminalHost {
     state: Arc<Mutex<TerminalState>>,
+    profile: Option<operit_host_api::TerminalProfile>,
 }
 
 #[derive(Default)]
@@ -73,6 +74,39 @@ impl LinuxTerminalHost {
 }
 
 impl TerminalHost for LinuxTerminalHost {
+    /// Registers custom bash executables and launcher argument prefixes on Linux.
+    fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
+        Ok(vec![operit_host_api::TerminalProfileSupport {
+            terminal: TERMINAL.into(),
+            terminalType: PRIMARY_TERMINAL_TYPE.into(),
+            fields: vec!["executable".into(), "arguments".into()],
+        }])
+    }
+    /// Creates an isolated registry for one exact custom bash launcher.
+    fn configuredTerminal(
+        &self,
+        profile: &operit_host_api::TerminalProfile,
+    ) -> HostResult<Arc<dyn TerminalHost>> {
+        requireNativeTerminal(&profile.terminal)?;
+        normalizeTerminalType(&profile.terminalType)?;
+        let executable = profile
+            .options
+            .get("executable")
+            .ok_or_else(|| HostError::new("Custom terminal requires executable"))?;
+        if !std::path::Path::new(executable).is_absolute()
+            || !std::path::Path::new(executable).is_file()
+        {
+            return Err(HostError::new(
+                "Terminal executable must be an existing absolute file path",
+            ));
+        }
+        operit_host_api::TerminalProfiles::profileArguments(profile)?;
+        Ok(Arc::new(Self {
+            state: Arc::default(),
+            profile: Some(profile.clone()),
+        }))
+    }
+
     /// Resolves native terminal directories through the runtime's host VFS mapper.
     fn resolveWorkingDirectory(
         &self,
@@ -114,6 +148,7 @@ impl TerminalHost for LinuxTerminalHost {
         let normalizedTerminalType = normalizeTerminalType(terminalType)?;
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createPtySession(
+            self.profile.as_ref(),
             normalizedSessionName,
             normalizedTerminalType,
             workDir,
@@ -258,6 +293,7 @@ impl TerminalHost for LinuxTerminalHost {
 
         let workingDir = std::env::current_dir()?.display().to_string();
         let session = createPtySession(
+            self.profile.as_ref(),
             normalizedSessionName.clone(),
             normalizedTerminalType.clone(),
             workingDir,
@@ -505,6 +541,7 @@ fn hiddenPtySessionId(
 
     let workingDir = std::env::current_dir()?.display().to_string();
     let session = createPtySession(
+        host.profile.as_ref(),
         format!("hidden:{executorLabel}"),
         terminalType.to_string(),
         workingDir,
@@ -529,6 +566,7 @@ struct SessionCommandResult {
 
 #[allow(non_snake_case)]
 fn createPtySession(
+    profile: Option<&operit_host_api::TerminalProfile>,
     sessionName: String,
     terminalType: String,
     workingDir: String,
@@ -539,7 +577,7 @@ fn createPtySession(
     let pair = ptySystem
         .openpty(ptySize(rows, cols))
         .map_err(toHostError)?;
-    let command = linuxPtyCommand(&workingDir);
+    let command = linuxProfilePtyCommand(profile, &workingDir)?;
     let mut child = pair.slave.spawn_command(command).map_err(toHostError)?;
     let mut reader = pair.master.try_clone_reader().map_err(toHostError)?;
     let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(toHostError)?));
@@ -611,6 +649,22 @@ fn linuxPtyCommand(workingDir: &str) -> CommandBuilder {
         r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status""#,
     );
     command
+}
+
+/// Builds an explicit launcher while retaining the host's existing bash completion protocol.
+fn linuxProfilePtyCommand(profile: Option<&operit_host_api::TerminalProfile>, workingDir: &str) -> HostResult<CommandBuilder> {
+    let Some(profile) = profile else { return Ok(linuxPtyCommand(workingDir)); };
+    let executable = profile.options.get("executable").ok_or_else(|| HostError::new("Terminal executable is required"))?;
+    let mut command = CommandBuilder::new(executable);
+    for argument in operit_host_api::TerminalProfiles::profileArguments(profile)? { command.arg(argument); }
+    for argument in ["--noprofile", "--norc", "-i"] { command.arg(argument); }
+    command.cwd(workingDir);
+    command.env("TERM", "xterm-256color");
+    command.env("COLORTERM", "truecolor");
+    command.env("LANG", "C.UTF-8");
+    command.env("PS1", "$PWD $ ");
+    command.env("PROMPT_COMMAND", r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$(printf '%s' "$PWD" | base64 | tr -d '\n')" "$__operit_status""#);
+    Ok(command)
 }
 
 #[allow(non_snake_case)]

@@ -10,6 +10,8 @@ pub mod HttpServer;
 pub mod PluginSdkIpc;
 pub mod Tcp;
 pub mod TerminalWorkingDirectory;
+pub mod TerminalProfiles;
+pub use TerminalProfiles::{TerminalDistribution, TerminalInstallProgress, TerminalInstallProgressCallback, TerminalProfile, TerminalProfileSettings, TerminalProfileSupport};
 pub mod TimeUtils;
 pub mod JavaScriptExecutionInterrupt;
 pub use JavaScriptExecutionInterrupt::{
@@ -1894,6 +1896,44 @@ pub fn terminalSessionNameMatches(actual: &str, expected: &str) -> bool {
 }
 
 pub trait TerminalHost: Send + Sync {
+    /// Lists archives executable by this host; an empty catalog means installation is unsupported.
+    fn terminalDistributions(&self) -> HostResult<Vec<TerminalDistribution>> {
+        Ok(Vec::new())
+    }
+    /// Downloads and installs a new independent rootfs instance without replacing existing instances.
+    fn installTerminalDistribution(
+        &self, _distributionId: &str, _instanceId: &str, _name: &str,
+        _control: HttpDownloadControl, _progress: TerminalInstallProgressCallback,
+    ) -> HostResult<TerminalProfile> {
+        Err(HostError::new("This host does not support downloadable terminal distributions"))
+    }
+    /// Removes a newly installed instance when registering it in durable settings fails.
+    fn discardTerminalDistribution(&self, _instanceId: &str) -> HostResult<()> {
+        Err(HostError::new("This host does not support terminal installation rollback"))
+    }
+    /// Creates a session in an exact saved profile, preserving interpreter identities in results.
+    fn createOrGetProfileSession(&self, _name: &str, _profileId: &str) -> HostResult<TerminalSessionInfo> {
+        Err(HostError::new("Terminal profile registry is not installed"))
+    }
+
+    /// Declares editable fields for each implementation without probing or starting processes.
+    fn terminalProfileSupport(&self) -> HostResult<Vec<TerminalProfileSupport>> {
+        Ok(self.terminalInfo()?.types.into_iter().map(|entry| TerminalProfileSupport {
+            terminal: entry.terminal, terminalType: entry.terminalType, fields: Vec::new(),
+        }).collect())
+    }
+    /// Creates an isolated host with immutable launch options for new sessions.
+    fn configuredTerminal(&self, _profile: &TerminalProfile) -> HostResult<Arc<dyn TerminalHost>> {
+        Err(HostError::new("This terminal implementation does not support custom launch options"))
+    }
+    /// Reads profiles from the device-local terminal registry installed during app assembly.
+    fn terminalProfileSettings(&self) -> HostResult<TerminalProfileSettings> {
+        Err(HostError::new("Terminal profile registry is not installed"))
+    }
+    /// Saves a validated configuration while retaining ownership of existing sessions.
+    fn saveTerminalProfileSettings(&self, _settings: TerminalProfileSettings) -> HostResult<()> {
+        Err(HostError::new("Terminal profile registry is not installed"))
+    }
     /// Converts a host filesystem locator to a directory usable by this terminal.
     /// Resource backends require explicit platform support; opaque locators must never reach a shell.
     fn resolveNativeWorkingDirectory(&self, path: &str) -> HostResult<String> {
@@ -1930,6 +1970,16 @@ pub trait TerminalHost: Send + Sync {
     fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>>;
     /// Creates or reuses a named session in the host's configured default terminal.
     fn createOrGetSession(&self, sessionName: &str) -> HostResult<TerminalSessionInfo>;
+    /// Creates a session in the exact implementation, including hosts sharing one interpreter type.
+    fn createOrGetTerminalSession(&self, sessionName: &str, terminal: &str, terminalType: &str) -> HostResult<TerminalSessionInfo> {
+        let info = self.terminalInfo()?;
+        let entry = info.types.iter().find(|entry| entry.terminalType == terminalType)
+            .ok_or_else(|| HostError::new("Terminal interpreter is not registered"))?;
+        if entry.terminal != terminal {
+            return Err(HostError::new("Explicit terminal implementation selection is unsupported"));
+        }
+        self.createOrGetTypedSession(sessionName, terminalType)
+    }
     /// Creates or reuses a named session of exactly the requested interpreter type.
     fn createOrGetTypedSession(
         &self,

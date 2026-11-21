@@ -139,7 +139,11 @@ impl OperitApplication {
 
     /// Creates an application around a supplied host manager and installs shared host defaults.
     #[allow(non_snake_case)]
-    pub fn newWithContext(hostManager: HostManager) -> Self {
+    pub fn newWithContext(mut hostManager: HostManager) -> Self {
+        if let (Some(terminal), Some(storage)) = (hostManager.terminalHost.clone(), hostManager.runtimeStorageHost.clone()) {
+            let registry = Arc::new(operit_host_api::ProfileTerminalHost::ProfileTerminalHost::new(terminal, storage));
+            hostManager.terminalHost = Some(Arc::new(crate::services::PublishingTerminalHost::RuntimeSessionPublishingTerminalHost::new(registry)));
+        }
         if let Some(runtimeStorageHost) = hostManager.runtimeStorageHost.clone() {
             let filesystem = Arc::new(hostManager.vfs().expect("Runtime VFS must be configured for logging"));
             AppLogger::configure_log_files(

@@ -68,13 +68,6 @@ pub(crate) fn startBridge(startup: BridgeStartup) -> Result<OperitFlutterBridge,
         .withClipboardHost(Arc::new(
             crate::FlutterOwnerCapabilities::setFlutterClipboardText,
         ));
-    let terminal = context
-        .terminalHost
-        .clone()
-        .ok_or_else(|| "Flutter runtime requires a terminal host".to_string())?;
-    context = context.withTerminalHost(Arc::new(
-        crate::FlutterOwnerCapabilities::RuntimeSessionPublishingTerminalHost::new(terminal),
-    ));
     let deviceInfo = platform::startup_device_info(&context, &startup.metadata)?;
     OperitFlutterBridge::start(
         LocalCoreProxy::new(OperitApplication::newWithContext(context)),

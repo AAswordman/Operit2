@@ -13,10 +13,13 @@ function __operitManagedTerminalResult(response) {
 /** Starts a session-owned command without tying its lifetime to this JavaScript Promise. */
 function __operitRunTerminal(request) {
     var value = __operitSnapshotJsonObject(request);
-    return toolCall('terminal_observe', { observation: {
-        op: 'run', sessionName: value.sessionName, terminalType: value.terminalType,
+    var observation = {
+        op: 'run', sessionName: value.sessionName,
         command: value.command, waitMs: __operitTerminalWaitBudget(value.waitMs)
-    }}).then(__operitManagedTerminalResult);
+    };
+    if (value.terminalType !== undefined) observation.terminalType = value.terminalType;
+    if (value.profileId !== undefined) observation.profileId = value.profileId;
+    return toolCall('terminal_observe', { observation: observation }).then(__operitManagedTerminalResult);
 }
 
 /** Waits for the original command without submitting input or canceling it on wait expiry. */

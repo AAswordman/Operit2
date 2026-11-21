@@ -3,6 +3,9 @@
 #[cfg(feature = "app-install")]
 pub mod AppInstaller;
 
+#[cfg(feature = "terminal-rootfs")]
+pub mod TerminalRootfs;
+
 pub mod DartPort;
 pub mod SharedBuffer;
 

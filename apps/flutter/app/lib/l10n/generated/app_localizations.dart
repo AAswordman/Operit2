@@ -98,6 +98,102 @@ abstract class AppLocalizations {
     Locale('zh'),
   ];
 
+  /// No description provided for @terminalProfilesTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Terminal profiles'**
+  String get terminalProfilesTitle;
+
+  /// No description provided for @terminalProfilesDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Add terminal profiles for this device and choose a default. New workspace and AI terminal sessions share this setting; existing sessions keep their original environment.'**
+  String get terminalProfilesDescription;
+
+  /// No description provided for @terminalProfileAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add terminal profile'**
+  String get terminalProfileAdd;
+
+  /// No description provided for @terminalProfileEdit.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit terminal profile'**
+  String get terminalProfileEdit;
+
+  /// No description provided for @terminalProfileDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete terminal profile'**
+  String get terminalProfileDelete;
+
+  /// No description provided for @terminalProfileDeleteDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'This profile will no longer be available for new terminals. Running sessions stay open. Select another default before deleting the default profile.'**
+  String get terminalProfileDeleteDescription;
+
+  /// No description provided for @terminalProfileName.
+  ///
+  /// In en, this message translates to:
+  /// **'Profile name'**
+  String get terminalProfileName;
+
+  /// No description provided for @terminalProfileNameRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a profile name'**
+  String get terminalProfileNameRequired;
+
+  /// No description provided for @terminalProfileImplementation.
+  ///
+  /// In en, this message translates to:
+  /// **'Terminal implementation and interpreter'**
+  String get terminalProfileImplementation;
+
+  /// No description provided for @terminalProfileRootfs.
+  ///
+  /// In en, this message translates to:
+  /// **'Root filesystem directory'**
+  String get terminalProfileRootfs;
+
+  /// No description provided for @terminalProfileRootfsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter an accessible absolute path to an extracted Linux root filesystem matching this device\'s architecture, such as Ubuntu. Android requires /bin/bash; OpenHarmony requires /bin/sh. Leave blank to use the built-in environment.'**
+  String get terminalProfileRootfsHelp;
+
+  /// No description provided for @terminalProfileExecutable.
+  ///
+  /// In en, this message translates to:
+  /// **'Interpreter executable path'**
+  String get terminalProfileExecutable;
+
+  /// No description provided for @terminalProfileArguments.
+  ///
+  /// In en, this message translates to:
+  /// **'Launcher arguments (JSON array)'**
+  String get terminalProfileArguments;
+
+  /// No description provided for @terminalProfileArgumentsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'For example [\"--login\"]. Arguments precede the managed interactive-shell arguments. Enter an executable path when specifying launch options. PowerShell 5 and 7 can be added as separate profiles.'**
+  String get terminalProfileArgumentsHelp;
+
+  /// No description provided for @terminalProfileArgumentsError.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a JSON array of strings, for example [\"--login\"]'**
+  String get terminalProfileArgumentsError;
+
+  /// No description provided for @terminalProfileNoOptions.
+  ///
+  /// In en, this message translates to:
+  /// **'This terminal is managed by the platform and can be selected as the default. The host does not expose additional launch options.'**
+  String get terminalProfileNoOptions;
+
   /// No description provided for @chatPromoteToRoot.
   ///
   /// In en, this message translates to:
@@ -9485,6 +9581,78 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Last successful backup: {time}'**
   String chatBackupLastSuccess(String time);
+
+  /// No description provided for @terminalDistributionsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Download Linux distributions'**
+  String get terminalDistributionsTitle;
+
+  /// No description provided for @terminalDistributionsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Only Alpine is bundled. Download an ARM64 root filesystem to add a separate instance, then choose it as the default. You can install the same distribution multiple times.'**
+  String get terminalDistributionsDescription;
+
+  /// No description provided for @terminalDistributionDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Download and install'**
+  String get terminalDistributionDownload;
+
+  /// No description provided for @terminalInstallQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting to install'**
+  String get terminalInstallQueued;
+
+  /// No description provided for @terminalInstallDownloading.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading root filesystem'**
+  String get terminalInstallDownloading;
+
+  /// No description provided for @terminalInstallVerifying.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying SHA-256'**
+  String get terminalInstallVerifying;
+
+  /// No description provided for @terminalInstallExtracting.
+  ///
+  /// In en, this message translates to:
+  /// **'Installing root filesystem'**
+  String get terminalInstallExtracting;
+
+  /// No description provided for @terminalInstallCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Installed · available in terminal profiles'**
+  String get terminalInstallCompleted;
+
+  /// No description provided for @terminalInstallCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'Installation cancelled'**
+  String get terminalInstallCancelled;
+
+  /// No description provided for @terminalInstallFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Installation failed'**
+  String get terminalInstallFailed;
+
+  /// No description provided for @terminalProfileWslDistribution.
+  ///
+  /// In en, this message translates to:
+  /// **'WSL distribution (optional)'**
+  String get terminalProfileWslDistribution;
+
+  /// No description provided for @terminalProfileWslHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'For WSL, select Bash, enter the absolute path to wsl.exe and a distribution name from wsl --list --quiet, such as Ubuntu-24.04. Leave this field blank for a native Bash executable.'**
+  String get terminalProfileWslHelp;
 }
 
 class _AppLocalizationsDelegate
