@@ -1,4 +1,5 @@
 use operit_model::PromptTurn::PromptTurn;
+use operit_providers::chat::llmprovider::AIService::TokenCounts;
 use operit_util::stream::HotStream::MutableSharedStreamImpl;
 use operit_util::ChainLogger::{self, PLUGIN_CHAIN};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -10,6 +11,8 @@ pub struct MessageProcessingHookParams {
     pub workspace_path: Option<String>,
     pub max_tokens: i32,
     pub token_usage_threshold: f64,
+    /// Real usage of the latest completed assistant turn, for cache-aware policies.
+    pub last_assistant_usage: Option<TokenCounts>,
 }
 
 pub trait MessageProcessingController {

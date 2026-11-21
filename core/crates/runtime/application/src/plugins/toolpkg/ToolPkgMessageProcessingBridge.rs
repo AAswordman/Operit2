@@ -276,6 +276,11 @@ fn buildMessageEventPayload(params: &MessageProcessingHookParams, probeOnly: boo
         "workspacePath": params.workspace_path,
         "maxTokens": params.max_tokens,
         "tokenUsageThreshold": params.token_usage_threshold,
+        "lastAssistantUsage": params.last_assistant_usage.as_ref().map(|usage| serde_json::json!({
+            "inputTokens": usage.input,
+            "cachedInputTokens": usage.cached_input,
+            "outputTokens": usage.output,
+        })),
         "probeOnly": probeOnly,
     })
 }
