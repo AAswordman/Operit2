@@ -43,8 +43,8 @@ class FlutterViewController {
 
   /// Creates hidden content that is reparented by the production window.
   FlutterViewController(int, int, const DartProject&) {
-    view_.handle = CreateWindowW(L"STATIC", L"", WS_POPUP, 0, 0, 16, 16,
-                                nullptr, nullptr, GetModuleHandle(nullptr), nullptr);
+    view_.handle = CreateWindowW(L"STATIC", L"", WS_CHILD, 0, 0, 16, 16,
+                                HWND_MESSAGE, nullptr, GetModuleHandle(nullptr), nullptr);
   }
 
   /// Injects reentrant messages at the point the real Flutter engine shuts down.

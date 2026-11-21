@@ -226,7 +226,8 @@ Win32Window::MessageHandler(HWND hwnd,
       return 0;
 
     case WM_ACTIVATE:
-      if (LOWORD(wparam) != WA_INACTIVE && child_content_ != nullptr) {
+      if (LOWORD(wparam) != WA_INACTIVE && child_content_ != nullptr &&
+          (GetWindowLongPtr(hwnd, GWL_EXSTYLE) & WS_EX_NOACTIVATE) == 0) {
         SetFocus(child_content_);
       }
       return 0;
@@ -260,8 +261,8 @@ void Win32Window::SetChildContent(HWND content) {
   child_content_ = content;
   SetParent(content, window_handle_);
   ResizeChildContent();
-
-  SetFocus(child_content_);
+  // Hidden windows must not activate while attaching a new engine. Visible,
+  // focusable windows give focus to their content through WM_ACTIVATE.
 }
 
 RECT Win32Window::GetClientArea() {

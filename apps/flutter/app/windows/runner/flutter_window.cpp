@@ -7,6 +7,7 @@
 
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
 #include <file_selector_windows/file_selector_windows.h>
+#include <record_windows/record_windows_plugin_c_api.h>
 
 #include "crash_channel.h"
 #include "engine_channel_lifetime.h"
@@ -15,6 +16,14 @@
 #include "system_audio_input_channel.h"
 
 namespace {
+
+/// Detaches recording transport before Flutter invalidates this engine's messenger.
+void RegisterRecordingPluginLifetime(flutter::FlutterEngine* engine) {
+  const auto registrar = engine->GetRegistrarForPlugin("RecordWindowsPluginCApi");
+  RegisterOperitEngineChannelShutdown(engine, [registrar]() {
+    RecordWindowsPluginCApiShutdownWithRegistrar(registrar);
+  });
+}
 
 /// Keeps the system caption controls while joining its color to the sidebar.
 void RegisterWindowChromeChannel(flutter::FlutterEngine* engine, HWND view) {
@@ -105,6 +114,7 @@ bool FlutterWindow::OnCreate() {
         flutter_controller_->engine()->GetRegistrarForPlugin("FileSelectorWindows"));
   } else {
     RegisterPlugins(flutter_controller_->engine());
+    RegisterRecordingPluginLifetime(flutter_controller_->engine());
   }
   RegisterOperitRuntimeChannel(flutter_controller_->engine(), GetHandle());
   if (!data_rescue_) {
@@ -115,6 +125,7 @@ bool FlutterWindow::OnCreate() {
     auto* flutter_view_controller =
         reinterpret_cast<flutter::FlutterViewController*>(controller);
     RegisterPlugins(flutter_view_controller->engine());
+    RegisterRecordingPluginLifetime(flutter_view_controller->engine());
     RegisterOperitRuntimeChannel(
         flutter_view_controller->engine(),
         flutter_view_controller->view()->GetNativeWindow());

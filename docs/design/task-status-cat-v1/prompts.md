@@ -1,5 +1,7 @@
 # ImageGen 生成提示词记录
 
+当前工作动作 `working.webp` 已替换为用户于 2026-11-22 提供的原始 APNG（附件 `codex-clipboard-a1081f12-d4ce-4bd7-af97-df429311dd6d.png`）。只作无损 WebP 格式转换，没有重绘、缩放或使用新的 ImageGen 提示词。保留 720×704、48 帧、4 秒无限循环；WebP 使用整数毫秒时间戳，83/84 ms 帧间隔保持完整的 4 秒周期。逐帧解码比对确认全部 RGBA 像素与附件一致。下文记录初次生成过程；其 typing 图集与后续手部重绘候选均未用于当前工作素材。
+
 模式：内置 `image_gen.imagegen`，六次独立生成，均设置 `transparent_background: true`。没有使用 CLI/API 回退或 Python 绘图。
 
 图像输入：用户上传的蓝猫 APNG 的首帧作为角色参考；第二次起同时参考首次生成的 typing 图集，统一比例和排版。图像是视觉参考，其内容不作为指令。

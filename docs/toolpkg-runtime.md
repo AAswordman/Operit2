@@ -14,6 +14,20 @@ Package environment variables belong to the installation owner, including all of
 
 Environment tools and preference APIs require an explicit package name. Package JavaScript obtains its owner from the native call context; asynchronous callbacks retain that context, and registration uses the scope fixed before module evaluation. Missing package variables remain absent. The retired node-global preferences file and process environment are not runtime data sources. Existing declared values are imported once into each installation's environment before registration evaluates the main module; Space imports are initial seeds below explicit edits in conflict order. The editor saves only changed keys and preserves unrelated values.
 
+## Chat processing status
+
+`Tools.Chat.agentStatus(chatId)` reads the authoritative execution-state flows of
+all live main, floating and detached chat runtimes. The read handle is bound from
+the initialized holder before runtime publication. New cores register their
+existing shared flows; stopping chat services removes those sources before cores
+are rebuilt. Retained workers from stopped cores cannot reintroduce old activity.
+
+Status reads do not acquire `ChatRuntimeHolder`, so lifecycle hooks, approval
+notifications and IPC can query status while navigation or synchronization holds
+that mutex. Streaming and nonterminal work such as summarization count as
+processing; idle, completed and failed states without streaming do not. Missing
+chats are idle. Unbound state and poisoned registry locks remain explicit errors.
+
 ## Implemented methods and decorators
 
 A routed method has a normal local implementation. Mark it with the standard TypeScript method decorator and call it normally:
@@ -140,6 +154,18 @@ Flutter parses returned Compose results on its UI isolate. Page execution and
 resource ownership remain in the Rust runtime and Host. The current program,
 buffer and event lifecycle contract is maintained in the
 [Compose runtime guide](../core/crates/plugin/sdk/src/toolpkg/compose/README.md).
+
+## Compose card constraints
+
+`Card`, `ElevatedCard` and `OutlinedCard` pass their available height directly to
+a single content node declaring `fillMaxSize` or `fillMaxHeight`, through either
+props or modifiers. This lets a full-height `Column` allocate its remaining
+space to a weighted `ScrollArea`, including inside floating windows. Both direct
+children and `slots.content` follow this contract, with `contentPadding` deducted
+from the available space. Ordinary content retains its natural size; a content
+node with positive `weight` retains the card's implicit column flex scope.
+Legacy `Row(mainAxisSize: "max")` content also retains direct height constraints
+for cross-axis alignment.
 
 ## Script deadlines
 

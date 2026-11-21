@@ -10,6 +10,8 @@ Vendored from desktop_multi_window 0.3.1 in the local pub cache. Upstream Apache
 
 - Keep hidden-at-launch macOS windows hidden until their content is prepared.
 
+- Keep Windows child-engine attachment from taking keyboard focus while the window is hidden. Forward activation to Flutter content only when the window allows activation, so nonfocusable floating surfaces cannot trigger application foreground/background loops.
+
 - Add a transparent configuration hint for GTK, selecting RGBA visuals for the native window and Flutter view before realization.
 
 - Start the macOS child engine explicitly when hidden at launch, after channel registration. Flutter normally starts Dart from `viewWillAppear`; waiting for Dart readiness before ever displaying a window otherwise deadlocks.

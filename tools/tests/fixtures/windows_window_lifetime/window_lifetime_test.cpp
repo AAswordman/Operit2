@@ -74,15 +74,28 @@ int main() {
   DesktopMultiWindowSetWindowDestroyedCallback(OnUnregister);
   flutter::FlutterViewController::on_destroy = OnDestroyed;
 
-  const auto first = OpenWindow();
   const auto outside = CreateWindowW(L"STATIC", L"", 0, 0, 0, 1, 1,
                                      HWND_MESSAGE, nullptr, nullptr, nullptr);
   Require(outside != nullptr, "Unable to create an external focus target");
   SetFocus(outside);
   Require(GetFocus() == outside, "Unable to focus the external target");
+  const auto first = OpenWindow();
+  const auto first_window = child_windows.back();
+  Require(!IsWindowVisible(first_window), "Hidden-at-launch window became visible");
+  Require(GetFocus() == outside, "Hidden secondary window stole focus during creation");
   SendMessage(child_windows.back(), WM_ACTIVATE, WA_INACTIVE,
               reinterpret_cast<LPARAM>(outside));
   Require(GetFocus() == outside, "Inactive secondary window stole focus");
+  const auto style = GetWindowLongPtr(first_window, GWL_EXSTYLE);
+  SetWindowLongPtr(first_window, GWL_EXSTYLE, style | WS_EX_NOACTIVATE);
+  ShowWindow(first_window, SW_SHOWNOACTIVATE);
+  Require(GetFocus() == outside, "Nonfocusable secondary window stole focus when shown");
+  SendMessage(first_window, WM_ACTIVATE, WA_ACTIVE, 0);
+  Require(GetFocus() == outside, "Nonfocusable secondary window focused its content");
+  SetWindowLongPtr(first_window, GWL_EXSTYLE, style);
+  SendMessage(first_window, WM_ACTIVATE, WA_ACTIVE, 0);
+  Require(GetAncestor(GetFocus(), GA_ROOT) == first_window,
+          "Focusable secondary window did not focus its content on activation");
   DestroyWindow(outside);
   DestroyWindow(child_windows.back());
   Require(manager->GetWindow(first) == nullptr, "Closed window remains registered");

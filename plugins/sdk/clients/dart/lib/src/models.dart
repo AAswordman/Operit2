@@ -771,6 +771,7 @@ class ToolPkgContainerRuntime {
     required this.chatResponseHooks,
     required this.hostEventHooks,
     required this.toolLifecycleHooks,
+    required this.toolPermissionHooks,
     required this.promptInputHooks,
     required this.promptHistoryHooks,
     required this.promptEstimateHistoryHooks,
@@ -830,6 +831,7 @@ class ToolPkgContainerRuntime {
     chatResponseHooks: (value['chatResponseHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     hostEventHooks: (value['hostEventHooks'] as List<Object?>).map((item) => ToolPkgHostEventHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     toolLifecycleHooks: (value['toolLifecycleHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
+    toolPermissionHooks: (value['toolPermissionHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     promptInputHooks: (value['promptInputHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     promptHistoryHooks: (value['promptHistoryHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     promptEstimateHistoryHooks: (value['promptEstimateHistoryHooks'] as List<Object?>).map((item) => ToolPkgFunctionHookRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
@@ -889,6 +891,7 @@ class ToolPkgContainerRuntime {
     'chatResponseHooks': chatResponseHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'hostEventHooks': hostEventHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'toolLifecycleHooks': toolLifecycleHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
+    'toolPermissionHooks': toolPermissionHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'promptInputHooks': promptInputHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'promptHistoryHooks': promptHistoryHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
     'promptEstimateHistoryHooks': promptEstimateHistoryHooks.map((item) => item.toMessagePackValue()).toList(growable: false),
@@ -946,6 +949,7 @@ class ToolPkgContainerRuntime {
   final List<ToolPkgFunctionHookRuntime> chatResponseHooks;
   final List<ToolPkgHostEventHookRuntime> hostEventHooks;
   final List<ToolPkgFunctionHookRuntime> toolLifecycleHooks;
+  final List<ToolPkgFunctionHookRuntime> toolPermissionHooks;
   final List<ToolPkgFunctionHookRuntime> promptInputHooks;
   final List<ToolPkgFunctionHookRuntime> promptHistoryHooks;
   final List<ToolPkgFunctionHookRuntime> promptEstimateHistoryHooks;

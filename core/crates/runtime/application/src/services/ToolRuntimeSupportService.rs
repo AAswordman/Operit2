@@ -37,7 +37,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::services::core::ChatTurnTransport::{
     AdmittedChatTurn, AdmittedChatTurnWork, ChatTurnTransport, SharedChatTurnTransport,
 };
-use crate::core::chat::ChatRuntimeHolder::ChatRuntimeHolder;
+use crate::core::chat::ChatRuntimeHolder::{ChatRuntimeHolder, ChatRuntimeProcessingState};
 use crate::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use crate::data::preferences::EnvPreferences::EnvPreferences;
 use crate::data::preferences::SkillVisibilityPreferences::SkillVisibilityPreferences;
@@ -62,6 +62,7 @@ impl ToolRuntimeSupportService {
             preparedChatDelivery: Default::default(),
             chatTurnTransport: Arc::new(std::sync::Mutex::new(ChatTurnTransport::default())),
             runtimeBindings: OnceLock::new(),
+            chatProcessingState: OnceLock::new(),
             chatHistoryManager: OnceLock::new(),
             coreNodeToolRuntime: RwLock::new(None),
             deviceToolRuntime: OnceLock::new(),
@@ -83,6 +84,7 @@ pub struct RuntimeToolSupport {
     chatRuntimeHolder: Arc<AsyncMutex<ChatRuntimeHolder>>,
     chatTurnTransport: SharedChatTurnTransport,
     runtimeBindings: OnceLock<RuntimeToolBindings>,
+    chatProcessingState: OnceLock<ChatRuntimeProcessingState>,
     chatHistoryManager: OnceLock<operit_store::repository::ChatHistoryManager::ChatHistoryManager>,
     coreNodeToolRuntime: RwLock<Option<Arc<dyn CoreNodeToolRuntime>>>,
     deviceToolRuntime: OnceLock<Arc<dyn operit_tools::tools::DeviceTools::DeviceToolRuntime>>,
@@ -120,6 +122,17 @@ impl RuntimeToolSupport {
                 providerRuntimeContext,
             })
             .map_err(|_| "Tool runtime services are already bound".to_string())
+    }
+
+    /// Captures live execution-flow readers before publishing the initialized chat runtime.
+    #[allow(non_snake_case)]
+    pub(crate) fn bindChatProcessingState(
+        &self,
+        state: ChatRuntimeProcessingState,
+    ) -> Result<(), String> {
+        self.chatProcessingState
+            .set(state)
+            .map_err(|_| "Tool runtime chat processing state is already bound".to_string())
     }
 
     /// Captures the canonical manager shared with this runtime's chat delegates and execution leases.
@@ -718,23 +731,17 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
             .chatRuntimeHolder
             .try_lock()
             .map_err(|_| "Chat runtime holder is busy".to_string())?;
-        holder.cores.clear();
-        holder.activeConversationCount = 0;
-        holder.currentSessionToolCount = 0;
+        holder.clearCores();
         Ok(())
     }
 
     /// Returns whether the requested chat is currently processing.
     #[allow(non_snake_case)]
     fn isChatProcessing(&self, chatId: &str) -> Result<bool, String> {
-        let holder = self
-            .chatRuntimeHolder
-            .try_lock()
-            .map_err(|_| "Chat runtime holder is busy".to_string())?;
-        Ok(holder
-            .cores
-            .values()
-            .any(|core| core.messageProcessingDelegate.isChatProcessing(chatId)))
+        self.chatProcessingState
+            .get()
+            .ok_or_else(|| "Tool runtime chat processing state is not bound".to_string())?
+            .isChatProcessing(chatId)
     }
 
     /// Switches the main chat only after its registered configuration owner has resolved the actual binding.
@@ -1428,3 +1435,7 @@ fn runtimeEditOperationToProvider(
         newContent: operation.newContent.clone(),
     }
 }
+
+#[cfg(test)]
+#[path = "ToolRuntimeSupportService.tests.rs"]
+mod tests;

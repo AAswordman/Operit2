@@ -643,6 +643,7 @@ export interface ToolPkgContainerRuntime {
   readonly chatResponseHooks: Array<ToolPkgFunctionHookRuntime>;
   readonly hostEventHooks: Array<ToolPkgHostEventHookRuntime>;
   readonly toolLifecycleHooks: Array<ToolPkgFunctionHookRuntime>;
+  readonly toolPermissionHooks: Array<ToolPkgFunctionHookRuntime>;
   readonly promptInputHooks: Array<ToolPkgFunctionHookRuntime>;
   readonly promptHistoryHooks: Array<ToolPkgFunctionHookRuntime>;
   readonly promptEstimateHistoryHooks: Array<ToolPkgFunctionHookRuntime>;
@@ -703,6 +704,7 @@ export function decodeToolPkgContainerRuntime(value: unknown): ToolPkgContainerR
     chatResponseHooks: (input['chatResponseHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     hostEventHooks: (input['hostEventHooks'] as unknown[]).map((item) => decodeToolPkgHostEventHookRuntime(item)) as Array<ToolPkgHostEventHookRuntime>,
     toolLifecycleHooks: (input['toolLifecycleHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
+    toolPermissionHooks: (input['toolPermissionHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     promptInputHooks: (input['promptInputHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     promptHistoryHooks: (input['promptHistoryHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
     promptEstimateHistoryHooks: (input['promptEstimateHistoryHooks'] as unknown[]).map((item) => decodeToolPkgFunctionHookRuntime(item)) as Array<ToolPkgFunctionHookRuntime>,
@@ -764,6 +766,7 @@ export function encodeToolPkgContainerRuntime(value: ToolPkgContainerRuntime): R
     'chatResponseHooks': value.chatResponseHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'hostEventHooks': value.hostEventHooks.map(item => encodeToolPkgHostEventHookRuntime(item)),
     'toolLifecycleHooks': value.toolLifecycleHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
+    'toolPermissionHooks': value.toolPermissionHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'promptInputHooks': value.promptInputHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'promptHistoryHooks': value.promptHistoryHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),
     'promptEstimateHistoryHooks': value.promptEstimateHistoryHooks.map(item => encodeToolPkgFunctionHookRuntime(item)),

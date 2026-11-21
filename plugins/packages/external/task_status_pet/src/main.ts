@@ -74,10 +74,11 @@ export function onVisibility(event: ToolPkg.HostEventBroadcastHookEvent<"app.lif
 
 ToolPkg.ipc.on<Request, Status>(CHANNEL, receive);
 
-/** Registers one optional cross-platform pet, its controls and typed event subscriptions. */
+/** Registers settings as the standalone entry, plus floating routes and typed hooks. */
 export function registerToolPkg(): boolean {
   for (const [id, route, screen, title] of [
-    ["pet", PET_ROUTE, petScreen, "任务状态猫"], ["details", DETAILS_ROUTE, detailsScreen, "任务状态"], ["settings", SETTINGS_ROUTE, settingsScreen, "任务状态猫"],
+    ["settings", SETTINGS_ROUTE, settingsScreen, "任务状态猫设置"],
+    ["pet", PET_ROUTE, petScreen, "任务猫悬浮窗"], ["details", DETAILS_ROUTE, detailsScreen, "任务猫详情"],
   ] as const) ToolPkg.registerUiRoute({ id, route, screen, runtime: "compose_dsl", title: { zh: title, en: "Task Status Cat" } });
   ToolPkg.registerNavigationEntry({ id: "settings", route: SETTINGS_ROUTE, surface: "toolbox", icon: "Pets", title: { zh: "任务状态猫", en: "Task Status Cat" } });
   ToolPkg.registerChatRuntimeHook({ id: "tasks", function: onRuntime });

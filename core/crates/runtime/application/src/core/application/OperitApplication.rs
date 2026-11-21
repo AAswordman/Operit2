@@ -211,6 +211,9 @@ impl OperitApplication {
             providerRuntimeContext.clone(),
         );
         runtimeToolSupport
+            .bindChatProcessingState(initializedChatRuntimeHolder.processingState())
+            .expect("tool runtime must bind live chat processing state exactly once");
+        runtimeToolSupport
             .bindChatHistoryManager(
                 initializedChatRuntimeHolder
                     .chatHistoryManager()

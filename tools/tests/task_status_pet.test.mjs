@@ -2,6 +2,10 @@ import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync, readdirSync } from 'node:fs';
 import test from 'node:test';
+import vm from 'node:vm';
+import { compileComposeModule } from '../../plugins/tools/compile_compose_module.mjs';
+import { composeContextScript, wrapComposeScript } from '../runtime/compose_scripts.mjs';
+import { composeStreamFixture } from './support/compose_stream_fixture.mjs';
 
 const require = createRequire(import.meta.url);
 const { PetService } = require('../../plugins/packages/external/task_status_pet/dist/service.js');
@@ -42,6 +46,73 @@ function runtime(chatId, state, activeChatIds = []) {
 
 /** Supplies an exact pending request identity. */
 function approval(id = 'r1') { return { chatId: 'a', requestId: id, description: 'Write a file', requestedAtMillis: 1, tool: { name: 'file_write', parameters: [] } }; }
+
+/** Runs the packaged settings screen and serialized callbacks against its real state owner. */
+function settingsUi(owner) {
+  const requests = [];
+  const context = vm.createContext({ console, module: { exports: {} },
+    ToolPkg: { ipc: { async call(channel, request, options) {
+      assert.equal(channel, 'task-status-pet');
+      assert.equal(options.targetRuntime, 'main');
+      requests.push(request.kind);
+      return owner.service.request(request);
+    } } },
+    require(name) {
+      assert.equal(name, './model');
+      return require('../../plugins/packages/external/task_status_pet/dist/model.js');
+    },
+  });
+  context.exports = context.module.exports;
+  vm.runInContext(composeContextScript(), context);
+  const source = readFileSync(new URL('../../plugins/packages/external/task_status_pet/dist/ui.js', import.meta.url), 'utf8');
+  vm.runInContext(wrapComposeScript(compileComposeModule(source, 'task-status-pet-ui') +
+    '\nObject.defineProperty(module.exports, "__operit_compose_entry_export", {value: "settingsScreen"});'), context);
+  const stream = composeStreamFixture(context);
+  stream.adapt();
+  return { requests, stream,
+    render() { return context.__operit_render_compose_dsl({ executionContextKey: 'task-cat-settings' }); },
+    action(node, property = 'onClick') { return context.__operit_dispatch_compose_dsl_action({ actionId: node.props[property].__actionId }); },
+  };
+}
+
+/** Enumerates the actual committed UI so assertions use current callback addresses. */
+function uiNodes(node) { return [node, ...node.children.flatMap(uiNodes)]; }
+
+test('settings opens a controls page and show/hide keep the page mounted', async () => {
+  const owner = fixture();
+  const ui = settingsUi(owner);
+  let result = ui.render();
+  assert.equal(result.tree.type, 'LazyColumn');
+  assert.equal(uiNodes(result.tree).find(node => node.props.text === '显示任务猫').props.enabled, false);
+  result = await ui.action(result.tree, 'onLoad');
+  assert.equal(uiNodes(result.tree).filter(node => node.type === 'Switch').length, 3);
+  assert.equal(owner.latest(), null);
+  result = await ui.action(uiNodes(result.tree).find(node => node.props.text === '显示任务猫'));
+  assert.equal(result.tree.type, 'LazyColumn');
+  assert.equal(owner.latest().state.sprite, 'vfs:/cat/idle.webp');
+  assert.ok(uiNodes(result.tree).some(node => node.props.text === '任务猫已显示'));
+  result = await ui.action(uiNodes(result.tree).find(node => node.props.text === '隐藏'));
+  assert.equal(result.tree.type, 'LazyColumn');
+  assert.equal(owner.latest(), null);
+  assert.deepEqual(ui.requests, ['status', 'show', 'hide']);
+  assert.deepEqual(ui.stream.errors, []);
+});
+
+test('settings reports a failed show and a later click can complete normally', async () => {
+  const owner = fixture();
+  const ui = settingsUi(owner);
+  let result = await ui.action(ui.render().tree, 'onLoad');
+  owner.resourceFailure(true);
+  result = await ui.action(uiNodes(result.tree).find(node => node.props.text === '显示任务猫'));
+  assert.equal(result.tree.type, 'LazyColumn');
+  assert.ok(uiNodes(result.tree).some(node => /Resource decode failed/.test(node.props.text)));
+  assert.equal(uiNodes(result.tree).find(node => node.props.text === '显示任务猫').props.enabled, true);
+  owner.resourceFailure(false);
+  result = await ui.action(uiNodes(result.tree).find(node => node.props.text === '显示任务猫'));
+  assert.equal(owner.latest().state.sprite, 'vfs:/cat/idle.webp');
+  assert.ok(uiNodes(result.tree).some(node => node.props.text === '任务猫已显示'));
+  assert.deepEqual(ui.stream.errors, []);
+});
 
 test('background opens one host-dragged window and foreground closes all surfaces', async () => {
   const f = fixture();
@@ -164,4 +235,43 @@ test('plugin ships only six animated WebP assets with no atlas or poster copies'
     assert.equal(bytes.toString('ascii', 8, 12), 'WEBP');
     assert.ok(bytes.indexOf(Buffer.from('ANIM')) > 0);
   }
+});
+
+test('late notifications after termination cannot reopen the cat or details', async () => {
+  const f = fixture({ backgroundOnly: false });
+  await f.service.request({ kind: 'details' });
+  await f.service.lifecycle('application_on_terminate');
+  await f.service.runtime(runtime('a', 'receiving', ['a']));
+  assert.equal(f.latest(), null);
+  assert.equal(f.calls.filter(call => call.id === 'details').at(-1).content, null);
+});
+
+test('registration installs durable hooks and routes without reading chats or opening windows', () => {
+  const before = globalThis.ToolPkg;
+  const routes = [], navigation = [], lifecycle = [], broadcasts = [], ipc = [];
+  let runtimeHook, permissionHook;
+  globalThis.ToolPkg = {
+    ipc: { on(channel, handler) { ipc.push({ channel, handler }); } },
+    registerUiRoute(route) { routes.push(route); },
+    registerNavigationEntry(entry) { navigation.push(entry); },
+    registerChatRuntimeHook(hook) { runtimeHook = hook; },
+    registerToolPermissionHook(hook) { permissionHook = hook; },
+    registerAppLifecycleHook(hook) { lifecycle.push(hook); },
+    registerHostEventHook(hook) { broadcasts.push(hook); },
+  };
+  try {
+    const plugin = require('../../plugins/packages/external/task_status_pet/dist/main.js');
+    assert.equal(plugin.registerToolPkg(), true);
+    assert.equal(routes.length, 3);
+    assert.equal(routes[0].id, 'settings');
+    assert.equal(routes[0].screen, require('../../plugins/packages/external/task_status_pet/dist/ui.js').settingsScreen);
+    assert.equal(navigation.length, 1);
+    assert.equal(navigation[0].surface, 'toolbox');
+    assert.equal(navigation[0].route, routes[0].route);
+    assert.equal(ipc.length, 1);
+    assert.equal(runtimeHook.function, plugin.onRuntime);
+    assert.equal(permissionHook.function, plugin.onPermissions);
+    assert.equal(lifecycle.length, 4);
+    assert.equal(broadcasts.length, 4);
+  } finally { globalThis.ToolPkg = before; }
 });

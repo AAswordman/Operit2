@@ -145,6 +145,8 @@ dev_dependencies:
   share_plus_platform_interface: ^7.2.0
 
 dependency_overrides:
+  record_windows:
+    path: ../thirdparty/record_windows
   desktop_multi_window:
     path: ../thirdparty/desktop_multi_window
   webview_all_linux:

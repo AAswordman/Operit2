@@ -406,6 +406,8 @@ pub struct SdkToolPkgContainerRuntime {
     pub hostEventHooks: Vec<SdkToolPkgHostEventHookRuntime>,
     #[serde(rename = "toolLifecycleHooks")]
     pub toolLifecycleHooks: Vec<SdkToolPkgFunctionHookRuntime>,
+    #[serde(rename = "toolPermissionHooks")]
+    pub toolPermissionHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "promptInputHooks")]
     pub promptInputHooks: Vec<SdkToolPkgFunctionHookRuntime>,
     #[serde(rename = "promptHistoryHooks")]

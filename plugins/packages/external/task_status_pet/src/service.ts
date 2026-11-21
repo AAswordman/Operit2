@@ -25,10 +25,12 @@ export class PetService {
   private completed: string | null = null;
   private finish: (() => void) | null = null;
   private ready = false;
+  private terminated = false;
   private sequence = 0;
   private visual = "";
   private presentation = "closed";
   private tail: Promise<unknown> = Promise.resolve();
+  /** Binds the host port without performing storage or window work at construction. */
   constructor(private readonly port: Port) {}
 
   /** Serializes independent hooks and IPC requests without losing caller errors. */
@@ -57,14 +59,14 @@ export class PetService {
     const view = this.view();
     const visual = `${view.mood}:${view.chatId}`;
     if (visual !== this.visual) { this.visual = visual; this.sequence++; view.sequence = this.sequence; }
-    const visible = this.settings.enabled && !this.dismissed && (this.manual || !this.settings.backgroundOnly || this.background)
+    const visible = !this.terminated && this.settings.enabled && !this.dismissed && (this.manual || !this.settings.backgroundOnly || this.background)
       && (view.mood !== "idle" || this.settings.keepIdle || this.manual);
     this.presentation = await this.port.set("cat", visible ? {
       route: PET_ROUTE,
       state: { view, sprite: await this.port.resource(view.mood) },
       options: { width: this.settings.width, height: this.settings.width + 32, alwaysOnTop: true, focusable: false, draggable: true },
     } : null);
-    if (this.details && this.settings.enabled && !this.dismissed) {
+    if (this.details && !this.terminated && this.settings.enabled && !this.dismissed) {
       await this.port.set("details", { route: DETAILS_ROUTE, state: { view }, options: { width: 360, height: 460, alwaysOnTop: true, focusable: false, draggable: true } });
     } else { this.details = false; await this.port.set("details", null); }
   }
@@ -100,13 +102,16 @@ export class PetService {
   lifecycle(event: ToolPkg.AppLifecycleEvent): Promise<void> {
     return this.enqueue(async () => {
       if (event === "application_on_terminate") {
+        this.terminated = true; this.details = false;
         this.finish?.(); this.finish = null;
         await this.port.set("cat", null); await this.port.set("details", null);
         return;
       }
+      if (event === "application_on_create") this.terminated = false;
       await this.initialize();
-      this.background = event === "application_on_background";
-      this.manual = false; this.dismissed = false;
+      const background = event === "application_on_background";
+      if (background !== this.background) { this.manual = false; this.dismissed = false; }
+      this.background = background;
       if (!this.background) this.details = false;
       await this.render();
     });
