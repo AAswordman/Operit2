@@ -9,8 +9,13 @@ import 'userscripts/WorkspaceUserscriptRuntime.dart';
 import 'userscripts/WorkspaceUserscriptStore.dart';
 
 class WorkspaceBrowserStores {
-  WorkspaceBrowserStores()
-    : _clients = const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge()) {
+  /// Binds browser stores to the same Core as their owning browser or viewer.
+  WorkspaceBrowserStores({
+    bool observeDownloads = false,
+    GeneratedCoreProxyClients clients = const GeneratedCoreProxyClients(
+      ProxyCoreRuntimeBridge(),
+    ),
+  }) : _clients = clients {
     final runtimeStorage = _clients.repositoryRuntimeStorageRepository;
     userscripts = WorkspaceUserscriptStore(
       runtimeStorage: runtimeStorage,
@@ -27,7 +32,9 @@ class WorkspaceBrowserStores {
     downloads = WorkspaceBrowserDownloadStore(
       runtimeStorage: runtimeStorage,
       storagePath: runtimeStorage.webSessionBrowserDownloadsPath,
-      downloadDirectoryPath: runtimeStorage.webSessionBrowserDownloadFilesDirPath,
+      downloadDirectoryPath:
+          runtimeStorage.webSessionBrowserDownloadFilesDirPath,
+      observer: observeDownloads,
     );
     userscriptRuntime = WorkspaceUserscriptRuntime(store: userscripts);
   }

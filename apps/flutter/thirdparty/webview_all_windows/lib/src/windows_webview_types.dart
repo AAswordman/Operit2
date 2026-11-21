@@ -10,6 +10,8 @@ enum WebviewDownloadEventKind {
   downloadStarted,
   downloadCompleted,
   downloadProgress,
+  downloadFailed,
+  downloadCancelled,
 }
 
 /// Pointer Event kind

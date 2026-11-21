@@ -286,6 +286,12 @@ class WindowsWebViewController extends PlatformWebViewController {
 
   Future<void> _initialize() async {
     await _webviewController.initialize();
+    _webviewController.setExternalNavigationRequestedDelegate((url) async {
+      final callback = _currentNavigationDelegate?._onNavigationRequest;
+      if (callback != null) {
+        await callback(NavigationRequest(url: url, isMainFrame: true));
+      }
+    });
     _webviewController.setJavaScriptDialogRequestedDelegate(
       _handleJavaScriptDialogRequested,
     );
@@ -317,7 +323,53 @@ class WindowsWebViewController extends PlatformWebViewController {
       _webviewController.onLoadError.listen(_handleLoadError),
       _webviewController.httpResponseError.listen(_handleHttpResponseError),
       _webviewController.webMessage.listen(_handleWebMessage),
+      _webviewController.onDownloadEvent.listen(_handleDownload),
     ]);
+  }
+
+  /// Imports the original WebView2 response, including POST and blob downloads.
+  void _handleDownload(native_webview.WebviewDownloadEvent event) {
+    final state = switch (event.kind) {
+      native_types.WebviewDownloadEventKind.downloadStarted ||
+      native_types.WebviewDownloadEventKind.downloadProgress =>
+        WebViewDownloadState.running,
+      native_types.WebviewDownloadEventKind.downloadCompleted =>
+        WebViewDownloadState.completed,
+      native_types.WebviewDownloadEventKind.downloadFailed =>
+        WebViewDownloadState.failed,
+      native_types.WebviewDownloadEventKind.downloadCancelled =>
+        WebViewDownloadState.cancelled,
+    };
+    final file = File(event.resultFilePath);
+    reportDownloadEvent(
+      WebViewDownloadEvent(
+        id: event.resultFilePath,
+        url: event.url,
+        fileName: path.basename(event.resultFilePath),
+        state: state,
+        receivedBytes: event.bytesReceived,
+        totalBytes: event.totalBytesToReceive > 0
+            ? event.totalBytesToReceive
+            : null,
+        error: event.error,
+        cancel: () => _webviewController.cancelDownload(event.resultFilePath),
+        readBytes: state == WebViewDownloadState.completed
+            ? () async {
+                try {
+                  return await file.readAsBytes();
+                } finally {
+                  await _webviewController.releaseDownload(
+                    event.resultFilePath,
+                  );
+                }
+              }
+            : null,
+      ),
+    );
+    if (state == WebViewDownloadState.failed ||
+        state == WebViewDownloadState.cancelled) {
+      unawaited(_webviewController.releaseDownload(event.resultFilePath));
+    }
   }
 
   /// Reuses the controller's initialization future so rebuilds keep the surface mounted.

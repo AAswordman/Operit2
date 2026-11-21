@@ -801,6 +801,19 @@ LinuxWebView *create_linux_webview(WebviewAllLinuxPlugin *self) {
   webview->horizontal_scrollbar_enabled = TRUE;
   webview->zoom_enabled = TRUE;
   webview->download_policy = new DownloadPolicy(webview->web_view);
+  webview->download_policy->SetCallback([webview](const DownloadPolicy::Update &update) {
+    FlValue *event = fl_value_new_map();
+    fl_value_set_string_take(event, "type", fl_value_new_string("download"));
+    fl_value_set_string_take(event, "id", fl_value_new_string(update.id.c_str()));
+    fl_value_set_string_take(event, "url", fl_value_new_string(update.url.c_str()));
+    fl_value_set_string_take(event, "fileName", fl_value_new_string(update.filename.c_str()));
+    fl_value_set_string_take(event, "path", fl_value_new_string(update.path.c_str()));
+    fl_value_set_string_take(event, "state", fl_value_new_string(update.state.c_str()));
+    fl_value_set_string_take(event, "error", fl_value_new_string(update.error.c_str()));
+    fl_value_set_string_take(event, "receivedBytes", fl_value_new_int(update.received));
+    fl_value_set_string_take(event, "totalBytes", fl_value_new_int(update.total));
+    send_event(webview, event);
+  });
   webview->media_playback_requires_user_gesture = -1;
   webview->frame_sequence = 0;
   webview->over_scroll_behavior = "";

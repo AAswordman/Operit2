@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:webview_platform_interface/webview_platform_interface.dart';
 
 import 'ohos_webview_proxy.dart';
+import 'ohos_download_bridge.dart';
 import 'ohos_webview_native.dart' as ohos_webview;
 import 'channels/api_implementations.dart';
 import 'channels/constants.dart';
@@ -254,6 +255,18 @@ class OhosWebViewController extends PlatformWebViewController {
 
   OhosWebViewControllerCreationParams get _ohosWebViewParams =>
       params as OhosWebViewControllerCreationParams;
+
+  /// Awaits the attached Ability's application handoff and preserves system errors.
+  @override
+  Future<bool> openExternalApplication(String url) async {
+    final opened = await const MethodChannel(
+      'operit/webview_external_navigation',
+    ).invokeMethod<bool>('open', {'url': url});
+    if (opened == null) {
+      throw StateError('ArkWeb did not return an application launch result');
+    }
+    return opened;
+  }
 
   /// The native [ohos_webview.WebView] being controlled.
   late final ohos_webview.WebView _webView = _ohosWebViewParams.ohosWebViewProxy
@@ -595,9 +608,21 @@ class OhosWebViewController extends PlatformWebViewController {
     return webViewProxy.setWebContentsDebuggingEnabled(enabled);
   }
 
-  /// Identifier used to retrieve the underlying native `WebView`.
-  ///
-  /// This is typically used by other plugins to retrieve the native `WebView`
+  /// Configures native ArkWeb transfers before the first page navigation.
+  @override
+  Future<void> setOnDownloadEvent(
+    void Function(WebViewDownloadEvent)? callback,
+  ) async {
+    await super.setOnDownloadEvent(callback);
+    if (callback != null)
+      await OhosDownloadBridge.attach(webViewIdentifier, callback);
+  }
+
+  /// Cancels native transfers when their owning browser view closes.
+  @override
+  Future<void> dispose() => OhosDownloadBridge.detach(webViewIdentifier);
+
+  /// Identifier used by other plugins to retrieve the native `WebView`
   /// from an `InstanceManager`.
   int get webViewIdentifier =>
       // ignore: invalid_use_of_visible_for_testing_member
@@ -2146,10 +2171,25 @@ class OhosNavigationDelegate extends PlatformNavigationDelegate {
                 String contentDisposition,
                 String mimetype,
                 int contentLength,
-              ) {
-                if (weakThis.target != null) {
-                  weakThis.target?._handleNavigation(url, isForMainFrame: true);
-                }
+              ) async {
+                final callback = weakThis.target?._onNavigationRequest;
+                if (callback == null) return;
+                final scheme = Uri.parse(url).scheme;
+                final cookie = scheme == 'http' || scheme == 'https'
+                    ? await ohos_webview.CookieManager.instance.getCookies(url)
+                    : '';
+                await callback(
+                  NavigationRequest(
+                    url: url,
+                    isMainFrame: true,
+                    isDownload: true,
+                    headers: <String, String>{
+                      'User-Agent': userAgent,
+                      if (cookie.isNotEmpty) 'Cookie': cookie,
+                    },
+                    contentDisposition: contentDisposition,
+                  ),
+                );
               },
         );
   }
@@ -2194,6 +2234,7 @@ class OhosNavigationDelegate extends PlatformNavigationDelegate {
   HttpAuthRequestCallback? _onHttpAuthRequest;
   SslAuthErrorCallback? _onSslAuthError;
 
+  /// Keeps document subframes in place while exposing application links to the owner.
   void _handleNavigation(
     String url, {
     required bool isForMainFrame,
@@ -2202,7 +2243,22 @@ class OhosNavigationDelegate extends PlatformNavigationDelegate {
     final LoadRequestCallback? onLoadRequest = _onLoadRequest;
     final NavigationRequestCallback? onNavigationRequest = _onNavigationRequest;
 
-    if (onNavigationRequest == null || onLoadRequest == null) {
+    final uri = Uri.parse(url);
+    final applicationLink =
+        uri.hasScheme &&
+        !const {
+          'http',
+          'https',
+          'file',
+          'content',
+          'about',
+          'data',
+          'blob',
+          'javascript',
+        }.contains(uri.scheme);
+    if ((!isForMainFrame && !applicationLink) ||
+        onNavigationRequest == null ||
+        onLoadRequest == null) {
       return;
     }
 

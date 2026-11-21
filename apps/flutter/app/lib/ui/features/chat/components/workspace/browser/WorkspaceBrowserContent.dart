@@ -6,6 +6,8 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../../../../../core/host/AppToastController.dart';
+import '../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../common/layout/ApplicationZoom.dart';
 import '../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../theme/OperitGlassSurface.dart';
@@ -15,10 +17,10 @@ import 'chrome/WorkspaceBrowserMenuSheet.dart';
 import 'chrome/WorkspaceBrowserSiteDataSheet.dart';
 import 'chrome/WorkspaceBrowserUrlBar.dart';
 import 'downloads/WorkspaceBrowserDownloadSheet.dart';
+import 'downloads/WorkspaceBrowserDownloadStore.dart';
 import 'history/WorkspaceBrowserHistorySheet.dart';
 import 'permissions/WorkspaceBrowserPermissionSheet.dart';
 import 'surface/WorkspaceBrowserSurface.dart';
-import 'tabs/WorkspaceBrowserTabModels.dart';
 import 'userscripts/WorkspaceUserscriptSheet.dart';
 
 class WorkspaceBrowserContent extends StatefulWidget {
@@ -213,6 +215,8 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                         onNewTab: () => widget.onOpenBrowserTab(),
                         menuButtonKey: _menuButtonKey,
                       ),
+                      if (_sessionStore.stores.downloads.items.isNotEmpty)
+                        _buildDownloadStatus(),
                       Expanded(child: _buildBrowserSurface(tab)),
                     ],
                   ),
@@ -222,6 +226,47 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
           },
         );
       },
+    );
+  }
+
+  /// Keeps download progress and completion reachable without opening the menu.
+  Widget _buildDownloadStatus() {
+    final l10n = AppLocalizations.of(context)!;
+    final items = _sessionStore.stores.downloads.items;
+    final active = items.where(
+      (item) =>
+          item.state == WorkspaceBrowserDownloadState.running ||
+          item.state == WorkspaceBrowserDownloadState.pending,
+    );
+    final item = active.isEmpty ? items.first : active.first;
+    return Material(
+      color: Theme.of(context).colorScheme.surfaceContainerLow,
+      child: InkWell(
+        onTap: _openDownloadSheet,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: <Widget>[
+              const Icon(Icons.download_outlined, size: 20),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '${item.fileName} · ${workspaceDownloadStatus(l10n, item)}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                l10n.downloads,
+                style: Theme.of(context).textTheme.labelMedium,
+              ),
+              const Icon(Icons.chevron_right, size: 20),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
@@ -330,6 +375,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
                       child: ConstrainedBox(
                         constraints: BoxConstraints(maxHeight: maxHeight),
                         child: WorkspaceBrowserMenuSheet(
+                          onOpenExternal: _openCurrentExternally,
                           onHistory: () {
                             _dismissMenuPopup();
                             _openHistorySheet();
@@ -391,6 +437,23 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
     _dismissZoomPopup();
     _menuPopupEntry?.remove();
     _menuPopupEntry = null;
+  }
+
+  /// Reports a failed owner-side application handoff on the viewing workspace.
+  Future<void> _openCurrentExternally() async {
+    _dismissMenuPopup();
+    try {
+      await _sessionStore.openCurrentInExternalApplication();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            AppLocalizations.of(context)!.browserExternalNavigationFailed,
+          ),
+        ),
+      );
+    }
   }
 
   static const List<double> _zoomFactors = <double>[
@@ -509,7 +572,11 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   }
 
   /// Positions a browser panel relative to its menu anchor inside the Overlay.
-  void _showPanelPopup(Widget child, {double preferredWidth = 320}) {
+  void _showPanelPopup(
+    Widget child, {
+    double preferredWidth = 320,
+    double preferredMaxHeight = 360,
+  }) {
     _dismissPanelPopup();
     final overlay = Overlay.of(context);
     final mediaQuery = MediaQuery.of(context);
@@ -529,7 +596,7 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
         : preferredWidth;
     final left = screenSize.width - rightPadding - popupWidth;
     final maxHeight = (screenSize.height - top - mediaQuery.padding.bottom - 16)
-        .clamp(160.0, 360.0)
+        .clamp(0.0, preferredMaxHeight)
         .toDouble();
     _panelPopupEntry = OverlayEntry(
       builder: (context) {
@@ -637,11 +704,33 @@ class _WorkspaceBrowserContentState extends State<WorkspaceBrowserContent> {
   }
 
   void _openDownloadSheet() {
+    _dismissMenuPopup();
     _showPanelPopup(
       WorkspaceBrowserDownloadSheet(
         store: _sessionStore.stores.downloads,
-        onOpenWorkspaceFile: widget.onOpenWorkspaceFile,
+        onOpenWorkspaceFile: (path) async {
+          await _saveDownloadToWorkspace(path);
+          await widget.onOpenWorkspaceFile(path);
+        },
+        onSaveToWorkspace: (path) async {
+          await _saveDownloadToWorkspace(path);
+          if (mounted) {
+            AppToastController.instance.show(
+              AppLocalizations.of(context)!.savedTo(path),
+            );
+          }
+        },
       ),
+      preferredWidth: 440,
+      preferredMaxHeight: 600,
+    );
+  }
+
+  /// Exports the owner file into the workspace explicitly chosen by this view.
+  Future<void> _saveDownloadToWorkspace(String path) {
+    return _sessionStore.stores.downloads.saveToWorkspace(
+      path,
+      widget.onWriteWorkspaceFileBytes,
     );
   }
 

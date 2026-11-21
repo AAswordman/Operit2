@@ -337,6 +337,33 @@ void main() {
   });
 
   group('AndroidWebViewController', () {
+    test(
+      'approved application links preserve Intent syntax and native results',
+      () async {
+        const channel = MethodChannel('operit/webview_external_navigation');
+        final messenger =
+            TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+        final calls = <MethodCall>[];
+        var result = true;
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          calls.add(call);
+          return result;
+        });
+        addTearDown(() => messenger.setMockMethodCallHandler(channel, null));
+        final controller = createControllerWithMocks();
+        const url =
+            'intent://scan/#Intent;scheme=zxing;package=com.example.scanner;end';
+        expect(await controller.openExternalApplication(url), isTrue);
+        expect(calls.single.method, 'open');
+        expect(calls.single.arguments, url);
+        result = false;
+        expect(
+          await controller.openExternalApplication('missing://app'),
+          isFalse,
+        );
+      },
+    );
+
     AndroidJavaScriptChannelParams
     createAndroidJavaScriptChannelParamsWithMocks({
       String? name,

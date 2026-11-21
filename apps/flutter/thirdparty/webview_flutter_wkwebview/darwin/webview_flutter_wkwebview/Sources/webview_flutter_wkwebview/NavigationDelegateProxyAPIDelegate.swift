@@ -14,6 +14,20 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
     self.registrar = registrar
   }
 
+  /// Retains the original response when WebKit converts a navigation to a download.
+  @available(iOS 14.5, macOS 11.3, *)
+  public func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse,
+                     didBecome download: WKDownload) {
+    registrar.downloads.start(download, webView: webView)
+  }
+
+  /// Accepts explicit HTML downloads, including browser-created blob files.
+  @available(iOS 14.5, macOS 11.3, *)
+  public func webView(_ webView: WKWebView, navigationAction: WKNavigationAction,
+                     didBecome download: WKDownload) {
+    registrar.downloads.start(download, webView: webView)
+  }
+
   public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
     registrar.dispatchOnMainThread { onFailure in
       self.api.didFinishNavigation(
@@ -83,6 +97,10 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationAction: WebKit.WKNavigationAction,
       decisionHandler: @escaping @MainActor (WebKit.WKNavigationActionPolicy) -> Void
     ) {
+      if #available(iOS 14.5, macOS 11.3, *), navigationAction.shouldPerformDownload {
+        decisionHandler(.download)
+        return
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationAction(
           pigeonInstance: self, webView: webView, navigationAction: navigationAction
@@ -120,6 +138,10 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction,
       decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
+      if #available(iOS 14.5, macOS 11.3, *), navigationAction.shouldPerformDownload {
+        decisionHandler(.download)
+        return
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationAction(
           pigeonInstance: self, webView: webView, navigationAction: navigationAction
@@ -159,6 +181,14 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
       decisionHandler: @escaping @MainActor (WKNavigationResponsePolicy) -> Void
     ) {
+      let response = navigationResponse.response
+      let disposition = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")
+      let attachment = disposition?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "attachment"
+      if #available(iOS 14.5, macOS 11.3, *),
+        attachment || !navigationResponse.canShowMIMEType {
+        decisionHandler(.download)
+        return
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationResponse(
           pigeonInstance: self, webView: webView, navigationResponse: navigationResponse
@@ -196,6 +226,14 @@ public class NavigationDelegateImpl: NSObject, WKNavigationDelegate {
       _ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse,
       decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
+      let response = navigationResponse.response
+      let disposition = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Disposition")
+      let attachment = disposition?.split(separator: ";").first?.trimmingCharacters(in: .whitespaces).lowercased() == "attachment"
+      if #available(iOS 14.5, macOS 11.3, *),
+        attachment || !navigationResponse.canShowMIMEType {
+        decisionHandler(.download)
+        return
+      }
       registrar.dispatchOnMainThread { onFailure in
         self.api.decidePolicyForNavigationResponse(
           pigeonInstance: self, webView: webView, navigationResponse: navigationResponse

@@ -98,6 +98,12 @@ class BrowserSessions {
     return _submit(action: 'navigate', sessionId: sessionId, url: url);
   }
 
+  /// Hands an explicit application link to the browser owner's operating system.
+  Future<RuntimeBrowserCommandResult> openExternal(
+    String sessionId,
+    String url,
+  ) => _submit(action: 'openExternal', sessionId: sessionId, url: url);
+
   /// Navigates one owner browser session backward.
   Future<RuntimeBrowserCommandResult> goBack(String sessionId) {
     return _submit(action: 'back', sessionId: sessionId);
@@ -149,6 +155,20 @@ class BrowserSessions {
   /// Clears cookies owned by the runtime app WebView implementation.
   Future<RuntimeBrowserCommandResult> clearCookies(String sessionId) {
     return _submit(action: 'clearCookies', sessionId: sessionId);
+  }
+
+  /// Reads or controls authoritative downloads on the browser owner.
+  Future<RuntimeBrowserCommandResult> downloads(
+    String sessionId, {
+    String operation = 'list',
+    String? url,
+  }) {
+    return _submit(
+      action: 'downloads',
+      sessionId: sessionId,
+      url: url,
+      payloadJson: jsonEncode(<String, String>{'operation': operation}),
+    );
   }
 
   /// Closes one owner browser session through Core.

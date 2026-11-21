@@ -27,13 +27,15 @@ class WebviewDownloadEvent {
   final String resultFilePath;
   final int bytesReceived;
   final int totalBytesToReceive;
+  final String? error;
   const WebviewDownloadEvent(
     this.kind,
     this.url,
     this.resultFilePath,
     this.bytesReceived,
-    this.totalBytesToReceive,
-  );
+    this.totalBytesToReceive, [
+    this.error,
+  ]);
 }
 
 class WebviewHttpResponseError {
@@ -254,6 +256,14 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   JavaScriptDialogRequestedDelegate? _javaScriptDialogRequested;
   HttpAuthRequestedDelegate? _httpAuthRequested;
   SslAuthErrorRequestedDelegate? _sslAuthErrorRequested;
+  Future<void> Function(String url)? _externalNavigationRequested;
+
+  /// Registers browser-owned handling for native application-link navigations.
+  void setExternalNavigationRequestedDelegate(
+    Future<void> Function(String url) callback,
+  ) {
+    _externalNavigationRequested = callback;
+  }
 
   void setPermissionRequestedDelegate(
     PermissionRequestedDelegate? permissionRequested,
@@ -280,6 +290,14 @@ class WebviewController extends ValueNotifier<WebviewValue> {
   }
 
   late MethodChannel _methodChannel;
+
+  /// Stops an engine transfer using its unique destination as its identifier.
+  Future<void> cancelDownload(String id) =>
+      _methodChannel.invokeMethod<void>('cancelDownload', id);
+
+  /// Releases engine event registrations after importing a terminal transfer.
+  Future<void> releaseDownload(String id) =>
+      _methodChannel.invokeMethod<void>('releaseDownload', id);
   late EventChannel _eventChannel;
   StreamSubscription? _eventStreamSubscription;
 
@@ -407,6 +425,7 @@ class WebviewController extends ValueNotifier<WebviewValue> {
               map['value']['resultFilePath'],
               map['value']['bytesReceived'],
               map['value']['totalBytesToReceive'],
+              map['value']['error'] as String?,
             );
             _downloadEventStreamController.add(value);
             break;
@@ -441,6 +460,13 @@ class WebviewController extends ValueNotifier<WebviewValue> {
       });
 
       _methodChannel.setMethodCallHandler((call) {
+        if (call.method == 'externalNavigationRequested') {
+          final callback = _externalNavigationRequested;
+          if (callback == null) {
+            throw StateError('External navigation has no browser owner');
+          }
+          return callback(call.arguments as String);
+        }
         if (call.method == 'permissionRequested') {
           return _onPermissionRequested(
             call.arguments as Map<dynamic, dynamic>,

@@ -194,7 +194,13 @@
   "messageLocatorNoFavorites": "No favorite messages yet",
   "messageLocatorLoadFailed": "Could not load messages. Please try again.",
   "messageTransformFailed": "Failed to process message display: {error}",
-  "@messageTransformFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@messageTransformFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "messageLocatorFavoriteFailed": "Could not update favorite. Please try again.",
   "messageLocatorAddFavorite": "Favorite message",
   "messageLocatorRemoveFavorite": "Remove favorite",
@@ -412,6 +418,11 @@
   "history": "History",
   "bookmarks": "Bookmarks",
   "downloads": "Downloads",
+  "browserDownloadsAll": "All",
+  "browserDownloadStorageHint": "Files are kept in the browser's download folder on the browser device. Open copies the file into this workspace first. You can also save it to the workspace directly.",
+  "browserDownloadWorkspaceTarget": "Save to this workspace:",
+  "browserDownloadSaveToWorkspace": "Save to workspace",
+  "browserDownloadInterrupted": "Interrupted · download again",
   "scripts": "Scripts",
   "zoom": "Zoom",
   "zoomIn": "Zoom in",
@@ -436,6 +447,7 @@
   "home": "Home",
   "newTab": "New tab",
   "openExternalApplication": "Open external application",
+  "browserExternalNavigationFailed": "Unable to open the link. No compatible application is installed, the link is invalid, or the system rejected the request.",
   "open": "Open",
   "ok": "OK",
   "webPage": "Web page",
@@ -800,7 +812,11 @@
   "localModelsImportChangeFiles": "Choose again",
   "localModelsImportFileCount": "{count} files selected",
   "@localModelsImportFileCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "localModelsImportName": "Model name",
   "localModelsImportCopyNotice": "The files are copied into app storage and stay on this device.",
@@ -817,8 +833,12 @@
   "localModelsResultCount": "Showing {count} of {total} models",
   "@localModelsResultCount": {
     "placeholders": {
-      "count": {"type": "int"},
-      "total": {"type": "int"}
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "localModelsHubRepositoryTab": "Repository",
@@ -1923,7 +1943,16 @@
   "settingsDataReadingSnapshot": "Reading snapshot",
   "settingsDataPreparingPreview": "Preparing preview",
   "settingsDataOperit1ImportResult": "Imported {chatCount} chats and {messageCount} messages.",
-  "@settingsDataOperit1ImportResult": {"placeholders": {"chatCount": {"type": "int"}, "messageCount": {"type": "int"}}},
+  "@settingsDataOperit1ImportResult": {
+    "placeholders": {
+      "chatCount": {
+        "type": "int"
+      },
+      "messageCount": {
+        "type": "int"
+      }
+    }
+  },
   "settingsDataExportSection": "Export files",
   "settingsDataExportChatJson": "Export chat JSON",
   "settingsDataExportModelJson": "Export model settings JSON",
@@ -2436,7 +2465,13 @@
   "deviceSpaceViewRequest": "View request",
   "devicePickerNearby": "Nearby devices",
   "devicePickerDiscoveryFailed": "Nearby device discovery failed: {error}",
-  "@devicePickerDiscoveryFailed": {"placeholders": {"error": {"type": "String"}}},
+  "@devicePickerDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "devicePickerEmpty": "No nearby devices found",
   "devicePickerHint": "Connect both devices to the same network and enable discovery on the other device.",
   "devicePickerManual": "Connect using an address",
@@ -2606,11 +2641,35 @@
   "deviceSpaceSyncChecking": "Checking for changes",
   "deviceSpaceSyncRecords": "Exchanging records",
   "deviceSpaceSyncRecordProgress": "{completed} / {total} records · {percent}%",
-  "@deviceSpaceSyncRecordProgress": {"placeholders": {"completed": {"type": "int"}, "total": {"type": "int"}, "percent": {"type": "int"}}},
+  "@deviceSpaceSyncRecordProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      },
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceSyncPendingCount": "{count} records pending application",
-  "@deviceSpaceSyncPendingCount": {"placeholders": {"count": {"type": "int"}}},
+  "@deviceSpaceSyncPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceSyncCounting": "Counting total · {count} records processed",
-  "@deviceSpaceSyncCounting": {"placeholders": {"count": {"type": "int"}}},
+  "@deviceSpaceSyncCounting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceSyncFiles": "Transferring and verifying files",
   "deviceSpaceSyncRetrying": "Sync interrupted. Retrying automatically.",
   "deviceSpaceSyncPending": "Some data is still pending.",
@@ -2673,13 +2732,43 @@
   "toolEditedFileCount": "{count, plural, one{Edited {count} file} other{Edited {count} files}}",
   "toolViewChanges": "View changes",
   "toolViewFileDiff": "View diff for {fileName}",
-  "@toolEditedFileCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolViewFileDiff": {"placeholders": {"fileName": {"type": "String"}}},
+  "@toolEditedFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolViewFileDiff": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
   "toolGroupCompleted": "Completed",
   "toolGroupExecuting": "Executing",
-  "@toolGroupThinkingCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolGroupCallCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolGroupThinkingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolGroupCallCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolGroupSearchCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsDataTimelineTitle": "Model usage over time",
   "settingsDataTimelineHint": "One line per model. Pinch or scroll to zoom, drag to move, and tap to inspect a time bucket.",
   "settingsDataTimelineHours": "{hours}h",
@@ -2760,7 +2849,13 @@
   "settingsAppearanceThemeDeleteConfirm": "Delete “{name}”? This cannot be undone.",
   "settingsAppearancePreviewCollapse": "Collapse",
   "settingsAppearancePreviewExpand": "Expand",
-  "@settingsAppearanceThemeDeleteConfirm": {"placeholders": {"name": {"type": "String"}}},
+  "@settingsAppearanceThemeDeleteConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceThemeNew": "New theme",
   "settingsAppearanceDeviceFonts": "Device fonts",
   "settingsAppearanceChooseDeviceFont": "Choose device font",
@@ -2814,7 +2909,13 @@
   "chatRestoreEmpty": "This folder contains no database backups.",
   "chatRestoreConfirmTitle": "Restore this database backup?",
   "chatRestoreConfirmDescription": "Replace the current database file with {name}. This replaces all data stored in this database. Stop running conversations first. Restoring establishes a new synchronization baseline that replaces older data on other devices.",
-  "@chatRestoreConfirmDescription": {"placeholders": {"name": {"type": "String"}}},
+  "@chatRestoreConfirmDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatRestoreSuccess": "Database restored. The next sync will use this copy as the source of truth.",
   "chatRestoreOnboardingTitle": "Restore from a previous backup",
   "chatRestoreOnboardingDescription": "Recover chats saved in an external folder before reinstalling or uninstalling",
@@ -2828,7 +2929,13 @@
   "chatBackupNow": "Back up chats now",
   "chatBackupNever": "No successful backup yet",
   "chatBackupLastSuccess": "Last successful backup: {time}",
-  "@chatBackupLastSuccess": {"placeholders": {"time": {"type": "String"}}},
+  "@chatBackupLastSuccess": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
   "terminalDistributionsTitle": "Download Linux distributions",
   "terminalDistributionsDescription": "Only Alpine is bundled. Download an ARM64 root filesystem to add a separate instance, then choose it as the default. You can install the same distribution multiple times.",
   "terminalDistributionDownload": "Download and install",

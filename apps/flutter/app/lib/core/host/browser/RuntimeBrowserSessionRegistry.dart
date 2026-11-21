@@ -160,6 +160,8 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
       <String, WorkspaceBrowserSessionInfo>{};
   _WorkspaceBrowserSessionOpener? _browserSessionOpener;
   _RuntimeBrowserSessionUpdater? _browserSessionUpdater;
+  Future<String> Function(String operation, String? url)? _downloadControl;
+  Future<void> Function(String sessionId, String url)? _externalNavigation;
   final Map<String, _WorkspaceBrowserSessionControls> _sessionControls =
       <String, _WorkspaceBrowserSessionControls>{};
   final Map<String, _RuntimeBrowserInteractionQueue> _interactionQueues =
@@ -209,6 +211,20 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
     update,
   ) {
     _browserSessionUpdater = _RuntimeBrowserSessionUpdater(update: update);
+  }
+
+  /// Registers download commands implemented by the browser owner.
+  void setDownloadControl(
+    Future<String> Function(String operation, String? url) control,
+  ) {
+    _downloadControl = control;
+  }
+
+  /// Registers explicit application handoffs on the browser session's owning device.
+  void setExternalNavigationHandler(
+    Future<void> Function(String sessionId, String url) handler,
+  ) {
+    _externalNavigation = handler;
   }
 
   /// Lists browser tabs for local automation surfaces.
@@ -600,6 +616,34 @@ class RuntimeBrowserSessionRegistry extends ChangeNotifier {
         return await _interactRuntimeSession(command);
       case 'clearCookies':
         return await _clearRuntimeCookies(command);
+      case 'openExternal':
+        final session = _requireSession(command);
+        final handler = _externalNavigation;
+        if (handler == null) {
+          throw StateError('External navigation is not configured');
+        }
+        await handler(session.sessionId, _requireCommandUrl(command));
+        return _commandResult(
+          success: true,
+          command: command,
+          session: session,
+        );
+      case 'downloads':
+        final session = _requireSession(command);
+        final control = _downloadControl;
+        if (control == null) {
+          throw StateError('Browser download controls are not registered');
+        }
+        final payload = jsonDecode(command.payloadJson) as Map<String, Object?>;
+        return _commandResult(
+          success: true,
+          command: command,
+          session: session,
+          resultJson: await control(
+            payload['operation'] as String,
+            command.url,
+          ),
+        );
       default:
         throw StateError('Unknown browser command action: ${command.action}');
     }

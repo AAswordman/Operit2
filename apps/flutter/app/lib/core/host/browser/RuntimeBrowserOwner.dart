@@ -21,6 +21,8 @@ import 'package:operit2/ui/features/chat/components/workspace/browser/userscript
 import 'package:operit2/ui/features/chat/components/workspace/html_preview/WorkspaceHtmlPreviewServer.dart';
 
 import 'RuntimeBrowserAutomationController.dart';
+import 'RuntimeBrowserPageDownloads.dart';
+import 'RuntimeBrowserExternalNavigation.dart';
 import 'RuntimeBrowserSessionRegistry.dart';
 
 class RuntimeBrowserOwnerUiDelegate {
@@ -38,7 +40,8 @@ class RuntimeBrowserOwnerUiDelegate {
   showConfirmDialog;
   final Future<String> Function(JavaScriptTextInputDialogRequest request)
   showPromptDialog;
-  final Future<void> Function(String url) openExternalNavigation;
+  final Future<void> Function(WorkspaceBrowserTabState tab, String url)
+  openExternalNavigation;
   final Future<void> Function(
     WorkspaceBrowserTabState tab,
     WebViewPermissionRequest request,
@@ -59,6 +62,9 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       },
     );
     _sessionRegistry.setBrowserSessionUpdater(updateSessionMetadata);
+    _sessionRegistry.setDownloadControl(_controlDownload);
+    _sessionRegistry.setExternalNavigationHandler(_openExternalApplication);
+    stores.downloads.addListener(_publishDownloads);
   }
 
   static final RuntimeBrowserOwner instance = RuntimeBrowserOwner._();
@@ -80,7 +86,9 @@ class RuntimeBrowserOwner extends ChangeNotifier {
         ProxyCoreRuntimeBridge(coreProxy: platformCoreProxy),
       );
 
-  final WorkspaceBrowserStores stores = WorkspaceBrowserStores();
+  final WorkspaceBrowserStores stores = WorkspaceBrowserStores(
+    clients: _coreClients,
+  );
   final WorkspaceBrowserPermissionStore permissions =
       WorkspaceBrowserPermissionStore();
   final List<WorkspaceBrowserTabState> _tabs = <WorkspaceBrowserTabState>[];
@@ -184,7 +192,6 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     _htmlPreviewServer = WorkspaceHtmlPreviewServer(
       onReadWorkspaceFileBytes: onReadWorkspaceFileBytes,
     );
-    stores.downloads.setWorkspaceSaver(onWriteWorkspaceFileBytes);
   }
 
   /// Detaches runtime-owner browser prompts from the application host.
@@ -320,20 +327,36 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     }
   }
 
-  /// Publishes a configured tab and releases it if setup fails before attachment.
+  /// Mounts the native view before awaiting configuration that requires attachment.
   Future<void> _attachTab(WorkspaceBrowserTabState tab) async {
-    try {
-      _configureTab(tab);
-      await _applyUserAgentForTab(tab);
-    } catch (_) {
-      unawaited(tab.controller.dispose());
-      _releaseTab(tab);
-      rethrow;
-    }
     _tabs.add(tab);
     _selectedIndex = _tabs.length - 1;
     notifyListeners();
+    try {
+      await _configureTab(tab);
+      _requireLiveTab(tab);
+      await _applyUserAgentForTab(tab);
+      _requireLiveTab(tab);
+    } catch (_) {
+      if (!tab.isDisposed) {
+        _tabs.remove(tab);
+        _selectedIndex = _tabs.isEmpty
+            ? 0
+            : _selectedIndex.clamp(0, _tabs.length - 1);
+        unawaited(tab.controller.dispose());
+        _releaseTab(tab);
+        notifyListeners();
+      }
+      rethrow;
+    }
     _syncSessionRegistry();
+  }
+
+  /// Prevents asynchronous setup from reviving a tab closed by its owner.
+  void _requireLiveTab(WorkspaceBrowserTabState tab) {
+    if (tab.isDisposed) {
+      throw StateError('The browser tab closed during initialization');
+    }
   }
 
   /// Opens a browser tab backed by the workspace HTML preview server.
@@ -411,6 +434,9 @@ class RuntimeBrowserOwner extends ChangeNotifier {
 
   /// Drops the registry and automation state before disposing the tab's browser.
   void _releaseTab(WorkspaceBrowserTabState tab) {
+    final downloads = _pageDownloads.remove(tab.id);
+    if (downloads != null) unawaited(downloads.close());
+    stores.downloads.closeEngineSession(tab.id);
     _automation.remove(tab.id);
     _defaultUserAgents.remove(tab.id);
     _sessionRegistry.unregister(tab.id);
@@ -425,6 +451,10 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       throw StateError('No active browser session');
     }
     final url = normalizeWorkspaceBrowserUrl(rawUrl);
+    if (isRuntimeBrowserExternalUrl(url)) {
+      await _requiredUiDelegate.openExternalNavigation(tab, url);
+      return;
+    }
     tab.update(url: url, addressText: url, errorText: null);
     _syncSessionRegistry();
     await tab.controller.loadRequest(
@@ -709,13 +739,37 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     return tab;
   }
 
+  final _pageDownloads = <String, RuntimeBrowserPageDownloads>{};
+
   /// Configures browser behavior shared by every owner WebView session.
-  void _configureTab(WorkspaceBrowserTabState tab) {
+  Future<void> _configureTab(WorkspaceBrowserTabState tab) async {
     tab.controller
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
       ..enableZoom(true);
+    await tab.controller.platform.setOnDownloadEvent((event) {
+      if (!tab.isDisposed) {
+        unawaited(stores.downloads.acceptEngineDownload(tab.id, event));
+      }
+    });
+    _requireLiveTab(tab);
     if (tab.capabilities.pageHooks) {
+      final downloads = RuntimeBrowserPageDownloads(
+        emit: (event) => stores.downloads.acceptEngineDownload(tab.id, event),
+        runJavaScript: tab.controller.runJavaScript,
+      );
+      _pageDownloads[tab.id] = downloads;
+      await tab.controller.addJavaScriptChannel(
+        'OperitBrowserDownloads',
+        onMessageReceived: (message) {
+          unawaited(downloads.handle(message.message));
+        },
+      );
+      _requireLiveTab(tab);
+      await tab.controller.addDocumentStartJavaScript(
+        runtimeBrowserPageDownloadScript,
+      );
+      _requireLiveTab(tab);
       tab.controller
         ..setOnConsoleMessage((message) {
           _automation[tab.id]?.addConsoleMessage(message);
@@ -759,16 +813,36 @@ class RuntimeBrowserOwner extends ChangeNotifier {
           return _requiredUiDelegate.showPromptDialog(request);
         });
     }
-    tab.controller.setNavigationDelegate(
+    await tab.controller.setNavigationDelegate(
       NavigationDelegate(
         onNavigationRequest: (request) async {
           final logicalUrl = _logicalUrl(request.url);
-          if (_isDownloadUrl(logicalUrl)) {
-            unawaited(stores.downloads.startDownload(logicalUrl));
+          if (request.isDownload &&
+              (Uri.parse(logicalUrl).scheme == 'blob' ||
+                  Uri.parse(logicalUrl).scheme == 'data')) {
+            await tab.controller.runJavaScript(
+              'globalThis.__operitPageDownloads.start(${jsonEncode(logicalUrl)});',
+            );
             return NavigationDecision.prevent;
           }
-          if (_isExternalAppUrl(logicalUrl)) {
-            await _requiredUiDelegate.openExternalNavigation(logicalUrl);
+          if (request.isDownload) {
+            unawaited(
+              stores.downloads.startDownload(
+                logicalUrl,
+                headers: <String, String>{
+                  ...tab.requestHeaders,
+                  'Referer': tab.url,
+                  if (tab.preferredUserAgent != null)
+                    'User-Agent': tab.preferredUserAgent!,
+                  ...request.headers,
+                },
+                contentDisposition: request.contentDisposition,
+              ),
+            );
+            return NavigationDecision.prevent;
+          }
+          if (isRuntimeBrowserExternalUrl(logicalUrl)) {
+            unawaited(_requestExternalNavigation(tab, logicalUrl));
             return NavigationDecision.prevent;
           }
           return NavigationDecision.navigate;
@@ -777,6 +851,7 @@ class RuntimeBrowserOwner extends ChangeNotifier {
           if (tab.isDisposed) {
             return;
           }
+          unawaited(_pageDownloads[tab.id]?.close());
           final logicalUrl = _logicalUrl(url);
           ClientLogger.v(
             'page started tab=${tab.id} url=$logicalUrl',
@@ -1071,8 +1146,17 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     final message = jsonDecode(rawMessage) as Map<String, Object?>;
     final action = message['action'] as String;
     if (action == 'open') {
-      final url = message['url'] as String;
-      final opened = await openTab(url: url);
+      final source = _tabs
+          .where((tab) => tab.id == sourceSessionId)
+          .singleOrNull;
+      if (source == null || source.isDisposed) return;
+      final opened = await openRuntimeBrowserPopup<WorkspaceBrowserTabState>(
+        sourceUrl: source.url,
+        target: message['url'] as String,
+        openExternal: (url) => _requestExternalNavigation(source, url),
+        openTab: (url) => openTab(url: url),
+      );
+      if (opened == null) return;
       final session = _sessionRegistry.sessions
           .where((item) => item.sessionId == opened.id)
           .single;
@@ -1282,28 +1366,68 @@ class RuntimeBrowserOwner extends ChangeNotifier {
     );
   }
 
-  bool _isDownloadUrl(String url) {
-    final lower = url.toLowerCase();
-    return lower.endsWith('.zip') ||
-        lower.endsWith('.apk') ||
-        lower.endsWith('.exe') ||
-        lower.endsWith('.dmg') ||
-        lower.endsWith('.tar.gz') ||
-        lower.endsWith('.7z');
+  /// Publishes authoritative download snapshots on existing browser streams.
+  void _publishDownloads() {
+    final snapshot = stores.downloads.encodeSnapshot();
+    for (final tab in _tabs) {
+      unawaited(
+        _publishBrowserSessionEvent(
+          sessionId: tab.id,
+          eventType: 'downloads',
+          resultJson: snapshot,
+        ),
+      );
+    }
   }
 
-  bool _isExternalAppUrl(String url) {
-    final uri = Uri.tryParse(url);
-    if (uri == null) {
-      return false;
+  /// Executes acknowledged download controls on the owner rather than the viewer.
+  Future<String> _controlDownload(String operation, String? url) async {
+    await ensureLoaded();
+    if (operation != 'list') {
+      final item = stores.downloads.items.singleWhere((item) => item.id == url);
+      switch (operation) {
+        case 'cancel':
+          await stores.downloads.cancel(item);
+        case 'retry':
+          await stores.downloads.retry(item);
+        case 'remove':
+          await stores.downloads.remove(item.id);
+        default:
+          throw StateError('Unknown browser download operation: $operation');
+      }
     }
-    return uri.hasScheme &&
-        uri.scheme != 'http' &&
-        uri.scheme != 'https' &&
-        uri.scheme != 'file' &&
-        uri.scheme != 'about' &&
-        uri.scheme != 'data' &&
-        uri.scheme != 'blob' &&
-        uri.scheme != 'javascript';
+    return stores.downloads.encodeSnapshot();
+  }
+
+  /// Resolves a page handoff and publishes failures to every viewer of its session.
+  Future<void> _requestExternalNavigation(
+    WorkspaceBrowserTabState tab,
+    String url,
+  ) async {
+    try {
+      await _requiredUiDelegate.openExternalNavigation(tab, url);
+    } catch (error) {
+      if (tab.isDisposed) return;
+      tab.update(errorText: error.toString());
+      _syncSessionRegistry(
+        eventType: 'error',
+        sessionId: tab.id,
+        error: error.toString(),
+      );
+    }
+  }
+
+  /// Opens an explicitly selected URL through the owning device's application resolver.
+  Future<void> _openExternalApplication(String sessionId, String url) {
+    final tab = _tabs.singleWhere((tab) => tab.id == sessionId);
+    final scheme = Uri.parse(url).scheme;
+    if (!isRuntimeBrowserExternalUrl(url) &&
+        scheme != 'https' &&
+        scheme != 'http') {
+      throw ArgumentError(
+        'Only application and HTTP(S) links can be opened externally',
+      );
+    }
+    return _requiredUiDelegate.openExternalNavigation(tab, url);
   }
 }

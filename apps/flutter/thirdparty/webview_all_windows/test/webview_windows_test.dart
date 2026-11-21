@@ -27,6 +27,121 @@ void main() {
     _clearWindowsWebViewCreationMock();
   });
 
+  test(
+    'native page application links reach the configured navigation delegate',
+    () async {
+      final controller = WindowsWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      addTearDown(controller.dispose);
+      final delegate = WindowsNavigationDelegate(
+        const PlatformNavigationDelegateCreationParams(),
+      );
+      final requests = <NavigationRequest>[];
+      await delegate.setOnNavigationRequest((request) {
+        requests.add(request);
+        return NavigationDecision.prevent;
+      });
+      await controller.setPlatformNavigationDelegate(delegate);
+      await controller.currentUrl();
+      for (final url in [
+        'weixin://chat',
+        'missing://app',
+        'intent://scan/#Intent;scheme=zxing;end',
+      ]) {
+        await _invokeWindowsWebViewMethod('externalNavigationRequested', url);
+      }
+      expect(requests.map((request) => request.url), [
+        'weixin://chat',
+        'missing://app',
+        'intent://scan/#Intent;scheme=zxing;end',
+      ]);
+    },
+  );
+
+  test(
+    'native downloads forward progress, cancellation, and original file bytes',
+    () async {
+      final calls = <MethodCall>[];
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      messenger.setMockMethodCallHandler(
+        const MethodChannel('$windowsWebViewChannelPrefix/1'),
+        (call) async {
+          calls.add(call);
+          return null;
+        },
+      );
+      final controller = WindowsWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      final events = <WebViewDownloadEvent>[];
+      controller.setOnDownloadEvent(events.add);
+      await controller.currentUrl();
+      final directory = await Directory.systemTemp.createTemp(
+        'webview-download-test-',
+      );
+      addTearDown(() async {
+        await controller.dispose();
+        await directory.delete(recursive: true);
+      });
+      final file = File('${directory.path}/report.pdf');
+      await file.writeAsBytes([0, 128, 255]);
+      for (final kind in [0, 2, 1]) {
+        await _emitWindowsWebViewEvent({
+          'type': 'downloadEvent',
+          'value': {
+            'kind': kind,
+            'url': 'blob:https://example.test/file',
+            'resultFilePath': file.path,
+            'bytesReceived': kind == 0 ? 0 : 3,
+            'totalBytesToReceive': 3,
+            'error': '',
+          },
+        });
+        await _flushAsyncEvents();
+      }
+      expect(events.map((event) => event.state), [
+        WebViewDownloadState.running,
+        WebViewDownloadState.running,
+        WebViewDownloadState.completed,
+      ]);
+      expect(events.last.fileName, 'report.pdf');
+      expect(await events.last.readBytes!(), [0, 128, 255]);
+      expect(calls.last.method, 'releaseDownload');
+      await events.first.cancel!();
+      expect(calls.last.method, 'cancelDownload');
+      expect(calls.last.arguments, file.path);
+    },
+  );
+
+  test(
+    'native download interruptions remain visible instead of hanging',
+    () async {
+      final controller = WindowsWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      addTearDown(controller.dispose);
+      final events = <WebViewDownloadEvent>[];
+      controller.setOnDownloadEvent(events.add);
+      await controller.currentUrl();
+      await _emitWindowsWebViewEvent({
+        'type': 'downloadEvent',
+        'value': {
+          'kind': 3,
+          'url': 'https://example.test/export',
+          'resultFilePath': 'report.pdf',
+          'bytesReceived': 1,
+          'totalBytesToReceive': 4,
+          'error': 'Network interrupted',
+        },
+      });
+      await _flushAsyncEvents();
+      expect(events.single.state, WebViewDownloadState.failed);
+      expect(events.single.error, 'Network interrupted');
+    },
+  );
+
   test('registerWith sets the Windows WebView platform implementation', () {
     final WebViewPlatform? previousInstance = WebViewPlatform.instance;
     addTearDown(() {
@@ -73,44 +188,47 @@ void main() {
     );
   });
 
-  test('disposes each native view once even while creation is pending', () async {
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    final creation = Completer<ByteData?>();
-    messenger.setMockMessageHandler(
-      _hostApiChannel('createWebView'),
-      (_) => creation.future,
-    );
-    final disposedViews = <int>[];
-    messenger.setMockMessageHandler(_hostApiChannel('disposeWebView'), (
-      message,
-    ) async {
-      disposedViews.add(_decodePigeonArgs(message).single! as int);
-      return _encodePigeonSuccess();
-    });
-    addTearDown(
-      () => messenger.setMockMessageHandler(
-        _hostApiChannel('disposeWebView'),
-        null,
-      ),
-    );
+  test(
+    'disposes each native view once even while creation is pending',
+    () async {
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final creation = Completer<ByteData?>();
+      messenger.setMockMessageHandler(
+        _hostApiChannel('createWebView'),
+        (_) => creation.future,
+      );
+      final disposedViews = <int>[];
+      messenger.setMockMessageHandler(_hostApiChannel('disposeWebView'), (
+        message,
+      ) async {
+        disposedViews.add(_decodePigeonArgs(message).single! as int);
+        return _encodePigeonSuccess();
+      });
+      addTearDown(
+        () => messenger.setMockMessageHandler(
+          _hostApiChannel('disposeWebView'),
+          null,
+        ),
+      );
 
-    final controller = WindowsWebViewController(
-      const PlatformWebViewControllerCreationParams(),
-    );
-    final disposal = controller.dispose();
-    expect(controller.dispose(), same(disposal));
-    expect(disposedViews, isEmpty);
+      final controller = WindowsWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      final disposal = controller.dispose();
+      expect(controller.dispose(), same(disposal));
+      expect(disposedViews, isEmpty);
 
-    creation.complete(
-      WindowsWebViewHostApi.pigeonChannelCodec.encodeMessage(<Object?>[
-        WindowsCreateWebViewResult(viewId: 1),
-      ]),
-    );
-    await disposal;
-    await controller.dispose();
-    expect(disposedViews, [1]);
-  });
+      creation.complete(
+        WindowsWebViewHostApi.pigeonChannelCodec.encodeMessage(<Object?>[
+          WindowsCreateWebViewResult(viewId: 1),
+        ]),
+      );
+      await disposal;
+      await controller.dispose();
+      expect(disposedViews, [1]);
+    },
+  );
 
   testWidgets('keeps explicitly managed surfaces independent from layout', (
     WidgetTester tester,
@@ -1240,6 +1358,10 @@ void _mockWindowsWebViewCreation({
     },
   );
 
+  messenger.setMockMessageHandler(
+    _hostApiChannel('disposeWebView'),
+    (_) async => _encodePigeonSuccess(),
+  );
   messenger.setMockMethodCallHandler(
     const MethodChannel('$windowsWebViewChannelPrefix/1/events'),
     (MethodCall methodCall) async => null,
@@ -1262,6 +1384,7 @@ void _clearWindowsWebViewCreationMock() {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
   messenger.setMockMessageHandler(_hostApiChannel('createWebView'), null);
+  messenger.setMockMessageHandler(_hostApiChannel('disposeWebView'), null);
   messenger.setMockMessageHandler(
     _hostApiChannel('setPopupWindowPolicy'),
     null,
@@ -1325,7 +1448,7 @@ List<Object?> _decodePigeonArgs(ByteData? message) {
 
 Future<Object?> _invokeWindowsWebViewMethod(
   String method,
-  Map<String, Object?> arguments,
+  Object? arguments,
 ) async {
   final messenger =
       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;

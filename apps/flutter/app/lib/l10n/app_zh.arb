@@ -194,7 +194,13 @@
   "messageLocatorNoFavorites": "还没有收藏的消息",
   "messageLocatorLoadFailed": "暂时无法加载消息，请重试",
   "messageTransformFailed": "消息显示处理失败：{error}",
-  "@messageTransformFailed": { "placeholders": { "error": { "type": "String" } } },
+  "@messageTransformFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "messageLocatorFavoriteFailed": "收藏更新失败，请重试",
   "messageLocatorAddFavorite": "收藏消息",
   "messageLocatorRemoveFavorite": "取消收藏",
@@ -412,6 +418,11 @@
   "history": "历史记录",
   "bookmarks": "收藏夹",
   "downloads": "下载",
+  "browserDownloadsAll": "全部",
+  "browserDownloadStorageHint": "文件保存在浏览器所在设备的下载目录中。打开文件时会先复制到当前工作区，也可以直接保存到工作区。",
+  "browserDownloadWorkspaceTarget": "保存到当前工作区：",
+  "browserDownloadSaveToWorkspace": "保存到工作区",
+  "browserDownloadInterrupted": "下载已中断，请重新下载",
   "scripts": "脚本",
   "zoom": "缩放",
   "zoomIn": "放大",
@@ -436,6 +447,7 @@
   "home": "主页",
   "newTab": "新建标签页",
   "openExternalApplication": "打开外部应用",
+  "browserExternalNavigationFailed": "无法打开此链接。可能未安装对应应用、链接无效，或系统拒绝了打开请求。",
   "open": "打开",
   "ok": "确定",
   "webPage": "网页",
@@ -793,7 +805,11 @@
   "localModelsImportChangeFiles": "重新选择",
   "localModelsImportFileCount": "已选择 {count} 个文件",
   "@localModelsImportFileCount": {
-    "placeholders": { "count": { "type": "int" } }
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
   },
   "localModelsImportName": "模型名称",
   "localModelsImportCopyNotice": "文件将复制到应用存储，并保留在当前设备。",
@@ -810,8 +826,12 @@
   "localModelsResultCount": "显示 {count} / {total} 个模型",
   "@localModelsResultCount": {
     "placeholders": {
-      "count": {"type": "int"},
-      "total": {"type": "int"}
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
     }
   },
   "localModelsHubRepositoryTab": "仓库地址",
@@ -1831,7 +1851,16 @@
   "settingsDataReadingSnapshot": "正在读取快照",
   "settingsDataPreparingPreview": "正在生成预览",
   "settingsDataOperit1ImportResult": "已导入 {chatCount} 个聊天、{messageCount} 条消息。",
-  "@settingsDataOperit1ImportResult": {"placeholders": {"chatCount": {"type": "int"}, "messageCount": {"type": "int"}}},
+  "@settingsDataOperit1ImportResult": {
+    "placeholders": {
+      "chatCount": {
+        "type": "int"
+      },
+      "messageCount": {
+        "type": "int"
+      }
+    }
+  },
   "settingsDataExportSection": "导出文件",
   "settingsDataExportChatJson": "导出聊天 JSON",
   "settingsDataExportModelJson": "导出模型配置 JSON",
@@ -2344,7 +2373,13 @@
   "deviceSpaceViewRequest": "查看申请",
   "devicePickerNearby": "附近设备",
   "devicePickerDiscoveryFailed": "附近设备发现失败：{error}",
-  "@devicePickerDiscoveryFailed": {"placeholders": {"error": {"type": "String"}}},
+  "@devicePickerDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "devicePickerEmpty": "暂未发现附近设备",
   "devicePickerHint": "请让两台设备连接同一网络，并在对方设备开启允许被搜索。",
   "devicePickerManual": "通过地址连接",
@@ -2514,11 +2549,35 @@
   "deviceSpaceSyncChecking": "正在检查数据差异",
   "deviceSpaceSyncRecords": "正在交换数据记录",
   "deviceSpaceSyncRecordProgress": "{completed} / {total} 条 · {percent}%",
-  "@deviceSpaceSyncRecordProgress": {"placeholders": {"completed": {"type": "int"}, "total": {"type": "int"}, "percent": {"type": "int"}}},
+  "@deviceSpaceSyncRecordProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      },
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceSyncPendingCount": "待应用 {count} 条",
-  "@deviceSpaceSyncPendingCount": {"placeholders": {"count": {"type": "int"}}},
+  "@deviceSpaceSyncPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceSyncCounting": "正在统计总量 · 已处理 {count} 条",
-  "@deviceSpaceSyncCounting": {"placeholders": {"count": {"type": "int"}}},
+  "@deviceSpaceSyncCounting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "deviceSpaceSyncFiles": "正在传输并校验文件",
   "deviceSpaceSyncRetrying": "同步暂时中断，稍后自动重试",
   "deviceSpaceSyncPending": "部分数据尚未处理完成",
@@ -2581,13 +2640,43 @@
   "toolEditedFileCount": "已编辑 {count} 个文件",
   "toolViewChanges": "查看变更",
   "toolViewFileDiff": "查看 {fileName} 的变更",
-  "@toolEditedFileCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolViewFileDiff": {"placeholders": {"fileName": {"type": "String"}}},
+  "@toolEditedFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolViewFileDiff": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
   "toolGroupCompleted": "已完成",
   "toolGroupExecuting": "正在执行",
-  "@toolGroupThinkingCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolGroupCallCount": {"placeholders": {"count": {"type": "int"}}},
-  "@toolGroupSearchCount": {"placeholders": {"count": {"type": "int"}}},
+  "@toolGroupThinkingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolGroupCallCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolGroupSearchCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsDataTimelineTitle": "模型使用时间线",
   "settingsDataTimelineHint": "每个模型一条线。双指或滚轮缩放，拖动查看其他时段，点击查看具体用量。",
   "settingsDataTimelineHours": "{hours} 小时",
@@ -2668,7 +2757,13 @@
   "settingsAppearanceThemeDeleteConfirm": "确定删除「{name}」？删除后无法恢复。",
   "settingsAppearancePreviewCollapse": "收起",
   "settingsAppearancePreviewExpand": "展开",
-  "@settingsAppearanceThemeDeleteConfirm": {"placeholders": {"name": {"type": "String"}}},
+  "@settingsAppearanceThemeDeleteConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "settingsAppearanceThemeNew": "新建主题",
   "settingsAppearanceDeviceFonts": "设备字体",
   "settingsAppearanceChooseDeviceFont": "选择设备字体",
@@ -2722,7 +2817,13 @@
   "chatRestoreEmpty": "此文件夹中没有数据库备份。",
   "chatRestoreConfirmTitle": "恢复这份数据库备份？",
   "chatRestoreConfirmDescription": "将用 {name} 直接覆盖当前数据库文件，数据库中的全部数据都会被替换。请先停止正在运行的对话。恢复后将以这份数据库建立新的同步基线，覆盖其他设备的旧数据。",
-  "@chatRestoreConfirmDescription": {"placeholders": {"name": {"type": "String"}}},
+  "@chatRestoreConfirmDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatRestoreSuccess": "数据库已恢复。下次同步将以这份数据为准。",
   "chatRestoreOnboardingTitle": "从以前的备份恢复",
   "chatRestoreOnboardingDescription": "找回重装前或卸载前保存在外部目录的聊天记录",
@@ -2736,7 +2837,13 @@
   "chatBackupNow": "立即备份聊天",
   "chatBackupNever": "尚无成功备份",
   "chatBackupLastSuccess": "最近成功备份：{time}",
-  "@chatBackupLastSuccess": {"placeholders": {"time": {"type": "String"}}},
+  "@chatBackupLastSuccess": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
   "terminalDistributionsTitle": "下载 Linux 发行版",
   "terminalDistributionsDescription": "软件仅内置 Alpine。按需下载 ARM64 根文件系统，安装为独立实例后可设为默认；同一发行版可以安装多套。",
   "terminalDistributionDownload": "下载安装",

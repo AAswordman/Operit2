@@ -82,9 +82,9 @@ public class WebViewClientProxyApi extends PigeonApiWebViewClient {
       api.getPigeonRegistrar()
           .runOnMainThread(() -> api.requestLoading(this, view, request, reply -> null));
 
-      // The client is only allowed to stop navigations that target the main frame because
-      // overridden URLs are passed to `loadUrl` and `loadUrl` cannot load a subframe.
-      return request.isForMainFrame() && returnValueForShouldOverrideUrlLoading;
+      // Application links terminate here; ordinary subframe documents stay in their own frame.
+      return returnValueForShouldOverrideUrlLoading
+          && (request.isForMainFrame() || WebViewExternalNavigation.isApplicationUri(request.getUrl()));
     }
 
     @Override

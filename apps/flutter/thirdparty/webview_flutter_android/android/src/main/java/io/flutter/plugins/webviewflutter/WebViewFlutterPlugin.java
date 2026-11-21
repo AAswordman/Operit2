@@ -68,6 +68,7 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
     themeChannel.setMethodCallHandler(null);
     if (proxyApiRegistrar != null) {
+      proxyApiRegistrar.externalNavigation.dispose();
       proxyApiRegistrar.userScripts.dispose();
       proxyApiRegistrar.localResources.dispose();
       proxyApiRegistrar.tearDown();

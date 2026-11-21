@@ -783,6 +783,21 @@ void instance_method_call_cb(FlMethodChannel *channel,
     return;
   }
 
+  if (strcmp(method, "cancelDownload") == 0 || strcmp(method, "releaseDownload") == 0) {
+    FlValue *id = map_lookup(args, "id");
+    if (!id || fl_value_get_type(id) != FL_VALUE_TYPE_STRING) {
+      respond(method_call, error_response("invalid_arguments", "Expected a download identifier"));
+      return;
+    }
+    if (strcmp(method, "cancelDownload") == 0) {
+      webview->download_policy->Cancel(fl_value_get_string(id));
+    } else {
+      webview->download_policy->Release(fl_value_get_string(id));
+    }
+    respond(method_call, success_response());
+    return;
+  }
+
   if (strcmp(method, "setDownloadsEnabled") == 0) {
     FlValue *enabled = map_lookup(args, "enabled");
     if (enabled == nullptr || fl_value_get_type(enabled) != FL_VALUE_TYPE_BOOL) {

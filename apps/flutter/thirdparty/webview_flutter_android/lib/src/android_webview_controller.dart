@@ -520,6 +520,18 @@ class AndroidWebViewController extends PlatformWebViewController {
     );
   }
 
+  /// Opens approved links using Android's Intent parser and application resolver.
+  @override
+  Future<bool> openExternalApplication(String url) async {
+    final opened = await const MethodChannel(
+      'operit/webview_external_navigation',
+    ).invokeMethod<bool>('open', url);
+    if (opened == null) {
+      throw StateError('Android did not return an application launch result');
+    }
+    return opened;
+  }
+
   @override
   Future<void> loadFileWithParams(LoadFileParams params) async {
     switch (params) {
@@ -1724,10 +1736,28 @@ class AndroidNavigationDelegate extends PlatformNavigationDelegate {
             String contentDisposition,
             String mimetype,
             int contentLength,
-          ) {
-            if (weakThis.target != null) {
-              weakThis.target?._handleNavigation(url, isForMainFrame: true);
+          ) async {
+            final delegate = weakThis.target;
+            final callback = delegate?._onNavigationRequest;
+            if (callback == null) {
+              return;
             }
+            final scheme = Uri.parse(url).scheme;
+            final cookie = scheme == 'http' || scheme == 'https'
+                ? await android_webview.CookieManager.instance.getCookies(url)
+                : null;
+            await callback(
+              NavigationRequest(
+                url: url,
+                isMainFrame: true,
+                isDownload: true,
+                headers: <String, String>{
+                  'User-Agent': userAgent,
+                  if (cookie != null && cookie.isNotEmpty) 'Cookie': cookie,
+                },
+                contentDisposition: contentDisposition,
+              ),
+            );
           },
     );
   }
@@ -1781,9 +1811,20 @@ class AndroidNavigationDelegate extends PlatformNavigationDelegate {
     final LoadRequestCallback? onLoadRequest = _onLoadRequest;
     final NavigationRequestCallback? onNavigationRequest = _onNavigationRequest;
 
-    // The client is only allowed to stop navigations that target the main frame because
-    // overridden URLs are passed to `loadUrl` and `loadUrl` cannot load a subframe.
-    if (!isForMainFrame ||
+    final uri = Uri.parse(url);
+    final applicationLink =
+        uri.hasScheme &&
+        !const {
+          'http',
+          'https',
+          'file',
+          'content',
+          'about',
+          'data',
+          'blob',
+          'javascript',
+        }.contains(uri.scheme);
+    if ((!isForMainFrame && !applicationLink) ||
         onNavigationRequest == null ||
         onLoadRequest == null) {
       return;
@@ -1794,11 +1835,12 @@ class AndroidNavigationDelegate extends PlatformNavigationDelegate {
     );
 
     if (returnValue is NavigationDecision &&
-        returnValue == NavigationDecision.navigate) {
+        returnValue == NavigationDecision.navigate &&
+        isForMainFrame) {
       onLoadRequest(LoadRequestParams(uri: Uri.parse(url), headers: headers));
     } else if (returnValue is Future<NavigationDecision>) {
       returnValue.then((NavigationDecision shouldLoadUrl) {
-        if (shouldLoadUrl == NavigationDecision.navigate) {
+        if (shouldLoadUrl == NavigationDecision.navigate && isForMainFrame) {
           onLoadRequest(
             LoadRequestParams(uri: Uri.parse(url), headers: headers),
           );

@@ -9,7 +9,6 @@ import 'package:webview_all_linux/src/linux_webview_constants.dart';
 import 'package:webview_all_linux/webview_all_linux.dart';
 import 'package:webview_platform_interface/webview_platform_interface.dart';
 
-
 /// Mounts the webview under a shaped clip and expects bounds-based clipping.
 Future<void> _pumpShapedClip(
   WidgetTester tester, {
@@ -55,6 +54,49 @@ void main() {
 
   setUp(_mockLinuxWebViewCreation);
   tearDown(_clearLinuxWebViewCreationMock);
+
+  test(
+    'engine downloads preserve original files and route native cancellation',
+    () async {
+      final calls = <MethodCall>[];
+      _mockLinuxWebViewCreation(onInstanceCall: calls.add);
+      final controller = LinuxWebViewController(
+        const PlatformWebViewControllerCreationParams(),
+      );
+      final events = <WebViewDownloadEvent>[];
+      controller.setOnDownloadEvent(events.add);
+      await controller.currentUrl();
+      final directory = await Directory.systemTemp.createTemp(
+        'webview-download-test-',
+      );
+      addTearDown(() async {
+        await controller.dispose();
+        await directory.delete(recursive: true);
+      });
+      final file = File('${directory.path}/report.pdf');
+      await file.writeAsBytes([0, 128, 255]);
+      for (final state in ['running', 'completed']) {
+        await _emitLinuxWebViewEvent({
+          'type': 'download',
+          'id': 'native-file',
+          'url': 'https://example.test/export',
+          'fileName': 'report.pdf',
+          'path': file.path,
+          'state': state,
+          'receivedBytes': 3,
+          'totalBytes': 3,
+          'error': '',
+        });
+        await _flushAsyncEvents();
+      }
+      expect(events.last.state, WebViewDownloadState.completed);
+      expect(await events.last.readBytes!(), [0, 128, 255]);
+      expect(calls.last.method, 'releaseDownload');
+      await events.first.cancel!();
+      expect(calls.last.method, 'cancelDownload');
+      expect(calls.last.arguments, {'id': 'native-file'});
+    },
+  );
 
   test('registerWith sets the Linux WebView platform implementation', () {
     final WebViewPlatform? previousInstance = WebViewPlatform.instance;
@@ -501,10 +543,8 @@ void main() {
     await _pumpShapedClip(
       tester,
       calls: calls,
-      clip: (child) => ClipRRect(
-        borderRadius: BorderRadius.circular(14),
-        child: child,
-      ),
+      clip: (child) =>
+          ClipRRect(borderRadius: BorderRadius.circular(14), child: child),
     );
   });
 

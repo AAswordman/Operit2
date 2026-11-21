@@ -1604,6 +1604,36 @@ abstract class AppLocalizations {
   /// **'Downloads'**
   String get downloads;
 
+  /// No description provided for @browserDownloadsAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All'**
+  String get browserDownloadsAll;
+
+  /// No description provided for @browserDownloadStorageHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Files are kept in the browser\'s download folder on the browser device. Open copies the file into this workspace first. You can also save it to the workspace directly.'**
+  String get browserDownloadStorageHint;
+
+  /// No description provided for @browserDownloadWorkspaceTarget.
+  ///
+  /// In en, this message translates to:
+  /// **'Save to this workspace:'**
+  String get browserDownloadWorkspaceTarget;
+
+  /// No description provided for @browserDownloadSaveToWorkspace.
+  ///
+  /// In en, this message translates to:
+  /// **'Save to workspace'**
+  String get browserDownloadSaveToWorkspace;
+
+  /// No description provided for @browserDownloadInterrupted.
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupted · download again'**
+  String get browserDownloadInterrupted;
+
   /// No description provided for @scripts.
   ///
   /// In en, this message translates to:
@@ -1747,6 +1777,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Open external application'**
   String get openExternalApplication;
+
+  /// No description provided for @browserExternalNavigationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to open the link. No compatible application is installed, the link is invalid, or the system rejected the request.'**
+  String get browserExternalNavigationFailed;
 
   /// No description provided for @open.
   ///

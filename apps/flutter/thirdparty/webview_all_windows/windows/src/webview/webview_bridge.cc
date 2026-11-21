@@ -112,6 +112,21 @@ WebviewBridge::WebviewBridge(flutter::BinaryMessenger *messenger,
       [this](const flutter::MethodCall<flutter::EncodableValue> &call,
              std::unique_ptr<flutter::MethodResult<flutter::EncodableValue>>
                  result) {
+        if (call.method_name() == "cancelDownload" ||
+            call.method_name() == "releaseDownload") {
+          const auto *id = std::get_if<std::string>(call.arguments());
+          if (!id) {
+            result->Error("invalid_arguments", "Expected a download identifier");
+          } else if (call.method_name() == "releaseDownload") {
+            webview_->ReleaseDownload(*id);
+            result->Success();
+          } else if (webview_->CancelDownload(*id)) {
+            result->Success();
+          } else {
+            result->Error("download_not_found", "The engine transfer has ended");
+          }
+          return;
+        }
         if (call.method_name() == "setNativeFocus") {
           const auto* focused = call.arguments() ? std::get_if<bool>(call.arguments()) : nullptr;
           if (!focused || !webview_->SetNativeFocus(*focused)) {
@@ -220,6 +235,11 @@ WebviewBridge::~WebviewBridge() {
 }
 
 void WebviewBridge::RegisterEventHandlers() {
+  webview_->OnExternalNavigation([this](const std::string &url) {
+    method_channel_->InvokeMethod(
+        "externalNavigationRequested",
+        std::make_unique<flutter::EncodableValue>(url));
+  });
   webview_->OnUrlChanged([this](const std::string &url) {
     const auto event = flutter::EncodableValue(flutter::EncodableMap{
         {flutter::EncodableValue(kEventType),
@@ -297,6 +317,8 @@ void WebviewBridge::RegisterEventHandlers() {
              {flutter::EncodableValue("totalBytesToReceive"),
               flutter::EncodableValue(
                   webviewDownloadEvent.totalBytesToReceive)},
+             {flutter::EncodableValue("error"),
+              flutter::EncodableValue(webviewDownloadEvent.error)},
          })}});
     EmitEvent(event);
   });

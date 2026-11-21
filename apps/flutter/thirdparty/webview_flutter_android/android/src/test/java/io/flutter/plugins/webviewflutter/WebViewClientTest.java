@@ -13,6 +13,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import android.net.Uri;
 import android.net.http.SslError;
 import android.os.Message;
 import android.webkit.ClientCertRequest;
@@ -116,12 +117,30 @@ public class WebViewClientTest {
     doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
 
     final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
+    instance.setReturnValueForShouldOverrideUrlLoading(true);
     final android.webkit.WebView webView = mock(WebView.class);
     final android.webkit.WebResourceRequest request = mock(WebResourceRequest.class);
     when(request.isForMainFrame()).thenReturn(false);
+    when(request.getUrl()).thenReturn(Uri.parse("https://example.test/frame"));
 
     assertFalse(instance.shouldOverrideUrlLoading(webView, request));
     verify(mockApi).requestLoading(eq(instance), eq(webView), eq(request), any());
+  }
+
+  /** Stops application subframes before WebView can reject their protocol as an unsupported page. */
+  @Test
+  public void applicationSubframeUsesTheNavigationDelegate() {
+    final WebViewClientProxyApi mockApi = mock(WebViewClientProxyApi.class);
+    doReturn(new TestProxyApiRegistrar()).when(mockApi).getPigeonRegistrar();
+    final WebViewClientImpl instance = new WebViewClientImpl(mockApi);
+    instance.setReturnValueForShouldOverrideUrlLoading(true);
+    final WebView view = mock(WebView.class);
+    final WebResourceRequest request = mock(WebResourceRequest.class);
+    when(request.isForMainFrame()).thenReturn(false);
+    when(request.getUrl()).thenReturn(Uri.parse("weixin://chat"));
+
+    assertTrue(instance.shouldOverrideUrlLoading(view, request));
+    verify(mockApi).requestLoading(eq(instance), eq(view), eq(request), any());
   }
 
   @Test

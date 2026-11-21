@@ -7,8 +7,8 @@ import 'package:flutter/material.dart';
 import 'package:operit2/core/browser/BrowserAutomationBridge.dart';
 import 'package:operit2/core/browser/BrowserAutomationModels.dart';
 import 'package:operit2/core/host/browser/RuntimeBrowserOwnerSurfaceHost.dart';
-import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_all/webview_all.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import 'package:operit2/ui/features/chat/components/workspace/browser/chrome/WorkspaceBrowserExternalNavigationDialog.dart';
 import 'package:operit2/ui/features/chat/components/workspace/browser/chrome/WorkspaceBrowserJavaScriptDialogs.dart';
@@ -17,6 +17,7 @@ import 'package:operit2/ui/features/chat/components/workspace/browser/tabs/Works
 
 import 'RuntimeBrowserAutomationController.dart';
 import 'RuntimeBrowserOwner.dart';
+import 'RuntimeBrowserExternalNavigation.dart';
 import 'RuntimeBrowserSessionRegistry.dart';
 import '../../web_visit/RuntimeWebVisitRegistry.dart';
 import '../../web_visit/WebVisitBridge.dart';
@@ -46,6 +47,30 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
   final RuntimeBrowserOwner _browserSessionStore = RuntimeBrowserOwner.instance;
   void Function()? _disposeBridgeHandler;
   void Function()? _disposeWebVisitHandler;
+  late final _externalNavigation = RuntimeBrowserExternalNavigation(
+    confirm: (url) async =>
+        mounted &&
+        await showWorkspaceBrowserExternalNavigationDialog(context, url),
+    failed: (url, error) async {
+      if (!mounted) return;
+      final l10n = AppLocalizations.of(context)!;
+      await showDialog<void>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: Text(l10n.openExternalApplication),
+          content: SingleChildScrollView(
+            child: Text(l10n.browserExternalNavigationFailed),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text(l10n.close),
+            ),
+          ],
+        ),
+      );
+    },
+  );
 
   /// Enables browser automation only when runtime services are ready.
   @override
@@ -129,16 +154,15 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
   }
 
   /// Confirms and opens a non-WebView navigation in the owner application.
-  Future<void> _openExternalNavigation(String url) async {
-    final confirmed = await showWorkspaceBrowserExternalNavigationDialog(
-      context,
-      url,
-    );
-    if (!confirmed) {
-      return;
+  Future<void> _openExternalNavigation(
+    WorkspaceBrowserTabState tab,
+    String url,
+  ) => _externalNavigation.open(url, () async {
+    if (!mounted || tab.isDisposed) {
+      throw StateError('The originating browser session closed');
     }
-    await launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
-  }
+    return tab.controller.platform.openExternalApplication(url);
+  });
 
   /// Resolves a real owner WebView permission request in the owner application.
   Future<void> _handlePermissionRequest(

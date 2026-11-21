@@ -3,9 +3,11 @@
 // found in the LICENSE file.
 
 import 'local_resource.dart';
+import 'webview_download.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:plugin_platform_interface/plugin_platform_interface.dart';
+import 'package:url_launcher_platform_interface/url_launcher_platform_interface.dart';
 
 import 'platform_navigation_delegate.dart';
 import 'types/types.dart';
@@ -20,6 +22,48 @@ import 'webview_platform.dart' show WebViewPlatform;
 /// `implements` this interface will be broken by newly added
 /// [PlatformWebViewController] methods.
 abstract class PlatformWebViewController extends PlatformInterface {
+  /// Hands an explicitly approved URL to the operating system's application resolver.
+  Future<bool> openExternalApplication(String url) {
+    final uri = Uri.parse(url);
+    if (!uri.hasScheme ||
+        const {
+          'file',
+          'content',
+          'about',
+          'data',
+          'blob',
+          'javascript',
+        }.contains(uri.scheme)) {
+      throw ArgumentError(
+        'A browser resource cannot be opened as an application link',
+      );
+    }
+    if (uri.scheme == 'intent') {
+      throw UnsupportedError(
+        'Android Intent links require an Android browser owner',
+      );
+    }
+    return UrlLauncherPlatform.instance.launchUrl(
+      url,
+      const LaunchOptions(mode: PreferredLaunchMode.externalApplication),
+    );
+  }
+
+  void Function(WebViewDownloadEvent)? _onDownloadEvent;
+
+  /// Registers the owner of native downloads before navigation starts.
+  Future<void> setOnDownloadEvent(
+    void Function(WebViewDownloadEvent)? callback,
+  ) async {
+    _onDownloadEvent = callback;
+  }
+
+  /// Publishes native progress and completion without starting another request.
+  @protected
+  void reportDownloadEvent(WebViewDownloadEvent event) {
+    _onDownloadEvent?.call(event);
+  }
+
   /// Scopes an injected script and applies main-frame filtering when requested.
   @protected
   String buildUserScriptSource(

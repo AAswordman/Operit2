@@ -19,6 +19,12 @@ public class Uri {
     this.url = url;
   }
 
+  /** Exposes the scheme used by native navigation classification in JVM tests. */
+  public String getScheme() {
+    int separator = url.indexOf(':');
+    return separator > 0 ? url.substring(0, separator) : null;
+  }
+
   @NonNull
   @Override
   public String toString() {

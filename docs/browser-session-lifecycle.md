@@ -41,6 +41,66 @@ visit_web 工具
 
 `visit_web` 总执行期限为 45 秒，单次脚本和清理分别最多 10 秒，为 Rust 宿主现有的 60 秒请求期限留出返回时间。脚本等待同时观察任务完成，取消时释放本地超时；事件订阅取消和会话关闭同时发起，避免互相等待。`browser_wait_for` 的文本条件由宿主进行限时轮询，不依赖页面内定时器或原生 WebView 对 Promise 返回值的处理。
 
-## 回归验证
+## 外部应用跳转
+
+自定义应用协议通过真实 WebView 的导航代理进入 owner，先阻止网页加载，再显示打开确认。确认与系统打开按正在处理的 URL 合并，重复事件不会叠加同一个确认框；取消确认不调用系统。找不到处理应用、链接格式错误、系统拒绝及平台异常都会显示失败，并通过原有浏览器命令结果返回调用方。
+
+Windows 在原生 `NavigationStarting`、`FrameNavigationStarting` 和 `NewWindowRequested` 接收应用协议，取消该次导航后转交 Flutter。被取消的应用导航不会当成普通页面加载错误。Android 的主框架及应用协议子框架、Apple 的 navigation action、Linux 的 WebKitGTK policy 和鸿蒙的 ArkWeb override 共用 owner 的确认入口。普通网页子框架保持自身的页面导航。
+
+Android 使用原生 `Intent.parseUri` 解析 `intent:`，保留目标 package、真实数据 URI 与附加参数，限定为可从浏览器发起的 `ACTION_VIEW`，移除显式 component、selector 和 URI 授权标记。该协议由 Android 宿主解释；其他宿主明确报告不支持。文件、content、脚本及页面内部资源不能通过这个应用打开接口启动。
+
+鸿蒙由浏览器插件跟踪当前 Ability，并等待 `startAbility` 完成才返回成功；系统异步拒绝会通过通道返回错误。Ability 分离后不能使用过期 context 发起打开。ArkWeb 的普通网页子框架保持在引擎内，应用协议子框架交给 owner。
+
+浏览器菜单提供“打开外部应用”，通过 `openExternal` 会话命令把当前 HTTP(S) 页面交给浏览器所属设备的系统解析器。关联应用或默认浏览器由操作系统决定；普通 HTTP(S) 点击仍按网页导航处理。Web 查看端也沿用此命令，打开动作发生在浏览器宿主设备。
+
+页面 `window.open` 的应用协议会在创建标签之前处理，不留下空标签；普通弹窗的相对 URL 按来源页面解析。地址栏输入应用协议不会替换原页面地址，打开错误保留在发起操作的标签上。确认框内容支持滚动和选择，适应移动端长 Intent 链接。
+
+本地回归覆盖协议分类、确认取消、重复事件、系统拒绝、平台异常、弹窗路由、Core 命令结果，以及 Windows 原生事件到导航代理和 Android Intent 通道的连接。Android 原生测试检查 Intent 解析调用、目标保留和授权清理；鸿蒙原生控制流测试使用替换的 Flutter 通道与 Ability 检查异步结果和子框架边界，不代表 ArkTS 原生编译。各平台实际安装应用的关联与系统解析结果仍需对应设备验收。
+
+## 下载与文件去向
+
+下载执行与文件保留属于 `RuntimeBrowserOwner`。工作区的下载 Store 是观察者，通过已有 Core 浏览器命令的 `downloads` action 读取列表、取消、重新下载和移除记录；通过 `downloads` 会话事件接收实时状态。每次挂载会话都会读取完整列表，快照包含宿主实例标记与递增版本，避免较早的命令响应覆盖较新的进度。关闭工作区展示不取消正在执行的下载。
+
+各平台通过两种明确的引擎契约接入，业务 Dart 不判断操作系统，也不按扩展名猜测下载：
+
+- Android 的 `DownloadListener` 通过通用 `NavigationRequest` 传递下载标记、User-Agent、Cookie 和 Content-Disposition，由 owner HTTP 下载器保存普通 HTTP(S) 文件；下载回调不会重新导航网页。Android 公开监听器没有原始响应体，不能保证消费一次的 POST 附件可重放。
+- Windows 的 WebView2 `DownloadStarting`、字节变化和状态变化直接上报 `WebViewDownloadEvent`。每个操作独立保留事件 token、取消句柄和临时目录；中断原因进入失败记录。同步回调不申请未完成的 deferral。
+- Linux 的 WebKitGTK `download-started`、`decide-destination`、`received-data`、`failed` 和 `finished` 上报同一契约，并按所属 WebView 隔离共享 context 中的任务。
+- iOS/macOS 的导航 action 下载标记、附件响应或不可显示 MIME 由 WKDownload 接管，原生代理报告进度、完成和失败。Windows、Linux、Apple 保留原始引擎操作，因此原始 POST、Cookie 与响应体不由 Dart 重新请求。
+- 鸿蒙通过每个视图的 ArkWeb `WebDownloadDelegate` 保留原始响应，`WebDownloadItem` 提供独立标识、字节数、完成文件与取消操作。代理可在视图挂载前注册，控制器附着后安装，实际文件只写入该传输的私有缓存目录。
+- 页面 `blob:` / `data:` 生成文件通过 document-start 注入拦截显式下载点击，使用 64 KiB 分块、序号和逐块确认传到 owner；原生监听器报告的 blob/data 也使用这个通道。原始 fetch 在确认之前开始，避免网页立即 revokeObjectURL 导致已点击的文件丢失。取消通过 AbortController 中止实际读取，页面关闭会明确标为中断。
+- Web 界面的下载列表、保存、打开和取消仍通过已连接浏览器 owner 的 Core 会话；浏览器的跨域 iframe 不具备读取任意远端网页下载的权限。
+
+文件先保存在运行时浏览器下载目录。完成记录保存真实 `runtimePath`，工作区相对路径 `savedPath` 仅表示明确的导出目标；不会把尚未写入工作区的文件声明为已保存到工作区。点击“打开文件”会先复制到当前工作区，再使用现有工作区文件打开能力；“保存到工作区”只复制文件并显示目标。查看位置显示可选择、可复制的真实路径，不再把目录交给文件打开接口。每次传输使用独立任务标识及保存文件名，同一个链接和同名文件也能同时下载。原生临时文件导入运行时存储后释放，只有写入成功才发布完成。
+
+下载界面默认显示全部记录，完成后不会从当前列表消失；浏览器地址栏下方保留最近任务状态及下载入口。任务显示已接收字节、已知总大小和百分比；未知总大小显示不定进度，不伪造百分比。菜单约束只控制菜单宽度，触发按钮单独保留 44×44 点击区域；筛选与操作按钮可以换行。
+
+HTTP 非成功状态和不完整传输会标为失败，文件写入成功后才标为完成。取消和移除会释放实际 HTTP 客户端，旧连接的迟到回调不能覆盖新下载。进程结束遗留的活动记录会转为中断；普通 HTTP 任务可重新下载，原生及页面生成文件需从原网页重新发起，界面不会把这些操作伪装为可重放的 GET。当前不提供断点续传，因此界面不显示暂停／继续操作。
+
+自动化验证覆盖共享存储与展示协议、生成文件分块传输、Windows/Linux/Apple/鸿蒙适配事件和 Android 下载请求上下文；Linux 原生回归使用真实 WebKitGTK 响应。Apple 和鸿蒙原生代码及各平台真实设备的下载触发、登录态、系统文件打开仍需在对应环境验收。当前生成文件和 HTTP 导入接口会把完整文件载入 owner 内存，大文件内存占用仍受设备容量限制。
+
+## 外部应用回归验证
+
+在 `apps/flutter/app` 运行共享路由、会话命令及窄屏确认框测试：
+
+```sh
+fvm flutter test test/core/browser/runtime_browser_external_navigation_test.dart test/core/browser/runtime_browser_session_creation_test.dart test/core/browser/workspace_browser_session_selection_test.dart test/core/browser/browser_menu_commands_test.dart
+```
+
+平台适配测试分别位于 `webview_flutter_platform_interface/test/external_navigation_test.dart`、`webview_flutter_android/test/android_navigation_delegate_test.dart`、`webview_flutter_android/test/android_webview_controller_test.dart`、`webview_all_windows/test/webview_windows_test.dart` 和 `webview_all_ohos/test/ohos_external_navigation_test.dart`。Android 原生回归运行 `WebViewExternalNavigationTest`、`WebViewClientTest`。仓库根目录可用 Node 24 运行 `node --test tools/tests/browser_external_navigation_ohos.test.mjs`，检查生产 ArkTS 控制流的异步打开结果和 Ability 生命周期边界。
+
+Android 控制器完整测试在 Windows 上执行时，既有四个包含 `?`、`<`、`>` 的 Unix 文件路径用例会因 `Uri.file` 使用宿主路径规则而失败；外部应用通道用例可独立执行。该问题与设备上的应用协议解析分开记录。
+
+## 下载回归验证
+
+在 `apps/flutter/app` 运行：
+
+```sh
+fvm flutter test test/core/browser/workspace_browser_page_download_test.dart test/core/browser/workspace_browser_download_test.dart test/core/browser/workspace_browser_session_selection_test.dart test/workspace_external_open_test.dart test/core/browser/browser_menu_commands_test.dart
+```
+
+覆盖无后缀 URL、Content-Disposition 文件名、未知长度、HTTP 失败、传输截断、取消后重试的迟到回调、同名文件、工作区导出、宿主重启、状态与控制协议、320 像素窄屏和放大文字下的菜单布局。Android 插件的 `android_navigation_delegate_test.dart` 同时检查下载标记、请求上下文与禁止重新导航的行为；Windows/Linux/Apple/鸿蒙的适配器测试检查原生事件、原始文件读取和取消路由。`node --test tools/tests/browser_download_bridge.test.mjs` 直接运行生产注入脚本，验证 blob/data 二进制、分块、取消和立即撤销 object URL。
+
+## 会话回归验证
 
 Flutter 测试覆盖并发创建的正序与逆序返回、排队创建及错误传播、未打开工作区的访问、延迟展示、展示异常、并发完成与取消、迟到创建、脚本无响应、嵌套休眠、视图实例保持和偏移后的触摸命中。它们验证共享生命周期和控制器契约；各平台真实 WebView 的渲染、输入和后台行为仍需设备验证。

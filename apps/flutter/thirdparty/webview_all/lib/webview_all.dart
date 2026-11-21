@@ -29,6 +29,8 @@ export 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
         WebResourceRequest,
         WebResourceResponse,
         WebViewCookie,
+        WebViewDownloadEvent,
+        WebViewDownloadState,
         WebViewCredential,
         WebViewOverScrollMode,
         WebViewPermissionResourceType,

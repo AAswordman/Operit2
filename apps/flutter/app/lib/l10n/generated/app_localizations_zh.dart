@@ -820,6 +820,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String get downloads => '下载';
 
   @override
+  String get browserDownloadsAll => '全部';
+
+  @override
+  String get browserDownloadStorageHint =>
+      '文件保存在浏览器所在设备的下载目录中。打开文件时会先复制到当前工作区，也可以直接保存到工作区。';
+
+  @override
+  String get browserDownloadWorkspaceTarget => '保存到当前工作区：';
+
+  @override
+  String get browserDownloadSaveToWorkspace => '保存到工作区';
+
+  @override
+  String get browserDownloadInterrupted => '下载已中断，请重新下载';
+
+  @override
   String get scripts => '脚本';
 
   @override
@@ -890,6 +906,10 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get openExternalApplication => '打开外部应用';
+
+  @override
+  String get browserExternalNavigationFailed =>
+      '无法打开此链接。可能未安装对应应用、链接无效，或系统拒绝了打开请求。';
 
   @override
   String get open => '打开';

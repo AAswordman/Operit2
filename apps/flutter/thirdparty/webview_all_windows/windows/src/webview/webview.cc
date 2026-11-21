@@ -5,8 +5,10 @@
 #include <shlwapi.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <format>
+#include <filesystem>
 #include <limits>
 #include <map>
 #include <memory>
@@ -21,6 +23,18 @@ using namespace Microsoft::WRL;
 
 namespace webview_all_windows {
 namespace {
+
+/// Identifies application protocols while leaving browser-owned resource schemes intact.
+bool IsExternalApplicationUrl(const std::string &url) {
+  const auto end = url.find(':');
+  if (end == std::string::npos || end == 0) return false;
+  auto scheme = url.substr(0, end);
+  std::transform(scheme.begin(), scheme.end(), scheme.begin(),
+                 [](unsigned char character) { return std::tolower(character); });
+  static const std::set<std::string> browser_schemes = {
+      "http", "https", "file", "content", "about", "data", "blob", "javascript"};
+  return browser_schemes.count(scheme) == 0;
+}
 
 inline void ConvertColor(COREWEBVIEW2_COLOR &webview_color, int32_t color) {
   webview_color.B = color & 0xFF;
@@ -295,6 +309,11 @@ bool Webview::SetLocalResourceHandler(LocalResourceCallback callback) {
 
 // Closes the browser controller before destroying its native parent.
 Webview::~Webview() {
+  while (!downloads_.empty()) {
+    const auto id = downloads_.begin()->first;
+    CancelDownload(id);
+    ReleaseDownload(id);
+  }
   if (webview_controller_) webview_controller_->Close();
   if (owns_window_) {
     DestroyWindow(hwnd_);
@@ -404,6 +423,32 @@ void Webview::RegisterEventHandlers() {
     return;
   }
 
+  webview_->add_NavigationStarting(
+      Callback<ICoreWebView2NavigationStartingEventHandler>(
+          [this](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+            wil::unique_cotaskmem_string uri;
+            if (FAILED(args->get_Uri(&uri))) return S_OK;
+            const auto url = util::Utf8FromUtf16(uri.get());
+            if (!external_navigation_callback_ || !IsExternalApplicationUrl(url)) return S_OK;
+            UINT64 id = 0;
+            args->get_NavigationId(&id);
+            external_navigation_ids_.insert(id);
+            args->put_Cancel(TRUE);
+            external_navigation_callback_(url);
+            return S_OK;
+          }).Get(), &event_registrations_.navigation_starting_token_);
+  webview_->add_FrameNavigationStarting(
+      Callback<ICoreWebView2NavigationStartingEventHandler>(
+          [this](ICoreWebView2 *, ICoreWebView2NavigationStartingEventArgs *args) -> HRESULT {
+            wil::unique_cotaskmem_string uri;
+            if (FAILED(args->get_Uri(&uri))) return S_OK;
+            const auto url = util::Utf8FromUtf16(uri.get());
+            if (!external_navigation_callback_ || !IsExternalApplicationUrl(url)) return S_OK;
+            args->put_Cancel(TRUE);
+            external_navigation_callback_(url);
+            return S_OK;
+          }).Get(), &event_registrations_.frame_navigation_starting_token_);
+
   webview_->add_ContentLoading(
       Callback<ICoreWebView2ContentLoadingEventHandler>(
           [this](ICoreWebView2 *sender, IUnknown *args) -> HRESULT {
@@ -420,6 +465,9 @@ void Webview::RegisterEventHandlers() {
       Callback<ICoreWebView2NavigationCompletedEventHandler>(
           [this](ICoreWebView2 *sender,
                  ICoreWebView2NavigationCompletedEventArgs *args) -> HRESULT {
+            UINT64 id = 0;
+            args->get_NavigationId(&id);
+            if (external_navigation_ids_.erase(id) != 0) return S_OK;
             BOOL is_success;
             args->get_IsSuccess(&is_success);
             if (!is_success && on_load_error_callback_) {
@@ -845,6 +893,15 @@ void Webview::RegisterEventHandlers() {
       Callback<ICoreWebView2NewWindowRequestedEventHandler>(
           [this](ICoreWebView2 *sender,
                  ICoreWebView2NewWindowRequestedEventArgs *args) -> HRESULT {
+            wil::unique_cotaskmem_string uri;
+            if (SUCCEEDED(args->get_Uri(&uri))) {
+              const auto url = util::Utf8FromUtf16(uri.get());
+              if (external_navigation_callback_ && IsExternalApplicationUrl(url)) {
+                args->put_Handled(TRUE);
+                external_navigation_callback_(url);
+                return S_OK;
+              }
+            }
             switch (popup_window_policy_) {
             case WebviewPopupWindowPolicy::Deny:
               args->put_Handled(TRUE);
@@ -879,9 +936,6 @@ void Webview::RegisterEventHandlers() {
         Callback<ICoreWebView2DownloadStartingEventHandler>(
             [this](ICoreWebView2 *sender,
                    ICoreWebView2DownloadStartingEventArgs *args) -> HRESULT {
-              wil::com_ptr<ICoreWebView2Deferral> deferral;
-              args->GetDeferral(&deferral);
-
               args->put_Handled(TRUE);
 
               wil::com_ptr<ICoreWebView2DownloadOperation> download;
@@ -902,15 +956,41 @@ void Webview::RegisterEventHandlers() {
               wil::unique_cotaskmem_string resultFilePath;
               args->get_ResultFilePath(&resultFilePath);
 
-              args->put_ResultFilePath(resultFilePath.get());
-              UpdateDownloadProgress(download.get());
+              GUID guid;
+              wchar_t identifier[40] = {};
+              std::error_code error;
+              const auto temporary = std::filesystem::temp_directory_path(error);
+              if (error || FAILED(CoCreateGuid(&guid)) ||
+                  StringFromGUID2(guid, identifier, 40) == 0) {
+                args->put_Cancel(TRUE);
+                if (download_event_callback_) download_event_callback_({
+                    WebviewDownloadEventKind::DownloadFailed,
+                    util::Utf8FromUtf16(uri.get()),
+                    util::Utf8FromUtf16(resultFilePath.get()), 0, totalBytesToReceive,
+                    "Cannot create browser download staging directory"});
+                return S_OK;
+              }
+              const auto directory = temporary / (std::wstring(L"operit-browser-") + identifier);
+              std::filesystem::create_directory(directory, error);
+              if (error) {
+                args->put_Cancel(TRUE);
+                if (download_event_callback_) download_event_callback_({
+                    WebviewDownloadEventKind::DownloadFailed,
+                    util::Utf8FromUtf16(uri.get()),
+                    util::Utf8FromUtf16(resultFilePath.get()), 0, totalBytesToReceive,
+                    error.message()});
+                return S_OK;
+              }
+              const auto destination = directory / std::filesystem::path(resultFilePath.get()).filename();
+              args->put_ResultFilePath(destination.c_str());
+              UpdateDownloadProgress(download.get(), util::Utf8FromUtf16(destination.c_str()));
 
               if (download_event_callback_) {
                 download_event_callback_(
                     {WebviewDownloadEventKind::DownloadStarted,
                      util::Utf8FromUtf16(uri.get()),
-                     util::Utf8FromUtf16(resultFilePath.get()), 0,
-                     totalBytesToReceive});
+                     util::Utf8FromUtf16(destination.c_str()), 0,
+                     totalBytesToReceive, {}});
               }
 
               return S_OK;
@@ -1677,66 +1757,66 @@ bool Webview::ClearVirtualHostNameMapping(const std::string &hostName) {
       util::Utf16FromUtf8(hostName).c_str());
 }
 
-void Webview::UpdateDownloadProgress(ICoreWebView2DownloadOperation *download) {
+// Registers independent callbacks for each engine-owned transfer.
+void Webview::UpdateDownloadProgress(ICoreWebView2DownloadOperation *download, const std::string &id) {
+  auto &transfer = downloads_[id];
+  transfer.operation = download;
+  auto publish = [this, id](ICoreWebView2DownloadOperation *operation,
+                        WebviewDownloadEventKind kind, std::string error = {}) {
+    if (!download_event_callback_) return;
+    INT64 received = 0, total = 0;
+    operation->get_BytesReceived(&received);
+    operation->get_TotalBytesToReceive(&total);
+    wil::unique_cotaskmem_string uri, destination;
+    operation->get_Uri(&uri);
+    operation->get_ResultFilePath(&destination);
+    download_event_callback_({kind, util::Utf8FromUtf16(uri.get()),
+        id, received, total, error});
+  };
   download->add_BytesReceivedChanged(
       Callback<ICoreWebView2BytesReceivedChangedEventHandler>(
-          [this](ICoreWebView2DownloadOperation *download,
-                 IUnknown *args) -> HRESULT {
-            if (download_event_callback_) {
-              INT64 recvd = 0;
-              download->get_BytesReceived(&recvd);
-              INT64 total = 0;
-              download->get_TotalBytesToReceive(&total);
-
-              wil::unique_cotaskmem_string uri;
-              download->get_Uri(&uri);
-              wil::unique_cotaskmem_string resultFilePath;
-              download->get_ResultFilePath(&resultFilePath);
-              download_event_callback_(
-                  {WebviewDownloadEventKind::DownloadProgress,
-                   util::Utf8FromUtf16(uri.get()),
-                   util::Utf8FromUtf16(resultFilePath.get()), recvd, total});
-            }
+          [publish](ICoreWebView2DownloadOperation *operation, IUnknown *) -> HRESULT {
+            publish(operation, WebviewDownloadEventKind::DownloadProgress);
             return S_OK;
-          })
-          .Get(),
-      &event_registrations_.download_bytes_received_token_);
-
+          }).Get(), &transfer.bytes_token);
   download->add_StateChanged(
       Callback<ICoreWebView2StateChangedEventHandler>(
-          [this](ICoreWebView2DownloadOperation *download,
-                 IUnknown *args) -> HRESULT {
+          [publish](ICoreWebView2DownloadOperation *operation, IUnknown *) -> HRESULT {
             COREWEBVIEW2_DOWNLOAD_STATE state;
-            download->get_State(&state);
-            switch (state) {
-            case COREWEBVIEW2_DOWNLOAD_STATE_IN_PROGRESS:
-              break;
-            case COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED:
-              // Here developer can take different actions based on
-              // `download->InterruptReason`. For example, show an error
-              // message to the end user.
-              break;
-            case COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED:
-              if (download_event_callback_) {
-                wil::unique_cotaskmem_string uri;
-                download->get_Uri(&uri);
-                wil::unique_cotaskmem_string resultFilePath;
-                download->get_ResultFilePath(&resultFilePath);
-                INT64 recvd = 0;
-                download->get_BytesReceived(&recvd);
-                INT64 total = 0;
-                download->get_TotalBytesToReceive(&total);
-                download_event_callback_(
-                    {WebviewDownloadEventKind::DownloadCompleted,
-                     util::Utf8FromUtf16(uri.get()),
-                     util::Utf8FromUtf16(resultFilePath.get()), recvd, total});
-              }
-              break;
+            operation->get_State(&state);
+            if (state == COREWEBVIEW2_DOWNLOAD_STATE_COMPLETED) {
+              publish(operation, WebviewDownloadEventKind::DownloadCompleted);
+            } else if (state == COREWEBVIEW2_DOWNLOAD_STATE_INTERRUPTED) {
+              COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON reason;
+              operation->get_InterruptReason(&reason);
+              publish(operation,
+                  reason == COREWEBVIEW2_DOWNLOAD_INTERRUPT_REASON_USER_CANCELED
+                      ? WebviewDownloadEventKind::DownloadCancelled
+                      : WebviewDownloadEventKind::DownloadFailed,
+                  std::format("WebView2 download interrupted ({})", static_cast<int>(reason)));
             }
             return S_OK;
-          })
-          .Get(),
-      &event_registrations_.download_state_changed_token_);
+          }).Get(), &transfer.state_token);
+}
+
+// Cancels the original engine operation, preserving request ownership.
+bool Webview::CancelDownload(const std::string &id) {
+  const auto entry = downloads_.find(id);
+  return entry != downloads_.end() && SUCCEEDED(entry->second.operation->Cancel());
+}
+
+// Disconnects callbacks before deleting a transfer's private staging file.
+void Webview::ReleaseDownload(const std::string &id) {
+  const auto entry = downloads_.find(id);
+  if (entry == downloads_.end()) return;
+  auto &transfer = entry->second;
+  transfer.operation->remove_BytesReceivedChanged(transfer.bytes_token);
+  transfer.operation->remove_StateChanged(transfer.state_token);
+  downloads_.erase(entry);
+  const std::filesystem::path file(util::Utf16FromUtf8(id));
+  std::error_code error;
+  std::filesystem::remove(file, error);
+  std::filesystem::remove(file.parent_path(), error);
 }
 
 } // namespace webview_all_windows

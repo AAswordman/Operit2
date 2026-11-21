@@ -11,6 +11,33 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 void main() {
   final registry = RuntimeBrowserSessionRegistry.instance;
 
+  test(
+    'explicit external links run on their own browser session and report failures',
+    () async {
+      _register(registry, 'external-owner', 'https://example.test/app');
+      addTearDown(() => registry.unregister('external-owner'));
+      final received = <String>[];
+      registry.setExternalNavigationHandler((sessionId, url) async {
+        received.add('$sessionId $url');
+        throw StateError('The system rejected the application link');
+      });
+      final result = await registry.handleRuntimeBrowserCommand(
+        const RuntimeBrowserCommand(
+          action: 'openExternal',
+          sessionId: 'external-owner',
+          url: 'https://example.test/app',
+          script: null,
+          payloadJson: '',
+          userAgent: null,
+          headers: {},
+        ),
+      );
+      expect(received, ['external-owner https://example.test/app']);
+      expect(result.success, isFalse);
+      expect(result.error, contains('The system rejected'));
+    },
+  );
+
   testWidgets('queued creates return their own sessions and errors', (
     tester,
   ) async {
@@ -138,5 +165,4 @@ class _Controller extends PlatformWebViewController {
   /// Creates a controller using the shared platform interface contract.
   _Controller()
     : super.implementation(const PlatformWebViewControllerCreationParams());
-
 }

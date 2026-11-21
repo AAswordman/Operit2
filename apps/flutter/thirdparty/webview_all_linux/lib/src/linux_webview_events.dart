@@ -8,6 +8,38 @@ extension LinuxWebViewControllerEventHandling on LinuxWebViewController {
 
     final String? type = event['type'] as String?;
     switch (type) {
+      case 'download':
+        final id = event['id'] as String;
+        final state = WebViewDownloadState.values.byName(
+          event['state'] as String,
+        );
+        final total = (event['totalBytes'] as num).toInt();
+        reportDownloadEvent(
+          WebViewDownloadEvent(
+            id: id,
+            url: event['url'] as String,
+            fileName: event['fileName'] as String,
+            state: state,
+            receivedBytes: (event['receivedBytes'] as num).toInt(),
+            totalBytes: total > 0 ? total : null,
+            error: event['error'] as String?,
+            cancel: () => _invoke<void>('cancelDownload', {'id': id}),
+            readBytes: state == WebViewDownloadState.completed
+                ? () async {
+                    try {
+                      return await File(event['path'] as String).readAsBytes();
+                    } finally {
+                      await _invoke<void>('releaseDownload', {'id': id});
+                    }
+                  }
+                : null,
+          ),
+        );
+        if (state == WebViewDownloadState.failed ||
+            state == WebViewDownloadState.cancelled) {
+          unawaited(_invoke<void>('releaseDownload', {'id': id}));
+        }
+        break;
       case 'urlChanged':
         final String url = '${event['url'] ?? ''}';
         _currentUrl = url;

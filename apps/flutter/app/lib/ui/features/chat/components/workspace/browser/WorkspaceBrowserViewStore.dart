@@ -5,6 +5,7 @@ import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:operit2/core/host/browser/RuntimeBrowserExternalNavigation.dart';
 import 'package:operit2/core/browser/BrowserSessions.dart';
 import 'package:operit2/core/host/RuntimeHostInteractionSubscriber.dart';
 import 'package:operit2/core/logging/ClientLogger.dart';
@@ -29,7 +30,9 @@ class WorkspaceBrowserViewDelegate {
 class WorkspaceBrowserViewStore extends ChangeNotifier {
   /// Creates the workspace browser surface store.
   WorkspaceBrowserViewStore._({BrowserSessions? sessions})
-    : _sessions = sessions ?? BrowserSessions();
+    : _sessions = sessions ?? BrowserSessions() {
+    stores.downloads.remoteControl = _controlDownload;
+  }
 
   /// Creates an isolated store with a supplied browser client for tests.
   @visibleForTesting
@@ -55,7 +58,9 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   static const String _logTag = 'WorkspaceBrowserSurface';
 
   final BrowserSessions _sessions;
-  final WorkspaceBrowserStores stores = WorkspaceBrowserStores();
+  final WorkspaceBrowserStores stores = WorkspaceBrowserStores(
+    observeDownloads: true,
+  );
   final WorkspaceBrowserPermissionStore permissions =
       WorkspaceBrowserPermissionStore();
   final List<WorkspaceBrowserTabState> _tabs = <WorkspaceBrowserTabState>[];
@@ -101,7 +106,6 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
     onWriteWorkspaceFileBytes,
   }) {
     _delegate = delegate;
-    stores.downloads.setWorkspaceSaver(onWriteWorkspaceFileBytes);
   }
 
   /// Detaches workspace presentation callbacks.
@@ -245,8 +249,32 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
   void navigateCurrent(String rawUrl) {
     final tab = _requireCurrentTab();
     final url = normalizeWorkspaceBrowserUrl(rawUrl);
-    tab.update(url: url, addressText: url, errorText: null);
-    unawaited(_sessions.navigate(tab.id, url));
+    if (isRuntimeBrowserExternalUrl(url)) {
+      tab.update(addressText: tab.url, errorText: null);
+    } else {
+      tab.update(url: url, addressText: url, errorText: null);
+    }
+    unawaited(_navigateOwnerTab(tab, url));
+  }
+
+  /// Preserves command failures on their originating tab without an unhandled Future.
+  Future<void> _navigateOwnerTab(
+    WorkspaceBrowserTabState tab,
+    String url,
+  ) async {
+    try {
+      await _sessions.navigate(tab.id, url);
+    } catch (error) {
+      if (!tab.isDisposed) {
+        tab.update(errorText: error.toString(), isLoading: false);
+      }
+    }
+  }
+
+  /// Sends an explicit application handoff to the same owner as this browser session.
+  Future<void> openCurrentInExternalApplication() async {
+    final tab = _requireCurrentTab();
+    await _sessions.openExternal(tab.id, tab.url);
   }
 
   /// Navigates the current real owner WebView backward.
@@ -461,6 +489,7 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
             tab.update(errorText: error.toString(), isLoading: false);
           },
         );
+    await refreshDownloads(tab.id);
     if (!usesNativeSurface) {
       final snapshot = await _sessions.getSnapshot(
         tab.id,
@@ -488,6 +517,9 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
     final info = event.session;
     if (info != null) {
       _applySessionInfo(tab, info);
+    }
+    if (event.eventType == 'downloads') {
+      stores.downloads.applySnapshot(event.resultJson);
     }
     if (event.eventType == 'surface' && event.resultJson.isNotEmpty) {
       _applySurfaceDescriptor(tab, event.resultJson);
@@ -522,6 +554,22 @@ class WorkspaceBrowserViewStore extends ChangeNotifier {
       tab.update(errorText: event.error, isLoading: false);
     }
     notifyListeners();
+  }
+
+  /// Refreshes authoritative download state when a browser session attaches.
+  Future<void> refreshDownloads(String sessionId) async {
+    final result = await _sessions.downloads(sessionId);
+    stores.downloads.applySnapshot(result.resultJson);
+  }
+
+  /// Routes download mutations to the runtime owner and applies its response.
+  Future<void> _controlDownload(String operation, String url) async {
+    final result = await _sessions.downloads(
+      _requireCurrentTab().id,
+      operation: operation,
+      url: url,
+    );
+    stores.downloads.applySnapshot(result.resultJson);
   }
 
   /// Copies typed Core session metadata into one view tab.

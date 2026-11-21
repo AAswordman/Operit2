@@ -24,6 +24,7 @@ class WorkspaceBrowserMenuSheet extends StatefulWidget {
     required this.onLoadMenuCommands,
     required this.onRunMenuCommand,
     required this.activeDownloadCount,
+    this.onOpenExternal,
   });
 
   final VoidCallback onHistory;
@@ -43,6 +44,7 @@ class WorkspaceBrowserMenuSheet extends StatefulWidget {
   onLoadMenuCommands;
   final ValueChanged<int> onRunMenuCommand;
   final int activeDownloadCount;
+  final VoidCallback? onOpenExternal;
 
   @override
   State<WorkspaceBrowserMenuSheet> createState() =>
@@ -67,6 +69,12 @@ class _WorkspaceBrowserMenuSheetState extends State<WorkspaceBrowserMenuSheet> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: <Widget>[
+          if (widget.onOpenExternal != null)
+            _MenuTile(
+              icon: Icons.open_in_new,
+              title: l10n.openExternalApplication,
+              onTap: widget.onOpenExternal!,
+            ),
           _MenuTile(
             icon: Icons.history,
             title: l10n.history,

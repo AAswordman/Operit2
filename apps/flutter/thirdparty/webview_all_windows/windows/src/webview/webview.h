@@ -9,6 +9,7 @@
 #include <functional>
 #include <map>
 #include <optional>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -25,7 +26,9 @@ enum class WebviewPointerEventKind { Activate, Down, Enter, Leave, Up, Update };
 enum class WebviewDownloadEventKind {
   DownloadStarted,
   DownloadCompleted,
-  DownloadProgress
+  DownloadProgress,
+  DownloadFailed,
+  DownloadCancelled
 };
 
 enum class WebviewPermissionKind {
@@ -57,6 +60,7 @@ struct WebviewDownloadEvent {
   std::string resultFilePath;
   INT64 bytesReceived;
   INT64 totalBytesToReceive;
+  std::string error;
 };
 
 struct WebviewCookie {
@@ -137,6 +141,8 @@ struct EventRegistrations {
   EventRegistrationToken source_changed_token_{};
   EventRegistrationToken content_loading_token_{};
   EventRegistrationToken navigation_completed_token_{};
+  EventRegistrationToken navigation_starting_token_{};
+  EventRegistrationToken frame_navigation_starting_token_{};
   EventRegistrationToken history_changed_token_{};
   EventRegistrationToken document_title_changed_token_{};
   EventRegistrationToken cursor_changed_token_{};
@@ -161,6 +167,7 @@ public:
   friend class WebviewHost;
 
   typedef std::function<void(const std::string &)> UrlChangedCallback;
+  typedef std::function<void(const std::string &)> ExternalNavigationCallback;
   typedef std::function<void(WebviewLoadingState)> LoadingStateChangedCallback;
   typedef std::function<void(COREWEBVIEW2_WEB_ERROR_STATUS)>
       OnLoadErrorCallback;
@@ -287,10 +294,19 @@ public:
                                  WebviewHostResourceAccessKind accessKind);
   bool ClearVirtualHostNameMapping(const std::string &hostName);
 
-  void UpdateDownloadProgress(ICoreWebView2DownloadOperation *download);
+  void UpdateDownloadProgress(ICoreWebView2DownloadOperation *download, const std::string &id);
+  // Cancels the original engine response without replaying its request.
+  bool CancelDownload(const std::string &id);
+  // Removes transfer callbacks and its private staging file.
+  void ReleaseDownload(const std::string &id);
 
   void OnUrlChanged(UrlChangedCallback callback) {
     url_changed_callback_ = std::move(callback);
+  }
+
+  /// Receives application links after their native WebView navigation is cancelled.
+  void OnExternalNavigation(ExternalNavigationCallback callback) {
+    external_navigation_callback_ = std::move(callback);
   }
 
   void OnLoadError(OnLoadErrorCallback callback) {
@@ -396,8 +412,16 @@ private:
   EventRegistrations event_registrations_{};
 
   UrlChangedCallback url_changed_callback_;
+  ExternalNavigationCallback external_navigation_callback_;
+  std::set<UINT64> external_navigation_ids_;
   LoadingStateChangedCallback loading_state_changed_callback_;
   DownloadEventCallback download_event_callback_;
+  struct DownloadTransfer {
+    wil::com_ptr<ICoreWebView2DownloadOperation> operation;
+    EventRegistrationToken bytes_token{};
+    EventRegistrationToken state_token{};
+  };
+  std::map<std::string, DownloadTransfer> downloads_;
   OnLoadErrorCallback on_load_error_callback_;
   HttpResponseErrorCallback http_response_error_callback_;
   HistoryChangedCallback history_changed_callback_;

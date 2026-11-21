@@ -849,6 +849,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get downloads => 'Downloads';
 
   @override
+  String get browserDownloadsAll => 'All';
+
+  @override
+  String get browserDownloadStorageHint =>
+      'Files are kept in the browser\'s download folder on the browser device. Open copies the file into this workspace first. You can also save it to the workspace directly.';
+
+  @override
+  String get browserDownloadWorkspaceTarget => 'Save to this workspace:';
+
+  @override
+  String get browserDownloadSaveToWorkspace => 'Save to workspace';
+
+  @override
+  String get browserDownloadInterrupted => 'Interrupted · download again';
+
+  @override
   String get scripts => 'Scripts';
 
   @override
@@ -920,6 +936,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get openExternalApplication => 'Open external application';
+
+  @override
+  String get browserExternalNavigationFailed =>
+      'Unable to open the link. No compatible application is installed, the link is invalid, or the system rejected the request.';
 
   @override
   String get open => 'Open';

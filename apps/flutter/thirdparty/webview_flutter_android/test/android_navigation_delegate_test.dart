@@ -25,6 +25,34 @@ import 'android_navigation_delegate_test.mocks.dart';
   android_webview.X509Certificate,
 ])
 void main() {
+  test(
+    'application links from subframes reach navigation without loading the main frame',
+    () {
+      final delegate = AndroidNavigationDelegate(_buildCreationParams());
+      final requests = <NavigationRequest>[];
+      delegate.setOnLoadRequest(
+        (_) async => fail('A subframe link must not replace the main page'),
+      );
+      delegate.setOnNavigationRequest((request) {
+        requests.add(request);
+        return NavigationDecision.prevent;
+      });
+      CapturingWebViewClient.lastCreatedDelegate.requestLoading!(
+        CapturingWebViewClient(),
+        TestWebView(),
+        android_webview.WebResourceRequest.pigeon_detached(
+          url: 'weixin://chat',
+          isForMainFrame: false,
+          isRedirect: false,
+          hasGesture: true,
+          method: 'GET',
+          requestHeaders: const {},
+        ),
+      );
+      expect(requests.single.url, 'weixin://chat');
+      expect(requests.single.isMainFrame, isFalse);
+    },
+  );
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('AndroidNavigationDelegate', () {
@@ -505,7 +533,7 @@ void main() {
 
     test(
       'onLoadRequest from onDownloadStart should not be called when onNavigationRequestCallback returns NavigationDecision.prevent',
-      () {
+      () async {
         final completer = Completer<void>();
         final androidNavigationDelegate = AndroidNavigationDelegate(
           _buildCreationParams(),
@@ -527,29 +555,37 @@ void main() {
         CapturingDownloadListener.lastCreatedListener.onDownloadStart(
           MockDownloadListener(),
           'https://www.google.com',
-          '',
-          '',
+          'download-agent',
+          'attachment; filename="file.apk"',
           '',
           0,
         );
+        await Future<void>.delayed(Duration.zero);
 
         expect(callbackNavigationRequest.isMainFrame, true);
+        expect(callbackNavigationRequest.isDownload, true);
+        expect(callbackNavigationRequest.headers, <String, String>{
+          'User-Agent': 'download-agent',
+          'Cookie': 'session=download-test',
+        });
+        expect(
+          callbackNavigationRequest.contentDisposition,
+          'attachment; filename="file.apk"',
+        );
         expect(callbackNavigationRequest.url, 'https://www.google.com');
         expect(completer.isCompleted, false);
       },
     );
 
     test(
-      'onLoadRequest from onDownloadStart should complete when onNavigationRequestCallback returns NavigationDecision.navigate',
-      () {
+      'identified downloads never navigate back to their download URL',
+      () async {
         final completer = Completer<void>();
-        late final LoadRequestParams loadRequestParams;
         final androidNavigationDelegate = AndroidNavigationDelegate(
           _buildCreationParams(),
         );
 
         androidNavigationDelegate.setOnLoadRequest((LoadRequestParams params) {
-          loadRequestParams = params;
           completer.complete();
           return completer.future;
         });
@@ -570,12 +606,12 @@ void main() {
           '',
           0,
         );
+        await Future<void>.delayed(Duration.zero);
 
-        expect(loadRequestParams.uri.toString(), 'https://www.google.com');
-        expect(loadRequestParams.headers, <String, String>{});
         expect(callbackNavigationRequest.isMainFrame, true);
+        expect(callbackNavigationRequest.isDownload, true);
         expect(callbackNavigationRequest.url, 'https://www.google.com');
-        expect(completer.isCompleted, true);
+        expect(completer.isCompleted, false);
       },
     );
 
@@ -714,6 +750,7 @@ void main() {
 }
 
 AndroidNavigationDelegateCreationParams _buildCreationParams() {
+  android_webview.PigeonOverrides.cookieManager_instance = _DownloadCookies();
   android_webview.PigeonOverrides.webViewClient_new =
       CapturingWebViewClient.new;
   android_webview.PigeonOverrides.webChromeClient_new =
@@ -723,6 +760,12 @@ AndroidNavigationDelegateCreationParams _buildCreationParams() {
   return AndroidNavigationDelegateCreationParams.fromPlatformNavigationDelegateCreationParams(
     const PlatformNavigationDelegateCreationParams(),
   );
+}
+
+class _DownloadCookies extends Fake implements android_webview.CookieManager {
+  /// Supplies browser-owned cookies for identified download responses.
+  @override
+  Future<String?> getCookies(String url) async => 'session=download-test';
 }
 
 // Records the last created instance of itself.

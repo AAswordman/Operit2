@@ -18,6 +18,7 @@ import Foundation
 open class ProxyAPIRegistrar: WebKitLibraryPigeonProxyApiRegistrar {
   let assetManager: FlutterAssetManager
   var localResources: WebViewLocalResources!
+  var downloads: WebViewDownloads!
 
   init(
     binaryMessenger: FlutterBinaryMessenger,
@@ -26,6 +27,7 @@ open class ProxyAPIRegistrar: WebKitLibraryPigeonProxyApiRegistrar {
     self.assetManager = assetManager
     super.init(binaryMessenger: binaryMessenger, apiDelegate: ProxyAPIDelegate())
     localResources = WebViewLocalResources(messenger: binaryMessenger, registrar: self)
+    downloads = WebViewDownloads(messenger: binaryMessenger, registrar: self)
   }
 
   /// Creates an error when the `unknown` enum value is passed to a host method.

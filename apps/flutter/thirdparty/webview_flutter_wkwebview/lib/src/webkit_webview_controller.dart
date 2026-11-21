@@ -16,6 +16,7 @@ import 'common/weak_reference_utils.dart';
 import 'common/web_kit.g.dart';
 import 'common/webkit_constants.dart';
 import 'webkit_ssl_auth_error.dart';
+import 'webkit_download_bridge.dart';
 
 /// Media types that can require a user gesture to begin playing.
 ///
@@ -394,6 +395,20 @@ class WebKitWebViewController extends PlatformWebViewController {
   /// `FLTWebViewFlutterPlugin:webViewForIdentifier:withPluginRegistry`.
   int get webViewIdentifier =>
       PigeonInstanceManager.instance.getIdentifier(_webView.nativeWebView)!;
+
+  /// Registers native download delivery before the first navigation.
+  @override
+  Future<void> setOnDownloadEvent(
+    void Function(WebViewDownloadEvent)? callback,
+  ) async {
+    await super.setOnDownloadEvent(callback);
+    if (callback != null)
+      WebKitDownloadBridge.attach(webViewIdentifier, callback);
+  }
+
+  /// Cancels engine downloads when their browser session closes.
+  @override
+  Future<void> dispose() => WebKitDownloadBridge.detach(webViewIdentifier);
 
   /// Whether horizontal swipe gestures trigger page navigation.
   Future<void> setAllowsBackForwardNavigationGestures(bool enabled) {

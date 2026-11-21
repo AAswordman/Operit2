@@ -106,6 +106,8 @@ export class WebViewPlatformView extends PlatformView {
 
   private url: string = '';
   private downloadListener: DownloadListener | null = null;
+  private nativeDownloadDelegate?: web_webview.WebDownloadDelegate;
+  private onNativeDownloadDispose?: () => void;
   private webChromeClient: WebChromeClient | null = null;
   private webViewClient: WebViewClient | null = null;
   private webSettings: WebSettings | null = null;
@@ -148,6 +150,7 @@ export class WebViewPlatformView extends PlatformView {
   };
 
   onDownloadStart = (event: ESObject): void => {
+    if (this.nativeDownloadDelegate !== undefined) return;
     if (this.downloadListener) {
       this.downloadListener.onDownloadStart(
         event.url,
@@ -299,6 +302,9 @@ export class WebViewPlatformView extends PlatformView {
 
   onControllerAttached = (): void => {
     this.controllerAttached = true;
+    if (this.nativeDownloadDelegate !== undefined) {
+      this.controller.setDownloadDelegate(this.nativeDownloadDelegate);
+    }
     if (this.userAgentString.length > 0) {
       this.setCustomUserAgent(this.userAgentString);
       this.controller.refresh();
@@ -427,6 +433,8 @@ export class WebViewPlatformView extends PlatformView {
 
   /** Rejects pending script-host registration when the native view is destroyed. */
   dispose(): void {
+    this.onNativeDownloadDispose?.();
+    this.onNativeDownloadDispose = undefined;
     this.documentStartScriptHostDisposed = true;
     this.documentStartScriptHost = undefined;
     this.documentStartScriptHostWaiters.forEach((waiter: DocumentStartScriptHostWaiter): void => waiter.reject(new Error('WebView script host is disposed')));
@@ -443,6 +451,13 @@ export class WebViewPlatformView extends PlatformView {
 
   onInactive(): void {
     this.controller.onInactive();
+  }
+
+  /** Registers original-response downloads before the Web component attaches. */
+  setNativeDownloadDelegate(delegate: web_webview.WebDownloadDelegate, dispose: () => void): void {
+    this.nativeDownloadDelegate = delegate;
+    this.onNativeDownloadDispose = dispose;
+    if (this.controllerAttached) this.controller.setDownloadDelegate(delegate);
   }
 
   onActive(): void {

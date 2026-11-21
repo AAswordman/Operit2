@@ -325,36 +325,33 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  fileTest('download location failures use the same awaited local feedback', (
-    tester,
-  ) async {
-    final store = _DownloadStore('downloads/archive.zip');
-    addTearDown(store.dispose);
-    final pending = Completer<void>();
-    final opened = <String>[];
-    await _pumpEntry(tester, _Entry.download, (path) {
-      opened.add(path);
-      return pending.future;
-    }, store: store);
-    final dynamic menu = tester.widget(_downloadMenu());
-    final List<PopupMenuEntry<dynamic>> actions = menu.itemBuilder(
-      tester.element(_downloadMenu()),
-    );
-    menu.onSelected(
-      actions.whereType<PopupMenuItem<dynamic>>().elementAt(1).value,
-    );
-    await tester.pump();
-    expect(opened, <String>['downloads']);
-    _expectBusy(tester, _Entry.download);
-    pending.completeError(StateError('Cannot open a directory as a file'));
-    await tester.pumpAndSettle();
-    expect(
-      AppToastController.instance.notices.value.single.text,
-      'File operation failed: Bad state: Cannot open a directory as a file',
-    );
-    expect(tester.takeException(), isNull);
-    await tester.pumpWidget(const SizedBox.shrink());
-  });
+  fileTest(
+    'download location shows paths without opening a directory as a file',
+    (tester) async {
+      final store = _DownloadStore('downloads/archive.zip');
+      addTearDown(store.dispose);
+      final opened = <String>[];
+      await _pumpEntry(tester, _Entry.download, (path) {
+        opened.add(path);
+        return Future<void>.value();
+      }, store: store);
+      final dynamic menu = tester.widget(_downloadMenu());
+      final List<PopupMenuEntry<dynamic>> actions = menu.itemBuilder(
+        tester.element(_downloadMenu()),
+      );
+      menu.onSelected(
+        actions.whereType<PopupMenuItem<dynamic>>().elementAt(1).value,
+      );
+      await tester.pump();
+      await tester.pumpAndSettle();
+      expect(opened, isEmpty);
+      expect(find.byType(AlertDialog), findsOneWidget);
+      expect(find.text('downloads/archive.zip'), findsOneWidget);
+      expect(AppToastController.instance.notices.value, isEmpty);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }
 
 /// Captures emitted diagnostics and removes toast timers before widget invariant checks.
@@ -431,11 +428,12 @@ Future<void> _pumpEntry(
     _Entry.download => WorkspaceBrowserDownloadSheet(
       store: store!,
       onOpenWorkspaceFile: open,
+      onSaveToWorkspace: (_) async {},
     ),
   };
   await tester.pumpWidget(_app(child));
   if (entry == _Entry.download) {
-    await tester.tap(find.text('Completed'));
+    await tester.tap(find.text('Completed (1)'));
   }
   await tester.pumpAndSettle();
 }

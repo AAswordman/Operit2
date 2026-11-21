@@ -18,6 +18,7 @@ public class ProxyApiRegistrar extends AndroidWebkitLibraryPigeonProxyApiRegistr
   @NonNull private Context context;
   final WebViewLocalResources localResources;
   final WebViewUserScripts userScripts;
+  final WebViewExternalNavigation externalNavigation;
 
   @NonNull private final FlutterAssetManager flutterAssetManager;
 
@@ -30,6 +31,7 @@ public class ProxyApiRegistrar extends AndroidWebkitLibraryPigeonProxyApiRegistr
     this.flutterAssetManager = flutterAssetManager;
     localResources = new WebViewLocalResources(binaryMessenger, this);
     userScripts = new WebViewUserScripts(binaryMessenger, this);
+    externalNavigation = new WebViewExternalNavigation(binaryMessenger, this);
   }
 
   // Interface for an injectable SDK version checker.

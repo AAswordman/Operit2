@@ -130,6 +130,38 @@ public:
     g_main_loop_unref(result.loop);
   }
 
+  // Exercises the exact native response, staging path, completion, and cleanup.
+  void CheckManaged() {
+    GMainLoop *loop = g_main_loop_new(nullptr, FALSE);
+    DownloadPolicy::Update latest;
+    int running = 0;
+    first_policy_->SetCallback([&](const DownloadPolicy::Update &update) {
+      latest = update;
+      if (update.state == "running") running++;
+      if (update.state == "completed" || update.state == "failed") g_main_loop_quit(loop);
+    });
+    WebKitDownload *download = webkit_web_view_download_uri(first_, url_.c_str());
+    const auto timeout = g_timeout_add_seconds(10, +[](gpointer value) -> gboolean {
+      g_main_loop_quit(static_cast<GMainLoop *>(value));
+      return G_SOURCE_REMOVE;
+    }, loop);
+    g_main_loop_run(loop);
+    g_source_remove(timeout);
+    g_assert_cmpstr(latest.state.c_str(), ==, "completed");
+    g_assert_cmpstr(latest.filename.c_str(), ==, "test.txt");
+    g_assert_cmpint(latest.received, ==, 13);
+    g_assert_cmpint(running, >, 0);
+    gchar *contents = nullptr;
+    g_assert_true(g_file_get_contents(latest.path.c_str(), &contents, nullptr, nullptr));
+    g_assert_cmpstr(contents, ==, "download test");
+    g_free(contents);
+    first_policy_->Release(latest.id);
+    g_assert_false(g_file_test(latest.path.c_str(), G_FILE_TEST_EXISTS));
+    first_policy_->SetCallback({});
+    g_object_unref(download);
+    g_main_loop_unref(loop);
+  }
+
   WebKitWebView *first_;
   WebKitWebView *second_;
   std::unique_ptr<DownloadPolicy> first_policy_;
@@ -164,6 +196,12 @@ void TestCleanupAndContextDownloads() {
   fixture.Check(fixture.second_, false);
 }
 
+// Verifies managed transfers without replacing the browser's HTTP request.
+void TestManagedDownload() {
+  Fixture fixture;
+  fixture.CheckManaged();
+}
+
 } // namespace
 
 int main(int argc, char **argv) {
@@ -172,5 +210,6 @@ int main(int argc, char **argv) {
                   TestScopeAndRuntimeChanges);
   g_test_add_func("/downloads/cleanup-and-context-downloads",
                   TestCleanupAndContextDownloads);
+  g_test_add_func("/downloads/managed-original-response", TestManagedDownload);
   return g_test_run();
 }

@@ -2,6 +2,7 @@ import { HttpAuthHandler, Reply, SslAuthHandler } from './OhosWebViewCallbackApi
 import { InstanceManager } from './InstanceManager';
 import { WebViewClientFlutterApiImpl } from './WebViewClientFlutterApiImpl';
 import { WebViewPlatformView } from './WebViewPlatformView';
+import { isExternalApplicationUrl } from './WebViewExternalNavigation';
 
 export interface WebViewClient {
   onPageStarted(view: WebViewPlatformView, url: string): void;
@@ -50,9 +51,10 @@ class OhosWebViewClient implements WebViewClient {
     this.flutterApi.onReceivedHttpErrorImpl(this, view, request, response, this.emptyReply);
   }
 
+  /** Leaves document subframes in ArkWeb while routing application links through the owner. */
   shouldOverrideUrlLoading(view: WebViewPlatformView, request: WebResourceRequest): boolean {
     this.flutterApi.requestLoadingImpl(this, view, request, this.emptyReply);
-    return this.shouldOverride;
+    return this.shouldOverride && (request.isMainFrame() || isExternalApplicationUrl(request.getRequestUrl()));
   }
 
   doUpdateVisitedHistory(view: WebViewPlatformView, url: string, isReload: boolean): void {
