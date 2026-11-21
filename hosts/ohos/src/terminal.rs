@@ -443,12 +443,14 @@ impl TerminalHost for OhosTerminalHost {
                     terminalType: SHELL_TERMINAL_TYPE.to_string(),
                     available: self.vrootRuntime.isAvailable(),
                     description: "OpenHarmony QEMU-vroot Alpine Linux shell".to_string(),
+                    nameKey: Some("terminalBuiltinOhosLinux".into()),
                 },
                 TerminalTypeInfo {
                     terminal: NATIVE_TERMINAL.to_string(),
                     terminalType: SHELL_TERMINAL_TYPE.to_string(),
                     available: Path::new("/bin/sh").is_file(),
                     description: "OpenHarmony system /bin/sh terminal".to_string(),
+                    nameKey: Some("terminalBuiltinOhosSystem".into()),
                 },
             ],
         })

@@ -179,6 +179,7 @@ pub fn install(
         Ok(TerminalProfile {
             id: instanceId.into(),
             name: name.trim().into(),
+            nameKey: None,
             terminal: terminal.into(),
             terminalType: terminalType.into(),
             options: BTreeMap::from([("rootfs".into(), target.to_string_lossy().into_owned())]),

@@ -367,12 +367,14 @@ impl TerminalHost for AndroidTerminalHost {
                     terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
                     available: true,
                     description: "Android proot Linux bash terminal".to_string(),
+                    nameKey: Some("terminalBuiltinAndroidLinux".into()),
                 },
                 TerminalTypeInfo {
                     terminal: ANDROID_SYSTEM_TERMINAL.to_string(),
                     terminalType: "shell".to_string(),
                     available: true,
                     description: "Android system shell terminal".to_string(),
+                    nameKey: Some("terminalBuiltinAndroidSystem".into()),
                 },
             ],
         })

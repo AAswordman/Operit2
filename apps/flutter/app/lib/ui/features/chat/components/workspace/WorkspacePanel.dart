@@ -15,6 +15,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import '../../../../common/components/RetainedPage.dart';
+import '../../../../common/TerminalLabels.dart';
 import '../../../../common/contributions/ToolPkgChatUiCatalog.dart';
 import '../../../../common/contributions/EmbeddedPluginSurfaceCatalog.dart';
 import '../../../../common/contributions/EmbeddedPluginSurfaceHost.dart';
@@ -1272,6 +1273,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   Future<void> _launchTerminalProfile(
     core_proxy.RuntimeTerminalTypeInfo terminal,
   ) async {
+    final name = TerminalLabels.runtimeName(
+      AppLocalizations.of(context)!,
+      terminal,
+    );
     await launchWorkspaceTerminal(
       context: context,
       terminal: terminal.terminal,
@@ -1279,8 +1284,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       launch: () async {
         final workingDirectory = _manualTerminalWorkingDirectory();
         final sessionId = await _terminalSessions.startPtySession(
-          sessionName:
-              '${_nextManualTerminalSessionName()} · ${terminal.description}',
+          sessionName: '${_nextManualTerminalSessionName()} · $name',
           terminal: terminal.terminal,
           terminalType: terminal.terminalType,
           workingDirectory: workingDirectory,
@@ -1308,16 +1312,17 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
       context: context,
       builder: (context) {
         final theme = Theme.of(context);
+        final l10n = AppLocalizations.of(context)!;
         final availableTypes = terminalInfo.types
             .where((item) => item.available)
             .toList(growable: false);
         return AlertDialog(
-          title: const Text('选择终端配置'),
+          title: Text(l10n.terminalProfileSelect),
           content: SizedBox(
             width: 460,
             child: availableTypes.isEmpty
                 ? Text(
-                    '当前平台没有可用的终端类型。',
+                    l10n.terminalProfilesUnavailable,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
@@ -1346,8 +1351,10 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
                             value: '${item.terminal}\u0000${item.terminalType}',
                             enabled: item.available,
                           ),
-                          title: Text(item.description),
-                          subtitle: Text(item.terminalType),
+                          title: Text(TerminalLabels.runtimeName(l10n, item)),
+                          subtitle: Text(
+                            TerminalLabels.interpreter(l10n, item.terminalType),
+                          ),
                           onTap: item.available
                               ? () => Navigator.of(context).pop(item)
                               : null,
@@ -1359,7 +1366,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(context).pop(),
-              child: const Text('取消'),
+              child: Text(l10n.cancel),
             ),
           ],
         );

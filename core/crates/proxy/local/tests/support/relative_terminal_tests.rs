@@ -24,6 +24,7 @@ impl DirectoryTerminalHost {
             types: ["bash", "zsh", "shell"]
                 .into_iter()
                 .map(|kind| TerminalTypeInfo {
+                    nameKey: None,
                     terminal: if kind == "shell" { "arm64" } else { "native" }.into(),
                     terminalType: kind.into(),
                     available: true,

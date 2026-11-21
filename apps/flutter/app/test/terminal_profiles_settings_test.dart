@@ -56,6 +56,11 @@ class _TerminalBridge extends OperitRuntimeBridge {
             'terminalType': 'bash',
             'fields': ['rootfs'],
           },
+          {
+            'terminal': 'native',
+            'terminalType': 'bash',
+            'fields': ['executable', 'arguments'],
+          },
         ];
       case 'terminalDistributions':
         value = advertiseDownloads
@@ -114,14 +119,18 @@ class _TerminalBridge extends OperitRuntimeBridge {
 }
 
 /// Renders the real settings panel with generated clients and English localization.
-Future<void> _render(WidgetTester tester, _TerminalBridge bridge) async {
+Future<void> _render(
+  WidgetTester tester,
+  _TerminalBridge bridge, {
+  Locale locale = const Locale('en'),
+}) async {
   tester.view.physicalSize = const Size(900, 1600);
   tester.view.devicePixelRatio = 1;
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
   await tester.pumpWidget(
     MaterialApp(
-      locale: const Locale('en'),
+      locale: locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
@@ -138,6 +147,58 @@ Future<void> _render(WidgetTester tester, _TerminalBridge bridge) async {
 
 /// Exercises default selection, multiple instances, validation, and asynchronous installation.
 void main() {
+  testWidgets('localized built-in names remain host-owned until renamed', (
+    tester,
+  ) async {
+    const fallback = 'A changed Core description';
+    final bridge = _TerminalBridge();
+    bridge.settings = {
+      'schemaVersion': 1,
+      'revision': 0,
+      'defaultProfileId': 'builtin_0',
+      'profiles': [
+        {
+          'id': 'builtin_0',
+          'name': fallback,
+          'nameKey': 'terminalBuiltinMacNative',
+          'terminal': 'native',
+          'terminalType': 'bash',
+          'options': <String, String>{},
+        },
+      ],
+    };
+    await _render(tester, bridge, locale: const Locale('zh'));
+    const display = 'macOS 本机 Bash 终端（支持作业控制）';
+    expect(find.text(display), findsOneWidget);
+    expect(find.text('本机终端 / Bash'), findsOneWidget);
+    expect(find.text(fallback), findsNothing);
+    await tester.tap(find.byTooltip('编辑'));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextFormField>(find.byType(TextFormField).first)
+          .controller!
+          .text,
+      display,
+    );
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    final saved = (bridge.settings['profiles']! as List).single as Map;
+    expect(saved['name'], fallback);
+    expect(saved['nameKey'], 'terminalBuiltinMacNative');
+    expect(bridge.settings['schemaVersion'], 1);
+    await tester.tap(find.byTooltip('编辑'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextFormField).first, '我的开发终端');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(find.text('我的开发终端'), findsOneWidget);
+    final renamed = (bridge.settings['profiles']! as List).single as Map;
+    expect(renamed['name'], '我的开发终端');
+    expect(renamed['nameKey'], isNull);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'same-interpreter profiles have an explicit default and protected deletion',
     (tester) async {

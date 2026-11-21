@@ -120,6 +120,11 @@ uses the browser runtime carried by its installed model bundle. Embedded engine
 targets still receive an installed engine registry record, but do not download
 a second runtime archive during model installation.
 
+On Unix desktops, `operit-host-local-inference` ensures the selected STT or TTS
+executable has its owner execute bit before launching it. Runtime storage writes
+preserve file contents without archive permission metadata, so this also repairs
+engines installed by earlier versions while preserving their other permission bits.
+
 Additional STT, TTS, chat, and embedding manifests can be added as catalog
 entries or loaded by the runtime through the same manifest structure.
 

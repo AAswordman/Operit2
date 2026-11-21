@@ -40,6 +40,7 @@ struct PtyCommandSpec {
     args: Vec<String>,
     terminalType: String,
     description: String,
+    nameKey: Option<String>,
     commandProtocol: PtyCommandProtocol,
     processWorkingDirectory: PtyProcessWorkingDirectory,
     initialWorkingDirectory: PtyInitialWorkingDirectory,
@@ -111,6 +112,7 @@ impl PtyCommandSpec {
             ],
             terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
             description: "POSIX bash terminal".to_string(),
+            nameKey: Some("terminalBuiltinPosix".into()),
             commandProtocol: PtyCommandProtocol::BashPromptCommand,
             processWorkingDirectory: PtyProcessWorkingDirectory::Session,
             initialWorkingDirectory: PtyInitialWorkingDirectory::ProcessCurrent,
@@ -127,6 +129,7 @@ impl PtyCommandSpec {
             args: vec!["-i".to_string()],
             terminalType: "shell".to_string(),
             description: "Privileged system /bin/sh terminal".to_string(),
+            nameKey: Some("terminalBuiltinPrivileged".into()),
             commandProtocol: PtyCommandProtocol::ExplicitMarker,
             processWorkingDirectory: PtyProcessWorkingDirectory::Session,
             initialWorkingDirectory: PtyInitialWorkingDirectory::ProcessCurrent,
@@ -162,6 +165,7 @@ impl PtyCommandSpec {
             args: command.arguments,
             terminalType: "shell".to_string(),
             description,
+            nameKey: None,
             commandProtocol: PtyCommandProtocol::ExplicitMarker,
             processWorkingDirectory: PtyProcessWorkingDirectory::Fixed(processWorkingDirectory),
             initialWorkingDirectory: PtyInitialWorkingDirectory::Fixed(
@@ -377,6 +381,7 @@ impl TerminalHost for NativePtyTerminalHost {
                 terminalType: self.commandSpec.terminalType.clone(),
                 available: true,
                 description: self.commandSpec.description.clone(),
+                nameKey: self.commandSpec.nameKey.clone(),
             }],
         })
     }

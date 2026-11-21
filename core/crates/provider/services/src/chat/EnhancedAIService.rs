@@ -3743,6 +3743,7 @@ fn resolve_terminal_path_mappings(
     let mut kinds = info.types.into_iter().filter(|kind| kind.available).collect::<Vec<_>>();
     if !kinds.iter().any(|kind| kind.terminal == info.terminal && kind.terminalType == info.terminalType) {
         kinds.insert(0, operit_host_api::TerminalTypeInfo {
+            nameKey: None,
             terminal: info.terminal, terminalType: info.terminalType, available: true, description: String::new(),
         });
     }

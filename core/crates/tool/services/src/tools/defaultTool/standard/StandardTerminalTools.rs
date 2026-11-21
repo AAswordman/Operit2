@@ -684,6 +684,7 @@ mod tests {
             terminal: "native".into(),
             terminalType: "zsh".into(),
             types: vec![TerminalTypeInfo {
+                nameKey: None,
                 terminal: "native".into(),
                 terminalType: "zsh".into(),
                 available: true,

@@ -77,6 +77,7 @@ impl TerminalHost for WebTerminalHost {
                 terminal: TERMINAL.to_string(),
                 terminalType: SHELL_TERMINAL_TYPE.to_string(),
                 available: true,
+                nameKey: Some("terminalBuiltinBrowser".into()),
                 description: "Browser-local Buildroot VM with BusyBox, Node, and Python"
                     .to_string(),
             }],

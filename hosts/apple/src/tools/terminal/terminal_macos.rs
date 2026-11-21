@@ -149,6 +149,14 @@ impl TerminalHost for AppleTerminalHost {
                 terminal: TERMINAL.to_string(),
                 terminalType: kind.clone(),
                 available: true,
+                nameKey: Some(
+                    if self.sandboxed {
+                        "terminalBuiltinMacSandbox"
+                    } else {
+                        "terminalBuiltinMacNative"
+                    }
+                    .into(),
+                ),
                 description: if self.sandboxed {
                     "macOS sandbox PTY (without controlling TTY)".to_string()
                 } else {

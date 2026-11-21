@@ -183,11 +183,13 @@ mod tests {
         let profile = TerminalProfile {
             id: "ps5".into(),
             name: "PowerShell 5".into(),
+            nameKey: None,
             terminal: "native".into(),
             terminalType: "powershell".into(),
             options: BTreeMap::new(),
         };
         let mut settings = TerminalProfileSettings {
+            schemaVersion: 1,
             revision: 17,
             defaultProfileId: profile.id.clone(),
             profiles: vec![profile.clone()],

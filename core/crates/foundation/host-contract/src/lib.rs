@@ -1871,6 +1871,8 @@ pub struct TerminalTypeInfo {
     pub terminalType: String,
     pub available: bool,
     pub description: String,
+    /// Stable localization identity, independent of the fallback description text.
+    pub nameKey: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

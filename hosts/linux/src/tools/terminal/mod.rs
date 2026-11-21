@@ -130,6 +130,7 @@ impl TerminalHost for LinuxTerminalHost {
                 terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
                 available: true,
                 description: "Linux bash terminal".to_string(),
+                nameKey: Some("terminalBuiltinLinux".into()),
             }],
         })
     }

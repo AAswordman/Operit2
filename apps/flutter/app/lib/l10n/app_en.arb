@@ -1,4 +1,43 @@
 {
+  "terminalProfileSelect": "Choose terminal profile",
+  "terminalProfilesUnavailable": "No terminals are available on this device.",
+  "terminalImplementationNative": "Native terminal",
+  "terminalImplementationProot": "Linux (PRoot)",
+  "terminalImplementationAndroidSystem": "Android system terminal",
+  "terminalImplementationQemu": "Linux (QEMU-vroot)",
+  "terminalImplementationArm64": "ARM64 Linux",
+  "terminalImplementationSystem": "System terminal",
+  "terminalImplementationBrowser": "Browser Linux VM",
+  "terminalInterpreterShell": "Shell",
+  "terminalBuiltinMacNative": "macOS native {interpreter} login PTY with job control",
+  "@terminalBuiltinMacNative": {
+    "placeholders": {
+      "interpreter": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalBuiltinMacSandbox": "macOS sandbox {interpreter} PTY (without controlling TTY)",
+  "@terminalBuiltinMacSandbox": {
+    "placeholders": {
+      "interpreter": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalBuiltinAndroidLinux": "Android proot Linux bash terminal",
+  "terminalBuiltinAndroidSystem": "Android system shell terminal",
+  "terminalBuiltinLinux": "Linux bash terminal",
+  "terminalBuiltinPosix": "POSIX bash terminal",
+  "terminalBuiltinPrivileged": "Privileged system /bin/sh terminal",
+  "terminalBuiltinPowerShellDownload": "PowerShell 7 · downloads on first use",
+  "terminalBuiltinPowerShell": "Bundled PowerShell 7 terminal",
+  "terminalBuiltinWindowsBash": "Bundled Windows Bash terminal",
+  "terminalBuiltinArm64": "Operit ARM64 Linux shell using the configured root filesystem",
+  "terminalBuiltinIosSystem": "iOS system /bin/sh; requires a jailbroken or otherwise privileged host",
+  "terminalBuiltinOhosLinux": "OpenHarmony QEMU-vroot Alpine Linux shell",
+  "terminalBuiltinOhosSystem": "OpenHarmony system /bin/sh terminal",
+  "terminalBuiltinBrowser": "Browser-local Buildroot VM with BusyBox, Node, and Python",
   "terminalProfilesTitle": "Terminal profiles",
   "terminalProfilesDescription": "Add terminal profiles for this device and choose a default. New workspace and AI terminal sessions share this setting; existing sessions keep their original environment.",
   "terminalProfileAdd": "Add terminal profile",

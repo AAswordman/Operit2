@@ -9,6 +9,91 @@ class AppLocalizationsEn extends AppLocalizations {
   AppLocalizationsEn([String locale = 'en']) : super(locale);
 
   @override
+  String get terminalProfileSelect => 'Choose terminal profile';
+
+  @override
+  String get terminalProfilesUnavailable =>
+      'No terminals are available on this device.';
+
+  @override
+  String get terminalImplementationNative => 'Native terminal';
+
+  @override
+  String get terminalImplementationProot => 'Linux (PRoot)';
+
+  @override
+  String get terminalImplementationAndroidSystem => 'Android system terminal';
+
+  @override
+  String get terminalImplementationQemu => 'Linux (QEMU-vroot)';
+
+  @override
+  String get terminalImplementationArm64 => 'ARM64 Linux';
+
+  @override
+  String get terminalImplementationSystem => 'System terminal';
+
+  @override
+  String get terminalImplementationBrowser => 'Browser Linux VM';
+
+  @override
+  String get terminalInterpreterShell => 'Shell';
+
+  @override
+  String terminalBuiltinMacNative(String interpreter) {
+    return 'macOS native $interpreter login PTY with job control';
+  }
+
+  @override
+  String terminalBuiltinMacSandbox(String interpreter) {
+    return 'macOS sandbox $interpreter PTY (without controlling TTY)';
+  }
+
+  @override
+  String get terminalBuiltinAndroidLinux => 'Android proot Linux bash terminal';
+
+  @override
+  String get terminalBuiltinAndroidSystem => 'Android system shell terminal';
+
+  @override
+  String get terminalBuiltinLinux => 'Linux bash terminal';
+
+  @override
+  String get terminalBuiltinPosix => 'POSIX bash terminal';
+
+  @override
+  String get terminalBuiltinPrivileged => 'Privileged system /bin/sh terminal';
+
+  @override
+  String get terminalBuiltinPowerShellDownload =>
+      'PowerShell 7 · downloads on first use';
+
+  @override
+  String get terminalBuiltinPowerShell => 'Bundled PowerShell 7 terminal';
+
+  @override
+  String get terminalBuiltinWindowsBash => 'Bundled Windows Bash terminal';
+
+  @override
+  String get terminalBuiltinArm64 =>
+      'Operit ARM64 Linux shell using the configured root filesystem';
+
+  @override
+  String get terminalBuiltinIosSystem =>
+      'iOS system /bin/sh; requires a jailbroken or otherwise privileged host';
+
+  @override
+  String get terminalBuiltinOhosLinux =>
+      'OpenHarmony QEMU-vroot Alpine Linux shell';
+
+  @override
+  String get terminalBuiltinOhosSystem => 'OpenHarmony system /bin/sh terminal';
+
+  @override
+  String get terminalBuiltinBrowser =>
+      'Browser-local Buildroot VM with BusyBox, Node, and Python';
+
+  @override
   String get terminalProfilesTitle => 'Terminal profiles';
 
   @override

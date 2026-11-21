@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../common/TerminalLabels.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 
 /// Edits device-owned profiles using fields registered by the active Core host.
@@ -228,6 +229,7 @@ class _TerminalProfilesSettingsState extends State<TerminalProfilesSettings> {
     }
     await _save(
       TerminalProfileSettings(
+        schemaVersion: settings.schemaVersion,
         revision: settings.revision,
         defaultProfileId: settings.defaultProfileId,
         profiles: profiles,
@@ -259,6 +261,7 @@ class _TerminalProfilesSettingsState extends State<TerminalProfilesSettings> {
     final settings = _settings!;
     await _save(
       TerminalProfileSettings(
+        schemaVersion: settings.schemaVersion,
         revision: settings.revision,
         defaultProfileId: settings.defaultProfileId,
         profiles: settings.profiles
@@ -304,6 +307,7 @@ class _TerminalProfilesSettingsState extends State<TerminalProfilesSettings> {
                     unawaited(
                       _save(
                         TerminalProfileSettings(
+                          schemaVersion: settings.schemaVersion,
                           revision: settings.revision,
                           defaultProfileId: id,
                           profiles: settings.profiles,
@@ -321,9 +325,13 @@ class _TerminalProfilesSettingsState extends State<TerminalProfilesSettings> {
                           value: profile.id,
                           enabled: !_saving,
                         ),
-                        title: Text(profile.name),
+                        title: Text(TerminalLabels.profileName(l10n, profile)),
                         subtitle: Text(
-                          '${profile.terminal} / ${profile.terminalType}',
+                          TerminalLabels.implementation(
+                            l10n,
+                            profile.terminal,
+                            profile.terminalType,
+                          ),
                         ),
                         trailing: Wrap(
                           children: [
@@ -347,6 +355,7 @@ class _TerminalProfilesSettingsState extends State<TerminalProfilesSettings> {
                             ? null
                             : () => _save(
                                 TerminalProfileSettings(
+                                  schemaVersion: settings.schemaVersion,
                                   revision: settings.revision,
                                   defaultProfileId: profile.id,
                                   profiles: settings.profiles,
@@ -443,6 +452,7 @@ class _TerminalProfileDialog extends StatefulWidget {
 class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
   final _form = GlobalKey<FormState>();
   late final TextEditingController _name;
+  String? _initialDisplayName;
   final Map<String, TextEditingController> _options = {};
   late TerminalProfileSupport _implementation;
 
@@ -466,6 +476,18 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
     }
   }
 
+  /// Shows the translated default while retaining its stored name on an unchanged save.
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (_initialDisplayName != null) return;
+    final profile = widget.profile;
+    _initialDisplayName = profile == null
+        ? ''
+        : TerminalLabels.profileName(AppLocalizations.of(context)!, profile);
+    _name.text = _initialDisplayName!;
+  }
+
   /// Releases all text controllers when the dialog closes.
   @override
   void dispose() {
@@ -485,7 +507,12 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
         id:
             widget.profile?.id ??
             'user_${DateTime.now().microsecondsSinceEpoch}',
-        name: _name.text.trim(),
+        name: widget.profile != null && _name.text == _initialDisplayName
+            ? widget.profile!.name
+            : _name.text.trim(),
+        nameKey: _name.text == _initialDisplayName
+            ? widget.profile?.nameKey
+            : null,
         terminal: _implementation.terminal,
         terminalType: _implementation.terminalType,
         options: {
@@ -564,7 +591,13 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
                   for (final entry in widget.support)
                     DropdownMenuItem(
                       value: '${entry.terminal}/${entry.terminalType}',
-                      child: Text('${entry.terminal} / ${entry.terminalType}'),
+                      child: Text(
+                        TerminalLabels.implementation(
+                          l10n,
+                          entry.terminal,
+                          entry.terminalType,
+                        ),
+                      ),
                     ),
                 ],
                 onChanged: (value) => setState(() {

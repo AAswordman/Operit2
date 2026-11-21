@@ -200,11 +200,19 @@ impl TerminalHost for WindowsTerminalHost {
                     terminalType: PRIMARY_TERMINAL_TYPE.to_string(),
                     available: powershell_available,
                     description: powershell_description,
+                    nameKey: powershell_available.then(|| {
+                        match &self.powershell {
+                            PowerShellSource::OnDemand(_) => "terminalBuiltinPowerShellDownload",
+                            PowerShellSource::Bundled => "terminalBuiltinPowerShell",
+                        }
+                        .into()
+                    }),
                 },
                 TerminalTypeInfo {
                     terminal: TERMINAL.to_string(),
                     terminalType: "bash".to_string(),
                     available: bash.is_ok(),
+                    nameKey: bash.is_ok().then(|| "terminalBuiltinWindowsBash".into()),
                     description: match bash {
                         Ok(_) => "Bundled Windows Bash terminal".to_string(),
                         Err(error) => format!(
@@ -1927,6 +1935,7 @@ mod tests {
         let profile = operit_host_api::TerminalProfile {
             id: "ubuntu_work".into(),
             name: "Ubuntu work".into(),
+            nameKey: None,
             terminal: "native".into(),
             terminalType: "bash".into(),
             options: BTreeMap::from([
@@ -1968,6 +1977,7 @@ mod tests {
             let profile = operit_host_api::TerminalProfile {
                 id: "powershell".into(),
                 name: "PowerShell".into(),
+                nameKey: None,
                 terminal: "native".into(),
                 terminalType: "powershell".into(),
                 options: BTreeMap::from([

@@ -69,6 +69,7 @@ static NEXT_SESSION: AtomicUsize = AtomicUsize::new(1);
 #[derive(Default)]
 struct TestTerminal {
     rootfs: String,
+    descriptionSuffix: String,
     sessions: Mutex<BTreeMap<String, TerminalSessionListEntry>>,
     installations: Arc<Mutex<std::collections::BTreeSet<String>>>,
 }
@@ -104,10 +105,11 @@ impl TerminalHost for TestTerminal {
             types: ["native", "alternate"]
                 .into_iter()
                 .map(|terminal| TerminalTypeInfo {
+                    nameKey: Some(format!("terminal.test.{terminal}")),
                     terminal: terminal.into(),
                     terminalType: "shell".into(),
                     available: true,
-                    description: terminal.into(),
+                    description: format!("{terminal}{}", self.descriptionSuffix),
                 })
                 .collect(),
         })
@@ -129,6 +131,7 @@ impl TerminalHost for TestTerminal {
     fn configuredTerminal(&self, profile: &TerminalProfile) -> HostResult<Arc<dyn TerminalHost>> {
         Ok(Arc::new(Self {
             rootfs: profile.options["rootfs"].clone(),
+            descriptionSuffix: self.descriptionSuffix.clone(),
             sessions: Mutex::default(),
             installations: self.installations.clone(),
         }))
@@ -294,6 +297,7 @@ fn profile(rootfs: &str) -> TerminalProfile {
     TerminalProfile {
         id: "ubuntu".into(),
         name: "Ubuntu".into(),
+        nameKey: None,
         terminal: "native".into(),
         terminalType: "shell".into(),
         options: BTreeMap::from([("rootfs".into(), rootfs.into())]),
@@ -442,6 +446,9 @@ fn same_interpreter_profiles_have_independent_named_sessions() {
     second.name = "Second shell".into();
     settings.profiles.push(second);
     registry.saveTerminalProfileSettings(settings).unwrap();
+    assert!(registry
+        .terminalProfileSettings().unwrap().profiles.iter()
+        .find(|profile| profile.id == "second").unwrap().nameKey.is_none());
     let a = registry
         .createOrGetProfileSession("agent", &first.id)
         .unwrap();
@@ -501,4 +508,109 @@ fn installation_registration_is_transactional_and_does_not_change_default() {
         *host.installations.lock().unwrap(),
         std::collections::BTreeSet::from(["instance_a".to_string()])
     );
+}
+
+/// Localization identity survives arbitrary changes to host description prose.
+#[test]
+fn name_keys_survive_description_changes_and_user_renames_are_literal() {
+    let storage = Arc::new(MemoryStorage::default());
+    let registry = ProfileTerminalHost::new(Arc::new(TestTerminal::default()), storage.clone());
+    let settings = registry.terminalProfileSettings().unwrap();
+    assert_eq!(settings.schemaVersion, 1);
+    assert_eq!(
+        settings.profiles[0].nameKey.as_deref(),
+        Some("terminal.test.native")
+    );
+    registry.saveTerminalProfileSettings(settings).unwrap();
+
+    let changed = ProfileTerminalHost::new(
+        Arc::new(TestTerminal {
+            descriptionSuffix: " completely rewritten".into(),
+            ..Default::default()
+        }),
+        storage.clone(),
+    );
+    let mut settings = changed.terminalProfileSettings().unwrap();
+    assert_eq!(
+        settings.profiles[0].nameKey.as_deref(),
+        Some("terminal.test.native")
+    );
+    assert_eq!(
+        changed.terminalInfo().unwrap().types[0].nameKey,
+        settings.profiles[0].nameKey
+    );
+    // Old clients can omit the key without erasing Core-owned name metadata.
+    settings.profiles[0].nameKey = None;
+    changed.saveTerminalProfileSettings(settings).unwrap();
+    let mut renamed = changed.terminalProfileSettings().unwrap();
+    assert!(renamed.profiles[0].nameKey.is_some());
+    renamed.profiles[0].name = "My shell".into();
+    changed.saveTerminalProfileSettings(renamed).unwrap();
+    let renamed = changed.terminalProfileSettings().unwrap();
+    assert_eq!(renamed.profiles[0].nameKey, None);
+    assert_eq!(renamed.profiles[0].name, "My shell");
+    let restarted = ProfileTerminalHost::new(Arc::new(TestTerminal::default()), storage);
+    assert_eq!(restarted.terminalProfileSettings().unwrap(), renamed);
+}
+
+/// Legacy name ownership is inferred once and persisted independently of UI locale.
+#[test]
+fn legacy_profiles_migrate_only_untouched_defaults_once() {
+    let storage = Arc::new(MemoryStorage::default());
+    storage.writeBytes(TERMINAL_PROFILES_PATH, br#"{
+        "revision": 0,
+        "defaultProfileId": "builtin_0",
+        "profiles": [
+            {"id":"builtin_0", "name":"native", "terminal":"native", "terminalType":"shell", "options":{}},
+            {"id":"builtin_1", "name":"My custom terminal", "terminal":"alternate", "terminalType":"shell", "options":{}},
+            {"id":"user_native", "name":"native", "terminal":"native", "terminalType":"shell", "options":{}}
+        ]
+    }"#).unwrap();
+
+    let registry = ProfileTerminalHost::new(Arc::new(TestTerminal::default()), storage.clone());
+    let mut migrated = registry.terminalProfileSettings().unwrap();
+    assert_eq!(migrated.schemaVersion, 1);
+    assert_eq!(migrated.revision, 1);
+    assert!(migrated.profiles[0].nameKey.is_some());
+    assert_eq!(migrated.profiles[1].name, "My custom terminal");
+    assert_eq!(migrated.profiles[1].nameKey, None);
+    assert_eq!(migrated.profiles[2].nameKey, None);
+    assert_eq!(
+        TerminalProfileSettings::fromBytes(&storage.readBytes(TERMINAL_PROFILES_PATH).unwrap())
+            .unwrap(),
+        migrated
+    );
+
+    // Renaming a built-in to another host's fallback remains a custom name.
+    migrated.profiles[1].name = "alternate".into();
+    registry.saveTerminalProfileSettings(migrated).unwrap();
+    let current = registry.terminalProfileSettings().unwrap();
+    let restarted = ProfileTerminalHost::new(Arc::new(TestTerminal::default()), storage);
+    assert_eq!(restarted.terminalProfileSettings().unwrap(), current);
+    assert_eq!(current.profiles[1].nameKey, None);
+}
+
+/// A failed migration leaves the original bytes available for an explicit retry.
+#[test]
+fn legacy_migration_storage_failure_preserves_the_original_registry() {
+    let storage = Arc::new(MemoryStorage::default());
+    let legacy = br#"{
+        "revision":7, "defaultProfileId":"builtin_0", "profiles":[
+            {"id":"builtin_0", "name":"native", "terminal":"native", "terminalType":"shell", "options":{}}
+        ]
+    }"#;
+    storage.writeBytes(TERMINAL_PROFILES_PATH, legacy).unwrap();
+    storage.1.store(true, Ordering::Relaxed);
+    let registry = ProfileTerminalHost::new(Arc::new(TestTerminal::default()), storage.clone());
+    assert!(registry
+        .terminalProfileSettings()
+        .unwrap_err()
+        .message
+        .contains("storage is full"));
+    assert_eq!(storage.readBytes(TERMINAL_PROFILES_PATH).unwrap(), legacy);
+    storage.1.store(false, Ordering::Relaxed);
+    let migrated = registry.terminalProfileSettings().unwrap();
+    assert_eq!(migrated.revision, 8);
+    assert_eq!(migrated.schemaVersion, 1);
+    assert!(migrated.profiles[0].nameKey.is_some());
 }

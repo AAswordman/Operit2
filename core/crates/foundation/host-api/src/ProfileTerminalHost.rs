@@ -43,7 +43,37 @@ impl ProfileTerminalHost {
             return Ok(settings.clone());
         }
         let settings = if self.storage.exists(TERMINAL_PROFILES_PATH)? {
-            TerminalProfileSettings::fromBytes(&self.storage.readBytes(TERMINAL_PROFILES_PATH)?)?
+            let mut settings = TerminalProfileSettings::fromBytes(
+                &self.storage.readBytes(TERMINAL_PROFILES_PATH)?,
+            )?;
+            if settings.schemaVersion == 0 {
+                let info = self.base.terminalInfo()?;
+                // Legacy records have no name ownership. Only adopt an untouched
+                // host default; renamed profiles keep their exact user text.
+                for profile in &mut settings.profiles {
+                    let builtin = profile.id.strip_prefix("builtin_").is_some_and(|suffix| {
+                        !suffix.is_empty() && suffix.bytes().all(|b| b.is_ascii_digit())
+                    });
+                    if builtin && profile.nameKey.is_none() {
+                        if let Some(entry) = info.types.iter().find(|entry| {
+                            entry.terminal == profile.terminal
+                                && entry.terminalType == profile.terminalType
+                                && entry.description == profile.name
+                        }) {
+                            profile.nameKey = entry.nameKey.clone();
+                        }
+                    }
+                }
+                settings.schemaVersion = 1;
+                settings.revision = settings
+                    .revision
+                    .checked_add(1)
+                    .ok_or_else(|| HostError::new("Terminal profile revision exhausted"))?;
+                settings.validate()?;
+                self.storage
+                    .writeBytesAtomically(TERMINAL_PROFILES_PATH, &settings.toBytes()?)?;
+            }
+            settings
         } else {
             let info = self.base.terminalInfo()?;
             let profiles: Vec<_> = info
@@ -53,6 +83,7 @@ impl ProfileTerminalHost {
                 .map(|(index, entry)| TerminalProfile {
                     id: format!("builtin_{index}"),
                     name: entry.description.clone(),
+                    nameKey: entry.nameKey.clone(),
                     terminal: entry.terminal.clone(),
                     terminalType: entry.terminalType.clone(),
                     options: BTreeMap::new(),
@@ -65,6 +96,7 @@ impl ProfileTerminalHost {
                 })
                 .ok_or_else(|| HostError::new("Host default terminal is not registered"))?;
             TerminalProfileSettings {
+                schemaVersion: 1,
                 revision: 0,
                 defaultProfileId: default.id.clone(),
                 profiles,
@@ -108,6 +140,7 @@ impl ProfileTerminalHost {
             return Ok(TerminalProfile {
                 id: String::new(),
                 name: String::new(),
+                nameKey: None,
                 terminal: terminal.into(),
                 terminalType: terminalType.into(),
                 options: BTreeMap::new(),
@@ -316,6 +349,21 @@ impl TerminalHost for ProfileTerminalHost {
                 "Terminal profiles changed; reload before saving",
             ));
         }
+        // Name ownership belongs to Core. A rename becomes literal user text,
+        // including when an older client omits the optional localization key.
+        for profile in &mut settings.profiles {
+            profile.nameKey = current
+                .profiles
+                .iter()
+                .find(|old| {
+                    old.id == profile.id
+                        && old.name == profile.name
+                        && old.terminal == profile.terminal
+                        && old.terminalType == profile.terminalType
+                })
+                .and_then(|old| old.nameKey.clone());
+        }
+        settings.schemaVersion = current.schemaVersion;
         settings.revision = settings
             .revision
             .checked_add(1)
@@ -365,6 +413,7 @@ impl TerminalHost for ProfileTerminalHost {
                 HostError::new("Configured terminal implementation is no longer registered")
             })?;
         info.types[index].description = selected.name.clone();
+        info.types[index].nameKey = selected.nameKey.clone();
         if !selected.options.is_empty() {
             info.types[index].available = true;
         }

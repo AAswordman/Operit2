@@ -126,7 +126,28 @@ fn engineExecutable(
 ) -> Result<PathBuf, LocalModelProviderError> {
     let relativePath = relativePath
         .ok_or_else(|| LocalModelProviderError::EngineExecutableMissing(capability.to_string()))?;
-    requiredFile(&PathBuf::from(&runtime.engineRuntimeDirectory).join(relativePath))
+    let executable =
+        requiredFile(&PathBuf::from(&runtime.engineRuntimeDirectory).join(relativePath))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let prepare = || -> std::io::Result<()> {
+            let mut permissions = std::fs::metadata(&executable)?.permissions();
+            let mode = permissions.mode();
+            if mode & 0o100 == 0 {
+                permissions.set_mode(mode | 0o100);
+                std::fs::set_permissions(&executable, permissions)?;
+            }
+            Ok(())
+        };
+        prepare().map_err(|error| {
+            LocalModelProviderError::Process(format!(
+                "cannot prepare executable {}: {error}",
+                executable.display()
+            ))
+        })?;
+    }
+    Ok(executable)
 }
 
 /// Resolves one declared model file and verifies that it exists.
@@ -199,9 +220,12 @@ fn runEngineCommand(
     }
     command.args(args).current_dir(&runtimeDirectory);
     configureEngineLibraryPath(&mut command, &runtime.engine.artifact, &runtimeDirectory)?;
-    let output = command
-        .output()
-        .map_err(|error| LocalModelProviderError::Process(error.to_string()))?;
+    let output = command.output().map_err(|error| {
+        LocalModelProviderError::Process(format!(
+            "cannot start executable {}: {error}",
+            executable.display()
+        ))
+    })?;
     if !output.status.success() {
         return Err(LocalModelProviderError::Process(format!(
             "status={} stdout={} stderr={}",
@@ -450,4 +474,101 @@ fn appendRuleFileArgument(
     }
     args.push(format!("{flag}={}", paths.join(",")));
     Ok(())
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+mod tests {
+    use super::*;
+    use operit_local_models::LocalEngineCatalog::LocalEngineCatalog;
+    use operit_local_models::LocalEngineManifest::LocalPlatformTarget;
+    use operit_local_models::LocalModelCatalog::LocalModelCatalog;
+    use operit_local_models::LocalModelRegistry::InstalledLocalEngine;
+    use std::fs;
+    use std::os::unix::fs::PermissionsExt;
+
+    struct SpeechRuntime {
+        directory: PathBuf,
+        runtime: ResolvedLocalModelRuntime,
+    }
+
+    impl SpeechRuntime {
+        fn new() -> Self {
+            let directory = std::env::temp_dir().join(format!(
+                "operit speech permissions {}-{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            fs::create_dir_all(directory.join("bin")).unwrap();
+            let manifest = LocalEngineCatalog::sherpaOnnx();
+            let artifact = manifest
+                .artifactForTarget(&LocalPlatformTarget::current().unwrap())
+                .unwrap()
+                .clone();
+            let runtime = ResolvedLocalModelRuntime {
+                model: InstalledLocalModel {
+                    manifest: LocalModelCatalog::sherpaOnnxStreamingStt(),
+                    storagePath: String::new(),
+                    installedAtMs: 0,
+                    verifiedAtMs: None,
+                },
+                engine: InstalledLocalEngine {
+                    manifest,
+                    artifact,
+                    storagePath: String::new(),
+                    installedAtMs: 0,
+                    verifiedAtMs: None,
+                },
+                modelDirectory: directory.to_string_lossy().into_owned(),
+                engineDirectory: directory.to_string_lossy().into_owned(),
+                engineRuntimeDirectory: directory.to_string_lossy().into_owned(),
+            };
+            Self { directory, runtime }
+        }
+    }
+
+    impl Drop for SpeechRuntime {
+        fn drop(&mut self) {
+            fs::remove_dir_all(&self.directory).unwrap();
+        }
+    }
+
+    #[test]
+    fn installedSpeechExecutablesLaunchAfterStorageDropsExecutePermissions() {
+        let fixture = SpeechRuntime::new();
+        for (relative, capability) in [
+            (
+                fixture.runtime.engine.artifact.sttExecutable.as_deref(),
+                "STT",
+            ),
+            (
+                fixture.runtime.engine.artifact.ttsExecutable.as_deref(),
+                "TTS",
+            ),
+        ] {
+            let path = fixture.directory.join(relative.unwrap());
+            fs::write(&path, "#!/bin/sh\nprintf '%s' speech-engine-ready\n").unwrap();
+            for mode in [0o644, 0o600, 0o755, 0o555] {
+                fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+                if mode & 0o100 == 0 {
+                    assert_eq!(
+                        Command::new(&path).output().unwrap_err().kind(),
+                        std::io::ErrorKind::PermissionDenied
+                    );
+                }
+                for _ in 0..2 {
+                    let executable =
+                        engineExecutable(&fixture.runtime, relative, capability).unwrap();
+                    let output = runEngineCommand(&fixture.runtime, &executable, &[]).unwrap();
+                    assert_eq!(output.stdout, b"speech-engine-ready");
+                    assert_eq!(
+                        fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                        mode | 0o100
+                    );
+                }
+            }
+        }
+    }
 }

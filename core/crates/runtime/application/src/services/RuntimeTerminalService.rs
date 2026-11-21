@@ -54,6 +54,8 @@ pub struct RuntimeTerminalTypeInfo {
     pub terminalType: String,
     pub available: bool,
     pub description: String,
+    #[serde(default)]
+    pub nameKey: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -337,6 +339,7 @@ impl RuntimeTerminalService {
                         terminalType: profile.terminalType,
                         available,
                         description: profile.name,
+                        nameKey: profile.nameKey,
                     }
                 })
                 .collect(),

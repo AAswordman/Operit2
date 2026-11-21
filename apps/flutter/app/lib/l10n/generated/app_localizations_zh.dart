@@ -9,6 +9,87 @@ class AppLocalizationsZh extends AppLocalizations {
   AppLocalizationsZh([String locale = 'zh']) : super(locale);
 
   @override
+  String get terminalProfileSelect => '选择终端配置';
+
+  @override
+  String get terminalProfilesUnavailable => '当前设备没有可用的终端。';
+
+  @override
+  String get terminalImplementationNative => '本机终端';
+
+  @override
+  String get terminalImplementationProot => 'Linux（PRoot 环境）';
+
+  @override
+  String get terminalImplementationAndroidSystem => 'Android 系统终端';
+
+  @override
+  String get terminalImplementationQemu => 'Linux（QEMU 虚拟环境）';
+
+  @override
+  String get terminalImplementationArm64 => 'ARM64 Linux 环境';
+
+  @override
+  String get terminalImplementationSystem => '系统终端';
+
+  @override
+  String get terminalImplementationBrowser => '浏览器 Linux 虚拟机';
+
+  @override
+  String get terminalInterpreterShell => 'Shell 命令行';
+
+  @override
+  String terminalBuiltinMacNative(String interpreter) {
+    return 'macOS 本机 $interpreter 终端（支持作业控制）';
+  }
+
+  @override
+  String terminalBuiltinMacSandbox(String interpreter) {
+    return 'macOS 沙箱 $interpreter 终端（无控制终端）';
+  }
+
+  @override
+  String get terminalBuiltinAndroidLinux => 'Android Linux Bash 终端（PRoot 环境）';
+
+  @override
+  String get terminalBuiltinAndroidSystem => 'Android 系统命令行终端';
+
+  @override
+  String get terminalBuiltinLinux => 'Linux Bash 终端';
+
+  @override
+  String get terminalBuiltinPosix => 'POSIX Bash 终端';
+
+  @override
+  String get terminalBuiltinPrivileged => '系统 /bin/sh 终端（需要特权权限）';
+
+  @override
+  String get terminalBuiltinPowerShellDownload => 'PowerShell 7 终端（首次使用时下载）';
+
+  @override
+  String get terminalBuiltinPowerShell => '内置 PowerShell 7 终端';
+
+  @override
+  String get terminalBuiltinWindowsBash => 'Windows 内置 Bash 终端';
+
+  @override
+  String get terminalBuiltinArm64 => 'ARM64 Linux 终端（使用已配置的根文件系统）';
+
+  @override
+  String get terminalBuiltinIosSystem => 'iOS 系统 /bin/sh 终端（需要越狱或其他特权权限）';
+
+  @override
+  String get terminalBuiltinOhosLinux =>
+      'OpenHarmony Alpine Linux 终端（QEMU 虚拟环境）';
+
+  @override
+  String get terminalBuiltinOhosSystem => 'OpenHarmony 系统 /bin/sh 终端';
+
+  @override
+  String get terminalBuiltinBrowser =>
+      '浏览器本地 Buildroot Linux 虚拟机（含 BusyBox、Node 和 Python）';
+
+  @override
   String get terminalProfilesTitle => '终端配置';
 
   @override

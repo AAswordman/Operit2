@@ -9,6 +9,9 @@ use crate::{HostError, HostResult};
 pub struct TerminalProfile {
     pub id: String,
     pub name: String,
+    /// Stable host-owned localization key; None displays the name verbatim.
+    #[serde(default)]
+    pub nameKey: Option<String>,
     pub terminal: String,
     pub terminalType: String,
     pub options: BTreeMap<String, String>,
@@ -25,6 +28,9 @@ pub struct TerminalProfileSupport {
 /// Terminal profiles and the explicitly selected default on this Core device.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TerminalProfileSettings {
+    /// Version 1 records whether each name belongs to the host or the user.
+    #[serde(default)]
+    pub schemaVersion: u32,
     pub revision: u64,
     pub defaultProfileId: String,
     pub profiles: Vec<TerminalProfile>,
@@ -44,6 +50,9 @@ impl TerminalProfileSettings {
 
     /// Rejects ambiguous identities and malformed launch values before persistence.
     pub fn validate(&self) -> HostResult<()> {
+        if self.schemaVersion > 1 {
+            return Err(HostError::new("Unsupported terminal profile schema version"));
+        }
         let mut ids = BTreeSet::new();
         for profile in &self.profiles {
             if profile.id.is_empty()
