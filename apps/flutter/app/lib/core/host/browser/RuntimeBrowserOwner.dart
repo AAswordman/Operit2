@@ -747,6 +747,8 @@ class RuntimeBrowserOwner extends ChangeNotifier {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.transparent)
       ..enableZoom(true);
+    await _automation[tab.id]?.applyDefaultSurfaceSize();
+    _requireLiveTab(tab);
     await tab.controller.platform.setOnDownloadEvent((event) {
       if (!tab.isDisposed) {
         unawaited(stores.downloads.acceptEngineDownload(tab.id, event));

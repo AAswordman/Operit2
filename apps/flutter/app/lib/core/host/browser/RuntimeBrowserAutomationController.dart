@@ -26,6 +26,7 @@ class RuntimeBrowserAutomationController {
   final List<Map<String, Object?>> _networkRequests = <Map<String, Object?>>[];
   bool _encodedStreamAttached = false;
   Size? _surfaceSize;
+  double _surfaceScaleFactor = 1;
   bool _surfaceFrameCaptureActive = false;
   bool _surfaceFrameCapturePending = false;
   final Map<int, WindowsBrowserSurfacePointerButton> _pressedPointerButtons =
@@ -40,6 +41,28 @@ class RuntimeBrowserAutomationController {
     final platform = _requireWindowsController();
     await _dispatchSurfaceInteraction(platform, payload);
     requestSurfaceFrame();
+  }
+
+  /// Resizes the owner WebView viewport for automation requests.
+  Future<void> resizeViewport(Size size) async {
+    final platform = _requireWindowsController();
+    await platform.resizeBrowserSurface(size, _surfaceScaleFactor);
+    _surfaceSize = size;
+    requestSurfaceFrame();
+  }
+
+  /// Gives sessions a usable viewport before any workspace view reports a size.
+  Future<void> applyDefaultSurfaceSize() async {
+    if (_surfaceSize != null) {
+      return;
+    }
+    final platform = controller.platform;
+    if (platform is! WindowsWebViewController) {
+      return;
+    }
+    const size = Size(1280, 720);
+    await platform.resizeBrowserSurface(size, _surfaceScaleFactor);
+    _surfaceSize = size;
   }
 
   /// Dispatches one decoded compositor surface interaction.
@@ -59,11 +82,10 @@ class RuntimeBrowserAutomationController {
           _readDouble(payload, 'width'),
           _readDouble(payload, 'height'),
         );
-        await platform.resizeBrowserSurface(
-          size,
-          _readDouble(payload, 'scaleFactor'),
-        );
+        final scaleFactor = _readDouble(payload, 'scaleFactor');
+        await platform.resizeBrowserSurface(size, scaleFactor);
         _surfaceSize = size;
+        _surfaceScaleFactor = scaleFactor;
         return;
       case 'cursor':
         await platform.moveBrowserSurfaceCursor(

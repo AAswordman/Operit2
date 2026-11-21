@@ -320,8 +320,15 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
       case 'browser_file_upload':
         await _controller(request).fileUpload(_required(params, 'files'));
         return 'OK';
-      case 'browser_handle_dialog':
       case 'browser_resize':
+        final width = double.parse(_required(params, 'width'));
+        final height = double.parse(_required(params, 'height'));
+        if (width <= 0 || height <= 0) {
+          throw StateError('browser_resize width and height must be positive');
+        }
+        await _controller(request).resizeViewport(Size(width, height));
+        return 'OK';
+      case 'browser_handle_dialog':
       case 'browser_take_screenshot':
         throw StateError(
           '${request.toolName} is not supported by Workspace Browser',
