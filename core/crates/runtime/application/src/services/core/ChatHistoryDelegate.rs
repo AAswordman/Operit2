@@ -2060,6 +2060,9 @@ impl ChatHistoryDelegate {
         let mut message = ChatMessage::new_with_markdown_timestamp("ai".into(), text.into(), timestamp);
         message.sentAt = timestamp;
         message.completedAt = operit_host_api::TimeUtils::currentTimeMillis();
+        // Tag plain-text deliveries exactly like generated scheduled replies so the host
+        // identifies every delivery uniformly; the snapshot path keeps existing tags intact.
+        message.pluginExtensions.insert("host.chat.scheduled".into(), serde_json::json!({ "preparedAt": message.completedAt }));
         self.commitPreparedAssistantMessageSnapshot(chatId, message)
     }
 
