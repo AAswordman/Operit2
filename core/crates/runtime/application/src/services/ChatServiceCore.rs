@@ -3845,6 +3845,35 @@ mod chat_deletion_tests {
             let next = database.store().beginChatExecution("route-chat").unwrap();
             next.release().unwrap();
         }
+
+        // A stop in the summary window must still cancel the turn: streaming has
+        // finished and no operation remains registered, but the turn is not idle.
+        let lease = database.store().beginChatExecution("route-chat").unwrap();
+        let mut turn = ChatRuntime::new();
+        turn.activeTurnId = 30;
+        turn.executionLease = Some(lease);
+        core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert("route-chat".into(), turn);
+        core.messageProcessingDelegate.setChatExecutionStateForTest("route-chat".into(), ChatExecutionState {
+            isLoading: false,
+            inputProcessingState: InputProcessingState::Summarizing { message: "summarizing".into() },
+        });
+        let settled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let observedSettlement = settled.clone();
+        let pending = core.messageProcessingDelegate.cancelMessage("route-chat".into(), move |result| {
+            observedSettlement.store(true, std::sync::atomic::Ordering::SeqCst);
+            result
+        });
+        {
+            let runtimes = core.messageProcessingDelegate.chatRuntimes.lock().unwrap();
+            let runtime = runtimes.get("route-chat").unwrap();
+            assert!(runtime.isCancelling, "a summary-window stop must reserve cancellation");
+            assert_eq!(runtime.activeTurnId, 31);
+        }
+        pending.await.unwrap();
+        assert!(settled.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(!core.messageProcessingDelegate.isChatProcessing("route-chat"));
+        let next = database.store().beginChatExecution("route-chat").unwrap();
+        next.release().unwrap();
     }
 }
 

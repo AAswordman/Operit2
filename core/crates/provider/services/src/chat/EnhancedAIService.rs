@@ -3357,6 +3357,12 @@ impl Clone for EnhancedAIService {
     }
 }
 
+impl std::fmt::Debug for EnhancedAIService {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.debug_struct("EnhancedAIService").finish_non_exhaustive()
+    }
+}
+
 /// Replaces an existing current turn exactly, including explicit empty text.
 fn apply_finalized_current_user_turn(
     preparedHistory: Vec<PromptTurn>,
