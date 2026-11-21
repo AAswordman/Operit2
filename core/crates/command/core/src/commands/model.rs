@@ -1,6 +1,5 @@
 use crate::commands::util::{parse_bool_arg, parse_f32_arg};
 use crate::output::CoreCommandOutput;
-use operit_host_api::HostManager::HostManager;
 use operit_model::ApiKeyInfo::ApiKeyInfo;
 use operit_model::FunctionType::FunctionType;
 use operit_model::ModelCatalog::ModelCatalog;
@@ -9,11 +8,13 @@ use operit_model::ModelConfigData::{
     ResolvedModelConfig,
 };
 use operit_model::ModelParameter::ModelParameter;
-use operit_model::ModelThinking::{ModelThinkingSettings, ThinkingLevel};
+use operit_model::ModelThinking::{ModelThinkingSettings, ModelThinkingSpec, ThinkingLevel};
+use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::preferences::FunctionalConfigManager::{
     FunctionModelBinding, FunctionalConfigManager,
 };
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
+use operit_runtime::services::CodexOAuthService::CodexOAuthService;
 use serde_json::{json, Value};
 
 struct ModelCommand;
@@ -31,11 +32,12 @@ impl ModelCommand {
 }
 
 /// Runs model provider, model profile, and functional binding commands.
-pub fn run_model_command(
-    _context: HostManager,
+pub async fn run_model_command(
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
+    let context = application.hostManager.clone();
     let mut command = ModelCommand;
     if args.is_empty() {
         print_model_usage(output);
@@ -43,6 +45,86 @@ pub fn run_model_command(
     }
 
     match args[0].as_str() {
+        "codex-status" if args.len() == 1 => {
+            let status = CodexOAuthService::getInstance().sessionStatus()?;
+            output.push_stdout_line(
+                serde_json::to_string_pretty(&status).map_err(|error| error.to_string())?,
+            );
+            output.setJsonStdout(json!(status));
+        }
+        "codex-logout" if args.len() == 1 => {
+            CodexOAuthService::getInstance().logout()?;
+            output.push_stdout_line("Signed out of ChatGPT Codex");
+            output.setJsonStdout(json!({"signedOut": true}));
+        }
+        "test" if args.len() == 3 => {
+            let report = application
+                .test_model_connection(args[1].clone(), args[2].clone())
+                .await?;
+            output.push_stdout_line(
+                serde_json::to_string_pretty(&report).map_err(|error| error.to_string())?,
+            );
+            output.setJsonStdout(json!(report));
+        }
+        "provider-test-key" if args.len() == 3 => {
+            let provider = command
+                .modelManager()
+                .getProviderProfile(&args[1])
+                .map_err(|error| error.to_string())?;
+            let report = application
+                .test_provider_api_key(provider, args[2].clone())
+                .await?;
+            output.push_stdout_line(format!(
+                "API key {}: {:?}",
+                report.id, report.availabilityStatus
+            ));
+            output.setJsonStdout(json!(report));
+        }
+        "providers-export" if args.len() == 1 => {
+            let document = command.modelManager().exportAllProviders()?;
+            output
+                .setJsonStdout(serde_json::from_str(&document).map_err(|error| error.to_string())?);
+            output.push_stdout_line(document);
+        }
+        "providers-import" if args.len() == 2 => {
+            let content = crate::commands::util::read_content_arg(&context, &args[1])?;
+            let result = command
+                .modelManager()
+                .importAllProvidersFromBackupContent(&content)?;
+            output.push_stdout_line(
+                serde_json::to_string_pretty(&result).map_err(|error| error.to_string())?,
+            );
+            output.setJsonStdout(json!(result));
+        }
+        "provider-save" if args.len() == 2 => {
+            let provider = serde_json::from_str(&crate::commands::util::read_content_arg(
+                &context, &args[1],
+            )?)
+            .map_err(|error| error.to_string())?;
+            let provider = command
+                .modelManager()
+                .updateProviderProfile(provider)
+                .map_err(|error| error.to_string())?;
+            print_provider_profile(&provider, output);
+            output.setJsonStdout(provider_profile_json(&provider));
+        }
+        "provider-delete" if args.len() == 2 => {
+            command
+                .modelManager()
+                .deleteProvider(&args[1])
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("Deleted provider {}", args[1]));
+            output.setJsonStdout(json!({"providerId": args[1], "deleted": true}));
+        }
+        "delete" if args.len() == 3 => {
+            command
+                .modelManager()
+                .deleteModel(&args[1], &args[2])
+                .map_err(|error| error.to_string())?;
+            output.push_stdout_line(format!("Deleted model {} / {}", args[1], args[2]));
+            output
+                .setJsonStdout(json!({"providerId": args[1], "modelId": args[2], "deleted": true}));
+        }
         "provider-type-list" => {
             let mut providers = ModelCatalog::providers().map_err(|error| error.to_string())?;
             providers.sort_by(|left, right| left.providerTypeId.cmp(&right.providerTypeId));
@@ -182,7 +264,8 @@ pub fn run_model_command(
             }));
         }
         "provider-model-available-list" => {
-            let usage = "usage: operit2 model provider-model-available-list <provider-id> [fetched|all]";
+            let usage =
+                "usage: operit2 model provider-model-available-list <provider-id> [fetched|all]";
             let providerId = requiredArg(args, 1, usage)?;
             let includeHistory = match args.get(2).map(String::as_str) {
                 None | Some("fetched") => false,
@@ -287,7 +370,9 @@ pub fn run_model_command(
             }
             .map_err(|error| error.to_string())?;
             output.push_stdout_line(match status.updatedAt {
-                Some(updatedAt) => format!("models.dev catalog downloaded at {updatedAt} (Unix ms)"),
+                Some(updatedAt) => {
+                    format!("models.dev catalog downloaded at {updatedAt} (Unix ms)")
+                }
                 None => "models.dev catalog not downloaded yet".to_string(),
             });
             if let Some(error) = &status.lastError {
@@ -639,6 +724,57 @@ pub fn run_model_command(
                 "updated": true
             }));
         }
+        "function-follow-chat" => {
+            match &args[1..] {
+                [function] => command
+                    .functionalManager()
+                    .setFunctionFollowChat(parseFunctionType(function)?),
+                [] => command.functionalManager().setAllFunctionsFollowChat(),
+                _ => return Err("usage: operit2 model function-follow-chat [function-type]".into()),
+            }
+            .map_err(|error| error.to_string())?;
+            output.push_stdout_line("Function bindings now follow the chat model");
+            output.setJsonStdout(json!({"followsChat": true, "functionType": args.get(1)}));
+        }
+        "spec-reset" | "provider-key-failures-clear" | "thinking-spec" | "profile-save" => {
+            let usage = "usage: operit2 model <spec-reset <provider> <model>|provider-key-failures-clear <provider>|thinking-spec <provider> <model> <json|null>|profile-save <provider> <profile-json|@vfs-file>>";
+            let provider = requiredArg(args, 1, usage)?;
+            let manager = command.modelManager();
+            let value = match args[0].as_str() {
+                "spec-reset" if args.len() == 3 => json!(manager
+                    .clearModelSpecOverrides(provider, &args[2])
+                    .map_err(|error| error.to_string())?),
+                "provider-key-failures-clear" if args.len() == 2 => {
+                    manager
+                        .clearProviderApiKeyFailures(provider)
+                        .map_err(|error| error.to_string())?;
+                    json!({"providerId": provider, "cleared": true})
+                }
+                "thinking-spec" if args.len() == 4 => {
+                    let spec: Option<ModelThinkingSpec> = serde_json::from_str(
+                        &crate::commands::util::read_content_arg(&context, &args[3])?,
+                    )
+                    .map_err(|error| error.to_string())?;
+                    json!(manager
+                        .setThinkingOverrideForModel(provider, &args[2], spec)
+                        .map_err(|error| error.to_string())?)
+                }
+                "profile-save" if args.len() == 3 => {
+                    let profile = serde_json::from_str(&crate::commands::util::read_content_arg(
+                        &context, &args[2],
+                    )?)
+                    .map_err(|error| error.to_string())?;
+                    json!(manager
+                        .updateModelProfile(provider, profile)
+                        .map_err(|error| error.to_string())?)
+                }
+                _ => return Err(usage.into()),
+            };
+            output.push_stdout_line(
+                serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
+            );
+            output.setJsonStdout(value);
+        }
         "function-reset" => {
             if let Some(functionTypeValue) = args.get(1) {
                 let functionType = parseFunctionType(functionTypeValue)?;
@@ -834,7 +970,10 @@ fn print_thinking_settings(
         output.push_stdout_line(if settings.chosen {
             format!("Current: {}", current.name())
         } else {
-            format!("Current: {} (carried over from the level set last)", current.name())
+            format!(
+                "Current: {} (carried over from the level set last)",
+                current.name()
+            )
         });
     }
 }
@@ -975,8 +1114,17 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model provider-type-list",
         "operit2 model provider-list",
         "operit2 model provider-show <provider-id>",
+        "operit2 model test <provider-id> <model-id>",
+        "operit2 model provider-test-key <provider-id> <key-id>",
+        "operit2 model codex-status",
+        "operit2 model codex-logout",
         "operit2 model provider-create <name> <provider-type-id> <endpoint>",
         "operit2 model provider-set-key <provider-id> <api-key>",
+        "operit2 model provider-save <provider-json|@vfs-file>",
+        "operit2 model provider-delete <provider-id>",
+        "operit2 model providers-export",
+        "operit2 model providers-import <providers-json|@vfs-file>",
+        "operit2 model delete <provider-id> <model-id>",
         "operit2 model provider-set-endpoint <provider-id> <endpoint>",
         "operit2 model provider-model-available-list <provider-id> [fetched|all]",
         "operit2 model provider-model-add <provider-id> <provider-model-id>",
@@ -998,9 +1146,14 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model function-show <function-type>",
         "operit2 model function-set <function-type> <provider-id> <model-id>",
         "operit2 model function-reset [function-type]",
+        "operit2 model function-follow-chat [function-type]",
+        "operit2 model spec-reset <provider-id> <model-id>",
+        "operit2 model provider-key-failures-clear <provider-id>",
+        "operit2 model thinking-spec <provider-id> <model-id> <json|null|@vfs-file>",
+        "operit2 model profile-save <provider-id> <profile-json|@vfs-file>",
     ];
     for line in lines {
         output.push_stdout_line(line);
     }
-    output.setJsonStdout(json!({ "usage": lines }));
+    output.setJsonStdout(json!({ "usage": lines.as_slice() }));
 }

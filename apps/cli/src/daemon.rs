@@ -571,7 +571,7 @@ fn route_supported(args: &[String]) -> bool {
     match command {
         "model" => args.get(1).map(String::as_str) != Some("codex-login"),
         "chat" => args.get(1).map(String::as_str) != Some("shell"),
-        "version" | "storage" | "tts" | "stt" | "export" | "import" | "backup" | "market"
+        "version" | "storage" | "stt" | "export" | "import" | "backup" | "market"
         | "update" | "shell" | "web" | "link" | "identity" | "install" | "uninstall" | "rescue"
         | "host" => false,
         _ => true,
@@ -1197,6 +1197,9 @@ mod tests {
     fn interactive_commands_stay_in_the_invoking_process() {
         assert!(route_supported(&["package".into(), "list".into()]));
         assert!(route_supported(&["chat".into(), "list".into()]));
+        assert!(route_supported(&["terminal".into(), "profiles".into()]));
+        assert!(route_supported(&["theme".into(), "list".into()]));
+        assert!(route_supported(&["tts".into(), "config".into(), "list".into()]));
         assert!(!route_supported(&["chat".into(), "shell".into()]));
         assert!(!route_supported(&[
             "model".into(),

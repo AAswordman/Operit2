@@ -18,7 +18,6 @@ use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::ModelConfigData::ApiProviderType;
 use operit_model::ModelParameter::ModelParameter;
 use operit_model::PromptFunctionType::PromptFunctionType;
-use operit_model::TtsConfig::{TtsConfig, TtsProviderType};
 use operit_providers::chat::enhance::ConversationService::ConversationService;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::market::MarketStatsApiService::{MarketEntrySummary, MarketListPage};
@@ -26,10 +25,8 @@ use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use operit_runtime::data::preferences::ModelConfigManager::ModelConfigManager;
-use operit_runtime::data::preferences::TtsConfigManager::TtsConfigManager;
 use operit_runtime::services::core::MessageCoordinationDelegate::MessageCoordinationDelegate;
 use operit_runtime::services::GitHubOAuthBrokerService::GitHubOAuthBrokerLoginCompletion;
-use operit_runtime::services::TtsSynthesisService::TtsSynthesisService;
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_tools::tools::ToolPermissionSystem::{AiPermissionMode, PermissionRequestResult};
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
@@ -66,8 +63,6 @@ use operit_vfs::VisualFileSystem::VisualFileSystem;
 use link::run_link_command;
 use transfer::{run_backup_command, run_export_command, run_import_command};
 use web::run_web_command;
-
-const CLI_DEFAULT_TTS_PROVIDER_TYPE: &str = "OPENAI_COMPATIBLE";
 
 static CLI_JSON_MODE: AtomicBool = AtomicBool::new(false);
 
@@ -171,11 +166,12 @@ async fn run_cli_local_command(args: &[String]) -> Result<(), String> {
         }
         "model" => run_core_command_and_print(&mut core, &localArgs).await,
         "prefs" => run_core_command_and_print(&mut core, &args).await,
+        "terminal" | "theme" => run_core_command_and_print(&mut core, &args).await,
         "host" => run_core_command_and_print(&mut core, &args).await,
         "log" => run_core_command_and_print(&mut core, &args).await,
         "local-models" => run_core_command_and_print(&mut core, &args).await,
         "stt" => run_core_command_and_print(&mut core, &args).await,
-        "tts" => run_tts_cli_command(&core, &args[1..]).await,
+        "tts" => run_core_command_and_print(&mut core, &args).await,
         "export" => run_export_command(&mut core, &args[1..]).await,
         "import" => run_import_command(&mut core, &args[1..]).await,
         "backup" => run_backup_command(&mut core, &args[1..]).await,
@@ -279,240 +275,6 @@ fn run_identity_command(args: &[String]) -> Result<(), String> {
     }
 }
 
-/// Runs local CLI text-to-speech configuration and synthesis commands.
-async fn run_tts_cli_command(
-    core: &crate::core_proxy::CliCore,
-    args: &[String],
-) -> Result<(), String> {
-    match args.get(0).map(String::as_str) {
-        Some("config") => run_tts_config_cli_command(&args[1..]),
-        Some("synthesize") => run_tts_synthesize_cli_command(core, &args[1..]),
-        _ => {
-            print_tts_usage();
-            Ok(())
-        }
-    }
-}
-
-/// Runs text-to-speech configuration commands against the shared preference store.
-/// Runs TTS configuration commands with readable text or explicit JSON output.
-fn run_tts_config_cli_command(args: &[String]) -> Result<(), String> {
-    let manager = TtsConfigManager::getInstance();
-    match args.get(0).map(String::as_str) {
-        Some("list") if args.len() == 1 => {
-            let currentConfigId = manager.getCurrentTtsConfigId()?;
-            let configs = manager.getAllTtsConfigs()?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!({
-                    "configs": configs,
-                    "currentConfigId": currentConfigId,
-                }));
-                return Ok(());
-            }
-            for config in configs {
-                let currentMark = if config.id == currentConfigId {
-                    " (current)"
-                } else {
-                    ""
-                };
-                println!(
-                    "{} ({}) — {} / {} / {}{}",
-                    config.name,
-                    config.id,
-                    config.providerType,
-                    config.model,
-                    config.voice,
-                    currentMark
-                );
-            }
-            Ok(())
-        }
-        Some("show") if args.len() == 2 => {
-            let config = manager.getTtsConfig(&args[1])?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!(config));
-            } else {
-                print_tts_config_human(&config);
-            }
-            Ok(())
-        }
-        Some("current") if args.len() == 1 => {
-            let config = manager.getCurrentTtsConfig()?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!(config));
-            } else {
-                print_tts_config_human(&config);
-            }
-            Ok(())
-        }
-        Some("use") if args.len() == 2 => {
-            let id = manager.setCurrentTtsConfigId(&args[1])?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!({ "currentConfigId": id }));
-            } else {
-                println!("Active TTS configuration: {id}");
-            }
-            Ok(())
-        }
-        Some("create") if args.len() == 8 => {
-            let responseFormat = args[6].clone();
-            let speed = args[7].parse::<f64>().map_err(|error| error.to_string())?;
-            let config = manager.createTtsConfig(TtsConfig {
-                id: String::new(),
-                name: args[1].clone(),
-                providerType: CLI_DEFAULT_TTS_PROVIDER_TYPE.to_string(),
-                endpoint: args[2].clone(),
-                apiKey: args[3].clone(),
-                model: args[4].clone(),
-                voice: args[5].clone(),
-                responseFormat,
-                speed,
-                httpMethod: "POST".to_string(),
-                requestBody: String::new(),
-                contentType: "application/json".to_string(),
-                headers: Vec::new(),
-                responsePipeline: Vec::new(),
-                createdAt: 0,
-                updatedAt: 0,
-            })?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!(config));
-            } else {
-                println!("Created TTS configuration {} ({})", config.name, config.id);
-            }
-            Ok(())
-        }
-        Some("create-local") if args.len() == 6 => {
-            let speed = args[5].parse::<f64>().map_err(|error| error.to_string())?;
-            let config = manager.createTtsConfig(TtsConfig {
-                id: String::new(),
-                name: args[1].clone(),
-                providerType: TtsProviderType::LOCAL_MODEL.to_string(),
-                endpoint: String::new(),
-                apiKey: String::new(),
-                model: format!("{}@{}", args[2], args[3]),
-                voice: args[4].clone(),
-                responseFormat: "wav".to_string(),
-                speed,
-                httpMethod: "POST".to_string(),
-                requestBody: String::new(),
-                contentType: "application/json".to_string(),
-                headers: Vec::new(),
-                responsePipeline: Vec::new(),
-                createdAt: 0,
-                updatedAt: 0,
-            })?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!(config));
-            } else {
-                println!(
-                    "Created local TTS configuration {} ({})",
-                    config.name, config.id
-                );
-            }
-            Ok(())
-        }
-        Some("update") if args.len() == 4 => {
-            let mut config = manager.getTtsConfig(&args[1])?;
-            match args[2].as_str() {
-                "name" => config.name = args[3].clone(),
-                "endpoint" => config.endpoint = args[3].clone(),
-                "api-key" => config.apiKey = args[3].clone(),
-                "model" => config.model = args[3].clone(),
-                "voice" => config.voice = args[3].clone(),
-                "response-format" => config.responseFormat = args[3].clone(),
-                "speed" => {
-                    config.speed = args[3].parse::<f64>().map_err(|error| error.to_string())?
-                }
-                "http-method" => config.httpMethod = args[3].clone(),
-                "request-body" => config.requestBody = args[3].clone(),
-                "content-type" => config.contentType = args[3].clone(),
-                field => return Err(format!("unknown tts config field: {field}")),
-            }
-            let updated = manager.updateTtsConfig(config)?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!(updated));
-            } else {
-                println!("Updated TTS configuration {}", updated.id);
-            }
-            Ok(())
-        }
-        Some("delete") if args.len() == 2 => {
-            let deleted = manager.deleteTtsConfig(&args[1])?;
-            if cli_json_mode() {
-                emit_cli_json(serde_json::json!({ "deleted": deleted, "id": args[1] }));
-            } else {
-                println!("Deleted TTS configuration {}", args[1]);
-            }
-            Ok(())
-        }
-        _ => {
-            print_tts_usage();
-            Ok(())
-        }
-    }
-}
-
-/// Synthesizes speech through an explicit TTS configuration.
-fn run_tts_synthesize_cli_command(
-    core: &crate::core_proxy::CliCore,
-    args: &[String],
-) -> Result<(), String> {
-    let mut configId: Option<String> = None;
-    let mut text: Option<String> = None;
-    let mut index = 0usize;
-    while index < args.len() {
-        match args[index].as_str() {
-            "--text" => {
-                index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| "--text requires a value".to_string())?;
-                text = Some(value.clone());
-            }
-            "--config" => {
-                index += 1;
-                let value = args
-                    .get(index)
-                    .ok_or_else(|| "--config requires a value".to_string())?;
-                configId = Some(value.clone());
-            }
-            value => return Err(format!("unknown tts synthesize argument: {value}")),
-        }
-        index += 1;
-    }
-    let text = text.ok_or_else(|| "--text is required".to_string())?;
-    let service = TtsSynthesisService::getInstance(core.localHostManager()?);
-    let configId = configId.ok_or_else(|| "tts synthesize requires --config <id>".to_string())?;
-    let result = service.synthesizeWithConfig(&configId, &text)?;
-    if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "audioPaths": result.audioPaths }));
-    } else {
-        for path in result.audioPaths {
-            println!("Audio: {path}");
-        }
-    }
-    Ok(())
-}
-
-/// Prints text-to-speech CLI usage.
-/// Prints TTS command usage in the selected output format.
-fn print_tts_usage() {
-    if cli_json_mode() {
-        emit_cli_json(serde_json::json!({ "usage": "operit2 cli tts config|synthesize" }));
-        return;
-    }
-    println!("operit2 cli tts config list");
-    println!("operit2 cli tts config show <id>");
-    println!("operit2 cli tts config current");
-    println!("operit2 cli tts config use <id>");
-    println!("operit2 cli tts config create <name> <endpoint> <api-key> <model> <voice> <response-format> <speed>");
-    println!("operit2 cli tts config create-local <name> <model-id> <version> <voice> <speed>");
-    println!("operit2 cli tts config update <id> <name|endpoint|api-key|model|voice|response-format|speed|http-method|request-body|content-type> <value>");
-    println!("operit2 cli tts config delete <id>");
-    println!("operit2 cli tts synthesize --config <id> --text <text>");
-}
-
 /// Runs update discovery, download, and installation commands.
 async fn run_update_cli_command(
     core: &mut crate::core_proxy::CliCore,
@@ -602,20 +364,6 @@ fn print_update_target(target: FullUpdateTarget) -> Result<(), String> {
         println!("Package: {package_name}");
     }
     Ok(())
-}
-
-/// Prints one TTS configuration as readable labeled text.
-fn print_tts_config_human(config: &TtsConfig) {
-    println!("TTS configuration {}", config.id);
-    println!("Name: {}", config.name);
-    println!("Provider: {}", config.providerType);
-    println!("Endpoint: {}", config.endpoint);
-    println!("Model: {}", config.model);
-    println!("Voice: {}", config.voice);
-    println!("Response format: {}", config.responseFormat);
-    println!("Speed: {}", config.speed);
-    println!("HTTP method: {}", config.httpMethod);
-    println!("Content type: {}", config.contentType);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1843,6 +1591,8 @@ const CLI_COMMANDS: &[(&str, &str)] = &[
     ("extension", "Move extensions between device and space"),
     ("market", "Browse, publish, and install from the market"),
     ("prefs", "Show or change preferences"),
+    ("terminal", "Manage terminal profiles, defaults, distributions, and sessions"),
+    ("theme", "Manage saved themes and application appearance"),
     ("host", "Show host information"),
     ("storage", "Show storage paths or migrate storage"),
     ("sync", "Reset local synchronization transaction history (recovery)"),
@@ -1923,10 +1673,6 @@ async fn print_cli_help(command: Option<&str>) -> Result<(), String> {
     match command {
         "identity" => {
             print_identity_usage();
-            Ok(())
-        }
-        "tts" => {
-            print_tts_usage();
             Ok(())
         }
         "update" => {

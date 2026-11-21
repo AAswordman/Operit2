@@ -12,12 +12,40 @@ use operit_util::RuntimeStorageLayout::{
 use serde_json::json;
 
 /// Runs local model repository and installation commands.
-pub fn run_local_models_command(
+pub async fn run_local_models_command(
     application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     match args.first().map(String::as_str) {
+        Some("test") if args.len() == 5 => {
+            let settings = serde_json::from_str(&super::util::read_content_arg(
+                &application.hostManager,
+                &args[4],
+            )?)
+            .map_err(error_string)?;
+            let response = local_model_service(application)?
+                .runChatInference(args[1].clone(), args[2].clone(), args[3].clone(), settings)
+                .await?;
+            output.push_stdout_line(serde_json::to_string_pretty(&response).map_err(error_string)?);
+            output.setJsonStdout(json!(response));
+            Ok(())
+        }
+        Some("unload") if args.len() == 1 => {
+            local_model_service(application)?.unloadChatModel().await?;
+            output.push_stdout_line("Released cached local model weights");
+            output.setJsonStdout(json!({"unloaded": true}));
+            Ok(())
+        }
+        Some("file-engines") if args.len() == 1 => {
+            let engines = local_model_service(application)?.getFileImportEngines()?;
+            output.push_stdout_line(serde_json::to_string_pretty(&engines).map_err(error_string)?);
+            output.setJsonStdout(json!(engines));
+            Ok(())
+        }
+        Some("file-import") if args.len() >= 4 => {
+            import_files(application, &args[1..], output).await
+        }
         Some("paths") if args.len() == 1 => print_local_model_paths(application, output),
         Some("catalog") if args.len() == 1 => print_catalog(application, output),
         Some("show") if args.len() == 3 => {
@@ -592,9 +620,120 @@ fn print_local_models_usage(output: &mut CoreCommandOutput) {
         "operit2 local-models hub-search <query> [huggingface|modelscope|hf-mirror]",
         "operit2 local-models hub-import <owner/repo-or-url> [revision] [huggingface|modelscope|hf-mirror]",
         "operit2 local-models custom-remove <model-id> <version>",
+        "operit2 local-models file-engines",
+        "operit2 local-models test <model-id> <version> <prompt> <runtime-settings-json|@vfs-file>",
+        "operit2 local-models unload",
+        "operit2 local-models file-import <LlamaCpp|Mnn> <display-name> <vfs-file> [vfs-files...]",
     ];
     for line in lines {
         output.push_stdout_line(line);
     }
     output.setJsonStdout(json!({ "usage": lines }));
+}
+
+/// Converts a serialization failure into the command's existing string error channel.
+fn error_string(error: serde_json::Error) -> String {
+    error.to_string()
+}
+
+/// Streams selected VFS files with bounded reads into the existing transactional model importer.
+async fn import_files(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    use operit_runtime::services::LocalModelService::LocalModelImportFile;
+    use operit_util::stream::ReverseStream::ReverseStream;
+    let engine = serde_json::from_value(json!(args[0])).map_err(error_string)?;
+    let service = local_model_service(application)?;
+    let filesystem = application.hostManager.vfs()?;
+    let mut selected = Vec::new();
+    let mut files = Vec::new();
+    for input in &args[2..] {
+        let path = crate::commands::util::command_file_path(&application.hostManager, input)?;
+        let info = filesystem.fileInfo(&path)?;
+        if !info.exists || info.fileType != "file" || info.size <= 0 {
+            return Err(format!("Model import requires a nonempty file: {input}"));
+        }
+        let name = path
+            .rsplit('/')
+            .next()
+            .ok_or("Model file has no name")?
+            .to_string();
+        files.push(LocalModelImportFile {
+            name,
+            byteLength: info.size as u64,
+        });
+        selected.push((path, info.size as u64));
+    }
+    let (mut sender, stream) = ReverseStream::channel();
+    let producer = async move {
+        let result = async {
+            for (path, size) in selected {
+                let mut offset = 0;
+                while offset < size {
+                    let bytes = filesystem
+                        .readFileBytesRange(
+                            &path,
+                            offset,
+                            ((size - offset).min(1024 * 1024)) as usize,
+                        )
+                        .map_err(ImportInputError::File)?;
+                    if bytes.is_empty() {
+                        return Err(ImportInputError::File(format!(
+                            "Model file changed or ended during import: {path}"
+                        )));
+                    }
+                    offset += bytes.len() as u64;
+                    sender
+                        .send(bytes)
+                        .await
+                        .map_err(ImportInputError::ConsumerClosed)?;
+                }
+                if filesystem
+                    .fileInfo(&path)
+                    .map_err(ImportInputError::File)?
+                    .size
+                    != size as i64
+                {
+                    return Err(ImportInputError::File(format!(
+                        "Model file size changed during import: {path}"
+                    )));
+                }
+            }
+            sender
+                .send(Vec::new())
+                .await
+                .map_err(ImportInputError::ConsumerClosed)?;
+            Ok(())
+        }
+        .await;
+        sender.close();
+        result
+    };
+    // Complete the receiver even after a read failure so its transaction can remove staged files.
+    let (produced, imported) = tokio::join!(
+        producer,
+        service.importModelFromFiles(engine, args[1].clone(), files, stream)
+    );
+    let transport_error = match produced {
+        Err(ImportInputError::File(error)) => return Err(error),
+        Err(ImportInputError::ConsumerClosed(error)) => Some(error),
+        Ok(()) => None,
+    };
+    imported?;
+    if let Some(error) = transport_error {
+        return Err(error);
+    }
+    output.push_stdout_line(format!("Imported local model: {}", args[1]));
+    output.setJsonStdout(
+        json!({"imported": true, "displayName": args[1], "registry": service.getRegistry()?}),
+    );
+    Ok(())
+}
+
+/// Preserves source read failures and the importer's original rejection separately.
+enum ImportInputError {
+    File(String),
+    ConsumerClosed(String),
 }

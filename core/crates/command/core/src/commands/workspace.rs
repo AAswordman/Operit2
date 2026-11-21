@@ -45,6 +45,22 @@ pub async fn run_workspace_command(
         "bind" => bind_workspace(application, &args[1..], output),
         "unbind" => unbind_workspace(application, &args[1..], output),
         "list" => list_workspaces(application, output),
+        "summary" if args.len() == 1 => {
+            let summary = application.workspaceService().workspaceManagementSummary()?;
+            output.push_stdout_line(serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?);
+            output.setJsonStdout(json!(summary));
+            Ok(())
+        }
+        "delete-unbound" => {
+            let names = match &args[1..] {
+                [flag, names @ ..] if flag == "--yes" && !names.is_empty() => names.to_vec(),
+                _ => return Err("usage: operit2 workspace delete-unbound --yes <workspace-name> [names...]".into()),
+            };
+            let deleted = application.workspaceService().deleteUnboundWorkspaces(names.clone())?;
+            output.push_stdout_line(format!("Deleted {deleted} unbound workspaces"));
+            output.setJsonStdout(json!({"deleted": deleted, "workspaceNames": names}));
+            Ok(())
+        }
         "chats" => list_workspace_chats(application, &args[1..], output),
         "commands" => list_workspace_commands(application, &args[1..], output),
         "commands-path" => list_workspace_commands_path(application, &args[1..], output),
@@ -770,6 +786,8 @@ fn print_workspace_usage(output: &mut CoreCommandOutput) {
         "operit2 workspace bind <chat-id> <workspace>",
         "operit2 workspace unbind <chat-id>",
         "operit2 workspace list",
+        "operit2 workspace summary",
+        "operit2 workspace delete-unbound --yes <workspace-name> [names...]",
         "operit2 workspace chats <workspace>",
         "operit2 workspace commands <chat-id>",
         "operit2 workspace commands-path <workspace>",

@@ -16,11 +16,16 @@ mod skill;
 mod storage;
 mod stt;
 mod sync;
+mod terminal;
+mod theme;
 mod tool;
+mod tts;
 mod update;
 mod usage;
 mod util;
 mod workspace;
+#[cfg(test)]
+mod settings_tests;
 
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
@@ -62,6 +67,8 @@ async fn run_core_owned_command(
     }
 
     match root {
+        BuiltinRoot::Terminal => terminal::run_terminal_command(application, args, output).await,
+        BuiltinRoot::Theme => theme::run_theme_command(application, args, output),
         BuiltinRoot::Extension => extension::run_extension_command(application, args, output),
         BuiltinRoot::Tool => tool::run_tool_command(application, args, output).await,
         BuiltinRoot::Package => package::run_package_command(application, args, output).await,
@@ -74,7 +81,7 @@ async fn run_core_owned_command(
         BuiltinRoot::Host => host::run_host_command(application.hostManager.clone(), args, output),
         BuiltinRoot::Log => log::run_log_command(args, output),
         BuiltinRoot::LocalModels => {
-            local_models::run_local_models_command(application, args, output)
+            local_models::run_local_models_command(application, args, output).await
         }
         BuiltinRoot::Prefs => {
             prefs::run_prefs_command(application.hostManager.clone(), args, output)
@@ -83,12 +90,13 @@ async fn run_core_owned_command(
             approval::run_approval_command(application.hostManager.clone(), args, output)
         }
         BuiltinRoot::Model => {
-            model::run_model_command(application.hostManager.clone(), args, output)
+            model::run_model_command(application, args, output).await
         }
         BuiltinRoot::Chat => chat::run_chat_command(application, args, output).await,
         BuiltinRoot::Workspace => workspace::run_workspace_command(application, args, output).await,
         BuiltinRoot::Storage => storage::run_storage_command(application, args, output),
         BuiltinRoot::Stt => stt::run_stt_command(application, args, output),
+        BuiltinRoot::Tts => tts::run_tts_command(application, args, output),
         BuiltinRoot::Sync => sync::run_sync_command(application, args, output),
         BuiltinRoot::Update => update::run_update_command(&application.hostManager, args, output).await,
         BuiltinRoot::Usage => usage::run_usage_command(application, args, output),
@@ -126,15 +134,18 @@ fn print_core_usage(
         "operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>",
         "operit2 host <show>",
         "operit2 log <show|package|path|clear>",
-        "operit2 local-models <paths|catalog|show|installed|installed-show|install|verify|delete|engine-delete>",
+        "operit2 local-models <paths|catalog|show|installed|installed-show|install|verify|delete|engine-delete|file-engines|file-import|test|unload>",
         "operit2 stt <provider-list|provider-model-list|config|transcribe|transcribe-config>",
-        "operit2 prefs <show|stream|media-history|mcp-timeout>",
+        "operit2 tts <provider-list|voices|voice-add|voice-custom|config|synthesize>",
+        "operit2 prefs <show|stream|media-history|mcp-timeout|pre-hook-timeout|tools|preference-description|feature|tool-visible|language|input>",
+        "operit2 terminal <info|support|profiles|save|add|update|default|delete|distributions|install|installs|cancel|sessions|open|input|screen|close>",
+        "operit2 theme <list|show|active|create|update|rename|delete|apply|appearance|appearance-save|appearance-patch|custom>",
         "operit2 approval <status|read-only|workspace-write|full>",
         "operit2 plugin commands  Show registered plugin command usage and descriptions.",
         "operit2 plugin exec <registered-command> [args...]  Explicitly invoke a registered plugin command.",
-        "operit2 model <codex-login|provider-type-list|provider-list|provider-show|provider-create|provider-set-key|provider-set-endpoint|provider-model-available-list|provider-model-add|provider-model-create|list|show|use|params|parameters|context-show|context-set|summary-show|summary-set|thinking|function-list|function-show|function-set|function-reset>",
+        "operit2 model <codex-login|provider-type-list|provider-list|provider-show|provider-create|provider-set-key|provider-set-endpoint|provider-model-available-list|provider-model-add|provider-model-create|list|show|use|params|parameters|context-show|context-set|summary-show|summary-set|thinking|function-list|function-show|function-set|function-reset|function-follow-chat|spec-reset|profile-save|provider-save|provider-delete|delete|providers-export|providers-import|test|provider-test-key|codex-status|codex-logout>",
         "operit2 chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|send>",
-        "operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|chats|commands|commands-path|run|run-path>",
+        "operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|summary|delete-unbound|chats|commands|commands-path|run|run-path>",
         "operit2 storage <paths|migrate>",
         "operit2 sync <reset-transactions>",
         "operit2 update <run|check|target>",

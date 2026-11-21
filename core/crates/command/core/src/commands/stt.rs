@@ -16,7 +16,7 @@ pub fn run_stt_command(
     match args.first().map(String::as_str) {
         Some("provider-list") if args.len() == 1 => print_provider_catalog(output),
         Some("provider-model-list") if args.len() == 2 => print_provider_models(&args[1], output),
-        Some("config") => run_config_command(&args[1..], output),
+        Some("config") => run_config_command(application, &args[1..], output),
         Some("transcribe") if args.len() == 2 => {
             transcribe_current(application, &args[1], None, output)
         }
@@ -84,9 +84,26 @@ fn print_provider_models(
 }
 
 /// Runs STT provider configuration commands.
-fn run_config_command(args: &[String], output: &mut CoreCommandOutput) -> Result<(), String> {
+fn run_config_command(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
     let manager = SttConfigManager::getInstance();
     match args.first().map(String::as_str) {
+        Some(command @ ("create-json" | "save")) if args.len() == 2 => {
+            let config = serde_json::from_str(&super::util::read_content_arg(
+                &application.hostManager,
+                &args[1],
+            )?)
+            .map_err(|error| error.to_string())?;
+            let config = if command == "create-json" {
+                manager.createSttConfig(config)?
+            } else {
+                manager.updateSttConfig(config)?
+            };
+            print_config(&config, output)
+        }
         Some("list") if args.len() == 1 => {
             let configs = manager.getAllSttConfigs()?;
             let items = configs.iter().map(stt_config_json).collect::<Vec<_>>();
@@ -363,6 +380,7 @@ fn print_stt_usage(output: &mut CoreCommandOutput) {
         "operit2 stt config create-remote <name> <provider-type-id> <endpoint> <api-key> <model>",
         "operit2 stt config update <id> <field> <value>",
         "operit2 stt config delete <id>",
+        "operit2 stt config <create-json|save> <config-json|@vfs-file>",
         "operit2 stt transcribe <audio-path>",
         "operit2 stt transcribe <audio-path> --language <language>",
         "operit2 stt transcribe-config <config-id> <audio-path>",

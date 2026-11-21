@@ -163,6 +163,9 @@ See [`BUILDING.md`](BUILDING.md) for complete environment, signing, release, and
 
 ### CLI/TUI
 
+Terminal profiles and other application settings can be managed from the CLI.
+See [CLI settings and UI parity](docs/cli-settings.md) for commands and Windows WSL examples.
+
 Run from the repository root:
 
 ```powershell

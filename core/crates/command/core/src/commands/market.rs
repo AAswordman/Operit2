@@ -98,6 +98,25 @@ pub fn run_market_command(
     }
 
     match args[0].as_str() {
+        "auth" => match &args[1..] {
+            [command] if command == "status" => {
+                let auth = core.github_auth();
+                let user = auth.getCurrentUserInfo().map_err(|error| error.to_string())?;
+                output.push_stdout_line(match &user {
+                    Some(user) => format!("GitHub account: {}", user.login),
+                    None => "No GitHub account is signed in".to_string(),
+                });
+                output.setJsonStdout(json!({"loggedIn": auth.isLoggedIn().map_err(|error| error.to_string())?, "user": user}));
+                Ok(())
+            }
+            [command] if command == "logout" => {
+                core.github_auth().logout().map_err(|error| error.to_string())?;
+                output.push_stdout_line("Signed out of GitHub");
+                output.setJsonStdout(json!({"signedOut": true}));
+                Ok(())
+            }
+            _ => Err("usage: operit2 cli market auth <login|status|logout>".into()),
+        },
         "rank" => {
             let sort = normalize_sort(args.get(1).map(String::as_str).unwrap_or("updated"))?;
             let page = parse_i32_opt(args.get(2), 1)?;
@@ -187,6 +206,7 @@ fn print_usage(output: &mut CoreCommandOutput) {
     let lines = vec![
         "usage: operit2 market <rank|list|search|show|comments|comment|like|notifications|my|publish|install|download>",
         "sort: updated|likes|downloads",
+        "account: operit2 cli market auth <login|status|logout>",
         "list: operit2 market list [sort] [type|-] [category|-] [page]",
         "search: operit2 market search <exact-query> [sort] [type|-] [category|-]",
         "comment: operit2 market comment <entryId> <body-or-@file>",

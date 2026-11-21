@@ -101,6 +101,12 @@ const result = await Tools.System.terminal.run({
 验证后原子写入；旧版本保存请求会返回冲突，防止覆盖其他编辑或安装新增的
 配置。损坏的数据、未知配置、未知选项和失效默认项均返回实际错误。
 
+## CLI 管理
+
+`operit2 cli terminal` 提供类型发现、实例增删改、默认选择、完整注册表保存、发行版
+下载和会话管理。CLI 使用同一 Core 注册表，完整保存仍校验 `revision`。
+Windows 的 PowerShell 及 WSL 示例、其他界面配置的命令见 [CLI 设置](cli-settings.md)。
+
 ## 检查命令
 
 ```sh

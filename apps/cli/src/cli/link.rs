@@ -902,7 +902,7 @@ async fn execute_link_discover_command(context: &LinkCommandContext, args: &[Str
 async fn run_link_space_command(args: &[String]) -> Result<(), String> {
     let ownsSpaceMutation = matches!(
         args,
-        [command, ..] if matches!(command.as_str(), "rename" | "disconnect" | "admit" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync" | "preference-set" | "preference-delete")
+        [command, ..] if matches!(command.as_str(), "rename" | "user-name" | "disconnect" | "admit" | "remove" | "join" | "leave" | "approve" | "reject" | "refresh" | "cancel" | "sync" | "preference-set" | "preference-delete")
     );
     let coreApplication = if ownsSpaceMutation {
         create_cli_core_application("client").await?
@@ -937,6 +937,11 @@ async fn execute_link_space_command(coreApplication: &LinkCommandContext, args: 
             let space = service.renameDeviceSpace(args[1].clone())?;
             if cli_json_mode() { emit_cli_json(serde_json::json!(space)); }
             else { println!("Device space renamed to {}", space.spaceName); }
+            Ok(())
+        }
+        Some("user-name") if args.len() == 2 => {
+            let device = service.updateCurrentDeviceUserName(args[1].clone())?;
+            emit_cli_json(serde_json::to_value(device).map_err(|error| error.to_string())?);
             Ok(())
         }
         Some("status") if args.len() == 2 => {
@@ -1508,6 +1513,7 @@ pub(crate) fn print_link_usage() {
     println!("operit2 cli link unpair [device-name|number] | peers | prompts");
     println!("operit2 cli link listen <http|ws|tcp|serial|bluetooth> [--automatic-port|--fixed-port] [--bind <host:port>]");
     println!("operit2 cli link space <show|topology|status <device-name>|rename <name>|join [device-name|number]|disconnect <device-name>|admit <device-name>|remove <device-name>|leave>");
+    println!("operit2 cli link space user-name <name>  # publish the current device's user name");
     println!("operit2 cli link space requests <incoming|outgoing> | refresh [space-name|number] | cancel [space-name|number]");
     println!("operit2 cli link space approve|reject [device-name|number] | sync  # a single pending request is selected automatically");
     println!("operit2 cli link space preferences <node-id> | preference-set <node-id> <key> <JSON> | preference-delete <node-id> <key>");

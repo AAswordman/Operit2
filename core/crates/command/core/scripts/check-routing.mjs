@@ -60,7 +60,7 @@ assert.ok(builtinBlock, "Core must declare one directory containing only its inh
 const builtins = [...builtinBlock[1].matchAll(/\("([a-z-]+)", BuiltinRoot::([A-Za-z]+)\)/g)]
   .map(([, name, handler]) => ({ name, handler }));
 const builtinNames = new Set(builtins.map(({ name }) => name));
-assert.equal(builtins.length, 20, "All 20 existing inherent Core command families must remain mounted");
+assert.equal(builtins.length, 23, "Existing command families and terminal, theme, TTS must remain mounted");
 assert.equal(builtinNames.size, builtins.length, "Inherent Core directory entries must be unique");
 
 assert.match(router, /^mod catalog;$/m);
@@ -156,8 +156,11 @@ const coreRoutes = new Map([
   ["Log", /log::run_log_command\(args, output\)/],
   ["LocalModels", /local_models::run_local_models_command\(application, args, output\)/],
   ["Prefs", /prefs::run_prefs_command\(application\.hostManager\.clone\(\), args, output\)/],
+  ["Terminal", /terminal::run_terminal_command\(application, args, output\)\.await/],
+  ["Theme", /theme::run_theme_command\(application, args, output\)/],
+  ["Tts", /tts::run_tts_command\(application, args, output\)/],
   ["Approval", /approval::run_approval_command\(application\.hostManager\.clone\(\), args, output\)/],
-  ["Model", /model::run_model_command\(application\.hostManager\.clone\(\), args, output\)/],
+  ["Model", /model::run_model_command\(application, args, output\)\.await/],
   ["Chat", /chat::run_chat_command\(application, args, output\)\.await/],
   ["Workspace", /workspace::run_workspace_command\(application, args, output\)\.await/],
   ["Storage", /storage::run_storage_command\(application, args, output\)/],
