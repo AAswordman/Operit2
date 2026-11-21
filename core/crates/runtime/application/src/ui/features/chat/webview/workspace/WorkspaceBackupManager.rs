@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
 use operit_host_api::FindFilesRequest;
 use serde::{Deserialize, Serialize};
@@ -10,6 +10,7 @@ use crate::ui::features::chat::webview::workspace::process::GitIgnoreFilter::Git
 use operit_host_api::HostManager::HostManager;
 use operit_vfs::VfsPath;
 use operit_vfs::VisualFileSystem::VisualFileSystem;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::AIToolHook::AIToolHook;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::AITool;
@@ -115,6 +116,80 @@ enum Capture {
     Unknown,
 }
 
+/// The currently-open hook session per (workspace, chat scope), keyed together
+/// with its hook id. `getInstance` builds a fresh manager on every call, so this
+/// backstop registry must be process-wide. Entries hold weak references: a
+/// session whose worker future was dropped is cleaned up by the drop guard, and
+/// a dead entry is simply replaced on the next turn.
+static OPEN_TOOL_HOOK_SESSIONS: Mutex<BTreeMap<(String, String), (String, Weak<WorkspaceToolHookSession>)>> =
+    Mutex::new(BTreeMap::new());
+
+fn toolHookScopeKey(workspacePath: &str, chatId: Option<&str>) -> (String, String) {
+    (
+        normalizeWorkspacePath(workspacePath),
+        normalizeChatScope(chatId),
+    )
+}
+
+/// The hook-registry surface needed to unregister one workspace hook session.
+pub trait ToolHookRegistry {
+    #[allow(non_snake_case)]
+    fn removeToolHook(&mut self, hookId: &str);
+}
+
+impl ToolHookRegistry for AIToolHandler {
+    fn removeToolHook(&mut self, hookId: &str) {
+        AIToolHandler::removeToolHook(self, hookId);
+    }
+}
+
+/// Removes and closes a turn's workspace hook session when the owning future is
+/// dropped before its completion path ran (user cancel, JS engine revoke).
+/// The completion path takes the session out of the shared slot first, so the
+/// guard is a no-op there. The synchronous send path arms the same guard over
+/// the same slot and calls `handoff` once the worker future owns the cleanup.
+pub struct WorkspaceToolHookDropGuard<R: ToolHookRegistry + ?Sized> {
+    sessionSlot: Option<Arc<Mutex<Option<Arc<WorkspaceToolHookSession>>>>>,
+    handler: Arc<Mutex<R>>,
+}
+
+impl<R: ToolHookRegistry + ?Sized> WorkspaceToolHookDropGuard<R> {
+    #[allow(non_snake_case)]
+    pub fn new(
+        sessionSlot: Arc<Mutex<Option<Arc<WorkspaceToolHookSession>>>>,
+        handler: Arc<Mutex<R>>,
+    ) -> Self {
+        Self {
+            sessionSlot: Some(sessionSlot),
+            handler,
+        }
+    }
+
+    /// Transfers cleanup ownership to the spawned worker future's own guard.
+    pub fn handoff(&mut self) {
+        self.sessionSlot = None;
+    }
+}
+
+impl<R: ToolHookRegistry + ?Sized> Drop for WorkspaceToolHookDropGuard<R> {
+    fn drop(&mut self) {
+        let Some(slot) = self.sessionSlot.take() else {
+            return;
+        };
+        let session = slot
+            .lock()
+            .expect("workspace tool hook session mutex poisoned")
+            .take();
+        if let Some(session) = session {
+            self.handler
+                .lock()
+                .expect("workspace tool hook handler mutex poisoned")
+                .removeToolHook(session.hookId());
+            session.close();
+        }
+    }
+}
+
 impl WorkspaceBackupManager {
     pub fn new(context: HostManager) -> Self {
         Self { context }
@@ -132,10 +207,28 @@ impl WorkspaceBackupManager {
         messageTimestamp: i64,
         chatId: Option<String>,
     ) -> Arc<WorkspaceToolHookSession> {
-        Arc::new(WorkspaceToolHookSession {
+        // Backstop for turns whose worker future hung instead of dropping: close
+        // the previous open session before the new turn can lazily `beginTurn`
+        // (which deletes objects and rewrites the snapshot), so the stale
+        // finalize can never clobber the new turn. Closing also marks the old
+        // session inert; unregistering its hook from the shared tool handler is
+        // owned by the drop guard, which only removes its own unique hook id.
+        let scopeKey = toolHookScopeKey(&workspacePath, chatId.as_deref());
+        let previous = OPEN_TOOL_HOOK_SESSIONS
+            .lock()
+            .expect("open workspace tool hook sessions mutex poisoned")
+            .remove(&scopeKey);
+        if let Some(previous) = previous.and_then(|(_, weak)| weak.upgrade()) {
+            previous.close();
+        }
+        let session = Arc::new(WorkspaceToolHookSession {
+            // Unique per session: continuation turns reuse the user message
+            // timestamp, and `addToolHook` deduplicates by hook id, so a shared
+            // id would keep a stale hook registered instead of the new one.
             id: format!(
-                "workspace-backup-{}-{messageTimestamp}",
-                normalizeChatScope(chatId.as_deref())
+                "workspace-backup-{}-{messageTimestamp}-{}",
+                normalizeChatScope(chatId.as_deref()),
+                uuid::Uuid::new_v4()
             ),
             manager: self.clone(),
             workspacePath,
@@ -148,7 +241,12 @@ impl WorkspaceBackupManager {
                 affectedPaths: BTreeSet::new(),
                 gitignoreRules: Vec::new(),
             }),
-        })
+        });
+        OPEN_TOOL_HOOK_SESSIONS
+            .lock()
+            .expect("open workspace tool hook sessions mutex poisoned")
+            .insert(scopeKey, (session.id.clone(), Arc::downgrade(&session)));
+        session
     }
 
     /// Returns `None` when this message's workspace snapshot is no longer kept.
@@ -591,6 +689,19 @@ impl WorkspaceToolHookSession {
     }
 
     pub fn close(&self) {
+        {
+            let mut open = OPEN_TOOL_HOOK_SESSIONS
+                .lock()
+                .expect("open workspace tool hook sessions mutex poisoned");
+            let scopeKey = toolHookScopeKey(&self.workspacePath, self.chatScopeId.as_deref());
+            if open
+                .get(&scopeKey)
+                .map(|(hookId, _)| hookId == &self.id)
+                .unwrap_or(false)
+            {
+                open.remove(&scopeKey);
+            }
+        }
         let state = self.state.lock().expect("WorkspaceToolHookSession mutex poisoned");
         if self.closed.swap(true, Ordering::SeqCst) {
             return;
@@ -1153,6 +1264,169 @@ mod tests {
             &affected,
             "/operitapp/workspaces/w/other.rs"
         ));
+    }
+
+    /// Records hook removals so guard tests can assert unregistration without
+    /// constructing a full AIToolHandler runtime.
+    #[derive(Default)]
+    struct RecordingHookRegistry {
+        removedHookIds: Vec<String>,
+    }
+
+    impl ToolHookRegistry for RecordingHookRegistry {
+        fn removeToolHook(&mut self, hookId: &str) {
+            self.removedHookIds.push(hookId.to_string());
+        }
+    }
+
+    fn editTool(path: &str) -> AITool {
+        AITool {
+            name: "edit_file".to_string(),
+            parameters: vec![ToolParameter {
+                name: "path".to_string(),
+                value: path.to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn drop_guard_removes_hook_and_finalizes_session_when_worker_is_dropped() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/operitapp/workspaces/guard-drop";
+        vfs.makeDirectory(workspace, true).unwrap();
+        let file = joinPath(workspace, "main.rs");
+        vfs.writeFile(&file, "before\n", false).unwrap();
+        let session = manager.createWorkspaceToolHookSession(
+            workspace.into(),
+            100,
+            Some("chat-guard".into()),
+        );
+        let registry = Arc::new(Mutex::new(RecordingHookRegistry::default()));
+        let slot = Arc::new(Mutex::new(Some(session.clone())));
+        session.onToolExecutionStarted(&editTool(&file));
+        vfs.writeFile(&file, "after\n", false).unwrap();
+
+        // Simulates the worker future being dropped mid-stream: the guard is
+        // its local and drops without the completion path ever running.
+        {
+            let _guard = WorkspaceToolHookDropGuard::new(slot.clone(), registry.clone());
+        }
+
+        assert_eq!(
+            registry.lock().unwrap().removedHookIds,
+            vec![session.hookId().to_string()]
+        );
+        assert!(slot.lock().unwrap().is_none());
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-guard"))
+            .expect("dropped worker must still finalize its turn snapshot");
+        assert_eq!(snapshot.turnTimestamp, 100);
+        assert!(snapshot.files.contains_key("main.rs"));
+    }
+
+    #[test]
+    fn drop_guard_is_a_noop_after_completion_takes_the_session() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/operitapp/workspaces/guard-complete";
+        vfs.makeDirectory(workspace, true).unwrap();
+        let file = joinPath(workspace, "main.rs");
+        vfs.writeFile(&file, "before\n", false).unwrap();
+        let session = manager.createWorkspaceToolHookSession(
+            workspace.into(),
+            100,
+            Some("chat-complete".into()),
+        );
+        let registry = Arc::new(Mutex::new(RecordingHookRegistry::default()));
+        let slot = Arc::new(Mutex::new(Some(session.clone())));
+        session.onToolExecutionStarted(&editTool(&file));
+        vfs.writeFile(&file, "after\n", false).unwrap();
+
+        // The normal completion path takes the session first, then closes it.
+        let taken = slot.lock().unwrap().take().expect("completion owns session");
+        taken.close();
+        let statePath = manager.statePath(workspace, Some("chat-complete"));
+        let finalized = vfs.readFile(&statePath).unwrap();
+
+        {
+            let _guard = WorkspaceToolHookDropGuard::new(slot.clone(), registry.clone());
+        }
+
+        assert!(registry.lock().unwrap().removedHookIds.is_empty());
+        assert_eq!(vfs.readFile(&statePath).unwrap(), finalized);
+    }
+
+    #[test]
+    fn new_session_closes_a_leaked_previous_session_before_the_new_turn_begins() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/operitapp/workspaces/backstop";
+        vfs.makeDirectory(workspace, true).unwrap();
+        let oldFile = joinPath(workspace, "old.rs");
+        let newFile = joinPath(workspace, "new.rs");
+        vfs.writeFile(&oldFile, "v1\n", false).unwrap();
+        let session1 = manager.createWorkspaceToolHookSession(
+            workspace.into(),
+            100,
+            Some("chat-backstop".into()),
+        );
+        session1.onToolExecutionStarted(&editTool(&oldFile));
+        vfs.writeFile(&oldFile, "v2\n", false).unwrap();
+        // Turn 1's worker future hangs: its session is neither closed nor
+        // unregistered, so its hook still observes later tool calls.
+
+        let session2 = manager.createWorkspaceToolHookSession(
+            workspace.into(),
+            200,
+            Some("chat-backstop".into()),
+        );
+        // The backstop finalized turn 1 before turn 2 can begin and wipe state.
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-backstop"))
+            .unwrap();
+        assert_eq!(snapshot.turnTimestamp, 100);
+        assert!(snapshot.files.contains_key("old.rs"));
+
+        session2.onToolExecutionStarted(&editTool(&newFile));
+        // The leaked turn-1 hook observes turn 2's edit before the file exists.
+        session1.onToolExecutionStarted(&editTool(&newFile));
+        vfs.writeFile(&newFile, "created\n", false).unwrap();
+        session2.close();
+        // Turn 1's guard fires late (or its hook is closed by any later path).
+        session1.close();
+
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-backstop"))
+            .expect("turn 2 snapshot must survive the stale session");
+        assert_eq!(snapshot.turnTimestamp, 200);
+        assert_eq!(
+            snapshot.files.keys().map(String::as_str).collect::<Vec<_>>(),
+            vec!["new.rs"],
+            "turn 2 snapshot must not mix in turn 1's files"
+        );
+    }
+
+    #[test]
+    fn continuation_sessions_get_unique_hook_ids() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let workspace = "/operitapp/workspaces/continuation";
+        // Continuation turns reuse the same user message timestamp.
+        let first = manager.createWorkspaceToolHookSession(
+            workspace.into(),
+            100,
+            Some("chat-cont".into()),
+        );
+        let second = manager.createWorkspaceToolHookSession(
+            workspace.into(),
+            100,
+            Some("chat-cont".into()),
+        );
+        assert_ne!(first.hookId(), second.hookId());
     }
 
     #[test]
