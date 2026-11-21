@@ -3032,16 +3032,26 @@ impl ChatServiceCore {
         let config = ModelConfigManager::default()
             .getResolvedModelConfig(&binding.providerId, &binding.modelId)
             .map_err(|e| e.to_string())?;
-        let chat = match chatId {
+        let chat = match &chatId {
             Some(id) => self
                 .chatHistoryDelegate
                 .chatHistoryManager
-                .loadChatHistory(id)
+                .loadChatHistory(id.clone())
                 .map_err(|e| e.to_string())?,
             None => None,
         };
+        // A non-zero live estimate tracks every request/tool round and is reseeded on each
+        // persisted write, so it is never older than the row; zero means a cold cache.
+        let liveWindowSize = if chatId.is_some() {
+            self.getTokenStatisticsDelegate()
+                .map(|delegate| delegate.getLastCurrentWindowSize(chatId.clone()))
+                .unwrap_or(0)
+        } else {
+            0
+        };
+        let persistedWindowSize = chat.as_ref().map(|c| c.currentWindowSize).unwrap_or(0);
         Ok(ChatInputMenuSummary {
-            currentWindowSize: chat.as_ref().map(|c| c.currentWindowSize).unwrap_or(0),
+            currentWindowSize: if liveWindowSize > 0 { liveWindowSize } else { persistedWindowSize },
             inputTokenCount: chat.as_ref().map(|c| c.inputTokens).unwrap_or(0),
             outputTokenCount: chat.as_ref().map(|c| c.outputTokens).unwrap_or(0),
             maxContextLength: f64::from(config.context.maxContextLength),
@@ -3845,6 +3855,109 @@ mod chat_deletion_tests {
             let next = database.store().beginChatExecution("route-chat").unwrap();
             next.release().unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod chat_input_menu_summary_tests {
+    use super::*;
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+    use operit_model::ChatEntity::ChatEntity;
+    use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
+    use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+    use operit_store::db::AppDatabase::AppDatabase;
+
+    /// Runs preference notifications inline and keeps background work out of the assertions.
+    struct SummaryScheduler;
+    impl operit_host_api::HostRuntimeTaskSchedulerHost for SummaryScheduler {
+        fn monotonicTimeMillis(&self) -> operit_host_api::HostResult<u64> { Ok(0) }
+        fn scheduleHostRuntimeTask(&self, _: &str, task: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> {
+            task(); Ok(())
+        }
+        fn scheduleHostRuntimeAsyncTask(&self, _: &str, _: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> { Ok(()) }
+        fn scheduleHostRuntimeCooperativeAsyncTask(&self, name: &str, task: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> {
+            self.scheduleHostRuntimeAsyncTask(name, task)
+        }
+        fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> { Ok(()) }
+        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
+        fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
+    }
+
+    #[tokio::test]
+    async fn summary_prefers_live_window_estimate_and_falls_back_to_persisted_row() {
+        operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(SummaryScheduler));
+        let root = std::env::temp_dir().join(format!("operit-context-summary-{}", uuid::Uuid::new_v4()));
+        let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
+        setDefaultRuntimeStorageHost(host.clone());
+        setDefaultRuntimeSqliteHost(host.clone());
+
+        let models = ModelConfigManager::default();
+        let providerId = models.createProvider(
+            "summary-provider".into(),
+            "OPENAI".into(),
+            "https://example.invalid/v1".into(),
+        ).unwrap();
+        models.createProviderModel(&providerId, "summary-model".into()).unwrap();
+        FunctionalConfigManager::default()
+            .setModelForFunction(FunctionType::CHAT, providerId, "summary-model".into())
+            .unwrap();
+
+        let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
+        let mut stale = ChatEntity::new("summary-stale".into(), "Stale row".into(), 1);
+        stale.inputTokens = 111;
+        stale.outputTokens = 22;
+        stale.currentWindowSize = 1000;
+        database.chatDao().insertChat(stale).unwrap();
+        let mut stuck = ChatEntity::new("summary-stuck".into(), "Stuck at zero".into(), 1);
+        stuck.inputTokens = 333;
+        stuck.outputTokens = 44;
+        stuck.currentWindowSize = 0;
+        database.chatDao().insertChat(stuck).unwrap();
+
+        let filesystem = VisualFileSystem::fromStorage(Arc::new(PosixFileSystemHost::new()), host).unwrap();
+        let mut core = ChatServiceCore::new(ChatSelectionMode::FOLLOW_GLOBAL, Arc::new(filesystem));
+
+        // Cold delegate cache (e.g. after restart): the persisted row is the only source.
+        let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
+        assert_eq!(summary.currentWindowSize, 1000);
+        assert_eq!((summary.inputTokenCount, summary.outputTokenCount), (111, 22));
+
+        // A live mid-turn estimate must win over the row left by the previous completed turn.
+        core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.setTokenCounts(
+            Some("summary-stale".into()), 111, 22, 5000,
+        );
+        let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
+        assert_eq!(summary.currentWindowSize, 5000);
+        assert_eq!((summary.inputTokenCount, summary.outputTokenCount), (111, 22));
+
+        // Production sends run on a deep-cloned worker delegate; its updates must reach the Core.
+        let mut workerDelegate = core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.clone();
+        workerDelegate.setTokenCounts(Some("summary-stale".into()), 111, 22, 6000);
+        let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
+        assert_eq!(summary.currentWindowSize, 6000);
+
+        // A row stuck at zero after failed completion estimates still shows the live estimate.
+        core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.setTokenCounts(
+            Some("summary-stuck".into()), 333, 44, 7000,
+        );
+        let summary = core.chatInputMenuSummary(Some("summary-stuck".into())).await.unwrap();
+        assert_eq!(summary.currentWindowSize, 7000);
+        assert_eq!((summary.inputTokenCount, summary.outputTokenCount), (333, 44));
+
+        // Estimates are per chat: another conversation keeps its own persisted value.
+        let mut other = ChatEntity::new("summary-other".into(), "Other chat".into(), 1);
+        other.currentWindowSize = 2000;
+        database.chatDao().insertChat(other).unwrap();
+        let summary = core.chatInputMenuSummary(Some("summary-other".into())).await.unwrap();
+        assert_eq!(summary.currentWindowSize, 2000);
+
+        // No selected conversation keeps returning zeros instead of the active chat's estimate.
+        let summary = core.chatInputMenuSummary(None).await.unwrap();
+        assert_eq!(
+            (summary.currentWindowSize, summary.inputTokenCount, summary.outputTokenCount),
+            (0, 0, 0)
+        );
     }
 }
 
