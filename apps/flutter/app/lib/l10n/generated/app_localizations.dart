@@ -119,7 +119,7 @@ abstract class AppLocalizations {
   /// No description provided for @terminalImplementationProot.
   ///
   /// In en, this message translates to:
-  /// **'Linux (PRoot)'**
+  /// **'PRoot Linux terminal'**
   String get terminalImplementationProot;
 
   /// No description provided for @terminalImplementationAndroidSystem.
@@ -131,13 +131,13 @@ abstract class AppLocalizations {
   /// No description provided for @terminalImplementationQemu.
   ///
   /// In en, this message translates to:
-  /// **'Linux (QEMU-vroot)'**
+  /// **'QEMU Linux emulated terminal'**
   String get terminalImplementationQemu;
 
   /// No description provided for @terminalImplementationArm64.
   ///
   /// In en, this message translates to:
-  /// **'ARM64 Linux'**
+  /// **'Linux ARM64 emulated terminal'**
   String get terminalImplementationArm64;
 
   /// No description provided for @terminalImplementationSystem.
@@ -161,91 +161,91 @@ abstract class AppLocalizations {
   /// No description provided for @terminalBuiltinMacNative.
   ///
   /// In en, this message translates to:
-  /// **'macOS native {interpreter} login PTY with job control'**
+  /// **'macOS native {interpreter} terminal'**
   String terminalBuiltinMacNative(String interpreter);
 
   /// No description provided for @terminalBuiltinMacSandbox.
   ///
   /// In en, this message translates to:
-  /// **'macOS sandbox {interpreter} PTY (without controlling TTY)'**
+  /// **'macOS sandbox {interpreter} terminal'**
   String terminalBuiltinMacSandbox(String interpreter);
 
   /// No description provided for @terminalBuiltinAndroidLinux.
   ///
   /// In en, this message translates to:
-  /// **'Android proot Linux bash terminal'**
+  /// **'Android PRoot Linux Bash terminal'**
   String get terminalBuiltinAndroidLinux;
 
   /// No description provided for @terminalBuiltinAndroidSystem.
   ///
   /// In en, this message translates to:
-  /// **'Android system shell terminal'**
+  /// **'Android system Shell terminal'**
   String get terminalBuiltinAndroidSystem;
 
   /// No description provided for @terminalBuiltinLinux.
   ///
   /// In en, this message translates to:
-  /// **'Linux bash terminal'**
+  /// **'Linux native Bash terminal'**
   String get terminalBuiltinLinux;
 
   /// No description provided for @terminalBuiltinPosix.
   ///
   /// In en, this message translates to:
-  /// **'POSIX bash terminal'**
+  /// **'POSIX native Bash terminal'**
   String get terminalBuiltinPosix;
 
   /// No description provided for @terminalBuiltinPrivileged.
   ///
   /// In en, this message translates to:
-  /// **'Privileged system /bin/sh terminal'**
+  /// **'System privileged sh terminal'**
   String get terminalBuiltinPrivileged;
 
   /// No description provided for @terminalBuiltinPowerShellDownload.
   ///
   /// In en, this message translates to:
-  /// **'PowerShell 7 · downloads on first use'**
+  /// **'PowerShell 7 terminal'**
   String get terminalBuiltinPowerShellDownload;
 
   /// No description provided for @terminalBuiltinPowerShell.
   ///
   /// In en, this message translates to:
-  /// **'Bundled PowerShell 7 terminal'**
+  /// **'Windows bundled PowerShell 7 terminal'**
   String get terminalBuiltinPowerShell;
 
   /// No description provided for @terminalBuiltinWindowsBash.
   ///
   /// In en, this message translates to:
-  /// **'Bundled Windows Bash terminal'**
+  /// **'Windows bundled Bash terminal'**
   String get terminalBuiltinWindowsBash;
 
   /// No description provided for @terminalBuiltinArm64.
   ///
   /// In en, this message translates to:
-  /// **'Operit ARM64 Linux shell using the configured root filesystem'**
+  /// **'Linux ARM64 emulated terminal'**
   String get terminalBuiltinArm64;
 
   /// No description provided for @terminalBuiltinIosSystem.
   ///
   /// In en, this message translates to:
-  /// **'iOS system /bin/sh; requires a jailbroken or otherwise privileged host'**
+  /// **'iOS system sh terminal'**
   String get terminalBuiltinIosSystem;
 
   /// No description provided for @terminalBuiltinOhosLinux.
   ///
   /// In en, this message translates to:
-  /// **'OpenHarmony QEMU-vroot Alpine Linux shell'**
+  /// **'OpenHarmony QEMU Linux emulated terminal'**
   String get terminalBuiltinOhosLinux;
 
   /// No description provided for @terminalBuiltinOhosSystem.
   ///
   /// In en, this message translates to:
-  /// **'OpenHarmony system /bin/sh terminal'**
+  /// **'OpenHarmony system sh terminal'**
   String get terminalBuiltinOhosSystem;
 
   /// No description provided for @terminalBuiltinBrowser.
   ///
   /// In en, this message translates to:
-  /// **'Browser-local Buildroot VM with BusyBox, Node, and Python'**
+  /// **'Browser Linux VM terminal'**
   String get terminalBuiltinBrowser;
 
   /// No description provided for @terminalProfilesTitle.

@@ -168,7 +168,7 @@ void main() {
       ],
     };
     await _render(tester, bridge, locale: const Locale('zh'));
-    const display = 'macOS 本机 Bash 终端（支持作业控制）';
+    const display = 'macOS 本机 Bash 终端';
     expect(find.text(display), findsOneWidget);
     expect(find.text('本机终端 / Bash'), findsOneWidget);
     expect(find.text(fallback), findsNothing);

@@ -19,16 +19,16 @@ class AppLocalizationsEn extends AppLocalizations {
   String get terminalImplementationNative => 'Native terminal';
 
   @override
-  String get terminalImplementationProot => 'Linux (PRoot)';
+  String get terminalImplementationProot => 'PRoot Linux terminal';
 
   @override
   String get terminalImplementationAndroidSystem => 'Android system terminal';
 
   @override
-  String get terminalImplementationQemu => 'Linux (QEMU-vroot)';
+  String get terminalImplementationQemu => 'QEMU Linux emulated terminal';
 
   @override
-  String get terminalImplementationArm64 => 'ARM64 Linux';
+  String get terminalImplementationArm64 => 'Linux ARM64 emulated terminal';
 
   @override
   String get terminalImplementationSystem => 'System terminal';
@@ -41,57 +41,54 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String terminalBuiltinMacNative(String interpreter) {
-    return 'macOS native $interpreter login PTY with job control';
+    return 'macOS native $interpreter terminal';
   }
 
   @override
   String terminalBuiltinMacSandbox(String interpreter) {
-    return 'macOS sandbox $interpreter PTY (without controlling TTY)';
+    return 'macOS sandbox $interpreter terminal';
   }
 
   @override
-  String get terminalBuiltinAndroidLinux => 'Android proot Linux bash terminal';
+  String get terminalBuiltinAndroidLinux => 'Android PRoot Linux Bash terminal';
 
   @override
-  String get terminalBuiltinAndroidSystem => 'Android system shell terminal';
+  String get terminalBuiltinAndroidSystem => 'Android system Shell terminal';
 
   @override
-  String get terminalBuiltinLinux => 'Linux bash terminal';
+  String get terminalBuiltinLinux => 'Linux native Bash terminal';
 
   @override
-  String get terminalBuiltinPosix => 'POSIX bash terminal';
+  String get terminalBuiltinPosix => 'POSIX native Bash terminal';
 
   @override
-  String get terminalBuiltinPrivileged => 'Privileged system /bin/sh terminal';
+  String get terminalBuiltinPrivileged => 'System privileged sh terminal';
 
   @override
-  String get terminalBuiltinPowerShellDownload =>
-      'PowerShell 7 · downloads on first use';
+  String get terminalBuiltinPowerShellDownload => 'PowerShell 7 terminal';
 
   @override
-  String get terminalBuiltinPowerShell => 'Bundled PowerShell 7 terminal';
+  String get terminalBuiltinPowerShell =>
+      'Windows bundled PowerShell 7 terminal';
 
   @override
-  String get terminalBuiltinWindowsBash => 'Bundled Windows Bash terminal';
+  String get terminalBuiltinWindowsBash => 'Windows bundled Bash terminal';
 
   @override
-  String get terminalBuiltinArm64 =>
-      'Operit ARM64 Linux shell using the configured root filesystem';
+  String get terminalBuiltinArm64 => 'Linux ARM64 emulated terminal';
 
   @override
-  String get terminalBuiltinIosSystem =>
-      'iOS system /bin/sh; requires a jailbroken or otherwise privileged host';
+  String get terminalBuiltinIosSystem => 'iOS system sh terminal';
 
   @override
   String get terminalBuiltinOhosLinux =>
-      'OpenHarmony QEMU-vroot Alpine Linux shell';
+      'OpenHarmony QEMU Linux emulated terminal';
 
   @override
-  String get terminalBuiltinOhosSystem => 'OpenHarmony system /bin/sh terminal';
+  String get terminalBuiltinOhosSystem => 'OpenHarmony system sh terminal';
 
   @override
-  String get terminalBuiltinBrowser =>
-      'Browser-local Buildroot VM with BusyBox, Node, and Python';
+  String get terminalBuiltinBrowser => 'Browser Linux VM terminal';
 
   @override
   String get terminalProfilesTitle => 'Terminal profiles';

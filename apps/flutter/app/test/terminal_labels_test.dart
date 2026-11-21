@@ -10,22 +10,21 @@ void main() {
 
   test('all host keys translate independently of Core description text', () {
     const labels = {
-      'terminalBuiltinMacNative': 'macOS 本机 Bash 终端（支持作业控制）',
-      'terminalBuiltinMacSandbox': 'macOS 沙箱 Bash 终端（无控制终端）',
-      'terminalBuiltinAndroidLinux': 'Android Linux Bash 终端（PRoot 环境）',
-      'terminalBuiltinAndroidSystem': 'Android 系统命令行终端',
-      'terminalBuiltinLinux': 'Linux Bash 终端',
-      'terminalBuiltinPosix': 'POSIX Bash 终端',
-      'terminalBuiltinPrivileged': '系统 /bin/sh 终端（需要特权权限）',
-      'terminalBuiltinPowerShellDownload': 'PowerShell 7 终端（首次使用时下载）',
-      'terminalBuiltinPowerShell': '内置 PowerShell 7 终端',
+      'terminalBuiltinMacNative': 'macOS 本机 Bash 终端',
+      'terminalBuiltinMacSandbox': 'macOS 沙箱 Bash 终端',
+      'terminalBuiltinAndroidLinux': 'Android PRoot Linux Bash 终端',
+      'terminalBuiltinAndroidSystem': 'Android 系统 Shell 终端',
+      'terminalBuiltinLinux': 'Linux 本机 Bash 终端',
+      'terminalBuiltinPosix': 'POSIX 本机 Bash 终端',
+      'terminalBuiltinPrivileged': '系统特权 sh 终端',
+      'terminalBuiltinPowerShellDownload': 'PowerShell 7 终端',
+      'terminalBuiltinPowerShell': 'Windows 内置 PowerShell 7 终端',
       'terminalBuiltinWindowsBash': 'Windows 内置 Bash 终端',
-      'terminalBuiltinArm64': 'ARM64 Linux 终端（使用已配置的根文件系统）',
-      'terminalBuiltinIosSystem': 'iOS 系统 /bin/sh 终端（需要越狱或其他特权权限）',
-      'terminalBuiltinOhosLinux': 'OpenHarmony Alpine Linux 终端（QEMU 虚拟环境）',
-      'terminalBuiltinOhosSystem': 'OpenHarmony 系统 /bin/sh 终端',
-      'terminalBuiltinBrowser':
-          '浏览器本地 Buildroot Linux 虚拟机（含 BusyBox、Node 和 Python）',
+      'terminalBuiltinArm64': 'Linux ARM64 模拟终端',
+      'terminalBuiltinIosSystem': 'iOS 系统 sh 终端',
+      'terminalBuiltinOhosLinux': 'OpenHarmony QEMU Linux 模拟终端',
+      'terminalBuiltinOhosSystem': 'OpenHarmony 系统 sh 终端',
+      'terminalBuiltinBrowser': '浏览器 Linux 虚拟机终端',
     };
     for (final entry in labels.entries) {
       final profile = TerminalProfile(

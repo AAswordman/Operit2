@@ -2,14 +2,14 @@
   "terminalProfileSelect": "Choose terminal profile",
   "terminalProfilesUnavailable": "No terminals are available on this device.",
   "terminalImplementationNative": "Native terminal",
-  "terminalImplementationProot": "Linux (PRoot)",
+  "terminalImplementationProot": "PRoot Linux terminal",
   "terminalImplementationAndroidSystem": "Android system terminal",
-  "terminalImplementationQemu": "Linux (QEMU-vroot)",
-  "terminalImplementationArm64": "ARM64 Linux",
+  "terminalImplementationQemu": "QEMU Linux emulated terminal",
+  "terminalImplementationArm64": "Linux ARM64 emulated terminal",
   "terminalImplementationSystem": "System terminal",
   "terminalImplementationBrowser": "Browser Linux VM",
   "terminalInterpreterShell": "Shell",
-  "terminalBuiltinMacNative": "macOS native {interpreter} login PTY with job control",
+  "terminalBuiltinMacNative": "macOS native {interpreter} terminal",
   "@terminalBuiltinMacNative": {
     "placeholders": {
       "interpreter": {
@@ -17,7 +17,7 @@
       }
     }
   },
-  "terminalBuiltinMacSandbox": "macOS sandbox {interpreter} PTY (without controlling TTY)",
+  "terminalBuiltinMacSandbox": "macOS sandbox {interpreter} terminal",
   "@terminalBuiltinMacSandbox": {
     "placeholders": {
       "interpreter": {
@@ -25,19 +25,19 @@
       }
     }
   },
-  "terminalBuiltinAndroidLinux": "Android proot Linux bash terminal",
-  "terminalBuiltinAndroidSystem": "Android system shell terminal",
-  "terminalBuiltinLinux": "Linux bash terminal",
-  "terminalBuiltinPosix": "POSIX bash terminal",
-  "terminalBuiltinPrivileged": "Privileged system /bin/sh terminal",
-  "terminalBuiltinPowerShellDownload": "PowerShell 7 · downloads on first use",
-  "terminalBuiltinPowerShell": "Bundled PowerShell 7 terminal",
-  "terminalBuiltinWindowsBash": "Bundled Windows Bash terminal",
-  "terminalBuiltinArm64": "Operit ARM64 Linux shell using the configured root filesystem",
-  "terminalBuiltinIosSystem": "iOS system /bin/sh; requires a jailbroken or otherwise privileged host",
-  "terminalBuiltinOhosLinux": "OpenHarmony QEMU-vroot Alpine Linux shell",
-  "terminalBuiltinOhosSystem": "OpenHarmony system /bin/sh terminal",
-  "terminalBuiltinBrowser": "Browser-local Buildroot VM with BusyBox, Node, and Python",
+  "terminalBuiltinAndroidLinux": "Android PRoot Linux Bash terminal",
+  "terminalBuiltinAndroidSystem": "Android system Shell terminal",
+  "terminalBuiltinLinux": "Linux native Bash terminal",
+  "terminalBuiltinPosix": "POSIX native Bash terminal",
+  "terminalBuiltinPrivileged": "System privileged sh terminal",
+  "terminalBuiltinPowerShellDownload": "PowerShell 7 terminal",
+  "terminalBuiltinPowerShell": "Windows bundled PowerShell 7 terminal",
+  "terminalBuiltinWindowsBash": "Windows bundled Bash terminal",
+  "terminalBuiltinArm64": "Linux ARM64 emulated terminal",
+  "terminalBuiltinIosSystem": "iOS system sh terminal",
+  "terminalBuiltinOhosLinux": "OpenHarmony QEMU Linux emulated terminal",
+  "terminalBuiltinOhosSystem": "OpenHarmony system sh terminal",
+  "terminalBuiltinBrowser": "Browser Linux VM terminal",
   "terminalProfilesTitle": "Terminal profiles",
   "terminalProfilesDescription": "Add terminal profiles for this device and choose a default. New workspace and AI terminal sessions share this setting; existing sessions keep their original environment.",
   "terminalProfileAdd": "Add terminal profile",
