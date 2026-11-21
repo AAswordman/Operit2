@@ -10,6 +10,7 @@ use crate::core::events::RuntimeEvent::{RuntimeEvent, RuntimeEventTopic};
 use crate::plugins::toolpkg::ToolPkgAppLifecycleHookBridge::ToolPkgAppLifecycleHookBridge;
 use crate::plugins::toolpkg::ToolPkgHookBridgeSupport::ToolPkgBridgeRuntime;
 use crate::plugins::toolpkg::ToolPkgHostEventHookBridge::ToolPkgHostEventHookBridge;
+use crate::plugins::toolpkg::ToolPkgToolPermissionBridge::ToolPkgToolPermissionBridge;
 use operit_host_api::HostManager::HostManager;
 use operit_plugin_sdk::js_sdk::toolpkg::{
     ToolPkgBroadcastNetworkChangedData, ToolPkgBroadcastNetworkType,
@@ -100,6 +101,9 @@ impl RuntimeEventIngressService {
             _ => {},
         }
         dispatchAppLifecycleEvent(&self.toolpkg_runtime, &event, payload.clone());
+        if event.topic == RuntimeEventTopic::AppLifecycleResumed {
+            ToolPkgToolPermissionBridge::notify();
+        }
         ToolPkgHostEventHookBridge::dispatchHostEvent(&self.toolpkg_runtime, "broadcast", payload);
         serde_json::json!({
             "ok": true,

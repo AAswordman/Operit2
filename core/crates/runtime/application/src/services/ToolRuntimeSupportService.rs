@@ -157,6 +157,31 @@ impl RuntimeToolSupport {
 }
 
 impl ToolRuntimeSupport for RuntimeToolSupport {
+    /// Routes plugin approval decisions to the same broker used by inline chat controls.
+    fn toolPermissionCommand(&self, payload: serde_json::Value) -> Result<serde_json::Value, String> {
+        use crate::services::RuntimeHostInteractionService::{pendingToolPermissions, respondChatToolPermission};
+        #[derive(serde::Deserialize)]
+        #[serde(tag = "operation", deny_unknown_fields)]
+        enum Command {
+            #[serde(rename = "list")]
+            List,
+            #[serde(rename = "respond", rename_all = "camelCase")]
+            Respond { chat_id: String, request_id: String, result: operit_plugin_sdk::js_sdk::toolpkg::ToolPkgToolPermissionDecision },
+        }
+        match serde_json::from_value(payload).map_err(|error| error.to_string())? {
+            Command::List => serde_json::to_value(pendingToolPermissions()).map_err(|error| error.to_string()),
+            Command::Respond { chat_id, request_id, result } => {
+                let decision = match result {
+                    operit_plugin_sdk::js_sdk::toolpkg::ToolPkgToolPermissionDecision::Allow => "allow",
+                    operit_plugin_sdk::js_sdk::toolpkg::ToolPkgToolPermissionDecision::Deny => "deny",
+                    operit_plugin_sdk::js_sdk::toolpkg::ToolPkgToolPermissionDecision::AllowSession => "allow_session",
+                };
+                respondChatToolPermission(chat_id, request_id, decision.into())?;
+                Ok(serde_json::Value::Null)
+            }
+        }
+    }
+
     /// Imports the v1 migrator's archive through the runtime's bound chat store.
     fn importV1MigratorArchive(&self, path: String) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<serde_json::Value, String>> + Send + '_>> {
         Box::pin(v1_chat_archive::import(self, path))

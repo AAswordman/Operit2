@@ -531,6 +531,7 @@ pub enum ToolPkgHookEventName {
     Variant19(ToolPkgCoreCommandEventName),
     Variant15(ToolPkgHostEventName),
     Variant20(ToolPkgHookEventNameVariant20),
+    Variant21(ToolPkgToolPermissionEventName),
 }
 /// Accepts a JSON result, no result, or asynchronous completion from a generic hook.
 pub enum ToolPkgHookReturn {
@@ -3100,11 +3101,32 @@ pub struct ToolPkgFloatingWindowOpenOptions {
     /// Selects one of this plugin's registered Compose UI routes.
     pub route: String,
     /// Supplies the UI session's initial state.
-    pub state: Option<ToolPkgJsonObject>,
+    pub state: Option<JsObject>,
     /// Fills the current scope: primary display for system windows, full view for application windows.
     pub fill: Option<bool>,
     /// Configures geometry and interaction flags.
     pub options: Option<ToolPkgFloatingWindowOptions>,
+}
+/// Declares the content of one managed window; route and fill stay fixed while it exists.
+pub struct ToolPkgFloatingWindowContent {
+    pub route: String,
+    /// Shallow-merges supplied JSON state into the live UI session.
+    pub state: Option<JsObject>,
+    pub fill: Option<bool>,
+    /// Applies supplied options without resetting other options or the UI session.
+    pub options: Option<ToolPkgFloatingWindowOptions>,
+}
+/// Reports presentation availability without requesting system authorization implicitly.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgFloatingWindowSetResult {
+    #[serde(rename = "shown")]
+    Shown,
+    #[serde(rename = "closed")]
+    Closed,
+    #[serde(rename = "permission_required")]
+    PermissionRequired,
+    #[serde(rename = "unsupported")]
+    Unsupported,
 }
 /// Reports the actual presentation scope and host capabilities.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3144,6 +3166,9 @@ pub struct ToolPkgFloatingWindowRecording {
 /// Controls general floating windows independently of launcher widgets.
 pub struct ToolPkgFloatingWindowApi;
 pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
+    /// Creates, updates and shows one window, or closes it for null content; repeated calls are safe.
+    /// The host serializes lifecycle changes. Unavailable hosts return an explicit status; other errors reject.
+    fn set(&self, id: String, content: JsNullable<ToolPkgFloatingWindowContent>) -> JsFuture<ToolPkgFloatingWindowSetResult>;
     /// Queries capabilities without opening a window or displaying a permission prompt.
     fn capabilities(&self) -> JsFuture<ToolPkgFloatingWindowCapabilities>;
     /// Opens the host's overlay permission settings when required; query capabilities again afterwards.
@@ -3151,7 +3176,7 @@ pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
     /// Creates a transparent live route session. IDs are local to the executing plugin.
     fn open(&self, options: ToolPkgFloatingWindowOpenOptions) -> JsFuture<ToolPkgFloatingWindowInfo>;
     /// Applies partial window options and shallow-merges optional UI state without recreating the session.
-    fn update(&self, id: String, options: ToolPkgFloatingWindowOptions, state: Option<ToolPkgJsonObject>) -> JsFuture<ToolPkgFloatingWindowInfo>;
+    fn update(&self, id: String, options: ToolPkgFloatingWindowOptions, state: Option<JsObject>) -> JsFuture<ToolPkgFloatingWindowInfo>;
     /// Shows an owned window without resetting its UI session.
     fn show(&self, id: String) -> JsFuture<ToolPkgFloatingWindowInfo>;
     /// Hides an owned window while retaining its UI session.
@@ -3174,8 +3199,69 @@ pub struct ToolPkgUiApi {
     /// Controls live floating windows independently of launcher widgets.
     pub floatingWindows: ToolPkgFloatingWindowApi,
 }
+/// Carries one exact argument displayed to the user before tool execution.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgToolPermissionParameter {
+    pub name: String,
+    pub value: String,
+}
+/// Identifies the tool and its public arguments awaiting approval.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgToolPermissionTool {
+    pub name: String,
+    pub parameters: Vec<ToolPkgToolPermissionParameter>,
+}
+/// Identifies one pending request across every chat and approval surface.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgToolPermissionRequest {
+    pub requestId: String,
+    pub chatId: String,
+    pub tool: ToolPkgToolPermissionTool,
+    pub description: String,
+    pub requestedAtMillis: i64,
+}
+/// Names the decisions supported by the existing runtime approval broker.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ToolPkgToolPermissionDecision {
+    #[serde(rename = "allow")]
+    Allow,
+    #[serde(rename = "deny")]
+    Deny,
+    #[serde(rename = "allow_session")]
+    AllowSession,
+}
+/// Exposes current approvals to enabled packages registering a permission hook.
+pub struct ToolPkgToolPermissionApi;
+pub trait ToolPkgToolPermissionApiMethods: Send + Sync {
+    /// Lists unresolved requests in creation order, across chats.
+    fn list(&self) -> JsFuture<Vec<ToolPkgToolPermissionRequest>>;
+    /// Resolves an existing request once, using its exact chat and request identity.
+    fn respond(&self, chatId: String, requestId: String, result: ToolPkgToolPermissionDecision) -> JsFuture<()>;
+}
+/// Carries the complete pending snapshot after creation, resolution, timeout or cancellation.
+pub struct ToolPkgToolPermissionEventPayload {
+    pub requests: Vec<ToolPkgToolPermissionRequest>,
+}
+/// Names a pending approval snapshot notification.
+#[derive(Clone, Copy, Debug, Serialize, Deserialize)]
+pub enum ToolPkgToolPermissionEventName {
+    #[serde(rename = "requests_changed")]
+    RequestsChanged,
+}
+/// Combines dispatch metadata with pending tool approvals.
+pub struct ToolPkgToolPermissionHookEvent {
+    pub base_hook_event_base:
+        ToolPkgHookEventBase<ToolPkgToolPermissionEventName, ToolPkgToolPermissionEventPayload>,
+}
+/// Registers a trusted approval presenter and replays the current pending snapshot.
+pub struct ToolPkgToolPermissionHookRegistration {
+    pub id: String,
+    pub function: Arc<dyn Fn(ToolPkgToolPermissionHookEvent) -> ToolPkgHookReturn + Send + Sync>,
+}
 /// Provides runtime and registration services for the current ToolPkg package.
 pub struct ToolPkgRegistry {
+    /// Observes and resolves tool approvals independently of their presentation surface.
+    pub toolPermissions: ToolPkgToolPermissionApi,
     /// Groups runtime presentation services for plugin-owned user interfaces.
     pub ui: ToolPkgUiApi,
     /// Exposes inter-context messaging for this ToolPkg registry.
@@ -3262,6 +3348,8 @@ pub trait ToolPkgRegistryMethods: Send + Sync {
     ) -> ();
     /// Registers a callback for tool permission and execution stages.
     fn registerToolLifecycleHook(&self, definition: ToolPkgToolLifecycleHookRegistration) -> ();
+    /// Observes pending approval changes; enables the package's permission presentation API.
+    fn registerToolPermissionHook(&self, definition: ToolPkgToolPermissionHookRegistration) -> ();
     /// Registers a callback around user-input processing.
     fn registerPromptInputHook(&self, definition: ToolPkgPromptInputHookRegistration) -> ();
     /// Registers a callback around prompt-history preparation.

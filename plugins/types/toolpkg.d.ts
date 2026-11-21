@@ -5,12 +5,22 @@ import type { ComposeDslScreen } from "./compose-dsl";
 import type { ToolParams } from "./core";
 
 export namespace ToolPkg {
-  /** Exposes the host registry IPC service. */
-  export const ipc: IpcApi;
-  /** Exposes the host registry WASM service. */
-  export const wasm: WasmApi;
-  /** Groups runtime presentation services for plugin-owned user interfaces. */
+  /**
+   * Observes and resolves tool approvals independently of their presentation surface.
+   */
+  export const toolPermissions: ToolPermissionApi;
+  /**
+   * Groups runtime presentation services for plugin-owned user interfaces.
+   */
   export const ui: UiApi;
+  /**
+   * Exposes inter-context messaging for this ToolPkg registry.
+   */
+  export const ipc: IpcApi;
+  /**
+   * Exposes declared WASM exports for this ToolPkg registry.
+   */
+  export const wasm: WasmApi;
   /**
    * Stores localized strings keyed by language tag.
    */
@@ -590,7 +600,7 @@ export namespace ToolPkg {
   /**
    * Enumerates every hook event that a ToolPkg plugin may register.
    */
-  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | MessageTransformEventName | ChatLifecycleEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | ChatResponseEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | CoreCommandEventName | HostEventName | HookEventNameVariant20;
+  export type HookEventName = AppLifecycleEvent | HookEventNameVariant2 | HookEventNameVariant3 | HookEventNameVariant4 | ChatInputEventName | ChatViewEventName | ChatMessageEventName | MessageTransformEventName | ChatLifecycleEventName | ChatMessageMenuItemEventName | ChatRuntimeEventName | ChatResponseEventName | HookEventNameVariant7 | ToolLifecycleEventName | PromptInputEventName | PromptHistoryEventName | SystemPromptComposeEventName | ToolPromptComposeEventName | PromptFinalizeEventName | SummaryGenerateEventName | CoreCommandEventName | HostEventName | HookEventNameVariant20 | ToolPermissionEventName;
 
   /**
    * Accepts a JSON result, no result, or asynchronous completion from a generic hook.
@@ -4063,7 +4073,7 @@ export namespace ToolPkg {
     /**
      * Supplies the UI session's initial state.
      */
-    state?: JsonObject;
+    state?: object;
     /**
      * Fills the current scope: primary display for system windows, full view for application windows.
      */
@@ -4073,6 +4083,27 @@ export namespace ToolPkg {
      */
     options?: FloatingWindowOptions;
   }
+
+  /**
+   * Declares the content of one managed window; route and fill stay fixed while it exists.
+   */
+  export interface FloatingWindowContent {
+    route: string;
+    /**
+     * Shallow-merges supplied JSON state into the live UI session.
+     */
+    state?: object;
+    fill?: boolean;
+    /**
+     * Applies supplied options without resetting other options or the UI session.
+     */
+    options?: FloatingWindowOptions;
+  }
+
+  /**
+   * Reports presentation availability without requesting system authorization implicitly.
+   */
+  export type FloatingWindowSetResult = "shown" | "closed" | "permission_required" | "unsupported";
 
   /**
    * Reports the actual presentation scope and host capabilities.
@@ -4130,6 +4161,11 @@ export namespace ToolPkg {
    */
   export interface FloatingWindowApi {
     /**
+     * Creates, updates and shows one window, or closes it for null content; repeated calls are safe.
+     * The host serializes lifecycle changes. Unavailable hosts return an explicit status; other errors reject.
+     */
+    set(id: string, content: FloatingWindowContent | null): Promise<FloatingWindowSetResult>;
+    /**
      * Queries capabilities without opening a window or displaying a permission prompt.
      */
     capabilities(): Promise<FloatingWindowCapabilities>;
@@ -4144,7 +4180,7 @@ export namespace ToolPkg {
     /**
      * Applies partial window options and shallow-merges optional UI state without recreating the session.
      */
-    update(id: string, options: FloatingWindowOptions, state?: JsonObject): Promise<FloatingWindowInfo>;
+    update(id: string, options: FloatingWindowOptions, state?: object): Promise<FloatingWindowInfo>;
     /**
      * Shows an owned window without resetting its UI session.
      */
@@ -4190,9 +4226,85 @@ export namespace ToolPkg {
   }
 
   /**
+   * Carries one exact argument displayed to the user before tool execution.
+   */
+  export interface ToolPermissionParameter {
+    name: string;
+    value: string;
+  }
+
+  /**
+   * Identifies the tool and its public arguments awaiting approval.
+   */
+  export interface ToolPermissionTool {
+    name: string;
+    parameters: ToolPermissionParameter[];
+  }
+
+  /**
+   * Identifies one pending request across every chat and approval surface.
+   */
+  export interface ToolPermissionRequest {
+    requestId: string;
+    chatId: string;
+    tool: ToolPermissionTool;
+    description: string;
+    requestedAtMillis: number;
+  }
+
+  /**
+   * Names the decisions supported by the existing runtime approval broker.
+   */
+  export type ToolPermissionDecision = "allow" | "deny" | "allow_session";
+
+  /**
+   * Exposes current approvals to enabled packages registering a permission hook.
+   */
+  export interface ToolPermissionApi {
+    /**
+     * Lists unresolved requests in creation order, across chats.
+     */
+    list(): Promise<ToolPermissionRequest[]>;
+    /**
+     * Resolves an existing request once, using its exact chat and request identity.
+     */
+    respond(chatId: string, requestId: string, result: ToolPermissionDecision): Promise<void>;
+  }
+
+  /**
+   * Carries the complete pending snapshot after creation, resolution, timeout or cancellation.
+   */
+  export interface ToolPermissionEventPayload {
+    requests: ToolPermissionRequest[];
+  }
+
+  /**
+   * Names a pending approval snapshot notification.
+   */
+  export type ToolPermissionEventName = "requests_changed";
+
+  /**
+   * Combines dispatch metadata with pending tool approvals.
+   */
+  export interface ToolPermissionHookEvent extends HookEventBase<ToolPermissionEventName, ToolPermissionEventPayload> {
+  }
+
+  /**
+   * Registers a trusted approval presenter and replays the current pending snapshot.
+   */
+  export interface ToolPermissionHookRegistration {
+    id: string;
+    function: (arg0: ToolPermissionHookEvent) => HookReturn;
+  }
+
+  /**
    * Provides runtime and registration services for the current ToolPkg package.
    */
   export interface Registry {
+    /**
+     * Observes and resolves tool approvals independently of their presentation surface.
+     */
+    toolPermissions: ToolPermissionApi;
     /**
      * Groups runtime presentation services for plugin-owned user interfaces.
      */
@@ -4307,6 +4419,10 @@ export namespace ToolPkg {
      * Registers a callback for tool permission and execution stages.
      */
     registerToolLifecycleHook(definition: ToolLifecycleHookRegistration): void;
+    /**
+     * Observes pending approval changes; enables the package's permission presentation API.
+     */
+    registerToolPermissionHook(definition: ToolPermissionHookRegistration): void;
     /**
      * Registers a callback around user-input processing.
      */
@@ -4521,6 +4637,10 @@ export namespace ToolPkg {
    * Registers a callback for tool permission and execution stages.
    */
   function registerToolLifecycleHook(definition: ToolLifecycleHookRegistration): void;
+  /**
+   * Observes pending approval changes; enables the package's permission presentation API.
+   */
+  function registerToolPermissionHook(definition: ToolPermissionHookRegistration): void;
   /**
    * Registers a callback for tool-prompt assembly and filtering.
    */

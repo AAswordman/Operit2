@@ -19,3 +19,5 @@ Notes for Operit2 plugin authors live here.
 - [Waifu plugin](../packages/external/waifu/README.md): reusable sentence streaming, emotion images and prompt profiles through declared plugin dependencies.
 
 - [Plugin page navigation](UI_NAVIGATION.md): use `ctx.navigate` for application pages and workspace tabs, including composition-owned asynchronous callbacks.
+
+- [Tool approval presentation](TOOL_PERMISSIONS.md): pending approval hooks, request-scoped decisions, and the optional classic permission overlay.

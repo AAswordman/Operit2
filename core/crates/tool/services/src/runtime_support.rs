@@ -379,6 +379,11 @@ pub trait CoreNodeToolRuntime: Send + Sync {
 
 /// Provides runtime-owned services that the tools crate must not own.
 pub trait ToolRuntimeSupport: Send + Sync {
+    /// Handles an approval presentation command after native plugin authentication.
+    fn toolPermissionCommand(&self, _payload: serde_json::Value) -> Result<serde_json::Value, String> {
+        Err("Tool permission presentation is unavailable".into())
+    }
+
     /// Runs the v1 migrator import with the current runtime's file and chat services.
     fn importV1MigratorArchive(&self, _path: String) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, String>> + Send + '_>> {
         Box::pin(async { Err("The v1 chat archive importer is unavailable in this runtime".into()) })

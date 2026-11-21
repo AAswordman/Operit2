@@ -1999,6 +1999,7 @@ impl JsEngineState {
             }
         });
         let windowSink = asyncCallbackSink.clone();
+        let permissionSink = asyncCallbackSink.clone();
         let toolSink = asyncCallbackSink.clone();
         let timerSink = asyncCallbackSink.clone();
         let ipcBinding = self.packageBinding.clone();
@@ -2006,6 +2007,17 @@ impl JsEngineState {
         let dependencyBinding = self.packageBinding.clone();
         let dependencySink = asyncCallbackSink.clone();
         let asyncFunctions: Vec<(&str, HostJavaScriptAsyncJsonCallback)> = vec![
+            (
+                "__operitNativeToolPermissionCommand",
+                Arc::new(move |requestId, arguments| {
+                    let [payload] = exactHostJavaScriptJsonArguments("__operitNativeToolPermissionCommand", arguments)?;
+                    requireHostObject(&payload)?;
+                    let host = currentExecutionHost().map_err(HostError::new)?;
+                    let result = host.tool_permission_command(payload);
+                    permissionSink(JsAsyncCallback::Promise { requestId, result });
+                    Ok(())
+                }),
+            ),
             (
                 "__operitNativeFloatingWindowCommand",
                 Arc::new(move |requestId, arguments| {

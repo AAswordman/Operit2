@@ -3,6 +3,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 import { readSdkScript } from '../runtime/compose_scripts.mjs';
 
+/** Loads the real SDK transport with an observable authenticated host binding. */
 function setup(registration) {
   const calls = [];
   const context = vm.createContext({
@@ -40,9 +41,36 @@ test('UI floatingWindows namespace sends structured commands without modifying r
   assert.equal(context.__operitToolPkgRegistrationCapture.desktopWidgets.length, 0);
 });
 
+test('managed windows send desired content with protected identity and explicit null closure', async () => {
+  const {context, calls} = setup(false);
+  await vm.runInContext(`(async () => {
+    const request = {requestId:'approval', tool:{name:'write_file', parameters:[]}};
+    await ToolPkg.ui.floatingWindows.set('approval', {
+      id:'forged', route:'approval-route', fill:true, state:{request}, visible:false, operation:'forged'
+    });
+    await ToolPkg.ui.floatingWindows.set('approval', null);
+  })()`, context);
+  assert.deepEqual(calls, [
+    {id:'approval',route:'approval-route',fill:true,state:{request:{requestId:'approval',tool:{name:'write_file',parameters:[]}}},visible:true,operation:'set'},
+    {id:'approval',visible:false,operation:'set'},
+  ]);
+});
+
+test('window state rejects lossy JSON serialization before sending a host request', () => {
+  const {context, calls} = setup(false);
+  for (const expression of [
+    '[]', 'null', '{invalid:undefined}', '{invalid:() => {}}', '{invalid:NaN}',
+    '{invalid:new Date()}', '(() => {const state={};state.self=state;return state;})()',
+  ]) {
+    assert.throws(() => vm.runInContext(`ToolPkg.ui.floatingWindows.set('test', {route:'route', state:${expression}})`, context), /Floating window state/);
+  }
+  assert.throws(() => vm.runInContext("ToolPkg.ui.floatingWindows.set('test', undefined)", context), /object or null/);
+  assert.deepEqual(calls, []);
+});
+
 test('registration never creates windows or prompts for overlay permission', () => {
   const {context, calls} = setup(true);
-  for (const expression of ['open({id:"pet",route:"pet"})','capabilities()','requestPermission()']) {
+  for (const expression of ['open({id:"pet",route:"pet"})','set("pet", {route:"pet"})','set("pet", null)','capabilities()','requestPermission()']) {
     assert.throws(() => vm.runInContext(`ToolPkg.ui.floatingWindows.${expression}`, context), /during registration/);
   }
   assert.deepEqual(calls, []);

@@ -230,6 +230,11 @@ fn parseCapturedRegistration(
             TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK,
             toolPkgId,
         )?,
+        toolPermissionHooks: parseRegisteredItems(
+            &captured.toolPermissionHooks,
+            TOOLPKG_REGISTRATION_TOOL_PERMISSION_HOOK,
+            toolPkgId,
+        )?,
         promptInputHooks: parseRegisteredItems(
             &captured.promptInputHooks,
             TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK,

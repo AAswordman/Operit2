@@ -1560,7 +1560,7 @@ impl JsExecutionHost for AIToolHandler {
                 .ok_or("Floating windows require an authenticated plugin engine")?;
             let mut request = payload.as_object().cloned().ok_or("Expected a window request object")?;
             let operation = request.get("operation").and_then(|value| value.as_str()).ok_or("Missing floating window operation")?;
-            if !matches!(operation, "capabilities" | "requestPermission" | "open" | "update" | "show" | "hide" | "close" | "list" | "record" | "recordingLevel" | "finishRecording" | "cancelRecording") {
+            if !matches!(operation, "capabilities" | "requestPermission" | "set" | "open" | "update" | "show" | "hide" | "close" | "list" | "record" | "recordingLevel" | "finishRecording" | "cancelRecording") {
                 return Err("Unknown floating window operation".into());
             }
             {
@@ -1568,7 +1568,7 @@ impl JsExecutionHost for AIToolHandler {
                 let registry = manager.lock().map_err(|_| "Package registry is unavailable")?;
                 let plugin = registry.getEnabledToolPkgContainerRuntimes().into_iter()
                     .find(|plugin| &plugin.packageName == owner).ok_or("Floating window owner is disabled or removed")?;
-                if operation == "open" {
+                if operation == "open" || (operation == "set" && request.get("visible") == Some(&serde_json::Value::Bool(true))) {
                     let route_id = request.get("route").and_then(|value| value.as_str()).ok_or("Window route is required")?;
                     if !registry.getToolPkgUiRoutes("compose_dsl", false).iter()
                         .any(|route| &route.containerPackageName == owner && route.routeId == route_id) {
@@ -1581,6 +1581,21 @@ impl JsExecutionHost for AIToolHandler {
             let host = handler.getContext().floatingWindowHost.ok_or("Floating window host is not registered")?;
             host.command(serde_json::Value::Object(request)).await.map_err(|error| error.to_string())
         })
+    }
+
+    /// Limits approval presentation to enabled packages explicitly registering a permission hook.
+    fn tool_permission_command(&self, payload: serde_json::Value) -> Result<serde_json::Value, String> {
+        let owner = self.authenticatedExtensionOwner.as_ref()
+            .ok_or("Tool permissions require an authenticated plugin engine")?;
+        {
+            let manager = self.getOrCreatePackageManager();
+            let registry = manager.lock().map_err(|_| "Package registry is unavailable")?;
+            if !registry.getEnabledToolPkgContainerRuntimes().iter()
+                .any(|plugin| &plugin.packageName == owner && !plugin.toolPermissionHooks.is_empty()) {
+                return Err("Tool permissions require an enabled permission presenter".into());
+            }
+        }
+        self.runtimeSupport().toolPermissionCommand(payload)
     }
 
     /// Validates and forwards an export to the registered host file-save owner.
@@ -2805,6 +2820,13 @@ mod tests {
         assert!(bound.floating_window_command(serde_json::json!({
             "operation":"open", "id":"pet", "route":"toolpkg:foreign:ui:pet",
         })).await.unwrap_err().contains("executing enabled package"));
+        assert!(bound.floating_window_command(serde_json::json!({
+            "operation":"set", "id":"pet", "visible":true, "route":"toolpkg:foreign:ui:pet",
+        })).await.unwrap_err().contains("executing enabled package"));
+        let response = bound.floating_window_command(serde_json::json!({
+            "operation":"set", "id":"pet", "visible":false, "packageName":"foreign-plugin",
+        })).await.unwrap();
+        assert_eq!(response["packageName"], "configuration_probe");
         for (mode, expected_error) in [("ready", None), ("error", Some("missing provider")), ("loop", Some("timed out")), ("ready", None)] {
             let started = std::time::Instant::now();
             let result = manager.invokeToolPkgPublicApiWithTimeoutMillis(

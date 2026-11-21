@@ -33,6 +33,7 @@ pub mod ToolPkgSummaryHookBridge;
 
 #[path = "ToolPkgToolLifecycleBridge.rs"]
 pub mod ToolPkgToolLifecycleBridge;
+pub mod ToolPkgToolPermissionBridge;
 
 #[path = "ToolPkgChatInputHookBridge.rs"]
 pub mod ToolPkgChatInputHookBridge;

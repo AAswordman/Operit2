@@ -6,6 +6,40 @@
 
 ## 打开与控制
 
+### 声明窗口内容
+
+多数插件只需 `set(id, content | null)`。它声明窗口现在应显示的内容：同一 ID
+首次创建，后续更新原会话并恢复显示；传 `null` 关闭，窗口不存在时也成功。
+创建、更新、显示和关闭在宿主同一队列中串行执行，创作者不需要查询窗口列表、
+维护句柄缓存或协调开窗期间到达的下一次调用。
+
+```ts
+await ToolPkg.ui.floatingWindows.set("status", {
+  route: "toolpkg:com.example.status:ui:status",
+  state: { message: "正在处理" },
+  options: { width: 240, height: 120 },
+});
+await ToolPkg.ui.floatingWindows.set("status", {
+  route: "toolpkg:com.example.status:ui:status",
+  state: { message: "处理完成" },
+});
+await ToolPkg.ui.floatingWindows.set("status", null);
+```
+
+`set` 返回 `"shown"`、`"closed"`、`"permission_required"` 或 `"unsupported"`。
+后两项明确表示未显示，并关闭该 ID 已有的窗口；不会自动申请系统授权或更换呈现方式。
+路由、参数、引擎创建或原生窗口操作错误会拒绝 Promise。需要展示授权入口时，
+在设置页查询 `capabilities()`，由用户点击调用 `requestPermission()`。
+取得授权后再次调用 `set` 即可显示；`set` 不保存未显示的请求，也不自动重试。
+
+`route` 必须属于当前启用插件。窗口存在期间 `route` 和 `fill` 模式不能改变，
+要更换时先传 `null` 关闭。省略 `fill` 保留现有模式，新窗口默认为 `false`。
+提供的 `options` 和 `state` 按顶层键合并，省略的字段保持不变，UI 会话不重建。
+`state` 接受普通 JSON 对象，可直接传入 SDK 返回的类型化对象；宿主桥接会拒绝
+非 JSON 值、循环引用、非有限数字和特殊对象，避免序列化时丢失数据。
+
+### 分步控制窗口
+
 先在 `registerToolPkg()` 中注册普通 UI 路由。注册期间不能调用任何窗口方法。
 
 ```ts

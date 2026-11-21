@@ -1412,3 +1412,11 @@ ToolPkg 涉及 main、子包、UI、hook 与 provider 等上下文，单次执�
 ## 桌面小部件与通用悬浮窗
 
 `ToolPkg.registerDesktopWidget` 是桌面小部件注册接口。桌宠和其他实时悬浮工具使用独立的 `ToolPkg.ui.floatingWindows` 窗口控制接口，内容复用已注册的 Compose UI 路由。方法、平台能力、权限与生命周期见 [通用悬浮窗](../FLOATING_WINDOWS.md)。
+
+工具审批界面可用 `ToolPkg.registerToolPermissionHook({ id, function })` 监听
+`requests_changed`，直接读取 `event.eventPayload.requests`；也可用独立于 UI 的
+`ToolPkg.toolPermissions.list()` 查询当前待审批请求。
+在用户点击时调用 `ToolPkg.toolPermissions.respond(chatId, requestId, result)`，
+`result` 为 `allow`、`deny` 或 `allow_session`；持续批准按当前 runtime 运行范围生效。
+审批插件必须已启用且注册该 hook。聊天内卡片和插件共用请求，首次成功处理后同步移除，
+取消和超时同样通知。完整契约见 [工具审批呈现接口](../TOOL_PERMISSIONS.md)。

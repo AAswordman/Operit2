@@ -816,6 +816,23 @@ impl Default for ChatToolPermissionBroker {
 
 static CHAT_TOOL_PERMISSIONS: OnceLock<ChatToolPermissionBroker> = OnceLock::new();
 
+/// Retires a pending approval when its awaiting tool future completes or is cancelled.
+struct ChatToolPermissionRequestGuard<'a> {
+    broker: &'a ChatToolPermissionBroker,
+    requestId: String,
+}
+
+impl Drop for ChatToolPermissionRequestGuard<'_> {
+    /// Removes both request and decision so cancellation cannot leave an actionable stale prompt.
+    fn drop(&mut self) {
+        let mut state = self.broker.state.lock().expect("tool permission mutex poisoned");
+        let removed = state.pending.remove(&self.requestId).is_some();
+        state.decisions.remove(&self.requestId);
+        if removed { self.broker.refreshRequests(&state); }
+        self.broker.changed.notify_waiters();
+    }
+}
+
 /// Returns the process-wide chat tool permission broker.
 fn chatToolPermissionBroker() -> &'static ChatToolPermissionBroker {
     CHAT_TOOL_PERMISSIONS.get_or_init(ChatToolPermissionBroker::default)
@@ -836,7 +853,10 @@ impl ChatToolPermissionBroker {
                 .then_with(|| left.requestId.cmp(&right.requestId))
         });
         crate::services::WorkActivityService::permissionsChanged(requests.clone());
-        self.requests.set_value(requests);
+        if self.requests.value() != requests {
+            self.requests.set_value(requests);
+            crate::plugins::toolpkg::ToolPkgToolPermissionBridge::ToolPkgToolPermissionBridge::notify();
+        }
     }
 
     /// Adds one chat-bound request and awaits its decision or deadline.
@@ -852,6 +872,7 @@ impl ChatToolPermissionBroker {
         let requestId = Uuid::new_v4().to_string();
         let requestedAtMillis = i64::try_from(tryCurrentTimeMillisU128()?)
             .map_err(|_| "tool permission timestamp exceeds i64 milliseconds")?;
+        let _guard = ChatToolPermissionRequestGuard { broker: self, requestId: requestId.clone() };
         {
             let mut state = self
                 .state
@@ -893,6 +914,8 @@ impl ChatToolPermissionBroker {
 
         loop {
             let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
             {
                 let mut state = self
                     .state
@@ -905,7 +928,7 @@ impl ChatToolPermissionBroker {
                 }
             }
             tokio::select! {
-                _ = changed => {}
+                _ = &mut changed => {}
                 timeout = &mut timeoutReceiver => {
                     timeout.map_err(|_| "tool permission timeout task was cancelled".to_string())?;
                     let mut state = self
@@ -927,6 +950,9 @@ impl ChatToolPermissionBroker {
 
     /// Applies a decision only when the request belongs to the addressed chat.
     fn respond(&self, chatId: &str, requestId: &str, result: String) -> Result<(), String> {
+        if !matches!(result.as_str(), "allow" | "deny" | "allow_session") {
+            return Err(format!("invalid tool permission decision: {result}"));
+        }
         let mut state = self
             .state
             .lock()
@@ -940,6 +966,9 @@ impl ChatToolPermissionBroker {
             return Err(format!(
                 "chat does not own tool permission request: {requestId}"
             ));
+        }
+        if state.decisions.contains_key(requestId) {
+            return Err(format!("tool permission request already resolved: {requestId}"));
         }
         state.decisions.insert(requestId.to_string(), result);
         self.refreshRequests(&state);
@@ -1637,6 +1666,16 @@ pub fn requestOwnerLocalInference(
         .ok_or_else(|| "local inference response payload is missing".to_string())
 }
 
+/// Returns unresolved public requests for plugin approval presenters across chats.
+pub fn pendingToolPermissions() -> Vec<RuntimeHostInteractionToolPermissionRequest> {
+    let mut requests = chatToolPermissionBroker().requests.value();
+    for request in &mut requests {
+        request.tool.parameters.retain(|parameter| !matches!(parameter.name.as_str(),
+            "__operit_package_caller_name" | "__operit_package_chat_id" | "__operit_package_caller_card_id"));
+    }
+    requests
+}
+
 /// Returns the permission requests currently pending for one chat.
 pub fn chatToolPermissionRequestsFlow(
     chatId: String,
@@ -1913,6 +1952,52 @@ impl RuntimeHostInteractionBroker {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Creates an isolated broker snapshot with requests in two different chats.
+    fn permissionBroker() -> ChatToolPermissionBroker {
+        let broker = ChatToolPermissionBroker::default();
+        let mut state = broker.state.lock().unwrap();
+        for (id, chat, time) in [("first", "chat-a", 1), ("second", "chat-b", 2)] {
+            state.pending.insert(id.into(), RuntimeHostInteractionToolPermissionRequest {
+                requestId: id.into(), chatId: chat.into(),
+                tool: RuntimeHostInteractionToolPermissionTool { name: "write_file".into(), parameters: vec![] },
+                description: "Write a file".into(), requestedAtMillis: time,
+            });
+        }
+        broker.refreshRequests(&state);
+        drop(state);
+        broker
+    }
+
+    /// Rejects forged scope, invalid decisions and conflicting answers from another approval surface.
+    #[test]
+    fn permissionDecisionsResolveOnlyOnceWithinTheirChat() {
+        let broker = permissionBroker();
+        assert!(broker.respond("chat-b", "first", "allow".into()).is_err());
+        assert!(broker.respond("chat-a", "first", "always_allow".into()).is_err());
+        assert_eq!(broker.requests.value().len(), 2);
+        broker.respond("chat-a", "first", "allow_session".into()).unwrap();
+        assert!(broker.respond("chat-a", "first", "deny".into()).is_err());
+        assert_eq!(broker.state.lock().unwrap().decisions["first"], "allow_session");
+        let pending = broker.requests.value();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].requestId, "second");
+    }
+
+    /// Removes the cancelled tool's request and an unconsumed decision while retaining other chats.
+    #[test]
+    fn permissionWaiterCleanupPublishesRemainingRequests() {
+        let broker = permissionBroker();
+        drop(ChatToolPermissionRequestGuard { broker: &broker, requestId: "first".into() });
+        assert!(broker.respond("chat-a", "first", "allow".into()).is_err());
+        assert_eq!(broker.requests.value()[0].requestId, "second");
+        broker.respond("chat-b", "second", "deny".into()).unwrap();
+        drop(ChatToolPermissionRequestGuard { broker: &broker, requestId: "second".into() });
+        let state = broker.state.lock().unwrap();
+        assert!(state.pending.is_empty());
+        assert!(state.decisions.is_empty());
+        assert!(broker.requests.value().is_empty());
+    }
 
     /// Verifies a real HEIC image becomes a Flutter-readable, nonempty PNG.
     #[tokio::test]

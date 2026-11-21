@@ -388,9 +388,18 @@ impl<'a> EmitContext<'a> {
     /// Emits declarations directly contained by one TypeScript namespace path.
     fn emit_scope(&self, output: &mut String, scope: &[String], indent: &str) {
         if self.current_file == "toolpkg.d.ts" && scope == ["ToolPkg"] {
-            output.push_str(&format!("{indent}/** Exposes the host registry IPC service. */\n{indent}export const ipc: IpcApi;\n"));
-            output.push_str(&format!("{indent}/** Exposes the host registry WASM service. */\n{indent}export const wasm: WasmApi;\n"));
-            output.push_str(&format!("{indent}/** Groups runtime presentation services for plugin-owned user interfaces. */\n{indent}export const ui: UiApi;\n"));
+            let registry = self.groups.iter().find(|group| group.path == ["ToolPkg", "Registry"])
+                .expect("ToolPkg registry is declared by its Rust owner");
+            for item in &registry.items {
+                if let ItemRef::Struct(registry) = item {
+                    for field in &registry.fields {
+                        let name = field.ident.as_ref().expect("ToolPkg registry fields must be named");
+                        emit_jsdoc(output, &field.attrs, indent);
+                        let field_type = self.emit_type(&field.ty, scope);
+                        output.push_str(&format!("{indent}export const {name}: {field_type};\n"));
+                    }
+                }
+            }
         }
         let mut entries = self.scope_entries(scope);
         entries.sort_by(|left, right| {
@@ -2089,6 +2098,26 @@ fn pattern_name(pattern: &syn::Pat) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Keeps registry service exports driven by Rust fields as services are added or removed.
+    #[test]
+    fn emits_toolpkg_root_services_from_registry_fields() {
+        let files = [syn::parse_quote! {
+            pub struct ToolPkgRegistry {
+                /// Reads approvals without requiring any UI surface.
+                pub approvals: String,
+            }
+        }];
+        let spec = ModuleSpec {
+            rust_file: "js_sdk/toolpkg.rs", additional_rust_file: None,
+            ts_file: "toolpkg.d.ts", nullable_wire_fields: false,
+        };
+        let output = EmitContext::new(&files, &spec, TypeCatalog::new()).emit();
+        assert!(output.contains("export const approvals: string;"), "{output}");
+        assert!(output.contains("Reads approvals without requiring any UI surface."));
+        assert!(!output.contains("export const ui:"));
+        assert!(!output.contains("export const ipc:"));
+    }
 
     /// Verifies that generated JSDoc excludes empty boundary lines and preserves inner paragraphs.
     #[test]

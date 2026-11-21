@@ -489,6 +489,8 @@ pub struct ToolPkgMainRegistration {
     pub hostEventHooks: Vec<ToolPkgRegisteredHostEventHook>,
     #[serde(rename = "toolLifecycleHooks", default)]
     pub toolLifecycleHooks: Vec<ToolPkgRegisteredFunctionHook>,
+    #[serde(default)]
+    pub toolPermissionHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "promptInputHooks", default)]
     pub promptInputHooks: Vec<ToolPkgRegisteredFunctionHook>,
     #[serde(rename = "promptHistoryHooks", default)]
@@ -612,6 +614,8 @@ pub struct ToolPkgContainerRuntime {
     pub hostEventHooks: Vec<ToolPkgHostEventHookRuntime>,
     #[serde(rename = "toolLifecycleHooks")]
     pub toolLifecycleHooks: Vec<ToolPkgFunctionHookRuntime>,
+    #[serde(default)]
+    pub toolPermissionHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "promptInputHooks")]
     pub promptInputHooks: Vec<ToolPkgFunctionHookRuntime>,
     #[serde(rename = "promptHistoryHooks")]
@@ -1623,6 +1627,10 @@ impl ToolPkgArchiveParser {
             &mainRegistration.toolLifecycleHooks,
             TOOLPKG_REGISTRATION_TOOL_LIFECYCLE_HOOK,
         )?;
+        let toolPermissionHooks = validateFunctionHooks(
+            &mainRegistration.toolPermissionHooks,
+            TOOLPKG_REGISTRATION_TOOL_PERMISSION_HOOK,
+        )?;
         let promptInputHooks = validateFunctionHooks(
             &mainRegistration.promptInputHooks,
             TOOLPKG_REGISTRATION_PROMPT_INPUT_HOOK,
@@ -1720,6 +1728,7 @@ impl ToolPkgArchiveParser {
             chatResponseHooks,
             hostEventHooks,
             toolLifecycleHooks,
+            toolPermissionHooks,
             promptInputHooks,
             promptHistoryHooks,
             promptEstimateHistoryHooks,

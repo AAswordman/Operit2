@@ -9,9 +9,16 @@ import '../../ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 import 'RuntimeWindowRecording.dart';
 
 class _OwnedFloatingWindow {
-  _OwnedFloatingWindow(this.window, this.route, this.options, this.state);
+  _OwnedFloatingWindow(
+    this.window,
+    this.route,
+    this.fill,
+    this.options,
+    this.state,
+  );
   final FloatingWindow window;
   final String route;
+  final bool fill;
   FloatingWindowOptions options;
   Map<String, Object?> state;
   bool visible = true;
@@ -46,6 +53,7 @@ class RuntimeFloatingWindowController {
   static StreamSubscription<void>? _catalog;
   static RuntimeWindowRecording? _activeRecording;
 
+  /// Serializes lifecycle mutations while letting a pending recording finish independently.
   static Future<Object?> command(Map<String, Object?> request) {
     final work = _tail.then((_) => _command(request));
     _tail = work.then<void>((_) {}, onError: (Object _, StackTrace stack) {});
@@ -75,6 +83,7 @@ class RuntimeFloatingWindowController {
     if (capture != null) unawaited(capture.finish(discard: true));
   }
 
+  /// Applies one authenticated plugin command in host arrival order.
   static Future<Object?> _command(Map<String, Object?> request) async {
     final owner = request['packageName'];
     if (owner is! String || owner.isEmpty) {
@@ -100,53 +109,12 @@ class RuntimeFloatingWindowController {
       );
     }
     final key = jsonEncode([owner, id]);
+    if (operation == 'set') return _set(owner, id, key, request);
     if (operation == 'open') {
       if (_windows.containsKey(key)) {
         throw StateError('Window already exists: $id');
       }
-      if (_owners.values.where((value) => value == owner).length >= 16) {
-        throw StateError('A plugin may own at most 16 floating windows');
-      }
-      final options = FloatingWindowOptions.fromMap(
-        ((request['options'] as Map?) ?? {}).cast<String, Object?>(),
-      );
-      final fill = (request['fill'] as bool?) ?? false;
-      final support = await FloatingWindows.capabilities();
-      if ((options.x != null ||
-              options.y != null ||
-              options.screenBounds != null) &&
-          support['positioning'] != true) {
-        throw UnsupportedError(
-          'This host does not support absolute window positioning',
-        );
-      }
-      if (request['state'] != null && request['state'] is! Map) {
-        throw ArgumentError('Window state must be an object');
-      }
-      final route = request['route'] as String;
-      final window = await FloatingWindows.open(
-        payload: {
-          'plugin': request['plugin'],
-          'route': route,
-          'state': request['state'] ?? {},
-          'windowId': id,
-          'locale':
-              WidgetsBinding.instance.platformDispatcher.locale.languageCode,
-        },
-        options: options,
-        fill: fill,
-      );
-      final owned = _OwnedFloatingWindow(
-        window,
-        route,
-        FloatingWindowOptions.defaults.merge(options),
-        Map<String, Object?>.from((request['state'] as Map?) ?? {}),
-      );
-      _windows[key] = owned;
-      _owners[key] = owner;
-      _ids[key] = id;
-      _startAudit();
-      return owned.info(id);
+      return (await _open(owner, id, key, request)).info(id);
     }
     final owned = _windows[key];
     if (owned == null) {
@@ -154,22 +122,7 @@ class RuntimeFloatingWindowController {
     }
     switch (operation) {
       case 'update':
-        final patch = FloatingWindowOptions.fromMap(
-          (request['options'] as Map).cast<String, Object?>(),
-        );
-        final rawState = request['state'];
-        if (rawState != null && rawState is! Map) {
-          throw ArgumentError('Window state must be an object');
-        }
-        final state = rawState == null
-            ? null
-            : {...owned.state, ...Map<String, Object?>.from(rawState as Map)};
-        await owned.window.update(
-          patch,
-          payload: state == null ? null : {'state': state},
-        );
-        owned.options = owned.options.merge(patch);
-        if (state != null) owned.state = state;
+        await _update(owned, request);
       case 'show':
         await owned.window.show();
         owned.visible = true;
@@ -178,9 +131,7 @@ class RuntimeFloatingWindowController {
         _discardRecording(owned);
         owned.visible = false;
       case 'close':
-        _discardRecording(owned);
-        await owned.window.close();
-        _remove(key);
+        await _close(key, owned);
         return null;
       case 'record':
         if (!owned.visible) throw StateError('The recording window is hidden');
@@ -209,6 +160,138 @@ class RuntimeFloatingWindowController {
     return owned.info(id);
   }
 
+  /// Reconciles desired content without exposing handle or permission bookkeeping to creators.
+  static Future<String> _set(
+    String owner,
+    String id,
+    String key,
+    Map<String, Object?> request,
+  ) async {
+    final visible = request['visible'];
+    if (visible is! bool) {
+      throw ArgumentError('Window visibility must be a boolean');
+    }
+    final owned = _windows[key];
+    if (!visible) {
+      if (owned != null) await _close(key, owned);
+      return 'closed';
+    }
+    final route = request['route'];
+    if (route is! String || route.isEmpty) {
+      throw ArgumentError('Window route is required');
+    }
+    if (owned != null &&
+        (owned.route != route ||
+            (request['fill'] != null && owned.fill != request['fill']))) {
+      throw StateError(
+        'Close the window before changing its route or fill mode',
+      );
+    }
+    final support = await FloatingWindows.capabilities();
+    final String? unavailable = support['supported'] != true
+        ? 'unsupported'
+        : support['permissionGranted'] != true
+        ? 'permission_required'
+        : null;
+    if (unavailable != null) {
+      if (owned != null) await _close(key, owned);
+      return unavailable;
+    }
+    if (owned == null) {
+      await _open(owner, id, key, request);
+    } else {
+      await _update(owned, request);
+      if (!owned.visible) {
+        await owned.window.show();
+        owned.visible = true;
+      }
+    }
+    return 'shown';
+  }
+
+  /// Creates one live route session after ownership and duplicate checks.
+  static Future<_OwnedFloatingWindow> _open(
+    String owner,
+    String id,
+    String key,
+    Map<String, Object?> request,
+  ) async {
+    if (_owners.values.where((value) => value == owner).length >= 16) {
+      throw StateError('A plugin may own at most 16 floating windows');
+    }
+    final options = FloatingWindowOptions.fromMap(
+      ((request['options'] as Map?) ?? {}).cast<String, Object?>(),
+    );
+    final fill = (request['fill'] as bool?) ?? false;
+    final support = await FloatingWindows.capabilities();
+    if ((options.x != null ||
+            options.y != null ||
+            options.screenBounds != null) &&
+        support['positioning'] != true) {
+      throw UnsupportedError(
+        'This host does not support absolute window positioning',
+      );
+    }
+    if (request['state'] != null && request['state'] is! Map) {
+      throw ArgumentError('Window state must be an object');
+    }
+    final route = request['route'] as String;
+    final window = await FloatingWindows.open(
+      payload: {
+        'plugin': request['plugin'],
+        'route': route,
+        'state': request['state'] ?? {},
+        'windowId': id,
+        'locale':
+            WidgetsBinding.instance.platformDispatcher.locale.languageCode,
+      },
+      options: options,
+      fill: fill,
+    );
+    final owned = _OwnedFloatingWindow(
+      window,
+      route,
+      fill,
+      FloatingWindowOptions.defaults.merge(options),
+      Map<String, Object?>.from((request['state'] as Map?) ?? {}),
+    );
+    _windows[key] = owned;
+    _owners[key] = owner;
+    _ids[key] = id;
+    _startAudit();
+    return owned;
+  }
+
+  /// Updates only supplied options and state without resetting the live session.
+  static Future<void> _update(
+    _OwnedFloatingWindow owned,
+    Map<String, Object?> request,
+  ) async {
+    final patch = FloatingWindowOptions.fromMap(
+      ((request['options'] as Map?) ?? {}).cast<String, Object?>(),
+    );
+    final rawState = request['state'];
+    if (rawState != null && rawState is! Map) {
+      throw ArgumentError('Window state must be an object');
+    }
+    final state = rawState == null
+        ? null
+        : {...owned.state, ...Map<String, Object?>.from(rawState as Map)};
+    await owned.window.update(
+      patch,
+      payload: state == null ? null : {'state': state},
+    );
+    owned.options = owned.options.merge(patch);
+    if (state != null) owned.state = state;
+  }
+
+  /// Closes the native surface before releasing its plugin-local identity.
+  static Future<void> _close(String key, _OwnedFloatingWindow owned) async {
+    _discardRecording(owned);
+    await owned.window.close();
+    _remove(key);
+  }
+
   /// Validates a supplied capture interval without rounding or clamping it.
   static int? _duration(
     Map<String, Object?> request,
@@ -233,6 +316,7 @@ class RuntimeFloatingWindowController {
     }
   }
 
+  /// Removes registry entries and stops observers when no windows remain.
   static void _remove(String key) {
     final owned = _windows.remove(key);
     if (owned != null) _discardRecording(owned);
@@ -246,6 +330,7 @@ class RuntimeFloatingWindowController {
     }
   }
 
+  /// Removes handles whose surfaces have already been closed externally.
   static Future<void> _prune() async {
     if (_windows.isEmpty) return;
     final live = await FloatingWindows.liveIds();
@@ -254,8 +339,11 @@ class RuntimeFloatingWindowController {
     }
   }
 
+  /// Releases windows belonging to disabled or uninstalled packages.
   static void _startAudit() {
     if (_audit != null) return;
+
+    /// Schedules catalog cleanup in the same lifecycle queue as plugin commands.
     void reconcile() {
       final work = _tail.then((_) async {
         await _prune();

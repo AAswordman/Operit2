@@ -326,6 +326,11 @@ pub trait JsExecutionHost: Send + Sync {
         Box::pin(async { Err("Floating windows are unavailable on this host".into()) })
     }
 
+    /// Reads or resolves approval requests for an authenticated permission presenter.
+    fn tool_permission_command(&self, _payload: Value) -> Result<Value, String> {
+        Err("Tool permission presentation is unavailable on this host".into())
+    }
+
     /// Saves a UTF-8 export through the embedding application's file selector.
     fn save_compose_file(&self, payload: &Value) -> Result<Value, String>;
 
@@ -606,6 +611,8 @@ pub struct ToolPkgMainRegistrationCapture {
     pub hostEventHooks: Vec<String>,
     #[serde(rename = "toolLifecycleHooks", default)]
     pub toolLifecycleHooks: Vec<String>,
+    #[serde(default)]
+    pub toolPermissionHooks: Vec<String>,
     #[serde(rename = "promptInputHooks", default)]
     pub promptInputHooks: Vec<String>,
     #[serde(rename = "promptHistoryHooks", default)]

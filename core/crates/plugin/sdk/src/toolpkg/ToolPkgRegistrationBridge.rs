@@ -38,6 +38,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             chatResponseHooks: [],
             hostEventHooks: [],
             toolLifecycleHooks: [],
+            toolPermissionHooks: [],
             promptInputHooks: [],
             promptHistoryHooks: [],
             promptEstimateHistoryHooks: [],
@@ -124,33 +125,33 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             if (matches !== 1) throw new Error('registerNavigationEntry.route is duplicated for ' + definition.surface + ': ' + definition.route);
         }
 
-        /** Rejects non-JSON route input before serialization can silently drop or replace values. */
-        function validateNavigationParams(value, ancestors) {
+        /** Rejects non-JSON input before serialization can silently drop or replace values. */
+        function validateJson(value, ancestors, label) {
             if (value === null) return;
             var kind = typeof value;
             if (kind === 'string' || kind === 'boolean') return;
             if (kind === 'number') {
-                if (!Number.isFinite(value)) throw new Error('registerNavigationEntry.params requires finite JSON numbers');
+                if (!Number.isFinite(value)) throw new Error(label + ' requires finite JSON numbers');
                 return;
             }
-            if (kind !== 'object') throw new Error('registerNavigationEntry.params must be JSON');
-            if (ancestors.indexOf(value) !== -1) throw new Error('registerNavigationEntry.params must not be cyclic');
+            if (kind !== 'object') throw new Error(label + ' must be JSON');
+            if (ancestors.indexOf(value) !== -1) throw new Error(label + ' must not be cyclic');
             var prototype = Object.getPrototypeOf(value);
             if (!Array.isArray(value) && prototype !== Object.prototype && prototype !== null) {
-                throw new Error('registerNavigationEntry.params requires plain JSON objects');
+                throw new Error(label + ' requires plain JSON objects');
             }
             if (Object.getOwnPropertySymbols(value).length !== 0) {
-                throw new Error('registerNavigationEntry.params must not have symbol properties');
+                throw new Error(label + ' must not have symbol properties');
             }
             ancestors.push(value);
             if (Array.isArray(value)) {
                 for (var index = 0; index < value.length; index += 1) {
-                    validateNavigationParams(value[index], ancestors);
+                    validateJson(value[index], ancestors, label);
                 }
             } else {
                 var keys = Object.keys(value);
                 for (var index = 0; index < keys.length; index += 1) {
-                    validateNavigationParams(value[keys[index]], ancestors);
+                    validateJson(value[keys[index]], ancestors, label);
                 }
             }
             ancestors.pop();
@@ -485,10 +486,23 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             return path;
         }
 
+        /** Validates JSON UI state and sends one lifecycle command to the owner host. */
         function windowCommand(operation, options) {
             if (registrationOnly) throw new Error('Floating windows cannot be used during registration');
             var request = Object.assign({}, options || {}, {operation:operation});
+            if (request.state !== undefined) {
+                if (request.state === null || typeof request.state !== 'object' || Array.isArray(request.state)) {
+                    throw new Error('Floating window state must be a JSON object');
+                }
+                validateJson(request.state, [], 'Floating window state');
+            }
             return root.__operitInvokeHostAsync(root.__operitNativeFloatingWindowCommand, [request]);
+        }
+        /** Sends approval presentation commands through the authenticated execution host. */
+        function permissionCommand(operation, options) {
+            if (registrationOnly) throw new Error('Tool permissions cannot be used during registration');
+            var request = Object.assign({}, options, {operation: operation});
+            return root.__operitInvokeHostAsync(root.__operitNativeToolPermissionCommand, [request]);
         }
         function requireToolPkgApiRuntime() {
             var runtime = root.__operitToolPkgApi;
@@ -516,8 +530,21 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 capture.publicApis.push(normalizeSpec(normalized));
             },
             callDependency: toolPkgApi.callDependency,
+            toolPermissions: {
+                list: function() { return permissionCommand('list', {}); },
+                respond: function(chatId, requestId, result) {
+                    return permissionCommand('respond', {chatId: chatId, requestId: requestId, result: result});
+                }
+            },
             ui: {
               floatingWindows: {
+                /** Declares visible content or removes the window without manual handle bookkeeping. */
+                set: function(id, content) {
+                    if (content !== null && (!content || typeof content !== 'object' || Array.isArray(content))) {
+                        throw new Error('Floating window content must be an object or null');
+                    }
+                    return windowCommand('set', Object.assign({}, content, {id:id, visible:content !== null}));
+                },
                 capabilities: function() { return windowCommand('capabilities', {}); },
                 requestPermission: function() { return windowCommand('requestPermission', {}); },
                 open: function(options) { return windowCommand('open', options); },
@@ -561,7 +588,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 }
                 if (isEmbeddedUiSurface(definition.surface)) validateEmbeddedRoute(definition);
                 if (Object.prototype.hasOwnProperty.call(definition, 'params')) {
-                    validateNavigationParams(definition.params, []);
+                    validateJson(definition.params, [], 'registerNavigationEntry.params');
                 }
                 var normalized = copyObject(definition, '');
                 if (definition && typeof definition.action === 'function') {
@@ -619,6 +646,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
             registerChatResponseHook: registerFunction('chatResponseHooks', 'registerChatResponseHook'),
             registerHostEventHook: registerFunction('hostEventHooks', 'registerHostEventHook'),
             registerToolLifecycleHook: registerFunction('toolLifecycleHooks', 'registerToolLifecycleHook'),
+            registerToolPermissionHook: registerFunction('toolPermissionHooks', 'registerToolPermissionHook'),
             registerPromptInputHook: registerFunction('promptInputHooks', 'registerPromptInputHook'),
             registerPromptHistoryHook: registerFunction('promptHistoryHooks', 'registerPromptHistoryHook'),
             registerPromptEstimateHistoryHook: registerFunction('promptEstimateHistoryHooks', 'registerPromptEstimateHistoryHook'),

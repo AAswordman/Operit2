@@ -46,6 +46,14 @@ Flutter / CLI / 已认证远端请求
 
 ## ToolPkg 与批准
 
+官方可选插件「权限悬浮窗」（`packages/external/permission_overlay`）可在聊天内卡片之外同步呈现一代风格的审批弹窗。
+它通过 `ToolPkg.registerToolPermissionHook` 接收审批变化，通过
+`ToolPkg.toolPermissions` 查询和响应同一个 Core broker 的请求，独立于 UI。
+审批事件在专用队列中串行派发，启用插件和返回前台时重放最新列表；插件通过
+`ToolPkg.ui.floatingWindows.set(id, content | null)` 声明窗口内容，由宿主管理生命周期。
+任意界面首次处理后，请求从其他界面移除；取消、超时同样通知插件。
+接口、授权范围和信任边界见 [工具审批呈现接口](../plugins/docs/TOOL_PERMISSIONS.md)。
+
 ToolPkg 是安装和配置资源；`packageName:toolName` 是 AI 可调用的具体包工具。插件、Skill、MCP 的安装、删除、启停与配置由本机 owner 管理。
 
 PackageTool 的外层声明不代表脚本内部全部读写效果。脚本中的 `Tools.*` 进入具体 Host bridge 工具后，执行同一套模式、效果和路径检查。不能把批准整个包当作后续操作的权限证明，也不建立独立的包内审批系统。

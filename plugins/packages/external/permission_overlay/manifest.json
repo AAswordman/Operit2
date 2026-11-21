@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.permission_overlay",
+  "version": "1.0.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "权限悬浮窗", "en": "Permission Overlay" },
+  "description": {
+    "zh": "工具需要批准时，同步显示一代风格的权限悬浮窗，可查看操作和参数、拒绝或允许。",
+    "en": "Shows a classic permission overlay alongside chat approvals, with operation details and approval actions."
+  },
+  "enabled_by_default": false,
+  "subpackages": [],
+  "resources": []
+}
