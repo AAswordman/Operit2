@@ -142,6 +142,7 @@ core.ToolPkgContainerRuntime runtime(String owner) =>
       chatResponseHooks: const [],
       hostEventHooks: const [],
       toolLifecycleHooks: const [],
+      toolPermissionHooks: const [],
       promptInputHooks: const [],
       promptHistoryHooks: const [],
       promptEstimateHistoryHooks: const [],

@@ -5,9 +5,12 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../../../../../core/application/PluginHotReload.dart';
+import '../../../../../../../core/logging/ClientLogger.dart';
 import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
+import '../../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../packages/screens/ToolPkgUiLauncherScreen.dart';
+import '../../../../../../main/navigation/ToolPkgCatalogChangeBus.dart';
 import '../../../../../../theme/OperitTheme.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 
@@ -36,12 +39,16 @@ class ChatComposerSlotHost extends StatefulWidget {
 class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
   late Future<List<core_proxy.ToolPkgChatComposerSlot>> _slotsFuture =
       _loadSlots();
+  StreamSubscription<void>? _catalogSubscription;
 
-  /// Starts listening for plugin hot-reload notifications.
+  /// Starts listening for catalog changes and debug hot-reload notifications.
   @override
   void initState() {
     super.initState();
     PluginHotReload.revision.addListener(_reloadSlots);
+    // PluginHotReload only fires in debug builds; the catalog bus also covers
+    // release installs, enables, and disables while this chat stays open.
+    _catalogSubscription = ToolPkgCatalogChangeBus.listen(_reloadSlots);
   }
 
   /// Reloads declarations only when the chat identity changes; live inputs update the session.
@@ -53,15 +60,18 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
     }
   }
 
-  /// Stops listening for plugin hot-reload notifications.
+  /// Stops listening for catalog changes and hot-reload notifications.
   @override
   void dispose() {
     PluginHotReload.revision.removeListener(_reloadSlots);
+    _catalogSubscription?.cancel();
+    _catalogSubscription = null;
     super.dispose();
   }
 
-  /// Reloads declarations after the host installs updated development packages.
+  /// Reloads declarations after catalog mutations or development hot reloads.
   void _reloadSlots() {
+    if (!mounted) return;
     setState(() {
       _slotsFuture = _loadSlots();
     });
@@ -69,9 +79,19 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
 
   /// Reads host-composed slot declarations for the active chat surface.
   Future<List<core_proxy.ToolPkgChatComposerSlot>> _loadSlots() async {
-    return await widget.viewModel.clients.application
-        .chatComposerSlotBridge()
-        .createSlotDefinitions(slot: 'above_input');
+    try {
+      return await widget.viewModel.clients.application
+          .chatComposerSlotBridge()
+          .createSlotDefinitions(slot: 'above_input');
+    } catch (error, stackTrace) {
+      ClientLogger.w(
+        'Composer slot query failed',
+        tag: 'ChatComposerSlotHost',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
   }
 
   /// Aligns contributions with the input surface edges and builds the current slot.
@@ -87,6 +107,30 @@ class _ChatComposerSlotHostState extends State<ChatComposerSlotHost> {
         child: FutureBuilder<List<core_proxy.ToolPkgChatComposerSlot>>(
           future: _slotsFuture,
           builder: (context, snapshot) {
+            if (snapshot.hasError) {
+              final errorColor = Theme.of(context).colorScheme.error;
+              return Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                child: Row(
+                  children: [
+                    Icon(Icons.error_outline, size: 14, color: errorColor),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        AppLocalizations.of(context)?.pageLoadFailed ??
+                            'Page load failed',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(fontSize: 12, color: errorColor),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }
             if (!snapshot.hasData) {
               return const SizedBox.shrink();
             }
