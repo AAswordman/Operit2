@@ -21,6 +21,7 @@ class RuntimeBrowserAutomationController {
   late final RuntimeBrowserFileUpload _fileUpload = RuntimeBrowserFileUpload(
     controller,
   );
+  int _nextRunCodeId = 0;
   final Future<void> Function() onSurfaceFrameRequested;
   final List<Map<String, Object?>> _consoleMessages = <Map<String, Object?>>[];
   final List<Map<String, Object?>> _networkRequests = <Map<String, Object?>>[];
@@ -202,9 +203,100 @@ class RuntimeBrowserAutomationController {
     return evaluate('($function)(${_resolverScript(target)})');
   }
 
-  /// Executes automation code with the same chooser lifecycle as page actions.
+  /// Executes automation code as an async function body so snippets can use
+  /// return and await; the WebView does not await Promises, so the result is
+  /// collected from a page slot while the chooser capture stays active.
   Future<Object?> runCode(String code) {
-    return evaluate(code);
+    final id = '${identityHashCode(this)}-${_nextRunCodeId++}';
+    return _fileUpload.capture(() async {
+      await controller.runJavaScript(_runCodeKickoffScript(id, code));
+      final deadline = DateTime.now().add(const Duration(seconds: 30));
+      while (DateTime.now().isBefore(deadline)) {
+        final state = _decodeRunCodeState(
+          await controller.runJavaScriptReturningResult(
+            _runCodePollScript(id),
+          ),
+        );
+        if (state == null) {
+          throw StateError(
+            'browser_run_code lost its result: the page navigated or the '
+            'snippet failed to compile',
+          );
+        }
+        if (state['pending'] == false) {
+          final error = state['error'];
+          if (error != null) throw StateError(error.toString());
+          return _decodeRunCodeValue(state['value']);
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 50));
+      }
+      try {
+        await controller.runJavaScript(
+          'delete (window.__operitRunCodeResults || {})["$id"];',
+        );
+      } catch (_) {
+        // A disposed WebView must not hide the timeout error.
+      }
+      throw StateError('browser_run_code timed out after 30 seconds');
+    });
+  }
+
+  /// Starts the snippet and records its eventual value or error in a page slot.
+  String _runCodeKickoffScript(String id, String code) {
+    return '''
+(function() {
+  const store = window.__operitRunCodeResults || (window.__operitRunCodeResults = {});
+  const id = "$id";
+  store[id] = { pending: true };
+  const encode = (value) => {
+    if (value === undefined) return null;
+    try {
+      const text = JSON.stringify(value);
+      if (text !== undefined) return { json: text };
+    } catch (_) {}
+    return { text: String(value) };
+  };
+  Promise.resolve((async function() {
+$code
+  })()).then(
+    (value) => { store[id] = { pending: false, value: encode(value) }; },
+    (error) => { store[id] = { pending: false, error: String(error && error.message || error) }; }
+  );
+})()
+''';
+  }
+
+  /// Reads and clears the snippet slot once the snippet has settled.
+  String _runCodePollScript(String id) {
+    return '''
+(function() {
+  const store = window.__operitRunCodeResults;
+  const state = store && store["$id"];
+  if (state && !state.pending) delete store["$id"];
+  return JSON.stringify(state || null);
+})()
+''';
+  }
+
+  /// Decodes one polled slot state across WebView result representations.
+  Map<String, Object?>? _decodeRunCodeState(Object? raw) {
+    var value = raw;
+    if (value is String) value = jsonDecode(value);
+    if (value == null) return null;
+    if (value is! Map<String, Object?>) {
+      throw StateError('browser_run_code returned an invalid result state');
+    }
+    return value;
+  }
+
+  /// Restores the snippet value from its JSON or plain-text envelope.
+  Object? _decodeRunCodeValue(Object? encoded) {
+    if (encoded is Map<String, Object?>) {
+      final json = encoded['json'];
+      if (json is String) return jsonDecode(json);
+      return encoded['text'];
+    }
+    return encoded;
   }
 
   /// Uploads host-provided files or cancels the active page file chooser.

@@ -592,10 +592,10 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "browser_run_code",
-                    "Run a Playwright-style code snippet against the current tab.",
+                    "Run a JavaScript snippet as an async function body in the current tab; use return to produce a result and await asynchronous work.",
                     "",
                     vec![
-                        param("code", "string", "Playwright-style JavaScript snippet", true, None)
+                        param("code", "string", "JavaScript snippet executed as an async function body; return produces the result and await is supported", true, None)
                     ],
                     "",
                     "",
@@ -1830,10 +1830,10 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "browser_run_code",
-                    "运行 Playwright 风格的代码片段。",
+                    "在当前 tab 中以异步函数体形式运行 JavaScript 片段，用 return 返回结果，支持 await。",
                     "",
                     vec![
-                        param("code", "string", "Playwright 风格 JavaScript 代码片段", true, None)
+                        param("code", "string", "以异步函数体形式执行的 JavaScript 片段，用 return 返回结果，支持 await", true, None)
                     ],
                     "",
                     "",
