@@ -2,11 +2,13 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use serde_json::Value;
+use tokio::sync::watch;
 
 use crate::chat::llmprovider::AIService::{
-    response_stream_from_chunks, AIService, AiServiceError, SendMessageRequest,
+    AIService, AiServiceError, SendMessageRequest, SharedAiResponseStream,
 };
 use crate::runtime_support::{ProviderRuntimeContext, ProviderToolPkgAiProviderRegistration};
+use operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost;
 use operit_model::ModelConfigData::ResolvedModelConfig;
 use operit_model::OpenAIModels::ModelOption;
 use operit_model::PromptTurn::PromptTurn;
@@ -15,16 +17,15 @@ use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_AI_PROVIDER_CALCULATE_INPUT_TOKENS, TOOLPKG_EVENT_AI_PROVIDER_LIST_MODELS,
     TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE, TOOLPKG_EVENT_AI_PROVIDER_TEST_CONNECTION,
 };
+use operit_util::stream::HotStream::mutable_shared_stream;
 use operit_util::stream::RevisableTextStream::RevisableTextStreamLike;
-use operit_util::stream::RevisableTextStream::{
-    empty_revisable_event_channel, with_event_channel_shared,
-};
 
 #[derive(Clone)]
 pub struct ToolPkgJsAiProviderService {
     config: ResolvedModelConfig,
     provider: ProviderToolPkgAiProviderRegistration,
     tokenCounts: Arc<Mutex<ToolPkgProviderTokenCounts>>,
+    cancelState: Arc<Mutex<ToolPkgCancelState>>,
     executionChatId: String,
     providerRuntimeContextKey: String,
     runtimeContext: ProviderRuntimeContext,
@@ -36,6 +37,24 @@ struct ToolPkgProviderTokenCounts {
     input: i64,
     cachedInput: i64,
     output: i64,
+}
+
+/// Shared cancellation state mirrored across every clone of one provider service.
+struct ToolPkgCancelState {
+    cancelled: bool,
+    cancelGeneration: u64,
+    cancelSignal: watch::Sender<u64>,
+}
+
+impl Default for ToolPkgCancelState {
+    fn default() -> Self {
+        let (cancelSignal, _) = watch::channel(0);
+        Self {
+            cancelled: false,
+            cancelGeneration: 0,
+            cancelSignal,
+        }
+    }
 }
 
 impl ToolPkgJsAiProviderService {
@@ -60,8 +79,46 @@ impl ToolPkgJsAiProviderService {
             config,
             provider,
             tokenCounts: Arc::new(Mutex::new(ToolPkgProviderTokenCounts::default())),
+            cancelState: Arc::new(Mutex::new(ToolPkgCancelState::default())),
             runtimeContext,
             keyGetter,
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.cancelState
+            .lock()
+            .map(|state| state.cancelled)
+            .unwrap_or(false)
+    }
+
+    fn begin_request(&self) {
+        if let Ok(mut state) = self.cancelState.lock() {
+            state.cancelled = false;
+        }
+    }
+
+    fn mark_cancelled(&self) {
+        if let Ok(mut state) = self.cancelState.lock() {
+            state.cancelled = true;
+            state.cancelGeneration = state.cancelGeneration.wrapping_add(1);
+            let _ = state.cancelSignal.send(state.cancelGeneration);
+        }
+    }
+
+    fn cancel_receiver(&self) -> watch::Receiver<u64> {
+        self.cancelState
+            .lock()
+            .expect("ToolPkg cancel mutex poisoned")
+            .cancelSignal
+            .subscribe()
+    }
+
+    async fn waitForCancellation(mut receiver: watch::Receiver<u64>, observedGeneration: u64) {
+        while receiver.changed().await.is_ok() {
+            if *receiver.borrow() != observedGeneration {
+                break;
+            }
         }
     }
 
@@ -167,6 +224,66 @@ impl ToolPkgJsAiProviderService {
         }
         Ok(())
     }
+
+    #[allow(non_snake_case)]
+    async fn runSendMessageHook(
+        &self,
+        payload: Value,
+        request: &SendMessageRequest,
+        producer: &SharedAiResponseStream,
+    ) -> Result<(), AiServiceError> {
+        let has_intermediate_text_chunk = Arc::new(Mutex::new(false));
+        let has_intermediate_text_chunk_for_callback = has_intermediate_text_chunk.clone();
+        let token_counts = self.tokenCounts.clone();
+        let on_non_fatal_error = request.on_non_fatal_error.clone();
+        let runtime_support = self.runtimeContext.shared_support();
+        let stream_for_intermediate = producer.clone();
+        let decoded = self
+            .invokeProviderFunction(
+                &self.provider.sendMessageFunctionName,
+                self.provider.sendMessageFunctionSource.as_deref(),
+                TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE,
+                payload,
+                Some(Arc::new(move |raw| {
+                    let Some(decoded) = runtime_support.decodeToolPkgHookResult(Some(raw)) else {
+                        return;
+                    };
+                    applyTokenUsage(&token_counts, &decoded);
+                    if let Some(error) = extractNonFatalError(&decoded) {
+                        if let Some(callback) = &on_non_fatal_error {
+                            callback(error);
+                        }
+                    }
+                    for chunk in extractMessageChunks(&decoded) {
+                        if !chunk.is_empty() {
+                            *has_intermediate_text_chunk_for_callback
+                                .lock()
+                                .expect("intermediate chunk mutex poisoned") = true;
+                            stream_for_intermediate.emit_chunk(chunk);
+                        }
+                    }
+                })),
+            )
+            .await?;
+        self.ensureNoFatalError(&decoded)?;
+        self.applyUsage(&decoded);
+        if let Some(error) = extractNonFatalError(&decoded) {
+            if let Some(callback) = &request.on_non_fatal_error {
+                callback(error);
+            }
+        }
+        if !*has_intermediate_text_chunk
+            .lock()
+            .expect("intermediate chunk mutex poisoned")
+        {
+            for chunk in extractMessageChunks(&decoded) {
+                if !chunk.is_empty() {
+                    producer.emit_chunk(chunk);
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg_attr(not(target_arch = "wasm32"), async_trait)]
@@ -197,6 +314,10 @@ impl AIService for ToolPkgJsAiProviderService {
     fn reset_token_counts(&mut self) {
         *self.tokenCounts.lock().expect("token mutex poisoned") =
             ToolPkgProviderTokenCounts::default();
+    }
+
+    fn cancel_streaming(&mut self) {
+        self.mark_cancelled();
     }
 
     async fn get_models_list(&self) -> Result<Vec<ModelOption>, AiServiceError> {
@@ -260,61 +381,40 @@ impl AIService for ToolPkgJsAiProviderService {
             );
             object.insert("enableRetry".to_string(), Value::Bool(request.enable_retry));
         }
-        let stream = operit_util::stream::HotStream::MutableSharedStreamImpl::new(usize::MAX);
-        let stream_for_intermediate = stream.clone();
-        let has_intermediate_text_chunk = Arc::new(Mutex::new(false));
-        let has_intermediate_text_chunk_for_callback = has_intermediate_text_chunk.clone();
-        let token_counts = self.tokenCounts.clone();
-        let on_non_fatal_error = request.on_non_fatal_error.clone();
-        let runtime_support = self.runtimeContext.shared_support();
-        let decoded = self
-            .invokeProviderFunction(
-                &self.provider.sendMessageFunctionName,
-                self.provider.sendMessageFunctionSource.as_deref(),
-                TOOLPKG_EVENT_AI_PROVIDER_SEND_MESSAGE,
-                payload,
-                Some(Arc::new(move |raw| {
-                    let Some(decoded) = runtime_support.decodeToolPkgHookResult(Some(raw)) else {
-                        return;
-                    };
-                    applyTokenUsage(&token_counts, &decoded);
-                    if let Some(error) = extractNonFatalError(&decoded) {
-                        if let Some(callback) = &on_non_fatal_error {
-                            callback(error);
+        // Background the hook so the service lock frees immediately and cancel_streaming can interrupt it.
+        let output = SharedAiResponseStream::new_ordered(
+            mutable_shared_stream(usize::MAX),
+            mutable_shared_stream(usize::MAX),
+        );
+        let producer = output.clone();
+        let provider = self.clone();
+        let receiver = provider.cancel_receiver();
+        let observedGeneration = *receiver.borrow();
+        defaultHostRuntimeTaskSchedulerHost()
+            .scheduleHostRuntimeAsyncTask(
+                "toolpkg-ai-provider-response-stream",
+                Box::new(move || {
+                    Box::pin(async move {
+                        let result = if provider.is_cancelled() {
+                            Err(AiServiceError::RequestCancelled)
+                        } else {
+                            tokio::select! {
+                                result = provider.runSendMessageHook(payload, &request, &producer) => result,
+                                _ = ToolPkgJsAiProviderService::waitForCancellation(receiver, observedGeneration) => {
+                                    Err(AiServiceError::RequestCancelled)
+                                }
+                            }
+                        };
+                        match result {
+                            Ok(()) | Err(AiServiceError::RequestCancelled) => {}
+                            Err(error) => producer.set_terminal_failure(error.to_string()),
                         }
-                    }
-                    for chunk in extractMessageChunks(&decoded) {
-                        if !chunk.is_empty() {
-                            *has_intermediate_text_chunk_for_callback
-                                .lock()
-                                .expect("intermediate chunk mutex poisoned") = true;
-                            stream_for_intermediate.emit(chunk);
-                        }
-                    }
-                })),
+                        producer.close();
+                    })
+                }),
             )
-            .await?;
-        self.ensureNoFatalError(&decoded)?;
-        self.applyUsage(&decoded);
-        if let Some(error) = extractNonFatalError(&decoded) {
-            if let Some(callback) = request.on_non_fatal_error {
-                callback(error);
-            }
-        }
-        if !*has_intermediate_text_chunk
-            .lock()
-            .expect("intermediate chunk mutex poisoned")
-        {
-            for chunk in extractMessageChunks(&decoded) {
-                if !chunk.is_empty() {
-                    stream.emit(chunk);
-                }
-            }
-        }
-        stream.close();
-        let event_channel = empty_revisable_event_channel();
-        event_channel.close();
-        Ok(Box::new(with_event_channel_shared(stream, event_channel)))
+            .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
+        Ok(Box::new(output))
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
