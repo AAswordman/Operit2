@@ -293,6 +293,23 @@ impl WorkspaceBackupManager {
         chatId: Option<&str>,
         snapshot: &WorkspaceTurnSnapshot,
     ) {
+        // A late finalize from an older turn (async cancel/revoke cleanup) must
+        // not overwrite a newer turn's snapshot: its after-state is captured at
+        // close time and can contain the newer turn's edits. Equal timestamps
+        // still write so finalize/restore can update the retained turn.
+        if let Some(existing) = self.loadTurnSnapshot(vfs, &snapshot.workspacePath, chatId) {
+            if existing.turnTimestamp > snapshot.turnTimestamp {
+                operit_util::AppLogger::AppLogger::v_with_level(
+                    "WorkspaceBackupManager",
+                    &format!(
+                        "skipping stale turn snapshot write: retained={} incoming={}",
+                        existing.turnTimestamp, snapshot.turnTimestamp
+                    ),
+                    operit_util::AppLogger::VERBOSE_LEVEL_2,
+                );
+                return;
+            }
+        }
         ensureDirectory(vfs, &self.chatBackupDir(&snapshot.workspacePath, chatId));
         let content =
             serde_json::to_string(snapshot).expect("WorkspaceTurnSnapshot must serialize");
@@ -1153,6 +1170,142 @@ mod tests {
             &affected,
             "/operitapp/workspaces/w/other.rs"
         ));
+    }
+
+    fn startEdit(
+        manager: &WorkspaceBackupManager,
+        workspace: &str,
+        chat: &str,
+        path: &str,
+        timestamp: i64,
+    ) -> Arc<WorkspaceToolHookSession> {
+        let session = manager.createWorkspaceToolHookSession(
+            workspace.to_string(),
+            timestamp,
+            Some(chat.to_string()),
+        );
+        session.onToolExecutionStarted(&AITool {
+            name: "edit_file".to_string(),
+            parameters: vec![ToolParameter {
+                name: "path".to_string(),
+                value: path.to_string(),
+            }],
+        });
+        session
+    }
+
+    fn snapshotFileKeys(snapshot: &WorkspaceTurnSnapshot) -> Vec<&str> {
+        snapshot.files.keys().map(String::as_str).collect()
+    }
+
+    #[test]
+    fn begin_turn_with_newer_timestamp_replaces_the_finalized_snapshot() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/operitapp/workspaces/project";
+        vfs.makeDirectory(workspace, true).unwrap();
+        let oldFile = joinPath(workspace, "old.rs");
+        vfs.writeFile(&oldFile, "original\n", false).unwrap();
+        fixture.edit(workspace, "chat-a", &oldFile, 100, "edited\n");
+        assert_eq!(
+            manager
+                .loadTurnSnapshot(&vfs, workspace, Some("chat-a"))
+                .unwrap()
+                .turnTimestamp,
+            100
+        );
+
+        let newFile = joinPath(workspace, "new.rs");
+        let session = startEdit(manager, workspace, "chat-a", &newFile, 200);
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-a"))
+            .unwrap();
+        assert_eq!(snapshot.turnTimestamp, 200);
+        assert!(snapshot.files.is_empty());
+        assert_eq!(
+            manager.previewChangesForMessage(workspace.into(), 200, Some("chat-a".into())),
+            Some(Vec::new())
+        );
+        vfs.writeFile(&newFile, "new\n", false).unwrap();
+        session.close();
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-a"))
+            .unwrap();
+        assert_eq!(snapshot.turnTimestamp, 200);
+        assert_eq!(snapshotFileKeys(&snapshot), vec!["new.rs"]);
+    }
+
+    #[test]
+    fn late_finalize_from_an_older_turn_cannot_overwrite_a_newer_snapshot() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/operitapp/workspaces/project";
+        vfs.makeDirectory(workspace, true).unwrap();
+        let oldFile = joinPath(workspace, "old.rs");
+        vfs.writeFile(&oldFile, "original\n", false).unwrap();
+
+        // Turn 100 starts editing but its cleanup (close) is delayed.
+        let oldSession = startEdit(manager, workspace, "chat-a", &oldFile, 100);
+        vfs.writeFile(&oldFile, "turn one\n", false).unwrap();
+
+        // Turn 200 begins and finalizes before turn 100's late cleanup runs.
+        let newFile = joinPath(workspace, "new.rs");
+        let newSession = startEdit(manager, workspace, "chat-a", &newFile, 200);
+        vfs.writeFile(&newFile, "turn two\n", false).unwrap();
+        newSession.close();
+
+        // The stale close captures after-state from disk at close time, which
+        // now includes turn 200's edits; it must not replace turn 200's data.
+        oldSession.close();
+
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-a"))
+            .unwrap();
+        assert_eq!(snapshot.turnTimestamp, 200);
+        assert_eq!(snapshotFileKeys(&snapshot), vec!["new.rs"]);
+        assert_eq!(
+            manager.previewChangesForMessage(workspace.into(), 100, Some("chat-a".into())),
+            None
+        );
+        let changes = manager
+            .previewChangesForMessage(workspace.into(), 200, Some("chat-a".into()))
+            .unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].path, "new.rs");
+    }
+
+    #[test]
+    fn same_timestamp_finalize_still_updates_the_retained_turn() {
+        let fixture = BackupFixture::new();
+        let manager = &fixture.manager;
+        let vfs = manager.vfs();
+        let workspace = "/operitapp/workspaces/project";
+        vfs.makeDirectory(workspace, true).unwrap();
+        let oldFile = joinPath(workspace, "old.rs");
+        vfs.writeFile(&oldFile, "original\n", false).unwrap();
+        fixture.edit(workspace, "chat-a", &oldFile, 100, "edited\n");
+
+        // A repeated finalize for the same turn must still be persisted.
+        let newFile = joinPath(workspace, "new.rs");
+        vfs.writeFile(&newFile, "added\n", false).unwrap();
+        let beforeHash = format!("{:x}", Sha256::digest(b"original\n"));
+        manager.finalizeTurn(
+            &vfs,
+            workspace,
+            100,
+            Some("chat-a"),
+            &[],
+            &BTreeMap::from([("old.rs".to_string(), Capture::Present(beforeHash))]),
+            &BTreeSet::from([oldFile.clone(), newFile.clone()]),
+        );
+
+        let snapshot = manager
+            .loadTurnSnapshot(&vfs, workspace, Some("chat-a"))
+            .unwrap();
+        assert_eq!(snapshot.turnTimestamp, 100);
+        assert_eq!(snapshotFileKeys(&snapshot), vec!["new.rs", "old.rs"]);
     }
 
     #[test]
