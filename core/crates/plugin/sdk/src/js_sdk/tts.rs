@@ -64,12 +64,18 @@ pub struct TtsSpeakRequest {
     pub speed: Option<f64>,
     /// Overrides the system voice pitch for this utterance only; generated audio requires 1.0.
     pub pitch: Option<f64>,
+    /// Resolves after the last segment finishes instead of after playback starts.
+    pub waitForCompletion: Option<bool>,
+    /// Names this utterance for cancellation within the executing plugin.
+    pub playbackId: Option<String>,
 }
 /// Reads and selects speech configurations through the canonical host manager.
 pub trait TtsHost: Send + Sync {
     fn synthesize(&self, request: TtsSynthesizeRequest) -> JsFuture<TtsSynthesizeResultData>;
     /// Starts configured speech through the shared host playback capability.
     fn speak(&self, request: TtsSpeakRequest) -> JsFuture<TtsSpeakResultData>;
+    /// Cancels the executing plugin's matching queued or active utterance.
+    fn cancel(&self, id: String) -> JsFuture<bool>;
     /// Returns complete configured speech records.
     fn listConfigs(&self) -> JsFuture<TtsListConfigsResultData>;
     /// Reads the current application-wide speech configuration ID.

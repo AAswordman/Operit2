@@ -44,7 +44,7 @@ import '../components/style/input/common/PendingQueueMessageItem.dart';
 import '../components/workspace/ChatContextStatsTopBarButton.dart';
 import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceTopBarButton.dart';
-import '../speech/LocalSpeechRecorder.dart';
+import '../../../../core/host/LocalSpeechRecorder.dart';
 import '../viewmodel/ChatSelectionTransition.dart';
 import '../viewmodel/ChatViewModel.dart';
 

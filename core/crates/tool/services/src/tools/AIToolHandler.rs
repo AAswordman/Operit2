@@ -1560,7 +1560,7 @@ impl JsExecutionHost for AIToolHandler {
                 .ok_or("Floating windows require an authenticated plugin engine")?;
             let mut request = payload.as_object().cloned().ok_or("Expected a window request object")?;
             let operation = request.get("operation").and_then(|value| value.as_str()).ok_or("Missing floating window operation")?;
-            if !matches!(operation, "capabilities" | "requestPermission" | "open" | "update" | "show" | "hide" | "close" | "list") {
+            if !matches!(operation, "capabilities" | "requestPermission" | "open" | "update" | "show" | "hide" | "close" | "list" | "record" | "recordingLevel" | "finishRecording" | "cancelRecording") {
                 return Err("Unknown floating window operation".into());
             }
             {
@@ -1968,7 +1968,7 @@ mod tests {
         &self,
     ) -> Result<Vec<operit_plugin_sdk::js_sdk::models::ModelsSummary>, String> { panic!("Unexpected runtime service: listModelSummaries") }
         /// Rejects unexpected application service access in execution pipeline tests.
-    fn speakSpeech(&self, _request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest)
+    fn speakSpeech(&self, _request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest, _owner: Option<String>)
         -> futures_util::future::BoxFuture<'_, Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>> {
         panic!("Unexpected runtime service: speakSpeech")
     }

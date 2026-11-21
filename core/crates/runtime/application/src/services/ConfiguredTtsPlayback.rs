@@ -18,7 +18,13 @@ type QueueRegistry = Vec<(Weak<dyn TtsPlaybackHost>, Weak<SpeechQueue>)>;
 #[derive(Default)]
 struct QueueState {
     next: u64,
-    pending: VecDeque<u64>,
+    pending: VecDeque<SpeechEntry>,
+    playing: Option<(u64, String)>,
+}
+
+struct SpeechEntry {
+    ticket: u64,
+    key: Option<(String, String)>,
 }
 
 #[derive(Default)]
@@ -48,28 +54,57 @@ pub(super) fn replace_playback<T>(
     let queue = queue_for(host);
     let mut state = queue.0.lock().map_err(|error| error.to_string())?;
     state.pending.clear();
+    state.playing = None;
     operation()
+}
+
+/// Removes only the requested plugin's utterance and stops its current segment if still active.
+pub(super) fn cancel_configured_speech(
+    host: &Arc<dyn TtsPlaybackHost>,
+    owner: &str,
+    id: &str,
+) -> Result<bool, String> {
+    let queue = queue_for(host);
+    let mut state = queue.0.lock().map_err(|error| error.to_string())?;
+    let Some(index) = state.pending.iter().position(|entry| {
+        entry.key.as_ref().is_some_and(|(entry_owner, entry_id)| entry_owner == owner && entry_id == id)
+    }) else { return Ok(false); };
+    let ticket = state.pending[index].ticket;
+    if let Some((playing, path)) = state.playing.as_ref() {
+        if *playing == ticket {
+            let status = host.speechState().map_err(|error| error.to_string())?;
+            if status.active && status.path == *path {
+                host.stopSpeech().map_err(|error| error.to_string())?;
+            }
+            state.playing = None;
+        }
+    }
+    state.pending.remove(index);
+    Ok(true)
 }
 
 impl SpeechQueue {
     fn with_turn<T>(
         &self,
         ticket: u64,
-        operation: impl FnOnce() -> Result<T, String>,
+        operation: impl FnOnce(&mut QueueState) -> Result<T, String>,
     ) -> Result<Option<T>, String> {
-        let state = self.0.lock().map_err(|error| error.to_string())?;
-        if !state.pending.contains(&ticket) {
+        let mut state = self.0.lock().map_err(|error| error.to_string())?;
+        if !state.pending.iter().any(|entry| entry.ticket == ticket) {
             return Err(CANCELLED.into());
         }
-        if state.pending.front() != Some(&ticket) {
+        if state.pending.front().map(|entry| entry.ticket) != Some(ticket) {
             return Ok(None);
         }
-        operation().map(Some)
+        operation(&mut state).map(Some)
     }
 
     fn finish(&self, ticket: u64) {
         if let Ok(mut state) = self.0.lock() {
-            state.pending.retain(|pending| *pending != ticket);
+            state.pending.retain(|entry| entry.ticket != ticket);
+            if state.playing.as_ref().is_some_and(|(playing, _)| *playing == ticket) {
+                state.playing = None;
+            }
         }
     }
 }
@@ -79,18 +114,24 @@ pub(super) async fn start_configured_speech(
     host: Arc<dyn TtsPlaybackHost>,
     scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     interrupt: bool,
+    wait_for_completion: bool,
+    key: Option<(String, String)>,
     prepare: PrepareSpeech,
 ) -> Result<TtsPlaybackStatus, String> {
     let queue = queue_for(&host);
     let ticket = {
         let mut state = queue.0.lock().map_err(|error| error.to_string())?;
+        if key.is_some() && state.pending.iter().any(|entry| entry.key == key) {
+            return Err("Speech playback ID is already in use".into());
+        }
         if interrupt {
             state.pending.clear();
+            state.playing = None;
             host.stopSpeech().map_err(|error| error.to_string())?;
         }
         let ticket = state.next;
         state.next = state.next.wrapping_add(1);
-        state.pending.push_back(ticket);
+        state.pending.push_back(SpeechEntry { ticket, key });
         ticket
     };
     let (sender, receiver) = oneshot::channel();
@@ -101,15 +142,14 @@ pub(super) async fn start_configured_speech(
         Box::new(move || {
             Box::pin(async move {
                 let mut sender = Some(sender);
-                let result =
-                    run_speech(&task_queue, ticket, &host, &timer, prepare, &mut sender).await;
+                let result = run_speech(
+                    &task_queue, ticket, &host, &timer, prepare, &mut sender, wait_for_completion,
+                ).await;
                 task_queue.finish(ticket);
-                if let Err(error) = result {
-                    if let Some(sender) = sender {
-                        let _ = sender.send(Err(error));
-                    } else if error != CANCELLED {
-                        AppLogger::e("ConfiguredTtsPlayback", &error);
-                    }
+                if let Some(sender) = sender {
+                    let _ = sender.send(result);
+                } else if let Err(error) = result {
+                    if error != CANCELLED { AppLogger::e("ConfiguredTtsPlayback", &error); }
                 }
             })
         }),
@@ -120,7 +160,7 @@ pub(super) async fn start_configured_speech(
     }
     receiver
         .await
-        .map_err(|_| "TTS playback task ended before startup".to_string())?
+        .map_err(|_| "TTS playback task ended before reporting its result".to_string())?
 }
 
 async fn run_speech(
@@ -130,11 +170,12 @@ async fn run_speech(
     timer: &Arc<dyn HostRuntimeTaskSchedulerHost>,
     prepare: PrepareSpeech,
     sender: &mut Option<oneshot::Sender<Result<TtsPlaybackStatus, String>>>,
-) -> Result<(), String> {
+    wait_for_completion: bool,
+) -> Result<TtsPlaybackStatus, String> {
     // Non-interrupting requests wait for both earlier plugin requests and host playback.
     loop {
         if let Some(status) =
-            queue.with_turn(ticket, || host.speechState().map_err(|e| e.to_string()))?
+            queue.with_turn(ticket, |_| host.speechState().map_err(|e| e.to_string()))?
         {
             if !status.active {
                 break;
@@ -149,10 +190,15 @@ async fn run_speech(
     if starts.is_empty() {
         return Err("TTS provider returned no audio segments".into());
     }
+    let mut started = None;
     for start in starts {
         // Recheck cancellation after synthesis, before any audio can start.
         let status = queue
-            .with_turn(ticket, || start(host.as_ref()))?
+            .with_turn(ticket, |state| {
+                let status = start(host.as_ref())?;
+                state.playing = Some((ticket, status.path.clone()));
+                Ok(status)
+            })?
             .ok_or("TTS playback lost its queue position")?;
         if !status.active {
             return Err(format!(
@@ -160,16 +206,22 @@ async fn run_speech(
                 status.details
             ));
         }
-        if let Some(sender) = sender.take() {
-            let _ = sender.send(Ok(status));
+        if started.is_none() {
+            if !wait_for_completion {
+                if let Some(sender) = sender.take() {
+                    let _ = sender.send(Ok(status.clone()));
+                }
+            }
+            started = Some(status);
         }
-        let initial_path = queue
-            .with_turn(ticket, || host.speechState().map_err(|e| e.to_string()))?
-            .ok_or("TTS playback lost its queue position")?
-            .path;
+        let initial_path = queue.with_turn(ticket, |state| {
+            let current = host.speechState().map_err(|error| error.to_string())?;
+            state.playing = Some((ticket, current.path.clone()));
+            Ok(current.path)
+        })?.ok_or("TTS playback lost its queue position")?;
         loop {
             let status = queue
-                .with_turn(ticket, || host.speechState().map_err(|e| e.to_string()))?
+                .with_turn(ticket, |_| host.speechState().map_err(|e| e.to_string()))?
                 .ok_or("TTS playback lost its queue position")?;
             if !status.active {
                 break;
@@ -183,7 +235,7 @@ async fn run_speech(
                 .map_err(|e| e.to_string())?;
         }
     }
-    Ok(())
+    started.ok_or_else(|| "TTS provider returned no audio segments".into())
 }
 
 #[cfg(test)]
@@ -301,7 +353,7 @@ mod tests {
                 Box::new(move || {
                     Box::pin(async move {
                         let _ = tx.send(
-                            start_configured_speech(host, worker_scheduler, interrupt, prepare)
+                            start_configured_speech(host, worker_scheduler, interrupt, false, None, prepare)
                                 .await,
                         );
                     })

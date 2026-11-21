@@ -4095,6 +4095,29 @@ export namespace ToolPkg {
   }
 
   /**
+   * Configures one bounded microphone capture in an owned window.
+   */
+  export interface FloatingWindowRecordingOptions {
+    /**
+     * Sets the capture limit in milliseconds (1000–20000, default 15000).
+     */
+    maxDurationMs?: number;
+    /**
+     * Stops after this much trailing silence (300–3000 ms) once speech is detected.
+     */
+    silenceMs?: number;
+  }
+
+  /**
+   * Carries a complete speech recording ready for STT.
+   */
+  export interface FloatingWindowRecording {
+    audio: number[];
+    fileName: string;
+    contentType: string;
+  }
+
+  /**
    * Controls general floating windows independently of launcher widgets.
    */
   export interface FloatingWindowApi {
@@ -4130,6 +4153,22 @@ export namespace ToolPkg {
      * Lists only the executing plugin's live windows.
      */
     list(): Promise<FloatingWindowInfo[]>;
+    /**
+     * Captures WAV audio while the owned window is visible; returns null when discarded.
+     */
+    record(id: string, options?: FloatingWindowRecordingOptions): Promise<FloatingWindowRecording | null>;
+    /**
+     * Reads the normalized microphone level (0 to 1) for this owned window; zero while idle.
+     */
+    recordingLevel(id: string): Promise<number>;
+    /**
+     * Ends active capture and delivers its WAV to the pending record call.
+     */
+    finishRecording(id: string): Promise<void>;
+    /**
+     * Discards active capture without returning audio.
+     */
+    cancelRecording(id: string): Promise<void>;
   }
 
   /**

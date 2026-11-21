@@ -1223,6 +1223,11 @@ fn registerTtsTools(handler: &mut AIToolHandler) {
         ToolRegistrationVisibility::INTERNAL,
     );
     handler.registerBuiltinTool(
+        BuiltinToolName::TtsCancel,
+        RegisteredToolExecutor::Shared(Arc::new(TtsToolExecutor { operation: TtsToolOperation::Cancel })),
+        ToolRegistrationVisibility::INTERNAL,
+    );
+    handler.registerBuiltinTool(
         BuiltinToolName::SttTranscribe,
         RegisteredToolExecutor::Shared(Arc::new(SttToolExecutor)),
         ToolRegistrationVisibility::INTERNAL,

@@ -58,6 +58,30 @@ await ToolPkg.ui.floatingWindows.close("pet");
 - 插件身份由 Rust 执行宿主提供。插件只能操作自己的窗口，传入其他插件名不能改变窗口归属。
 - 停用或卸载插件后，宿主关闭对应窗口。应用内目录变更立即触发检查；其他来源的变更最多每 5 秒检查一次。窗口不跨应用退出恢复。
 
+## 麦克风录音
+
+插件可以在自己的可见悬浮窗里，从用户点击触发一次有时限的录音。麦克风授权使用宿主的系统权限流程，同一宿主一次只允许一个悬浮窗录音。结束或丢弃录音后才能开始下一段。隐藏、关闭窗口或卸载插件会丢弃录音并释放麦克风。
+
+```ts
+const windows = ToolPkg.ui.floatingWindows;
+const recording = await windows.record('call', {
+    maxDurationMs: 15000,
+    silenceMs: 900,
+});
+if (recording !== null) {
+    const { text } = await Tools.Stt.transcribe(recording);
+    console.log(text);
+}
+```
+
+- `record(id, options?)` 等待完成并返回 `{audio, fileName, contentType}`，音频为 16 kHz、单声道、16 位 PCM WAV。
+- 录音期间可调用 `recordingLevel(id)` 获取当前窗口的归一化音量（`0` 到 `1`），用于绘制波纹或音量计。不采集时返回 `0`。
+- `maxDurationMs` 可设为 1000–20000 毫秒，默认 15000。`silenceMs` 可设为 300–3000 毫秒，设置后检测到一段声音才开始判断尾部静音，整段没有达到发声阈值时返回 `null`。
+- 从另一个界面事件调用 `finishRecording(id)` 可提前结束采集，WAV 由原来的 `record` 调用返回。`cancelRecording(id)` 丢弃采集，`record` 返回 `null`。权限或音频设备错误会拒绝 Promise。
+- 真实可用范围取决于宿主麦克风权限和系统的后台录音规则。系统悬浮窗权限只决定窗口能否显示。
+
+连续录音和播报的用法见 [语音通话插件](../packages/external/voice_call/README.md)。
+
 ## 宿主实现
 
 调用通过 `ToolPkg.ui.floatingWindows`、异步原生绑定、认证后的 `JsExecutionHost` 和 `FloatingWindowHost`，由 Flutter 主引擎经 `floating_windows` 驱动当前窗口范围。

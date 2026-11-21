@@ -293,6 +293,9 @@ copy that file into their own source tree, import it locally and declare
 `com.operit.character_cards >= 0.2.0` in `requires`, following
 `plugins/docs/PUBLIC_API.md`. Public calls use `ToolPkg.callDependency`.
 
+`characterCards.defaultAvatar()` requires `com.operit.character_cards >= 0.2.8`.
+It returns the shared VFS path of the default Operit avatar for dependency UIs.
+
 `characterCards.memory.query({ participantId, query, limit, snapshotId })`
 resolves the explicit participant's actual memory binding and reuses the
 plugin's existing query implementation. Results contain complete typed

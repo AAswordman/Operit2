@@ -525,7 +525,13 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 show: function(id) { return windowCommand('show', {id:id}); },
                 hide: function(id) { return windowCommand('hide', {id:id}); },
                 close: function(id) { return windowCommand('close', {id:id}); },
-                list: function() { return windowCommand('list', {}); }
+                list: function() { return windowCommand('list', {}); },
+                record: function(id, options) {
+                    return windowCommand('record', Object.assign({}, options, {id:id}));
+                },
+                recordingLevel: function(id) { return windowCommand('recordingLevel', {id:id}); },
+                finishRecording: function(id) { return windowCommand('finishRecording', {id:id}); },
+                cancelRecording: function(id) { return windowCommand('cancelRecording', {id:id}); }
               }
             },
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'ToolPkg.registerToolboxUiModule'),

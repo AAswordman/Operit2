@@ -430,7 +430,12 @@ pub trait ToolRuntimeSupport: Send + Sync {
     fn speakSpeech(
         &self,
         request: operit_plugin_sdk::js_sdk::tts::TtsSpeakRequest,
+        owner: Option<String>,
     ) -> futures_util::future::BoxFuture<'_, Result<operit_plugin_sdk::js_sdk::results::TtsSpeakResultData, String>>;
+    /// Cancels one utterance belonging to the authenticated plugin.
+    fn cancelSpeech(&self, _owner: &str, _id: &str) -> Result<bool, String> {
+        Err("Speech cancellation is unavailable on this host".into())
+    }
     /// Recognizes supplied audio through the configured provider on this host.
     fn transcribeSpeech(&self, _request: operit_plugin_sdk::js_sdk::stt::SttTranscribeRequest)
         -> Result<operit_plugin_sdk::js_sdk::results::SttTranscribeResultData, String> {

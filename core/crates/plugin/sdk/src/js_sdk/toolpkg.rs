@@ -3124,6 +3124,19 @@ pub struct ToolPkgFloatingWindowInfo {
     pub visible: bool,
     pub options: ToolPkgFloatingWindowOptions,
 }
+/// Configures one bounded microphone capture in an owned window.
+pub struct ToolPkgFloatingWindowRecordingOptions {
+    /// Sets the capture limit in milliseconds (1000–20000, default 15000).
+    pub maxDurationMs: Option<u32>,
+    /// Stops after this much trailing silence (300–3000 ms) once speech is detected.
+    pub silenceMs: Option<u32>,
+}
+/// Carries a complete speech recording ready for STT.
+pub struct ToolPkgFloatingWindowRecording {
+    pub audio: Vec<u8>,
+    pub fileName: String,
+    pub contentType: String,
+}
 /// Controls general floating windows independently of launcher widgets.
 pub struct ToolPkgFloatingWindowApi;
 pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
@@ -3143,6 +3156,14 @@ pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
     fn close(&self, id: String) -> JsFuture<()>;
     /// Lists only the executing plugin's live windows.
     fn list(&self) -> JsFuture<Vec<ToolPkgFloatingWindowInfo>>;
+    /// Captures WAV audio while the owned window is visible; returns null when discarded.
+    fn record(&self, id: String, options: Option<ToolPkgFloatingWindowRecordingOptions>) -> JsFuture<JsNullable<ToolPkgFloatingWindowRecording>>;
+    /// Reads the normalized microphone level (0 to 1) for this owned window; zero while idle.
+    fn recordingLevel(&self, id: String) -> JsFuture<f64>;
+    /// Ends active capture and delivers its WAV to the pending record call.
+    fn finishRecording(&self, id: String) -> JsFuture<()>;
+    /// Discards active capture without returning audio.
+    fn cancelRecording(&self, id: String) -> JsFuture<()>;
 }
 /// Groups runtime presentation services for plugin-owned user interfaces.
 pub struct ToolPkgUiApi {

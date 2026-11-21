@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 #[path = "ConfiguredTtsPlayback.rs"]
 mod configured_playback;
-use configured_playback::{replace_playback, start_configured_speech, SpeechStart};
+use configured_playback::{cancel_configured_speech, replace_playback, start_configured_speech, SpeechStart};
 
 use operit_host_api::{TtsPlaybackHost, TtsPlaybackRequest, TtsPlaybackStatus};
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
@@ -108,6 +108,8 @@ impl TtsPlaybackService {
         text: String,
         interrupt: bool,
         pitch: f64,
+        waitForCompletion: bool,
+        playbackKey: Option<(String, String)>,
     ) -> Result<TtsHostPlaybackResult, String> {
         let text = TtsCleaner::clean(&text);
         validateSpeech(&text, config.speed, pitch)?;
@@ -130,6 +132,8 @@ impl TtsPlaybackService {
             host,
             scheduler,
             interrupt,
+            waitForCompletion,
+            playbackKey,
             Box::new(move || {
                 if system {
                     let request = systemSpeechRequest(config, text, interrupt, pitch);
@@ -152,6 +156,11 @@ impl TtsPlaybackService {
         )
         .await?;
         Ok(ttsHostPlaybackResult(status))
+    }
+
+    /// Cancels only the supplied plugin's configured utterance.
+    pub(crate) fn cancelConfigured(&self, owner: &str, id: &str) -> Result<bool, String> {
+        cancel_configured_speech(&self.ttsPlaybackHost()?, owner, id)
     }
 
     /// Pauses host speech playback.

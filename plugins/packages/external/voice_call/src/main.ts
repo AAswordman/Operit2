@@ -1,0 +1,353 @@
+import type { ComposeCanvasCommand, ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
+import { characterCards } from "./dependencies/character_cards/api.js";
+
+const PACKAGE = "com.operit.voice_call";
+const CONTROL_ROUTE = `toolpkg:${PACKAGE}:ui:control`;
+const CALL_ROUTE = `toolpkg:${PACKAGE}:ui:call`;
+const WINDOW = "voice-call";
+const title = { zh: "语音通话", en: "Voice Call" };
+const AVATAR = "Operit";
+const WAVE_SIZE = 212;
+const CENTER = WAVE_SIZE / 2;
+
+const labels = {
+  idle: ["准备通话", "Ready to call"],
+  connecting: ["正在建立会话…", "Opening conversation…"],
+  listening: ["正在听…", "Listening…"],
+  recognizing: ["正在识别…", "Transcribing…"],
+  waiting: ["正在等待回复…", "Waiting for a reply…"],
+  speaking: ["正在播报…", "Speaking…"],
+  closing: ["正在挂断…", "Ending call…"],
+  error: ["通话已暂停", "Call paused"],
+  start: ["开始通话", "Start call"],
+  retry: ["继续通话", "Resume call"],
+  submit: ["说完了", "Done speaking"],
+  hangup: ["挂断", "Hang up"],
+  open: ["打开通话悬浮窗", "Open call window"],
+  grant: ["授予悬浮窗权限", "Grant overlay permission"],
+  unsupported: ["当前宿主不支持悬浮窗。", "Floating windows are unavailable on this host."],
+  permission: ["在系统设置授权后，再打开通话窗。", "Grant permission in system settings, then open the call window."],
+  setup: ["使用应用当前的语音识别和朗读配置。每个通话窗使用一个独立会话。", "Uses the selected speech recognition and voice settings. Each call window gets its own conversation."],
+  system: ["已打开系统悬浮窗。", "Opened the system overlay."],
+  application: ["已打开 Operit 应用内悬浮窗。", "Opened a floating window inside Operit."],
+  noReply: ["本轮没有可播报的 AI 回复。", "No assistant reply was available to speak."],
+  you: ["你", "You"],
+} as const;
+
+type Label = keyof typeof labels;
+type Phase = "idle" | "connecting" | "listening" | "recognizing" | "waiting" | "speaking" | "closing" | "error";
+
+/** Selects window and control text using the plugin locale. */
+function text(label: Label): string {
+  return labels[label][getLang().startsWith("zh") ? 0 : 1];
+}
+
+/** Formats and logs a host error without hiding its reason from the user. */
+function report(error: unknown): string {
+  console.error("[voice_call]", error);
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** Opens or reveals the single call window and handles overlay authorization. */
+export function control(ctx: ComposeDslContext): ComposeNode {
+  const windowApi = ToolPkg.ui.floatingWindows;
+  const [status, setStatus] = ctx.useState("status", "");
+  const [needsPermission, setNeedsPermission] = ctx.useState("needsPermission", false);
+  const [busy, setBusy] = ctx.useState("busy", false);
+  const inFlight = ctx.useRef("inFlight", false);
+
+  /** Runs an explicit window operation and reflects its outcome. */
+  async function launch(): Promise<void> {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    try {
+      const caps = await windowApi.capabilities();
+      if (!caps.supported) throw new Error(text("unsupported"));
+      setNeedsPermission(!caps.permissionGranted);
+      if (!caps.permissionGranted) {
+        setStatus(text("permission"));
+        return;
+      }
+      const windows = await windowApi.list();
+      if (windows.some(window => window.id === WINDOW)) {
+        await windowApi.show(WINDOW);
+      } else {
+        await windowApi.open({
+          id: WINDOW,
+          route: CALL_ROUTE,
+          options: { width: 340, height: 404, draggable: true },
+        });
+      }
+      setStatus(text(caps.scope === "system" ? "system" : "application"));
+    } catch (error) {
+      setStatus(report(error));
+    } finally {
+      inFlight.current = false;
+      setBusy(false);
+    }
+  }
+
+  /** Opens the platform authorization UI from a user gesture. */
+  async function requestPermission(): Promise<void> {
+    try {
+      await windowApi.requestPermission();
+    } catch (error) {
+      setStatus(report(error));
+    }
+  }
+
+  return ctx.UI.Column({ padding: 16, spacing: 10 }, [
+    ctx.UI.Text({ text: text("setup"), style: "bodyMedium" }),
+    ctx.UI.Button({ text: text("open"), enabled: !busy, onClick: launch }),
+    ...(needsPermission ? [ctx.UI.OutlinedButton({ onClick: requestPermission }, [ctx.UI.Text({ text: text("grant") })])] : []),
+    ...(status ? [ctx.UI.Text({ text: status, style: "bodySmall" })] : []),
+  ]);
+}
+
+/** Sends soft circular wavefronts out from the avatar. */
+function avatarWave(ctx: ComposeDslContext, avatar: string, phase: Phase, frame: { time: number; level: number }): ComposeNode {
+  const ui = ctx.UI;
+  const colors = ctx.MaterialTheme.colorScheme;
+  const processing = phase === "waiting" || phase === "recognizing";
+  const color = processing ? colors.tertiary : colors.primary;
+  const center = { type: "Circle", cx: CENTER, cy: CENTER } as const;
+  const commands: ComposeCanvasCommand[] = [
+    { ...center, radius: 63, color: color.copy({ alpha: 0.06 }) },
+    { ...center, radius: 58, color: color.copy({ alpha: 0.10 }) },
+  ];
+  if (phase === "listening" || phase === "speaking" || processing) {
+    const strength = phase === "listening" ? 0.16 + 0.84 * frame.level : processing ? 0.24 : 0.48;
+    const period = processing ? 3000 : 2100;
+    for (let index = 0; index < 3; index++) {
+      const progress = (frame.time / period + index / 3) % 1;
+      const radius = 55 + (1 - (1 - progress) ** 1.35) * (30 + 16 * strength);
+      const fade = Math.sin(Math.PI * progress) * (1 - 0.45 * progress);
+      const opacity = (0.24 + 0.48 * strength) * fade;
+      commands.push(
+        { ...center, radius: radius - 2, strokeWidth: 8 + 5 * strength, color: color.copy({ alpha: opacity * 0.18 }) },
+        { ...center, radius, strokeWidth: 0.9 + 1.5 * strength, color: color.copy({ alpha: opacity }) },
+      );
+    }
+  }
+  return ui.Box({ width: WAVE_SIZE, height: WAVE_SIZE, contentAlignment: "center" }, [
+    ui.Canvas({ key: "avatar-wave", width: WAVE_SIZE, height: WAVE_SIZE, commands }),
+    ...(avatar ? [ui.Image({ key: "call-avatar", path: avatar, width: 104, height: 104, contentScale: "crop",
+      modifier: ctx.Modifier.clip({ type: "circle" }), contentDescription: AVATAR })] : []),
+  ]);
+}
+
+/** Runs a half-duplex call in the real floating window's UI session. */
+export function call(ctx: ComposeDslContext): ComposeNode {
+  const windowApi = ToolPkg.ui.floatingWindows;
+  const [phase, setPhase] = ctx.useState<Phase>("phase", "idle");
+  const [heard, setHeard] = ctx.useState("heard", "");
+  const [reply, setReply] = ctx.useState("reply", "");
+  const [failure, setFailure] = ctx.useState("failure", "");
+  const [avatar, setAvatar] = ctx.useState("avatar", "");
+  const [frame, setFrame] = ctx.useState("frame", { time: 0, level: 0 });
+  const session = ctx.useRef("session", {
+    chatId: "",
+    active: false,
+    closing: false,
+    sending: false,
+    playbackId: "",
+  }).current;
+
+  /** Prevents another turn and cancels any chat or speech already started. */
+  async function stopCall(): Promise<void> {
+    session.active = false;
+    await Promise.all([
+      ...(session.sending ? [Tools.Chat.cancel(session.chatId).catch(report)] : []),
+      ...(session.playbackId ? [Tools.Tts.cancel(session.playbackId).catch(report)] : []),
+    ]);
+  }
+
+  ctx.useEffect("call-lifetime", () => () => { void stopCall(); }, []);
+
+  ctx.useEffect("call-avatar", () => {
+    let disposed = false;
+    void characterCards.defaultAvatar().then(path => {
+      if (!disposed) setAvatar(path);
+    }).catch(error => {
+      if (!disposed) setFailure(report(error));
+    });
+    return () => { disposed = true; };
+  }, []);
+
+  ctx.useEffect("call-wave", () => {
+    if (phase !== "listening" && phase !== "recognizing" && phase !== "waiting" && phase !== "speaking") {
+      return () => {};
+    }
+    const start = Date.now();
+    let nextSample = 0;
+    let disposed = false;
+    let measuring = false;
+    let meterFailed = false;
+    let target = 0;
+    let level = 0;
+    const timer = setInterval(() => {
+      const time = Date.now() - start;
+      if (phase === "listening" && !measuring && !meterFailed && time >= nextSample) {
+        measuring = true;
+        nextSample = time + 100;
+        void windowApi.recordingLevel(WINDOW).then(value => {
+          if (!disposed) target = value;
+        }).catch(error => {
+          if (disposed) return;
+          meterFailed = true;
+          setFailure(report(error));
+        }).finally(() => { measuring = false; });
+      }
+      level += (target - level) * 0.38;
+      setFrame({ time, level });
+    }, 34);
+    return () => {
+      disposed = true;
+      clearInterval(timer);
+    };
+  }, [phase]);
+
+  /** Records each turn, persists it in chat, and waits for speech before listening again. */
+  async function run(): Promise<void> {
+    if (session.active || session.closing) return;
+    session.active = true;
+    setFailure("");
+    try {
+      if (!session.chatId) {
+        setPhase("connecting");
+        const chat = await Tools.Chat.createNew({ setAsCurrentChat: false });
+        session.chatId = chat.chatId;
+      }
+      while (session.active) {
+        setPhase("listening");
+        const recording = await windowApi.record(WINDOW, { maxDurationMs: 20000, silenceMs: 900 });
+        if (!session.active) return;
+        if (!recording) {
+          setPhase("idle");
+          return;
+        }
+        setPhase("recognizing");
+        const recognized = await Tools.Stt.transcribe(recording);
+        if (!session.active) return;
+        const transcript = recognized.text.trim();
+        if (!transcript) continue;
+
+        setHeard(transcript);
+        setReply("");
+        setPhase("waiting");
+        session.sending = true;
+        const turn = await Tools.Chat.sendMessage({
+          kind: "submit",
+          chatId: session.chatId,
+          runtime: "floating",
+          input: { text: transcript, attachments: [], replyToMessageTimestamp: null },
+          turn: { kind: "execute" },
+          notifyReply: false,
+        }).finally(() => { session.sending = false; });
+        if (!session.active) return;
+        if (turn.outcome.type === "blocked") {
+          throw new Error(turn.outcome.message ?? text("noReply"));
+        }
+        const answer = turn.aiResponse?.trim();
+        if (!answer) throw new Error(text("noReply"));
+
+        setReply(answer);
+        setPhase("speaking");
+        session.playbackId = `call-${session.chatId}-${turn.sentAt}`;
+        try {
+          await Tools.Tts.speak({
+            text: answer,
+            interrupt: false,
+            waitForCompletion: true,
+            playbackId: session.playbackId,
+          });
+        } finally {
+          session.playbackId = "";
+        }
+      }
+    } catch (error) {
+      if (session.active) {
+        setFailure(report(error));
+        setPhase("error");
+      }
+    } finally {
+      session.active = false;
+    }
+  }
+
+  /** Ends the active recording and lets the current turn continue. */
+  async function finishRecording(): Promise<void> {
+    try {
+      await windowApi.finishRecording(WINDOW);
+    } catch (error) {
+      setFailure(report(error));
+    }
+  }
+
+  /** Prevents later phases from starting and closes the window on hangup. */
+  async function hangup(): Promise<void> {
+    if (session.closing) return;
+    session.closing = true;
+    setPhase("closing");
+    try {
+      await stopCall();
+      await windowApi.close(WINDOW);
+    } catch (error) {
+      session.closing = false;
+      setFailure(report(error));
+      setPhase("error");
+    }
+  }
+
+  const ui = ctx.UI;
+  const colors = ctx.MaterialTheme.colorScheme;
+  const canStart = phase === "idle" || phase === "error";
+  const listening = phase === "listening";
+  const statusColor = phase === "error" ? colors.error : colors.primary;
+  const statusIcon = listening ? "mic" : phase === "speaking" ? "graphic_eq" : canStart ? "call" : "more_horiz";
+  const detail = failure || (phase === "speaking" ? reply : heard ? `${text("you")}  ${heard}` : "");
+  return ui.Surface({ fillMaxSize: true, containerColor: colors.surface, shape: { type: "rounded", radius: 28 } }, [
+    ui.Column({ fillMaxSize: true, horizontalAlignment: "center", paddingHorizontal: 20, paddingVertical: 16, spacing: 6,
+      backgroundShape: { type: "rounded", radius: 28 },
+      backgroundBrush: { type: "VerticalGradient", colors: [colors.primaryContainer, colors.surface, colors.surface] },
+    }, [
+      ui.Text({ text: title[getLang().startsWith("zh") ? "zh" : "en"], style: "labelMedium", color: colors.onSurfaceVariant }),
+      avatarWave(ctx, avatar, phase, frame),
+      ui.Column({ horizontalAlignment: "center", spacing: 6 }, [
+        ui.Text({ text: AVATAR, style: "headlineSmall", color: colors.onSurface }),
+        ui.Row({ verticalAlignment: "center", spacing: 5, paddingHorizontal: 11, paddingVertical: 5,
+          background: statusColor, backgroundAlpha: 0.1, backgroundShape: { type: "rounded", radius: 20 },
+        }, [
+          ui.Icon({ name: statusIcon, size: 14, tint: statusColor }),
+          ui.Text({ text: text(phase), style: "labelMedium", color: statusColor }),
+        ]),
+      ]),
+      ui.Box({ weight: 1, fillMaxWidth: true, contentAlignment: "center" }, detail ? [
+        ui.Text({ text: detail, textAlign: "center", style: "bodySmall", color: failure ? colors.error : colors.onSurfaceVariant,
+          maxLines: 2, overflow: "ellipsis" }),
+      ] : []),
+      ui.Row({ spacing: 10, verticalAlignment: "center", fillMaxWidth: true, horizontalArrangement: "center" }, [
+        ...(canStart || listening ? [ui.FilledTonalButton({
+          width: 144,
+          text: text(listening ? "submit" : session.chatId ? "retry" : "start"),
+          onClick: listening ? finishRecording : run,
+        })] : []),
+        ui.Button({ width: 118, enabled: phase !== "closing", onClick: hangup,
+          containerColor: colors.error, contentColor: colors.onError,
+        }, [ui.Row({ spacing: 6, verticalAlignment: "center" }, [
+          ui.Icon({ name: "call_end", size: 16, tint: colors.onError }),
+          ui.Text({ text: text("hangup"), style: "labelLarge", color: colors.onError }),
+        ])]),
+      ]),
+    ]),
+  ]);
+}
+
+/** Registers the toolbox launcher and the standalone call surface. */
+export function registerToolPkg(): boolean {
+  ToolPkg.registerUiRoute({ id: "control", route: CONTROL_ROUTE, runtime: "compose_dsl", screen: control, title });
+  ToolPkg.registerUiRoute({ id: "call", route: CALL_ROUTE, runtime: "compose_dsl", screen: call, title });
+  ToolPkg.registerNavigationEntry({ id: "control", route: CONTROL_ROUTE, title, surface: "toolbox", icon: "Call" });
+  return true;
+}

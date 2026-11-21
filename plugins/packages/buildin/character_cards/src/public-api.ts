@@ -1,4 +1,4 @@
-import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, ChatConfigurationResult, DomainInput, DomainOutput } from "./api";
+import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, ChatConfigurationResult, DomainInput, DomainOutput, EmptyParams } from "./api";
 import { parseDomainPayload, parseMemoryQueryRequest } from "./domain";
 import { MemoryTools } from "./runtime-tools/memory";
 import { dispatchDomain } from "./service-runtime";
@@ -6,6 +6,14 @@ import { findChatBinding, chatSelection, readDraftBinding, commitDraftBinding, a
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
 const memoryQueries = new MemoryTools(dispatchDomain);
+
+/** Resolves the provider's default avatar for dependency UIs. */
+export function defaultAvatarApi(event: ToolPkg.PublicApiEvent<EmptyParams>): Promise<string> {
+  if (!event.payload || typeof event.payload !== "object" || Array.isArray(event.payload) || Object.keys(event.payload).length !== 0) {
+    throw new Error("avatar.default requires an empty object");
+  }
+  return ToolPkg.readResource("character_default_avatar");
+}
 
 /** Resolves this chat's persisted configuration through the sole initialized service. */
 export async function chatConfigurationResolveApi(event: ToolPkg.PublicApiEvent<ChatConfigurationRequest>): Promise<ChatConfigurationResult> {
@@ -467,6 +475,7 @@ export async function memoryImportApi(event: ToolPkg.PublicApiEvent<DomainInput<
 
 /** Publishes independent typed methods backed by the same service as commands and UI. */
 export function registerDomainApis(): void {
+  ToolPkg.registerApi({ name: "avatar.default", function: defaultAvatarApi });
   ToolPkg.registerApi({ name: "chat.configuration.draft.resolve", function: chatConfigurationDraftResolveApi });
   ToolPkg.registerApi({ name: "chat.configuration.draft.commit", function: chatConfigurationDraftCommitApi });
   ToolPkg.registerApi({ name: "chat.configuration.draft.abort", function: chatConfigurationDraftAbortApi });

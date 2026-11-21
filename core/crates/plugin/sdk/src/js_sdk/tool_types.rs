@@ -143,6 +143,7 @@ pub struct ToolResultMap {
     #[display(action = "speak", icon = "audio", target = "text")]
     pub tts_synthesize: TtsSynthesizeResultData,
     pub tts_speak: TtsSpeakResultData,
+    pub tts_cancel: BooleanResultData,
     #[display(action = "transcribe", icon = "audio", target = "path")]
     pub stt_transcribe: SttTranscribeResultData,
     pub tts_list_configs: TtsListConfigsResultData,

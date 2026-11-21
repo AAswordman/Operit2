@@ -262,8 +262,18 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
     fn speakSpeech(
         &self,
         request: TtsSpeakRequest,
+        owner: Option<String>,
     ) -> futures_util::future::BoxFuture<'_, Result<TtsSpeakResultData, String>> {
         Box::pin(async move {
+            let playbackKey = match request.playbackId {
+                Some(id) => {
+                    if id.is_empty() || id.trim() != id || id.len() > 128 {
+                        return Err("Speech playback ID must be 1–128 bytes of trimmed text".into());
+                    }
+                    Some((owner.ok_or("Named speech requires an authenticated plugin")?, id))
+                }
+                None => None,
+            };
             let manager =
                 crate::data::preferences::TtsConfigManager::TtsConfigManager::getInstance();
             let id = match request.configId {
@@ -285,6 +295,8 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 request.text,
                 interrupt,
                 pitch,
+                request.waitForCompletion.unwrap_or(false),
+                playbackKey,
             )
             .await?;
             Ok(TtsSpeakResultData {
@@ -295,6 +307,11 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                 pitch,
             })
         })
+    }
+
+    /// Cancels a queued or playing utterance owned by this plugin.
+    fn cancelSpeech(&self, owner: &str, id: &str) -> Result<bool, String> {
+        TtsPlaybackService::getInstance(&self.hostManager)?.cancelConfigured(owner, id)
     }
 
     fn transcribeSpeech(&self, request: operit_plugin_sdk::js_sdk::stt::SttTranscribeRequest)

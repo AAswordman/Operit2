@@ -77,8 +77,20 @@ export namespace Tts {
      * Overrides the system voice pitch for this utterance only; generated audio requires 1.0.
      */
     pitch?: number;
+    /**
+     * Resolves after the last segment finishes instead of after playback starts.
+     */
+    waitForCompletion?: boolean;
+    /**
+     * Names this utterance for cancellation within the executing plugin.
+     */
+    playbackId?: string;
   }
 
+  /**
+   * Cancels the executing plugin's matching queued or active utterance.
+   */
+  function cancel(id: string): Promise<boolean>;
   /**
    * Reads the current application-wide speech configuration ID.
    */

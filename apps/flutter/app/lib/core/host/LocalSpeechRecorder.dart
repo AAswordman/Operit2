@@ -8,7 +8,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:record/record.dart';
 
-import '../../../../core/logging/ClientLogger.dart';
+import '../logging/ClientLogger.dart';
 
 class RecordedAudio {
   final Uint8List bytes;
@@ -66,13 +66,13 @@ class LocalSpeechRecorder {
   static const MethodChannel _windowsAudioInputChannel = MethodChannel(
     'operit/audio-input',
   );
-  static const int _sampleRate = 16000;
+  static const int sampleRate = 16000;
   static const int _channelCount = 1;
   static const int _bitsPerSample = 16;
   static const int _streamBufferSize = 256;
   static const int _minimumPcmDurationMs = 250;
   static const int _minimumPcmBytes =
-      _sampleRate *
+      sampleRate *
       _channelCount *
       (_bitsPerSample ~/ 8) *
       _minimumPcmDurationMs ~/
@@ -87,7 +87,7 @@ class LocalSpeechRecorder {
   StackTrace? _streamErrorStackTrace;
 
   /// Starts a 16 kHz mono PCM16 microphone stream.
-  Future<void> start() async {
+  Future<void> start({void Function(Uint8List)? onChunk}) async {
     if (_pcmBuilder != null) {
       throw StateError('A speech recording is already active');
     }
@@ -102,7 +102,7 @@ class LocalSpeechRecorder {
     final inputDevice = await _resolveInputDevice();
     if (inputDevice != null) {
       ClientLogger.i(
-        'recording start sampleRate=$_sampleRate channels=$_channelCount '
+        'recording start sampleRate=$sampleRate channels=$_channelCount '
         'inputRole=default inputId=${inputDevice.id} inputLabel=${inputDevice.label}',
         tag: _logTag,
       );
@@ -110,7 +110,7 @@ class LocalSpeechRecorder {
     final stream = await _recorder.startStream(
       RecordConfig(
         encoder: AudioEncoder.pcm16bits,
-        sampleRate: _sampleRate,
+        sampleRate: sampleRate,
         numChannels: _channelCount,
         streamBufferSize: _streamBufferSize,
         device: inputDevice,
@@ -125,6 +125,7 @@ class LocalSpeechRecorder {
       (Uint8List chunk) {
         pcmBuilder.add(chunk);
         diagnostics.add(chunk);
+        onChunk?.call(chunk);
       },
       onError: (Object error, StackTrace stackTrace) {
         _streamError = error;
@@ -225,7 +226,7 @@ class LocalSpeechRecorder {
     const headerLength = 44;
     const bytesPerSample = _bitsPerSample ~/ 8;
     const blockAlign = _channelCount * bytesPerSample;
-    const byteRate = _sampleRate * blockAlign;
+    const byteRate = sampleRate * blockAlign;
     final wavBytes = Uint8List(headerLength + pcmBytes.length);
     final header = ByteData.view(wavBytes.buffer, 0, headerLength);
     _writeAscii(wavBytes, 0, 'RIFF');
@@ -235,7 +236,7 @@ class LocalSpeechRecorder {
     header.setUint32(16, 16, Endian.little);
     header.setUint16(20, 1, Endian.little);
     header.setUint16(22, _channelCount, Endian.little);
-    header.setUint32(24, _sampleRate, Endian.little);
+    header.setUint32(24, sampleRate, Endian.little);
     header.setUint32(28, byteRate, Endian.little);
     header.setUint16(32, blockAlign, Endian.little);
     header.setUint16(34, _bitsPerSample, Endian.little);

@@ -6,6 +6,7 @@ import 'package:flutter/widgets.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../../ui/main/navigation/ToolPkgCatalogChangeBus.dart';
+import 'RuntimeWindowRecording.dart';
 
 class _OwnedFloatingWindow {
   _OwnedFloatingWindow(this.window, this.route, this.options, this.state);
@@ -14,6 +15,7 @@ class _OwnedFloatingWindow {
   FloatingWindowOptions options;
   Map<String, Object?> state;
   bool visible = true;
+  RuntimeWindowRecording? recording;
 
   /// Reports measured geometry separately from the validated configuration.
   Future<Map<String, Object?>> info(String id) async {
@@ -42,11 +44,35 @@ class RuntimeFloatingWindowController {
   static Future<void> _tail = Future<void>.value();
   static Timer? _audit;
   static StreamSubscription<void>? _catalog;
+  static RuntimeWindowRecording? _activeRecording;
 
   static Future<Object?> command(Map<String, Object?> request) {
     final work = _tail.then((_) => _command(request));
     _tail = work.then<void>((_) {}, onError: (Object _, StackTrace stack) {});
-    return work;
+    return work.then((value) async {
+      if (value is! (_OwnedFloatingWindow, RuntimeWindowRecording)) {
+        return value;
+      }
+      final (window, capture) = value;
+      try {
+        final audio = await capture.result;
+        if (audio == null) return null;
+        return {
+          'audio': audio.bytes,
+          'fileName': audio.fileName,
+          'contentType': audio.contentType,
+        };
+      } finally {
+        if (identical(_activeRecording, capture)) _activeRecording = null;
+        if (identical(window.recording, capture)) window.recording = null;
+      }
+    });
+  }
+
+  /// Discards any microphone capture when the owner connection is uninstalled.
+  static void cancelRecording() {
+    final capture = _activeRecording;
+    if (capture != null) unawaited(capture.finish(discard: true));
   }
 
   static Future<Object?> _command(Map<String, Object?> request) async {
@@ -86,7 +112,9 @@ class RuntimeFloatingWindowController {
       );
       final fill = (request['fill'] as bool?) ?? false;
       final support = await FloatingWindows.capabilities();
-      if ((options.x != null || options.y != null || options.screenBounds != null) &&
+      if ((options.x != null ||
+              options.y != null ||
+              options.screenBounds != null) &&
           support['positioning'] != true) {
         throw UnsupportedError(
           'This host does not support absolute window positioning',
@@ -147,10 +175,33 @@ class RuntimeFloatingWindowController {
         owned.visible = true;
       case 'hide':
         await owned.window.hide();
+        _discardRecording(owned);
         owned.visible = false;
       case 'close':
+        _discardRecording(owned);
         await owned.window.close();
         _remove(key);
+        return null;
+      case 'record':
+        if (!owned.visible) throw StateError('The recording window is hidden');
+        if (_activeRecording != null) {
+          throw StateError('A floating window is already recording');
+        }
+        final maxDuration =
+            _duration(request, 'maxDurationMs', 1000, 20000) ?? 15000;
+        final silence = _duration(request, 'silenceMs', 300, 3000);
+        final capture = RuntimeWindowRecording(maxDuration, silence);
+        _activeRecording = capture;
+        owned.recording = capture;
+        return (owned, capture);
+      case 'recordingLevel':
+        return owned.recording?.level ?? 0.0;
+      case 'finishRecording':
+      case 'cancelRecording':
+        final capture = owned.recording;
+        if (capture != null && identical(_activeRecording, capture)) {
+          unawaited(capture.finish(discard: operation == 'cancelRecording'));
+        }
         return null;
       default:
         throw ArgumentError('Unknown floating window operation: $operation');
@@ -158,8 +209,33 @@ class RuntimeFloatingWindowController {
     return owned.info(id);
   }
 
+  /// Validates a supplied capture interval without rounding or clamping it.
+  static int? _duration(
+    Map<String, Object?> request,
+    String field,
+    int min,
+    int max,
+  ) {
+    final value = request[field];
+    if (value == null) return null;
+    if (value is! int || value < min || value > max) {
+      throw ArgumentError('$field must be an integer between $min and $max');
+    }
+    return value;
+  }
+
+  /// Stops capture for a window without waiting on a permission dialog.
+  static void _discardRecording(_OwnedFloatingWindow owned) {
+    final capture = owned.recording;
+    owned.recording = null;
+    if (capture != null && identical(_activeRecording, capture)) {
+      unawaited(capture.finish(discard: true));
+    }
+  }
+
   static void _remove(String key) {
-    _windows.remove(key);
+    final owned = _windows.remove(key);
+    if (owned != null) _discardRecording(owned);
     _owners.remove(key);
     _ids.remove(key);
     if (_windows.isEmpty) {
@@ -192,6 +268,7 @@ class RuntimeFloatingWindowController {
                 .toSet();
         for (final entry in _windows.entries.toList()) {
           if (!enabled.contains(_owners[entry.key])) {
+            _discardRecording(entry.value);
             await entry.value.window.close();
             _remove(entry.key);
           }

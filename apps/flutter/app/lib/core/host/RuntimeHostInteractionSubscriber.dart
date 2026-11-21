@@ -192,6 +192,7 @@ class RuntimeHostInteractionSubscriber {
     final subscription = _subscription;
     _subscription = null;
     _delivery.clear();
+    RuntimeFloatingWindowController.cancelRecording();
     await subscription?.cancel();
   }
 

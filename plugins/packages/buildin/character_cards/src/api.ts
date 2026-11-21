@@ -316,6 +316,9 @@ function call<K extends DomainOperation>(operation: K, payload: DomainInput<K>):
 }
 /** Exposes typed domain methods to packages declaring a dependency on character cards. */
 export const characterCards = {
+  /** Returns the shared VFS image path for the default Operit avatar. Requires character cards 0.2.8. */
+  defaultAvatar: (): Promise<string> =>
+    ToolPkg.callDependency<EmptyParams, string>("com.operit.character_cards", "avatar.default", {}),
 
   chat: {
     configuration: {

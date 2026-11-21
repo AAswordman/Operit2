@@ -174,7 +174,7 @@ fn speak(
             "public-speech-test",
             Box::new(move || {
                 Box::pin(async move {
-                    let _ = tx.send(support.speakSpeech(request).await);
+                    let _ = tx.send(support.speakSpeech(request, None).await);
                 })
             }),
         )
@@ -185,6 +185,8 @@ fn speak(
 
 fn request(text: &str) -> TtsSpeakRequest {
     TtsSpeakRequest {
+        waitForCompletion: None,
+        playbackId: None,
         text: text.into(),
         configId: None,
         interrupt: None,
