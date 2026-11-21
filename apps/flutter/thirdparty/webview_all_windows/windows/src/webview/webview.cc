@@ -30,7 +30,9 @@ bool IsExternalApplicationUrl(const std::string &url) {
   if (end == std::string::npos || end == 0) return false;
   auto scheme = url.substr(0, end);
   std::transform(scheme.begin(), scheme.end(), scheme.begin(),
-                 [](unsigned char character) { return std::tolower(character); });
+                 [](unsigned char character) {
+                   return static_cast<char>(std::tolower(character));
+                 });
   static const std::set<std::string> browser_schemes = {
       "http", "https", "file", "content", "about", "data", "blob", "javascript"};
   return browser_schemes.count(scheme) == 0;

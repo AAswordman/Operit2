@@ -1280,5 +1280,5 @@ function postWorkerMessage(
 
 /** Converts one runtime or host exception into a transport-safe message. */
 function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
+  return error instanceof Error ? `${String(error)}\n${error.stack ?? ""}`.trim() : String(error);
 }

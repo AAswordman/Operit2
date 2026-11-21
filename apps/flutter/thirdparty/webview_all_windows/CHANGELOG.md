@@ -1,5 +1,6 @@
 ## 1.2.1
 
+* Fix Windows MSVC C4244/C2220 build failures by explicitly converting lowercase URL scheme characters back to `char`.
 * Ignore `setBackgroundColor` on macOS and log the skipped call, avoiding application exceptions caused by unimplemented WKWebView `opaque` / `backgroundColor`.
 * Improve the `examples/platform` Linux platform by attaching the Flutter view to a `GtkOverlay` before creating WebKitGTK views.
 

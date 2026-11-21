@@ -47,7 +47,7 @@ jobs:
           node-version: 24
 
       - name: Check browser JavaScript runtime contracts
-        run: node --test tools/tests/web_javascript_runtime.test.mjs tools/tests/web_runtime_events.test.mjs
+        run: node --test tools/tests/web_javascript_runtime.test.mjs tools/tests/web_runtime_events.test.mjs tools/tests/web_runtime_errors.test.mjs
 
       - name: Prepare Web build hook dependencies
         run: |

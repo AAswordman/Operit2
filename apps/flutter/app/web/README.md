@@ -55,3 +55,21 @@ Native apps and the CLI do not package or serve this directory. The settings
 entry and `operit2 cli web open` open `https://web.operit.app/` without starting a
 local server or putting credentials in the URL. Connecting to another device is
 a separate node listening/pairing operation, not a Web Access server lifecycle.
+
+## Runtime failure diagnostics
+
+The Rust panic hook reports the original panic text and Rust source location to
+the browser page before the Wasm instance traps. The owner Worker broadcasts a
+terminal failure to every connected page, rejects pending Core requests, and
+rejects further requests to that failed runtime. An uncaught Worker error also
+reports its script filename, line and column.
+
+The error surface keeps the first failure and the seven most recent reports.
+This preserves the Rust panic when Safari subsequently reports only
+`RuntimeError: Unreachable code should not be executed` in its task callback.
+`Copy details` copies that complete bounded history. The closure symbol in the
+browser trap identifies the Wasm task adapter; the original panic is needed to
+locate the failing Core operation.
+
+Run `node --test tools/tests/web_runtime_errors.test.mjs` to check Safari-style
+stacks, clipboard diagnostics, Worker failure propagation and pending calls.

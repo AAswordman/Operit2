@@ -130,11 +130,12 @@
   <script>
     (() => {
       let latestOperitWebError = "";
+      const operitWebErrors = [];
 
       /** Converts one JavaScript value into readable diagnostic text. */
       function formatOperitWebErrorValue(value) {
         if (value instanceof Error) {
-          return value.stack || value.message || String(value);
+          return `${String(value)}\n${value.stack || ""}`.trim();
         }
         if (typeof value === "string") {
           return value;
@@ -149,7 +150,7 @@
       /** Builds a diagnostic block for browser error events. */
       function formatOperitBrowserError(event) {
         if (event.error instanceof Error) {
-          return event.error.stack || event.error.message;
+          return formatOperitWebErrorValue(event.error);
         }
         const target = event.target;
         if (target instanceof HTMLScriptElement) {
@@ -206,7 +207,10 @@
       /** Renders a mobile-readable Web error surface above Flutter. */
       function showOperitWebError(source, details) {
         const renderedDetails = `${new Date().toISOString()}\n${source}\n\n${details}`;
-        latestOperitWebError = renderedDetails;
+        // Keep the original panic when subsequent browser traps report the same failed runtime.
+        if (operitWebErrors.length === 8) operitWebErrors.splice(1, 1);
+        operitWebErrors.push(renderedDetails);
+        latestOperitWebError = operitWebErrors.join("\n\n---\n\n");
         document.getElementById("operit-web-error-surface")?.remove();
 
         const surface = document.createElement("section");
@@ -227,7 +231,7 @@
         const detailsBlock = createOperitWebErrorElement(
           "pre",
           "operit-web-error-details",
-          renderedDetails
+          latestOperitWebError
         );
         const actions = createOperitWebErrorElement("div", "operit-web-error-actions", "");
         const closeButton = createOperitWebErrorElement(
@@ -266,7 +270,8 @@
 
       /** Handles browser error events and opens the Web error surface. */
       function handleOperitBrowserError(event) {
-        showOperitWebError("Browser error", formatOperitBrowserError(event));
+        const location = event.filename ? `\n${event.filename}:${event.lineno}:${event.colno}` : "";
+        showOperitWebError("Browser error", formatOperitBrowserError(event) + location);
       }
 
       /** Handles promise rejection events and opens the Web error surface. */

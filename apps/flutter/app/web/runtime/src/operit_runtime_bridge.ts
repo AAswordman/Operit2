@@ -509,6 +509,8 @@ interface ManagedRuntimeProcess {
 }
 
 interface RuntimeGlobals {
+  __operitReportRuntimePanic?: (message: string) => void;
+  __operitShowWebError?: (source: string, details: string) => void;
   Tesseract?: BrowserOcrEngine;
   __OPERIT_MODEL_INSTALL_WORKER__?: boolean;
   __OPERIT_RUNTIME_WORKER__?: boolean;
@@ -650,6 +652,7 @@ interface RuntimeWorkerLeaderMessage {
   response?: Uint8Array;
   event?: Uint8Array;
   message?: unknown;
+  source?: string;
   module?: string;
   method?: string;
   args?: unknown[];
@@ -735,6 +738,7 @@ interface ModelInstallWorkerError {
 
 (function () {
   const runtimeGlobal = globalThis as typeof globalThis & RuntimeGlobals;
+  runtimeGlobal.__operitReportRuntimePanic = reportRuntimePanic;
   const workerHostModules = new WeakSet<object>();
   const mainHostModules = new WeakSet<object>();
   runtimeGlobal.__operitWorkerHostModules = workerHostModules;
@@ -4743,6 +4747,18 @@ self.onmessage = (event) => {
     return new module.OperitFlutterBridgeWasm();
   }
 
+  /** Preserves Rust's panic location before an asynchronous Wasm trap loses that context. */
+  function reportRuntimePanic(message: string): void {
+    const details = `${message}\n\n${new Error("Rust runtime panic").stack}`;
+    if (isRuntimeWorker()) {
+      runtimeGlobal.postMessage({ type: "runtimeFatalError", source: "Rust panic", message: details });
+    } else if (isModelInstallWorker()) {
+      runtimeGlobal.postMessage({ type: "error", message: details });
+    } else {
+      runtimeGlobal.__operitShowWebError("Rust panic", details);
+    }
+  }
+
   async function bridge() {
     if (!bridgePromise) {
       const wasmModulePath = isModelInstallWorker() || isRuntimeWorker()
@@ -5210,6 +5226,7 @@ self.onmessage = (event) => {
     let runtimeWorker: Worker | null = null;
     let releaseLeadership: (() => void) | null = null;
     let closed = false;
+    let runtimeFailure: Error | null = null;
     let nextRequestId = 0;
     let nextRuntimeRequestId = 0;
     const pendingRequests = new Map<number, RuntimeWorkerPendingRequest>();
@@ -5242,6 +5259,7 @@ self.onmessage = (event) => {
       });
       runtimeWorker = worker;
       worker.addEventListener("message", handleRuntimeWorkerMessage);
+      worker.addEventListener("error", handleRuntimeWorkerError);
       worker.postMessage({ type: "configure", clientId });
       coordinator.postMessage({ type: "leaderReady" });
       forwardPendingRequests();
@@ -5285,6 +5303,10 @@ self.onmessage = (event) => {
         return;
       }
       const message = value as RuntimeWorkerLeaderMessage;
+      if (message.type === "runtimeFatalError") {
+        handleClientRuntimeMessage(message);
+        return;
+      }
       if (message.type === "clientDisconnect" && typeof message.clientId === "string") {
         if (runtimeWorker !== null) {
           disconnectLeaderClient(message.clientId);
@@ -5326,6 +5348,12 @@ self.onmessage = (event) => {
 
     /** Registers one globally routed request and dispatches it through the owner worker. */
     function forwardLeaderRequest(request: RuntimeWorkerLeaderRequest): void {
+      if (runtimeFailure !== null) {
+        deliverCoordinatorMessage(request.clientId, {
+          type: "runtimeFatalError", source: "Runtime worker error", message: runtimeFailure.message,
+        });
+        return;
+      }
       const routedRequests = leaderRequestIdsFor(request.clientId);
       if (routedRequests.has(request.clientRequestId)) {
         return;
@@ -5349,6 +5377,10 @@ self.onmessage = (event) => {
     /** Handles a result, event, or synchronous host message produced by the owner worker. */
     function handleRuntimeWorkerMessage(event: MessageEvent<unknown>): void {
       const message = event.data as RuntimeWorkerLeaderMessage;
+      if (message.type === "runtimeFatalError") {
+        publishRuntimeFailure(message);
+        return;
+      }
       if (message.type === "hostCall") {
         forwardLeaderHostCall(message);
         return;
@@ -5360,6 +5392,18 @@ self.onmessage = (event) => {
       if (message.type === "coreResult" || message.type === "coreError" || message.type === "coreWatchEvent") {
         forwardLeaderRuntimeReply(message);
       }
+    }
+
+    /** Delivers an uncaught worker exception with its source location to every runtime client. */
+    function handleRuntimeWorkerError(event: ErrorEvent): void {
+      const details = `${event.message}\n${event.filename}:${event.lineno}:${event.colno}`;
+      publishRuntimeFailure({ type: "runtimeFatalError", source: "Runtime worker error", message: details });
+    }
+
+    /** Broadcasts the owner's terminal failure without restarting the failed Wasm instance. */
+    function publishRuntimeFailure(message: RuntimeWorkerLeaderMessage): void {
+      coordinator.postMessage(message);
+      handleClientRuntimeMessage(message);
     }
 
     /** Routes one owner-worker reply to the page that issued its original Core request. */
@@ -5446,6 +5490,12 @@ self.onmessage = (event) => {
 
     /** Handles a result, Watch event, or synchronous Host phase delivered to this browser page. */
     function handleClientRuntimeMessage(message: RuntimeWorkerLeaderMessage): void {
+      if (message.type === "runtimeFatalError") {
+        runtimeFailure ??= new Error(String(message.message));
+        rejectRuntimeRequests(runtimeFailure);
+        runtimeGlobal.__operitShowWebError(message.source, String(message.message));
+        return;
+      }
       if (message.type === "coreResult" && typeof message.id === "number" && message.response instanceof Uint8Array) {
         const pending = pendingRequests.get(message.id);
         if (pending !== undefined) {
@@ -5484,6 +5534,9 @@ self.onmessage = (event) => {
       payload: Uint8Array | string,
       onWatchEvent?: (event: Uint8Array) => void,
     ): Promise<{ id: number; response: Uint8Array }> {
+      if (runtimeFailure !== null) {
+        return Promise.reject(runtimeFailure);
+      }
       if (closed) {
         return Promise.reject(new Error("runtime page coordinator is closed"));
       }

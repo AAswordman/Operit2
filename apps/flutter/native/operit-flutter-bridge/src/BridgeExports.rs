@@ -15,6 +15,26 @@ use js_sys::Function;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    /// Reports the original Rust panic before the browser receives the terminal Wasm trap.
+    #[wasm_bindgen(js_namespace = globalThis, js_name = __operitReportRuntimePanic)]
+    fn report_browser_runtime_panic(message: &str);
+}
+
+/// Installs one panic reporter for the browser runtime and its developer console.
+#[cfg(target_arch = "wasm32")]
+fn install_browser_runtime_panic_hook() {
+    static INSTALL: std::sync::Once = std::sync::Once::new();
+    INSTALL.call_once(|| {
+        std::panic::set_hook(Box::new(|info| {
+            report_browser_runtime_panic(&info.to_string());
+            console_error_panic_hook::hook(info);
+        }));
+    });
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 use crate::PlatformRuntimeAbi::RuntimeBootstrapStore::{
     readNativeRuntimeBootstrapConfig, writeNativeRuntimeBootstrapConfig,
@@ -394,7 +414,7 @@ pub struct OperitFlutterBridgeWasm {
 impl OperitFlutterBridgeWasm {
     #[wasm_bindgen(constructor)]
     pub fn new() -> Result<OperitFlutterBridgeWasm, JsValue> {
-        console_error_panic_hook::set_once();
+        install_browser_runtime_panic_hook();
         OperitFlutterBridge::new()
             .map(|inner| OperitFlutterBridgeWasm { inner })
             .map_err(|error| JsValue::from_str(&error))
