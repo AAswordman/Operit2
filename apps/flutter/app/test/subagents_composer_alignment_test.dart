@@ -114,6 +114,7 @@ void main() {
                                           PendingQueueMessageItem(
                                             id: 1,
                                             text: 'Queue message',
+                                            attachments: [],
                                           ),
                                         ],
                                         expanded: fixtureKey == expandedKey,

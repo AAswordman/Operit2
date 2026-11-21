@@ -1021,12 +1021,15 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       return;
     }
     _pendingQueueEnqueueInFlight = true;
+    final submittedAttachments = _attachments;
     try {
       await _viewModel.enqueuePendingQueueMessage(
         chatId: chatId,
         messageText: draftText,
+        attachments: submittedAttachments,
       );
       _clearSubmittedDraft(chatId, draftText);
+      await _clearSubmittedAttachments(chatId, submittedAttachments);
       if (!mounted || _currentChatId != chatId) {
         return;
       }
@@ -1056,6 +1059,45 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _clearMentionSuggestionState();
       _messageController.clear();
     }
+  }
+
+  /// Clears only the attachments accepted into the queue, preserving newer picks.
+  Future<void> _clearSubmittedAttachments(
+    String chatId,
+    List<AttachmentInfo> submittedAttachments,
+  ) async {
+    if (submittedAttachments.isEmpty) {
+      return;
+    }
+    final currentAttachments = await _viewModel.attachments();
+    if (!_attachmentSnapshotsMatch(currentAttachments, submittedAttachments)) {
+      return;
+    }
+    await _viewModel.clearAttachments();
+    if (!mounted || _currentChatId != chatId) {
+      return;
+    }
+    await _refreshAttachments();
+  }
+
+  /// Compares attachment snapshots by stable identity, not generated instance equality.
+  bool _attachmentSnapshotsMatch(
+    List<AttachmentInfo> current,
+    List<AttachmentInfo> submitted,
+  ) {
+    if (current.length != submitted.length) {
+      return false;
+    }
+    for (var index = 0; index < current.length; index += 1) {
+      final left = current[index];
+      final right = submitted[index];
+      if (left.filePath != right.filePath ||
+          left.fileName != right.fileName ||
+          left.fileSize != right.fileSize) {
+        return false;
+      }
+    }
+    return true;
   }
 
   /// Deletes one message from the Rust-owned queue for the active chat.
@@ -1214,7 +1256,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       text: queuedText,
       selectionStart: queuedText.length,
       selectionEnd: queuedText.length,
-      attachments: const [],
+      attachments: item.attachments,
       replyToMessageTimestamp: null,
     );
     if (decision != null) {
@@ -1279,6 +1321,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     await _viewModel.sendUserMessage(
       queuedText.trim(),
       chatIdOverride: queueChatId,
+      attachmentsOverride: item.attachments,
     );
     if (mounted && _currentChatId == queueChatId) {
       await _refreshAttachments();

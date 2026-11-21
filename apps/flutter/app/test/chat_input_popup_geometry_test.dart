@@ -381,7 +381,11 @@ void main() {
                   viewModel: ChatViewModel(bridge: _PendingModelBridge()),
                   mention: null,
                   queue: const [
-                    PendingQueueMessageItem(id: 1, text: 'Queue alignment'),
+                    PendingQueueMessageItem(
+                      id: 1,
+                      text: 'Queue alignment',
+                      attachments: [],
+                    ),
                   ],
                 ),
               ),

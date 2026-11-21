@@ -968,7 +968,12 @@ impl ChatServiceCore {
     /// Adds one message to the queue owned by a specific chat.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub fn enqueuePendingQueueMessage(&mut self, chatId: String, messageText: String) {
+    pub fn enqueuePendingQueueMessage(
+        &mut self,
+        chatId: String,
+        messageText: String,
+        attachments: Vec<AttachmentInfo>,
+    ) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
             .entry(chatId)
@@ -978,6 +983,7 @@ impl ChatServiceCore {
         queueState.messages.push(PendingQueueMessageItem {
             id: messageId,
             text: messageText,
+            attachments,
         });
         queueState.isExpanded = true;
         queueState.wasBlocked = true;
@@ -3999,5 +4005,109 @@ mod edge_plugin_metadata_tests {
         let details = ChatPluginDetails { id:"a".repeat(108),description:"中".repeat(64),
             tools:vec!["a".repeat(64);3],toolTotal:999, ..Default::default() };
         assert!(serde_json::to_vec(&details).unwrap().len() < 768);
+    }
+}
+
+#[cfg(test)]
+mod pending_queue_attachment_tests {
+    use super::*;
+    use crate::services::core::MessageProcessingDelegate::ChatExecutionState;
+    use operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost;
+    use operit_host_api::{
+        HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
+        HostRuntimeTurnFuture,
+    };
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+    use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
+
+    /// Delivers synchronous work immediately and retains background tasks so queue
+    /// flow publication never needs a platform executor.
+    #[derive(Default)]
+    struct QueueTestScheduler(std::sync::Mutex<Vec<HostRuntimeAsyncTask>>);
+
+    impl HostRuntimeTaskSchedulerHost for QueueTestScheduler {
+        fn monotonicTimeMillis(&self) -> HostResult<u64> {
+            Ok(0)
+        }
+        fn scheduleHostRuntimeTask(&self, _: &str, task: HostRuntimeTask) -> HostResult<()> {
+            task();
+            Ok(())
+        }
+        fn scheduleHostRuntimeAsyncTask(&self, _: &str, task: HostRuntimeAsyncTask) -> HostResult<()> {
+            self.0.lock().unwrap().push(task);
+            Ok(())
+        }
+        fn scheduleHostRuntimeCooperativeAsyncTask(&self, name: &str, task: HostRuntimeAsyncTask) -> HostResult<()> {
+            self.scheduleHostRuntimeAsyncTask(name, task)
+        }
+        fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, task: HostRuntimeTask) -> HostResult<()> {
+            task();
+            Ok(())
+        }
+        fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
+            Box::pin(async { Ok(()) })
+        }
+        fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    /// Builds a chat core whose queue store is empty and whose storage hosts are process-wide.
+    fn queueTestCore() -> ChatServiceCore {
+        let root = std::env::temp_dir().join(format!("operit-queue-attach-{}", uuid::Uuid::new_v4()));
+        let runtimeRoot = root.join("runtime");
+        let workspaceRoot = root.join("workspaces");
+        std::fs::create_dir_all(&runtimeRoot).unwrap();
+        let host = Arc::new(NativeRuntimeStorageHost::new(runtimeRoot, workspaceRoot));
+        setDefaultRuntimeStorageHost(host.clone());
+        setDefaultRuntimeSqliteHost(host.clone());
+        setDefaultHostRuntimeTaskSchedulerHost(Arc::new(QueueTestScheduler::default()));
+        let filesystem = VisualFileSystem::fromStorage(Arc::new(PosixFileSystemHost::new()), host).unwrap();
+        ChatServiceCore::new(ChatSelectionMode::FOLLOW_GLOBAL, Arc::new(filesystem))
+    }
+
+    fn sampleAttachment() -> AttachmentInfo {
+        AttachmentInfo::new(
+            "/tmp/queued-image.png".into(),
+            "queued-image.png".into(),
+            "image/png".into(),
+            42,
+        )
+    }
+
+    #[test]
+    fn enqueue_with_attachments_survives_until_the_chat_is_ready() {
+        let mut core = queueTestCore();
+        let chatId = "queue-chat".to_string();
+        core.messageProcessingDelegate.setChatExecutionStateForTest(chatId.clone(), ChatExecutionState {
+            isLoading: false,
+            inputProcessingState: InputProcessingState::Summarizing { message: "compressing".into() },
+        });
+        core.enqueuePendingQueueMessage(chatId.clone(), "look at this".into(), vec![sampleAttachment()]);
+        // A busy chat (here: compressing history) must not dequeue yet.
+        assert!(core.takeNextPendingQueueMessageIfReady(chatId.clone()).is_none());
+        core.messageProcessingDelegate.finishChatExecution(chatId.clone(), InputProcessingState::Completed);
+        let item = core.takeNextPendingQueueMessageIfReady(chatId.clone()).expect("ready chat dequeues");
+        assert_eq!(item.text, "look at this");
+        assert_eq!(item.attachments, vec![sampleAttachment()]);
+        assert!(core.takeNextPendingQueueMessageIfReady(chatId).is_none());
+    }
+
+    #[test]
+    fn restore_round_trip_preserves_attachments() {
+        let mut core = queueTestCore();
+        let chatId = "queue-chat".to_string();
+        core.enqueuePendingQueueMessage(chatId.clone(), "queued".into(), vec![sampleAttachment()]);
+        let item = core.takeNextPendingQueueMessageIfReady(chatId.clone()).expect("dequeues");
+        core.restorePendingQueueMessage(chatId.clone(), item.clone());
+        // Restoring re-inserts the item but leaves the queue disarmed so a rejected
+        // message cannot auto-fire again; the next submit re-arms it (see sendUserMessage).
+        core.pendingQueueStateFlow().update(|queues| {
+            if let Some(queue) = queues.get_mut(&chatId) { queue.wasBlocked = true; }
+        });
+        let restored = core.takeNextPendingQueueMessageIfReady(chatId).expect("re-dequeues");
+        assert_eq!(restored, item);
+        assert_eq!(restored.attachments, vec![sampleAttachment()]);
     }
 }
