@@ -48,6 +48,7 @@ use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
 use operit_model::MessagePart::MessagePart;
 use operit_model::MessagePartCodec::MessagePartCodec;
+use operit_model::ModelConfigData::ResolvedModelConfig;
 use operit_model::PendingQueueMessageItem::PendingQueueMessageItem;
 use operit_model::PromptFunctionType::PromptFunctionType;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
@@ -3029,9 +3030,10 @@ impl ChatServiceCore {
         let binding = FunctionalConfigManager::default()
             .getModelBindingForFunction(FunctionType::CHAT)
             .map_err(|e| e.to_string())?;
-        let config = ModelConfigManager::default()
-            .getResolvedModelConfig(&binding.providerId, &binding.modelId)
-            .map_err(|e| e.to_string())?;
+        let config = Self::summaryModelConfig(
+            self.lastTurnModelBindingForChat(chatId.as_ref()),
+            (&binding.providerId, &binding.modelId),
+        )?;
         let chat = match chatId {
             Some(id) => self
                 .chatHistoryDelegate
@@ -3046,6 +3048,32 @@ impl ChatServiceCore {
             outputTokenCount: chat.as_ref().map(|c| c.outputTokens).unwrap_or(0),
             maxContextLength: f64::from(config.context.maxContextLength),
         })
+    }
+
+    /// The model this chat actually used on its last turn, while its service instance is alive.
+    fn lastTurnModelBindingForChat(&self, chatId: Option<&String>) -> Option<(String, String)> {
+        let services = self
+            .chatEnhancedAiServicesByChatId
+            .lock()
+            .expect("chat enhanced AI service mutex poisoned");
+        services.get(chatId?)?.getLastTurnModelBinding()
+    }
+
+    /// Prefers the chat's own turn model; a deleted model or cold service falls back to the global binding.
+    fn summaryModelConfig(
+        chatTurnBinding: Option<(String, String)>,
+        globalBinding: (&str, &str),
+    ) -> Result<ResolvedModelConfig, String> {
+        if let Some((providerId, modelId)) = chatTurnBinding {
+            if let Ok(config) =
+                ModelConfigManager::default().getResolvedModelConfig(&providerId, &modelId)
+            {
+                return Ok(config);
+            }
+        }
+        ModelConfigManager::default()
+            .getResolvedModelConfig(globalBinding.0, globalBinding.1)
+            .map_err(|e| e.to_string())
     }
 
     /// Responds to a tool permission request through the owning chat route.
@@ -3845,6 +3873,97 @@ mod chat_deletion_tests {
             let next = database.store().beginChatExecution("route-chat").unwrap();
             next.release().unwrap();
         }
+    }
+}
+
+#[cfg(test)]
+mod chat_input_menu_denominator_tests {
+    use super::*;
+    use operit_host_native_filesystem::PosixFileSystemHost;
+    use operit_host_native_storage::NativeRuntimeStorageHost;
+    use operit_model::ChatEntity::ChatEntity;
+    use operit_model::ModelConfigData::ModelContextSpec;
+    use operit_store::RuntimeStorageHost::{setDefaultRuntimeSqliteHost, setDefaultRuntimeStorageHost};
+    use operit_store::RuntimeStorePaths::RuntimeStorePaths;
+    use operit_store::db::AppDatabase::AppDatabase;
+
+    /// Runs preference notifications inline and keeps background work out of the assertions.
+    struct DenominatorScheduler;
+    impl operit_host_api::HostRuntimeTaskSchedulerHost for DenominatorScheduler {
+        fn monotonicTimeMillis(&self) -> operit_host_api::HostResult<u64> { Ok(0) }
+        fn scheduleHostRuntimeTask(&self, _: &str, task: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> {
+            task(); Ok(())
+        }
+        fn scheduleHostRuntimeAsyncTask(&self, _: &str, _: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> { Ok(()) }
+        fn scheduleHostRuntimeCooperativeAsyncTask(&self, name: &str, task: operit_host_api::HostRuntimeAsyncTask) -> operit_host_api::HostResult<()> {
+            self.scheduleHostRuntimeAsyncTask(name, task)
+        }
+        fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> { Ok(()) }
+        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
+        fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
+    }
+
+    fn setContextLength(models: &ModelConfigManager, providerId: &str, modelId: &str, maxContextLength: f32) {
+        let mut profile = models.getModelProfile(providerId, modelId).unwrap();
+        profile.contextOverride = Some(ModelContextSpec { maxContextLength });
+        models.updateModelProfile(providerId, profile).unwrap();
+    }
+
+    #[tokio::test]
+    async fn summary_denominator_follows_the_chat_turn_model_with_global_fallback() {
+        operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(Arc::new(DenominatorScheduler));
+        let root = std::env::temp_dir().join(format!("operit-context-denominator-{}", uuid::Uuid::new_v4()));
+        let host = Arc::new(NativeRuntimeStorageHost::new(root.join("runtime"), root.join("workspaces")));
+        setDefaultRuntimeStorageHost(host.clone());
+        setDefaultRuntimeSqliteHost(host.clone());
+
+        let models = ModelConfigManager::default();
+        let globalProvider = models.createProvider(
+            "denominator-global".into(),
+            "OPENAI".into(),
+            "https://example.invalid/v1".into(),
+        ).unwrap();
+        models.createProviderModel(&globalProvider, "global-model".into()).unwrap();
+        setContextLength(&models, &globalProvider, "global-model", 128.0);
+        let sessionProvider = models.createProvider(
+            "denominator-session".into(),
+            "OPENAI".into(),
+            "https://example.invalid/v1".into(),
+        ).unwrap();
+        models.createProviderModel(&sessionProvider, "session-model".into()).unwrap();
+        setContextLength(&models, &sessionProvider, "session-model", 200.0);
+        FunctionalConfigManager::default()
+            .setModelForFunction(FunctionType::CHAT, globalProvider.clone(), "global-model".into())
+            .unwrap();
+
+        let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
+        database.chatDao().insertChat(ChatEntity::new("denominator-chat".into(), "Denominator".into(), 1)).unwrap();
+
+        let filesystem = VisualFileSystem::fromStorage(Arc::new(PosixFileSystemHost::new()), host).unwrap();
+        let core = ChatServiceCore::new(ChatSelectionMode::FOLLOW_GLOBAL, Arc::new(filesystem));
+
+        // Cold service map (restart or new chat): the global binding supplies the limit.
+        let summary = core.chatInputMenuSummary(Some("denominator-chat".into())).await.unwrap();
+        assert_eq!(summary.maxContextLength, 128.0);
+
+        // The chat's own last-turn model wins over the global binding.
+        let config = ChatServiceCore::summaryModelConfig(
+            Some((sessionProvider.clone(), "session-model".into())),
+            (&globalProvider, "global-model"),
+        ).unwrap();
+        assert_eq!(config.context.maxContextLength, 200.0);
+
+        // No recorded turn keeps the global binding.
+        let config = ChatServiceCore::summaryModelConfig(None, (&globalProvider, "global-model")).unwrap();
+        assert_eq!(config.context.maxContextLength, 128.0);
+
+        // A model deleted after the turn falls back instead of failing the summary.
+        models.deleteModel(&sessionProvider, "session-model").unwrap();
+        let config = ChatServiceCore::summaryModelConfig(
+            Some((sessionProvider.clone(), "session-model".into())),
+            (&globalProvider, "global-model"),
+        ).unwrap();
+        assert_eq!(config.context.maxContextLength, 128.0);
     }
 }
 

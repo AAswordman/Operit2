@@ -111,6 +111,8 @@ pub struct EnhancedAISharedState {
     pub last_reply_content: Option<String>,
     pub last_provider_model: Option<String>,
     pub last_turn_model_identity: Option<TurnModelIdentity>,
+    /// Configuration ids of the last turn's model, for resolving its context limit.
+    pub last_turn_model_binding: Option<(String, String)>,
     pub last_turn_context_window: Option<i64>,
     pub pendingRouteChange: Option<RouteChangeIntent>,
 }
@@ -175,6 +177,7 @@ impl EnhancedAISharedState {
             providerName: config.providerName.clone(),
             modelName: config.modelId.clone(),
         });
+        self.last_turn_model_binding = Some((config.providerId.clone(), config.modelId.clone()));
         self.last_reply_content = None;
         self.turn_token_usage = TurnTokenUsage::default();
         self.last_turn_context_window = None;
@@ -3281,6 +3284,12 @@ impl EnhancedAIService {
         self.shared_state().last_turn_model_identity.clone()
     }
 
+    /// Returns the provider/model configuration ids used by this chat's last turn.
+    #[allow(non_snake_case)]
+    pub fn getLastTurnModelBinding(&self) -> Option<(String, String)> {
+        self.shared_state().last_turn_model_binding.clone()
+    }
+
     /// Shares accounting with the persistence owner for this exact turn.
     pub fn turnTokenUsage(&self) -> TurnTokenUsage {
         self.shared_state().turn_token_usage.clone()
@@ -3993,6 +4002,10 @@ mod model_identity_tests {
             state.last_provider_model.as_deref(),
             Some("OPENAI_CODEX:gpt-6.1-sol")
         );
+        assert_eq!(
+            state.last_turn_model_binding,
+            Some(("custom-provider".into(), "gpt-6.1-sol".into()))
+        );
     }
 
     #[test]
@@ -4019,7 +4032,8 @@ mod model_identity_tests {
             outputTokens: 50,
             cachedInputTokens: 20,
         });
-        let second = model_config("供应商 B", "model-b");
+        let mut second = model_config("供应商 B", "model-b");
+        second.providerId = "provider-b".into();
         state.beginTurn(&second, second.providerModelLabel());
         assert_eq!(
             state
@@ -4034,6 +4048,10 @@ mod model_identity_tests {
             "model-b"
         );
         assert_eq!(previous_identity.unwrap().modelName, "model-a");
+        assert_eq!(
+            state.last_turn_model_binding,
+            Some(("provider-b".into(), "model-b".into()))
+        );
         assert!(state.last_reply_content.is_none());
         assert_eq!(state.turn_token_usage.snapshot(), TurnTokenSnapshot::default());
         assert_eq!(previous_usage.snapshot().inputTokens, 100);
