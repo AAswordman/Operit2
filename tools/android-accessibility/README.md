@@ -60,9 +60,9 @@ storage. The report screen runs in a separate process and offers a copy action.
 Android can block the report screen from opening after a background crash. Open
 the companion from the launcher to review and clear the saved report.
 
-## Protocol version 1
+## Protocol version 2
 
-`getProtocolVersion()` returns `1`. `execute(requestJson)` returns a
+`getProtocolVersion()` returns `2`. `execute(requestJson)` returns a
 `ParcelFileDescriptor`; read it to EOF as UTF-8 JSON:
 
 ```json
@@ -78,11 +78,20 @@ excluded. Android 11+ window discovery includes all displays.
 Supported operations are `list_windows`, `focus_window`, `get_page_info`, `tap`,
 `long_press`, `swipe`, `set_input_text` and `press_key`. `list_windows` returns
 `{"windows":[...]}`. Explicit window reads do not change input focus. Input
-operations use the active window and screen coordinates, so focus the target
-before sending input. Gesture results wait for Android's completion callback.
+operations accept an internal exact `window_id` or `display_id` supplied by the
+Android Host. An omitted target uses the primary display's active window. Window
+and snapshot responses include internal `displayId` metadata, removed by the
+Android Host before returning the shared schema. Gesture coordinates belong to
+the target display and completion waits for Android's callback. Global key
+actions are limited to the primary display; hosted-window keys go directly to
+the standalone window server.
 Focus is verified against Android's input-focused window; a denied request
 returns an error.
 
 Window IDs refer to Android's current interactive-window session. Refresh the
 list after windows close or change. A virtualized view can only expose the
 descendants its application has materialized through accessibility.
+
+The companion owns accessibility only. Native floating windows and virtual
+displays are owned by the separate [tmp payload](../android-ui-server/README.md),
+which starts without installing an APK or calling this companion's components.

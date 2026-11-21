@@ -17,7 +17,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Android package operations invoked through the owner interaction channel. */
-internal class AndroidPackageOperations(private val context: Activity) {
+internal class AndroidPackageOperations(
+    private val context: Activity,
+    private val uiServer: AndroidUiServer,
+    private val uiAutomation: AndroidUiAutomation,
+) {
     private val pm = context.packageManager
     private val uninstaller = AndroidAppUninstaller(context)
 
@@ -89,12 +93,18 @@ internal class AndroidPackageOperations(private val context: Activity) {
         return JSONObject().put("includesSystemApps", includeSystem).put("packages", JSONArray(packages))
     }
 
+    /** Uses native standalone windows when this Host has privileged Android authorization. */
     private fun start(name: String, activity: String?): JSONObject {
         val intent = if (activity == null) {
             pm.getLaunchIntentForPackage(name)
                 ?: throw IllegalStateException("No launchable activity found for $name")
         } else {
             Intent(Intent.ACTION_MAIN).setClassName(name, if (activity.startsWith('.')) name + activity else activity)
+        }
+        if (uiServer.isAuthorized()) {
+            val component = intent.component ?: error("Application launch intent has no component")
+            uiAutomation.launch(component.flattenToString())
+            return result("start_app", name, "Application launched in its native window; select it with list_windows and focus_window")
         }
         context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         return result("start_app", name, "Launch requested")
@@ -111,6 +121,7 @@ internal class AndroidPackageOperations(private val context: Activity) {
             context, target, "am force-stop '$name'", rootSettings = AndroidPrivilegeAuthorization.rootExecutionSettings(context),
         )
         check(response.exitCode == 0) { "Force stop failed: ${response.stderrText()}" }
+        uiServer.closePackage(name)
         return result("stop_app", name, "Force stop completed")
     }
 

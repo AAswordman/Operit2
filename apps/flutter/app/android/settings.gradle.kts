@@ -29,3 +29,5 @@ plugins {
 include(":app")
 include(":accessibilityCompanion")
 project(":accessibilityCompanion").projectDir = file("../../../../tools/android-accessibility")
+include(":windowServer")
+project(":windowServer").projectDir = file("../../../../tools/android-ui-server")

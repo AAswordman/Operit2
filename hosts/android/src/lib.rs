@@ -34,7 +34,7 @@ mod terminal;
 mod terminal_command;
 mod terminal_privilege;
 #[cfg(target_os = "android")]
-pub use terminal::androidPrivilegedPtyOperation;
+pub use terminal::{androidExecShellProcess, androidPrivilegedPtyOperation};
 mod tts_playback;
 mod tts_synthesis;
 mod web_visit;

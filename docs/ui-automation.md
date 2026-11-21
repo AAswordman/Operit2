@@ -119,3 +119,27 @@ and [system context API](https://github.com/openharmony/docs/blob/master/en/appl
 
 See [Android companion](../tools/android-accessibility/README.md) for its build,
 authorization, signing and AIDL protocol.
+
+On Android 11+, an already-authorized Shizuku or Root Host launches applications
+through the existing `start_app`/`app_launch` interface into independently rendered
+native windows. The main APK embeds a separate uninstalled DEX payload and pushes
+it to `/data/local/tmp`; that process owns the floating SurfaceView and virtual
+display. Display output goes straight to the Surface, without image capture or
+video encoding/decoding. Root and Shizuku share the existing shell-identity
+boundary, including Root dropping to UID/GID 2000. The accessibility companion
+continues to supply trees and gestures through its existing pipe.
+
+The owner passes its existing native window-session Binder to the tmp process,
+because Android 15 requires a registered app process to open that session. Native
+chrome uses the owner's existing overlay permission; Views, touch handling and
+Surface rendering execute in the shell process. Android security screens may hide
+application overlays according to system policy.
+
+Use the same `list_windows`, `focus_window`, snapshots and input tools on these
+windows. Opaque window IDs survive minimization and restore; closed IDs fail.
+Window-list bounds describe the physical floating content area for the indicator;
+tree bounds and automation coordinates refer to the virtual screen. Only the
+Android Host translates window IDs and coordinates. No Android-specific tool,
+transport selector or virtual-display field is added to shared contracts. See
+[native Android windows](../tools/android-ui-server/README.md) for deployment,
+lifecycle and device verification.

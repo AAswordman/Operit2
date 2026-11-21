@@ -82,8 +82,8 @@ abstract class StageOperitAndroidJniLibraries : Sync() {
     abstract val outputDirectory: DirectoryProperty
 }
 
-/** Embeds the signed companion APK produced by the matching Android build. */
-abstract class StageOperitAccessibilityApk : Sync() {
+/** Embeds Android APK payloads produced by the matching build variant. */
+abstract class StageOperitAndroidPayload : Sync() {
     @get:InputDirectory
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val apkDirectory: DirectoryProperty
@@ -151,6 +151,7 @@ android {
     ndkVersion = flutter.ndkVersion
     buildFeatures { buildConfig = true; aidl = true }
     sourceSets.getByName("main").aidl.srcDir("../../../../../tools/android-accessibility/contract/src/main/aidl")
+    sourceSets.getByName("main").aidl.srcDir("../../../../../tools/android-ui-server/contract/src/main/aidl")
 
     signingConfigs {
         create("release") {
@@ -248,7 +249,7 @@ androidComponents {
             "path" to ":accessibilityCompanion",
             "configuration" to "${companionBuildType}Apk",
         )))
-        val stagedCompanion = tasks.register<StageOperitAccessibilityApk>(
+        val stagedCompanion = tasks.register<StageOperitAndroidPayload>(
             "stageOperitAccessibilityApk" + variant.name.replaceFirstChar { it.uppercase() },
         ) {
             dependsOn(companionApk)
@@ -261,6 +262,27 @@ androidComponents {
             into(outputDirectory)
         }
         assets.addGeneratedSourceDirectory(stagedCompanion) { it.outputDirectory }
+        val uiServerApk = configurations.create("${variant.name}UiServerApk") {
+            isCanBeConsumed = false
+            isCanBeResolved = true
+        }
+        dependencies.add(uiServerApk.name, dependencies.project(mapOf(
+            "path" to ":windowServer",
+            "configuration" to "${companionBuildType}Apk",
+        )))
+        val stagedUiServer = tasks.register<StageOperitAndroidPayload>(
+            "stageOperitUiServer" + variant.name.replaceFirstChar { it.uppercase() },
+        ) {
+            dependsOn(uiServerApk)
+            apkDirectory.set(layout.dir(provider { uiServerApk.singleFile }))
+            from(apkDirectory) {
+                include("*.apk")
+                into("companions")
+                rename { "operit-ui-server.jar" }
+            }
+            into(outputDirectory)
+        }
+        assets.addGeneratedSourceDirectory(stagedUiServer) { it.outputDirectory }
     }
 }
 

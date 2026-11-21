@@ -14,7 +14,7 @@ class UiAutomationBinderService : Service() {
     private val worker = Executors.newSingleThreadExecutor()
     private val binder = object : IUiAutomationProvider.Stub() {
         /** Reports the exact wire version implemented by this companion. */
-        override fun getProtocolVersion(): Int = 1
+        override fun getProtocolVersion(): Int = 2
 
         /** Returns a pipe immediately and serializes device operations on one worker. */
         override fun execute(requestJson: String): ParcelFileDescriptor {

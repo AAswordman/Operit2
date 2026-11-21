@@ -2219,6 +2219,36 @@ unsafe fn dropRootToShellIdentity() {
     }
 }
 
+/// Re-execs a standalone Android Host after applying the terminal's shell identity.
+#[cfg(target_os = "android")]
+pub fn androidExecShellProcess(arguments: &[String]) -> HostResult<()> {
+    let arguments = arguments
+        .iter()
+        .map(|argument| cstring(argument))
+        .collect::<HostResult<Vec<_>>>()?;
+    let executable = arguments
+        .first()
+        .ok_or_else(|| HostError::new("Missing Android shell executable"))?;
+    let mut pointers = arguments
+        .iter()
+        .map(|argument| argument.as_ptr())
+        .collect::<Vec<_>>();
+    pointers.push(std::ptr::null());
+    unsafe {
+        if libc::geteuid() == 0 {
+            dropRootToShellIdentity();
+        }
+        if libc::getuid() != 2000 || libc::getgid() != 2000 {
+            return Err(HostError::new("Android UI server requires shell uid/gid 2000"));
+        }
+        libc::execv(executable.as_ptr(), pointers.as_ptr());
+    }
+    Err(HostError::new(format!(
+        "Android shell exec failed: {}",
+        std::io::Error::last_os_error()
+    )))
+}
+
 /// Forks the PTY child in the current process's Android security context.
 fn forkPtyExecve(
     command: &AndroidPtyCommand,

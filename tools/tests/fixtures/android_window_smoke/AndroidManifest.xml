@@ -1,0 +1,8 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.operit.windowsmoke">
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="35" />
+    <uses-permission android:name="app.operit.accessibility.permission.AUTOMATE_UI" />
+    <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+    <application android:label="Operit window device test" android:theme="@android:style/Theme.Material.Light.NoActionBar" android:debuggable="true">
+        <activity android:name=".SmokeActivity" android:exported="true" android:launchMode="singleTask" />
+    </application>
+</manifest>

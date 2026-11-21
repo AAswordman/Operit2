@@ -83,7 +83,8 @@ class OwnerSystemCapabilityChannel(
     }
 
     private var cachedMediaProjectionCaptureManager: MediaProjectionCaptureManager? = null
-    private val uiAutomation = AndroidUiAutomation(activity.applicationContext)
+    private val uiServer = AndroidUiServer(activity.applicationContext)
+    private val uiAutomation = AndroidUiAutomation(activity.applicationContext, uiServer)
     private var cachedMediaProjection: MediaProjection? = null
     private val ttsPlaybackLock = Any()
     private val ttsPlaybackSynthesisLock = Any()
@@ -111,7 +112,7 @@ class OwnerSystemCapabilityChannel(
     private var musicLoopPlayback: Boolean = false
     private var musicMessage: String = "android music player idle"
     private val locationReader = AndroidLocationReader(activity)
-    private val packageOperations = AndroidPackageOperations(activity)
+    private val packageOperations = AndroidPackageOperations(activity, uiServer, uiAutomation)
     private val bluetoothClassicSockets = ConcurrentHashMap<String, BluetoothSocket>()
     private val bluetoothClassicServers = ConcurrentHashMap<String, BluetoothServerSocket>()
     private val bluetoothBleSessions = ConcurrentHashMap<String, BluetoothBleSession>()
@@ -180,6 +181,7 @@ class OwnerSystemCapabilityChannel(
     /** Releases owner-host resources and invalidates every active TTS generation. */
     fun release() {
         uiAutomation.release()
+        uiServer.release()
         packageOperations.release()
         cachedMediaProjectionCaptureManager?.release()
         cachedMediaProjectionCaptureManager = null

@@ -10,6 +10,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
@@ -46,6 +47,8 @@ class UiAccessibilityService : AccessibilityService() {
     /** Dispatches the structured operations shared by every Operit UI Host. */
     fun execute(request: JSONObject): JSONObject {
         val params = request.getJSONObject("parameters")
+        val windowId = if (params.has("window_id")) params.getString("window_id") else null
+        val displayId = if (params.has("display_id")) params.getInt("display_id") else Display.DEFAULT_DISPLAY
         when (val operation = request.getString("operation")) {
             "list_windows" -> {
                 val result = JSONArray()
@@ -54,16 +57,17 @@ class UiAccessibilityService : AccessibilityService() {
                 finally { entries.forEach { it.recycle() } }
                 return JSONObject().put("windows", result)
             }
-            "get_page_info" -> return withWindow(if (params.has("window_id")) params.getString("window_id") else null) { window ->
+            "get_page_info" -> return withWindow(windowId, displayId) { window ->
                 val root = window.root ?: error("The selected Android window has no accessible root")
                 try {
                     JSONObject().put("windowId", window.id.toString())
+                        .put("displayId", displayIdOf(window))
                         .put("packageName", root.packageName?.toString() ?: "")
                         .put("activityName", window.title?.toString() ?: "")
                         .put("scope", "desktop").put("truncated", false).put("uiElements", readNode(root))
                 } finally { root.recycle() }
             }
-            "focus_window" -> focusWindow(params.getString("window_id"))
+            "focus_window" -> focusWindow(windowId, displayId)
             "tap", "long_press", "swipe" -> {
                 val path = Path()
                 val duration: Long
@@ -78,9 +82,10 @@ class UiAccessibilityService : AccessibilityService() {
                     duration = if (operation == "tap") 50 else 600
                 }
                 require(duration in 1..60000) { "Gesture duration must be between 1 and 60000 milliseconds" }
-                performGesture(path, duration)
+                val targetDisplay = withWindow(windowId, displayId, ::displayIdOf)
+                performGesture(path, duration, targetDisplay)
             }
-            "set_input_text" -> withWindow(null) { window ->
+            "set_input_text" -> withWindow(windowId, displayId) { window ->
                 val root = window.root ?: error("The active Android window has no accessible root")
                 try {
                     val matches = mutableListOf<AccessibilityNodeInfo>()
@@ -95,6 +100,7 @@ class UiAccessibilityService : AccessibilityService() {
                 } finally { root.recycle() }
             }
             "press_key" -> {
+                check(withWindow(windowId, displayId, ::displayIdOf) == Display.DEFAULT_DISPLAY) { "Global keys require the primary display" }
                 val action = when (params.getString("key_code").uppercase()) {
                     "BACK", "KEYCODE_BACK" -> GLOBAL_ACTION_BACK
                     "HOME", "KEYCODE_HOME" -> GLOBAL_ACTION_HOME
@@ -110,6 +116,10 @@ class UiAccessibilityService : AccessibilityService() {
         return JSONObject()
     }
 
+    /** Resolves the native window's coordinate space on Android versions with display metadata. */
+    private fun displayIdOf(window: AccessibilityWindowInfo): Int =
+        if (Build.VERSION.SDK_INT >= 30) window.displayId else Display.DEFAULT_DISPLAY
+
     /** Queries all displays on Android 11+, and the system window list on earlier releases. */
     private fun nativeWindows(): List<AccessibilityWindowInfo> {
         if (Build.VERSION.SDK_INT >= 30) {
@@ -119,12 +129,16 @@ class UiAccessibilityService : AccessibilityService() {
         return windows
     }
 
-    /** Resolves an exact native ID or active window and releases every handle afterward. */
-    private fun <T> withWindow(id: String?, action: (AccessibilityWindowInfo) -> T): T {
+    /** Resolves exact IDs, the primary active window or a hosted display's top application. */
+    private fun <T> withWindow(id: String?, displayId: Int, action: (AccessibilityWindowInfo) -> T): T {
         val entries = nativeWindows()
         try {
-            val selected = entries.singleOrNull { if (id == null) it.isActive else it.id.toString() == id }
-                ?: error("The selected Android window is unavailable or ambiguous; refresh list_windows")
+            val selected = when {
+                id != null -> entries.singleOrNull { it.id.toString() == id }
+                displayId == Display.DEFAULT_DISPLAY -> entries.singleOrNull { it.isActive && displayIdOf(it) == displayId }
+                else -> entries.filter { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && displayIdOf(it) == displayId }
+                    .maxByOrNull { it.layer }
+            } ?: error("The selected Android window is unavailable or ambiguous; refresh list_windows")
             return action(selected)
         } finally { entries.forEach { it.recycle() } }
     }
@@ -139,6 +153,7 @@ class UiAccessibilityService : AccessibilityService() {
             val rect = Rect().also { window.getBoundsInScreen(it) }
             return JSONObject().put("windowId", window.id.toString()).put("title", window.title?.toString() ?: "")
                 .put("packageName", root?.packageName?.toString() ?: "").put("bounds", bounds(rect))
+                .put("displayId", displayIdOf(window))
                 .put("isActive", window.isActive).put("isFocused", window.isFocused).put("isMinimized", false)
         } finally { root?.recycle() }
     }
@@ -175,8 +190,9 @@ class UiAccessibilityService : AccessibilityService() {
     }
 
     /** Focuses a selected native window and verifies the resulting window focus. */
-    private fun focusWindow(id: String) {
-        withWindow(id) { window ->
+    private fun focusWindow(id: String?, displayId: Int) {
+        if (id == null) awaitDisplayWindow(displayId)
+        withWindow(id, displayId) { window ->
             if (!window.isFocused) {
                 val root = window.root ?: error("The selected Android window has no accessible root")
                 try { check(focusInput(root)) { "Android rejected input focus for the selected window" } }
@@ -184,8 +200,21 @@ class UiAccessibilityService : AccessibilityService() {
             }
         }
         val deadline = SystemClock.uptimeMillis() + 2000
-        while (!withWindow(id) { it.isFocused }) {
+        while (!withWindow(id, displayId) { it.isFocused }) {
             check(SystemClock.uptimeMillis() < deadline) { "The selected Android window did not gain input focus" }
+            SystemClock.sleep(20)
+        }
+    }
+
+    /** Waits for the same display's application after its Surface has been restored. */
+    private fun awaitDisplayWindow(displayId: Int) {
+        val deadline = SystemClock.uptimeMillis() + 5000
+        while (true) {
+            val entries = nativeWindows()
+            val available = try { entries.any { it.type == AccessibilityWindowInfo.TYPE_APPLICATION && displayIdOf(it) == displayId } }
+                finally { entries.forEach { it.recycle() } }
+            if (available) return
+            check(SystemClock.uptimeMillis() < deadline) { "The selected Android display did not expose an application window" }
             SystemClock.sleep(20)
         }
     }
@@ -201,11 +230,13 @@ class UiAccessibilityService : AccessibilityService() {
     }
 
     /** Waits for gesture completion and reports rejection, cancellation or timeout. */
-    private fun performGesture(path: Path, duration: Long) {
+    private fun performGesture(path: Path, duration: Long, displayId: Int) {
         val finished = CountDownLatch(1)
         var completed = false
         var accepted = false
-        val gesture = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, duration)).build()
+        val builder = GestureDescription.Builder().addStroke(GestureDescription.StrokeDescription(path, 0, duration))
+        if (Build.VERSION.SDK_INT >= 30) builder.setDisplayId(displayId)
+        val gesture = builder.build()
         check(Handler(Looper.getMainLooper()).post {
             accepted = dispatchGesture(gesture, object : GestureResultCallback() {
                 /** Publishes successful completion to the operation worker. */

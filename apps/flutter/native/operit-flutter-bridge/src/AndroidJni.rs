@@ -1,7 +1,7 @@
 use crate::BridgeExports::*;
 use crate::BridgeExports::{last_create_error, panic_payload_message, set_last_create_error};
 use crate::OperitFlutterBridge;
-use jni::objects::{JClass, JObject, JString};
+use jni::objects::{JClass, JObject, JObjectArray, JString};
 use jni::sys::{jlong, jstring};
 use jni::JNIEnv;
 use std::ffi::CStr;
@@ -10,6 +10,34 @@ use std::sync::Arc;
 
 #[path = "AndroidJniTaskScheduler.rs"]
 mod task_scheduler;
+
+/// Reuses the terminal identity boundary and replaces the Root VM with a shell-owned VM.
+#[no_mangle]
+pub unsafe extern "system" fn Java_app_operit_uiserver_UiServerMain_restartAsShell(
+    mut env: JNIEnv,
+    _class: JClass,
+    arguments: JObjectArray,
+) {
+    let result = (|| -> Result<(), String> {
+        let count = env
+            .get_array_length(&arguments)
+            .map_err(|error| error.to_string())?;
+        let mut decoded = Vec::with_capacity(count as usize);
+        for index in 0..count {
+            let argument = JString::from(
+                env.get_object_array_element(&arguments, index)
+                    .map_err(|error| error.to_string())?,
+            );
+            decoded.push(String::from(
+                env.get_string(&argument).map_err(|error| error.to_string())?,
+            ));
+        }
+        operit_host_android_native::androidExecShellProcess(&decoded).map_err(|error| error.to_string())
+    })();
+    if let Err(error) = result {
+        let _ = env.throw_new("java/lang/SecurityException", error.to_string());
+    }
+}
 
 /// Runs process primitives in the privileged service without creating a Core runtime.
 #[no_mangle]

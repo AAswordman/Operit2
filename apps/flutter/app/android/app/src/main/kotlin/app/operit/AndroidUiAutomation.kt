@@ -6,17 +6,41 @@ import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import app.operit.accessibility.IUiAutomationProvider
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import org.json.JSONArray
 import org.json.JSONObject
 
 /** Adapts the in-repository accessibility companion to the platform-neutral UI Host. */
-class AndroidUiAutomation(private val context: Context) {
+internal class AndroidUiAutomation(private val context: Context, private val uiServer: AndroidUiServer) {
     private val lock = Any()
     private val operationLock = Any()
     private var connection: ProviderConnection? = null
     private var released = false
+    private var selectedWindowId: String? = null
+
+    /** Confirms that Android exposed the launched application on the exact hosted display. */
+    fun launch(component: String) = synchronized(operationLock) {
+        val provider = requireProvider()
+        val window = uiServer.launch(component)
+        val deadline = SystemClock.uptimeMillis() + 6000
+        try {
+            while (true) {
+                val windows = readResponse(provider, JSONObject().put("operation", "list_windows").put("parameters", JSONObject()))
+                    .getJSONArray("windows").objects()
+                if (windows.any { it.getInt("displayId") == window.getInt("displayId") &&
+                        it.getString("packageName") == window.getString("packageName") }) return@synchronized
+                check(SystemClock.uptimeMillis() < deadline) { "Android did not expose the launched application on its requested display" }
+                SystemClock.sleep(50)
+            }
+        } catch (error: Exception) {
+            try { uiServer.closePackage(window.getString("packageName")) }
+            catch (cleanupError: Exception) { error.addSuppressed(cleanupError) }
+            throw error
+        }
+    }
 
     /** Associates every asynchronous service callback with its own binding. */
     private class ProviderConnection : ServiceConnection {
@@ -59,7 +83,7 @@ class AndroidUiAutomation(private val context: Context) {
             return synchronized(lock) {
                 check(!released && connection === binding) { "UI automation owner has been released" }
                 val service = binding.service ?: error("Operit2 Accessibility rejected the connection")
-                check(service.protocolVersion == 1) { "Operit2 Accessibility protocol version is incompatible" }
+                check(service.protocolVersion == 2) { "Update Operit2 Accessibility through the UI automation grant action" }
                 service
             }
         } catch (error: Exception) {
@@ -72,12 +96,62 @@ class AndroidUiAutomation(private val context: Context) {
 
     /** Reads the full streamed response and preserves native provider failures. */
     fun execute(request: JSONObject): JSONObject = synchronized(operationLock) {
-        val descriptor = requireProvider().execute(request.toString())
+        val provider = requireProvider()
+        val operation = request.getString("operation")
+        val parameters = JSONObject(request.getJSONObject("parameters").toString())
+        val hosted = uiServer.windows().objects().associateBy { it.getInt("displayId") }
+        if (operation == "list_windows") {
+            val result = readResponse(provider, request)
+            val native = result.getJSONArray("windows").objects()
+            val windows = JSONArray()
+            val chromeIds = hosted.values.map { it.getString("chromeWindowId") }.toSet()
+            native.filter { !hosted.containsKey(it.getInt("displayId")) && it.getString("windowId") !in chromeIds }.forEach { window ->
+                window.remove("displayId")
+                windows.put(window)
+            }
+            hosted.forEach { (displayId, overlay) ->
+                val active = native.filter { it.optInt("displayId", -1) == displayId }
+                overlay.put("isActive", active.any { it.getBoolean("isActive") })
+                    .put("isFocused", active.any { it.getBoolean("isFocused") })
+                overlay.remove("displayId")
+                overlay.remove("chromeWindowId")
+                windows.put(overlay)
+            }
+            return@synchronized JSONObject().put("windows", windows)
+        }
+        if (operation != "focus_window" && !parameters.has("window_id")) {
+            selectedWindowId?.let { parameters.put("window_id", it) }
+        }
+        val targetId = parameters.optString("window_id").takeIf { it.isNotEmpty() }
+        val virtual = hosted.values.singleOrNull { it.getString("windowId") == targetId }
+        if (virtual != null) {
+            val displayId = virtual.getInt("displayId")
+            if (operation == "focus_window") uiServer.control("focus", virtual.getString("windowId"))
+            else if (operation != "get_page_info") {
+                check(!virtual.getBoolean("isMinimized")) { "Focus the minimized Android window before sending input" }
+            }
+            if (operation == "press_key") return@synchronized uiServer.control("key", virtual.getString("windowId"), parameters.getString("key_code"))
+            parameters.remove("window_id")
+            parameters.put("display_id", displayId)
+        }
+        val result = readResponse(provider, JSONObject().put("operation", operation).put("parameters", parameters))
+        if (operation == "focus_window") selectedWindowId = checkNotNull(targetId)
+        if (virtual != null && operation == "get_page_info") result.put("windowId", targetId)
+        result.remove("displayId")
+        result
+    }
+
+    /** Iterates Android's JSON arrays without leaking platform metadata into shared contracts. */
+    private fun JSONArray.objects(): List<JSONObject> = List(length()) { getJSONObject(it) }
+
+    /** Reads a response from a specific binding without reconnecting mid-operation. */
+    private fun readResponse(provider: IUiAutomationProvider, request: JSONObject): JSONObject {
+        val descriptor = provider.execute(request.toString())
             ?: error("Operit2 Accessibility returned no response stream")
         val response = ParcelFileDescriptor.AutoCloseInputStream(descriptor).bufferedReader(Charsets.UTF_8)
             .use { JSONObject(it.readText()) }
         check(response.getBoolean("success")) { response.getString("error") }
-        response.getJSONObject("data")
+        return response.getJSONObject("data")
     }
 
     /** Releases only the binding owned by this adapter. */
