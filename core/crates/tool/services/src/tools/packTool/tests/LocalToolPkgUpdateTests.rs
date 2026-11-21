@@ -567,6 +567,10 @@ async fn local_same_id_update_preserves_configuration_and_scope() {
 
 #[allow(unused_variables)]
 impl ToolRuntimeSupport for TestPackageRuntimeSupport {
+    /// Rejects device cleanup calls in package tests that never bind device transports.
+    fn closeDeviceTransports(&self, _owner: &str) {
+        panic!("Unexpected runtime service: closeDeviceTransports")
+    }
     fn bindCoreNodeToolRuntime(&self, runtime: Arc<dyn CoreNodeToolRuntime>) -> Result<(), String> { panic!("Unexpected runtime service: bindCoreNodeToolRuntime") }
     fn coreNodeRouteState(&self) -> Result<RuntimeCoreNodeRouteState, String> { panic!("Unexpected runtime service: coreNodeRouteState") }
     fn bindCoreRouteChangeHandler(&self, handler: CoreRouteChangeHandler) -> Result<(), String> { panic!("Unexpected runtime service: bindCoreRouteChangeHandler") }

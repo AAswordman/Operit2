@@ -260,6 +260,40 @@ async fn hook_caller_getters_use_native_snapshot_in_v1_and_v2() {
     }
 }
 
+/// Keeps business input clean while the actual engine retains native context across asynchronous tool forwarding.
+#[tokio::test]
+async fn package_runtime_metadata_is_detached_before_forwarding_business_arguments() {
+    let host = Arc::new(TestPluginConfigExecutionHost::default());
+    *host.callerContext.lock().unwrap() = Some(serde_json::json!({
+        "callerName": "Native caller", "chatId": "native-chat",
+        "participantId": "native-participant", "extensionOwner": "test.package",
+    }));
+    let engine = newTestIpcEngine(host);
+    let params = BTreeMap::from([
+        ("text".into(), serde_json::json!("性能")),
+        ("nested".into(), serde_json::json!({"__operit_environment_owner": "authored data"})),
+        ("toolPkgId".into(), serde_json::json!("test.package")),
+        ("containerPackageName".into(), serde_json::json!("test.package")),
+        ("__operit_toolpkg_runtime_kind".into(), serde_json::json!("sandbox")),
+    ]);
+    let script = r#"
+        exports.forward = async function(input) {
+            var participant = getCallerParticipantId();
+            var forwarded = await toolCall('echo', input);
+            return { input: input, forwarded: forwarded, participant: participant,
+                chat: getChatId(), caller: getCallerName() };
+        };
+    "#;
+    let result = engine.execute_script_function(script, "forward", &params, &BTreeMap::new(), None, true, None).await.unwrap().unwrap();
+    let result: Value = serde_json::from_str(&result).unwrap();
+    let business = serde_json::json!({"text": "性能", "nested": {"__operit_environment_owner": "authored data"}});
+    assert_eq!(result, serde_json::json!({
+        "input": business, "forwarded": business, "participant": "native-participant",
+        "chat": "native-chat", "caller": "Native caller",
+    }));
+    engine.destroy();
+}
+
 /// Returns the repository root above core/crates/plugin/javascript-bridge.
 #[allow(non_snake_case)]
 fn testRepositoryRoot() -> &'static Path {

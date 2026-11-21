@@ -1188,6 +1188,7 @@ impl JsExecutionHost for AIToolHandler {
     fn toolpkg_caller_context(&self) -> Option<Value> {
         Some(
             self.invocationSnapshot.turnSnapshot.as_ref().map(|context| json!({
+                "callerName": context.callerName,
                 "chatId": context.callerChatId,
                 "participantId": context.callerParticipantId,
                 "extensionOwner": context.extensionOwner,
@@ -1965,6 +1966,10 @@ mod tests {
         package_assets: Option<&'static [RuntimePluginAsset]>,
     }
     impl ToolRuntimeSupport for UnusedRuntimeSupport {
+        /// Rejects device cleanup calls in tests that never bind device transports.
+        fn closeDeviceTransports(&self, _owner: &str) {
+            panic!("Unexpected runtime service: closeDeviceTransports")
+        }
         /// Rejects unexpected application service access in execution pipeline tests.
     fn bindCoreNodeToolRuntime(&self, runtime: Arc<dyn CoreNodeToolRuntime>) -> Result<(), String> { panic!("Unexpected runtime service: bindCoreNodeToolRuntime") }
         /// Rejects unexpected application service access in execution pipeline tests.
@@ -2635,6 +2640,7 @@ mod tests {
         let directory = operit_store::ChatOutputStore::ChatOutputStore::new(storage)
             .bind("transfer-chat", 1_700_000_000_000, None).unwrap();
         let context = ToolRuntimeContext {
+            callerName: None,
             callerChatId: Some("transfer-chat".into()), callerParticipantId: None,
             workspacePath: None, workspaceFolders: Vec::new(),
             toolExposureMode: ToolExposureMode::FULL, extensionOwner: "main".into(),
@@ -3024,6 +3030,7 @@ mod tests {
     async fn sdk_caller_identity_uses_captured_native_turn() {
         let fixture = PipelineFixture::new();
         let turn = ToolRuntimeContext {
+            callerName: None,
             callerChatId: Some("summary-chat".into()), callerParticipantId: Some("opaque-participant".into()),
             workspacePath: None, workspaceFolders: Vec::new(), toolExposureMode: ToolExposureMode::CLI,
             extensionOwner: "independent.configuration.provider".into(),
@@ -3033,6 +3040,7 @@ mod tests {
             fixture.handler.capture_tool_invocation_host()
         }).await;
         assert_eq!(host.toolpkg_caller_context(), Some(json!({
+            "callerName": null,
             "chatId":"summary-chat", "participantId":"opaque-participant",
             "extensionOwner":"independent.configuration.provider",
         })));
@@ -3051,6 +3059,7 @@ mod tests {
             panic!("Direct JS must never request AI approval");
         });
         let turn = ToolRuntimeContext {
+            callerName: None,
             callerChatId: Some("direct-in-ai-turn".into()), callerParticipantId: None,
             workspacePath: None, workspaceFolders: Vec::new(), toolExposureMode: ToolExposureMode::CLI,
             extensionOwner: "configuration-owner".into(), executionData: Default::default(),
@@ -3179,7 +3188,7 @@ mod tests {
         let calls = (0..24).map(|index| {
             let handler = fixture.handler.clone();
             async move {
-                let turn = ToolRuntimeContext { callerChatId: Some(format!("chat-{index}")),
+                let turn = ToolRuntimeContext { callerName: None, callerChatId: Some(format!("chat-{index}")),
                     callerParticipantId: None, workspacePath: None, workspaceFolders: Vec::new(),
                     toolExposureMode: ToolExposureMode::FULL, extensionOwner: format!("owner-{index}"),
                     executionData: Default::default() };
@@ -3311,14 +3320,13 @@ mod tests {
                 })
             }),
         }));
-        let manager = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
         let invocations = (0..3).map(|index| crate::ToolExecutionManager::ToolInvocation {
             tool: AITool { name: "pipeline_probe".into(), parameters: vec![ToolParameter {
                 name: "index".into(), value: index.to_string(),
             }] }, rawText: String::new(), responseLocation: (0, 0),
         }).collect::<Vec<_>>();
         let mut batch = Box::pin(ToolExecutionManager::executeInvocations(
-            &invocations, &mut fixture.handler, &manager, None, Some("chat".into()), None,
+            &invocations, &mut fixture.handler, None, Some("chat".into()), None,
             None, Vec::new(), ToolExposureMode::FULL, "configuration-owner".into(), Default::default(),
         ));
         for index in 0..3 {
@@ -3375,7 +3383,7 @@ mod tests {
         let hooks = Arc::new(LifecycleProbe::default());
         fixture.handler.addToolHook(hooks.clone());
         fixture.handler.registerSharedTool("pipeline_probe".into(), Arc::new(SharedProbe::default()), ToolRegistrationVisibility::INTERNAL);
-        let turn = ToolRuntimeContext { callerChatId: Some("chat-A".into()), callerParticipantId:None,
+        let turn = ToolRuntimeContext { callerName: None, callerChatId: Some("chat-A".into()), callerParticipantId:None,
             workspacePath:None,workspaceFolders:Vec::new(),toolExposureMode:ToolExposureMode::FULL,
             extensionOwner:"configuration-owner".into(), executionData: Default::default() };
         let a = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), async {
@@ -3478,6 +3486,7 @@ mod tests {
         let expected = json!({"content": "print(\"\\d+\")\n\n", "enabled": true, "nested": {"items": [1, null]}});
         for name in ["package_proxy", "proxy"] {
             let turn = ToolRuntimeContext {
+                callerName: None,
                 callerChatId: Some("chat".into()), callerParticipantId: None,
                 workspacePath: None, workspaceFolders: Vec::new(),
                 toolExposureMode: if name == "proxy" { ToolExposureMode::CLI } else { ToolExposureMode::FULL },
@@ -3531,6 +3540,7 @@ mod tests {
         for name in ["package_proxy", "proxy"] {
             let exposure = if name == "proxy" { ToolExposureMode::CLI } else { ToolExposureMode::FULL };
             let turn = ToolRuntimeContext {
+                callerName: None,
                 callerChatId: Some("chat".into()), callerParticipantId: None,
                 workspacePath: None, workspaceFolders: Vec::new(),
                 toolExposureMode: exposure.clone(), extensionOwner: "config-owner".into(),
@@ -3610,10 +3620,6 @@ mod tests {
             let context = fixture.handler.getContext();
             setDefaultRuntimeStorageHost(context.runtimeStorageHost.clone().unwrap());
             setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.clone().unwrap());
-            let manager = RuntimePackageManager::new(
-                RuntimeStorePaths::default(),
-                fixture.handler.clone(),
-            );
             let invocations = [malformed.clone(), "{\"command\":".into(), corrected.clone()].into_iter().map(|params| {
                 ToolInvocation {
                     tool: AITool {
@@ -3628,7 +3634,7 @@ mod tests {
                 }
             }).collect::<Vec<_>>();
             let batch = ToolExecutionManager::executeInvocations(
-                &invocations, &mut fixture.handler, &manager,
+                &invocations, &mut fixture.handler,
                 None, Some("chat".into()), None, None, Vec::new(), exposure,
                 "config-owner".into(), Default::default(),
             ).await.expect("Malformed model parameters must not terminate the chat round");
@@ -3660,7 +3666,7 @@ mod tests {
         fixture.handler.getToolPermissionSystem().setAsyncPermissionRequester(|_, _, _| async {
             crate::tools::ToolPermissionSystem::PermissionRequestResult::DENY
         });
-        let turn = ToolRuntimeContext { callerChatId:Some("chat".into()),callerParticipantId:None,
+        let turn = ToolRuntimeContext { callerName: None, callerChatId:Some("chat".into()),callerParticipantId:None,
             workspacePath:None,workspaceFolders:Vec::new(),toolExposureMode:ToolExposureMode::CLI,
             extensionOwner:"config-owner".into(), executionData: Default::default() };
         let request = ToolCall { name:"proxy".into(),parameters:BTreeMap::from([

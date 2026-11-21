@@ -67,7 +67,21 @@ void main() {
       expect(state.entries.map((entry) => entry.id).toSet(), hasLength(3));
       await tester.tap(find.byTooltip('Edit key').first);
       await tester.pumpAndSettle();
+      final keyInput = find.descendant(
+        of: find.byKey(const ValueKey('pool-key-input')),
+        matching: find.byType(EditableText),
+      );
+      final keyState = tester.state<EditableTextState>(keyInput);
+      expect(keyState.renderEditable.text!.toPlainText(), '*' * 16);
+      expect(tester.widget<EditableText>(keyInput).obscureText, isFalse);
+      await tester.tap(keyInput);
+      await tester.pump();
+      expect(keyState.renderEditable.text!.toPlainText(), 'fixture-original');
+      expect(tester.testTextInput.setClientArgs!['obscureText'], isFalse);
+      expect(tester.testTextInput.setClientArgs!['enableSuggestions'], isTrue);
       await tester.enterText(find.byType(TextFormField).first, 'Renamed');
+      await tester.pump();
+      expect(keyState.renderEditable.text!.toPlainText(), '*' * 16);
       await tester.tap(find.text('Save'));
       await tester.pumpAndSettle();
       expect(state.entries.first.id, 'original');

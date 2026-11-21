@@ -878,6 +878,7 @@ mod tests {
             Some("/operitapp/workspaces/missing"),
         ] {
             let context = ToolRuntimeContext {
+                callerName: None,
                 callerChatId: Some("chat".into()),
                 callerParticipantId: None,
                 workspacePath: workspace.map(str::to_string),

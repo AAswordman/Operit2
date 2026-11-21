@@ -22,7 +22,7 @@ export function toolModuleScript(relative) {
   return result.outputFiles[0].text;
 }
 
-/** Supplies one explicit native runtime envelope whose exact fields are checked against JsToolManager source. */
+/** Supplies temporary runtime metadata for production bootstrap detachment and SDK getters. */
 export function nativeToolParameters(participantId) {
   return {
     __operit_package_lang: "zh",
@@ -32,6 +32,8 @@ export function nativeToolParameters(participantId) {
     __operit_package_caller_participant_id: participantId,
     __operit_package_caller_owner: "com.operit.character_cards",
     __operit_package_name: "character_memory_tools",
+    __operit_package_api_version: "2.0.0",
+    __operit_environment_owner: "com.operit.character_cards",
     __operit_toolpkg_runtime_kind: "sandbox",
     __operit_toolpkg_api_version: "2.0.0",
     __operit_execution_context_key: "toolpkg_main:com.operit.character_cards",
@@ -44,7 +46,7 @@ export function nativeToolParameters(participantId) {
 }
 
 /** Runs actual native-boundary JavaScript with strict transport endpoints; Rust injection itself is not executed by this Node harness. */
-export function createNativeToolRuntime(globals, dispatchIpc) {
+export function createNativeToolRuntime(globals, dispatchIpc, dispatchTool) {
   const terminal = [], pending = new Map(), detached = new Set();
   let nextCall = 0;
   const context=vm.createContext({...globals});
@@ -58,10 +60,13 @@ export function createNativeToolRuntime(globals, dispatchIpc) {
   };
   /** Supplies the trusted library source through the production structured binding. */
   context.__operitNativeReadBootstrapLibrary=registry.syncBinding(bootstrapLibrarySource);
-  context.__operitNativeSetCallStructuredResult=(callId,value)=>{
+  /** Captures ordinary tool results and Compose results through their respective native bindings. */
+  const receiveResult=(callId,value)=>{
     const request=pending.get(callId);assert.ok(request,'Unexpected native result '+callId);
     pending.delete(callId);terminal.push({callId,type:'result',value});request.resolve(value);
   };
+  context.__operitNativeSetCallStructuredResult=receiveResult;
+  context.__operitNativeSetCallResult=receiveResult;
   context.__operitNativeSetCallError=registry.syncBinding((callId,value)=>{
     const request=pending.get(callId);assert.ok(request,'Unexpected native failure '+callId);
     pending.delete(callId);terminal.push({callId,type:'error',value});request.reject(new Error(value.message));
@@ -82,12 +87,19 @@ export function createNativeToolRuntime(globals, dispatchIpc) {
       error=>registry.settle(requestId,String(error.message),true),
     );
   });
+  context.__operitNativeCallToolStructured=registry.binding((requestId,type,name,params)=>{
+    assert.equal(typeof dispatchTool,'function');
+    Promise.resolve().then(()=>dispatchTool(type,name,params)).then(
+      data=>registry.settle(requestId,{success:true,data},false),
+      error=>registry.settle(requestId,String(error.message),true),
+    );
+  });
   context.__operitNativePrepareComposeModule = compileComposeModule;
   installTestJavaScriptCompiler(context);
   vm.runInContext(productionBootstrap(),context);
 
   /** Invokes the production engine entry point with exactly the supplied converted native parameters. */
-  function invoke(script, name, params) {
+  function invoke(script, name, params, compose = true) {
     const callId = "native-tool-fixture-" + ++nextCall;
     const result = new Promise(
       /** Registers the sole terminal receiver before the real module and target function execute. */
@@ -95,7 +107,9 @@ export function createNativeToolRuntime(globals, dispatchIpc) {
     );
     const sourceId = callId + ":" + createHash("sha256").update(script).digest("hex");
     context.__operitRegisterScriptSource(sourceId, script);
-    context.__operitExecuteScriptFunction(callId, params, sourceId, name, true, {
+    // Native Host imports produce realm-owned JSON data, including nested objects.
+    const imported = vm.runInContext(`JSON.parse(${JSON.stringify(JSON.stringify(params))})`, context);
+    context.__operitExecuteScriptFunction(callId, imported, sourceId, name, compose, {
       packageTarget: 'com.operit.character_cards',
       contextKey: 'toolpkg_main:com.operit.character_cards',
       runtime: params.__operit_toolpkg_runtime_kind,

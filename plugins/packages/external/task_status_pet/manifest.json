@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.task_status_pet",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": { "zh": "任务状态猫", "en": "Task Status Cat" },
+  "description": { "zh": "蓝色像素猫：后台任务状态、完成待机、待审批提醒与工具批准。", "en": "Pixel cat with live background task status, completion, idle and approval controls." },
+  "enabled_by_default": false,
+  "subpackages": [],
+  "resources": [
+    { "key": "working", "path": "resources/working.webp", "mime": "image/webp" },
+    { "key": "thinking", "path": "resources/thinking.webp", "mime": "image/webp" },
+    { "key": "approval", "path": "resources/approval.webp", "mime": "image/webp" },
+    { "key": "completed", "path": "resources/completed.webp", "mime": "image/webp" },
+    { "key": "idle", "path": "resources/idle.webp", "mime": "image/webp" },
+    { "key": "error", "path": "resources/error.webp", "mime": "image/webp" }
+  ]
+}

@@ -48,6 +48,7 @@ pub async fn run_core_command(
         };
         let mut context =
             ToolExecutionManager::currentToolRuntimeContext().unwrap_or(ToolRuntimeContext {
+                callerName: None,
                 callerChatId: None,
                 callerParticipantId: None,
                 workspacePath: None,

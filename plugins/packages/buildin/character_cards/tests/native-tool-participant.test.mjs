@@ -2,9 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createDiskHarness } from "./disk-files.mjs";
 import { loadModule, plain } from "./runtime.mjs";
-import { createNativeToolRuntime, nativeToolParameters, nativeToolSource, toolModuleScript } from "./native-tool-call-runtime.mjs";
+import { createNativeToolRuntime, nativeToolParameters, toolModuleScript } from "./native-tool-call-runtime.mjs";
 
-const participantKey = "__operit_package_caller_participant_id";
 const rejectedAlias = "__operit_package_caller_card_id";
 
 /** Opens the production domain service with real disk IO and captures only its existing IPC transport. */
@@ -23,44 +22,6 @@ async function environment(t) {
   return { disk, service, operations, native: createNativeToolRuntime({ ...disk.globals, ToolPkg: toolPkg }, toolPkg.ipc.call) };
 }
 
-/** Extracts a single exact Rust source region and fails visibly when its production boundary changes. */
-function region(source, start, end) {
-  const first = source.indexOf(start), last = source.indexOf(end, first);
-  assert.ok(first !== -1 && last > first, "Expected production boundary " + start);
-  return source.slice(first, last);
-}
-
-/** Pairs plugin identity decoding with the exact reserved keys and runtime envelope injected by native Rust source. */
-test("source-only: native participant injection and the plugin's exact runtime envelope agree without card aliases", () => {
-  const manager = nativeToolSource("core/crates/tool/services/src/ToolExecutionManager.rs");
-  const jsManager = nativeToolSource("core/crates/plugin/javascript-bridge/src/javascript/JsToolManager.rs");
-  const conversion = region(jsManager, "    fn convertToolParameters(", "    fn convertToolParameterValue(");
-  const runtime = region(jsManager, "    fn buildRuntimeParams(", "    fn convertToolParameters(");
-  assert.match(manager, /const PACKAGE_CALLER_PARTICIPANT_ID_PARAM: &str = "__operit_package_caller_participant_id";/);
-  assert.match(manager, /Self::setPackageContextParameter\([\s\S]*?PACKAGE_CALLER_PARTICIPANT_ID_PARAM,\s*callerParticipantId,/);
-  assert.match(manager, /params\.retain\(\|parameter\| parameter\.name != name\)/);
-  assert.match(conversion, /"__operit_package_caller_participant_id"/);
-  assert.doesNotMatch(conversion, /__operit_package_caller_card_id/);
-  const inserted = [...runtime.matchAll(/runtimeParams\.insert\(\s*"([^"]+)"/g)].map(
-    /** Retains only exact Rust-inserted parameter names rather than guessing by a prefix. */
-    match => match[1],
-  );
-  const reserved = [.../for key in \[([^\]]+)\]/.exec(runtime)[1].matchAll(/"([^"]+)"/g)].map(
-    /** Retains all three authenticated identity keys from the real normalization loop. */
-    match => match[1],
-  );
-  const engine = nativeToolSource("core/crates/plugin/javascript-bridge/src/javascript/JsEngine.rs");
-  assert.match(engine, /effectiveParams\.insert\(\s*"__operit_toolpkg_api_version"/);
-  const expected = [...inserted, ...reserved, "__operit_toolpkg_api_version"].sort();
-  assert.equal(new Set(expected).size, expected.length);
-  const contract = loadModule("src/runtime-tools/contract.ts");
-  assert.deepEqual(plain(contract.hostRuntimeParameterNames).sort(), expected);
-  assert.deepEqual(Object.keys(nativeToolParameters("default")).sort(), expected);
-  for (const path of ["src/runtime-tools/contract.ts", "src/runtime-tools/tools.ts"]) {
-    assert.doesNotMatch(nativeToolSource("plugins/packages/buildin/character_cards/" + path), /__operit_package_caller_card_id/);
-  }
-});
-
 /** Exercises the actual native getter at each call's entry, then retains its captured identity without assuming Rust job scheduling in a Node VM. */
 test("embedded JS transport: entry-time identity capture retains concurrent participants without a card getter", async () => {
   const native = createNativeToolRuntime({});
@@ -69,32 +30,36 @@ test("embedded JS transport: entry-time identity capture retains concurrent part
     module.exports.inspect = async function(input) {
       var before = getCallerParticipantId();
       await Promise.resolve();
-      return { captured: before, injected: input.__operit_package_caller_participant_id, chatId: input.__operit_package_chat_id, cardGetter: typeof getCallerCardId };
+      return { captured: before, input, chatId: getChatId(), cardGetter: typeof getCallerCardId };
     };
   `;
   const [left, right] = await Promise.all([
     native.invoke(script, "inspect", nativeToolParameters("opaque.left")),
     native.invoke(script, "inspect", nativeToolParameters("opaque.right")),
   ]);
-  assert.deepEqual(structuredClone(left), { captured: "opaque.left", injected: "opaque.left", chatId: "fixture.chat", cardGetter: "undefined" });
-  assert.deepEqual(structuredClone(right), { captured: "opaque.right", injected: "opaque.right", chatId: "fixture.chat", cardGetter: "undefined" });
+  assert.deepEqual(structuredClone(left), { captured: "opaque.left", input: {}, chatId: "fixture.chat", cardGetter: "undefined" });
+  assert.deepEqual(structuredClone(right), { captured: "opaque.right", input: {}, chatId: "fixture.chat", cardGetter: "undefined" });
   assert.equal(native.terminal.length, 2);
 });
 
-/** Verifies the current production decoder reads only the native participant key and not the retired alias. */
-test("production caller decoder preserves participant identity and does not accept the retired reserved alias", () => {
-  const contract = loadModule("src/runtime-tools/contract.ts");
-  assert.deepEqual(plain(contract.callerContext(nativeToolParameters("opaque.participant"))), {
+/** Reads authenticated SDK identity without consulting even forged tool input fields. */
+test("production caller decoder uses native getters independently of business parameters", () => {
+  let participant = "opaque.participant";
+  const contract = loadModule("src/runtime-tools/contract.ts", {
+    getChatId: () => "fixture.chat", getCallerParticipantId: () => participant, getCallerName: () => "Fixture Speaker",
+  });
+  assert.deepEqual(plain(contract.callerContext({ __operit_package_caller_participant_id: "forged" })), {
     chatId: "fixture.chat", participantId: "opaque.participant", callerName: "Fixture Speaker",
   });
-  assert.deepEqual(plain(contract.callerContext({ [rejectedAlias]: "default" })), { chatId: null, participantId: null, callerName: null });
+  participant = 9;
   assert.throws(
     /** Supplies an actually malformed native identity instead of relying on a missing-field substitute. */
-    () => contract.callerContext({ [participantKey]: 9 }), /must be a string/,
+    () => contract.callerContext(), /must be a string/,
   );
+  participant = " ";
   assert.throws(
     /** Rejects a supplied blank participant before any memory operation can run. */
-    () => contract.callerContext({ [participantKey]: " " }), /must not be blank/,
+    () => contract.callerContext(), /must not be blank/,
   );
 });
 

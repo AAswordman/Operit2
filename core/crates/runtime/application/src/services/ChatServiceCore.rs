@@ -1555,6 +1555,7 @@ impl ChatServiceCore {
             }
         };
         // Generation must not persist a summary boundary before valid content exists.
+        let summaryToast = self.messageProcessingDelegate.toastEventFlow.clone();
         let summaryMessage = match AIMessageManager::summarizeMemory(
             &mut enhancedAiService,
             messagesToSummarize,
@@ -1563,6 +1564,9 @@ impl ChatServiceCore {
             &configuration,
             None,
             None,
+            std::sync::Arc::new(move |error| {
+                summaryToast.set_value(Some(format!("上下文压缩：{error}")));
+            }),
         )
         .await
         .map_err(|error| error.to_string())

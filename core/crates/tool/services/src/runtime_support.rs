@@ -392,7 +392,8 @@ pub trait ToolRuntimeSupport: Send + Sync {
     fn bindDeviceToolRuntime(&self, _runtime: Arc<dyn crate::tools::DeviceTools::DeviceToolRuntime>) -> Result<(), String> {
         Err("Device tool routing is not supported by this runtime".into())
     }
-    fn closeDeviceTransports(&self, _owner: &str) {}
+    /// Closes every device transport held by the specified tool owner.
+    fn closeDeviceTransports(&self, owner: &str);
 
     fn executeDeviceTool(&self, _request: operit_plugin_sdk::javascript::JsToolCallRequest)
         -> operit_plugin_sdk::javascript::JsExecutionCompletion<operit_plugin_sdk::javascript::JsToolCallResult> {

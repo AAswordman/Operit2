@@ -1,0 +1,38 @@
+export const PACKAGE = "com.operit.task_status_pet";
+export const CHANNEL = "task-status-pet";
+export const PET_ROUTE = `toolpkg:${PACKAGE}:ui:pet`;
+export const DETAILS_ROUTE = `toolpkg:${PACKAGE}:ui:details`;
+export const SETTINGS_ROUTE = `toolpkg:${PACKAGE}:ui:settings`;
+export type Mood = "working" | "thinking" | "approval" | "completed" | "idle" | "error";
+export interface Settings { enabled: boolean; backgroundOnly: boolean; keepIdle: boolean; width: number; }
+export const DEFAULTS: Settings = { enabled: true, backgroundOnly: true, keepIdle: true, width: 128 };
+export interface Task { chatId: string; state: string; active: boolean; message: string; }
+export interface View { mood: Mood; chatId: string; message: string; count: number; approvals: ToolPkg.ToolPermissionRequest[]; tasks: Task[]; sequence: number; }
+export type Request = { kind: "status" } | { kind: "save"; settings: Settings } | { kind: "show" } | { kind: "hide" }
+  | { kind: "details" } | { kind: "closeDetails" } | { kind: "switchChat"; chatId: string }
+  | { kind: "respond"; chatId: string; requestId: string; decision: ToolPkg.ToolPermissionDecision };
+export interface Status { settings: Settings; scope: string; permissionGranted: boolean; view: View; presentation: string; }
+export const LABELS: Record<Mood, string> = { working: "正在执行", thinking: "正在思考", approval: "等待批准", completed: "任务完成", idle: "空闲待命", error: "需要处理" };
+
+/** Rejects invalid settings before changing storage or the host window. */
+export function validateSettings(value: Settings): Settings {
+  if (typeof value.enabled !== "boolean" || typeof value.backgroundOnly !== "boolean" || typeof value.keepIdle !== "boolean"
+    || !Number.isFinite(value.width) || value.width < 80 || value.width > 256) throw new Error("设置无效：大小须为 80–256，开关须为布尔值");
+  return { enabled: value.enabled, backgroundOnly: value.backgroundOnly, keepIdle: value.keepIdle, width: Math.round(value.width) };
+}
+
+/** Selects the actionable state from structured task and approval data. */
+export function selectView(tasks: Task[], approvals: ToolPkg.ToolPermissionRequest[], completed: string | null, sequence: number): View {
+  const active = tasks.filter(task => task.active);
+  const errors = tasks.filter(task => task.state === "error");
+  const request = approvals[0];
+  const task = errors[0] ?? active[0];
+  let mood: Mood = "idle", chatId = "", message = "随时待命";
+  if (request) { mood = "approval"; chatId = request.chatId; message = `${approvals.length} 项待批准 · ${request.tool.name}`; }
+  else if (task) {
+    chatId = task.chatId;
+    mood = task.state === "error" ? "error" : task.state === "connecting" || task.state === "processing" ? "thinking" : "working";
+    message = task.message || LABELS[mood];
+  } else if (completed !== null) { mood = "completed"; chatId = completed; message = "任务完成啦"; }
+  return { mood, chatId, message, count: active.length, approvals, tasks, sequence };
+}

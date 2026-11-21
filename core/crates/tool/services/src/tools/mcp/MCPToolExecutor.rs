@@ -529,6 +529,7 @@ mod tests {
 
         fn runtimeContext(&self) -> ToolRuntimeContext {
             ToolRuntimeContext {
+                callerName: None,
                 callerChatId: None,
                 callerParticipantId: None,
                 workspacePath: Some("/operitapp/workspaces/ws1".to_string()),

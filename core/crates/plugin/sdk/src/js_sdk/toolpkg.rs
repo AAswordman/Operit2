@@ -531,7 +531,7 @@ pub enum ToolPkgHookEventName {
     Variant19(ToolPkgCoreCommandEventName),
     Variant15(ToolPkgHostEventName),
     Variant20(ToolPkgHookEventNameVariant20),
-    Variant21(ToolPkgToolPermissionEventName),
+    Variant24(ToolPkgToolPermissionEventName),
 }
 /// Accepts a JSON result, no result, or asynchronous completion from a generic hook.
 pub enum ToolPkgHookReturn {

@@ -959,8 +959,19 @@ impl MessageCoordinationDelegate {
                                 InputProcessingState::Summarizing { message: stage.to_string() });
                         }
                     });
+                    let errorDelegate = std::sync::Mutex::new(worker.messageProcessingDelegate.clone_for_core());
+                    let errorChatId = workerChatId.clone();
+                    let errorTaskId = workerTaskId.clone();
+                    let onNonFatalError = Arc::new(move |error: String| {
+                        let delegate = errorDelegate.lock().expect("summary error mutex poisoned");
+                        let ownsTask = delegate.summaryTaskForChat(&errorChatId)
+                            .is_some_and(|task| Arc::ptr_eq(&task.taskId, &errorTaskId));
+                        if ownsTask {
+                            delegate.toastEventFlow.set_value(Some(format!("上下文压缩：{error}")));
+                        }
+                    });
                     let outcome = Abortable::new(
-                        worker.generateAndStoreSummary(&mut service, messages, request, Some(progress)),
+                        worker.generateAndStoreSummary(&mut service, messages, request, Some(progress), onNonFatalError),
                         registration,
                     )
                     .await;
@@ -1021,6 +1032,7 @@ impl MessageCoordinationDelegate {
         messages: Vec<ChatMessage>,
         request: ConversationSummaryRequest,
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<(), String> {
         let insertPosition = self
             .chatHistoryDelegate
@@ -1034,7 +1046,7 @@ impl MessageCoordinationDelegate {
             .map(|message| message.timestamp);
         let summary =
             AIMessageManager::summarizeMemory(
-                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger,
+                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger, onNonFatalError,
             )
                 .await
                 .map_err(|error| error.to_string())?
@@ -1222,9 +1234,6 @@ impl MessageCoordinationDelegate {
     ) {
         self.cancelSummaryForChat(enhancedAiService, chatId);
     }
-
-    /// Installs UI bridge callbacks used by platform integrations.
-    pub fn setUiBridge(&mut self) {}
 }
 
 #[cfg(test)]

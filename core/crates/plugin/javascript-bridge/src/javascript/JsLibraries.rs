@@ -522,6 +522,8 @@ fn assembleRuntimeBootstrapScript() -> String {
                 return;
             }}
             var callState = registerCallSession(callId, params, toolPkgContext);
+            params = callState.arguments;
+            delete callState.arguments;
             callState.previousCallId = previousCallId;
             callState.previousCallRuntime = previousCallRuntime;
             globalThis.__operitCurrentCallId = callId;
@@ -585,8 +587,8 @@ fn assembleRuntimeBootstrapScript() -> String {
                 __operitNativeLogJsExecutionTrace(
                     callId,
                     'function=' + callState.lastExecFunction +
-                        ' package=' + __operitText(params && (params.__operit_ui_package_name || params.toolPkgId || params.__operit_package_name)) +
-                        ' screen=' + __operitText(params && params.__operit_script_screen) +
+                        ' package=' + __operitText(readCallValue('__operit_ui_package_name', '') || readCallValue('toolPkgId', '') || readCallValue('__operit_package_name', '')) +
+                        ' screen=' + __operitText(readCallValue('__operit_script_screen', '')) +
                         ' context=' + __operitText(toolPkgContext && toolPkgContext.contextKey) +
                         ' session=' + __operitText(params && params.__operit_compose_session_id)
                 );

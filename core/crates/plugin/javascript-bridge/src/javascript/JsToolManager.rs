@@ -153,28 +153,6 @@ impl JsToolManager {
             );
         }
 
-        for key in [
-            "__operit_package_caller_name",
-            "__operit_package_chat_id",
-            "__operit_package_caller_participant_id",
-            "__operit_package_caller_owner",
-        ] {
-            let value = runtimeParams
-                .get(key)
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|value| !value.is_empty())
-                .map(str::to_string);
-            match value {
-                Some(value) => {
-                    runtimeParams.insert(key.to_string(), Value::String(value));
-                }
-                None => {
-                    runtimeParams.remove(key);
-                }
-            }
-        }
-
         runtimeParams.insert(
             "__operit_package_name".to_string(),
             Value::String(packageName.to_string()),
@@ -257,16 +235,6 @@ impl JsToolManager {
                 .find(|item| item.name == *parameterName)
             {
                 Some(parameter) => parameter.parameter_type.as_str(),
-                None if matches!(
-                    parameterName.as_str(),
-                    "__operit_package_caller_name"
-                        | "__operit_package_chat_id"
-                        | "__operit_package_caller_participant_id"
-                        | "__operit_package_caller_owner"
-                ) =>
-                {
-                    "string"
-                }
                 None => {
                     return Err(ToolParameterConversionException {
                         message: format!(
@@ -1177,7 +1145,7 @@ mod tests {
     }
   ]
 }
-*/"use strict";exports.inspect=function(t){return"protected-flow:"+t.text+"|"+t.__operit_toolpkg_subpackage_id+"|"+t.__operit_script_screen};"#;
+*/"use strict";exports.inspect=function(t){return"protected-flow:"+t.text+"|"+Object.keys(t).sort().join(",")};"#;
         let asset_payload = b"asset-secret-value";
 
         let mut source_bytes = Vec::new();
@@ -1512,7 +1480,7 @@ mod tests {
 
         assert_eq!(
             output,
-            "\"protected-flow:downloaded|market_flow_sub|dist/sub.js\""
+            "\"protected-flow:downloaded|text\""
         );
     }
 
@@ -1584,18 +1552,12 @@ mod tests {
         manager.destroy();
     }
 
+    /// Separates subpackage metadata before invoking the exported business tool.
     #[tokio::test(flavor = "current_thread")]
-    async fn subpackage_runtime_params_match_toolpkg_context() {
+    async fn subpackage_runtime_context_is_detached_from_business_params() {
         let script = r#"
             exports.inspect = function(params) {
-                return [
-                    params.__operit_execution_context_key,
-                    params.__operit_toolpkg_subpackage_id,
-                    params.containerPackageName,
-                    params.toolPkgId,
-                    params.__operit_ui_package_name,
-                    params.__operit_script_screen
-                ].join('|');
+                return { params: params, language: getLang(), context: globalThis.__operitGetCallState(globalThis.__operitCurrentCallId).params.__operit_execution_context_key };
             };
         "#;
         let (manager, _) = toolpkg_manager(script);
@@ -1607,10 +1569,10 @@ mod tests {
             "subpackage runtime params execution",
         );
 
-        assert_eq!(
-            output,
-            "\"toolpkg_main:test_toolpkg|sub|test_toolpkg|test_toolpkg|test_toolpkg|dist/sub.js\""
-        );
+        let output: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(output["params"], serde_json::json!({}));
+        assert_eq!(output["language"], "en");
+        assert_eq!(output["context"], "toolpkg_main:test_toolpkg");
     }
 
     #[tokio::test(flavor = "current_thread")]

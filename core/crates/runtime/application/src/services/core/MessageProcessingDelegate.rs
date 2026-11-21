@@ -750,6 +750,7 @@ impl MessageProcessingDelegate {
     /// Schedules title generation without delaying the primary chat response.
     #[allow(non_snake_case)]
     pub fn launchConversationTitleGeneration(
+        &self,
         mut enhanced_ai_service: EnhancedAIService,
         mut chat_history_delegate: ChatHistoryDelegate,
         chat_id: String,
@@ -757,6 +758,8 @@ impl MessageProcessingDelegate {
         attachments: Vec<AttachmentInfo>,
         provisional_title: String,
     ) {
+        let titleErrors = self.toastEventFlow.clone();
+        let retryErrors = titleErrors.clone();
         defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask(
                 "conversation-title-generation",
@@ -769,6 +772,9 @@ impl MessageProcessingDelegate {
                                     .into_iter()
                                     .map(|attachment| attachment.fileName)
                                     .collect(),
+                                Arc::new(move |error| {
+                                    retryErrors.set_value(Some(format!("会话标题生成：{error}")));
+                                }),
                             )
                             .await
                         {
@@ -790,6 +796,7 @@ impl MessageProcessingDelegate {
                                     "MessageProcessingDelegate",
                                     &format!("conversation title generation failed: {error}"),
                                 );
+                                titleErrors.set_value(Some(format!("会话标题生成失败：{error}")));
                             }
                         }
                     })
@@ -1364,6 +1371,7 @@ impl MessageProcessingDelegate {
     pub fn finishChatExecution(&mut self, chatId: String, terminalState: InputProcessingState) {
         if let InputProcessingState::Error { message } = &terminalState {
             self.failTurnReceipt(&chatId, message.clone());
+            self.showToast(message.clone());
         }
         debug_assert!(matches!(
             &terminalState,
@@ -2024,7 +2032,7 @@ impl MessageProcessingDelegate {
             self.recordCommittedUser(&chatId, turnId, committedUser.timestamp);
             userMessageAdded = true;
             if let Some(provisionalTitle) = provisionalTitle {
-                Self::launchConversationTitleGeneration(
+                self.launchConversationTitleGeneration(
                     request.enhancedAiService.clone(),
                     request.chatHistoryDelegate.clone_for_core(),
                     chatId.clone(),
@@ -2086,7 +2094,6 @@ impl MessageProcessingDelegate {
             maxTokens: request.maxTokens,
             tokenUsageThreshold,
             proxySenderName: request.proxySenderNameOverride.clone(),
-            notifyReplyOverride: request.turnOptions.notifyReply,
             chatProviderIdOverride: request.chatProviderIdOverride.clone(),
             chatModelIdOverride: request.chatModelIdOverride.clone(),
             disableWarning: request.turnOptions.disableWarning,

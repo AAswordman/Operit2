@@ -212,6 +212,7 @@ async fn super_admin_sdk_keeps_chat_directory_across_javascript_scheduling() {
             std::fs::write(native.join(".operit/attachments/fixture/input.txt"), base).unwrap();
             for kind in ["bash", "zsh", "shell"] {
                 let context = ToolRuntimeContext {
+                    callerName: None,
                     callerChatId: Some("terminal-chat".into()), callerParticipantId: None,
                     workspacePath: workspace.map(str::to_string), workspaceFolders: Vec::new(),
                     toolExposureMode: ToolExposureMode::FULL, extensionOwner: "test-owner".into(), executionData: Default::default(),
@@ -236,6 +237,7 @@ async fn super_admin_sdk_keeps_chat_directory_across_javascript_scheduling() {
             for kind in ["bash", "zsh", "shell"] {
                 let before = terminal.commands.lock().unwrap().len();
                 let context = ToolRuntimeContext {
+                    callerName: None,
                     callerChatId: Some(chat_id.into()), callerParticipantId: None,
                     workspacePath: workspace.map(str::to_string), workspaceFolders: Vec::new(),
                     toolExposureMode: ToolExposureMode::FULL, extensionOwner: "test-owner".into(), executionData: Default::default(),

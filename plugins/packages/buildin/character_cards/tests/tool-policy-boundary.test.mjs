@@ -130,13 +130,14 @@ test("static negative: removing recipient namespace isolation is a red item", ()
   assert.ok(violations(input).indexOf("owner-only message object or explicit null") !== -1);
 });
 
-/** Verifies all assigned native tool transport paths use the same generic participant name without aliases. */
-test("static: participant metadata has one generic reserved transport key and no card aliases", () => {
+/** Keeps participant ownership native and out of generic tool business arguments. */
+test("static: participant metadata stays in native context without card aliases", () => {
   const input = sources();
   for (const name of ["manager", "enhanced", "jsRuntime", "jsTools", "registration", "prelude"]) {
     assert.doesNotMatch(input[name], /\b(?:callerCardId|roleCardId|getCallerCardId)\b|__operit_package_caller_card_id/);
   }
-  for (const name of ["manager", "jsRuntime", "jsTools"]) assert.match(input[name], /__operit_package_caller_participant_id/);
+  assert.match(input.jsRuntime, /__operit_package_caller_participant_id/);
+  for (const name of ["manager", "jsTools"]) assert.doesNotMatch(input[name], /__operit_package_caller_participant_id/);
   assert.match(input.prelude, /getCallerParticipantId/);
 });
 

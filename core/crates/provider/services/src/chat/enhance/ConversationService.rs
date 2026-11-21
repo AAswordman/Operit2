@@ -9,7 +9,7 @@ use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
 use crate::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
-    collect_stream_chunks, AiServiceError, SendMessageRequest, TokenCounts,
+    ensure_response_completed, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::FunctionType::FunctionType;
@@ -427,11 +427,13 @@ impl ConversationService {
             .join("\n")
     }
 
+    /// Generates a summary while forwarding every provider retry error to its owner.
     pub async fn generateSummary(
         &self,
         messages: Vec<(String, String)>,
         previousSummary: Option<String>,
         multiServiceManager: &mut MultiServiceManager,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<String, AiServiceError> {
         self.generateSummaryFromPromptTurns(
             messages
@@ -440,19 +442,23 @@ impl ConversationService {
                 .collect(),
             previousSummary,
             multiServiceManager,
+            onNonFatalError,
         )
         .await
     }
 
+    /// Summarizes prepared turns with an explicit provider error consumer.
     pub async fn generateSummaryFromPromptTurns(
         &self,
         messages: Vec<PromptTurn>,
         previousSummary: Option<String>,
         multiServiceManager: &mut MultiServiceManager,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<String, AiServiceError> {
-        self.generateSummaryWithProgress(messages, previousSummary, multiServiceManager, None, None).await.map(|(content, _)| content)
+        self.generateSummaryWithProgress(messages, previousSummary, multiServiceManager, None, None, onNonFatalError).await.map(|(content, _)| content)
     }
 
+    /// Runs summary hooks and generation with progress and required retry-error delivery.
     pub async fn generateSummaryWithProgress(
         &self,
         messages: Vec<PromptTurn>,
@@ -460,6 +466,7 @@ impl ConversationService {
         multiServiceManager: &mut MultiServiceManager,
         progress: Option<SummaryProgressCallback>,
         trigger: Option<SummaryTriggerContext>,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<(String, TokenCounts), AiServiceError> {
         let useEnglish = false;
         let previousSummary = previousSummary.map(|summary| ChatMarkupRegex::remove_meta_tags(&summary));
@@ -569,14 +576,14 @@ impl ConversationService {
                     available_tools: Vec::new(),
                     preserve_think_in_history: false,
                     enable_retry: true,
-                    on_non_fatal_error: None,
+                    on_non_fatal_error: Some(onNonFatalError),
                     on_tool_invocation: None,
                 })
                 .await?
         };
         let mut content = String::new();
         summaryStream.collect(&mut |chunk| content.push_str(&chunk)).await;
-        crate::chat::llmprovider::AIService::ensure_response_completed(summaryStream.as_ref())?;
+        ensure_response_completed(summaryStream.as_ref())?;
         let mut summaryContent = ChatMarkupRegex::remove_meta_tags(&removeThinkingContent(content.trim()));
         let usage = {
             let service = summaryService.lock().await;
@@ -651,6 +658,7 @@ impl ConversationService {
         user_text: String,
         attachment_file_names: Vec<String>,
         multi_service_manager: &mut MultiServiceManager,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<String, AiServiceError> {
         let use_english = false;
         let prepared_history = vec![
@@ -675,7 +683,7 @@ impl ConversationService {
             let service = title_service.lock().await;
             service.provider_model()
         };
-        let title_stream = {
+        let mut title_stream = {
             let mut service = title_service.lock().await;
             service
                 .send_message(SendMessageRequest {
@@ -686,13 +694,15 @@ impl ConversationService {
                     available_tools: Vec::new(),
                     preserve_think_in_history: false,
                     enable_retry: false,
-                    on_non_fatal_error: None,
+                    on_non_fatal_error: Some(onNonFatalError),
                     on_tool_invocation: None,
                 })
                 .await?
         };
-        let title_chunks = collect_stream_chunks(title_stream).await;
-        let title = sanitizeConversationTitle(&removeThinkingContent(&title_chunks.join("")));
+        let mut title_content = String::new();
+        title_stream.collect(&mut |chunk| title_content.push_str(&chunk)).await;
+        ensure_response_completed(title_stream.as_ref())?;
+        let title = sanitizeConversationTitle(&removeThinkingContent(&title_content));
         let (input_tokens, cached_input_tokens, output_tokens) = {
             let service = title_service.lock().await;
             (

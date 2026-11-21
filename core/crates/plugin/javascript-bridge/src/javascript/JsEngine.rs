@@ -3393,6 +3393,7 @@ fn bindCallerContext(params: &mut BTreeMap<String, Value>, host: Option<&dyn JsE
         return;
     };
     for (field, key) in [
+        ("callerName", "__operit_package_caller_name"),
         ("participantId", "__operit_package_caller_participant_id"),
         ("extensionOwner", "__operit_package_caller_owner"),
         ("chatId", "__operit_package_chat_id"),

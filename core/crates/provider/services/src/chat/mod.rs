@@ -1,5 +1,3 @@
-#[path = "AIForegroundService.rs"]
-pub mod AIForegroundService;
 #[path = "EnhancedAIService.rs"]
 pub mod EnhancedAIService;
 #[path = "TurnTokenUsage.rs"]

@@ -77,7 +77,6 @@ pub struct SendMessageRequest<'a> {
     pub maxTokens: i32,
     pub tokenUsageThreshold: f64,
     pub proxySenderName: Option<String>,
-    pub notifyReplyOverride: Option<bool>,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
     pub disableWarning: bool,
@@ -419,7 +418,6 @@ impl AIMessageManager {
         options.maxTokens = request.maxTokens;
         options.tokenUsageThreshold = request.tokenUsageThreshold;
         options.proxySenderName = request.proxySenderName;
-        options.notifyReplyOverride = request.notifyReplyOverride;
         options.chatProviderIdOverride = request.chatProviderIdOverride;
         options.chatModelIdOverride = request.chatModelIdOverride;
         options.disableWarning = request.disableWarning;
@@ -530,6 +528,7 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Builds a summary message and forwards retry errors to the owning chat surface.
     pub async fn summarizeMemory(
         enhancedAiService: &mut EnhancedAIService,
         messages: Vec<ChatMessage>,
@@ -538,6 +537,7 @@ impl AIMessageManager {
         configuration: &ChatConfigurationResult,
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
         trigger: Option<operit_providers::chat::enhance::ConversationService::SummaryTriggerContext>,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<Option<ChatMessage>, operit_providers::chat::llmprovider::AIService::AiServiceError>
     {
         let lastSummaryIndex = messages
@@ -584,7 +584,7 @@ impl AIMessageManager {
 
         let startTime = ChatMessageTimestampAllocator::currentTimeMillis();
         let (summary, usage) = enhancedAiService
-            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, progress, trigger)
+            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, progress, trigger, onNonFatalError)
             .await?;
         let endTime = ChatMessageTimestampAllocator::currentTimeMillis();
         if summary.trim().is_empty() {

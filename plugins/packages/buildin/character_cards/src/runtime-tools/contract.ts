@@ -9,14 +9,6 @@ export interface DomainCall {
 export const memoryToolNames = ["get_memory_owner_key", "query_memory", "get_memory_by_title", "create_memory", "update_memory", "delete_memory", "move_memory", "update_user_preferences", "link_memories", "query_memory_links", "update_memory_link", "delete_memory_link"] as const;
 export type MemoryToolName = typeof memoryToolNames[number];
 export type ToolParameters = Record<string, unknown>;
-/** Enumerates the exact runtime fields injected by JsToolManager and JsEngine, excluding tool-specific business parameters. */
-export const hostRuntimeParameterNames = [
-  "__operit_package_lang", "__operit_package_state", "__operit_package_caller_name",
-  "__operit_package_chat_id", "__operit_package_caller_participant_id", "__operit_package_caller_owner", "__operit_package_name",
-  "__operit_toolpkg_runtime_kind", "__operit_toolpkg_api_version", "__operit_execution_context_key",
-  "__operit_toolpkg_subpackage_id", "containerPackageName", "toolPkgId", "__operit_ui_package_name",
-  "__operit_script_screen",
-] as const;
 /** Carries only the host-injected execution identity understood by this plugin. */
 export interface CallerContext { chatId: string | null; participantId: string | null; callerName: string | null }
 /** Calls the existing package-owned domain IPC channel without a Core memory executor. */
@@ -59,16 +51,16 @@ export function score(input: ToolParameters, name: string): number | undefined {
   if (value !== undefined && (value < 0 || value > 1)) throw new Error(name + " must be between 0 and 1");
   return value;
 }
-/** Decodes optional host-injected identity fields using their exact reserved names. */
-export function callerContext(input: ToolParameters): CallerContext {
-  /** Converts one genuinely absent execution field to its explicit optional-context spelling. */
-  const field = (name: string): string | null => {
-    const value = optionalText(input, name);
+/** Captures authenticated call identity independently of model-supplied business parameters. */
+export function callerContext(): CallerContext {
+  /** Validates an SDK getter's optional identity without reading tool input. */
+  const field = (name: string, value: unknown): string | null => {
     if (value === undefined) return null;
+    if (typeof value !== "string") throw new Error(name + " must be a string");
     if (value.trim() === "") throw new Error(name + " must not be blank");
     return value;
   };
-  return { chatId: field("__operit_package_chat_id"), participantId: field("__operit_package_caller_participant_id"), callerName: field("__operit_package_caller_name") };
+  return { chatId: field("chatId", getChatId()), participantId: field("participantId", getCallerParticipantId()), callerName: field("callerName", getCallerName()) };
 }
 /** Formats the original local-time memory timestamp contract without an invalid-date substitute. */
 export function formatTime(value: number): string {

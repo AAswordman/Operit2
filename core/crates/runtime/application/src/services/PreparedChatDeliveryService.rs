@@ -15,7 +15,7 @@ use operit_plugin_sdk::js_sdk::results::{
 };
 use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_model::ChatMessage::ChatMessage;
-use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageOptions};
+use operit_providers::chat::EnhancedAIService::{EnhancedAIService, SendMessageCallbacks, SendMessageOptions};
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -25,6 +25,24 @@ use std::sync::{
 
 const STORE: &str = "runtime/scheduled_chat_messages.json";
 const MAX_PENDING: usize = 60;
+
+/// Forwards provider retry notices while a scheduled reply is being prepared.
+struct PreparedReplyCallbacks {
+    errors: operit_store::PreferencesDataStore::MutableStateFlow<Option<String>>,
+}
+
+impl SendMessageCallbacks for PreparedReplyCallbacks {
+    /// Delivers the provider's original error to the existing chat notice surface.
+    fn onNonFatalError(&self, error: String) {
+        self.errors.set_value(Some(format!("定时回复生成：{error}")));
+    }
+
+    /// Reports an exhausted request window through the scheduled reply notice surface.
+    fn onTokenLimitExceeded(&self) {
+        self.errors.set_value(Some("定时回复生成：上下文已达到压缩阈值".to_string()));
+    }
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 struct Entry {
     owner: String,
@@ -538,12 +556,17 @@ async fn context(
     if runtime.cores.values().any(|core| core.messageProcessingDelegate.isChatProcessing(chatId)) {
         return Err("Target conversation is processing".into());
     }
-    let history = &runtime.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate;
+    let core = runtime.getCore(ChatRuntimeSlot::MAIN);
+    let history = &core.chatHistoryDelegate;
     let chat = history.chatHistoryManager.loadChatHistory(chatId.into()).map_err(|e| e.to_string())?
         .ok_or("Scheduled reply target conversation does not exist")?;
     let options = SendMessageOptions {
         chatId: Some(chatId.into()), workspacePath: history.primaryWorkspacePathForChat(&chat),
-        workspaceFolders: history.workspaceFolderPathsForChat(&chat), ..SendMessageOptions::new()
+        workspaceFolders: history.workspaceFolderPathsForChat(&chat),
+        callbacks: Some(Arc::new(PreparedReplyCallbacks {
+            errors: core.messageProcessingDelegate.toastEventFlow.clone(),
+        })),
+        ..SendMessageOptions::new()
     };
     Ok((history.getRuntimeChatHistory(chatId.into()), options))
 }

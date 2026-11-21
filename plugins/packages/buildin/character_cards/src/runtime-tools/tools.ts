@@ -547,7 +547,7 @@
   ]
 }
 */
-import { callDomain, callerContext, hostRuntimeParameterNames, parameters } from "./contract";
+import { callDomain, callerContext, parameters } from "./contract";
 import type { MemoryToolName, MemoryToolResult, MemoryToolResults } from "./contract";
 import { MemoryTools } from "./memory";
 
@@ -555,7 +555,7 @@ const executor = new MemoryTools(callDomain);
 /** Executes a declared tool through typed IPC, preserving the host-injected execution identity. */
 function execute<N extends MemoryToolName>(name: N, value: unknown): Promise<MemoryToolResult<N>> {
   const input = parameters(value);
-  return executor.execute(name, input, callerContext(input));
+  return executor.execute(name, input, callerContext());
 }
 
 /** Resolve the actual memory owner bound to the execution participant. */
@@ -596,11 +596,9 @@ export async function delete_memory_link(input: unknown): Promise<MemoryToolResu
 
 /** Lists the actual plugin records through the single authenticated main-runtime domain dispatcher. */
 export async function list_character_cards(input: unknown): Promise<{ totalCount: number; cards: { id: string; name: string; description: string; createdAt: number; updatedAt: number }[] }> {
-  const values = parameters(input), runtimeNames = new Set<string>(hostRuntimeParameterNames);
-  for (const key of Object.keys(values)) {
-    if (!runtimeNames.has(key)) throw new Error("Unknown list_character_cards parameter: " + key);
-  }
-  callerContext(values);
+  const key = Object.keys(parameters(input))[0];
+  if (key !== undefined) throw new Error("Unknown list_character_cards parameter: " + key);
+  callerContext();
   const records = await callDomain("character.list", {});
   return { totalCount: records.length, cards: records.map(
     /** Preserves the historical tool projection from actual complete stored card records. */

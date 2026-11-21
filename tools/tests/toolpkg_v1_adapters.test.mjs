@@ -300,9 +300,7 @@ test('v1 hook memory uses the neutral caller transport and rejects foreign parti
   const result = await tools.Memory.query('Hook memory');
   assert.equal(result.memories[0].title, 'Hook memory');
   const query = calls.findLast(call => call.name === 'character_memory:query_memory');
-  assert.equal(query.args[0].__operit_package_caller_participant_id, card.id);
-  assert.equal(query.args[0].__operit_package_chat_id, 'hook-chat');
-  assert.equal(query.args[0].__operit_package_caller_owner, 'com.operit.character_cards');
+  assert.deepEqual(Object.keys(query.args[0]).filter(key => key.startsWith('__operit_')), []);
 
   delete context.params.__operit_package_caller_participant_id;
   delete context.params.__operit_package_caller_owner;
@@ -475,7 +473,13 @@ async function roleProvider(t, version = '1.0.0') {
     assert.equal(apis.has(method), true, method);
     return apis.get(method)({ payload, callerPackage: 'legacy.test.package' });
   }
-  const exportedTools = loadModule('src/runtime-tools/tools.ts', { ...disk.globals, ToolPkg: {
+  const runtime = engine(version);
+  const exportedTools = loadModule('src/runtime-tools/tools.ts', { ...disk.globals,
+    /** Models native caller inheritance separately from the forwarded tool request. */
+    getChatId: () => runtime.context.params.__operit_package_chat_id,
+    getCallerParticipantId: () => runtime.context.params.__operit_package_caller_participant_id,
+    getCallerName: () => runtime.context.params.__operit_package_caller_name,
+    ToolPkg: {
     ...disk.globals.ToolPkg, ipc: {
       /** Routes the executable tool's real IPC request back to the one authoritative provider service. */
       async call(channel, request, options) {
@@ -485,7 +489,6 @@ async function roleProvider(t, version = '1.0.0') {
       },
     },
   } });
-  const runtime = engine(version);
   runtime.context.params = {
     __operit_package_caller_participant_id: 'default', __operit_package_caller_owner: 'com.operit.character_cards',
     __operit_package_chat_id: 'actual-chat', __operit_package_caller_name: 'Actual speaker',
@@ -571,8 +574,7 @@ test('legacy memory operations reach the actual disk-backed provider', async t =
   assert.equal(Object.hasOwn(fetched, 'ownerKey'), false);
   const requests = calls.filter(call => call.name.startsWith('character_memory:'));
   for (const call of requests) {
-    assert.equal(call.args[0].__operit_package_caller_participant_id, 'default');
-    assert.equal(call.args[0].__operit_package_caller_owner, 'com.operit.character_cards');
+    assert.deepEqual(Object.keys(call.args[0]).filter(key => key.startsWith('__operit_')), []);
   }
   await tools.Memory.move({ targetFolderPath: 'actual-folder', titles: ['First memory'] });
   const stored = disk.readState().owners.find(space => space.ownerKey === 'character:default');

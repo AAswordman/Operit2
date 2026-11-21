@@ -241,6 +241,7 @@ async fn workspace_file_actions_worker() {
         assert_eq!(text, "remote content");
         let result = operit_tools::ToolExecutionManager::ToolExecutionManager::scopeToolRuntimeContext(
             operit_tools::ToolExecutionManager::ToolRuntimeContext {
+                callerName: None,
                 callerChatId: Some(chat_id.clone()), callerParticipantId: None,
                 workspacePath: Some(remote_address.clone()), workspaceFolders: vec![remote_address.clone()],
                 toolExposureMode: operit_tools::ToolExecutionManager::ToolExposureMode::FULL,

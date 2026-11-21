@@ -125,6 +125,7 @@ fn installCall(path: &str) -> AITool {
 /// Captures the same current file directory used by ordinary file tools.
 fn directoryContext(path: &str) -> ToolRuntimeContext {
     ToolRuntimeContext {
+        callerName: None,
         callerChatId: None,
         callerParticipantId: None,
         workspacePath: Some(path.into()),

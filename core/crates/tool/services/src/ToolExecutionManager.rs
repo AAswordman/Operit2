@@ -7,7 +7,6 @@ use serde::{Deserialize, Serialize};
 use operit_tools::tools::climode::CliToolModeSupport::{
     CliToolModeSupport, PROXY_TOOL_NAME, SEARCH_TOOL_NAME,
 };
-use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
 use operit_tools::tools::ToolResultDataClasses::stringResultData;
 use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
@@ -18,10 +17,6 @@ const TAG: &str = "ToolExecutionManager";
 const PACKAGE_PROXY_TOOL_NAME: &str = "package_proxy";
 const CLI_PROXY_TOOL_NAME: &str = PROXY_TOOL_NAME;
 const CLI_SEARCH_TOOL_NAME: &str = SEARCH_TOOL_NAME;
-const PACKAGE_CALLER_NAME_PARAM: &str = "__operit_package_caller_name";
-const PACKAGE_CHAT_ID_PARAM: &str = "__operit_package_chat_id";
-const PACKAGE_CALLER_PARTICIPANT_ID_PARAM: &str = "__operit_package_caller_participant_id";
-const PACKAGE_CALLER_OWNER_PARAM: &str = "__operit_package_caller_owner";
 
 tokio::task_local! {
     static TOOL_RUNTIME_CONTEXT: ToolRuntimeContext;
@@ -40,6 +35,9 @@ pub enum ToolExposureMode {
 /// Context made available while a batch of tool invocations is executing.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ToolRuntimeContext {
+    /// Keeps the authenticated caller label outside business tool arguments.
+    #[serde(default)]
+    pub callerName: Option<String>,
     pub callerChatId: Option<String>,
     pub callerParticipantId: Option<String>,
     pub workspacePath: Option<String>,
@@ -113,7 +111,7 @@ impl ToolCall {
             return Err(CliToolModeSupport::buildCliModeUnavailableMessage(false));
         }
         for key in self.parameters.keys() {
-            if !matches!(key.as_str(), "tool_name" | "params" | PACKAGE_CALLER_NAME_PARAM | PACKAGE_CHAT_ID_PARAM | PACKAGE_CALLER_PARTICIPANT_ID_PARAM | PACKAGE_CALLER_OWNER_PARAM) {
+            if !matches!(key.as_str(), "tool_name" | "params") {
                 return Err(format!("Unexpected proxy parameter: {key}. Put target tool parameters inside params as a JSON object."));
             }
         }
@@ -133,11 +131,7 @@ impl ToolCall {
             serde_json::Value::Object(object) => object.clone(),
             _ => return Err("Proxy params must be a JSON object or its legacy text encoding".into()),
         };
-        let mut parameters = object.into_iter().collect::<BTreeMap<_, _>>();
-        for key in [PACKAGE_CALLER_NAME_PARAM, PACKAGE_CHAT_ID_PARAM, PACKAGE_CALLER_PARTICIPANT_ID_PARAM, PACKAGE_CALLER_OWNER_PARAM] {
-            parameters.remove(key);
-            if let Some(value) = self.parameters.get(key) { parameters.insert(key.to_string(), value.clone()); }
-        }
+        let parameters = object.into_iter().collect::<BTreeMap<_, _>>();
         Ok(Self { name: name.to_string(), parameters })
     }
 
@@ -359,7 +353,6 @@ impl ToolExecutionManager {
     pub async fn executeInvocations(
         invocations: &[ToolInvocation],
         toolHandler: &mut AIToolHandler,
-        packageManager: &RuntimePackageManager,
         callerName: Option<String>,
         callerChatId: Option<String>,
         callerParticipantId: Option<String>,
@@ -370,6 +363,7 @@ impl ToolExecutionManager {
         executionData: serde_json::Map<String, serde_json::Value>,
     ) -> Result<ToolExecutionBatch, String> {
         let runtimeContext = ToolRuntimeContext {
+            callerName: callerName.clone(),
             callerChatId: callerChatId.clone(),
             callerParticipantId: callerParticipantId.clone(),
             workspacePath: workspacePath.clone(),
@@ -402,25 +396,7 @@ impl ToolExecutionManager {
             operit_util::AppLogger::VERBOSE_LEVEL_3,
         );
         toolHandler.registerDefaultTools();
-        let jsPackageNames = packageManager
-            .getAvailablePackages()
-            .keys()
-            .cloned()
-            .collect::<BTreeSet<_>>();
-        let injectedInvocations = invocations
-            .iter()
-            .map(|invocation| {
-                Self::injectPackageCallContext(
-                    invocation,
-                    &jsPackageNames,
-                    callerName.as_deref(),
-                    callerChatId.as_deref(),
-                    callerParticipantId.as_deref(),
-                )
-            })
-            .collect::<Vec<_>>();
-
-        for invocation in injectedInvocations.iter().cloned() {
+        for invocation in invocations.iter().cloned() {
             let displayToolName = Self::resolveDisplayToolName(&invocation.tool);
             AppLogger::trace_detail(
                 TAG,
@@ -537,65 +513,6 @@ impl ToolExecutionManager {
                 }
             },
             _ => tool.name.clone(),
-        }
-    }
-
-    fn isJsPackageTool(toolName: &str, jsPackageNames: &BTreeSet<String>) -> bool {
-        let parts = toolName.splitn(2, ':').collect::<Vec<_>>();
-        parts.len() == 2 && jsPackageNames.contains(parts[0])
-    }
-
-    /// Replaces every untrusted reserved value with the authenticated host context, including its absence.
-    fn setPackageContextParameter(
-        params: &mut Vec<ToolParameter>,
-        name: &str,
-        value: Option<&str>,
-    ) {
-        params.retain(|parameter| parameter.name != name);
-        if let Some(value) = value {
-            params.push(ToolParameter {
-                name: name.to_string(),
-                value: value.to_string(),
-            });
-        }
-    }
-
-    /// Injects canonical context into a selected JavaScript tool or its proxy wrapper.
-    fn injectPackageCallContext(
-        invocation: &ToolInvocation,
-        jsPackageNames: &BTreeSet<String>,
-        callerName: Option<&str>,
-        callerChatId: Option<&str>,
-        callerParticipantId: Option<&str>,
-    ) -> ToolInvocation {
-        let targetName = Self::resolveDisplayToolName(&invocation.tool);
-        if !Self::isJsPackageTool(&targetName, jsPackageNames) {
-            return invocation.clone();
-        }
-
-        let mut updatedParams = invocation.tool.parameters.clone();
-        Self::setPackageContextParameter(&mut updatedParams, PACKAGE_CALLER_NAME_PARAM, callerName);
-        Self::setPackageContextParameter(&mut updatedParams, PACKAGE_CHAT_ID_PARAM, callerChatId);
-        Self::setPackageContextParameter(
-            &mut updatedParams,
-            PACKAGE_CALLER_PARTICIPANT_ID_PARAM,
-            callerParticipantId,
-        );
-
-        let context = Self::currentToolRuntimeContext();
-        Self::setPackageContextParameter(
-            &mut updatedParams,
-            PACKAGE_CALLER_OWNER_PARAM,
-            context.as_ref().map(|context| context.extensionOwner.as_str()),
-        );
-
-        ToolInvocation {
-            tool: AITool {
-                name: invocation.tool.name.clone(),
-                parameters: updatedParams,
-            },
-            rawText: invocation.rawText.clone(),
-            responseLocation: invocation.responseLocation,
         }
     }
 
@@ -833,6 +750,7 @@ mod tests {
     /// Creates an explicit opaque turn snapshot for task-local tests without a package-manager fixture.
     fn turn_snapshot(owner: &str) -> ToolRuntimeContext {
         ToolRuntimeContext {
+            callerName: None,
             callerChatId: Some(format!("chat:{owner}")),
             callerParticipantId: Some(format!("participant:{owner}")),
             workspacePath: None,

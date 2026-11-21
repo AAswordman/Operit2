@@ -4,6 +4,7 @@ import 'dart:math';
 import 'package:flutter/material.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core;
 import '../../../../l10n/generated/app_localizations.dart';
+import '../components/ApiKeyTextField.dart';
 
 /// Edits a provider's draft key pool without writing application preferences.
 class ApiKeyPoolEditor extends StatefulWidget {
@@ -87,20 +88,15 @@ class _ApiKeyPoolEditorState extends State<ApiKeyPoolEditor> {
                     ),
                   ),
                   const SizedBox(height: 12),
-                  TextFormField(
+                  ApiKeyTextField(
                     key: const ValueKey('pool-key-input'),
                     controller: keyText,
-                    obscureText: entry != null,
+                    labelText: l10n.settingsModelApiKey,
                     minLines: entry == null ? 3 : 1,
                     maxLines: entry == null ? 6 : 1,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    decoration: InputDecoration(
-                      labelText: l10n.settingsModelApiKey,
-                      helperText: entry == null
-                          ? l10n.settingsModelPoolPaste
-                          : null,
-                    ),
+                    helperText: entry == null
+                        ? l10n.settingsModelPoolPaste
+                        : null,
                     validator: (value) => value == null || value.trim().isEmpty
                         ? l10n.settingsModelApiKey
                         : null,

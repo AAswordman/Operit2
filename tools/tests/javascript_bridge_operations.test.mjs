@@ -290,7 +290,7 @@ test('cyclic script results fail explicitly rather than producing replacement da
 
 /** Checks Java arguments remain arrays and successful application strings are never decoded as envelopes. */
 test('Java wrappers dispatch structured values and do not probe alternative member transports', () => {
-  const { context } = runtime({
+  const { context, openCall } = runtime({
     /** Returns the explicit compatibility application-context descriptor. */
     __operitNativeJavaGetApplicationContext() { return {__javaHandle: 'context', __javaClass: 'android.app.Application'}; },
     /** Preserves literal application text from a Java compatibility method. */
@@ -303,6 +303,7 @@ test('Java wrappers dispatch structured values and do not probe alternative memb
       assert.equal(Array.isArray(args), true); throw new Error('static call is unsupported');
     },
   });
+  openCall('java-owner');
   vm.runInContext('JSON.parse = JSON.stringify = function() { throw Error("JSON transport used"); };', context);
   assert.equal(vm.runInContext('Java.getApplicationContext().toString()', context), '{"success":false,"message":"literal text"}');
   assert.throws(() => vm.runInContext('Java.callStatic("Example", "run", {value:7})', context), /static call is unsupported/);

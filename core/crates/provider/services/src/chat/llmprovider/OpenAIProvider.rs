@@ -842,8 +842,6 @@ impl OpenAIProvider {
         )?;
         json_object.insert("messages".to_string(), messagesArray);
 
-        self.customize_final_request_object(json_object);
-
         Ok(request_object)
     }
 
@@ -893,8 +891,6 @@ impl OpenAIProvider {
             }
         }
     }
-
-    pub fn customize_final_request_object(&self, _request_object: &mut Map<String, Value>) {}
 
     pub fn comparable_role_for_turn(&self, turn: &PromptTurn) -> &'static str {
         match turn.kind {

@@ -329,13 +329,10 @@ function installV1Adapters(runtime) {
         Tools.Chat[chatMethod] = chatBuilder.build('Tools.Chat.' + chatMethod);
     }
     var legacyMemory = __operitCreateV1Memory(
-        /** Sends one package tool request with the active authenticated caller fields. */
+        /** Sends business arguments while the native invocation retains the authenticated caller. */
         function(name, params) {
             var state = runtime.__operitGetCallState(api.currentCallId());
             if (state.params.__operit_package_caller_participant_id !== undefined) legacyCallerCardId();
-            for (var key of ['__operit_package_caller_name', '__operit_package_chat_id', '__operit_package_caller_participant_id', '__operit_package_caller_owner']) {
-                if (state.params[key] !== undefined) params[key] = state.params[key];
-            }
             return runtime.toolCall('character_memory:' + name, params).then(
                 /**
                  * Decodes the package executor's serialized JSON result.

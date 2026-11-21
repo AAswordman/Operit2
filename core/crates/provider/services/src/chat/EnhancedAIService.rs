@@ -182,13 +182,29 @@ impl EnhancedAISharedState {
 }
 
 pub trait SendMessageCallbacks: Send + Sync {
-    fn onNonFatalError(&self, _error: String) {}
+    /// Reports a provider error while its request is being retried.
+    fn onNonFatalError(&self, error: String);
 
-    fn onTokenLimitExceeded(&self) {}
+    /// Reports that the current request window requires compaction.
+    fn onTokenLimitExceeded(&self);
+}
 
-    fn onToolInvocation(&self, _toolName: String) {}
-
-    fn onInputProcessingStateChanged(&self, _state: InputProcessingState) {}
+/// Bridges provider retry errors to both supported chat callback channels.
+fn provider_error_callback(
+    callback: Option<fn(String)>,
+    callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
+) -> Option<Arc<dyn Fn(String) + Send + Sync>> {
+    if callback.is_none() && callbacks.is_none() {
+        return None;
+    }
+    Some(Arc::new(move |error: String| {
+        if let Some(callback) = callback {
+            callback(error.clone());
+        }
+        if let Some(callbacks) = callbacks.as_ref() {
+            callbacks.onNonFatalError(error);
+        }
+    }))
 }
 
 /// Monotonic per-send cancellation gate, including work not yet registered or started.
@@ -343,7 +359,6 @@ pub struct SendMessageOptions {
     pub customSystemPromptTemplate: Option<String>,
     pub isSubTask: bool,
     pub participantName: Option<String>,
-    pub avatarUri: Option<String>,
     /// Explicit participant selected from a plugin-resolved execution plan.
     pub executionParticipantId: Option<String>,
     /// Resolved neutral context propagated unchanged through prompt and tool execution.
@@ -351,7 +366,6 @@ pub struct SendMessageOptions {
     pub proxySenderName: Option<String>,
     pub callbacks: Option<Arc<dyn SendMessageCallbacks + Send + Sync>>,
     pub onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
-    pub notifyReplyOverride: Option<bool>,
     pub chatProviderIdOverride: Option<String>,
     pub chatModelIdOverride: Option<String>,
     pub stream: bool,
@@ -386,13 +400,11 @@ impl SendMessageOptions {
             customSystemPromptTemplate: None,
             isSubTask: false,
             participantName: None,
-            avatarUri: None,
             executionParticipantId: None,
             chatConfiguration: None,
             proxySenderName: None,
             callbacks: None,
             onToolInvocation: None,
-            notifyReplyOverride: None,
             chatProviderIdOverride: None,
             chatModelIdOverride: None,
             stream: true,
@@ -504,7 +516,6 @@ impl PreparedRequestWindow {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SendMessageLifecycleStage {
-    StartAiService,
     SetProcessingState,
     PrepareConversationHistory,
     SyncPreparedHistoryToExecutionContext,
@@ -527,7 +538,6 @@ pub enum SendMessageLifecycleStage {
     PersistTokenUsage,
     ProcessStreamCompletion,
     UnregisterExecutionContext,
-    StopAiService,
 }
 
 #[derive(Clone, Debug)]
@@ -1076,14 +1086,16 @@ impl EnhancedAIService {
         Ok(history)
     }
 
+    /// Generates a functional summary with an explicit retry-error consumer.
     pub async fn generateSummary(
         &mut self,
         messages: Vec<(String, String)>,
         previousSummary: Option<String>,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<String, AiServiceError> {
         let mut multiServiceManager = self.multi_service_manager.clone();
         self.conversation_service
-            .generateSummary(messages, previousSummary, &mut multiServiceManager)
+            .generateSummary(messages, previousSummary, &mut multiServiceManager, onNonFatalError)
             .await
     }
 
@@ -1152,6 +1164,7 @@ impl EnhancedAIService {
         configuration: &ChatConfigurationResult,
         progress: Option<crate::chat::enhance::ConversationService::SummaryProgressCallback>,
         trigger: Option<crate::chat::enhance::ConversationService::SummaryTriggerContext>,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<(String, TokenCounts), AiServiceError> {
         let context = toolRuntimeContextForConfiguration(
             configuration, Some(chatId), None, Vec::new(), &ToolExposureMode::Full,
@@ -1161,18 +1174,20 @@ impl EnhancedAIService {
             PromptTurn::new(PromptTurnKind::from_role(&role), content)
         ).collect();
         ToolExecutionManager::scopeToolRuntimeContext(context,
-            self.conversation_service.generateSummaryWithProgress(turns, previousSummary, &mut manager, progress, trigger),
+            self.conversation_service.generateSummaryWithProgress(turns, previousSummary, &mut manager, progress, trigger, onNonFatalError),
         ).await
     }
 
+    /// Summarizes prepared turns while preserving the caller's error notifications.
     pub async fn generateSummaryFromPromptTurns(
         &mut self,
         messages: Vec<PromptTurn>,
         previousSummary: Option<String>,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<String, AiServiceError> {
         let mut multiServiceManager = self.multi_service_manager.clone();
         self.conversation_service
-            .generateSummaryFromPromptTurns(messages, previousSummary, &mut multiServiceManager)
+            .generateSummaryFromPromptTurns(messages, previousSummary, &mut multiServiceManager, onNonFatalError)
             .await
     }
 
@@ -1182,10 +1197,11 @@ impl EnhancedAIService {
         &mut self,
         user_text: String,
         attachment_file_names: Vec<String>,
+        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<String, AiServiceError> {
         let mut multi_service_manager = self.multi_service_manager.clone();
         self.conversation_service
-            .generateConversationTitle(user_text, attachment_file_names, &mut multi_service_manager)
+            .generateConversationTitle(user_text, attachment_file_names, &mut multi_service_manager, onNonFatalError)
             .await
     }
 
@@ -1436,22 +1452,6 @@ impl EnhancedAIService {
         self.request_window_estimate_flow.clone()
     }
 
-    /// Retains the existing optional provider lifecycle callback surface.
-    pub fn startAiService(&mut self, _participantName: Option<String>, _avatarUri: Option<String>) {}
-
-    /// Retains the existing optional provider shutdown callback surface.
-    pub fn stopAiService(&mut self, _participantName: Option<String>, _avatarUri: Option<String>) {}
-
-    /// Retains the existing optional reply notification callback surface.
-    pub fn notifyReplyCompleted(
-        &mut self,
-        _chatId: Option<String>,
-        _participantName: Option<String>,
-        _avatarUri: Option<String>,
-        _notifyReplyOverride: Option<bool>,
-    ) {
-    }
-
     /// Sends a user message through the prompt, provider, and tool loop.
     pub async fn sendMessage(
         &mut self,
@@ -1486,7 +1486,6 @@ impl EnhancedAIService {
             .validate()
             .map_err(AiServiceError::RequestFailed)?;
         options.participantName = Some(configuration.profile.name.clone());
-        options.avatarUri = configuration.profile.avatarUri.clone();
         options.executionParticipantId = Some(configuration.profile.id.clone());
         options.chatConfiguration = Some(configuration.clone());
         let runtime = self.createSendMessageRuntime(&options, configuration)?;
@@ -1758,11 +1757,9 @@ impl EnhancedAIService {
         let customSystemPromptTemplate = options.customSystemPromptTemplate.clone();
         let isSubTask = options.isSubTask;
         let participantName = options.participantName.clone();
-        let avatarUri = options.avatarUri.clone();
         let participantId = Some(runtime.chatConfiguration.profile.id.clone());
         let proxySenderName = options.proxySenderName.clone();
         let callbacks = options.callbacks;
-        let notifyReplyOverride = options.notifyReplyOverride;
         let chatProviderIdOverride = options.chatProviderIdOverride.clone();
         let chatModelIdOverride = options.chatModelIdOverride.clone();
         let stream = options.stream;
@@ -1786,11 +1783,6 @@ impl EnhancedAIService {
         }
 
         let mut lifecycle = Vec::new();
-        if !isSubTask {
-            lifecycle.push(SendMessageLifecycleStage::StartAiService);
-            self.startAiService(participantName.clone(), avatarUri.clone());
-        }
-
         if !isSubTask {
             lifecycle.push(SendMessageLifecycleStage::SetProcessingState);
             self.setInputProcessingState(InputProcessingState::Processing {
@@ -2011,22 +2003,7 @@ impl EnhancedAIService {
             ),
             operit_util::AppLogger::VERBOSE_LEVEL_3,
         );
-        let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> = {
-            let callbackFn = onNonFatalError;
-            let callbacks = callbacks.clone();
-            if callbackFn.is_some() || callbacks.is_some() {
-                Some(Arc::new(move |error: String| {
-                    if let Some(callbackFn) = callbackFn {
-                        callbackFn(error.clone());
-                    }
-                    if let Some(callbacks) = callbacks.as_ref() {
-                        callbacks.onNonFatalError(error);
-                    }
-                }))
-            } else {
-                None
-            }
-        };
+        let providerOnNonFatalError = provider_error_callback(onNonFatalError, callbacks.clone());
         let (turnUsage, tokenRequest);
         let providerResult = {
             let mut service = serviceForFunction.lock().await;
@@ -2066,9 +2043,6 @@ impl EnhancedAIService {
                     "sendMessage.provider.error".to_string(),
                 );
                 AppLogger::e(TAG, &format!("发送消息时发生错误: {}", error));
-                if !isSubTask {
-                    self.stopAiService(participantName.clone(), avatarUri.clone());
-                }
                 self.unregisterExecutionContext(&execContext);
                 return Err(error);
             }
@@ -2169,9 +2143,6 @@ impl EnhancedAIService {
 
         if let Err(error) = ensure_response_completed(provider_stream.as_ref()) {
             self.invalidateExecutionContext(&mut execContext, "sendMessage.providerStream.error".to_string());
-            if !isSubTask {
-                self.stopAiService(participantName.clone(), avatarUri.clone());
-            }
             self.unregisterExecutionContext(&execContext);
             return Err(error);
         }
@@ -2234,12 +2205,10 @@ impl EnhancedAIService {
                 maxTokens,
                 tokenUsageThreshold,
                 isSubTask,
-                participantName.clone(),
-                avatarUri.clone(),
+                participantName,
                 participantId,
                 chatId.clone(),
                 onToolInvocation,
-                notifyReplyOverride,
                 chatProviderIdOverride.clone(),
                 chatModelIdOverride,
                 stream,
@@ -2254,9 +2223,6 @@ impl EnhancedAIService {
                 "processStreamCompletion.error".to_string(),
             );
             AppLogger::e(TAG, &format!("处理流完成时发生错误: {}", error));
-            if !isSubTask {
-                self.stopAiService(participantName.clone(), avatarUri.clone());
-            }
             self.unregisterExecutionContext(&execContext);
             return Err(error);
         }
@@ -2330,11 +2296,6 @@ impl EnhancedAIService {
         lifecycle.push(SendMessageLifecycleStage::UnregisterExecutionContext);
         self.unregisterExecutionContext(&execContext);
 
-        if !isSubTask {
-            lifecycle.push(SendMessageLifecycleStage::StopAiService);
-            self.stopAiService(participantName, avatarUri);
-        }
-
         {
             let mut shared = self.shared_state();
             shared.last_reply_content = Some(execContext.roundManager.getDisplayContent());
@@ -2371,9 +2332,6 @@ impl EnhancedAIService {
         maxTokens: i32,
         tokenUsageThreshold: f64,
         isSubTask: bool,
-        participantName: Option<String>,
-        avatarUri: Option<String>,
-        participantId: Option<String>,
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
         chatProviderIdOverride: Option<String>,
@@ -2538,9 +2496,6 @@ impl EnhancedAIService {
                     context,
                     "processToolResults.tokenLimit".to_string(),
                 );
-                if !isSubTask {
-                    self.stopAiService(participantName, avatarUri);
-                }
                 return Ok(false);
             }
         }
@@ -2560,12 +2515,7 @@ impl EnhancedAIService {
         );
         let (turnUsage, tokenRequest);
         let responseResult = {
-            let providerOnNonFatalError: Option<Arc<dyn Fn(String) + Send + Sync>> =
-                onNonFatalError.map(|callbackFn| {
-                    Arc::new(move |error: String| {
-                        callbackFn(error);
-                    }) as Arc<dyn Fn(String) + Send + Sync>
-                });
+            let providerOnNonFatalError = provider_error_callback(onNonFatalError, callbacks.clone());
             let mut service = runtime.aiService.lock().await;
             if !self.isExecutionContextActive(context) {
                 return Ok(false);
@@ -2727,11 +2677,9 @@ impl EnhancedAIService {
         tokenUsageThreshold: f64,
         isSubTask: bool,
         participantName: Option<String>,
-        avatarUri: Option<String>,
         participantId: Option<String>,
         chatId: Option<String>,
         onToolInvocation: Option<Arc<dyn Fn(String) + Send + Sync>>,
-        notifyReplyOverride: Option<bool>,
         chatProviderIdOverride: Option<String>,
         chatModelIdOverride: Option<String>,
         stream: bool,
@@ -2756,17 +2704,7 @@ impl EnhancedAIService {
                 consecutiveEmptyResponses = 0;
             }
 
-            let continuation = match self.completeResponseRound(
-                collector,
-                context,
-                onNonFatalError,
-                isSubTask,
-                participantName.clone(),
-                avatarUri.clone(),
-                chatId.clone(),
-                notifyReplyOverride,
-                disableWarning,
-            ) {
+            let continuation = match self.completeResponseRound(collector, context, disableWarning) {
                 ResponseRoundAction::Complete => return Ok(()),
                 ResponseRoundAction::Continue(continuation) => continuation,
                 ResponseRoundAction::ExecuteTools(invocations) => {
@@ -2804,9 +2742,6 @@ impl EnhancedAIService {
                 maxTokens,
                 tokenUsageThreshold,
                 isSubTask,
-                participantName.clone(),
-                avatarUri.clone(),
-                participantId.clone(),
                 chatId.clone(),
                 onToolInvocation.clone(),
                 chatProviderIdOverride.clone(),
@@ -2823,18 +2758,11 @@ impl EnhancedAIService {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     /// Finalizes the current response or returns the next tool or warning action.
     fn completeResponseRound(
         &mut self,
         collector: &SharedAiResponseStream,
         context: &mut MessageExecutionContext,
-        onNonFatalError: Option<fn(String)>,
-        isSubTask: bool,
-        participantName: Option<String>,
-        avatarUri: Option<String>,
-        chatId: Option<String>,
-        notifyReplyOverride: Option<bool>,
         disableWarning: bool,
     ) -> ResponseRoundAction {
         if !self.isExecutionContextActive(context) {
@@ -2874,16 +2802,7 @@ impl EnhancedAIService {
                 ),
                 operit_util::AppLogger::VERBOSE_LEVEL_2,
             );
-            self.finalizeAssistantResponse(
-                context,
-                &content,
-                onNonFatalError,
-                isSubTask,
-                chatId.clone(),
-                participantName,
-                avatarUri,
-                notifyReplyOverride,
-            );
+            self.finalizeAssistantResponse(&content);
             return ResponseRoundAction::Complete;
         }
 
@@ -2898,16 +2817,7 @@ impl EnhancedAIService {
                         context.executionId, context.roundManager.roundIndex
                     ),
                 );
-                self.finalizeAssistantResponse(
-                    context,
-                    &displayContent,
-                    onNonFatalError,
-                    isSubTask,
-                    chatId.clone(),
-                    participantName,
-                    avatarUri,
-                    notifyReplyOverride,
-                );
+                self.finalizeAssistantResponse(&displayContent);
                 return ResponseRoundAction::Complete;
             }
             let pureThinkingWarning =
@@ -3000,16 +2910,7 @@ impl EnhancedAIService {
             ),
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
-        self.finalizeAssistantResponse(
-            context,
-            &context.roundManager.getDisplayContent(),
-            onNonFatalError,
-            isSubTask,
-            chatId.clone(),
-            participantName,
-            avatarUri,
-            notifyReplyOverride,
-        );
+        self.finalizeAssistantResponse(&context.roundManager.getDisplayContent());
         ResponseRoundAction::Complete
     }
 
@@ -3071,13 +2972,6 @@ impl EnhancedAIService {
             return Ok(None);
         }
 
-        self.tool_handler.registerDefaultTools();
-        let packageManagerSnapshot = self
-            .tool_handler
-            .getOrCreatePackageManager()
-            .lock()
-            .expect("package manager mutex poisoned")
-            .clone();
         let toolExposureMode = match runtime.toolExposureMode {
             ToolExposureMode::Cli => RuntimeToolExposureMode::CLI,
             ToolExposureMode::Full => RuntimeToolExposureMode::FULL,
@@ -3086,7 +2980,6 @@ impl EnhancedAIService {
             ToolExecutionManager::executeInvocations(
                 &toolInvocations,
                 &mut self.tool_handler,
-                &packageManagerSnapshot,
                 participantName.clone(),
                 chatId.clone(),
                 participantId.clone(),
@@ -3203,21 +3096,9 @@ impl EnhancedAIService {
         trimmed.ends_with("/>") || trimmed.contains(&format!("</{tagName}>"))
     }
 
-    #[allow(clippy::too_many_arguments)]
-    /// Retains the completed reply and publishes its completion notification.
-    fn finalizeAssistantResponse(
-        &mut self,
-        context: &mut MessageExecutionContext,
-        content: &str,
-        _onNonFatalError: Option<fn(String)>,
-        _isSubTask: bool,
-        chatId: Option<String>,
-        participantName: Option<String>,
-        avatarUri: Option<String>,
-        notifyReplyOverride: Option<bool>,
-    ) {
+    /// Retains the completed reply for the runtime that owns state and notifications.
+    fn finalizeAssistantResponse(&mut self, content: &str) {
         self.shared_state().last_reply_content = Some(content.to_string());
-        self.notifyReplyCompleted(chatId, participantName, avatarUri, notifyReplyOverride);
     }
 
     /// Cancels the producer and settles its request before releasing turn accounting.
@@ -3236,7 +3117,6 @@ impl EnhancedAIService {
             shared.current_response_callback_registered = false;
             shared.current_complete_callback_registered = false;
         }
-        self.stopAiService(None, None);
         AppLogger::v_with_level(TAG, "Conversation cancellation complete", operit_util::AppLogger::VERBOSE_LEVEL_2);
         usageResult
     }
@@ -3655,6 +3535,7 @@ fn toolRuntimeContextForConfiguration(
 ) -> Result<ToolRuntimeContext, AiServiceError> {
     configuration.validate().map_err(AiServiceError::RequestFailed)?;
     let context = ToolRuntimeContext {
+        callerName: Some(configuration.profile.name.clone()),
         callerChatId: chatId,
         callerParticipantId: Some(configuration.profile.id.clone()),
         workspacePath,
@@ -3771,6 +3652,60 @@ fn resolve_workspace_path_mappings(
         .filter(|path| seen.insert(path.clone()))
         .map(|vfsPath| WorkspacePathMapping { vfsPath })
         .collect()
+}
+
+#[cfg(test)]
+mod provider_error_callback_tests {
+    use super::*;
+
+    /// Records retry errors and token-window events through the real callback contract.
+    #[derive(Default)]
+    struct CallbackEvents {
+        errors: Mutex<Vec<String>>,
+        tokenLimitExceeded: AtomicBool,
+    }
+
+    impl SendMessageCallbacks for CallbackEvents {
+        /// Retains the complete provider error without altering its text.
+        fn onNonFatalError(&self, error: String) {
+            self.errors.lock().unwrap().push(error);
+        }
+
+        /// Records compaction requests independently from retry failures.
+        fn onTokenLimitExceeded(&self) {
+            self.tokenLimitExceeded.store(true, Ordering::Release);
+        }
+    }
+
+    /// Verifies the callback used by ordinary chat and post-tool requests preserves raw errors.
+    #[test]
+    fn retry_error_reaches_chat_callbacks_without_legacy_function() {
+        let events = Arc::new(CallbackEvents::default());
+        let callback = provider_error_callback(None, Some(events.clone())).unwrap();
+        callback("HTTP 503: no_healthy_account，正在进行第 1 次重试...".to_string());
+        assert_eq!(
+            *events.errors.lock().unwrap(),
+            ["HTTP 503: no_healthy_account，正在进行第 1 次重试..."]
+        );
+        assert!(!events.tokenLimitExceeded.load(Ordering::Acquire));
+    }
+
+    /// Verifies the compatibility callback cannot hide the current chat callback.
+    #[test]
+    fn retry_error_reaches_both_registered_consumers_once() {
+        static LEGACY_ERRORS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+        /// Records delivery through the legacy function callback.
+        fn recordLegacyError(error: String) {
+            LEGACY_ERRORS.lock().unwrap().push(error);
+        }
+
+        let events = Arc::new(CallbackEvents::default());
+        let callback = provider_error_callback(Some(recordLegacyError), Some(events.clone())).unwrap();
+        callback("HTTP 400: context length exceeded".to_string());
+        assert_eq!(*LEGACY_ERRORS.lock().unwrap(), ["HTTP 400: context length exceeded"]);
+        assert_eq!(*events.errors.lock().unwrap(), ["HTTP 400: context length exceeded"]);
+    }
 }
 
 #[cfg(test)]

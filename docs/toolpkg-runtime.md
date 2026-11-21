@@ -1,5 +1,11 @@
 # ToolPkg runtime
 
+Tool executors, including MCP servers, receive business arguments from the model or the calling script. The common dispatcher carries caller name, chat, participant, workspace and authenticated owner in `ToolInvocationContext`; it does not append those fields to tool parameters or proxy envelopes. A proxy accepts only `tool_name` and `params` and preserves the target's argument values.
+
+The JavaScript bootstrap detaches temporary package runtime fields before evaluating the package module or invoking its exported function. Package tools therefore receive ordinary business arguments, such as `{ "text": "性能" }`, without environment, API version, package identity or caller metadata. Read caller information through `getChatId()`, `getCallerName()` and `getCallerParticipantId()`, and package configuration through the existing SDK helpers. These values retain their owning call across asynchronous continuations. Passing the business input directly to `Tools.UI.clickElement(input)` or `toolCall("server:method", input)` does not forward runtime metadata. The v1 adapter also inherits caller context through the native invocation instead of inserting private fields into memory-tool arguments.
+
+Declared hook event fields, including `toolPkgId` and `containerPackageName`, remain part of the typed hook event. Nested user data is preserved verbatim; detachment targets exact runtime field names at the call boundary and does not remove arbitrary keys by prefix.
+
 A manifest can fix its installation scope with `"installation_scope": "device"` or `"installation_scope": "space"`. The parser, package registration, bundled import, marketplace install, and scope moves enforce this declaration. A fixed-scope package cannot be installed or moved into the other scope. The package UI shows its required scope and hides scope moves.
 
 Device installations own local data. Space installations own synchronized data. Storage synchronization follows the registered directory owner; `Storage.open` does not accept a synchronization switch. Goal and Plan both require a space installation and keep their state in their own databases, independently of chat workspaces. Workspace records are not migrated.

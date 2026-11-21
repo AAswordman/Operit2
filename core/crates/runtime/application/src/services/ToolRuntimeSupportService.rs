@@ -15,7 +15,7 @@ use operit_providers::chat::config::SystemToolPrompts as ProviderToolPrompts;
 use operit_providers::chat::enhance::FileBindingService::{
     FileBindingService, StructuredEditAction, StructuredEditOperation,
 };
-use operit_providers::chat::llmprovider::AIService::SendMessageRequest;
+use operit_providers::chat::llmprovider::AIService::{ensure_response_completed, SendMessageRequest};
 use operit_providers::chat::llmprovider::ThinkingDialect::RequestThinking;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_providers::runtime_support::ProviderRuntimeContext;
@@ -1018,6 +1018,9 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         request: RuntimeChatCallRequest,
     ) -> ToolRuntimeSupportFuture<'a, Result<String, String>> {
         Box::pin(async move {
+            let modelErrors = self.chatRuntimeHolder.lock().await
+                .getCore(ChatRuntimeSlot::MAIN).messageProcessingDelegate.toastEventFlow.clone();
+            let providerErrors = modelErrors.clone();
             let bindings = self.runtimeBindings()?.clone();
             let mut service =
                 EnhancedAIService::new(bindings.toolHandler, bindings.providerRuntimeContext);
@@ -1044,14 +1047,25 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
                         available_tools: Vec::new(),
                         preserve_think_in_history: true,
                         enable_retry: false,
-                        on_non_fatal_error: None,
+                        on_non_fatal_error: Some(Arc::new(move |error| {
+                            providerErrors.set_value(Some(error));
+                        })),
                         on_tool_invocation: None,
                     })
                     .await
-                    .map_err(|error| error.to_string())?
+                    .map_err(|error| {
+                        let message = error.to_string();
+                        modelErrors.set_value(Some(message.clone()));
+                        message
+                    })?
             };
             let mut output = String::new();
             response.collect(&mut |chunk| output.push_str(&chunk)).await;
+            ensure_response_completed(response.as_ref()).map_err(|error| {
+                let message = error.to_string();
+                modelErrors.set_value(Some(message.clone()));
+                message
+            })?;
             if request.recordTokenUsage {
                 let (inputTokens, cachedInputTokens, outputTokens) = {
                     let provider = aiService.lock().await;
