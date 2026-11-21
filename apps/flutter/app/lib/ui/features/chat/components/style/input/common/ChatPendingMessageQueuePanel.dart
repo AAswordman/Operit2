@@ -249,6 +249,22 @@ class _PendingQueueMessageTile extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 6),
+          if (item.attachments.isNotEmpty) ...<Widget>[
+            Icon(
+              Icons.attach_file_rounded,
+              size: 13,
+              color: defaultIconColor,
+            ),
+            const SizedBox(width: 2),
+            Text(
+              '${item.attachments.length}',
+              style: theme.textTheme.labelSmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+                fontSize: 10.5,
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           if (onGuideMessage != null)
             _QueueIconAction(
               icon: Icons.call_split_rounded,

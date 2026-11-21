@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
+import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
+    as core_proxy;
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/style/input/common/ChatComposerSendActionMenu.dart';
 import 'package:operit2/ui/features/chat/components/style/input/common/ChatPendingMessageQueuePanel.dart';
@@ -55,7 +57,11 @@ void main() {
         child: Scaffold(
           body: ChatPendingMessageQueuePanel(
             queuedMessages: const <PendingQueueMessageItem>[
-              PendingQueueMessageItem(id: 7, text: 'Adjust the current plan'),
+              PendingQueueMessageItem(
+                id: 7,
+                text: 'Adjust the current plan',
+                attachments: [],
+              ),
             ],
             expanded: true,
             canGuide: true,
@@ -69,11 +75,72 @@ void main() {
       ),
     );
 
-    await tester.tap(find.byIcon(Icons.edit));
-    await tester.tap(find.byIcon(Icons.alt_route));
-    await tester.tap(find.byIcon(Icons.send));
-    await tester.tap(find.byIcon(Icons.delete));
+    await tester.tap(find.byIcon(Icons.edit_note_rounded));
+    await tester.tap(find.byIcon(Icons.call_split_rounded));
+    await tester.tap(find.byIcon(Icons.arrow_upward_rounded));
+    await tester.tap(find.byIcon(Icons.close_rounded));
     expect(actions, <String>['edit:7', 'guide:7', 'send:7', 'delete:7']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('queued item shows an attachment count only when attachments exist', (
+    tester,
+  ) async {
+    Widget panel(List<PendingQueueMessageItem> items) => OperitTheme(
+      initialThemePreferenceSnapshot:
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+      initialThemeIsReady: false,
+      unconfiguredChildEnabled: true,
+      hostInteractionHostsEnabled: false,
+      child: Scaffold(
+        body: ChatPendingMessageQueuePanel(
+          queuedMessages: items,
+          expanded: true,
+          onExpandedChange: (_) {},
+          onDeleteMessage: (_) {},
+          onEditMessage: (_) {},
+          onSendMessage: (_) {},
+        ),
+      ),
+    );
+
+    await tester.pumpWidget(
+      panel(const <PendingQueueMessageItem>[
+        PendingQueueMessageItem(id: 1, text: 'text only', attachments: []),
+      ]),
+    );
+    expect(find.byIcon(Icons.attach_file_rounded), findsNothing);
+
+    await tester.pumpWidget(
+      panel(<PendingQueueMessageItem>[
+        PendingQueueMessageItem(
+          id: 2,
+          text: 'with images',
+          attachments: <core_proxy.AttachmentInfo>[
+            core_proxy.AttachmentInfo(
+              filePath: '/tmp/a.png',
+              vfsPath: null,
+              nodeId: null,
+              fileName: 'a.png',
+              mimeType: 'image/png',
+              fileSize: 3,
+              content: '',
+            ),
+            core_proxy.AttachmentInfo(
+              filePath: '/tmp/b.png',
+              vfsPath: null,
+              nodeId: null,
+              fileName: 'b.png',
+              mimeType: 'image/png',
+              fileSize: 4,
+              content: '',
+            ),
+          ],
+        ),
+      ]),
+    );
+    expect(find.byIcon(Icons.attach_file_rounded), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 }
