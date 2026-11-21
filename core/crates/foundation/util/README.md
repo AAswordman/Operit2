@@ -32,6 +32,11 @@ or store ownership.
   inserted into the image pool. GIF/WebP inputs contribute one still image.
 - `src/*Util.rs`: focused helpers for files, archives, media, network, and
   document processing.
+- `src/ChatMarkupRegex.rs`: shared XML-like protocol helpers. Opening-tag
+  attributes accept single quotes, double quotes, and bare values terminated by
+  whitespace or a tag delimiter. Attribute reads skip other attribute values
+  and stop before the tag body. Tools, parameters, results, provider metadata,
+  and live message snapshots therefore share the same attribute syntax.
 
 ## Boundary
 

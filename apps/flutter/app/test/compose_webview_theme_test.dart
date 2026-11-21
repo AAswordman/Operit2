@@ -347,6 +347,91 @@ void main() {
       'dispose',
     ]);
   });
+  testWidgets('sliver WebView pages fill and resize without reloading', (
+    tester,
+  ) async {
+    final previousPlatform = WebViewPlatform.instance;
+    final platform = _ThemeTestPlatform();
+    WebViewPlatform.instance = platform;
+    if (previousPlatform != null) {
+      addTearDown(() => WebViewPlatform.instance = previousPlatform);
+    }
+    const channel = MethodChannel('operit/webview_theme');
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      channel,
+      (_) async => null,
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        null,
+      ),
+    );
+    final height = ValueNotifier(400.0);
+    addTearDown(height.dispose);
+    final content = buildComposeDslHostForTest(
+      node: {
+        'type': 'Box',
+        'props': {'fillMaxSize': true},
+        'children': [
+          {
+            'type': 'WebView',
+            'props': {'fillMaxSize': true, 'url': 'https://example.com'},
+          },
+        ],
+      },
+      contentBuilder: (context, content) => content.sliver,
+      hostContext: ComposeDslWebViewHostContext(
+        packageName: 'regression',
+        routeInstanceId: 'sidebar-page',
+        executionContextKey: 'sidebar-webview',
+        dispatchAction: (id, [payload]) async => null,
+        runtimeOptionsProvider: () => {},
+      ),
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: Center(
+            child: ValueListenableBuilder<double>(
+              valueListenable: height,
+              child: content,
+              builder: (context, extent, child) => SizedBox(
+                width: 320,
+                height: extent,
+                child: CustomScrollView(
+                  slivers: [
+                    const SliverToBoxAdapter(child: SizedBox(height: 48)),
+                    child!,
+                    const SliverToBoxAdapter(child: Text('Plugin footer')),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    final browser = find.byType(ComposeDslWebView);
+    final element = tester.element(browser);
+    expect(tester.getSize(browser), const Size(320, 352));
+    height.value = 250;
+    await tester.pumpAndSettle();
+    expect(tester.getSize(browser), const Size(320, 202));
+    expect(tester.element(browser), same(element));
+    expect(find.byType(Scrollable), findsOneWidget);
+    expect(
+      platform.controller.events.where(
+        (event) => event == 'load:https://example.com',
+      ),
+      hasLength(1),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+  });
+
   testWidgets('DSL action errors do not dispose or reload the mounted WebView', (
     tester,
   ) async {
@@ -418,7 +503,10 @@ void main() {
     );
     expect(
       platform.controller.events,
-      allOf(isNot(contains('remove-document-start')), isNot(contains('dispose'))),
+      allOf(
+        isNot(contains('remove-document-start')),
+        isNot(contains('dispose')),
+      ),
     );
     await tester.pumpWidget(const SizedBox());
     await tester.pumpAndSettle();

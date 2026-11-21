@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/logging/ClientLogger.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgComposeDslWebView.dart';
 import 'package:operit2/ui/features/packages/screens/ToolPkgUiLauncherScreen.dart';
+import 'package:operit2/ui/features/packages/screens/compose_dsl/fill_layout.dart';
 
 /// Creates mixed-height keyed items resembling role headings and conversation rows.
 Map<String, Object?> _tree({int count = 1000, bool dialog = false}) => {
@@ -95,6 +96,78 @@ int _mountedChats() => find
 /// Verifies viewport ownership, item virtualization, and independent modal lifetime.
 void main() {
   setUpAll(ClientLogger.initialize);
+
+  for (final fill in ['fillMaxSize', 'fillMaxHeight']) {
+    for (final modifier in [false, true]) {
+      testWidgets(
+        '$fill uses the remaining sliver viewport (modifier: $modifier)',
+        (tester) async {
+          final controller = ScrollController();
+          addTearDown(controller.dispose);
+          final tree = <String, Object?>{
+            'type': 'Box',
+            'props': {
+              if (!modifier) fill: true,
+              if (modifier)
+                'modifier': {
+                  '__modifierOps': [
+                    {
+                      'name': fill,
+                      'args': [0.5],
+                    },
+                  ],
+                },
+            },
+            'children': [
+              {
+                'type': 'Text',
+                'props': {'text': 'Page body'},
+              },
+            ],
+          };
+          for (final height in [400.0, 250.0]) {
+            await tester.pumpWidget(_surface(tree, controller, height: height));
+            await tester.pumpAndSettle();
+            final headerHeight = tester
+                .getSize(find.text('Sidebar header'))
+                .height;
+            final pageHeight = tester
+                .getSize(find.byType(ComposeDslFill))
+                .height;
+            expect(pageHeight, (height - headerHeight) * (modifier ? 0.5 : 1));
+            expect(find.byType(Scrollable), findsOneWidget);
+            expect(tester.takeException(), isNull);
+          }
+        },
+      );
+    }
+  }
+
+  testWidgets('ordinary box content retains its full scroll extent', (
+    tester,
+  ) async {
+    final controller = ScrollController();
+    addTearDown(controller.dispose);
+    await tester.pumpWidget(
+      _surface({
+        'type': 'Column',
+        'children': [
+          for (var index = 0; index < 3; index++)
+            {
+              'type': 'Text',
+              'props': {'text': 'Tall section $index', 'height': 300},
+            },
+        ],
+      }, controller),
+    );
+    await tester.pumpAndSettle();
+    expect(controller.position.maxScrollExtent, greaterThan(500));
+    expect(tester.getSize(find.text('Tall section 2')).height, 300);
+    controller.jumpTo(controller.position.maxScrollExtent);
+    await tester.pumpAndSettle();
+    expect(find.text('Sidebar footer').hitTestable(), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets(
     'variable sliver windows measure cached rows instead of dividing by an estimated height',

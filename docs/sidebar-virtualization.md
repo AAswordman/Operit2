@@ -47,6 +47,21 @@ inside its retained scope, so an unselected workspace does not regenerate its
 row factories during another tab's updates. Plugin sessions, expansion state,
 search text, and scroll positions survive tab changes and drawer closure.
 
+## Embedded page sizing
+
+An embedded root other than `LazyColumn` that declares `fillMaxSize` or
+`fillMaxHeight` receives a bounded height equal to the viewport height minus the
+preceding host chrome. Both direct properties and modifier operations use this
+rule; modifier fractions still apply within that space. Resizing the sidebar
+updates these constraints without recreating its Compose session or WebView.
+This lets a page containing a WebView fill the available area without a fixed
+pixel height. Its footer remains in the same outer scrolling viewport.
+
+Ordinary roots retain their natural content height and can extend beyond the
+viewport. Root `LazyColumn` items continue to use the parent's sliver protocol
+and cache. A WebView inside a lazy-list item needs an explicit item size because
+individual scrolling rows do not own the page viewport.
+
 ## Verification
 
 Focused Flutter tests cover 2,000 workspace conversations and desktop recent
@@ -57,6 +72,10 @@ keyboard cycles: zero hidden descendant rebuilds and a detached render subtree,
 while main content continues resizing. Reopening applies fresh history without
 losing the retained search state. Separate drawer-transition checks retain the
 scroll position across repeated close/open cycles.
+
+Widget regressions cover both fill properties, their fractional modifiers,
+ordinary tall content, and a production WebView widget with an inert platform
+view that retains its identity and loads its page once across resizing.
 
 Compiled plugin tests cover the 2,000-chat window, middle and tail range requests,
 callback release, bounded transport, collapse and immediate re-expansion, avatar

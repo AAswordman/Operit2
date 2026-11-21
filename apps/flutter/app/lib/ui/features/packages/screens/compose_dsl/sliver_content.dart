@@ -146,7 +146,7 @@ class _ComposeDslSliverContentState extends State<_ComposeDslSliverContent> {
   /// Projects static prefixes and fixed-extent windows into the owning viewport.
   Widget _sliverContent() {
     if (node.type != 'LazyColumn') {
-      return SliverToBoxAdapter(child: widget.renderer);
+      return _boxContent();
     }
     if (props['reverseLayout'] == true || props['autoScrollToEnd'] == true) {
       throw StateError(
@@ -305,6 +305,31 @@ class _ComposeDslSliverContentState extends State<_ComposeDslSliverContent> {
           sliver: SliverMainAxisGroup(slivers: [staticSliver, ?lazySliver]),
         ),
       ],
+    );
+  }
+
+  /// Gives fill-height pages the remaining viewport while ordinary content keeps its natural extent.
+  Widget _boxContent() {
+    final fillsHeight =
+        _bool(props['fillMaxSize']) ||
+        _bool(props['fillMaxHeight']) ||
+        _hasModifierOp(props['modifier'], 'fillmaxsize') ||
+        _hasModifierOp(props['modifier'], 'fillmaxheight');
+    return SliverLayoutBuilder(
+      builder: (context, constraints) => SliverToBoxAdapter(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: fillsHeight
+                ? math.max(
+                    0.0,
+                    constraints.viewportMainAxisExtent -
+                        constraints.precedingScrollExtent,
+                  )
+                : double.infinity,
+          ),
+          child: widget.renderer,
+        ),
+      ),
     );
   }
 

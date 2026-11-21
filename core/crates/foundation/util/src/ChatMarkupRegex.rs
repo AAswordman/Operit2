@@ -242,43 +242,64 @@ pub struct XmlBlock {
     pub end: usize,
 }
 
-/// Reads a quoted attribute value from XML-like text.
+/// Reads a quoted or bare attribute from the opening tag, excluding nested markup.
 pub fn attr_value(text: &str, attr_name: &str) -> Option<String> {
     let bytes = text.as_bytes();
-    let lower_text = text.to_ascii_lowercase();
-    let lower_attr_name = attr_name.to_ascii_lowercase();
-    let mut index = 0;
-    while index < bytes.len() {
-        let found = lower_text[index..].find(&lower_attr_name)?;
-        let name_start = index + found;
-        let name_end = name_start + lower_attr_name.len();
-        let before_ok = name_start == 0 || !is_attr_name_byte(bytes[name_start - 1]);
-        let after_ok = name_end >= bytes.len() || !is_attr_name_byte(bytes[name_end]);
-        if before_ok && after_ok {
-            let mut cursor = name_end;
-            while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+    let mut cursor = 0;
+    while cursor < bytes.len() && bytes[cursor] != b'>' {
+        if !is_attr_name_byte(bytes[cursor]) {
+            cursor += 1;
+            continue;
+        }
+        let name_start = cursor;
+        while cursor < bytes.len() && is_attr_name_byte(bytes[cursor]) {
+            cursor += 1;
+        }
+        let name_end = cursor;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        if bytes.get(cursor) != Some(&b'=') {
+            continue;
+        }
+        cursor += 1;
+        while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
+            cursor += 1;
+        }
+        let first = *bytes.get(cursor)?;
+        let value_start;
+        let value_end;
+        if first == b'"' || first == b'\'' {
+            cursor += 1;
+            value_start = cursor;
+            while cursor < bytes.len() && bytes[cursor] != first {
                 cursor += 1;
             }
-            if cursor < bytes.len() && bytes[cursor] == b'=' {
+            if cursor == bytes.len() {
+                return None;
+            }
+            value_end = cursor;
+            cursor += 1;
+        } else {
+            value_start = cursor;
+            while cursor < bytes.len()
+                && !bytes[cursor].is_ascii_whitespace()
+                && bytes[cursor] != b'>'
+                && !(bytes[cursor] == b'/' && bytes.get(cursor + 1) == Some(&b'>'))
+            {
+                if matches!(bytes[cursor], b'<' | b'"' | b'\'' | b'`' | b'=') {
+                    return None;
+                }
                 cursor += 1;
-                while cursor < bytes.len() && bytes[cursor].is_ascii_whitespace() {
-                    cursor += 1;
-                }
-                if cursor < bytes.len() && (bytes[cursor] == b'"' || bytes[cursor] == b'\'') {
-                    let quote = bytes[cursor];
-                    cursor += 1;
-                    let value_start = cursor;
-                    while cursor < bytes.len() && bytes[cursor] != quote {
-                        cursor += 1;
-                    }
-                    if cursor == bytes.len() {
-                        return None;
-                    }
-                    return Some(text[value_start..cursor].to_string());
-                }
+            }
+            value_end = cursor;
+            if value_start == value_end {
+                return None;
             }
         }
-        index = name_end;
+        if text[name_start..name_end].eq_ignore_ascii_case(attr_name) {
+            return Some(text[value_start..value_end].to_string());
+        }
     }
     None
 }

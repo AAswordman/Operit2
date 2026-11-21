@@ -18,8 +18,8 @@ use operit_host_api::{
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 use url::Url;
 
-const CONNECT_TIMEOUT_SECONDS: u64 = 15;
-const READ_TIMEOUT_SECONDS: u64 = 30;
+const API_REQUEST_TIMEOUT_SECONDS: u64 = 15;
+const ARCHIVE_DOWNLOAD_TIMEOUT_SECONDS: u64 = 30;
 
 /// Repository for installing MCP plugins and deriving plugin metadata.
 #[derive(Clone)]
@@ -559,8 +559,8 @@ fn getGithubDefaultBranch(owner: &str, repoName: &str) -> Option<String> {
             body: Vec::new(),
             formFields: Vec::new(),
             fileParts: Vec::new(),
-            connectTimeoutSeconds: CONNECT_TIMEOUT_SECONDS,
-            readTimeoutSeconds: CONNECT_TIMEOUT_SECONDS,
+            connectTimeoutSeconds: API_REQUEST_TIMEOUT_SECONDS,
+            readTimeoutSeconds: API_REQUEST_TIMEOUT_SECONDS,
             followRedirects: true,
             ignoreSsl: false,
             proxyHost: String::new(),
@@ -593,8 +593,8 @@ fn downloadArchiveBytes(
             body: Vec::new(),
             formFields: Vec::new(),
             fileParts: Vec::new(),
-            connectTimeoutSeconds: READ_TIMEOUT_SECONDS,
-            readTimeoutSeconds: READ_TIMEOUT_SECONDS,
+            connectTimeoutSeconds: ARCHIVE_DOWNLOAD_TIMEOUT_SECONDS,
+            readTimeoutSeconds: ARCHIVE_DOWNLOAD_TIMEOUT_SECONDS,
             followRedirects: true,
             ignoreSsl: false,
             proxyHost: String::new(),
