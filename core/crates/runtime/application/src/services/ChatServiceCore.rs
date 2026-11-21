@@ -3931,6 +3931,12 @@ mod chat_input_menu_summary_tests {
         assert_eq!(summary.currentWindowSize, 5000);
         assert_eq!((summary.inputTokenCount, summary.outputTokenCount), (111, 22));
 
+        // Production sends run on a deep-cloned worker delegate; its updates must reach the Core.
+        let mut workerDelegate = core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.clone();
+        workerDelegate.setTokenCounts(Some("summary-stale".into()), 111, 22, 6000);
+        let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
+        assert_eq!(summary.currentWindowSize, 6000);
+
         // A row stuck at zero after failed completion estimates still shows the live estimate.
         core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.setTokenCounts(
             Some("summary-stuck".into()), 333, 44, 7000,

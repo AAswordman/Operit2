@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
@@ -16,7 +17,8 @@ pub struct TokenStatisticsDelegate {
     pub lastCurrentWindowSize: i64,
     pub cumulativeInputTokensByChatKey: HashMap<String, i64>,
     pub cumulativeOutputTokensByChatKey: HashMap<String, i64>,
-    pub lastWindowSizeByChatKey: HashMap<String, i64>,
+    // Sends and summaries run on deep-cloned workers; estimates must reach the owning Core.
+    pub lastWindowSizeByChatKey: Arc<Mutex<HashMap<String, i64>>>,
     pub perRequestTokenCountByChatKey: HashMap<String, Option<(i64, i64)>>,
     pub activeChatId: Option<String>,
 }
@@ -35,7 +37,7 @@ impl TokenStatisticsDelegate {
             lastCurrentWindowSize: 0,
             cumulativeInputTokensByChatKey: HashMap::new(),
             cumulativeOutputTokensByChatKey: HashMap::new(),
-            lastWindowSizeByChatKey: HashMap::new(),
+            lastWindowSizeByChatKey: Arc::new(Mutex::new(HashMap::new())),
             perRequestTokenCountByChatKey: HashMap::new(),
             activeChatId: None,
         }
@@ -63,7 +65,7 @@ impl TokenStatisticsDelegate {
             .get(&key)
             .copied()
             .unwrap_or(0);
-        let window = self.lastWindowSizeByChatKey.get(&key).copied().unwrap_or(0);
+        let window = self.windowCache().get(&key).copied().unwrap_or(0);
         let perRequest = self
             .perRequestTokenCountByChatKey
             .get(&key)
@@ -117,7 +119,7 @@ impl TokenStatisticsDelegate {
     #[allow(non_snake_case)]
     fn handleRequestWindowEstimate(&mut self, key: String, windowSize: Option<i64>) {
         if let Some(windowSize) = windowSize {
-            self.lastWindowSizeByChatKey.insert(key.clone(), windowSize);
+            self.windowCache().insert(key.clone(), windowSize);
             if self.isActiveKey(&key) {
                 self.currentWindowSize = windowSize;
                 self.currentWindowSizeFlow.set_value(windowSize);
@@ -139,7 +141,7 @@ impl TokenStatisticsDelegate {
         self.lastCurrentWindowSize = 0;
         self.cumulativeInputTokensByChatKey.clear();
         self.cumulativeOutputTokensByChatKey.clear();
-        self.lastWindowSizeByChatKey.clear();
+        self.windowCache().clear();
         self.perRequestTokenCountByChatKey.clear();
         if let Some(service) = service {
             service.resetTokenCounters();
@@ -194,7 +196,7 @@ impl TokenStatisticsDelegate {
             .insert(key.clone(), inputTokens);
         self.cumulativeOutputTokensByChatKey
             .insert(key.clone(), outputTokens);
-        self.lastWindowSizeByChatKey.insert(key.clone(), windowSize);
+        self.windowCache().insert(key.clone(), windowSize);
         if self.isActiveKey(&key) {
             self.cumulativeInputTokens = inputTokens;
             self.cumulativeOutputTokens = outputTokens;
@@ -224,7 +226,13 @@ impl TokenStatisticsDelegate {
     #[allow(non_snake_case)]
     pub fn getLastCurrentWindowSize(&self, chatId: Option<String>) -> i64 {
         let key = Self::chatKey(chatId.as_ref().or(self.activeChatId.as_ref()));
-        self.lastWindowSizeByChatKey.get(&key).copied().unwrap_or(0)
+        self.windowCache().get(&key).copied().unwrap_or(0)
+    }
+
+    fn windowCache(&self) -> std::sync::MutexGuard<'_, HashMap<String, i64>> {
+        self.lastWindowSizeByChatKey
+            .lock()
+            .expect("token statistics window cache mutex poisoned")
     }
 
     #[allow(non_snake_case)]
@@ -251,5 +259,26 @@ impl TokenStatisticsDelegate {
 impl Default for TokenStatisticsDelegate {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod window_cache_sharing_tests {
+    use super::*;
+
+    #[test]
+    fn worker_clone_estimates_reach_the_owning_delegate() {
+        let owner = TokenStatisticsDelegate::new();
+        let mut worker = owner.clone();
+        worker.handleRequestWindowEstimate("chat-a".into(), Some(5000));
+        assert_eq!(owner.getLastCurrentWindowSize(Some("chat-a".into())), 5000);
+
+        let mut compressionWorker = owner.clone();
+        compressionWorker.setTokenCounts(Some("chat-a".into()), 10, 20, 800);
+        assert_eq!(owner.getLastCurrentWindowSize(Some("chat-a".into())), 800);
+
+        let mut resetter = owner.clone();
+        resetter.resetTokenStatistics(None);
+        assert_eq!(owner.getLastCurrentWindowSize(Some("chat-a".into())), 0);
     }
 }
