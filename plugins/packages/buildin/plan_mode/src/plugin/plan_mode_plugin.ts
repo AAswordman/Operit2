@@ -36,11 +36,25 @@ import {
 import { onPlanaskXmlRender } from "./planask-xml-render-plugin.js";
 import { onPlantodoXmlRender } from "./plantodo-xml-render-plugin.js";
 
+// Planning forbids side effects: block every filesystem-mutating and terminal-execution
+// tool. Read-only getters (get_terminal_info / get_terminal_session_screen) stay available.
 const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
   "apply_file",
   "create_file",
   "edit_file",
   "delete_file",
+  "write_file",
+  "make_directory",
+  "move_file",
+  "copy_file",
+  "download_file",
+  "create_terminal_session",
+  "execute_in_terminal_session",
+  "execute_in_terminal_session_streaming",
+  "execute_hidden_terminal_command",
+  "execute_cli_command",
+  "input_in_terminal_session",
+  "close_terminal_session",
 ]);
 
 const PLAN_MODE_COMMAND_ID = "plan_mode_command";
@@ -273,7 +287,7 @@ function registerPlanModeIpc(): void {
   );
 }
 
-/** Removes file mutation tools while the chat is in planning mode. */
+/** Removes filesystem-mutating and terminal-execution tools while the chat is in planning mode. */
 function filterPlanModeTools(
   availableTools: ToolPkg.ToolPromptItem[]
 ): ToolPkg.ToolPromptItem[] {
