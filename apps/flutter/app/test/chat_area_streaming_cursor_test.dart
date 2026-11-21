@@ -1947,7 +1947,133 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets('bottom button reanchors only after the latest window is ready', (
+  for (final (live, tailOrigin) in [
+    (false, false),
+    (false, true),
+    (true, false),
+    (true, true),
+  ]) {
+    testWidgets(
+      'bottom return retains rows, live=$live, tail origin=$tailOrigin',
+      (tester) async {
+        final scroll = ScrollController();
+        final autoScroll = ValueNotifier(tailOrigin);
+        final stream = StreamController<MarkdownStreamEvent>.broadcast();
+        addTearDown(scroll.dispose);
+        addTearDown(autoScroll.dispose);
+        addTearDown(stream.close);
+        final parsed = <String>[];
+        final messages = [
+          _heightTestMessage(0, lines: 60),
+          _heightTestMessage(1, lines: 60),
+          if (live)
+            _aiMessage(timestamp: 80002, parts: const [], stream: stream.stream)
+          else
+            _heightTestMessage(2, lines: 8),
+        ];
+        await tester.pumpWidget(
+          _chatArea(
+            messages: messages,
+            isLoading: false,
+            scrollController: scroll,
+            autoScrollToBottom: autoScroll,
+            onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+            splitMarkdownContent: (content) async {
+              parsed.add(content);
+              await Future<void>.delayed(const Duration(milliseconds: 80));
+              return _splitMarkdownContent(content);
+            },
+          ),
+        );
+        await tester.pumpAndSettle();
+        scroll.jumpTo(scroll.position.maxScrollExtent);
+        await tester.pumpAndSettle();
+        final position = scroll.position;
+        final viewport = tester.element(find.byType(CustomScrollView));
+        for (var attempt = 0; attempt < 3; attempt++) {
+          await tester.drag(
+            find.byType(CustomScrollView),
+            const Offset(0, 240),
+          );
+          await tester.pumpAndSettle();
+          final parseCount = parsed.length;
+          expect(autoScroll.value, isFalse);
+          if (attempt == 1) {
+            tester
+                .widget<ChatScrollNavigator>(find.byType(ChatScrollNavigator))
+                .onJumpToMessage(messages.length - 1);
+          } else {
+            await tester.tap(find.byTooltip('回到底部'));
+          }
+          await tester.pump();
+          expect(scroll.position, same(position));
+          expect(tester.element(find.byType(CustomScrollView)), same(viewport));
+          expect(scroll.position.extentAfter, lessThanOrEqualTo(1));
+          expect(parsed.length, parseCount);
+          expect(find.textContaining('Height row 1 line 59'), findsOneWidget);
+          await tester.pumpAndSettle();
+        }
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox());
+      },
+    );
+  }
+
+  testWidgets('bottom return follows delayed rows above an idle live tail', (
+    tester,
+  ) async {
+    final scroll = ScrollController();
+    final autoScroll = ValueNotifier(false);
+    final stream = StreamController<MarkdownStreamEvent>.broadcast();
+    addTearDown(scroll.dispose);
+    addTearDown(autoScroll.dispose);
+    addTearDown(stream.close);
+    await tester.pumpWidget(
+      _chatArea(
+        messages: [
+          for (var index = 0; index < 79; index++)
+            _heightTestMessage(index, lines: index == 78 ? 60 : 1),
+          _aiMessage(timestamp: 80079, parts: const [], stream: stream.stream),
+        ],
+        isLoading: false,
+        scrollController: scroll,
+        autoScrollToBottom: autoScroll,
+        onAutoScrollToBottomChanged: (value) => autoScroll.value = value,
+        splitMarkdownContent: (content) async {
+          await Future<void>.delayed(const Duration(milliseconds: 500));
+          return _splitMarkdownContent(content);
+        },
+      ),
+    );
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    final position = scroll.position;
+    await tester.tap(find.byTooltip('回到底部'));
+    await tester.pumpAndSettle();
+    // No live chunks arrive to wake the follower while the preceding row grows.
+    await tester.pump(const Duration(seconds: 1));
+    await tester.pumpAndSettle();
+    expect(scroll.position, same(position));
+    expect(autoScroll.value, isTrue);
+    expect(scroll.position.extentAfter, lessThanOrEqualTo(1));
+    final tail = find.byWidgetPredicate(
+      (widget) =>
+          widget is CursorStyleChatMessage && widget.message.timestamp == 80079,
+    );
+    final row = find.ancestor(
+      of: tail,
+      matching: find.byType(ChatMessageExtentBox),
+    );
+    expect(
+      tester.getBottomLeft(find.byType(CustomScrollView)).dy -
+          tester.getBottomLeft(row).dy,
+      closeTo(16, 0.01),
+    );
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('bottom button aligns only after the latest window is ready', (
     tester,
   ) async {
     final scroll = ScrollController();

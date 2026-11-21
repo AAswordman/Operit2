@@ -893,11 +893,14 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         let holder = self.chatRuntimeHolder.clone();
         operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost()
             .scheduleHostRuntimeAsyncTask("native-chat-cancel", Box::new(move || Box::pin(async move {
-                let mut runtime = holder.lock().await;
-                if let Err(error) = runtime.getCore(slot).cancelNativeChatExecution(&capturedChatId, &executionId).await {
+                let pending = {
+                    let mut runtime = holder.lock().await;
+                    runtime.getCore(slot).cancelNativeChatExecution(&capturedChatId, &executionId)
+                };
+                if let Err(error) = pending.await {
                     operit_util::AppLogger::AppLogger::e("NativeChatCancel", &error);
                 }
-                runtime.observeStats();
+                holder.lock().await.observeStats();
             }))).map_err(|error| format!("Native chat cancellation scheduling failed: {error}"))?;
         Ok(ChatCancelResult { chatId: chatId.to_string(), cancelRequested: true })
     }
@@ -1198,13 +1201,18 @@ async fn runAdmittedChatTurn(
             message, None, None, None, attachments, reply, options, Some(admitted.lease.clone()))
     };
     let submission = submission.await?;
-    {
+    let cancellation = {
         let mut runtime = holder.lock().await;
-        if admitted.cancelled.load(Ordering::Acquire) {
+        let cancellation = admitted.cancelled.load(Ordering::Acquire).then(|| {
             runtime.getCore(admitted.slot.clone())
-                .cancelNativeChatExecution(chatId, &admitted.handle.executionId).await?;
-        }
+                .cancelNativeChatExecution(chatId, &admitted.handle.executionId)
+        });
         runtime.observeStats();
+        cancellation
+    };
+    if let Some(cancellation) = cancellation {
+        cancellation.await?;
+        holder.lock().await.observeStats();
     }
     submission.wait().await
 }

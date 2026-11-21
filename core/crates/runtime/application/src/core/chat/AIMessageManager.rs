@@ -310,6 +310,7 @@ impl AIMessageManager {
     }
 
     #[allow(non_snake_case)]
+    /// Registers a cancellable send before preparation and transfers its stream to the collector.
     pub async fn sendMessage(
         request: SendMessageRequest<'_>,
     ) -> Result<
@@ -405,7 +406,7 @@ impl AIMessageManager {
         let enableStream = !disableStreamOutput;
 
         let mut options = SendMessageOptions::new();
-        options.cancellationToken = Some(cancellationToken);
+        options.cancellationToken = Some(cancellationToken.clone());
         options.guidanceInbox = request.guidanceInbox;
         options.message = request.messageContent;
         options.chatId = request.chatId;
@@ -459,13 +460,19 @@ impl AIMessageManager {
             return Err(AiServiceError::RequestCancelled);
         }
         options.chatConfiguration = Some(request.chatConfiguration.clone());
-        let providerResponse = if request.resume {
-            request
-                .enhancedAiService
-                .resume(ResumeRequest { options })
-                .await
-        } else {
-            request.enhancedAiService.sendMessageWithConfiguration(options, request.chatConfiguration).await
+        let providerResponse = cancellationToken.runUntilCancelled(async {
+            if request.resume {
+                request
+                    .enhancedAiService
+                    .resume(ResumeRequest { options })
+                    .await
+            } else {
+                request.enhancedAiService.sendMessageWithConfiguration(options, request.chatConfiguration).await
+            }
+        }).await;
+        let providerResponse = match providerResponse {
+            Some(result) => result,
+            None => Err(AiServiceError::RequestCancelled),
         };
         match providerResponse {
             Ok(stream) => {

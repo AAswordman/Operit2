@@ -80,7 +80,6 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
   StreamSubscription<String>? _outputSubscription;
   Timer? _resizeTimer;
   bool _closed = false;
-  bool _finishingExit = false;
   int? _pendingRows;
   int? _pendingColumns;
 
@@ -200,19 +199,17 @@ class _BridgeWorkspacePtyProcess implements WorkspacePtyProcess {
     unawaited(_finishWithExit());
   }
 
-  /// Polls the runtime for the terminal exit code and closes the host session.
+  /// Completes this attachment while leaving host release to the session owner.
   Future<void> _finishWithExit() async {
-    if (_finishingExit) {
+    if (_closed) {
       return;
     }
-    _finishingExit = true;
     _closed = true;
     _resizeTimer?.cancel();
     try {
       await _outputSubscription?.cancel();
       _outputSubscription = null;
       final code = await _terminal.pollTerminalPtyExit(sessionId: _sessionId);
-      await _terminal.closeTerminalPty(sessionId: _sessionId);
       await _output.close();
       if (!_exitCode.isCompleted) {
         _exitCode.complete(code ?? -1);

@@ -12,6 +12,7 @@ import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/CommonNetworkErrorView.dart';
+import '../../../common/ApiErrorText.dart';
 import '../../../common/ThinkingLevelText.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
@@ -4579,11 +4580,11 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
         ? _testRestrictedColor(isDark)
         : colorScheme.error;
     final failures = <String>[
-      if (result.error != null) result.error!,
+      if (result.error != null) apiErrorText(result.error!),
       if (report != null)
         for (final item in report.items)
           if (!item.success && item.error != null)
-            '${_connectionTestTypeLabel(l10n, item.type)}: ${item.error}',
+            '${_connectionTestTypeLabel(l10n, item.type)}: ${apiErrorText(item.error!)}',
     ];
     final title = passed
         ? l10n.settingsModelConnectionTestPassed
@@ -4621,126 +4622,127 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
             ),
           ],
         ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 420),
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
-                Icon(
-                  passed
-                      ? Icons.check_circle_rounded
-                      : restricted
-                      ? Icons.pause_circle_outline_rounded
-                      : Icons.error_rounded,
-                  size: 15,
-                  color: statusColor,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Text(
-                    title,
-                    style: theme.textTheme.labelLarge?.copyWith(
-                      fontSize: 12.5,
-                      fontWeight: FontWeight.w700,
-                      color: colorScheme.onSurface,
+                Row(
+                  children: <Widget>[
+                    Icon(
+                      passed
+                          ? Icons.check_circle_rounded
+                          : restricted
+                          ? Icons.pause_circle_outline_rounded
+                          : Icons.error_rounded,
+                      size: 15,
+                      color: statusColor,
                     ),
-                  ),
-                ),
-                if (failures.isNotEmpty)
-                  IconButton(
-                    tooltip: l10n.settingsModelCopyError,
-                    onPressed: () => unawaited(_copy(failures.join('\n'))),
-                    icon: AnimatedSwitcher(
-                      duration: const Duration(milliseconds: 160),
-                      child: Icon(
-                        _copied ? Icons.check_rounded : Icons.copy_rounded,
-                        key: ValueKey<bool>(_copied),
-                        size: 14,
-                        color: _copied
-                            ? _testPassedColor(isDark)
-                            : colorScheme.onSurfaceVariant,
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: theme.textTheme.labelLarge?.copyWith(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w700,
+                          color: colorScheme.onSurface,
+                        ),
                       ),
                     ),
-                    visualDensity: VisualDensity.compact,
-                    padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(
-                      minWidth: 26,
-                      minHeight: 26,
+                    if (failures.isNotEmpty)
+                      IconButton(
+                        tooltip: l10n.settingsModelCopyError,
+                        onPressed: () => unawaited(_copy(failures.join('\n'))),
+                        icon: AnimatedSwitcher(
+                          duration: const Duration(milliseconds: 160),
+                          child: Icon(
+                            _copied ? Icons.check_rounded : Icons.copy_rounded,
+                            key: ValueKey<bool>(_copied),
+                            size: 14,
+                            color: _copied
+                                ? _testPassedColor(isDark)
+                                : colorScheme.onSurfaceVariant,
+                          ),
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(
+                          minWidth: 26,
+                          minHeight: 26,
+                        ),
+                      )
+                    else
+                      const SizedBox(width: 6),
+                  ],
+                ),
+                if (report != null)
+                  for (final item in report.items)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(top: 6, end: 6),
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: <Widget>[
+                          Padding(
+                            padding: const EdgeInsets.only(top: 1),
+                            child: Icon(
+                              item.success
+                                  ? Icons.check_rounded
+                                  : connectionTestRestriction(item.error) != null
+                                  ? Icons.pause_rounded
+                                  : Icons.close_rounded,
+                              size: 13,
+                              color: item.success
+                                  ? _testPassedColor(isDark)
+                                  : connectionTestRestriction(item.error) != null
+                                  ? _testRestrictedColor(isDark)
+                                  : colorScheme.error,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: <Widget>[
+                                Text(
+                                  _connectionTestItemLabel(
+                                    l10n,
+                                    item.type,
+                                    item.success ? null : item.error,
+                                  ),
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    fontSize: 11.5,
+                                    color: colorScheme.onSurface,
+                                  ),
+                                ),
+                                if (!item.success && item.error != null)
+                                  SelectableText(
+                                    apiErrorText(item.error!),
+                                    style: detailStyle,
+                                  ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  )
-                else
-                  const SizedBox(width: 6),
+                if (result.error != null)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(top: 6, end: 6),
+                    child: SelectableText(
+                      apiErrorText(result.error!),
+                      style: detailStyle,
+                    ),
+                  ),
+                if (result.note != null)
+                  Padding(
+                    padding: const EdgeInsetsDirectional.only(top: 8, end: 6),
+                    child: Text(result.note!, style: detailStyle),
+                  ),
               ],
             ),
-            if (report != null)
-              for (final item in report.items)
-                Padding(
-                  padding: const EdgeInsetsDirectional.only(top: 6, end: 6),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: <Widget>[
-                      Padding(
-                        padding: const EdgeInsets.only(top: 1),
-                        child: Icon(
-                          item.success
-                              ? Icons.check_rounded
-                              : connectionTestRestriction(item.error) != null
-                              ? Icons.pause_rounded
-                              : Icons.close_rounded,
-                          size: 13,
-                          color: item.success
-                              ? _testPassedColor(isDark)
-                              : connectionTestRestriction(item.error) != null
-                              ? _testRestrictedColor(isDark)
-                              : colorScheme.error,
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: <Widget>[
-                            Text(
-                              _connectionTestItemLabel(
-                                l10n,
-                                item.type,
-                                item.success ? null : item.error,
-                              ),
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                fontSize: 11.5,
-                                color: colorScheme.onSurface,
-                              ),
-                            ),
-                            if (!item.success && item.error != null)
-                              Text(
-                                item.error!,
-                                maxLines: 4,
-                                overflow: TextOverflow.ellipsis,
-                                style: detailStyle,
-                              ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-            if (result.error != null)
-              Padding(
-                padding: const EdgeInsetsDirectional.only(top: 6, end: 6),
-                child: Text(
-                  result.error!,
-                  maxLines: 5,
-                  overflow: TextOverflow.ellipsis,
-                  style: detailStyle,
-                ),
-              ),
-            if (result.note != null)
-              Padding(
-                padding: const EdgeInsetsDirectional.only(top: 8, end: 6),
-                child: Text(result.note!, style: detailStyle),
-              ),
-          ],
+          ),
         ),
       ),
     );

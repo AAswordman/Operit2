@@ -74,6 +74,7 @@ class _OperitThemeState extends State<OperitTheme> {
   double _zoom = 1.0;
   Future<void> _zoomSave = Future<void>.value();
   StreamSubscription<LongPastedTextInputSettings>? _longPasteSubscription;
+  StreamSubscription<bool?>? _enterSendsMessageSubscription;
   late final OperitThemeController _controller = OperitThemeController(
     onChanged: () {
       if (mounted) {
@@ -167,11 +168,14 @@ class _OperitThemeState extends State<OperitTheme> {
     try {
       await startFuture;
       final zoom = await _zoomPreferences.load();
+      final enterSendsMessage = await const UserPreferencesManager()
+          .loadEnterSendsMessage();
       if (!mounted ||
           generation != _runtimeGeneration ||
           !_runtimeManager.runtimeConfigured) {
         return;
       }
+      UserPreferencesManager.enterSendsMessage.value = enterSendsMessage;
       _longPasteSubscription = const UserPreferencesManager()
           .longPastedTextInputSettingsFlow()
           .listen((settings) {
@@ -179,6 +183,14 @@ class _OperitThemeState extends State<OperitTheme> {
               return;
             }
             UserPreferencesManager.longPastedTextInputSettings.value = settings;
+          });
+      _enterSendsMessageSubscription = const UserPreferencesManager()
+          .enterSendsMessageFlow()
+          .listen((enabled) {
+            if (!mounted || generation != _runtimeGeneration) {
+              return;
+            }
+            UserPreferencesManager.enterSendsMessage.value = enabled;
           });
       setState(() {
         _zoom = zoom;
@@ -214,6 +226,8 @@ class _OperitThemeState extends State<OperitTheme> {
   void _cancelPreferenceSubscriptions() {
     unawaited(_longPasteSubscription?.cancel());
     _longPasteSubscription = null;
+    unawaited(_enterSendsMessageSubscription?.cancel());
+    _enterSendsMessageSubscription = null;
   }
 
   /// Starts reading Android native runtime stages while Core-backed UI is starting.

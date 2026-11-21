@@ -106,6 +106,12 @@ class _LineReflow {
     var cellsLeft = to - from;
 
     while (cellsLeft > 0) {
+      // A reused line can already fill the destination when its final glyph
+      // extends past the old width. Commit it before appending wrapped cells.
+      if (_builder.length == newWidth) {
+        _lines.add(_builder.take(wrapped: _lines.isNotEmpty));
+      }
+
       final bufferRemainingCells = newWidth - _builder.length;
 
       // How many cells we should copy in this iteration.

@@ -1,23 +1,19 @@
 // ignore_for_file: file_names
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../../../common/ApiErrorText.dart';
 
 /// Account and upstream restrictions do not establish a model capability result.
 enum ModelConnectionTestRestriction { credits, rateLimit }
-
-final _restrictionStatus = RegExp(
-  r'(?:^|\b(?:request|connection) failed:\s*|\bHTTP(?:/\d(?:\.\d)?)?\s+)(402|429)(?=\s|:|$)',
-  caseSensitive: false,
-);
 
 /// Reads the HTTP status preserved in the provider's request error.
 ModelConnectionTestRestriction? connectionTestRestriction(String? error) {
   if (error == null) {
     return null;
   }
-  return switch (_restrictionStatus.firstMatch(error)?.group(1)) {
-    '402' => ModelConnectionTestRestriction.credits,
-    '429' => ModelConnectionTestRestriction.rateLimit,
+  return switch (apiErrorHttpStatus(error)) {
+    402 => ModelConnectionTestRestriction.credits,
+    429 => ModelConnectionTestRestriction.rateLimit,
     _ => null,
   };
 }

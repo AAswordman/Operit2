@@ -2150,6 +2150,18 @@ abstract class AppLocalizations {
   /// **'Chat input'**
   String get settingsGlobalBehaviorChatInputSection;
 
+  /// No description provided for @settingsGlobalBehaviorEnterSendsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Press Enter to send'**
+  String get settingsGlobalBehaviorEnterSendsMessage;
+
+  /// No description provided for @settingsGlobalBehaviorEnterSendsMessageDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'When off, Enter inserts a newline. Ctrl+Enter and Enter in the expanded editor always insert a newline.'**
+  String get settingsGlobalBehaviorEnterSendsMessageDescription;
+
   /// No description provided for @settingsGlobalBehaviorLongPastedTextAsAttachment.
   ///
   /// In en, this message translates to:

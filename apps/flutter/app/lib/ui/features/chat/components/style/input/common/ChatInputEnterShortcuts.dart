@@ -3,9 +3,10 @@
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../../../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../../../main/layout/NavigationLayoutMetrics.dart';
 
-/// Shares Enter behavior across composers using the application display layout.
+/// Shares the configurable Enter behavior across composers.
 class ChatInputEnterShortcuts extends StatelessWidget {
   /// Creates Enter bindings that preserve input method candidate confirmation.
   const ChatInputEnterShortcuts({
@@ -23,10 +24,21 @@ class ChatInputEnterShortcuts extends StatelessWidget {
   final VoidCallback onSendMessage;
   final Widget child;
 
-  /// Sends only from a collapsed desktop layout; other Enter presses add lines.
+  /// Applies the saved switch while keeping expanded editors in multiline mode.
   @override
   Widget build(BuildContext context) {
-    final enterSends = !inputExpanded && useTabletLayoutForContext(context);
+    return ValueListenableBuilder<bool?>(
+      valueListenable: UserPreferencesManager.enterSendsMessage,
+      builder: (context, enabled, child) => _buildShortcuts(
+        !inputExpanded && (enabled ?? useTabletLayoutForContext(context)),
+        child!,
+      ),
+      child: child,
+    );
+  }
+
+  /// Binds both Enter keys without replacing the active text editor.
+  Widget _buildShortcuts(bool enterSends, Widget child) {
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         for (final key in <LogicalKeyboardKey>[

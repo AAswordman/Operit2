@@ -1592,84 +1592,97 @@ impl MessageProcessingDelegate {
 
     /// Cancels an active message turn and optionally keeps partial response content.
     #[allow(non_snake_case)]
-    pub async fn cancelMessageInternal(
+    pub fn cancelMessageInternal(
         &mut self,
         chatId: String,
         keepPartialResponse: bool,
-    ) -> Result<Option<ChatMessage>, String> {
-        self.cancelMessageInternalForTurn(chatId, keepPartialResponse, None).await
+    ) -> impl std::future::Future<Output = Result<Option<ChatMessage>, String>> + 'static {
+        self.cancelMessageInternalForTurn(chatId, keepPartialResponse, None, std::convert::identity)
     }
 
     /// Cancels only the execution reserved by an exact background-work action.
     pub(crate) async fn cancelWorkGeneration(&mut self, chatId: String, turnId: u64) -> Result<(), String> {
-        self.cancelMessageInternalForTurn(chatId, true, Some(turnId)).await.map(|_| ())
+        self.cancelMessageInternalForTurn(chatId, true, Some(turnId), std::convert::identity).await.map(|_| ())
     }
 
     /// Reserves cancellation and validates optional generation ownership under one runtime lock.
-    async fn cancelMessageInternalForTurn(&mut self, chatId: String, keepPartialResponse: bool,
-        expectedTurnId: Option<u64>) -> Result<Option<ChatMessage>, String> {
+    fn cancelMessageInternalForTurn(
+        &mut self, chatId: String, keepPartialResponse: bool, expectedTurnId: Option<u64>,
+        settleCancellation: impl FnOnce(Result<Option<ChatMessage>, String>) -> Result<Option<ChatMessage>, String> + 'static,
+    ) -> impl std::future::Future<Output = Result<Option<ChatMessage>, String>> + 'static {
         if expectedTurnId.is_none() { self.cancelSummaryTasks(Some(&chatId)); }
         let cancellation = self.withExistingRuntime(Some(chatId.clone()), |runtime| {
             runtime.reserveCancellation(expectedTurnId, self.isChatLoading(chatId.clone())).map(|reservation|
                 reservation.map(|(cancelled, cancelling)| (cancelled, cancelling, runtime.responseStream.clone())))
         });
-        let Some(reservation) = cancellation else {
-            if expectedTurnId.is_some() { return Err("Work runtime no longer exists".to_string()); }
-            return Ok(None);
-        };
-        let Some((cancelledTurnId, cancellationTurnId, responseStream)) = reservation? else { return Ok(None); };
-        if expectedTurnId.is_some() { self.cancelSummaryTasks(Some(&chatId)); }
-        self.clearCurrentTurnToolInvocationCount(chatId.clone());
-        // Cancel the producer first. Closing the stream earlier lets its cleanup task
-        // remove the active service before AIMessageManager can invalidate execution.
-        let usageResult = AIMessageManager::cancelOperation(chatId.clone()).await;
-        let partialMessage = keepPartialResponse
-            .then(|| self.detachStreamingAiMessage(chatId.clone()))
-            .flatten();
-        if let Some(responseStream) = responseStream {
-            responseStream.close();
-        }
-        let cancelled = self
-            .withExistingRuntime(Some(chatId.clone()), |runtime| {
-                if runtime.activeTurnId != cancellationTurnId || !runtime.isCancelling {
-                    return false;
-                }
-                if let Some(lease) = runtime.executionLease.take() {
-                    if !runtime.currentTurnOptions.deferSequenceCompletion {
-                        lease.release().expect("Cancelled execution lease release must succeed");
+        let mut delegate = self.clone_for_core();
+        async move {
+            let Some(reservation) = cancellation else {
+                if expectedTurnId.is_some() { return Err("Work runtime no longer exists".to_string()); }
+                return Ok(None);
+            };
+            let Some((cancelledTurnId, cancellationTurnId, responseStream)) = reservation? else { return Ok(None); };
+            if expectedTurnId.is_some() { delegate.cancelSummaryTasks(Some(&chatId)); }
+            delegate.clearCurrentTurnToolInvocationCount(chatId.clone());
+            // Cancel the producer first. Closing the stream earlier lets its cleanup task
+            // remove the active service before AIMessageManager can invalidate execution.
+            let usageResult = AIMessageManager::cancelOperation(chatId.clone()).await;
+            let ownsCancellation = delegate.withExistingRuntime(Some(chatId.clone()), |runtime| {
+                runtime.activeTurnId == cancellationTurnId && runtime.isCancelling
+            }).unwrap_or(false);
+            if !ownsCancellation {
+                return usageResult.map(|()| None).map_err(|error| error.to_string());
+            }
+            let partialMessage = keepPartialResponse
+                .then(|| delegate.detachStreamingAiMessage(chatId.clone()))
+                .flatten();
+            if let Some(responseStream) = responseStream {
+                responseStream.close();
+            }
+            // Commit partial output and settle its receipt before admitting another turn.
+            // Duplicate cancellation reservations never reach this callback.
+            let result = settleCancellation(usageResult.map(|()| partialMessage).map_err(|error| error.to_string()));
+            let cancelled = delegate
+                .withExistingRuntime(Some(chatId.clone()), |runtime| {
+                    if runtime.activeTurnId != cancellationTurnId || !runtime.isCancelling {
+                        return false;
                     }
-                }
-                runtime.responseStream = None;
-                runtime.sendJob = None;
-                runtime.streamCollectionJob = None;
-                runtime.stateCollectionJob = None;
-                runtime.currentTurnOptions = ChatTurnOptions::default();
-                runtime.requestSentAt = 0;
-                runtime.requestStartElapsed = 0;
-                runtime.firstResponseElapsed = None;
-                runtime.isCancelling = false;
-                true
-            })
-            .unwrap_or(false);
-        if cancelled {
-            AppLogger::v_with_level(
-                "ResponseExecutionTrace",
-                &format!(
-                    "response_cancelled chatId={} turnId={}",
-                    chatId, cancelledTurnId
-                ),
-                operit_util::AppLogger::VERBOSE_LEVEL_2,
-            );
-            self.finishChatExecution(chatId, InputProcessingState::Idle);
+                    if let Some(lease) = runtime.executionLease.take() {
+                        if !runtime.currentTurnOptions.deferSequenceCompletion {
+                            lease.release().expect("Cancelled execution lease release must succeed");
+                        }
+                    }
+                    runtime.responseStream = None;
+                    runtime.sendJob = None;
+                    runtime.streamCollectionJob = None;
+                    runtime.stateCollectionJob = None;
+                    runtime.currentTurnOptions = ChatTurnOptions::default();
+                    runtime.requestSentAt = 0;
+                    runtime.requestStartElapsed = 0;
+                    runtime.firstResponseElapsed = None;
+                    runtime.isCancelling = false;
+                    true
+                })
+                .unwrap_or(false);
+            if cancelled {
+                AppLogger::v_with_level(
+                    "ResponseExecutionTrace",
+                    &format!("response_cancelled chatId={} turnId={}", chatId, cancelledTurnId),
+                    operit_util::AppLogger::VERBOSE_LEVEL_2,
+                );
+                delegate.finishChatExecution(chatId, InputProcessingState::Idle);
+            }
+            result
         }
-        usageResult.map_err(|error| error.to_string())?;
-        Ok(partialMessage)
     }
 
-    /// Cancels an active message turn while preserving partial response content.
+    /// Settles the cancelled turn's partial output and receipt before releasing its execution ownership.
     #[allow(non_snake_case)]
-    pub async fn cancelMessage(&mut self, chatId: String) -> Result<Option<ChatMessage>, String> {
-        self.cancelMessageInternal(chatId, true).await
+    pub fn cancelMessage(
+        &mut self, chatId: String,
+        settleCancellation: impl FnOnce(Result<Option<ChatMessage>, String>) -> Result<Option<ChatMessage>, String> + 'static,
+    ) -> impl std::future::Future<Output = Result<Option<ChatMessage>, String>> + 'static {
+        self.cancelMessageInternalForTurn(chatId, true, None, settleCancellation)
     }
 
     /// Cancels an active message turn before destructive history mutation.

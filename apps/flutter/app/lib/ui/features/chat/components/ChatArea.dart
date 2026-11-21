@@ -10,6 +10,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 
+import '../../../common/ApiErrorText.dart';
 import '../../../common/markdown/StreamMarkdownRenderer.dart';
 import '../../../common/markdown/MarkdownFileScope.dart';
 import '../../../common/interactions/ChainedScrollController.dart';
@@ -471,7 +472,7 @@ class _ChatAreaState extends State<ChatArea>
       notification.metrics.maxScrollExtent,
     );
     final viewportDimension = notification.metrics.viewportDimension;
-    _handleCompletedStreamExtentChange(maxScrollExtentDelta);
+    _handleBottomStreamExtentChange(maxScrollExtentDelta);
     _scheduleHistoryLoad(_historyLoadDirection);
     if (_scrollViewportDimension != viewportDimension) {
       _scrollViewportDimension = viewportDimension;
@@ -491,13 +492,13 @@ class _ChatAreaState extends State<ChatArea>
         : maxScrollExtent - previousMaxScrollExtent;
   }
 
-  /// Routes completed stream extent changes through the frame follower.
-  bool _handleCompletedStreamExtentChange(double maxScrollExtentDelta) {
-    if (!_isCompletingBottomFollow()) {
-      return false;
+  /// Follows async transcript growth even before the live tail emits any text.
+  void _handleBottomStreamExtentChange(double maxScrollExtentDelta) {
+    if (_isCompletingBottomFollow() ||
+        (_hasLiveBottomStream() &&
+            maxScrollExtentDelta > _bottomFollowPositionTolerance)) {
+      _scheduleBottomFollow(maxScrollExtentDelta);
     }
-    _scheduleBottomFollow(maxScrollExtentDelta);
-    return true;
   }
 
   /// Refreshes navigation geometry after asynchronously rendered content changes.
@@ -880,7 +881,7 @@ class _ChatAreaState extends State<ChatArea>
         message.contentStream != null;
   }
 
-  /// Reanchors at the tail without traversing intermediate history layouts.
+  /// Returns to the latest bottom without replacing the transcript's layout origin.
   Future<void> _scrollToBottomFromNavigator() async {
     _historyLoadDirection = ScrollDirection.idle;
     _clearPendingMessageJump();
@@ -892,11 +893,16 @@ class _ChatAreaState extends State<ChatArea>
       await widget.onShowLatestDisplayWindow();
     }
     if (!mounted || generation != _messageNavigationGeneration) return;
-    if (_pendingScrollToBottom) setState(_applyPendingMessageJump);
+    if (_pendingScrollToBottom) _applyPendingNavigation();
   }
 
   /// Reveals a timestamp and ignores completions superseded by user navigation.
   Future<void> _jumpToMessageTimestamp(int timestamp) async {
+    if (!widget.hasNewerDisplayHistory &&
+        widget.messages.lastOrNull?.timestamp == timestamp) {
+      await _scrollToBottomFromNavigator();
+      return;
+    }
     _historyLoadDirection = ScrollDirection.idle;
     _clearPendingMessageJump();
     final generation = _messageNavigationGeneration;
@@ -904,7 +910,7 @@ class _ChatAreaState extends State<ChatArea>
     _stopBottomFollow();
     widget.onAutoScrollToBottomChanged(false);
     if (widget.messages.any((message) => message.timestamp == timestamp)) {
-      setState(_applyPendingMessageJump);
+      setState(_applyPendingNavigation);
       return;
     }
 
@@ -916,7 +922,7 @@ class _ChatAreaState extends State<ChatArea>
       _clearPendingMessageJump();
       return;
     }
-    setState(_applyPendingMessageJump);
+    setState(_applyPendingNavigation);
   }
 
   /// Resolves navigator indices to stable message identities.
@@ -927,25 +933,30 @@ class _ChatAreaState extends State<ChatArea>
     unawaited(_jumpToMessageTimestamp(widget.messages[targetIndex].timestamp));
   }
 
-  /// Makes the target the layout origin so earlier rows grow away from it.
-  void _applyPendingMessageJump() {
-    if (_pendingScrollToBottom) {
+  /// Aligns the current bottom or establishes an origin for a history target.
+  void _applyPendingNavigation() {
+    final timestamp = _pendingJumpToMessageTimestamp;
+    final targetsLatest =
+        timestamp != null &&
+        timestamp == widget.messages.lastOrNull?.timestamp &&
+        !widget.hasNewerDisplayHistory;
+    if (_pendingScrollToBottom || targetsLatest) {
       if (widget.hasNewerDisplayHistory ||
           widget.isLoadingDisplayWindow ||
           widget.messages.isEmpty) {
         return;
       }
       _pendingScrollToBottom = false;
-      _pendingJumpToMessageTimestamp = widget.messages.last.timestamp;
+      _pendingJumpToMessageTimestamp = null;
+      widget.onAutoScrollToBottomChanged(true);
+      _layoutScrollController.alignBottom();
+      _scheduleMessageAnchorCollection();
+      return;
     }
-    final timestamp = _pendingJumpToMessageTimestamp;
     if (timestamp == null) {
       return;
     }
-    final index = widget.messages.indexWhere(
-      (message) => message.timestamp == timestamp,
-    );
-    if (index < 0) {
+    if (!widget.messages.any((message) => message.timestamp == timestamp)) {
       return;
     }
     _pendingJumpToMessageTimestamp = null;
@@ -955,10 +966,8 @@ class _ChatAreaState extends State<ChatArea>
     _scrollLayoutKey = UniqueKey();
     _lastScrollMaxExtent = null;
     _messageAnchorsNotifier.value = const <int, ChatScrollMessageAnchor>{};
-    final isLatest =
-        index == widget.messages.length - 1 && !widget.hasNewerDisplayHistory;
-    _layoutAnchorAtBottom = isLatest;
-    widget.onAutoScrollToBottomChanged(isLatest);
+    _layoutAnchorAtBottom = false;
+    widget.onAutoScrollToBottomChanged(false);
     _scheduleMessageAnchorCollection();
   }
 
@@ -1087,7 +1096,7 @@ class _ChatAreaState extends State<ChatArea>
       _initialLayoutOriginChosen = false;
       _scrollLayoutKey = UniqueKey();
     }
-    _applyPendingMessageJump();
+    _applyPendingNavigation();
     final bottomInsetChanged =
         oldWidget.bottomContentInset != widget.bottomContentInset;
     if (messagesChanged || bottomInsetChanged) {
@@ -1352,6 +1361,12 @@ class _ChatLayoutScrollController extends ScrollController {
   final ValueGetter<double> layoutOriginTopPadding;
   ScrollPosition? _origin;
 
+  /// Requests bottom alignment in the current position's next layout pass.
+  void alignBottom() {
+    final origin = _origin;
+    if (origin is _ChatLayoutScrollPosition) origin.alignBottom();
+  }
+
   /// Moves the active layout origin when the owner replaces its controller.
   set delegate(ScrollController value) {
     if (identical(value, _delegate)) {
@@ -1442,6 +1457,14 @@ class _ChatLayoutScrollPosition extends ScrollPositionWithSingleContext {
   final ValueGetter<double> leadingScrollExtent;
   final ValueGetter<double> layoutOriginTopPadding;
   double? _previousOriginTopPadding;
+  bool _bottomAlignmentRequested = false;
+
+  /// Reuses this coordinate system and resolves its bottom before painting.
+  void alignBottom() {
+    _bottomAlignmentRequested = true;
+    goIdle();
+    forcePixels(maxScrollExtent);
+  }
 
   /// Requests a new layout pass with the measured bottom before any painting.
   @override
@@ -1454,6 +1477,7 @@ class _ChatLayoutScrollPosition extends ScrollPositionWithSingleContext {
       maxScrollExtent = math.max(minScrollExtent, maxScrollExtent);
     }
     final alignsBottom =
+        _bottomAlignmentRequested ||
         shouldAlignBottom() ||
         (!haveDimensions && shouldInitiallyAlignBottom());
     final padding = layoutOriginTopPadding();
@@ -1469,7 +1493,12 @@ class _ChatLayoutScrollPosition extends ScrollPositionWithSingleContext {
       correctPixels(maxScrollExtent);
       return false;
     }
-    return super.applyContentDimensions(minScrollExtent, maxScrollExtent);
+    final accepted = super.applyContentDimensions(
+      minScrollExtent,
+      maxScrollExtent,
+    );
+    if (accepted) _bottomAlignmentRequested = false;
+    return accepted;
   }
 }
 
@@ -1556,18 +1585,20 @@ class _ChatAreaContentColumn extends StatelessWidget {
 }
 
 class _StatusMessage extends StatelessWidget {
+  /// Creates a selectable transcript status or API error message.
   const _StatusMessage({required this.text, this.isError = false});
 
   final String text;
   final bool isError;
 
+  /// Builds the status with an API explanation and its original error text.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: SelectableText(
-        text,
+        isError ? apiErrorText(text) : text,
         style: theme.textTheme.bodySmall?.copyWith(
           color: isError
               ? theme.colorScheme.error

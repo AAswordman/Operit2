@@ -1094,6 +1094,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsGlobalBehaviorChatInputSection => '聊天输入';
 
   @override
+  String get settingsGlobalBehaviorEnterSendsMessage => '回车键发送消息';
+
+  @override
+  String get settingsGlobalBehaviorEnterSendsMessageDescription =>
+      '关闭后，回车键换行。Ctrl+Enter 和展开输入框中的回车键始终换行。';
+
+  @override
   String get settingsGlobalBehaviorLongPastedTextAsAttachment => '将超长粘贴文本转为文件';
 
   @override

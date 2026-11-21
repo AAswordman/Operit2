@@ -1617,8 +1617,9 @@ impl ChatHistoryDelegate {
         Ok(true)
     }
 
-    /// Clears local projections of a committed deletion without invoking configuration owners again.
+    /// Clears a committed deletion and opens the latest remaining history when the active chat was deleted.
     pub(crate) fn clearDeletedChatState(&mut self, chatId: String) -> Result<(), String> {
+        let wasCurrentChat = self.currentChatIdFlow.value().as_ref() == Some(&chatId);
         if self.chatHistoryManager.currentChatIdFlow()
             .map_err(|error| error.to_string())?
             .as_ref() == Some(&chatId)
@@ -1626,7 +1627,7 @@ impl ChatHistoryDelegate {
             self.chatHistoryManager.clearCurrentChatId()
                 .map_err(|error| error.to_string())?;
         }
-        if self.currentChatIdFlow.value().as_ref() == Some(&chatId) {
+        if wasCurrentChat {
             self.currentChatIdFlow.set_value(None);
             self.clearCurrentChatHistoryInMemory();
         }
@@ -1635,6 +1636,13 @@ impl ChatHistoryDelegate {
         });
         self.clearChatFlow(&chatId);
         self.finishDestructiveHistoryMutation(chatId);
+        if wasCurrentChat {
+            if let Some(nextChatId) = self.chatHistoryManager.mostRecentChatId()
+                .map_err(|error| error.to_string())?
+            {
+                self.openChatHistory(nextChatId, true)?;
+            }
+        }
         Ok(())
     }
 

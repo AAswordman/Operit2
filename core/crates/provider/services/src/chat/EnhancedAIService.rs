@@ -223,6 +223,15 @@ impl MessageCancellationToken {
             notified.await;
         }
     }
+
+    /// Drops pending preparation or provider work as soon as this send is cancelled.
+    pub async fn runUntilCancelled<T>(&self, execution: impl std::future::Future<Output = T>) -> Option<T> {
+        tokio::select! {
+            biased;
+            _ = self.cancelled() => None,
+            result = execution => Some(result),
+        }
+    }
 }
 
 /// Shares user guidance between the owning chat turn and its provider worker.
@@ -437,18 +446,30 @@ impl MessageExecutionContext {
         }
     }
 
-    /// Drops the pending serial tool batch as soon as its owning execution is cancelled.
-    async fn awaitToolExecution<T>(&self, execution: impl std::future::Future<Output = T>) -> Option<T> {
-        let sendCancelled = async {
-            match &self.cancellationToken {
-                Some(token) => token.cancelled().await,
-                None => std::future::pending::<()>().await,
+    /// Captures cancellation gates without retaining the context or copying its history.
+    fn cancelled(&self) -> impl std::future::Future<Output = ()> + 'static {
+        let executionCancellation = self.executionCancellation.clone();
+        let cancellationToken = self.cancellationToken.clone();
+        async move {
+            let sendCancelled = async {
+                match &cancellationToken {
+                    Some(token) => token.cancelled().await,
+                    None => std::future::pending::<()>().await,
+                }
+            };
+            tokio::select! {
+                biased;
+                _ = executionCancellation.cancelled() => (),
+                _ = sendCancelled => (),
             }
-        };
+        }
+    }
+
+    /// Drops pending provider, stream or tool work when either execution owner cancels it.
+    async fn awaitExecution<T>(&self, execution: impl std::future::Future<Output = T>) -> Option<T> {
         tokio::select! {
             biased;
-            _ = self.executionCancellation.cancelled() => None,
-            _ = sendCancelled => None,
+            _ = self.cancelled() => None,
             result = execution => Some(result),
         }
     }
@@ -1650,15 +1671,22 @@ impl EnhancedAIService {
                             operit_util::AppLogger::VERBOSE_LEVEL_5,
                         );
                         let cancellationToken = execContext.cancellationToken.clone();
-                        let result = ToolExecutionManager::scopeToolRuntimeContext(
-                            toolRuntimeContext,
-                            service.executeSendMessageWithRuntime(
-                                options,
-                                runtime,
-                                producerStream.clone(),
-                                execContext,
-                            ),
-                        ).await;
+                        let cancelled = execContext.cancelled();
+                        let executionId = execContext.executionId;
+                        let result = tokio::select! {
+                            biased;
+                            _ = cancelled => Err(AiServiceError::RequestCancelled),
+                            result = ToolExecutionManager::scopeToolRuntimeContext(
+                                toolRuntimeContext,
+                                service.executeSendMessageWithRuntime(
+                                    options,
+                                    runtime,
+                                    producerStream.clone(),
+                                    execContext,
+                                ),
+                            ) => result,
+                        };
+                        service.shared_state().active_execution_contexts.remove(&executionId);
                         if let Err(error) = result {
                             let cancelled = matches!(error, AiServiceError::RequestCancelled)
                                 || cancellationToken
@@ -3054,7 +3082,7 @@ impl EnhancedAIService {
             ToolExposureMode::Cli => RuntimeToolExposureMode::CLI,
             ToolExposureMode::Full => RuntimeToolExposureMode::FULL,
         };
-        let toolBatch = context.awaitToolExecution(
+        let toolBatch = context.awaitExecution(
             ToolExecutionManager::executeInvocations(
                 &toolInvocations,
                 &mut self.tool_handler,
@@ -4020,6 +4048,53 @@ mod cancellation_tests {
     };
     use std::sync::{Arc, Mutex};
 
+    /// Cancellation drops a pending send and its provider lock before the canceller needs it.
+    #[tokio::test]
+    async fn cancellation_releases_provider_lock_and_request_permit() {
+        use crate::chat::llmprovider::RequestConcurrencyRegistry::RequestSemaphore;
+        for cancelSend in [false, true] {
+            let mut state = EnhancedAISharedState::default();
+            let token = MessageCancellationToken::default();
+            let options = SendMessageOptions {
+                cancellationToken: Some(token.clone()),
+                ..SendMessageOptions::new()
+            };
+            let context = state.createExecutionContext(0, &options).unwrap();
+            let provider = tokio::sync::Mutex::new(());
+            let semaphore = RequestSemaphore::new(1);
+            let mut send = Box::pin(context.awaitExecution(async {
+                let _provider = provider.lock().await;
+                let _permit = semaphore.acquire().await;
+                std::future::pending::<()>().await;
+            }));
+            assert!(futures_util::poll!(&mut send).is_pending());
+            assert!(provider.try_lock().is_err());
+            if cancelSend { token.cancel(); } else { state.invalidateExecutionContexts(); }
+            assert!(matches!(futures_util::poll!(&mut send), std::task::Poll::Ready(None)));
+            assert!(provider.try_lock().is_ok());
+            assert!(futures_util::poll!(Box::pin(semaphore.acquire())).is_ready());
+        }
+    }
+
+    /// An occupied provider lock cannot prevent cancelling preparation or launch it afterwards.
+    #[tokio::test]
+    async fn cancellation_drops_preparation_waiting_for_provider_lock() {
+        let token = MessageCancellationToken::default();
+        let provider = tokio::sync::Mutex::new(());
+        let held = provider.lock().await;
+        let entered = std::sync::atomic::AtomicBool::new(false);
+        let mut preparation = Box::pin(token.runUntilCancelled(async {
+            let _provider = provider.lock().await;
+            entered.store(true, std::sync::atomic::Ordering::SeqCst);
+        }));
+        assert!(futures_util::poll!(&mut preparation).is_pending());
+        token.cancel();
+        assert!(matches!(futures_util::poll!(&mut preparation), std::task::Poll::Ready(None)));
+        drop(held);
+        assert!(!entered.load(std::sync::atomic::Ordering::SeqCst));
+        assert!(provider.try_lock().is_ok());
+    }
+
     /// Wakes every observer and remains ready for observers created after cancellation.
     #[tokio::test]
     async fn cancellation_wakes_all_tool_waiters_without_losing_early_signals() {
@@ -4045,7 +4120,7 @@ mod cancellation_tests {
             let context = state.createExecutionContext(0, &options).unwrap();
             let (sender, receiver) = tokio::sync::oneshot::channel::<()>();
             let laterTool = std::sync::atomic::AtomicBool::new(false);
-            let mut batch = Box::pin(context.awaitToolExecution(async {
+            let mut batch = Box::pin(context.awaitExecution(async {
                 receiver.await.unwrap();
                 laterTool.store(true, std::sync::atomic::Ordering::SeqCst);
             }));
@@ -4062,9 +4137,9 @@ mod cancellation_tests {
     async fn tool_batch_preserves_completion_and_rejects_cancelled_start() {
         let mut state = EnhancedAISharedState::default();
         let context = state.createExecutionContext(0, &SendMessageOptions::new()).unwrap();
-        assert_eq!(context.awaitToolExecution(async { 42 }).await, Some(42));
+        assert_eq!(context.awaitExecution(async { 42 }).await, Some(42));
         state.invalidateExecutionContexts();
-        let mut cancelled = Box::pin(context.awaitToolExecution(async { panic!("cancelled batch started") }));
+        let mut cancelled = Box::pin(context.awaitExecution(async { panic!("cancelled batch started") }));
         assert!(matches!(futures_util::poll!(&mut cancelled), std::task::Poll::Ready(None)));
     }
 

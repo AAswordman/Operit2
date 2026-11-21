@@ -28,6 +28,38 @@ void main() {
     expect(extent.estimateHeight(600, 20), 360);
   });
 
+  testWidgets('does not inflate a pending row to an unmeasured estimate', (
+    tester,
+  ) async {
+    final extent = ChatMessageExtent();
+    addTearDown(extent.dispose);
+    extent.estimateHeight(400, 1800);
+    expect(extent.reservedHeight(400), 0);
+    await tester.pumpWidget(
+      Directionality(
+        textDirection: TextDirection.ltr,
+        child: Align(
+          alignment: Alignment.topLeft,
+          child: SizedBox(
+            width: 400,
+            child: observeChatMessageExtent(
+              key: const ValueKey('pending-tail'),
+              extent: extent,
+              child: _PendingExtentContent(
+                source: Object(),
+                height: 64,
+                pending: true,
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    expect(tester.getSize(find.byType(ChatMessageExtentBox)).height, 64);
+    expect(extent.reservedHeight(400), 0);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   test('updates cached separator distance when the last row changes', () {
     final extent = ChatMessageExtent();
     addTearDown(extent.dispose);

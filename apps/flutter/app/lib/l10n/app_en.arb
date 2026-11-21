@@ -510,6 +510,8 @@
   "settingsCategoryGroupExperience": "Display & Interaction",
   "settingsCategoryGroupSystem": "Data & System",
   "settingsGlobalBehaviorChatInputSection": "Chat input",
+  "settingsGlobalBehaviorEnterSendsMessage": "Press Enter to send",
+  "settingsGlobalBehaviorEnterSendsMessageDescription": "When off, Enter inserts a newline. Ctrl+Enter and Enter in the expanded editor always insert a newline.",
   "settingsGlobalBehaviorLongPastedTextAsAttachment": "Convert long pasted text to a file",
   "settingsGlobalBehaviorLongPastedTextThreshold": "Conversion threshold",
   "settingsGlobalBehaviorLongPastedTextThresholdValue": "{count} characters",

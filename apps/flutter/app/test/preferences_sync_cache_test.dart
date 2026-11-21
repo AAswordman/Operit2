@@ -24,6 +24,46 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(ClientLogger.initialize);
 
+  test('Enter preference persists choices and rejects invalid values', () async {
+    final bridge = _PreferenceBridge();
+    final preferences = UserPreferencesManager(
+      clients: GeneratedCoreProxyClients(bridge),
+    );
+    addTearDown(() => UserPreferencesManager.enterSendsMessage.value = null);
+    expect(await preferences.loadEnterSendsMessage(), isNull);
+    expect(bridge.preferenceWrites, 0);
+    await preferences.saveEnterSendsMessage(false);
+    expect(bridge._values[_userFile]!['enter_sends_message'], isFalse);
+    expect(UserPreferencesManager.enterSendsMessage.value, isFalse);
+    UserPreferencesManager.enterSendsMessage.value = null;
+    expect(await preferences.loadEnterSendsMessage(), isFalse);
+
+    final values = <bool?>[];
+    final errors = <Object>[];
+    final subscription = preferences.enterSendsMessageFlow().listen(
+      values.add,
+      onError: errors.add,
+    );
+    await _drainEvents();
+    bridge.applyPeerPreferences(_userFile, <String, Object?>{
+      'enter_sends_message': true,
+    });
+    bridge.applyPeerPreferences(_userFile, <String, Object?>{
+      'enter_sends_message': true,
+      'theme_mode': 'dark',
+    });
+    bridge.applyPeerPreferences(_userFile, <String, Object?>{});
+    bridge.applyPeerPreferences(_userFile, <String, Object?>{
+      'enter_sends_message': 'invalid',
+    });
+    await _drainEvents();
+    expect(values, <bool?>[false, true, null]);
+    expect(errors.single, isA<FormatException>());
+    expect(bridge.preferenceWrites, 1);
+    await subscription.cancel();
+    expect(bridge.activeWatches, 0);
+  });
+
   test(
     'peer preferences refresh the live theme without restarting it',
     () async {

@@ -510,6 +510,8 @@
   "settingsCategoryGroupExperience": "显示与交互",
   "settingsCategoryGroupSystem": "数据与系统",
   "settingsGlobalBehaviorChatInputSection": "聊天输入",
+  "settingsGlobalBehaviorEnterSendsMessage": "回车键发送消息",
+  "settingsGlobalBehaviorEnterSendsMessageDescription": "关闭后，回车键换行。Ctrl+Enter 和展开输入框中的回车键始终换行。",
   "settingsGlobalBehaviorLongPastedTextAsAttachment": "将超长粘贴文本转为文件",
   "settingsGlobalBehaviorLongPastedTextThreshold": "转换阈值",
   "settingsGlobalBehaviorLongPastedTextThresholdValue": "{count} 个字符",

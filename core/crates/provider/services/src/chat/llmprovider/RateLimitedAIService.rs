@@ -62,6 +62,7 @@ impl AIService for RateLimitedAIService {
         self.delegate.get_models_list().await
     }
 
+    /// Keeps admission asynchronous and returns its concurrency permit on every exit.
     async fn send_message(
         &mut self,
         request: SendMessageRequest,
@@ -69,17 +70,11 @@ impl AIService for RateLimitedAIService {
         if let Some(rateLimiter) = &self.rateLimiter {
             rateLimiter.acquire().await;
         }
-        if let Some(semaphore) = &self.concurrencySemaphore {
-            semaphore.acquire();
-        }
-
-        let result = self.delegate.send_message(request).await;
-
-        if let Some(semaphore) = &self.concurrencySemaphore {
-            semaphore.release();
-        }
-
-        result
+        let _permit = match &self.concurrencySemaphore {
+            Some(semaphore) => Some(semaphore.acquire().await),
+            None => None,
+        };
+        self.delegate.send_message(request).await
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {

@@ -1280,6 +1280,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       queuedText.trim(),
       chatIdOverride: queueChatId,
     );
+    if (mounted && _currentChatId == queueChatId) {
+      await _refreshAttachments();
+    }
   }
 
   /// Persists the pending-queue expanded state through the chat runtime.
@@ -2083,6 +2086,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           _clearMentionSuggestionState();
           _messageController.clear();
           await _viewModel.clearAttachments();
+          await _refreshAttachments();
         }
         final message = decision.message;
         if (message != null && message.trim().isNotEmpty) {

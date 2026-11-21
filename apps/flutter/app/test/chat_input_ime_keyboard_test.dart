@@ -17,9 +17,69 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 /// Verifies composer keyboard behavior across display layouts and input methods.
 void main() {
   setUp(ClientLogger.initialize);
+  setUp(() {
+    UserPreferencesManager.enterSendsMessage.value = null;
+  });
   final platforms = TargetPlatformVariant(TargetPlatform.values.toSet());
   for (final classic in <bool>[false, true]) {
     final style = classic ? 'Classic' : 'Agent';
+    for (final expanded in <bool>[false, true]) {
+      testWidgets(
+        '$style saved Enter switch overrides layout and updates the active editor expanded=$expanded',
+        (tester) async {
+          final controller = TextEditingController();
+          var sends = 0;
+          await _pumpComposer(tester, classic, controller, () => sends++);
+          await tester.enterText(
+            find.byKey(const ValueKey('chat.input')),
+            'draft',
+          );
+          if (expanded) {
+            await tester.tap(find.byIcon(Icons.fullscreen));
+            await tester.pumpAndSettle();
+            await tester.tap(find.byKey(const ValueKey('chat.input')));
+            await tester.pump();
+          }
+          final editor = tester.state(find.byType(EditableText));
+          for (final enabled in <bool>[false, true, false]) {
+            final previousValue = controller.value;
+            UserPreferencesManager.enterSendsMessage.value = enabled;
+            await tester.pump();
+            expect(tester.state(find.byType(EditableText)), same(editor));
+            expect(controller.value, previousValue);
+            expect(
+              tester.widget<TextField>(find.byKey(const ValueKey('chat.input')))
+                  .focusNode!.hasFocus,
+              isTrue,
+            );
+            for (final width in <double>[
+              navigationTabletBreakpoint - 1,
+              navigationTabletBreakpoint,
+            ]) {
+              tester.view.physicalSize = Size(width, 800);
+              await tester.pumpAndSettle();
+              for (final key in <LogicalKeyboardKey>[
+                LogicalKeyboardKey.enter,
+                LogicalKeyboardKey.numpadEnter,
+              ]) {
+                final previousText = controller.text;
+                final previousSends = sends;
+                await tester.sendKeyEvent(key, platform: 'macos');
+                final shouldSend = enabled && !expanded;
+                expect(sends, previousSends + (shouldSend ? 1 : 0));
+                expect(
+                  controller.text,
+                  shouldSend ? previousText : '$previousText\n',
+                );
+              }
+            }
+          }
+          await tester.pumpWidget(const SizedBox.shrink());
+          await tester.pump(const Duration(milliseconds: 600));
+        },
+        variant: platforms,
+      );
+    }
     for (final key in <LogicalKeyboardKey>[
       LogicalKeyboardKey.enter,
       LogicalKeyboardKey.numpadEnter,

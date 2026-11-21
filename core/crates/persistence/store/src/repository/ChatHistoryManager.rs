@@ -589,6 +589,11 @@ impl ChatHistoryManager {
         Ok(self.currentChatIdFlow.first()?)
     }
 
+    /// Reads the most recently updated remaining conversation without loading message histories.
+    pub fn mostRecentChatId(&self) -> ChatHistoryManagerResult<Option<String>> {
+        Ok(self.chatDao.getMostRecentChatId()?)
+    }
+
     /// Saves host metadata and message edits without overwriting live namespaces or deleting independent variants.
     fn saveChatHistoryInternal(&self, history: ChatHistory) -> ChatHistoryManagerResult<()> {
         if self.chatDao.getChatById(&history.id)?.is_some() {

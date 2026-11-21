@@ -32,8 +32,9 @@ class ChatMessageExtent extends ChangeNotifier {
     return _height;
   }
 
-  /// Returns the distance reserved for the current row constraints.
-  double reservedHeight(double width) => _width == width ? _height : 0;
+  /// Reserves only measured content, never a virtual scroll-distance estimate.
+  double reservedHeight(double width) =>
+      _width == width && _hasMeasuredHeight ? _height : 0;
 
   /// Records real layouts and retains their distance during pending rendering.
   void recordHeight(double width, double height) {

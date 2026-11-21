@@ -751,10 +751,15 @@ impl ChatServiceCore {
     }
 
     /// Cancels only the native execution that still owns this exact chat runtime, never a later admitted turn.
-    pub(crate) async fn cancelNativeChatExecution(&mut self, chatId: &str, executionId: &str) -> Result<bool, String> {
-        if !self.messageProcessingDelegate.isNativeExecutionActive(chatId, executionId) { return Ok(false); }
-        self.cancelMessage(chatId.to_string()).await?;
-        Ok(true)
+    pub(crate) fn cancelNativeChatExecution(&mut self, chatId: &str, executionId: &str) -> impl std::future::Future<Output = Result<bool, String>> + 'static {
+        let pending = self.messageProcessingDelegate.isNativeExecutionActive(chatId, executionId)
+            .then(|| self.cancelMessage(chatId.to_string()));
+        async move {
+            match pending {
+                Some(pending) => pending.await.map(|()| true),
+                None => Ok(false),
+            }
+        }
     }
 
     /// Validates every aggregate locator against canonical records before publishing one sequence-level completion.
@@ -924,27 +929,32 @@ impl ChatServiceCore {
         self.resumeFromRouteContext(chatId, resumeContext).await
     }
 
-    /// Cancels message generation for a specific chat id.
+    /// Reserves the current generation under Holder and completes cancellation after releasing it.
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub async fn cancelMessage(&mut self, chatId: String) -> Result<(), String> {
+    pub fn cancelMessage(&mut self, chatId: String) -> impl std::future::Future<Output = Result<(), String>> + 'static {
         let turn = self.messageProcessingDelegate.readCurrentTurnCancellationSnapshot(chatId.clone());
-        let partialMessage = match self.messageProcessingDelegate.cancelMessage(chatId.clone()).await {
-            Ok(message) => message,
-            Err(error) => {
-                self.messageProcessingDelegate.failTurnReceipt(&chatId, error.clone());
-                return Err(error);
+        let processing = self.messageProcessingDelegate.clone_for_core();
+        let mut history = self.chatHistoryDelegate.clone_for_core();
+        let pending = self.messageProcessingDelegate.cancelMessage(chatId.clone(), move |result| {
+            let partialMessage = match result {
+                Ok(message) => message,
+                Err(error) => {
+                    processing.failTurnReceipt(&chatId, error.clone());
+                    return Err(error);
+                }
+            };
+            if let (Some(turn), Some(partial)) = (turn, &partialMessage) {
+                if turn.turnOptions.persistTurn {
+                    if let Err(error) = history.commitAssistantMessageSegment(chatId.clone(), partial.clone(), None) {
+                        processing.failTurnReceipt(&chatId, error.clone());
+                        return Err(error);
+                    }
+                }
             }
-        };
-        if let (Some(turn), Some(partial)) = (turn, &partialMessage) {
-            if turn.turnOptions.persistTurn {
-            if let Err(error) = self.chatHistoryDelegate.commitAssistantMessageSegment(chatId.clone(), partial.clone(), None) {
-                self.messageProcessingDelegate.failTurnReceipt(&chatId, error.clone());
-                return Err(error);
-            }
-        }
-            }
-        self.messageProcessingDelegate.completeCancelledTurnReceipt(&chatId, partialMessage.as_ref());
-        Ok(())
+            processing.completeCancelledTurnReceipt(&chatId, partialMessage.as_ref());
+            Ok(partialMessage)
+        });
+        async move { pending.await.map(|_| ()) }
     }
 
     /// Guides the active logical turn without cancelling its current model or tool round.
@@ -3623,8 +3633,11 @@ mod chat_deletion_tests {
         setDefaultRuntimeStorageHost(host.clone());
         setDefaultRuntimeSqliteHost(host.clone());
         let database = AppDatabase::getDatabase(RuntimeStorePaths::default()).unwrap();
-        for id in ["deleted-chat", "live-chat"] {
-            database.chatDao().insertChat(ChatEntity::new(id.into(), id.into(), 1)).unwrap();
+        for (id, timestamp) in [("deleted-chat", 30), ("live-chat", 20), ("older-chat", 10)] {
+            let mut chat = ChatEntity::new(id.into(), id.into(), timestamp);
+            chat.pinned = id == "older-chat";
+            chat.displayOrder = -timestamp * 100;
+            database.chatDao().insertChat(chat).unwrap();
         }
         let filesystem = VisualFileSystem::fromStorage(Arc::new(PosixFileSystemHost::new()), host).unwrap();
         let mut core = ChatServiceCore::new(ChatSelectionMode::FOLLOW_GLOBAL, Arc::new(filesystem));
@@ -3672,12 +3685,12 @@ mod chat_deletion_tests {
         assert!(streams[1].upstream.try_emit("still live".into()));
         assert!(!streams[0].upstream.try_emit("must be closed".into()));
         assert!(deletedFlow.value().is_empty());
-        assert!(core.chatHistoryDelegate.currentChatIdFlow.value().is_none());
-        assert!(core.chatHistoryDelegate.chatHistoryManager.currentChatIdFlow().unwrap().is_none());
+        assert_eq!(core.chatHistoryDelegate.currentChatIdFlow.value().as_deref(), Some("live-chat"));
+        assert_eq!(core.chatHistoryDelegate.chatHistoryManager.currentChatIdFlow().unwrap().as_deref(), Some("live-chat"));
         assert!(!core.pendingQueueStateFlow().value().contains_key("deleted-chat"));
         assert!(core.pendingQueueStateFlow().value().contains_key("live-chat"));
         assert!(!core.chatHistoryDelegate.chatConfigurationsFlow.value().contains_key("deleted-chat"));
-        assert!(core.chatHistoryDelegate.chatConfigurationsFlow.value().contains_key("live-chat"));
+        assert!(!core.chatHistoryDelegate.chatConfigurationsFlow.value().contains_key("live-chat"));
         assert!(core.chatHistoryDelegate.chatHistoryManager.loadChatHistory("deleted-chat".into()).unwrap().is_none());
         drop(runtimes);
 
@@ -3697,6 +3710,33 @@ mod chat_deletion_tests {
         assert!(!observer.isChatLoading("missing-chat".into()));
         assert!(!observer.isChatProcessing("missing-chat"));
         assert_eq!(observer.chatRuntimes.lock().unwrap().len(), runtimeCount);
+
+        // A local selection follows deletion without changing the main selection.
+        database.chatDao().insertChat(ChatEntity::new("local-next".into(), "Local successor".into(), 15)).unwrap();
+        core.chatHistoryDelegate.openChatHistory("older-chat".into(), true).unwrap();
+        let mut local = ChatHistoryDelegate::new(ChatSelectionMode::LOCAL_ONLY);
+        local.openChatHistory("live-chat".into(), false).unwrap();
+        assert!(SqlChatSyncStore::default().unwrap().deleteChat("live-chat").unwrap());
+        local.clearDeletedChatState("live-chat".into()).unwrap();
+        core.applySynchronizedChatDeletion("live-chat".into()).await.unwrap();
+        assert_eq!(local.currentChatIdFlow.value().as_deref(), Some("local-next"));
+        assert_eq!(core.chatHistoryDelegate.currentChatIdFlow.value().as_deref(), Some("older-chat"));
+        assert_eq!(core.chatHistoryDelegate.chatHistoryManager.currentChatIdFlow().unwrap().as_deref(), Some("older-chat"));
+
+        assert!(SqlChatSyncStore::default().unwrap().deleteChat("local-next").unwrap());
+        local.clearDeletedChatState("local-next".into()).unwrap();
+        core.applySynchronizedChatDeletion("local-next".into()).await.unwrap();
+        assert_eq!(local.currentChatIdFlow.value().as_deref(), Some("older-chat"));
+        assert_eq!(core.chatHistoryDelegate.currentChatIdFlow.value().as_deref(), Some("older-chat"));
+
+        // Removing the final chat leaves an empty selection in both runtimes.
+        assert!(SqlChatSyncStore::default().unwrap().deleteChat("older-chat").unwrap());
+        core.applySynchronizedChatDeletion("older-chat".into()).await.unwrap();
+        local.clearDeletedChatState("older-chat".into()).unwrap();
+        assert!(core.chatHistoryDelegate.currentChatIdFlow.value().is_none());
+        assert!(core.chatHistoryDelegate.currentChatMessagesSnapshot().is_empty());
+        assert!(core.chatHistoryDelegate.chatHistoryManager.currentChatIdFlow().unwrap().is_none());
+        assert!(local.currentChatIdFlow.value().is_none());
 
         // Reuse the same native fixture: the production history manager is process-wide.
         // A completed source turn must hand its lease to the route lifecycle.
@@ -3762,6 +3802,49 @@ mod chat_deletion_tests {
         let retry = database.store().beginChatExecution("route-chat").unwrap();
         retry.release().unwrap();
         other.release().unwrap();
+
+        // Cancellation reserves its generation before polling and keeps ownership
+        // through partial persistence, including a persistence failure.
+        for failSettlement in [false, true] {
+            let lease = database.store().beginChatExecution("route-chat").unwrap();
+            let response = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+            let mut turn = ChatRuntime::new();
+            turn.activeTurnId = 20;
+            turn.executionLease = Some(lease);
+            turn.responseStream = Some(response.clone());
+            core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert("route-chat".into(), turn);
+            core.messageProcessingDelegate.setChatExecutionStateForTest("route-chat".into(), ChatExecutionState {
+                isLoading: true,
+                inputProcessingState: InputProcessingState::Processing { message: "processing".into() },
+            });
+            let processing = core.messageProcessingDelegate.clone_for_core();
+            let cancellationDatabase = database.clone();
+            let settled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let observedSettlement = settled.clone();
+            let pending = core.messageProcessingDelegate.cancelMessage("route-chat".into(), move |result| {
+                assert!(processing.isChatProcessing("route-chat"));
+                assert!(cancellationDatabase.store().beginChatExecution("route-chat").is_err());
+                assert!(!response.upstream.try_emit("late output".into()));
+                observedSettlement.store(true, std::sync::atomic::Ordering::SeqCst);
+                if failSettlement { Err("partial persistence failed".into()) } else { result }
+            });
+            {
+                let runtimes = core.messageProcessingDelegate.chatRuntimes.lock().unwrap();
+                let runtime = runtimes.get("route-chat").unwrap();
+                assert!(runtime.isCancelling);
+                assert_eq!(runtime.activeTurnId, 21);
+            }
+            let duplicate = core.messageProcessingDelegate.cancelMessage("route-chat".into(), |_| {
+                panic!("duplicate cancellation must not settle the active receipt")
+            });
+            assert!(duplicate.await.unwrap().is_none());
+            assert!(!settled.load(std::sync::atomic::Ordering::SeqCst));
+            assert_eq!(pending.await.is_err(), failSettlement);
+            assert!(settled.load(std::sync::atomic::Ordering::SeqCst));
+            assert!(!core.messageProcessingDelegate.isChatProcessing("route-chat"));
+            let next = database.store().beginChatExecution("route-chat").unwrap();
+            next.release().unwrap();
+        }
     }
 }
 

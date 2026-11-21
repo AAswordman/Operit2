@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import '../../../../data/preferences/UserPreferencesManager.dart';
 import '../../../../l10n/generated/app_localizations.dart';
+import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
 
@@ -21,7 +22,10 @@ class GlobalBehaviorSettingsPanel extends StatelessWidget {
       children: <Widget>[
         _GlobalBehaviorSectionCard(
           title: l10n.settingsGlobalBehaviorChatInputSection,
-          children: const <Widget>[_LongPastedTextBehaviorControl()],
+          children: const <Widget>[
+            _EnterSendsMessageControl(),
+            _LongPastedTextBehaviorControl(),
+          ],
         ),
       ],
     );
@@ -91,6 +95,31 @@ class _GlobalBehaviorSettingSwitch extends StatelessWidget {
       title: Text(title),
       value: value,
       onChanged: onChanged,
+    );
+  }
+}
+
+class _EnterSendsMessageControl extends StatelessWidget {
+  const _EnterSendsMessageControl();
+
+  /// Builds the shared Enter switch using the existing layout default if unset.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return ValueListenableBuilder<bool?>(
+      valueListenable: UserPreferencesManager.enterSendsMessage,
+      builder: (context, enabled, _) => SwitchListTile(
+        key: const ValueKey('settings.enterSendsMessage'),
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        title: Text(l10n.settingsGlobalBehaviorEnterSendsMessage),
+        subtitle: Text(l10n.settingsGlobalBehaviorEnterSendsMessageDescription),
+        value: enabled ?? useTabletLayoutForContext(context),
+        onChanged: (value) => unawaited(
+          const UserPreferencesManager().saveEnterSendsMessage(value),
+        ),
+      ),
     );
   }
 }

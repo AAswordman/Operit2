@@ -60,6 +60,9 @@ class UserPreferencesManager {
   static const int longPastedTextInputThresholdStep = 500;
   static const int defaultLongPastedTextInputThreshold = 3000;
 
+  /// An unset preference keeps the application's desktop/mobile layout default.
+  static final ValueNotifier<bool?> enterSendsMessage = ValueNotifier<bool?>(null);
+
   static final ValueNotifier<LongPastedTextInputSettings>
   longPastedTextInputSettings = ValueNotifier<LongPastedTextInputSettings>(
     const LongPastedTextInputSettings(
@@ -184,6 +187,7 @@ class UserPreferencesManager {
 
   static const String _KEY_LONG_PASTED_TEXT_INPUT_ENABLED =
       'long_pasted_text_input_enabled';
+  static const String _KEY_ENTER_SENDS_MESSAGE = 'enter_sends_message';
   static const String _KEY_LONG_PASTED_TEXT_INPUT_THRESHOLD =
       'long_pasted_text_input_threshold';
 
@@ -192,6 +196,27 @@ class UserPreferencesManager {
     return _clients.preferencesPreferenceStorageManager
         .preferencesFlow(fileName: _fileName)
         .distinct(mapEquals);
+  }
+
+  /// Observes the explicit Enter preference, preserving the unset default state.
+  Stream<bool?> enterSendsMessageFlow() => preferencesFlow()
+      .map((values) => _decodeEnterSendsMessage(values[_KEY_ENTER_SENDS_MESSAGE]))
+      .distinct();
+
+  /// Decodes the optional switch without accepting malformed persisted values.
+  bool? _decodeEnterSendsMessage(Object? value) =>
+      value == null ? null : _decodeBool(value);
+
+  /// Loads the Enter preference before the application mounts its composers.
+  Future<bool?> loadEnterSendsMessage() async {
+    final values = await _getValues(<String>[_KEY_ENTER_SENDS_MESSAGE]);
+    return _decodeEnterSendsMessage(values[_KEY_ENTER_SENDS_MESSAGE]);
+  }
+
+  /// Commits a manual choice and updates all active composer bindings.
+  Future<void> saveEnterSendsMessage(bool enabled) async {
+    await _setValues(<String, Object?>{_KEY_ENTER_SENDS_MESSAGE: enabled});
+    enterSendsMessage.value = enabled;
   }
 
   /// Observes and validates the global long-paste settings from the shared store.

@@ -1136,6 +1136,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsGlobalBehaviorChatInputSection => 'Chat input';
 
   @override
+  String get settingsGlobalBehaviorEnterSendsMessage => 'Press Enter to send';
+
+  @override
+  String get settingsGlobalBehaviorEnterSendsMessageDescription =>
+      'When off, Enter inserts a newline. Ctrl+Enter and Enter in the expanded editor always insert a newline.';
+
+  @override
   String get settingsGlobalBehaviorLongPastedTextAsAttachment =>
       'Convert long pasted text to a file';
 

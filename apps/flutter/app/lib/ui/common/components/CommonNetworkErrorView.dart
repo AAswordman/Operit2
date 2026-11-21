@@ -3,8 +3,10 @@
 import 'package:flutter/material.dart';
 
 import '../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import '../ApiErrorText.dart';
 
 class CommonNetworkErrorView extends StatelessWidget {
+  /// Creates a model configuration error with its original details.
   const CommonNetworkErrorView({
     super.key,
     this.errorDetails,
@@ -14,6 +16,7 @@ class CommonNetworkErrorView extends StatelessWidget {
   final core_proxy.CoreProxyErrorDetails? errorDetails;
   final String? errorText;
 
+  /// Builds a readable explanation followed by selectable original error text.
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -63,8 +66,8 @@ class CommonNetworkErrorView extends StatelessWidget {
                     ),
                     if (summary.detail != null) ...<Widget>[
                       const SizedBox(height: 6),
-                      Text(
-                        summary.detail!,
+                      SelectableText(
+                        '原始错误：\n${summary.detail!}',
                         style: textTheme.bodySmall?.copyWith(
                           color: colorScheme.onErrorContainer.withValues(
                             alpha: 0.74,
@@ -85,6 +88,7 @@ class CommonNetworkErrorView extends StatelessWidget {
 }
 
 class NetworkErrorSummary {
+  /// Creates an explanation and optional original error details.
   const NetworkErrorSummary({
     required this.title,
     required this.message,
@@ -102,101 +106,61 @@ class NetworkErrorSummary {
     core_proxy.CoreProxyErrorDetails? details,
     String? text,
   ) {
-    final statusCode = details?.httpStatus;
-    final remoteMessage =
-        details?.remoteMessage ??
-        details?.stringField('value') ??
-        details?.message ??
-        text;
-
-    if (statusCode == 400) {
-      return NetworkErrorSummary(
-        title: '请求参数有误',
-        message: '服务端拒绝了这次模型列表请求，请检查服务地址和供应商是否匹配。',
-        detail: remoteMessage,
-        icon: Icons.tune_rounded,
-      );
-    }
-
-    if (statusCode == 401) {
-      return NetworkErrorSummary(
-        title: '密钥验证失败',
-        message: '访问密钥没有通过供应商验证，请重新粘贴完整密钥后再拉取模型。',
-        detail: remoteMessage,
-        icon: Icons.key_off_rounded,
-      );
-    }
-
-    if (statusCode == 403) {
-      return NetworkErrorSummary(
-        title: '没有访问权限',
-        message: '当前密钥无权访问该供应商接口，请确认账号权限和模型服务开通状态。',
-        detail: remoteMessage,
-        icon: Icons.lock_outline_rounded,
-      );
-    }
-
-    if (statusCode == 404) {
-      return NetworkErrorSummary(
-        title: '服务地址不可用',
-        message: '当前服务地址没有找到模型列表接口，请检查地址路径是否正确。',
-        detail: remoteMessage,
-        icon: Icons.link_off_rounded,
-      );
-    }
-
-    if (statusCode == 429) {
-      return NetworkErrorSummary(
-        title: '请求过于频繁',
-        message: '供应商限制了当前请求频率，请稍后再拉取模型。',
-        detail: remoteMessage,
-        icon: Icons.hourglass_top_rounded,
-      );
-    }
-
-    if (statusCode != null && statusCode >= 500) {
-      return NetworkErrorSummary(
-        title: '供应商服务异常',
-        message: '供应商暂时无法处理模型列表请求，请稍后再试。',
-        detail: remoteMessage,
-        icon: Icons.cloud_off_rounded,
-      );
-    }
-
-    if (details?.variant == 'ModelListFetch') {
-      return NetworkErrorSummary(
+    final original = text ?? details?.message;
+    final statusCode = switch (details?.httpStatus) {
+      final int status => status,
+      null => apiErrorHttpStatus(original ?? ''),
+    };
+    final httpExplanation = apiErrorExplanation(statusCode);
+    final explanation = switch ((
+      httpExplanation,
+      details?.variant,
+      details?.kind,
+    )) {
+      (final ApiErrorExplanation http, _, _) => (
+        title: 'HTTP $statusCode：${http.title}',
+        message: http.message,
+        category: http.category,
+      ),
+      (_, 'ModelAlreadyExists', _) => (
+        title: '模型已存在',
+        message: '模型“${details!.stringField('modelId')!}”'
+            '已添加到供应商“${details.stringField('providerName')!}”。',
+        category: ApiErrorCategory.info,
+      ),
+      (_, 'ModelListFetch', _) => (
         title: '模型列表拉取失败',
         message: '没有拿到供应商返回的模型列表，请检查服务地址、访问密钥和网络连接。',
-        detail: remoteMessage,
-        icon: Icons.wifi_off_rounded,
-      );
-    }
-
-    if (details?.kind == 'network') {
-      return NetworkErrorSummary(
+        category: ApiErrorCategory.network,
+      ),
+      (_, _, 'network') => (
         title: '网络连接失败',
         message: '无法连接到模型供应商，请检查网络连接和服务地址。',
-        detail: remoteMessage,
-        icon: Icons.wifi_off_rounded,
-      );
-    }
-
-    if (details?.variant == 'ModelAlreadyExists') {
-      final duplicateDetails = details!;
-      final modelId = duplicateDetails.stringField('modelId')!;
-      final providerName = duplicateDetails.stringField('providerName')!;
-      return NetworkErrorSummary(
-        title: '模型已存在',
-        message: '模型“$modelId”已添加到供应商“$providerName”。',
-        icon: Icons.info_outline_rounded,
-      );
-    }
-
+        category: ApiErrorCategory.network,
+      ),
+      _ => (
+        title: '模型配置失败',
+        message: '模型配置操作出现异常，请查看原始错误中的具体原因。',
+        category: ApiErrorCategory.unknown,
+      ),
+    };
     return NetworkErrorSummary(
-      title: '模型配置失败',
-      message: '拉取可用模型时出现异常，请检查供应商、服务地址和访问密钥。',
-      detail: remoteMessage,
-      icon: Icons.error_outline_rounded,
+      title: explanation.title,
+      message: explanation.message,
+      detail: explanation.category == ApiErrorCategory.info ? null : original,
+      icon: switch (explanation.category) {
+        ApiErrorCategory.request => Icons.tune_rounded,
+        ApiErrorCategory.key => Icons.key_off_rounded,
+        ApiErrorCategory.billing => Icons.account_balance_wallet_outlined,
+        ApiErrorCategory.access => Icons.lock_outline_rounded,
+        ApiErrorCategory.address => Icons.link_off_rounded,
+        ApiErrorCategory.timeout => Icons.timer_outlined,
+        ApiErrorCategory.limit => Icons.hourglass_top_rounded,
+        ApiErrorCategory.server => Icons.cloud_off_rounded,
+        ApiErrorCategory.network => Icons.wifi_off_rounded,
+        ApiErrorCategory.info => Icons.info_outline_rounded,
+        ApiErrorCategory.unknown => Icons.error_outline_rounded,
+      },
     );
   }
 }

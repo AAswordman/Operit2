@@ -120,6 +120,12 @@ delivery. Withdrawing edits a pending queue item; guidance already accepted by t
 active turn is no longer part of that pending queue. This Flutter/Core control
 route is not a new plugin SDK method.
 
+After a queued message is sent automatically or with **Interrupt and send**, the
+active chat refreshes its composer attachments from Core, matching ordinary send
+cleanup. A submit hook returning `Consume` with `clearInput: true` also refreshes
+the composer after clearing Core attachments, so sent image previews do not remain
+in the input box.
+
 ## Semantic observation
 
 ```ts
