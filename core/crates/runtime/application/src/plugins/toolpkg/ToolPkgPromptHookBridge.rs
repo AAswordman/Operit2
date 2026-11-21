@@ -410,6 +410,7 @@ fn prompt_context_to_value(context: &PromptHookContext) -> Value {
     let mut payload = serde_json::json!({
         "stage": context.stage,
         "chatId": context.chat_id,
+        "workspacePath": context.metadata.get("workspacePath").cloned(),
         "functionType": context.function_type,
         "promptFunctionType": context.prompt_function_type,
         "useEnglish": context.use_english,
@@ -455,6 +456,21 @@ mod payload_tests {
         let payload = prompt_context_to_value(&explicit);
         assert_eq!(payload["promptFunctionType"], "VOICE");
         assert_eq!(payload["useEnglish"], false);
+    }
+
+    /// Surfaces the workspace path carried in hook metadata as a top-level payload field.
+    #[test]
+    fn prompt_payload_promotes_workspace_path_from_metadata() {
+        let mut context = PromptHookContext::default();
+        assert!(prompt_context_to_value(&context).get("workspacePath").is_none());
+
+        context.metadata.insert(
+            "workspacePath".to_string(),
+            serde_json::json!("/tmp/workspace"),
+        );
+        let payload = prompt_context_to_value(&context);
+        assert_eq!(payload["workspacePath"], "/tmp/workspace");
+        assert_eq!(payload["metadata"]["workspacePath"], "/tmp/workspace");
     }
 
     /// Lets plugins clear complete fields while retaining exact whitespace and omitted fields.

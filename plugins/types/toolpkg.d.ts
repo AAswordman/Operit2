@@ -1198,6 +1198,10 @@ export namespace ToolPkg {
      */
     chatId?: string;
     /**
+     * Provides the workspace path associated with the conversation.
+     */
+    workspacePath?: string;
+    /**
      * Identifies the host function participating in prompt construction.
      */
     functionType?: string;
@@ -1259,6 +1263,10 @@ export namespace ToolPkg {
      * Identifies the conversation associated with the event.
      */
     chatId?: string;
+    /**
+     * Provides the workspace path associated with the conversation.
+     */
+    workspacePath?: string;
     /**
      * Identifies the host function participating in prompt construction.
      */

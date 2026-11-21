@@ -1065,6 +1065,8 @@ pub struct ToolPkgPromptHookEventPayload {
     pub stage: Option<String>,
     /// Identifies the conversation associated with the event.
     pub chatId: Option<String>,
+    /// Provides the workspace path associated with the conversation.
+    pub workspacePath: Option<String>,
     /// Identifies the host function participating in prompt construction.
     pub functionType: Option<String>,
     /// Identifies the prompt-building function active for this hook.
@@ -1099,6 +1101,8 @@ pub struct ToolPkgToolPromptHookEventPayload {
     pub stage: Option<String>,
     /// Identifies the conversation associated with the event.
     pub chatId: Option<String>,
+    /// Provides the workspace path associated with the conversation.
+    pub workspacePath: Option<String>,
     /// Identifies the host function participating in prompt construction.
     pub functionType: Option<String>,
     /// Identifies the prompt-building function active for this hook.
