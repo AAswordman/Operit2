@@ -239,7 +239,62 @@ void main() {
     expect(find.byType(M3LoadingIndicator), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('a failed poll keeps the last snapshot and refresh enabled', (
+    tester,
+  ) async {
+    final bridge = _DeviceStatsBridge('local');
+    await tester.pumpWidget(_app(bridge));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.data_usage_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('5826 / 1000000'), findsOneWidget);
+
+    bridge.summaryError = StateError('Context lookup failed');
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(find.text('5826 / 1000000'), findsOneWidget);
+    expect(find.text('无法加载上下文信息'), findsNothing);
+    expect(_refreshButton(tester).onPressed, isNotNull);
+
+    bridge.summaryError = null;
+    bridge.currentWindowSize = 129774;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(find.text('129774 / 1000000'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('a hung summary times out and later polls recover', (tester) async {
+    final gate = Completer<void>();
+    final bridge = _DeviceStatsBridge('local')..summaryGate = gate;
+    await tester.pumpWidget(_app(bridge));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byIcon(Icons.data_usage_rounded));
+    await tester.pumpAndSettle();
+    expect(find.text('5826 / 1000000'), findsNothing);
+    expect(_refreshButton(tester).onPressed, isNotNull);
+
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+    expect(find.text('无法加载上下文信息'), findsOneWidget);
+
+    bridge.summaryGate = null;
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+    expect(find.text('5826 / 1000000'), findsOneWidget);
+    expect(find.text('无法加载上下文信息'), findsNothing);
+    gate.complete();
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
+
+IconButton _refreshButton(WidgetTester tester) => tester.widget<IconButton>(
+  find.ancestor(
+    of: find.byIcon(Icons.refresh_rounded),
+    matching: find.byType(IconButton),
+  ),
+);
 
 Finder _selectedRow(String name) => find.byWidgetPredicate(
   (widget) =>
@@ -309,6 +364,7 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
   Object? switchError;
   Completer<void>? topologyGate;
   Object? topologyError;
+  Completer<void>? summaryGate;
   Object? summaryError;
   int topologyCalls = 0;
   int currentWindowSize = 5826;
@@ -338,6 +394,7 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
       if (topologyError case final error?) throw error;
     }
     if (request.methodName == 'chatInputMenuSummary') {
+      await summaryGate?.future;
       if (summaryError case final error?) throw error;
     }
     final value = switch (request.methodName) {

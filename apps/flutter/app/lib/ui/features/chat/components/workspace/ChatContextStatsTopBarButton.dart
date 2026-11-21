@@ -132,9 +132,9 @@ class _ChatContextStatsTopBarButtonState
     _pollingSummary = true;
     final epoch = _requestEpoch;
     try {
-      final summary = await widget.viewModel.chatCore.chatInputMenuSummary(
-        chatId: widget.currentChatId,
-      );
+      final summary = await widget.viewModel.chatCore
+          .chatInputMenuSummary(chatId: widget.currentChatId)
+          .timeout(const Duration(seconds: 5));
       if (!mounted || epoch != _requestEpoch) return;
       setState(() {
         _summary = summary;
@@ -143,8 +143,8 @@ class _ChatContextStatsTopBarButtonState
       });
     } catch (_) {
       if (!mounted || epoch != _requestEpoch) return;
+      // A failed poll keeps the last snapshot; only a cold start shows the error.
       setState(() {
-        _summary = null;
         _loading = false;
         _loadFailed = true;
       });
@@ -330,7 +330,7 @@ class _ChatContextStatsTopBarButtonState
                           ),
                           IconButton(
                             tooltip: AppLocalizations.of(context)!.refresh,
-                            onPressed: _pollingSummary ? null : _loadAllData,
+                            onPressed: _loadAllData,
                             icon: const Icon(Icons.refresh_rounded, size: 16),
                             visualDensity: VisualDensity.compact,
                           ),
@@ -341,7 +341,7 @@ class _ChatContextStatsTopBarButtonState
                           padding: const EdgeInsets.symmetric(vertical: 8),
                           child: Text(AppLocalizations.of(context)!.loading),
                         )
-                      else if (_loadFailed)
+                      else if (_loadFailed && _summary == null)
                         Text(
                           AppLocalizations.of(
                             context,

@@ -127,6 +127,9 @@ void main() {
           }
         }
         await tester.pumpWidget(const SizedBox.shrink());
+        // Summary loads time out after 5s; dispose stops the 4s poll, then
+        // let the last in-flight timeout fire so no timer outlives the test.
+        await tester.pump(const Duration(seconds: 5));
       });
     }
   }
