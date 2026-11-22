@@ -49,6 +49,9 @@ including the running ROM's own extensions. The actual window service supplies
 animator scale without requiring zygote application shared memory. Full-display
 bounds and public maximum-window metrics determine bars and cutouts; no hidden
 InsetsState calculation signature is assumed.
+The shell bootstrap has a local `BlockedPrivateApi` lint suppression because its
+zygote preload runs in an uninstalled `app_process` payload as shell, outside
+installed applications' hidden-API enforcement. Release lint remains enabled.
 
 System fonts are initialized before any View is measured. Android 15's standalone
 shell process initializes the font map from the platform's legacy font configuration,

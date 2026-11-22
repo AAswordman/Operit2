@@ -1,5 +1,6 @@
 package app.operit.uiserver;
 
+import android.annotation.SuppressLint;
 import android.app.Application;
 import android.app.Instrumentation;
 import android.content.AttributionSource;
@@ -71,6 +72,7 @@ final class ShellContext extends ContextWrapper {
     }
 
     /** Builds ActivityThread, application and configuration state before creating Views. */
+    @SuppressLint("BlockedPrivateApi") // This uninstalled app_process payload runs as shell, outside app hidden-API enforcement.
     static ShellContext create(int ownerUid, String ownerPackage) throws Exception {
         Method libraries = Class.forName("com.android.internal.os.ZygoteInit").getDeclaredMethod("preloadSharedLibraries");
         libraries.setAccessible(true);
