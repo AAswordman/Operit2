@@ -54,6 +54,9 @@ struct ScanState {
     pending: Option<(String, Option<RuntimeFileSnapshot>)>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pendingBatch: Vec<SyncOperation>,
+    // The next completed scan re-publishes pre-existing files after a Space join.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    republishFromMtime: bool,
 }
 
 pub struct WorkspaceFileSyncStore {
@@ -131,7 +134,7 @@ impl WorkspaceFileSyncStore {
         if let Some(path) = pendingPath.filter(|path| state.deferred.contains_key(path)) {
             return Err(format!("Cannot reset workspace inventory while a pending file is inaccessible: {path}"));
         }
-        self.save(&ScanState::default())?;
+        self.save(&ScanState { republishFromMtime: true, ..ScanState::default() })?;
         self.markDirty::<&str>(&[])
     }
 
@@ -348,7 +351,15 @@ impl WorkspaceFileSyncStore {
                     state.files.remove(&previous);
                     changes += 1;
                 }
-                files.recordSnapshot(path, &bytes, false)?;
+                // The first scan after a Space join re-publishes pre-existing files.
+                // Order them by their real modification time (host contract: Unix
+                // microseconds) instead of the join time, so a stale local copy cannot
+                // overwrite a newer peer version. Missing or non-positive stamps are
+                // unreliable and keep the wall-clock fallback.
+                let republishedAt = if state.republishFromMtime {
+                    stamp.modifiedAt.map(|micros| micros / 1000).filter(|millis| *millis > 0)
+                } else { None };
+                files.recordSnapshotAt(path, &bytes, false, republishedAt)?;
                 if localDeferred { state.deferred.remove(path); }
                 changes += 1;
             }
@@ -372,10 +383,13 @@ impl WorkspaceFileSyncStore {
             state.deferred.remove(&path);
             changes += 1;
         }
-        let inventoryChanged = state.files != current || !dirty.is_empty();
+        // The re-publish round ends with its first completed scan; interrupted scans
+        // keep the intent, and later edits return to wall-clock ordering.
+        let inventoryChanged = state.files != current || !dirty.is_empty() || state.republishFromMtime;
         state.files = current;
         let referencesChanged = state.references != large;
         state.references = large;
+        state.republishFromMtime = false;
         if inventoryChanged || referencesChanged { self.save(&state)?; }
         let _mutation = self.lock.mutation.lock().map_err(|e| e.to_string())?;
         if self.lock.revision.load(Ordering::Acquire) == revision && !dirty.is_empty() {
