@@ -35,30 +35,7 @@ import {
 } from "../shared/plan_mode_logging.js";
 import { onPlanaskXmlRender } from "./planask-xml-render-plugin.js";
 import { onPlantodoXmlRender } from "./plantodo-xml-render-plugin.js";
-
-// Planning forbids side effects: block every filesystem-mutating and terminal-execution
-// tool. Read-only getters (get_terminal_info / get_terminal_session_screen) stay available.
-const PLAN_MODE_BLOCKED_TOOL_NAMES = new Set([
-  "apply_file",
-  "create_file",
-  "edit_file",
-  "delete_file",
-  "write_file",
-  "write_file_binary",
-  "make_directory",
-  "move_file",
-  "copy_file",
-  "download_file",
-  "zip_files",
-  "unzip_files",
-  "create_terminal_session",
-  "execute_in_terminal_session",
-  "execute_in_terminal_session_streaming",
-  "execute_hidden_terminal_command",
-  "execute_cli_command",
-  "input_in_terminal_session",
-  "close_terminal_session",
-]);
+import { filterPlanModeTools } from "../shared/plan_mode_tool_filter.js";
 
 const PLAN_MODE_COMMAND_ID = "plan_mode_command";
 const PLAN_MODE_COMMAND_NAME = "plan";
@@ -288,13 +265,6 @@ function registerPlanModeIpc(): void {
     PLAN_MODE_IS_PLAN_STARTED_IPC_CHANNEL,
     handleIsPlanStartedIpc
   );
-}
-
-/** Removes filesystem-mutating and terminal-execution tools while the chat is in planning mode. */
-function filterPlanModeTools(
-  availableTools: ToolPkg.ToolPromptItem[]
-): ToolPkg.ToolPromptItem[] {
-  return availableTools.filter((tool) => !PLAN_MODE_BLOCKED_TOOL_NAMES.has(tool.name));
 }
 
 /** Injects a plan prompt into the system turn of prepared history. */
