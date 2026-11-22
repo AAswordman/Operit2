@@ -1635,8 +1635,9 @@ impl TerminalTextRenderer {
     fn eraseChars(&mut self, count: usize) {
         self.ensureCursorLine();
         let line = &mut self.lines[self.row];
-        let end = (self.col + count).min(line.len());
-        for cell in &mut line[self.col..end] {
+        let start = self.col.min(line.len());
+        let end = start.saturating_add(count).min(line.len());
+        for cell in &mut line[start..end] {
             *cell = ' ';
         }
     }
@@ -2217,6 +2218,17 @@ mod tests {
         let mut renderer = TerminalTextRenderer::new(3, 8);
         renderer.write("12345678\tend");
         assert_eq!(renderer.textFrom(0), "12345678        end");
+    }
+
+    /// ECH past the end of a short line must not panic, even with an overflowing count.
+    #[test]
+    fn terminal_erase_chars_tolerates_cursor_past_line_end() {
+        let mut renderer = TerminalTextRenderer::new(3, 8);
+        renderer.write("ab\x1b[1;8H\x1b[3X");
+        assert_eq!(renderer.textFrom(0), "ab");
+        let mut renderer = TerminalTextRenderer::new(3, 8);
+        renderer.write("ab\x1b[1;8H\x1b[18446744073709551615X");
+        assert_eq!(renderer.textFrom(0), "ab");
     }
 
     /// Preserves PowerShell pipeline output when the completion marker precedes its final display writes.

@@ -1644,8 +1644,9 @@ impl TerminalTextRenderer {
     fn eraseChars(&mut self, count: usize) {
         self.ensureCursorLine();
         let line = &mut self.lines[self.row];
-        let end = (self.col + count).min(line.len());
-        for cell in &mut line[self.col..end] {
+        let start = self.col.min(line.len());
+        let end = start.saturating_add(count).min(line.len());
+        for cell in &mut line[start..end] {
             *cell = ' ';
         }
     }
@@ -1926,6 +1927,17 @@ fn nextSessionId() -> String {
 mod tests {
     use super::*;
     use operit_host_api::TerminalHost;
+
+    /// ECH with the cursor past the end of a short line must not panic, even
+    /// when the erase count would overflow usize.
+    #[test]
+    fn renderer_erase_chars_tolerates_cursor_past_line_end() {
+        assert_eq!(renderTerminalText("ab\x1b[1;10H\x1b[3X"), "ab");
+        assert_eq!(
+            renderTerminalText("ab\x1b[1;10H\x1b[18446744073709551615X"),
+            "ab"
+        );
+    }
 
     /// An exited hidden shell is replaced before a new command is submitted.
     #[test]
