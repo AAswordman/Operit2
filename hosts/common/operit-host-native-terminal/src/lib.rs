@@ -2056,6 +2056,23 @@ mod tests {
         }
     }
 
+    /// A quote followed by an octal digit must not merge into the printf escape.
+    #[test]
+    fn posix_quote_before_octal_digit_is_not_swallowed() {
+        let host = NativePtyTerminalHost::new();
+        let session = host.createOrGetSession("terminal_quote_octal").unwrap();
+        let result = host
+            .executeInSession(
+                &session.sessionId,
+                "OPERIT_HASHES='327429f1 5c8a733d'\nprintf '%s\\n' \"$OPERIT_HASHES\"",
+                3000,
+            )
+            .unwrap();
+        assert!(!result.timedOut);
+        assert_eq!(result.exitCode, 0);
+        assert_eq!(result.output, "327429f1 5c8a733d");
+    }
+
     /// Applies the timeout to the complete multiline script and keeps the shell responsive.
     #[test]
     fn posix_multiline_timeout_keeps_session_usable() {
