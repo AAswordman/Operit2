@@ -118,6 +118,12 @@ impl RuntimeFileSyncStore {
 
     /// Records observed bytes without rewriting an externally edited workspace file.
     pub(crate) fn recordSnapshot(&self, storagePath: &str, content: &[u8], initial: bool) -> Result<RuntimeFileSyncReference, String> {
+        self.recordSnapshotAt(storagePath, content, initial, None)
+    }
+
+    /// Records observed bytes with an optional ordering timestamp (Unix milliseconds)
+    /// for re-publishing pre-existing files by their real modification time.
+    pub(crate) fn recordSnapshotAt(&self, storagePath: &str, content: &[u8], initial: bool, createdAt: Option<i64>) -> Result<RuntimeFileSyncReference, String> {
         requireSpaceFile(storagePath)?;
         if crate::PluginStorage::ownsFile(self.storageHost.clone(),storagePath).map_err(|e|e.to_string())? {
             return Err("Registered database files require record-level storage operations".into());
@@ -130,14 +136,14 @@ impl RuntimeFileSyncStore {
             deviceId.push_str(":initial");
             payload["initial"] = true.into();
         }
-        self.syncOperationStore.appendLocalOperation(&deviceId, NewSyncOperation {
+        self.syncOperationStore.appendLocalOperationAt(&deviceId, NewSyncOperation {
             domain: RUNTIME_FILE_SYNC_DOMAIN.to_string(),
             entityType: RUNTIME_FILE_SYNC_ENTITY_TYPE.to_string(),
             entityId: storagePath.to_string(),
             operation: "upsert".to_string(),
             semantics: SyncOperationSemantics::EntityState,
             payload,
-        }).map_err(|e|e.to_string())?;
+        }, createdAt).map_err(|e|e.to_string())?;
         Ok(reference)
     }
 

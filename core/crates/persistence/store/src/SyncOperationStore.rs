@@ -1879,6 +1879,13 @@ impl SyncOperationStore {
     }
 
     pub fn appendLocalOperation(&self, originDeviceId: &str, operation: NewSyncOperation) -> Result<SyncOperation, SyncOperationStoreError> {
+        self.appendLocalOperationAt(originDeviceId, operation, None)
+    }
+
+    /// Appends a local operation with an optional ordering timestamp override
+    /// (Unix milliseconds). Re-publishing pre-existing files after a Space join
+    /// passes their real modification time instead of the join time.
+    pub fn appendLocalOperationAt(&self, originDeviceId: &str, operation: NewSyncOperation, createdAt: Option<i64>) -> Result<SyncOperation, SyncOperationStoreError> {
         let control = beginControlWrite(&self.storageHost, &self.rootPath, operation.domain == NETWORK_CONTROL_SYNC_DOMAIN)?;
         let mut cached = lockSyncState(&self.sharedState.clock, "clock")?;
         let mut clock = self.loadCachedJson(&mut cached, &self.clockPath())?.clone();
@@ -1889,7 +1896,7 @@ impl SyncOperationStore {
                 opId: format!("{originDeviceId}:{sequence}"), originDeviceId: originDeviceId.into(), sequence,
                 domain: operation.domain, entityType: operation.entityType, entityId: operation.entityId,
                 operation: operation.operation, semantics: operation.semantics, payload: operation.payload,
-                createdAt: currentTimeMillis()?, schemaVersion: 1,
+                createdAt: match createdAt { Some(time) => time, None => currentTimeMillis()? }, schemaVersion: 1,
             };
             let stored = self.encodeOperationPayload(&op)?;
             journal.transaction(|tx| {

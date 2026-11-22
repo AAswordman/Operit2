@@ -284,6 +284,13 @@ fn invalid_paths_are_rejected() {
     }
 }
 
+fn nowMillis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
 #[test]
 fn space_join_reexports_existing_local_files_without_deleting_them() {
     let a = Node::new();
@@ -299,6 +306,105 @@ fn space_join_reexports_existing_local_files_without_deleting_them() {
         b.host.readBytes("workspaces/phone/notes.txt").unwrap(),
         b"keep me"
     );
+
+    // A peer holding a newer explicit edit must not be overwritten when this
+    // node rejoins and re-publishes its stale local copy.
+    b.write("workspaces/phone/notes.txt", b"newer peer edit");
+    b.workspace().scan().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    a.log().markLocalOperationsUnexportable().unwrap();
+    a.workspace().prepareSpaceJoin().unwrap();
+    // The stale local copy was last modified long before the peer's edit
+    // (host contract: Unix microseconds).
+    a.host
+        .setModifiedAt("workspaces/phone/notes.txt", 1_000_000_000_000_000)
+        .unwrap();
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    let republished = a.ops().pop().unwrap();
+    assert_eq!(republished.entityId, "workspaces/phone/notes.txt");
+    assert_eq!(republished.operation, "upsert");
+    a.send(&b);
+    assert_eq!(
+        b.host.readBytes("workspaces/phone/notes.txt").unwrap(),
+        b"newer peer edit"
+    );
+    // The rejoin still retains and re-publishes the local file itself.
+    assert_eq!(
+        a.host.readBytes("workspaces/phone/notes.txt").unwrap(),
+        b"keep me"
+    );
+}
+
+/// A genuinely newer local file must still win after a rejoin re-publish.
+#[test]
+fn space_join_republish_keeps_genuinely_newer_local_files_winning() {
+    let a = Node::new();
+    let b = Node::new();
+    let path = "workspaces/phone/notes.txt";
+    a.write(path, b"shared base");
+    a.workspace().scan().unwrap();
+    a.send(&b);
+    b.write(path, b"peer edit");
+    b.workspace().scan().unwrap();
+    let peerCreatedAt = b.ops().pop().unwrap().createdAt;
+    a.write(path, b"newer local edit");
+    let newerMicros = (peerCreatedAt + 5_000) * 1_000;
+    a.host.setModifiedAt(path, newerMicros).unwrap();
+    a.log().markLocalOperationsUnexportable().unwrap();
+    a.workspace().prepareSpaceJoin().unwrap();
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    let republished = a.ops().pop().unwrap();
+    // The re-publish carries the file's modification time in ordering milliseconds.
+    assert_eq!(republished.createdAt, peerCreatedAt + 5_000);
+    a.send(&b);
+    assert_eq!(b.host.readBytes(path).unwrap(), b"newer local edit");
+}
+
+/// Epoch-zero modification times are unreliable; ordering falls back to the join time.
+#[test]
+fn space_join_republish_with_zero_mtime_falls_back_to_wall_clock() {
+    let a = Node::new();
+    let b = Node::new();
+    let path = "workspaces/phone/notes.txt";
+    a.write(path, b"local copy");
+    a.workspace().scan().unwrap();
+    a.send(&b);
+    b.write(path, b"peer edit");
+    b.workspace().scan().unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2));
+    a.log().markLocalOperationsUnexportable().unwrap();
+    a.workspace().prepareSpaceJoin().unwrap();
+    a.host.setModifiedAt(path, 0).unwrap();
+    let before = nowMillis();
+    assert_eq!(a.workspace().scan().unwrap(), 1);
+    let republished = a.ops().pop().unwrap();
+    assert!(republished.createdAt >= before);
+    a.send(&b);
+    assert_eq!(b.host.readBytes(path).unwrap(), b"local copy");
+}
+
+/// Only the post-reset re-publish round uses file mtimes; discovery and edits keep now().
+#[test]
+fn normal_discovery_and_edits_keep_wall_clock_timestamps() {
+    let a = Node::new();
+    let path = "workspaces/phone/notes.txt";
+    a.write(path, b"one");
+    a.host.setModifiedAt(path, 5_000_000).unwrap();
+    let before = nowMillis();
+    a.workspace().scan().unwrap();
+    assert!(a.ops().pop().unwrap().createdAt >= before);
+    // The post-reset re-publish round orders by the file's modification time
+    // (5_000_000 host microseconds = 5000 ordering milliseconds)...
+    a.log().markLocalOperationsUnexportable().unwrap();
+    a.workspace().prepareSpaceJoin().unwrap();
+    a.workspace().scan().unwrap();
+    assert_eq!(a.ops().pop().unwrap().createdAt, 5000);
+    // ...and only that round; later edits return to wall-clock ordering.
+    a.write(path, b"two");
+    a.host.setModifiedAt(path, 2_000_000).unwrap();
+    let before = nowMillis();
+    a.workspace().scan().unwrap();
+    assert!(a.ops().pop().unwrap().createdAt >= before);
 }
 
 #[test]
