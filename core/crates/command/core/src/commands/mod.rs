@@ -25,6 +25,8 @@ mod usage;
 mod util;
 mod workspace;
 #[cfg(test)]
+mod package_tests;
+#[cfg(test)]
 mod settings_tests;
 
 use crate::output::CoreCommandOutput;

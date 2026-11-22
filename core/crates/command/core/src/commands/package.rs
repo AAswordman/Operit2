@@ -1,5 +1,7 @@
 use crate::commands::tool;
 use crate::output::CoreCommandOutput;
+use operit_plugin_sdk::package::ToolPackage;
+use operit_plugin_sdk::toolpkg::ToolPkgPackageModels::ToolPkgContainerDetails;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_tools::tools::packTool::RuntimePackageManager::BundledExternalPackageCandidate;
 use operit_tools::tools::AIToolHandler::AIToolHandler;
@@ -167,26 +169,56 @@ fn list_packages(
         .lock()
         .expect("package manager mutex poisoned");
     let enabled = guard.getEnabledPackageNames();
-    let packages = guard
-        .getAvailablePackages()
-        .into_iter()
-        .filter(|(name, _)| !guard.isToolPkgContainer(name) && !guard.isToolPkgSubpackage(name))
-        .collect::<Vec<_>>();
+    let packages = guard.getAvailablePackages().into_iter().collect::<Vec<_>>();
+    let mut containers = BTreeMap::new();
+    let mut subpackage_enabled = BTreeMap::new();
+    for (name, _) in &packages {
+        if guard.isToolPkgContainer(name) {
+            if let Some(details) = guard.getToolPkgContainerDetails(name, false) {
+                for subpackage in &details.subpackages {
+                    subpackage_enabled
+                        .insert(subpackage.packageName.clone(), subpackage.enabled);
+                }
+                containers.insert(name.clone(), details);
+            }
+        }
+    }
     let mut items = Vec::new();
     output.push_stdout_line(format!("Packages: {}", packages.len()));
     for (name, package) in packages {
-        let isEnabled = enabled.contains(&name);
+        let container = containers.get(&name);
+        let kind = if container.is_some() {
+            "toolpkg-container"
+        } else if guard.isToolPkgSubpackage(&name) {
+            "toolpkg-subpackage"
+        } else {
+            "package"
+        };
+        let tool_count = match container {
+            Some(details) => details.subpackages.iter().map(|sub| sub.toolCount).sum(),
+            None => package.tools.len(),
+        };
+        let isEnabled = subpackage_enabled
+            .get(&name)
+            .copied()
+            .unwrap_or_else(|| enabled.contains(&name));
         let description = package.description.resolve(false);
+        let kind_suffix = match container {
+            Some(details) => format!(" [container: {} subpackages]", details.subpackages.len()),
+            None if kind == "toolpkg-subpackage" => " [subpackage]".to_string(),
+            _ => String::new(),
+        };
         output.push_stdout_line(format!(
-            "- {} — {} tools — {}{}",
+            "- {} — {} tools — {}{}{}",
             name,
-            package.tools.len(),
+            tool_count,
             description,
             if isEnabled {
                 " (enabled)"
             } else {
                 " (disabled)"
-            }
+            },
+            kind_suffix
         ));
         items.push(serde_json::json!({
             "name": name,
@@ -196,7 +228,9 @@ fn list_packages(
             "enabled": isEnabled,
             "enabledByDefault": package.enabled_by_default,
             "isBuiltIn": package.is_built_in,
-            "tools": package.tools.len(),
+            "kind": kind,
+            "tools": tool_count,
+            "subpackages": container.map(|details| details.subpackages.len()),
         }));
     }
     output.setJsonStdout(serde_json::Value::Array(items));
@@ -236,6 +270,12 @@ fn show_package(
     let package = guard
         .getPackageTools(name)
         .ok_or_else(|| format!("package not found: {name}"))?;
+    if guard.isToolPkgContainer(name) {
+        let details = guard
+            .getToolPkgContainerDetails(name, false)
+            .ok_or_else(|| format!("container details unavailable: {name}"))?;
+        return show_toolpkg_container(&package, &details, output);
+    }
     output.push_stdout_line(format!("Package: {}", package.name));
     output.push_stdout_line(format!(
         "Display name: {}",
@@ -291,6 +331,60 @@ fn show_package(
         "enabledByDefault": package.enabled_by_default,
         "isBuiltIn": package.is_built_in,
         "tools": tools,
+    }));
+    Ok(())
+}
+
+/// Shows a ToolPkg container through its subpackages instead of an empty tool list.
+fn show_toolpkg_container(
+    package: &ToolPackage,
+    details: &ToolPkgContainerDetails,
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let tool_count: usize = details.subpackages.iter().map(|sub| sub.toolCount).sum();
+    output.push_stdout_line(format!("Package: {}", package.name));
+    output.push_stdout_line(format!(
+        "Display name: {}",
+        package.display_name.resolve(false)
+    ));
+    output.push_stdout_line(format!(
+        "Description: {}",
+        package.description.resolve(false)
+    ));
+    output.push_stdout_line(format!("Category: {}", package.category));
+    output.push_stdout_line(format!(
+        "Enabled by default: {}",
+        package.enabled_by_default
+    ));
+    output.push_stdout_line(format!("Built in: {}", package.is_built_in));
+    output.push_stdout_line("Kind: toolpkg-container".to_string());
+    output.push_stdout_line(format!("Subpackages: {}", details.subpackages.len()));
+    output.push_stdout_line(format!("Tools: {tool_count} (across subpackages)"));
+    for subpackage in &details.subpackages {
+        output.push_stdout_line(format!(
+            "- {} — {} tools — {} — {}: {}",
+            subpackage.packageName,
+            subpackage.toolCount,
+            if subpackage.enabled {
+                "enabled"
+            } else {
+                "disabled"
+            },
+            subpackage.displayName,
+            subpackage.description
+        ));
+    }
+    output.setJsonStdout(serde_json::json!({
+        "name": package.name,
+        "displayName": package.display_name.resolve(false),
+        "description": package.description.resolve(false),
+        "category": package.category,
+        "enabledByDefault": package.enabled_by_default,
+        "isBuiltIn": package.is_built_in,
+        "kind": "toolpkg-container",
+        "toolCount": tool_count,
+        "subpackages": serde_json::to_value(&details.subpackages)
+            .map_err(|error| error.to_string())?,
     }));
     Ok(())
 }

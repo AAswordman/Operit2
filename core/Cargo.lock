@@ -2098,6 +2098,7 @@ dependencies = [
  "operit-host-native-storage",
  "operit-local-models",
  "operit-model",
+ "operit-plugin-sdk",
  "operit-providers",
  "operit-runtime",
  "operit-store",
@@ -2109,6 +2110,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tokio",
+ "zip",
 ]
 
 [[package]]
