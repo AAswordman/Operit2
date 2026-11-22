@@ -578,6 +578,13 @@ fn validateSegment(segment: &str, originalPath: &str) -> Result<(), String> {
             "Invalid VFS path segment in {originalPath}: {segment}"
         ));
     }
+    // On Windows hosts Path::push replaces the whole accumulated path when a
+    // segment carries a drive letter, so ':' must never reach joinPhysical.
+    if segment.contains(':') || segment.contains('\\') {
+        return Err(format!(
+            "Invalid VFS path segment in {originalPath}: {segment}"
+        ));
+    }
     Ok(())
 }
 
@@ -776,6 +783,15 @@ fn windowsDriveEntries(hostRoots: HostFileSystemRoots) -> Vec<FileEntry> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn segments_with_drive_letters_or_backslashes_are_rejected() {
+        assert!(validateSegment("C:evil", "/app/data/C:evil").is_err());
+        assert!(validateSegment("a\\b", "/app/data/a\\b").is_err());
+        assert!(validateSegment("file.txt", "/app/data/file.txt").is_ok());
+        assert!(normalizeAbsoluteVfsPath("/app/data/C:evil/x").is_err());
+        assert!(PathMapper::resolveFileToolPath(Some("/app/workspaces/chat-a"), "C:evil").is_err());
+    }
 
     #[test]
     fn file_tool_paths_resolve_against_workspace_without_alias_rewrites() {
