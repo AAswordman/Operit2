@@ -965,7 +965,7 @@ impl ChatServiceCore {
         self.messageProcessingDelegate.steerMessage(chatId, messageText)
     }
 
-    /// Adds one message to the queue owned by a specific chat.
+    /// Queues a draft and consumes its unchanged composer attachments in the same Core call.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub fn enqueuePendingQueueMessage(
@@ -976,10 +976,15 @@ impl ChatServiceCore {
     ) {
         let mut queueStateByChatId = self.pendingQueueStateFlow().value();
         let queueState = queueStateByChatId
-            .entry(chatId)
+            .entry(chatId.clone())
             .or_insert_with(PendingChatQueueState::new);
         let messageId = queueState.nextMessageId;
         queueState.nextMessageId += 1;
+        // The caller may have added/replaced attachments or switched chats while this call
+        // was in transit. Only this chat's exact submitted records belong to the queue.
+        if self.chatHistoryDelegate.currentChatIdFlow.value().as_deref() == Some(chatId.as_str()) {
+            self.attachments.retain(|attachment| !attachments.contains(attachment));
+        }
         queueState.messages.push(PendingQueueMessageItem {
             id: messageId,
             text: messageText,
@@ -4109,5 +4114,74 @@ mod pending_queue_attachment_tests {
         let restored = core.takeNextPendingQueueMessageIfReady(chatId).expect("re-dequeues");
         assert_eq!(restored, item);
         assert_eq!(restored.attachments, vec![sampleAttachment()]);
+    }
+
+    /// A newer pick must survive while the accepted attachment moves into the queue.
+    #[test]
+    fn enqueue_consumes_submitted_attachments_and_preserves_new_picks() {
+        let mut core = queueTestCore();
+        let chatId = "queue-chat".to_string();
+        core.chatHistoryDelegate.currentChatIdFlow.set_value(Some(chatId.clone()));
+        let submitted = sampleAttachment();
+        let mut newer = sampleAttachment();
+        newer.filePath = "/tmp/newer-image.png".into();
+        core.attachments = vec![submitted.clone(), newer.clone()];
+
+        core.enqueuePendingQueueMessage(chatId.clone(), "queued".into(), vec![submitted.clone()]);
+
+        assert_eq!(core.attachments(), vec![newer.clone()]);
+        let item = core.takeNextPendingQueueMessageIfReady(chatId).expect("dequeues");
+        assert_eq!(item.attachments, vec![submitted]);
+        // An upload finishing after enqueue also has no delayed Flutter clear to race with.
+        let mut later = newer.clone();
+        later.filePath = "/tmp/later-image.png".into();
+        core.attachments.push(later.clone());
+        assert_eq!(core.attachments(), vec![newer, later]);
+    }
+
+    /// A delayed enqueue for another chat must never consume the selected chat's composer.
+    #[test]
+    fn enqueue_for_another_chat_does_not_clear_current_attachments() {
+        let mut core = queueTestCore();
+        core.chatHistoryDelegate.currentChatIdFlow.set_value(Some("selected-chat".into()));
+        let attachment = sampleAttachment();
+        core.attachments = vec![attachment.clone()];
+
+        core.enqueuePendingQueueMessage("previous-chat".into(), "queued".into(), vec![attachment.clone()]);
+
+        assert_eq!(core.attachments(), vec![attachment.clone()]);
+        let item = core.takeNextPendingQueueMessageIfReady("previous-chat".into()).expect("dequeues");
+        assert_eq!(item.attachments, vec![attachment]);
+    }
+
+    /// Matching host path/name/size is insufficient when the file's owning node changed.
+    #[test]
+    fn enqueue_preserves_replaced_attachment_with_the_same_host_path() {
+        let mut core = queueTestCore();
+        let chatId = "queue-chat".to_string();
+        core.chatHistoryDelegate.currentChatIdFlow.set_value(Some(chatId.clone()));
+        let mut submitted = sampleAttachment();
+        submitted.nodeId = Some("node-a".into());
+        let mut replacement = submitted.clone();
+        replacement.nodeId = Some("node-b".into());
+        core.attachments = vec![replacement.clone()];
+
+        core.enqueuePendingQueueMessage(chatId, "queued".into(), vec![submitted]);
+
+        assert_eq!(core.attachments(), vec![replacement]);
+    }
+
+    /// Queueing text alone must not consume an attachment selected after the captured draft.
+    #[test]
+    fn enqueue_without_attachments_preserves_the_composer() {
+        let mut core = queueTestCore();
+        let chatId = "queue-chat".to_string();
+        core.chatHistoryDelegate.currentChatIdFlow.set_value(Some(chatId.clone()));
+        let attachment = sampleAttachment();
+        core.attachments = vec![attachment.clone()];
+
+        core.enqueuePendingQueueMessage(chatId, "queued".into(), vec![]);
+
+        assert_eq!(core.attachments(), vec![attachment]);
     }
 }

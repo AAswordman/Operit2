@@ -195,8 +195,8 @@ class ChatViewModel {
       'Chat send requested chatId=${chatIdOverride ?? 'current'} '
       'chars=${text.length}',
     );
-    // A queued send carries its own captured attachments; the composer snapshot
-    // in Core was already cleared when the draft entered the queue.
+    // A queued send carries its own captured attachments; Core consumed those
+    // records from the composer when the draft entered the queue.
     final attachments =
         attachmentsOverride ?? await _chat.attachments();
     await _chat.sendUserMessage(

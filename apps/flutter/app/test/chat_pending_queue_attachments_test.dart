@@ -147,7 +147,7 @@ void main() {
     expect(bridge.callsNamed('clearAttachments'), hasLength(1));
   });
 
-  test('screen enqueue captures and clears composer attachments with the draft', () {
+  test('screen enqueue captures attachments and only refreshes after Core accepts', () {
     final source = File(
       'lib/ui/features/chat/screens/AIChatScreen.dart',
     ).readAsStringSync();
@@ -157,10 +157,9 @@ void main() {
     );
     expect(enqueue, contains('final submittedAttachments = _attachments;'));
     expect(enqueue, contains('attachments: submittedAttachments,'));
-    expect(
-      enqueue,
-      contains('await _clearSubmittedAttachments(chatId, submittedAttachments);'),
-    );
+    expect(enqueue, contains('await _refreshAttachments();'));
+    expect(enqueue, isNot(contains('clearAttachments(')));
+    expect(source, isNot(contains('_clearSubmittedAttachments')));
   });
 
   test('screen dequeued send delivers the item attachments end to end', () {
