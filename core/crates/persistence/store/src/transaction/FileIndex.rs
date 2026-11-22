@@ -12,7 +12,8 @@ CREATE INDEX IF NOT EXISTS sync_file_hash ON sync_file_sources(hash);
 CREATE TABLE IF NOT EXISTS sync_file_garbage(hash TEXT PRIMARY KEY, after_ms INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS sync_blob_references(hash TEXT NOT NULL, operation_id TEXT NOT NULL, PRIMARY KEY(hash,operation_id));
 CREATE INDEX IF NOT EXISTS sync_blob_operations ON sync_blob_references(operation_id);
-CREATE TABLE IF NOT EXISTS sync_owner_blob_references(hash TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(hash,path));";
+CREATE TABLE IF NOT EXISTS sync_owner_blob_references(hash TEXT NOT NULL,path TEXT NOT NULL,PRIMARY KEY(hash,path));
+CREATE TABLE IF NOT EXISTS sync_conflict_blob_references(hash TEXT NOT NULL,path TEXT NOT NULL,device_id TEXT NOT NULL,preserved_at INTEGER NOT NULL,PRIMARY KEY(hash,path));";
 // Allow a page already exported to finish transferring before its old source is collected.
 const TRANSFER_GRACE_MS: i64 = 10 * 60 * 1000;
 
@@ -164,7 +165,8 @@ impl Journal {
             AND hash NOT IN (SELECT hash FROM sync_blob_leases WHERE expires_ms>?1)
             AND NOT EXISTS (SELECT 1 FROM sync_blob_references r JOIN originals o ON o.id=r.operation_id
                 WHERE r.hash=g.hash AND (o.pending<>0 OR o.domain<>'runtime_file') UNION ALL
-                SELECT 1 FROM sync_owner_blob_references WHERE hash=g.hash)", vec![SqliteValue::Integer(now)])?;
+                SELECT 1 FROM sync_owner_blob_references WHERE hash=g.hash UNION ALL
+                SELECT 1 FROM sync_conflict_blob_references WHERE hash=g.hash)", vec![SqliteValue::Integer(now)])?;
         let started = operit_host_api::TimeUtils::tryCurrentTimeMillis().map_err(Error::Message)?;
         let mut removed = Vec::new();
         for row in candidates {
@@ -183,6 +185,14 @@ impl Journal {
             tx.execute("DELETE FROM sync_blob_leases WHERE expires_ms<=?1",vec![SqliteValue::Integer(now)])?;
             Ok(())
         })?;
+        Ok(())
+    }
+
+    /// A losing local version overwritten by a winning remote state is archived permanently,
+    /// outside lease and journal lifetimes. Replays deduplicate on the (hash,path) identity.
+    pub(crate) fn preserve_conflict_blob(tx: &mut dyn RuntimeSqliteTransaction, hash: &str, path: &str, device_id: &str, preserved_at: i64) -> Result<(), Error> {
+        tx.execute("INSERT OR IGNORE INTO sync_conflict_blob_references VALUES(?1,?2,?3,?4)",
+            vec![text(hash), text(path), text(device_id), SqliteValue::Integer(preserved_at)])?;
         Ok(())
     }
 

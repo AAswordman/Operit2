@@ -214,6 +214,39 @@ fn blob_sweep_keeps_sql_roots_and_active_transfers_then_reclaims_replaced_initia
     assert!(host.exists(&blob(&history)).unwrap());
 }
 
+/// Archived conflict bytes stay collect-proof across repeated sweeps past every grace period.
+#[test]
+fn conflict_blobs_survive_repeated_collection() {
+    let node = Node::new();
+    let host = node.host();
+    let files = RuntimeFileSyncStore::new(host.clone(), ROOT);
+    let workspace = crate::WorkspaceFileSyncStore::WorkspaceFileSyncStore::new(host.clone(), ROOT);
+    let path = "workspaces/project/diverged.txt";
+    host.writeBytes(path, b"losing local work").unwrap();
+    workspace.scan().unwrap();
+    let loser = RuntimeFileSyncReference { contentHash: contentHash(b"losing local work"), size: 17 };
+    // Materialize the loser carrier so collection has a real blob to reclaim.
+    assert_eq!(files.readBlob(&loser).unwrap(), b"losing local work");
+    let winner_bytes = b"winning remote state";
+    let winner = RuntimeFileSyncReference { contentHash: contentHash(winner_bytes), size: winner_bytes.len() as i64 };
+    files.writeBlob(&winner, winner_bytes).unwrap();
+    let operation = SyncOperation {
+        opId: "remote-winner:1".into(), originDeviceId: "remote-winner".into(), sequence: 1,
+        domain: RUNTIME_FILE_SYNC_DOMAIN.into(), entityType: "file".into(), entityId: path.into(),
+        operation: "upsert".into(), semantics: SyncOperationSemantics::EntityState,
+        payload: serde_json::json!({"contentHash": winner.contentHash, "size": winner.size, "modifiedAt": 1234}),
+        createdAt: i64::MAX / 2, schemaVersion: 1,
+    };
+    assert!(workspace.applyOperation(&operation, false).unwrap());
+    assert_eq!(host.readBytes(path).unwrap(), winner_bytes);
+    // A later local edit compacts the superseded originals, exposing the loser blob to GC.
+    host.writeBytes(path, b"later local edit").unwrap();
+    workspace.scan().unwrap();
+    for _ in 0..3 { collect(&files); }
+    assert!(host.exists(&format!("{ROOT}/blobs/{}", loser.contentHash)).unwrap(), "archived conflict bytes must survive collection");
+    assert_eq!(files.readBlob(&loser).unwrap(), b"losing local work");
+}
+
 #[test]
 fn prepared_carriers_keep_verified_revisions_after_source_changes_and_reopen() {
     let node = Node::new();
