@@ -2088,14 +2088,16 @@ fn merge_alias_chain_depth_is_not_business_content() {
     // so a rule that only holds in one of them cannot pass unnoticed.
     let summary = |rows: &[(&str, &str, &str)]| {
         store.executeBatch("DELETE FROM _operit_merge_map").unwrap();
-        for (collection, remote, canonical) in rows {
-            store.execute("INSERT INTO _operit_merge_map VALUES(?1,'preferences',?2,?3)",
-                vec![text(collection), text(remote), text(canonical)]).unwrap();
+        for (origin, (collection, remote, canonical)) in rows.iter().enumerate() {
+            store.execute("INSERT INTO _operit_merge_map VALUES(?1,?2,?3,?4)",
+                vec![text(collection), text(&origin.to_string()), text(remote), text(canonical)]).unwrap();
         }
         let snapshot = PluginStorage::syncSnapshot(fixture.host.clone(), &fixture.path, fixture.device).unwrap();
         let mut decoded = snapshot.clone();
         decoded.data = serde_json::from_slice(&serde_json::to_vec(&decoded.data).unwrap()).unwrap();
-        (PluginStorage::snapshotContentSummary(&snapshot).unwrap(), PluginStorage::snapshotContentSummary(&decoded).unwrap())
+        let content = PluginStorage::snapshotContentSummary(&snapshot).unwrap();
+        assert_eq!(content, PluginStorage::snapshotContentSummary(&decoded).unwrap());
+        content
     };
     // One peer rewrites `x -> b -> z` into `x -> z`; another re-declares `x -> b`. Both mean the same.
     assert_eq!(summary(&[("cards", "x", "b"), ("cards", "b", "z")]),
@@ -2118,6 +2120,14 @@ fn merge_alias_chain_depth_is_not_business_content() {
     // An unresolvable chain keeps its recorded targets instead of inventing a closure.
     assert_ne!(summary(&[("cards", "x", "z"), ("cards", "b", "z")]),
         summary(&[("cards", "x", "b"), ("cards", "b", "x")]));
+    // Ambiguity preserves every original edge, including predecessors, in both namespaces.
+    for (collection, prefix) in [("cards", ""), ("_preference_aliases", "cards.preferences.json\u{1f}")] {
+        let keys = ["u", "v", "w", "x"].map(|key| format!("{prefix}{key}"));
+        let ambiguous = |parent, left, right| summary(&[(collection, &keys[0], parent), (collection, &keys[1], "x"),
+            (collection, &keys[2], "x"), (collection, &keys[3], left), (collection, &keys[3], right)]);
+        assert_ne!(ambiguous("v", "a", "b"), ambiguous("v", "c", "d"));
+        assert_ne!(ambiguous("v", "a", "b"), ambiguous("w", "a", "b"));
+    }
     drop(store); fixture.dispose();
 }
 

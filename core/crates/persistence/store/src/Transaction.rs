@@ -1487,20 +1487,10 @@ pub fn project_sql_table(value: &Value, local_columns: &[&str]) -> Result<Value>
     serde_json::to_value(table).map_err(|error| error.to_string())
 }
 
-/// Projects one alias table onto its transitive closure so equivalent merge graphs compare equal.
-///
-/// A row states that `source` is another name for `target`, and that statement only carries meaning
-/// together with the rows it leads to: `a -> b` on its own is not knowledge about `a`. Peers write
-/// the same equivalences at different depths — one compresses `a -> b -> c` into `a -> c`, another
-/// re-declares `a -> b` — so comparing rows as text reports one merge graph as two contents.
-/// Resolving every row to the identity its chain ends at removes that difference while keeping the
-/// equivalences comparable: a chain that cannot be resolved, because it cycles or because two
-/// identities claim one name, keeps its recorded target, so a real identity disagreement still
-/// requires correction. A stored self mapping is only the receiver's own receipt and states no
-/// equivalence, so it is dropped.
-///
-/// A source name may be namespace-qualified as `<namespace>\u{1f}<identity>` while its target is a
-/// bare identity in that namespace, so chains are followed within one namespace.
+/// Compares alias graphs by their final identities within each collection and namespace.
+/// Equivalent chains and flattened edges compare equally; self receipts carry no equivalence.
+/// Cycles and conflicting targets retain their original edges as evidence for correction.
+/// Preference sources use `<namespace>\u{1f}<identity>` with bare targets in that namespace.
 #[cfg(feature = "full")]
 pub fn project_sql_alias_closure(value: &Value, local_columns: &[&str], source: &str, target: &str) -> Result<Value> {
     let mut table: Table = serde_json::from_value(value.clone()).map_err(|error| error.to_string())?;
@@ -1530,33 +1520,21 @@ pub fn project_sql_alias_closure(value: &Value, local_columns: &[&str], source: 
         let Some((scope, key, value)) = claimOf(row) else { continue };
         if key != value { claims.entry((scope, key)).or_default().insert(value); }
     }
-    // Only unambiguous claims form a chain; a name claimed by two identities stays unresolved.
-    let mapping = claims.iter().filter(|(_, targets)| targets.len() == 1)
-        .map(|(claim, targets)| (claim.clone(), targets.iter().next().expect("one target").clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut rows = Vec::with_capacity(table.rows.len());
-    for row in &table.rows {
-        let Some((scope, key, value)) = claimOf(row) else {
-            rows.push(retained.iter().map(|index| row[*index].clone()).collect());
-            continue;
-        };
-        // A row a peer wrote for itself records no equivalence and must not affect the comparison.
-        if key == value { continue; }
-        let mut current = key.clone();
-        let mut seen = BTreeSet::new();
-        let resolved = loop {
-            if !seen.insert(current.clone()) { break None; }
-            match mapping.get(&(scope.clone(), current.clone())) {
-                Some(next) => current = next.clone(),
-                None => break Some(current),
+    table.rows.retain(|row| claimOf(row).is_none_or(|(_, key, value)| key != value));
+    for row in &mut table.rows {
+        if let Some((scope, mut current, _)) = claimOf(row) {
+            let mut seen = BTreeSet::new();
+            while seen.insert(current.clone()) {
+                match claims.get(&(scope.clone(), current.clone())) {
+                    None => { row[to] = Cell::Text(current); break; }
+                    Some(targets) if targets.len() == 1 => current = targets.first().expect("one target").clone(),
+                    Some(_) => break,
+                }
             }
-        };
-        let mut projected = row.to_vec();
-        projected[to] = Cell::Text(resolved.unwrap_or(value));
-        rows.push(retained.iter().map(|index| projected[*index].clone()).collect());
+        }
+        *row = retained.iter().map(|index| row[*index].clone()).collect();
     }
     table.columns = retained.into_iter().map(|index| table.columns[index].clone()).collect();
-    table.rows = rows;
     table.rows.sort_by_cached_key(|row| serde_json::to_string(row).expect("SQL cells serialize"));
     table.rows.dedup();
     serde_json::to_value(table).map_err(|error| error.to_string())
