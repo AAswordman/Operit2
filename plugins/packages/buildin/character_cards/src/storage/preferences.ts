@@ -6,6 +6,7 @@ const merge = declarations as Record<keyof typeof declarations, StoragePreferenc
 import { clone } from "./records";
 import { finishOperit1Import } from "./operit1-import-repair";
 import { CharacterMemoryDatabase } from "./memory";
+import { closeMemoryScheduleStore } from "./device-schedule";
 import { traceCharacterLoad } from "../diagnostics";
 
 export const configurationNames = ["cards", "groups", "tags", "stores", "conversationGroups"] as const;
@@ -88,6 +89,7 @@ export class CharacterStorage {
     const closed = await Promise.allSettled([
       ...Object.values(this.configuration).map(handle => handle.close()),
       this.metadata.close(), this.chats.close(), this.memory.close(),
+      closeMemoryScheduleStore(),
     ]);
     const failures = closed.filter((result): result is PromiseRejectedResult => result.status === "rejected").map(result => result.reason);
     if (failures.length !== 0) throw Object.assign(new Error("Character storage handle cleanup failed"), { cleanupErrors: failures });

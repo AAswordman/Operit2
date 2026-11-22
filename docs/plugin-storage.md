@@ -35,6 +35,8 @@ When a merge aliases one identity onto a surviving canonical identity, the decis
 
 Use `ToolPkg.getSpaceDataDir()` for the plugin's synchronized folder, or its local data directory for device-owned preferences. A Space cannot inject device-owned preference operations. SQLite/object openers reject preference files; JSON preference files are excluded from whole-file synchronization.
 
+Keep device-local values out of synchronized records. A value that only describes the writing device — a next-run timestamp, a local counter, a cached path — becomes permanently different on every peer that rewrites it, so peers comparing the same business content never converge and synchronization repeatedly ships a full snapshot to "repair" it. Put such values in `ToolPkg.getLocalDataDir()` and leave a constant placeholder in the synchronized record, for example by clamping a device cursor field to `0` before every commit. Core already projects its own per-writer bookkeeping (`_operit_versions`, `_operit_merge_map.origin`, `messages.messageId`, `sync_sql_versions` clocks) out of content equality, but a plugin field inside a record's JSON is business content and cannot be excluded for you.
+
 The character plugin keeps its preferences inside its own persistent folder:
 
 ```text

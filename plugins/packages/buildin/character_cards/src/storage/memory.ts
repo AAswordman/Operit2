@@ -8,6 +8,25 @@ export const characterMerge = merge as StorageMergeDescriptor;
 export type ObjectMutation = Storage.ObjectMutation;
 const HOST_READ_PAGE_LIMIT = 100;
 
+/** Keeps the device-local scheduler cursor out of the synchronized owner record. */
+function synchronizedOwnerValue(value: Storage.Value): Storage.Value {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>, settings = record.settings;
+  if (settings === null || typeof settings !== "object" || Array.isArray(settings)) return value;
+  if ((settings as Record<string, unknown>).nextAutoSaveRunAtMs === 0) return value;
+  return { ...record, settings: { ...(settings as Record<string, unknown>), nextAutoSaveRunAtMs: 0 } };
+}
+
+/** Removes the device-local cursor from every owner write, whichever caller produced it. */
+function synchronizedMutations(mutations: ObjectMutation[]): ObjectMutation[] {
+  return mutations.map(
+    /** Rewrites only owner records that still carry a non-zero local cursor. */
+    mutation => mutation.collection !== "owners" || mutation.op !== "put"
+      ? mutation
+      : { ...mutation, value: synchronizedOwnerValue(mutation.value) },
+  );
+}
+
 /** Stores synchronized memory records and executes bounded database queries. */
 export class CharacterMemoryDatabase {
   /** Retains one authenticated storage handle. */
@@ -74,5 +93,7 @@ export class CharacterMemoryDatabase {
   }
 
   /** Publishes guarded source records and vectors in one synchronized transaction. */
-  commit(mutations: ObjectMutation[], guards: StorageRecordGuard[] = []): Promise<Storage.Receipt> { return this.database.commit(mutations, guards); }
+  commit(mutations: ObjectMutation[], guards: StorageRecordGuard[] = []): Promise<Storage.Receipt> {
+    return this.database.commit(synchronizedMutations(mutations), guards);
+  }
 }

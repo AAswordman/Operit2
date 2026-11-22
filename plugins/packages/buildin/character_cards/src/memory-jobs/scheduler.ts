@@ -4,6 +4,7 @@ import type { MemoryCandidate, MemoryChatMessage, MemoryRebuild, MemoryRebuildPr
 import { assertInteger, assertObject, assertStrings, requireId } from "../validation";
 import { extractMessages } from "./analysis";
 import { chatParticipants, planWindows, primaryOwner, readMessages, requireChat, requireChatOwner, requireMessageOwner, requireMessagesOwner, currentMessageMemoryAccess } from "./chat";
+import { writeNextAutoSaveRun } from "../storage/device-schedule";
 
 export type CandidateSource = "reply_finalized_auto" | "selected_user_message";
 export interface CandidateRequest { chatId: string; timestamp: number; variantIndex: number; sourceType: CandidateSource; ownerKey: string | null }
@@ -100,8 +101,11 @@ export async function enqueueCandidate(input: CandidateRequest, repository: Char
     }
     const id = await repository.allocateRecordId();
     space.candidates.push({ id, producerNodeId, chatId: input.chatId, triggerMessageTimestamp: input.timestamp, triggerVariantIndex: input.variantIndex, createdAt: now, updatedAt: now, status: "pending", attemptCount: 0, lastError: "", sourceType: input.sourceType });
-    if (space.settings.autoSaveIntervalMinutes > 0 && space.settings.nextAutoSaveRunAtMs === 0) space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 60000;
     await repository.writeMemoryJobState(ownerKey, space); result.candidateIds.push(id);
+    // The next-run cursor is this device's own schedule, so it never enters the synchronized record.
+    if (space.settings.autoSaveIntervalMinutes > 0 && space.settings.nextAutoSaveRunAtMs === 0) {
+      await writeNextAutoSaveRun(ownerKey, now + space.settings.autoSaveIntervalMinutes * 60000);
+    }
   }
   return result;
 }
@@ -312,6 +316,8 @@ export class MemoryJobRunner {
     const runnable = await this.owner.run(
       /** Recovers this device's interrupted work and exposes released tasks with unknown provenance. */
       async repository => {
+        // Older builds kept this device-local cursor in the synchronized record; move it out first.
+        await repository.adoptLegacyScheduleCursor(ownerKey);
         const space = await repository.readMemoryJobState(ownerKey), now = Date.now();
         let changed = false;
         for (const candidate of space.candidates) {
@@ -369,8 +375,8 @@ export class MemoryJobRunner {
             }
           }
         }
-        space.settings.nextAutoSaveRunAtMs = now + space.settings.autoSaveIntervalMinutes * 60000;
-        await repository.writeMemoryJobState(ownerKey, space); return batches;
+        await writeNextAutoSaveRun(ownerKey, now + space.settings.autoSaveIntervalMinutes * 60000);
+        return batches;
       },
     );
     for (const batch of batches) {

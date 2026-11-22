@@ -527,6 +527,8 @@ test("memory jobs isolate real owner failures without swallowing composite publi
         return callback({
           /** Schedules the failing owner before a healthy independent owner. */
           async listMemoryOwnerKeys() { return ["first", "healthy"]; },
+          /** Reports that this fixture has no legacy synchronized cursor to migrate. */
+          async adoptLegacyScheduleCursor() { return false; },
           /** Retains the original failure identity or reads a genuine idle job state. */
           async readMemoryJobState(ownerKey) {
             visited.add(ownerKey);
@@ -659,4 +661,30 @@ test("history rebuild uses a saved 16-message window after runtime restart", asy
   } });
   const space = await readOwner(harness);
   assert.deepEqual(space.rebuildTask.windows.map(window => window.sourceMessageCount), [16, 16]);
+});
+
+/** The automatic-check due time is this device's own schedule and must never enter synchronized records. */
+test("synchronized owner settings never carry the device-local automatic check cursor", async t => {
+  const harness = await createMemoryJobsHarness(t), runtime = harness.openRuntime();
+  await runtime.initialize(); await runtime.bind();
+  const localFile = path.join(harness.disk.directory, "local", "memory-schedule.preferences.json");
+
+  const settings = await runtime.api("memory.settings.read", owner);
+  assert.equal(settings.nextAutoSaveRunAtMs, 0, "a fresh owner carries only the zero placeholder");
+  await runtime.api("memory.settings.write", { ...owner, settings: { ...settings, nextAutoSaveRunAtMs: 4_000_000_000_000, autoSaveIntervalMinutes: 9 } });
+  const saved = await runtime.api("memory.settings.read", owner);
+  assert.equal(saved.nextAutoSaveRunAtMs, 4_000_000_000_000, "this device still observes its own schedule");
+  assert.equal(saved.autoSaveIntervalMinutes, 9);
+  // The synchronized record keeps the placeholder so peers cannot disagree about it.
+  assert.equal((await readOwner(harness)).settings.nextAutoSaveRunAtMs, 0);
+  // The real cursor lives in device-local storage instead.
+  const local = JSON.parse(await readFile(localFile, "utf8"));
+  assert.equal(local[CONTROLLED_OWNER], 4_000_000_000_000);
+
+  // A restart keeps both the local schedule and the synchronized placeholder.
+  const restarted = harness.openRuntime(); await restarted.initialize();
+  const afterRestart = await restarted.api("memory.settings.read", owner);
+  assert.equal(afterRestart.nextAutoSaveRunAtMs, 4_000_000_000_000);
+  assert.equal(afterRestart.autoSaveIntervalMinutes, 9);
+  assert.equal((await readOwner(harness)).settings.nextAutoSaveRunAtMs, 0);
 });
