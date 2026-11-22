@@ -1035,7 +1035,10 @@ impl AIMessageManager {
             .into_iter()
             .map(|turn| {
                 if turn.kind == PromptTurnKind::USER {
-                    currentUserTurnIndex = currentUserTurnIndex.saturating_add(1);
+                    // wrapping_add lets the usize::MAX sentinel roll over to 0
+                    // on the first user turn; saturating_add would keep MAX
+                    // forever and retain media in every turn.
+                    currentUserTurnIndex = currentUserTurnIndex.wrapping_add(1);
                 }
                 let shouldKeepMedia = limit > 0 && currentUserTurnIndex >= keepFromTurn;
                 if !shouldKeepMedia && MediaLinkParser::has_media_links(&turn.content) {
@@ -1071,7 +1074,7 @@ impl AIMessageManager {
             .into_iter()
             .map(|turn| {
                 if turn.kind == PromptTurnKind::USER {
-                    currentUserTurnIndex = currentUserTurnIndex.saturating_add(1);
+                    currentUserTurnIndex = currentUserTurnIndex.wrapping_add(1);
                 }
                 let shouldKeepImages = limit > 0 && currentUserTurnIndex >= keepFromTurn;
                 if !shouldKeepImages && MediaLinkParser::has_image_links(&turn.content) {
@@ -1482,6 +1485,43 @@ fn strip_tag_blocks(text: &str, tag_name: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// The image turn limit keeps only the last N user turns, not every turn.
+    #[test]
+    fn image_turn_limit_keeps_only_last_user_turns() {
+        let image = "<link type=\"image\" id=\"img\"/>";
+        let history = vec![
+            PromptTurn::new(PromptTurnKind::USER, format!("first {image}")),
+            PromptTurn::new(PromptTurnKind::ASSISTANT, "old reply".to_string()),
+            PromptTurn::new(PromptTurnKind::USER, format!("second {image}")),
+            PromptTurn::new(PromptTurnKind::USER, format!("third {image}")),
+            PromptTurn::new(PromptTurnKind::ASSISTANT, format!("recent reply {image}")),
+        ];
+        let limited = AIMessageManager::limitImageLinksInChatHistory(history, 1);
+        assert_eq!(limited[0].content, "first");
+        assert_eq!(limited[2].content, "second");
+        assert!(limited[3].content.contains(image));
+        assert!(limited[4].content.contains(image));
+
+        let history = vec![PromptTurn::new(PromptTurnKind::USER, format!("only {image}"))];
+        let limited = AIMessageManager::limitImageLinksInChatHistory(history, 0);
+        assert_eq!(limited[0].content, "only");
+    }
+
+    /// The media turn limit keeps only the last N user turns, not every turn.
+    #[test]
+    fn media_turn_limit_keeps_only_last_user_turns() {
+        let audio = "<link type=\"audio\" id=\"aud\"/>";
+        let history = vec![
+            PromptTurn::new(PromptTurnKind::USER, format!("first {audio}")),
+            PromptTurn::new(PromptTurnKind::USER, format!("second {audio}")),
+            PromptTurn::new(PromptTurnKind::USER, format!("third {audio}")),
+        ];
+        let limited = AIMessageManager::limitMediaLinksInChatHistory(history, 2);
+        assert_eq!(limited[0].content, "first");
+        assert!(limited[1].content.contains(audio));
+        assert!(limited[2].content.contains(audio));
+    }
 
     /// Low context usage cannot trigger automatic summaries, even after many user turns.
     #[test]
