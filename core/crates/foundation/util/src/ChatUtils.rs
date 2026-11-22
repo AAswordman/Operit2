@@ -125,12 +125,30 @@ fn strip_markdown_fence(text: &str) -> &str {
     } else {
         text.len()
     };
+    // Degenerate fences like "````" locate the closing marker before the
+    // first line break, leaving an inverted range with no content.
+    if start >= end {
+        return "";
+    }
     text[start..end].trim()
 }
 
 #[cfg(test)]
 mod tests {
     use super::ChatUtils;
+
+    #[test]
+    fn strip_markdown_fence_tolerates_degenerate_fences() {
+        assert_eq!(super::strip_markdown_fence("```"), "");
+        assert_eq!(super::strip_markdown_fence("````"), "");
+        assert_eq!(super::strip_markdown_fence("``````"), "");
+        assert_eq!(super::strip_markdown_fence("```x```"), "");
+        assert_eq!(
+            super::strip_markdown_fence("```json\n{\"a\":1}\n```"),
+            "{\"a\":1}"
+        );
+        assert_eq!(ChatUtils::extract_json("````"), "");
+    }
 
     #[test]
     fn remove_thinking_content_mirrors_kt_pure_thinking_detection() {
