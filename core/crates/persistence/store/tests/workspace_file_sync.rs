@@ -1048,6 +1048,123 @@ fn batch_flush_failure_keeps_recovery_intent_and_does_not_publish_versions() {
     assert_eq!(target._node.ops().len(), operations.len());
 }
 
+fn wall_clock_millis() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as i64
+}
+
+/// Republishes one received operation under a fresh identity with a shifted
+/// createdAt, modelling a peer whose wall clock runs fast (or slow).
+fn skewed_copy(operation: &SyncOperation, shift_millis: i64) -> SyncOperation {
+    let mut skewed = operation.clone();
+    skewed.createdAt += shift_millis;
+    skewed.sequence += 1;
+    skewed.opId = format!("{}:{}", skewed.originDeviceId, skewed.sequence);
+    skewed
+}
+
+fn local_file_operation(node: &Node, path: &str) -> SyncOperation {
+    let device = node.log().localDeviceId().unwrap();
+    node.ops()
+        .into_iter()
+        .find(|op| op.originDeviceId == device && op.entityId == path)
+        .expect("local file operation was published")
+}
+
+/// A peer ten minutes ahead must not outrank every later local edit forever:
+/// observing its operation raises the local hybrid-clock floor instead.
+#[test]
+fn fast_peer_clock_does_not_outrank_later_local_edits() {
+    let a = Node::new();
+    let b = Node::new();
+    let path = "workspaces/project/skew.txt";
+    a.write(path, b"desktop");
+    a.workspace().scan().unwrap();
+    a.send(&b);
+    let skewed = skewed_copy(&a.ops().pop().unwrap(), 600_000);
+    a.log().appendOperations(&[skewed.clone()]).unwrap();
+    a.deliver(&b, &skewed);
+    assert_eq!(b.host.readBytes(path).unwrap(), b"desktop");
+
+    b.write(path, b"phone edit");
+    b.workspace().scan().unwrap();
+    let local = local_file_operation(&b, path);
+    assert!(
+        local.createdAt >= skewed.createdAt + 1,
+        "later local edit must outrank the fast peer clock: local={} peer={}",
+        local.createdAt,
+        skewed.createdAt
+    );
+    b.send(&a);
+    assert_eq!(a.host.readBytes(path).unwrap(), b"phone edit");
+    assert_eq!(b.host.readBytes(path).unwrap(), b"phone edit");
+}
+
+/// The floor is durable journal state, so a restart cannot lose the skew guard.
+#[test]
+fn hybrid_clock_floor_survives_restart() {
+    use operit_store::SyncOperationStore::{NewSyncOperation, SyncOperationSemantics};
+    let a = Node::new();
+    let b = Node::new();
+    let path = "workspaces/project/restart.txt";
+    a.write(path, b"desktop");
+    a.workspace().scan().unwrap();
+    a.send(&b);
+    let skewed = skewed_copy(&a.ops().pop().unwrap(), 600_000);
+    a.deliver(&b, &skewed);
+
+    let restarted = Arc::new(NativeRuntimeStorageHost::new(
+        b.root.join("runtime"),
+        b.root.join("workspaces"),
+    ));
+    let operation = SyncOperationStore::new(restarted, SYNC)
+        .appendLocalOperation(
+            &b.log().localDeviceId().unwrap(),
+            NewSyncOperation {
+                domain: RUNTIME_FILE_SYNC_DOMAIN.into(),
+                entityType: "file".into(),
+                entityId: "workspaces/project/restart-probe.txt".into(),
+                operation: "delete".into(),
+                semantics: SyncOperationSemantics::EntityState,
+                payload: serde_json::Value::Null,
+            },
+        )
+        .unwrap();
+    assert!(operation.createdAt >= skewed.createdAt + 1);
+}
+
+/// Without a newer peer timestamp, local createdAt keeps tracking the wall
+/// clock; an older peer operation neither pulls it down nor pushes it up.
+#[test]
+fn wall_clock_timestamps_are_unchanged_without_ahead_peer() {
+    let a = Node::new();
+    let b = Node::new();
+    let path = "workspaces/project/normal.txt";
+    let before = wall_clock_millis();
+    a.write(path, b"one");
+    a.workspace().scan().unwrap();
+    let first = a.ops().pop().unwrap();
+    let after = wall_clock_millis();
+    assert!(first.createdAt >= before && first.createdAt <= after + 100);
+    a.send(&b);
+
+    let stale = skewed_copy(&first, -600_000);
+    b.log().appendOperations(&[stale]).unwrap();
+    let before = wall_clock_millis();
+    b.write(path, b"two");
+    b.workspace().scan().unwrap();
+    let local = local_file_operation(&b, path);
+    let after = wall_clock_millis();
+    assert!(
+        local.createdAt >= before && local.createdAt <= after + 100,
+        "local createdAt must stay near the wall clock: {} not in [{before}, {}]",
+        local.createdAt,
+        after + 100
+    );
+}
+
 #[test]
 fn batch_missing_blob_does_not_block_other_files_or_future_scans() {
     let source = Node::new();
