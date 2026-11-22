@@ -338,7 +338,7 @@ pub trait JsExecutionHost: Send + Sync {
     fn is_package_imported(&self, package_name: &str) -> Result<bool, String>;
 
     /// Imports one package into the active package set.
-    fn import_package(&self, package_name: &str) -> Result<String, String>;
+    fn import_package(&self, package_name: &str) -> JsExecutionFuture<Result<String, String>>;
 
     /// Removes one package from the active package set.
     fn remove_package(&self, package_name: &str) -> Result<String, String>;
@@ -428,8 +428,6 @@ pub trait JsExecutionHost: Send + Sync {
         Box::pin(async { Err("Plugin storage record watches are unavailable on this host".to_string()) })
     }
 
-    /// Waits for the host runtime to advance JavaScript work on a later turn.
-    fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture;
 }
 
 /// Executes package JavaScript through one bound package and host context.
@@ -438,6 +436,14 @@ pub trait JsPackageExecutor: Send + Sync {
     fn execute_package_tool(
         &self,
         request: &JsPackageToolCallRequest,
+    ) -> JsExecutionCompletion<JsPackageToolCallResult> {
+        self.execute_package_tool_streaming(request, None)
+    }
+
+    /// Executes one package while delivering its explicitly emitted intermediate output.
+    fn execute_package_tool_streaming(
+        &self, request: &JsPackageToolCallRequest,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> JsExecutionCompletion<JsPackageToolCallResult>;
 }
 
@@ -690,6 +696,15 @@ pub trait JsExecutionEngine: Send + Sync {
         self.execute_script_function(&script, &function_name, &params, &env_overrides, None, true)
     }
 
+    /// Transfers a package call while preserving its execution-owned intermediate output sink.
+    fn execute_script_function_owned_with_output(
+        &self, script: String, function_name: String, params: BTreeMap<String, Value>,
+        env_overrides: BTreeMap<String, String>,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
+        self.execute_script_function(&script, &function_name, &params, &env_overrides, on_intermediate_result, true)
+    }
+
     /// Executes a before hook under its caller-owned millisecond completion deadline.
     fn execute_script_function_with_timeout_millis(
         &self,
@@ -713,14 +728,14 @@ pub trait JsExecutionEngine: Send + Sync {
         dispatch_intermediate_on_main: bool,
     ) -> JsExecutionFuture<JsExecutionResult<Option<String>>>;
 
-    /// Executes a ToolPkg registration function and returns captured declarations.
+    /// Awaits a ToolPkg registration function without blocking the caller's scheduler.
     fn execute_toolpkg_main_registration_function_with_text_resources(
         &self,
         script: &str,
         function_name: &str,
         params: &BTreeMap<String, Value>,
         text_resources: Option<Arc<BTreeMap<String, String>>>,
-    ) -> JsExecutionResult<ToolPkgMainRegistrationCapture>;
+    ) -> JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>>;
 
     /// Executes a streamed render with a synchronous sink for every generated retained commit.
     fn execute_compose_dsl_script_stream_async(

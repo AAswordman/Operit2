@@ -9,8 +9,10 @@
 #include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/event.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <vector>
 
 static const NSUInteger ORTOutputCapacity = 1024 * 1024;
 static const NSUInteger ORTCommandCapacity = 16 * 1024 * 1024;
@@ -113,9 +115,10 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 @interface ORTArm64Execution : NSObject
 @property(nonatomic, copy) NSString *identifier;
 @property(nonatomic, strong) NSMutableData *frames;
-@property(nonatomic, strong) dispatch_semaphore_t changed;
-@property(nonatomic, assign) NSUInteger outputCount;
+@property(nonatomic, copy) dispatch_block_t changed;
+@property(nonatomic, assign) BOOL notificationScheduled;
 @property(nonatomic, assign) BOOL boundedOutput;
+@property(nonatomic, assign) NSUInteger outputCount;
 @property(nonatomic, assign) BOOL started;
 @property(nonatomic, assign) BOOL done;
 @property(nonatomic, assign) BOOL abandoned;
@@ -132,7 +135,6 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
     _identifier = NSUUID.UUID.UUIDString;
     _scriptDirectory = -1;
     _frames = [NSMutableData data];
-    _changed = dispatch_semaphore_create(0);
   }
   return self;
 }
@@ -159,6 +161,8 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 @property(nonatomic, assign) ort_arm64_vm *vm;
 @property(nonatomic, assign) BOOL terminalOpen;
 @property(nonatomic, assign) BOOL pumpScheduled;
+@property(nonatomic, strong) dispatch_source_t waitSource;
+@property(nonatomic, assign) uint64_t waitGeneration;
 @property(nonatomic, assign) BOOL outputDrained;
 @property(nonatomic, assign) BOOL ptyHangup;
 @property(nonatomic, assign) BOOL ready;
@@ -176,7 +180,9 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 @property(nonatomic, strong) NSMutableData *screenOutput;
 @property(nonatomic, strong) NSMutableData *queuedInput;
 @property(nonatomic, strong) ORTArm64Execution *execution;
-- (void)schedulePump:(NSTimeInterval)delay;
+- (void)schedulePump;
+- (void)cancelWait;
+- (void)armWait:(BOOL)runtime;
 - (void)pump;
 - (void)receive:(NSData *)data;
 - (void)publish:(NSData *)data;
@@ -206,6 +212,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   return self;
 }
 - (void)dealloc {
+  if (_waitSource) dispatch_source_cancel(_waitSource);
   // Normally releaseVM already ran on queue. Preserve queue ownership even if
   // an unfinished startup is released by its caller.
   ort_arm64_vm *vm = _vm;
@@ -221,6 +228,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   });
 }
 - (void)releaseVM {
+  [self cancelWait];
   if (self.vm) {
     if (self.terminalOpen) {
       if (ort_arm64_terminal_close(self.vm) != 0 && self.failure == nil)
@@ -235,7 +243,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   self.configuration = nil;
   [self.queuedInput setLength:0];
   dispatch_semaphore_signal(self.startup);
-  if (self.execution) dispatch_semaphore_signal(self.execution.changed);
+  if (self.execution) if (self.execution.changed) self.execution.changed();
 }
 - (void)fail:(NSString *)error {
   self.failure = error;
@@ -247,6 +255,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   [self releaseVM];
 }
 - (NSString *)close {
+  [self cancelWait];
   NSString *error = nil;
   if (self.vm && self.terminalOpen) {
     if (ort_arm64_terminal_close(self.vm) != 0) error = ORTRuntimeError(self.vm, @"terminal close failed");
@@ -265,11 +274,73 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   if (!self.vm || self.closed) return self.failure ?: @"ARM64 terminal session is not running";
   if (ort_arm64_terminal_signal(self.vm, ORTLinuxInterrupt) != 0)
     return ORTRuntimeError(self.vm, @"terminal interrupt failed");
-  [self schedulePump:0];
+  [self schedulePump];
   return nil;
 }
-- (void)schedulePump:(NSTimeInterval)delay {
-  if (self.pumpScheduled || !self.vm || self.closed) return;
+// Cancel native registrations before any further guest execution or fd closure.
+- (void)cancelWait {
+  ++self.waitGeneration;
+  if (self.waitSource) dispatch_source_cancel(self.waitSource);
+  self.waitSource = nil;
+}
+// One native queue observes the VM's borrowed fds without retaining their open descriptions.
+- (void)armWait:(BOOL)runtime {
+  [self cancelWait];
+  if (!self.vm || self.closed) return;
+  int64_t timeout = -1;
+  std::vector<ort_arm64_wait_source> sources;
+  if (runtime) {
+    size_t count = ort_arm64_wait_sources(self.vm, nullptr, 0, &timeout, self.queuedInput.length != 0);
+    sources.resize(count);
+    count = ort_arm64_wait_sources(self.vm, sources.data(), sources.size(), &timeout, self.queuedInput.length != 0);
+    if (count != sources.size()) { [self fail:@"ARM64 wait sources changed outside their owning queue"]; return; }
+  }
+  if (self.execution.abandoned) {
+    int64_t cancellation = (int64_t)(MAX(0.0, self.execution.cancelDeadline - NSProcessInfo.processInfo.systemUptime) * NSEC_PER_SEC);
+    if (timeout < 0 || cancellation < timeout) timeout = cancellation;
+  }
+  if (timeout == 0) { [self schedulePump]; return; }
+  if (sources.empty() && timeout < 0) return;
+  int descriptor = kqueue();
+  if (descriptor < 0) { [self fail:@"ARM64 wait queue creation failed"]; return; }
+  if (fcntl(descriptor, F_SETFD, FD_CLOEXEC) < 0) {
+    close(descriptor); [self fail:@"ARM64 wait queue descriptor setup failed"]; return;
+  }
+  std::vector<struct kevent> events;
+  for (const auto &source : sources) {
+    for (uint32_t flag : {ORT_ARM64_WAIT_READ, ORT_ARM64_WAIT_WRITE}) {
+      if (!(source.events & flag)) continue;
+      struct kevent event;
+      EV_SET(&event, source.fd, flag == ORT_ARM64_WAIT_READ ? EVFILT_READ : EVFILT_WRITE,
+             EV_ADD | EV_ONESHOT, 0, 0, nullptr);
+      events.push_back(event);
+    }
+  }
+  if (timeout > 0) {
+    struct kevent event;
+    EV_SET(&event, 0, EVFILT_TIMER, EV_ADD | EV_ONESHOT, NOTE_NSECONDS, timeout, nullptr);
+    events.push_back(event);
+  }
+  if (kevent(descriptor, events.data(), (int)events.size(), nullptr, 0, nullptr) < 0) {
+    close(descriptor); [self fail:@"ARM64 wait source registration failed"]; return;
+  }
+  const uint64_t generation = self.waitGeneration;
+  __weak ORTArm64TerminalSession *weakSelf = self;
+  dispatch_source_t source = dispatch_source_create(DISPATCH_SOURCE_TYPE_READ, descriptor, 0, self.queue);
+  if (!source) { close(descriptor); [self fail:@"ARM64 wait source creation failed"]; return; }
+  dispatch_source_set_event_handler(source, ^{
+    ORTArm64TerminalSession *session = weakSelf;
+    if (session && session.waitGeneration == generation) [session schedulePump];
+  });
+  dispatch_source_set_cancel_handler(source, ^{ close(descriptor); });
+  self.waitSource = source;
+  dispatch_resume(source);
+}
+// Immediate producer signals supersede any previous descriptor or deadline wait.
+- (void)schedulePump {
+  if (!self.vm || self.closed) return;
+  [self cancelWait];
+  if (self.pumpScheduled) return;
   self.pumpScheduled = YES;
   __weak ORTArm64TerminalSession *weakSelf = self;
   dispatch_block_t step = ^{
@@ -277,10 +348,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
     session.pumpScheduled = NO;
     [session pump];
   };
-  if (delay > 0)
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(delay * NSEC_PER_SEC)), self.queue, step);
-  else
-    dispatch_async(self.queue, step);
+  dispatch_async(self.queue, step);
 }
 - (void)publish:(NSData *)data {
   if (data.length == 0) return;
@@ -295,14 +363,13 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   }
   if (execution && execution.started && !execution.done) {
     if (execution.boundedOutput && data.length > ORTCommandCapacity - execution.outputCount) {
-      [self fail:@"ARM64 command output exceeded the 16 MiB capture limit"];
-      return;
+      [self fail:@"ARM64 command output exceeded the 16 MiB capture limit"]; return;
     }
     if (execution.boundedOutput) execution.outputCount += data.length;
     [execution.frames appendData:data];
     if (!execution.boundedOutput && execution.frames.length > ORTOutputCapacity)
       [execution.frames replaceBytesInRange:NSMakeRange(0, execution.frames.length - ORTOutputCapacity) withBytes:nullptr length:0];
-    dispatch_semaphore_signal(execution.changed);
+    if (execution.changed) execution.changed();
   }
 }
 - (void)record:(NSString *)record {
@@ -316,9 +383,10 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
     ORTArm64Execution *execution = self.execution;
     if (execution && !execution.done && execution.started) {
       // SIGINT can abort the entire submitted line before its status printf.
-      execution.error = @"ARM64 command returned to the prompt without an exit-status record";
+      execution.error = execution.abandoned ? nil : @"ARM64 command returned to the prompt without an exit-status record";
+      if (execution.abandoned) execution.exitCode = 130;
       execution.done = YES;
-      dispatch_semaphore_signal(execution.changed);
+      if (execution.changed) execution.changed();
       if (execution.abandoned) self.execution = nil;
     }
     self.commandRunning = self.execution != nil && !self.execution.done;
@@ -351,7 +419,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
   execution.done = YES;
   [execution removeScript];
   self.commandRunning = NO;
-  dispatch_semaphore_signal(execution.changed);
+  if (execution.changed) execution.changed();
   if (execution.abandoned) self.execution = nil;
 }
 - (void)receive:(NSData *)data {
@@ -415,6 +483,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
 }
 - (void)pump {
   @autoreleasepool {
+    [self cancelWait];
     if (!self.vm || self.closed) return;
     if (self.execution.abandoned && NSProcessInfo.processInfo.systemUptime >= self.execution.cancelDeadline) {
       [self fail:@"ARM64 command did not stop after SIGINT; its VM was closed"];
@@ -437,7 +506,7 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
     [self readOutput];
     if (!self.vm) return;
     if (!self.execution && self.pendingOutput.length >= ORTOutputCapacity) {
-      [self schedulePump:0.01];
+      [self armWait:NO];
       return;
     }
     ort_arm64_result result = ort_arm64_run(self.vm, ORTRunBudget);
@@ -455,7 +524,8 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
       // Output read per pump is bounded; retain the VM until all final PTY
       // bytes have been drained, even if the reader is applying backpressure.
       if (!self.outputDrained) {
-        [self schedulePump:0.01];
+        if (!self.execution && self.pendingOutput.length >= ORTOutputCapacity) [self armWait:NO];
+        else [self schedulePump];
         return;
       }
       if (self.protocolBuffer.length) {
@@ -487,7 +557,8 @@ static NSString *ORTRuntimeError(ort_arm64_vm *vm, NSString *operation) {
       [self fail:@"ARM64 runtime returned an unknown execution status"];
       return;
     }
-    [self schedulePump:result.status == ORT_ARM64_WAITING ? 0.005 : 0];
+    if (result.status == ORT_ARM64_WAITING) [self armWait:YES];
+    else [self schedulePump];
   }
 }
 @end
@@ -980,7 +1051,7 @@ static ORTArm64TerminalSession *ORTStart(NSString *name, NSString *cwd, uint32_t
       return;
     }
     session.terminalOpen = YES;
-    [session schedulePump:0];
+    [session schedulePump];
   });
   if (dispatch_semaphore_wait(session.startup, dispatch_time(DISPATCH_TIME_NOW, 30LL * NSEC_PER_SEC)) != 0)
     dispatch_sync(session.queue, ^{ [session fail:@"ARM64 shell did not reach its first prompt within 30 seconds"]; });
@@ -1018,25 +1089,6 @@ static void ORTAbandon(ORTArm64TerminalSession *session, ORTArm64Execution *exec
   if (error) { [session fail:error]; return; }
   execution.abandoned = YES;
   execution.cancelDeadline = NSProcessInfo.processInfo.systemUptime + 2.0;
-}
-// Return from callback cancellation only after the foreground job has yielded
-// back to the shell, so the caller can immediately reuse the same session.
-static void ORTCancelExecution(ORTArm64TerminalSession *session, ORTArm64Execution *execution) {
-  dispatch_sync(session.queue, ^{ ORTAbandon(session, execution); });
-  const NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + 2.5;
-  for (;;) {
-    __block BOOL done = NO;
-    dispatch_sync(session.queue, ^{
-      done = execution.done || session.closed;
-      if (!done && NSProcessInfo.processInfo.systemUptime >= deadline) {
-        [session fail:@"ARM64 foreground command did not stop after cancellation"];
-        done = YES;
-      }
-      if (done && session.execution == execution) session.execution = nil;
-    });
-    if (done) return;
-    dispatch_semaphore_wait(execution.changed, dispatch_time(DISPATCH_TIME_NOW, 20LL * NSEC_PER_MSEC));
-  }
 }
 // Source a real guest file rather than placing an arbitrarily long command on
 // a canonical PTY line. Sourcing preserves shell variables and working directory.
@@ -1081,8 +1133,10 @@ static NSString *ORTWriteCommand(ORTArm64TerminalSession *session, ORTArm64Execu
   }
   return [@"/tmp/" stringByAppendingString:execution.scriptName];
 }
-static NSDictionary *ORTExecute(ORTArm64TerminalSession *session, NSString *command, uint64_t timeout,
-                                void *context, operit_ios_arm64_terminal_output_callback callback) {
+/// Submits a command and delivers owned output/completion callbacks from the session queue.
+static NSDictionary *ORTExecuteAsync(ORTArm64TerminalSession *session, NSString *command, uint64_t timeout,
+    void *context, operit_ios_arm64_terminal_output_callback callback,
+    operit_ios_arm64_terminal_completion_callback completion) {
   ORTArm64Execution *execution = [ORTArm64Execution new];
   execution.boundedOutput = timeout != 0;
   __block NSString *error = nil;
@@ -1101,67 +1155,39 @@ static NSDictionary *ORTExecute(ORTArm64TerminalSession *session, NSString *comm
     NSString *display = [[command stringByReplacingOccurrencesOfString:@"\r\n" withString:@"\n"]
                          stringByReplacingOccurrencesOfString:@"\n" withString:@"\r\n"];
     [session publish:[[display stringByAppendingString:@"\r\n"] dataUsingEncoding:NSUTF8StringEncoding]];
+    __weak ORTArm64Execution *weakExecution = execution;
+    execution.changed = ^{
+      ORTArm64Execution *pending = weakExecution;
+      if (!pending || pending.notificationScheduled) return;
+      pending.notificationScheduled = YES;
+      dispatch_async(session.queue, ^{
+        pending.notificationScheduled = NO;
+        // Completion retires the handler before releasing the Rust callback context.
+        if (!pending.changed) return;
+        NSData *frame = [pending.frames copy];
+        [pending.frames setLength:0];
+        if (frame.length) callback(context, static_cast<const uint8_t *>(frame.bytes), frame.length);
+        if (!pending.done) return;
+        pending.changed = nil;
+        if (session.execution == pending) session.execution = nil;
+        NSDictionary *receipt = pending.error ? ORTError(pending.error) : ORTResult(@{
+          @"sessionId": session.sessionId, @"terminalType": @"shell", @"exitCode": @(pending.exitCode)
+        });
+        // Ownership of this encoded response passes to the Rust completion callback.
+        completion(context, ORTEncode(receipt));
+      });
+    };
     session.execution = execution;
     session.commandRunning = YES;
     [session.queuedInput appendData:input];
-    [session schedulePump:0];
+    [session schedulePump];
   });
-  if (error) return ORTError(error);
-  NSMutableData *output = [NSMutableData data];
-  NSTimeInterval deadline = NSProcessInfo.processInfo.systemUptime + (NSTimeInterval)timeout / 1000.0;
-  for (;;) {
-    __block NSData *frame = nil;
-    __block BOOL done = NO;
-    __block BOOL started = NO;
-    __block NSInteger exitCode = 0;
-    dispatch_sync(session.queue, ^{
-      frame = [execution.frames copy];
-      [execution.frames setLength:0];
-      error = execution.error;
-      done = execution.done;
-      started = execution.started;
-      exitCode = execution.exitCode;
-    });
-    [output appendData:frame];
-    if (timeout == 0 && output.length > ORTOutputCapacity)
-      [output replaceBytesInRange:NSMakeRange(0, output.length - ORTOutputCapacity) withBytes:nullptr length:0];
-    // Empty frames poll cancellation while a running command is silent.
-    if (callback && (frame.length || (started && !done)) &&
-        !callback(context, frame.length ? static_cast<const uint8_t *>(frame.bytes) : nullptr, frame.length)) {
-      ORTCancelExecution(session, execution);
-      return ORTError(@"ARM64 terminal execution canceled by its output callback");
-    }
-    if (done) {
-      dispatch_sync(session.queue, ^{ if (session.execution == execution) session.execution = nil; });
-      if (error) return ORTError(error);
-      return ORTResult(@{ @"sessionId": session.sessionId, @"terminalType": @"shell", @"outputBytes": ORTBytes(output),
-                         @"exitCode": @(exitCode), @"timedOut": @NO });
-    }
-    if (timeout != 0 && NSProcessInfo.processInfo.systemUptime >= deadline) {
-      __block NSData *lastFrame = nil;
-      dispatch_sync(session.queue, ^{
-        // Recheck on the owning queue: completion can race the caller deadline.
-        if (!execution.done) ORTAbandon(session, execution);
-        else done = YES;
-        error = execution.error;
-        exitCode = execution.exitCode;
-        lastFrame = [execution.frames copy];
-        [execution.frames setLength:0];
-        if (execution.done && session.execution == execution) session.execution = nil;
-      });
-      [output appendData:lastFrame];
-      if (callback && lastFrame.length && !callback(context, static_cast<const uint8_t *>(lastFrame.bytes), lastFrame.length))
-        return ORTError(@"ARM64 terminal execution canceled by its output callback");
-      if (error) return ORTError(error);
-      return ORTResult(@{ @"sessionId": session.sessionId, @"terminalType": @"shell", @"outputBytes": ORTBytes(output),
-                         @"exitCode": done ? @(exitCode) : @124, @"timedOut": @(!done) });
-    }
-    dispatch_semaphore_wait(execution.changed, dispatch_time(DISPATCH_TIME_NOW, 20LL * NSEC_PER_MSEC));
-  }
+  return error ? ORTError(error) : ORTResult(@{});
 }
 
 static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *context,
-                               operit_ios_arm64_terminal_output_callback callback) {
+                               operit_ios_arm64_terminal_output_callback callback,
+                               operit_ios_arm64_terminal_completion_callback completion) {
   ORTInitialize();
   __block NSString *error = nil;
   if ([command isEqualToString:@"arm64RuntimeConfigure"]) {
@@ -1240,21 +1266,23 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
   }
   ORTArm64TerminalSession *session = ORTSession(request, &error);
   if (!session) return ORTError(error);
-  if ([command isEqualToString:@"terminalExecute"]) {
+  if ([command isEqualToString:@"terminalExecuteAsync"]) {
     NSString *shellCommand = ORTString(request, @"command", &error);
-    id timeout = request[@"timeoutMs"];
     if (error) return ORTError(error);
+    id timeout = request[@"timeoutMs"];
     if (![timeout isKindOfClass:NSNumber.class] || CFGetTypeID((__bridge CFTypeRef)timeout) == CFBooleanGetTypeID() ||
         [timeout doubleValue] < 0 || [timeout doubleValue] != [timeout unsignedLongLongValue])
       return ORTError(@"ARM64 terminal request has invalid timeoutMs");
-    return ORTExecute(session, shellCommand, [timeout unsignedLongLongValue], context, callback);
+    if (!context || !callback || !completion) return ORTError(@"ARM64 command callbacks are missing");
+    return ORTExecuteAsync(session, shellCommand, [timeout unsignedLongLongValue], context, callback, completion);
   }
+
   __block NSDictionary *result = nil;
   dispatch_sync(session.queue, ^{
     if ([command isEqualToString:@"terminalRead"]) {
       NSData *data = [session.pendingOutput copy];
       [session.pendingOutput setLength:0];
-      [session schedulePump:0];
+      [session schedulePump];
       // Deliver all buffered real output before reporting a VM failure.
       result = data.length || !session.failure ? ORTResult(@{ @"bytes": ORTBytes(data) }) : ORTError(session.failure);
     } else if ([command isEqualToString:@"terminalScreen"]) {
@@ -1271,16 +1299,13 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
     } else if ([command isEqualToString:@"terminalWrite"]) {
       NSData *input = ORTInput(request, &error);
       if (!input) { result = ORTError(error); return; }
-      if (session.queuedInput.length) { result = ORTError(@"ARM64 command input is still being submitted"); return; }
-      int64_t accepted = input.length ? ort_arm64_terminal_write(session.vm, input.bytes, input.length) : 0;
-      if (accepted == ORTLinuxAgain) accepted = 0;
-      if (accepted < 0 || (uint64_t)accepted > input.length) {
-        result = ORTError([NSString stringWithFormat:@"ARM64 terminal write failed (Linux errno %lld)", (long long)-accepted]);
-        return;
+      if (input.length > ORTCommandCapacity - session.queuedInput.length) {
+        result = ORTError(@"ARM64 terminal input queue exceeded 16 MiB"); return;
       }
-      if (accepted && memchr(input.bytes, '\n', (size_t)accepted)) session.commandRunning = YES;
-      [session schedulePump:0];
-      result = ORTResult(@{ @"acceptedBytes": @(accepted) });
+      [session.queuedInput appendData:input];
+      if (input.length && memchr(input.bytes, '\n', input.length)) session.commandRunning = YES;
+      [session schedulePump];
+      result = ORTResult(@{ @"acceptedBytes": @(input.length) });
     } else if ([command isEqualToString:@"terminalResize"]) {
       uint32_t rows = ORTDimension(request, @"rows", &error);
       uint32_t cols = ORTDimension(request, @"cols", &error);
@@ -1291,8 +1316,11 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
       }
       session.rows = rows;
       session.cols = cols;
-      [session schedulePump:0];
+      [session schedulePump];
       result = ORTResult(@{});
+    } else if ([command isEqualToString:@"terminalCancel"]) {
+      if (session.execution) ORTAbandon(session, session.execution);
+      result = session.failure ? ORTError(session.failure) : ORTResult(@{});
     } else if ([command isEqualToString:@"terminalSignal"]) {
       id signal = request[@"signal"];
       if (![signal isKindOfClass:NSNumber.class] || [signal intValue] != ORTLinuxInterrupt) {
@@ -1313,7 +1341,8 @@ static NSDictionary *ORTHandle(NSString *command, NSDictionary *request, void *c
   return result;
 }
 static char *ORTCall(const char *command, const char *requestJSON, void *context,
-                      operit_ios_arm64_terminal_output_callback callback) {
+                      operit_ios_arm64_terminal_output_callback callback,
+                      operit_ios_arm64_terminal_completion_callback completion) {
   @autoreleasepool {
     if (!command || !requestJSON) return ORTEncode(ORTError(@"ARM64 terminal bridge request is missing"));
     NSString *name = [NSString stringWithUTF8String:command];
@@ -1322,14 +1351,15 @@ static char *ORTCall(const char *command, const char *requestJSON, void *context
     id request = [NSJSONSerialization JSONObjectWithData:data options:0 error:&error];
     if (!name || ![request isKindOfClass:NSDictionary.class])
       return ORTEncode(ORTError(error.localizedDescription ?: @"ARM64 terminal request must be a JSON object"));
-    return ORTEncode(ORTHandle(name, request, context, callback));
+    return ORTEncode(ORTHandle(name, request, context, callback, completion));
   }
 }
 extern "C" char *operit_ios_arm64_terminal_call(const char *command, const char *requestJSON) {
-  return ORTCall(command, requestJSON, nullptr, nullptr);
+  return ORTCall(command, requestJSON, nullptr, nullptr, nullptr);
 }
-extern "C" char *operit_ios_arm64_terminal_execute_streaming(const char *command, const char *requestJSON,
-    void *context, operit_ios_arm64_terminal_output_callback callback) {
-  return ORTCall(command, requestJSON, context, callback);
+extern "C" char *operit_ios_arm64_terminal_execute_async(const char *command, const char *requestJSON,
+    void *context, operit_ios_arm64_terminal_output_callback callback,
+    operit_ios_arm64_terminal_completion_callback completion) {
+  return ORTCall(command, requestJSON, context, callback, completion);
 }
 extern "C" void operit_ios_arm64_terminal_free(char *value) { free(value); }

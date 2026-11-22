@@ -79,7 +79,7 @@ async fn run_core_owned_command(
         }
         BuiltinRoot::Skill => skill::run_skill_command(application, args, output),
         BuiltinRoot::Mcp => mcp::run_mcp_command(application, args, output).await,
-        BuiltinRoot::Market => market::run_market_command(application, args, output),
+        BuiltinRoot::Market => market::run_market_command(application, args, output).await,
         BuiltinRoot::Host => host::run_host_command(application.hostManager.clone(), args, output),
         BuiltinRoot::Log => log::run_log_command(args, output),
         BuiltinRoot::LocalModels => {

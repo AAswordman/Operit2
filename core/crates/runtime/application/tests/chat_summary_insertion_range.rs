@@ -51,9 +51,6 @@ impl HostRuntimeTaskSchedulerHost for SummaryRangeScheduler {
     ) -> HostResult<()> {
         panic!("summary range loading must not schedule timers")
     }
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
         panic!("summary range loading must not wait for timers")
     }

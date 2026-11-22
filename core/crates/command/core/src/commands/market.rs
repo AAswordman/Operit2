@@ -76,17 +76,18 @@ struct PackageManagerCommand {
 
 impl PackageManagerCommand {
     /// Imports an external package file and returns structured metadata.
-    fn add_from_external(&self, path: &str) -> Result<ExternalPackageImportResult, String> {
-        self.manager
+    async fn add_from_external(&self, path: &str) -> Result<ExternalPackageImportResult, String> {
+        let import = self.manager
             .lock()
             .expect("package manager mutex poisoned")
-            .addPackageFileFromExternalStorageResult(path)
+            .addPackageFileFromExternalStorageResult(path);
+        import.await
     }
 }
 
 // ── Entry point ──────────────────────────────────────────────
 
-pub fn run_market_command(
+pub async fn run_market_command(
     application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
@@ -177,7 +178,7 @@ pub fn run_market_command(
                 .get(1)
                 .ok_or_else(|| "usage: operit2 market install <entryId> [versionId]".to_string())?;
             let version_id = args.get(2).map(String::as_str);
-            install_entry(core, entry_id, version_id, output)
+            install_entry(core, entry_id, version_id, output).await
         }
         "download" => {
             let asset_id = args
@@ -859,7 +860,7 @@ fn write_update_entry_response(
 // ── Install ─────────────────────────────────────────────────
 
 /// Installs one marketplace entry according to its declared type.
-fn install_entry(
+async fn install_entry(
     core: &mut MarketCommand,
     entry_id: &str,
     version_id: Option<&str>,
@@ -904,7 +905,7 @@ fn install_entry(
         }
         "skill" => install_skill_from_entry(core, entry, output),
         "mcp" => install_mcp_from_entry(core, entry, output),
-        "package" | "script" => install_artifact_from_entry(core, entry, version_id, output),
+        "package" | "script" => install_artifact_from_entry(core, entry, version_id, output).await,
         other => Err(format!("unknown market type: {other}")),
     }
 }
@@ -979,7 +980,7 @@ fn install_mcp_from_entry(
 }
 
 /// Installs one artifact through the market asset endpoint and verifies its immutable digest.
-fn install_artifact_from_entry(
+async fn install_artifact_from_entry(
     core: &mut MarketCommand,
     entry: MarketEntrySummary,
     version_id: Option<&str>,
@@ -1020,7 +1021,7 @@ fn install_artifact_from_entry(
     let entry_title = entry.title.clone();
     let temp_file = download_asset_to_temp_file(core, asset)?;
     let package_manager = core.package_manager();
-    let import_result = package_manager.add_from_external(&temp_file.to_string_lossy());
+    let import_result = package_manager.add_from_external(&temp_file.to_string_lossy()).await;
     core.context
         .vfs()?
         .deleteFile(&temp_file.to_string_lossy(), false)
@@ -1407,6 +1408,7 @@ mod tests {
         }
     }
 
+    /// Drives each parsing fixture through the asynchronous command entry point.
     fn run_market_cli(args: &[&str]) {
         static TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         let _guard = TEST_LOCK
@@ -1417,7 +1419,8 @@ mod tests {
         let mut out = CoreCommandOutput::new();
         let args: Vec<String> = args.iter().map(|s| s.to_string()).collect();
         // Tests that parsing does not panic; network/IO errors are OK at this level.
-        let _ = run_market_command(&application, &args, &mut out);
+        let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().unwrap();
+        let _ = runtime.block_on(run_market_command(&application, &args, &mut out));
     }
 
     #[test]

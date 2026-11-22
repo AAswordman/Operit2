@@ -849,6 +849,10 @@ FD InotifyFile::duplicate_handle() const {
 int InotifyFile::native_handle() const noexcept {
     return impl_->reader.get();
 }
+// The coordinator pumps native changes after this descriptor becomes readable.
+int InotifyFile::backend_handle() const noexcept {
+    return impl_->backend.get();
+}
 std::optional<size_t> InotifyFile::try_read(void *buffer, size_t capacity) {
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->pump();

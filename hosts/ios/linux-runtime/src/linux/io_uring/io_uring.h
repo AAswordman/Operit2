@@ -43,6 +43,8 @@ std::shared_ptr<CompletionContext> make_completion_context();
 // Call at every Machine quantum boundary and while all guest tasks are idle,
 // after all workers have stopped and before retrying blocked guest operations.
 void service_completions(const std::shared_ptr<CompletionContext> &context, Scheduler &scheduler);
+// Borrowed native completion pipe, valid for the owning Machine's lifetime.
+int completion_descriptor(const std::shared_ptr<CompletionContext> &context);
 
 struct SetupResult {
     int fd;

@@ -126,11 +126,6 @@ impl HostRuntimeTaskSchedulerHost for WebHostRuntimeTaskSchedulerHost {
             })
     }
 
-    /// Waits for the browser worker to advance to a later event-loop turn.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        waitForBrowserRuntimeDelay(0)
-    }
-
     /// Waits through the browser timer queue for one platform-owned delay.
     fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture {
         waitForBrowserRuntimeDelay(delayMs)

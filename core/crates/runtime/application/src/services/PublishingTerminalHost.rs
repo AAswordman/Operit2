@@ -221,6 +221,16 @@ impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
             .executeInSessionStreaming(sessionId, command, timeoutMs, onOutput)
     }
 
+    /// Preserves the exact backend when a caller obtains cooperative command state directly.
+    fn beginInSessionStreaming(
+        self: Arc<Self>,
+        sessionId: String,
+        command: String,
+        timeoutMs: u64,
+    ) -> HostResult<Box<dyn operit_host_api::TerminalCommand::TerminalCommandExecution>> {
+        self.inner.clone().beginInSessionStreaming(sessionId, command, timeoutMs)
+    }
+
     /// Retains the concrete Host's scheduling model and publishes command lifecycle changes.
     fn scheduleInSessionStreaming(
         self: Arc<Self>,
@@ -232,6 +242,8 @@ impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
         onComplete: operit_host_api::TerminalCompletionCallback,
     ) -> HostResult<()> {
         let publisher = self.clone();
+        let outputScheduler = scheduler.clone();
+        let completionScheduler = scheduler.clone();
         let mut started = false;
         self.inner.clone().scheduleInSessionStreaming(
             scheduler,
@@ -240,16 +252,32 @@ impl operit_host_api::TerminalHost for RuntimeSessionPublishingTerminalHost {
             timeoutMs,
             Box::new(move |bytes, finalFrame| {
                 if !started {
-                    publisher.publish_sessions()?;
+                    let publisher = publisher.clone();
+                    outputScheduler.scheduleHostRuntimeTask("terminal-session-started", Box::new(move || {
+                        if let Err(error) = publisher.publish_sessions() {
+                            operit_host_api::logHostError("terminal-session-started", &error.message);
+                        }
+                    }))?;
                     started = true;
                 }
                 onOutput(bytes, finalFrame)
             }),
             Box::new(move |result| {
-                onComplete(result.and_then(|receipt| {
-                    self.publish_sessions()?;
-                    Ok(receipt)
+                let completion = Arc::new(std::sync::Mutex::new(Some(onComplete)));
+                let delivered = completion.clone();
+                let scheduled = completionScheduler.scheduleHostRuntimeTask("terminal-session-completed", Box::new(move || {
+                    let result = result.and_then(|receipt| { self.publish_sessions()?; Ok(receipt) });
+                    let complete = delivered.lock().unwrap_or_else(|error| error.into_inner()).take();
+                    if let Some(complete) = complete {
+                        complete(result);
+                    }
                 }));
+                if let Err(error) = scheduled {
+                    let complete = completion.lock().unwrap_or_else(|error| error.into_inner()).take();
+                    if let Some(complete) = complete {
+                        complete(Err(error));
+                    }
+                }
             }),
         )
     }

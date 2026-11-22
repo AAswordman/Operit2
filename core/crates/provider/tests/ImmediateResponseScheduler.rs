@@ -57,11 +57,6 @@ impl HostRuntimeTaskSchedulerHost for Scheduler {
         panic!("immediate-response fixture must not schedule delayed tasks")
     }
 
-    /// Provides an immediate event-loop turn for deterministic fixtures.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
-
     /// Keeps first-output deadlines pending and rejects unexpected retry delays.
     fn waitForHostRuntimeDelay(&self, delay_ms: u64) -> HostRuntimeTurnFuture {
         assert_eq!(

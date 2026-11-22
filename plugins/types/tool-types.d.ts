@@ -124,6 +124,7 @@ export interface ToolResultMap {
   list_core_nodes: string;
   switch_core: string;
   package_proxy: ToolResultData;
+  package_wait: JsonResultData;
   get_terminal_info: TerminalInfoResultData;
   execute_in_terminal_session: TerminalCommandResultData;
   execute_in_terminal_session_streaming: TerminalCommandResultData;

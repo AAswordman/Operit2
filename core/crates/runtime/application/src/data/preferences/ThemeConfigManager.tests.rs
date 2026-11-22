@@ -893,10 +893,6 @@ impl operit_host_api::HostRuntimeTaskSchedulerHost for ThemeObserverScheduler {
             ))
         })
     }
-    /// Finishes the explicitly synchronous observer turn.
-    fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
 }
 
 /// Migrates known user values in version one while preserving ordinary strings exactly.

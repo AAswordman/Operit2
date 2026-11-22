@@ -24,10 +24,10 @@ pub(super) struct PreparedPackageRegistry {
 
 impl PackageRegistryScanner {
     /// Runs filesystem reads and package-owned registration code outside the registry mutex.
-    pub(super) fn scan(mut self) -> Result<PreparedPackageRegistry, String> {
+    pub(super) async fn scan(mut self) -> Result<PreparedPackageRegistry, String> {
         let activation = PackageScanActivation::read()?;
-        let assets = self.scanBuiltInPackageAssets(&activation);
-        let snapshot = self.scanExternalPackages(assets, &activation);
+        let assets = self.scanBuiltInPackageAssets(&activation).await;
+        let snapshot = self.scanExternalPackages(assets, &activation).await;
         let (mut snapshot, scopes) = self.prepareOwnership(snapshot);
         let runtimes = self.runtimes.prepareRuntimeMaps(
             std::mem::take(&mut snapshot.toolPkgContainers),
@@ -39,7 +39,7 @@ impl PackageRegistryScanner {
         })
     }
     /// Prepares package declarations without holding the live registry owner.
-    fn scanBuiltInPackageAssets(&mut self, activation: &PackageScanActivation) -> PackageScanSnapshot {
+    async fn scanBuiltInPackageAssets(&mut self, activation: &PackageScanActivation) -> PackageScanSnapshot {
         let mut results = Vec::new();
         let mut nextCache = BTreeMap::new();
         for asset in self.runtimeSupport.builtinPluginAssets() {
@@ -50,7 +50,7 @@ impl PackageRegistryScanner {
                 None => self.parseCandidate(
                     asset.name, Ok(asset.bytes), ToolPkgSourceType::ASSET,
                     Ok(ToolPkgConfigScope::Device), Some(activation),
-                ),
+                ).await,
             };
             let packageName = RuntimePackageManager::packageNameFromScanResult(&result);
             let selected = match packageName.as_deref() {
@@ -80,7 +80,7 @@ impl PackageRegistryScanner {
     }
 
     /// Prepares package declarations without holding the live registry owner.
-    fn scanExternalPackages(&mut self, mut baseSnapshot: PackageScanSnapshot, activation: &PackageScanActivation) -> PackageScanSnapshot {
+    async fn scanExternalPackages(&mut self, mut baseSnapshot: PackageScanSnapshot, activation: &PackageScanActivation) -> PackageScanSnapshot {
         let mut files = Vec::new();
         for scope in operit_store::ExtensionStore::EXTENSION_LOAD_SCOPES {
             let root =
@@ -163,11 +163,10 @@ impl PackageRegistryScanner {
                     "external"
                 }
             );
-            let mut result = previousCache
-                .get(&cacheKey)
-                .filter(|entry| entry.signature == signature && activation.matches(&entry.result))
-                .map(|entry| entry.result.clone())
-                .unwrap_or_else(|| {
+            let mut result = match previousCache.get(&cacheKey)
+                .filter(|entry| entry.signature == signature && activation.matches(&entry.result)) {
+                Some(entry) => entry.result.clone(),
+                None => {
                     let sourceType = if isMarketToolPkg {
                         ToolPkgSourceType::MARKET
                     } else {
@@ -177,8 +176,9 @@ impl PackageRegistryScanner {
                     self.parseCandidate(
                         &cacheKey, bytes.as_deref().map_err(Clone::clone), sourceType,
                         self.installedPackageConfigScope(&file), Some(activation),
-                    )
-                });
+                    ).await
+                }
+            };
             if let Some(name) = RuntimePackageManager::packageNameFromScanResult(&result) {
                 if let Some(issue) = activation.shadowedIssue(&name, scope, &cacheKey) {
                     result = PackageScanCandidateResult { issues: vec![issue], ..Default::default() };
@@ -199,7 +199,26 @@ impl PackageRegistryScanner {
     }
 
     /// Parses all source kinds through one path; catalog previews never execute registration code.
-    pub(super) fn parseCandidate(
+    pub(super) async fn parseCandidate(
+        &self,
+        sourcePath: &str,
+        bytes: Result<&[u8], String>,
+        sourceType: ToolPkgSourceType,
+        scope: Result<ToolPkgConfigScope, String>,
+        activation: Option<&PackageScanActivation>,
+    ) -> PackageScanCandidateResult {
+        let archive = Path::new(sourcePath).extension().is_some_and(|extension| extension.eq_ignore_ascii_case("toolpkg"));
+        if let (true, Some(activation), Ok(bytes), Ok(scope)) = (archive, activation, &bytes, &scope) {
+            let builtin = sourceType == ToolPkgSourceType::ASSET;
+            let mut result = self.scanToolPkgArchive(bytes, sourceType, sourcePath, builtin, *scope, activation).await;
+            result.phase = if builtin { "asset" } else { "external" }.into();
+            return result;
+        }
+        self.parseCatalogCandidate(sourcePath, bytes, sourceType, scope, activation)
+    }
+
+    /// Reads metadata without executing package-owned registration code.
+    pub(super) fn parseCatalogCandidate(
         &self,
         sourcePath: &str,
         bytes: Result<&[u8], String>,
@@ -219,16 +238,10 @@ impl PackageRegistryScanner {
         let parsed = (|| -> Result<(), String> {
             let bytes = bytes?;
             if archive {
-                match activation {
-                    Some(activation) => {
-                        let phase = std::mem::take(&mut result.phase);
-                        result = self.scanToolPkgArchive(bytes, sourceType.clone(), sourcePath, builtin, scope?, activation);
-                        result.phase = phase;
-                    }
-                    None => result.toolPkgLoadResult = Some(ToolPkgArchiveParser::readToolPkgCatalog(
-                        bytes, sourceType.clone(), sourcePath, builtin,
-                    )?),
-                }
+                scope?;
+                result.toolPkgLoadResult = Some(ToolPkgArchiveParser::readToolPkgCatalog(
+                    bytes, sourceType.clone(), sourcePath, builtin,
+                )?);
             } else {
                 let package = match extension.as_str() {
                     "js" | "ts" => {
@@ -261,7 +274,7 @@ impl PackageRegistryScanner {
     }
 
     /// Discovers manifests and registers only enabled installations.
-    fn scanToolPkgArchive(
+    async fn scanToolPkgArchive(
         &self,
         bytes: &[u8],
         sourceType: ToolPkgSourceType,
@@ -275,7 +288,7 @@ impl PackageRegistryScanner {
         };
         let mut packageName = None;
         let mut displayName = packageProgressDisplayName(sourcePath);
-        let scanned = (|| -> Result<Option<ToolPkgLoadResult>, String> {
+        let scanned = async {
             let manifest = ToolPkgArchiveParser::readToolPkgManifest(bytes)?;
             packageName = Some(manifest.toolpkgId.clone());
             displayName = manifest.displayName.resolve(false);
@@ -302,21 +315,22 @@ impl PackageRegistryScanner {
             }
             beginPackageLoadProgress(sourcePath);
             let issues = RefCell::new(Vec::new());
-            let loaded = self.withToolPkgRegistrationEngine(|engine| {
+            let registrationEngine = self.registrationEngine()?;
+            let loaded = {
                 ToolPkgLoader::loadToolPkgFromArchiveBytes(
                     bytes, sourceType.clone(), sourcePath, isBuiltIn,
-                    configScope, engine, |packageName, error| {
+                    configScope, registrationEngine.engine.as_ref(), |packageName, error| {
                         issues.borrow_mut().push(newToolPkgLoadIssue(
                             sourcePath.into(), nonEmptyString(packageName), packageName.into(),
                             "toolpkg_registration", error.into(),
                             packageLoadIssueKind(sourcePath, true, sourceType == ToolPkgSourceType::MARKET),
                         ));
                     },
-                )
-            });
+                ).await
+            };
             result.issues.extend(issues.into_inner());
             loaded.map(Some)
-        })();
+        }.await;
         match scanned {
             Ok(loaded) => result.toolPkgLoadResult = loaded,
             Err(error) => result.issues.push(newToolPkgLoadIssue(
@@ -491,16 +505,12 @@ impl PackageRegistryScanner {
     }
 
     /// Prepares package declarations without holding the live registry owner.
-    pub(super) fn withToolPkgRegistrationEngine<T>(
-        &self,
-        operation: impl FnOnce(&dyn JsExecutionEngine) -> Result<T, String>,
-    ) -> Result<T, String> {
+    pub(super) fn registrationEngine(&self) -> Result<ToolPkgRegistrationEngineGuard, String> {
         // Registration runs package-owned code; per-load ownership prevents one timed-out
         // package from retaining state or blocking registration of the next package.
-        let registrationEngine = ToolPkgRegistrationEngineGuard {
+        Ok(ToolPkgRegistrationEngineGuard {
             engine: self.toolPkgExecutionEngineFactory.createExecutionEngine()?,
-        };
-        operation(registrationEngine.engine.as_ref())
+        })
     }
 
     /// Registers an installation using the same settings schema as catalog discovery.

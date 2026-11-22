@@ -197,9 +197,9 @@ interface WorkerRuntimeGlobals {
 const workerGlobal = globalThis as typeof globalThis & WorkerRuntimeGlobals;
 const controlStateIndex = 0;
 const controlLengthIndex = 1;
-const terminalFilesystemBuffer = new SharedArrayBuffer(1024 * 1024 + 8);
-const terminalFilesystemHeader = new Int32Array(terminalFilesystemBuffer, 0, 2);
-const terminalFilesystemPayload = new Uint8Array(terminalFilesystemBuffer, 8);
+const terminalFilesystemBuffer = new SharedArrayBuffer(1024 * 1024 + 12);
+const terminalFilesystemHeader = new Int32Array(terminalFilesystemBuffer, 0, 3);
+const terminalFilesystemPayload = new Uint8Array(terminalFilesystemBuffer, 12);
 const controlReady = 1;
 const controlPayloadReady = 2;
 const runtimeStorageDataFileName = "operit_runtime_storage.data";
@@ -347,6 +347,10 @@ function requestWorkerShutdown(): void {
     return;
   }
   shutdownRequested = true;
+  Atomics.store(terminalFilesystemHeader, 0, -1);
+  Atomics.notify(terminalFilesystemHeader, 0);
+  Atomics.add(terminalFilesystemHeader, 2, 1);
+  Atomics.notify(terminalFilesystemHeader, 2);
   shutdownPromise = (async () => {
     try {
       await workerReady;
@@ -535,17 +539,17 @@ function serviceTerminalFilesystem(): void {
   }
   terminalFilesystemPayload.set(encoded);
   Atomics.store(terminalFilesystemHeader, 1, encoded.length);
-  Atomics.store(terminalFilesystemHeader, 0, 2);
+  Atomics.compareExchange(terminalFilesystemHeader, 0, 3, 2);
   Atomics.notify(terminalFilesystemHeader, 0);
 }
 
 /** Keeps filesystem I/O live while a terminal command waits for its guest. */
 function waitForMainHost(control: Int32Array): void {
-  while (Atomics.load(control, controlStateIndex) === 0 || Atomics.load(control, controlStateIndex) === 3) {
-    Atomics.compareExchange(control, controlStateIndex, 3, 0);
+  while (Atomics.load(control, controlStateIndex) === 0) {
+    const generation = Atomics.load(terminalFilesystemHeader, 2);
+    if (Atomics.load(terminalFilesystemHeader, 0) === -1) throw new Error("Runtime worker owner stopped");
     serviceTerminalFilesystem();
-    // The timeout also serves VMs on another page while this page owns the call.
-    Atomics.wait(control, controlStateIndex, 0, 20);
+    if (Atomics.load(control, controlStateIndex) === 0) Atomics.wait(terminalFilesystemHeader, 2, generation);
   }
 }
 
@@ -604,6 +608,8 @@ function receiveMainHostPayload(message: WorkerHostPayload): void {
   const control = new Int32Array(message.control);
   Atomics.store(control, controlStateIndex, controlPayloadReady);
   Atomics.notify(control, controlStateIndex);
+  Atomics.add(terminalFilesystemHeader, 2, 1);
+  Atomics.notify(terminalFilesystemHeader, 2);
 }
 
 

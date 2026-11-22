@@ -48,10 +48,6 @@ impl HostRuntimeTaskSchedulerHost for Clock {
     ) -> HostResult<()> {
         panic!("no update timer")
     }
-    /// Rejects callback polling through runtime turns.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        panic!("no update polling")
-    }
     /// Keeps probe deadlines pending while deterministic fixture responses complete immediately.
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
         Box::pin(std::future::pending())

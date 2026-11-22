@@ -11,6 +11,37 @@
 #include <thread>
 
 namespace operit::arm64 {
+// Async native workers and filesystem changes share the ordinary scheduler wake path.
+std::vector<pollfd> Machine::runtime_wait_descriptors() {
+    std::vector<pollfd> descriptors;
+    for (const auto &[pid, process] : processes_) {
+        auto pending = process->image.syscalls->runtime_wait_descriptors();
+        descriptors.insert(descriptors.end(), pending.begin(), pending.end());
+    }
+    descriptors.push_back({io_uring::completion_descriptor(io_uring_context_), POLLIN, 0});
+    return descriptors;
+}
+// Convert the VM's steady-clock deadline to a relative duration, never a foreign epoch.
+size_t Machine::wait_sources(ort_arm64_wait_source *sources, size_t capacity, int64_t *timeout, bool writing) {
+    auto descriptors = scheduler_.wait_descriptors();
+    if (console_)
+        descriptors.push_back({console_->native_handle(), short(POLLIN | (writing ? POLLOUT : 0)), 0});
+    std::map<int, uint32_t> merged;
+    for (const auto &descriptor : descriptors)
+        if (descriptor.fd >= 0)
+            merged[descriptor.fd] |= ((descriptor.events & (POLLIN | POLLPRI)) ? ORT_ARM64_WAIT_READ : 0) |
+                                     ((descriptor.events & POLLOUT) ? ORT_ARM64_WAIT_WRITE : 0);
+    if (capacity >= merged.size() && sources) {
+        size_t index = 0;
+        for (const auto &[fd, events] : merged) sources[index++] = {fd, events};
+    }
+    if (timeout) {
+        const auto deadline = scheduler_.wait_deadline();
+        *timeout = deadline ? std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::nanoseconds>(
+            *deadline - TaskClock::now()).count()) : -1;
+    }
+    return merged.size();
+}
 Machine::Machine(const ort_arm64_config &config) : config_(config) {
     io_uring_context_ = io_uring::make_completion_context();
     scheduler_.set_process_controller(this);

@@ -340,16 +340,13 @@ async fn verify_package(
     }
     archive.finish().unwrap();
     let manager = handler.getOrCreatePackageManager();
-    {
-        let mut registry = manager.lock().unwrap();
-        registry.loadAvailablePackages();
-        registry.packageRegistryReadiness().require_ready().unwrap();
-        registry
-            .addPackageFileFromExternalStorageResult(&package.to_string_lossy())
-            .unwrap();
-        let enabled = registry.enableToolPkgContainer("com.operit.device_speech_processor");
-        assert!(!enabled.contains("not found"), "{enabled}");
-    }
+    operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager::reloadRegistry(manager.clone()).await.unwrap();
+    let imported = manager.lock().unwrap()
+        .addPackageFileFromExternalStorageResult(&package.to_string_lossy());
+    imported.await.unwrap();
+    let enabled = manager.lock().unwrap().enableToolPkgContainer("com.operit.device_speech_processor");
+    let enabled = enabled.await;
+    assert!(!enabled.contains("not found"), "{enabled}");
     let mut handler = handler.clone();
     let start = handler
         .executeTool(AITool {

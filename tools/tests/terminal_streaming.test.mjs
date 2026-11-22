@@ -40,6 +40,28 @@ test('managed SDK rejects invalid wait budgets before submitting any command', (
   assert.equal(f.calls.length, 0);
 });
 
+/** Exercises named continuous execution over the actual generated SDK and native pull transport. */
+test('named runStream snapshots the selected profile and retains observation until actual completion', async () => {
+  const f = fixture();
+  f.run("var request={sessionName:'build',profileId:'ubuntu_a',command:'slow build'}; var stream=Tools.System.terminal.runStream(request); request.profileId='ubuntu_b';");
+  const first = f.run('stream.next()');
+  assert.deepEqual(structuredClone(f.calls[0].parameters), {observation:{op:'runstream',request:{sessionName:'build',profileId:'ubuntu_a',command:'slow build'}}});
+  f.settle(0,{handle:'continuous'}); await turn();
+  f.settle(1,{event:{type:'start',sessionId:'original'}});
+  assert.equal((await first).value.sessionId,'original');
+  const next = f.run('stream.next()'); await turn();
+  f.settle(2,{event:{type:'chunk',sessionId:'original',chunk:'still running'}});
+  assert.equal((await next).value.chunk,'still running');
+  assert.equal(f.calls.some(call=>call.parameters.observation.op==='close'),false);
+  const done = f.run('stream.next()'); await turn();
+  f.settle(3,{event:{type:'completed',result:{sessionId:'original',output:'still running',exitCode:0,timedOut:false}}}); await turn();
+  assert.equal(f.calls[4].parameters.observation.op,'close');
+  f.settle(4,{});
+  assert.equal((await done).value.result.exitCode,0);
+  assert.equal((await f.run('stream.next()')).done,true);
+  await turn(); assert.equal(f.context.refs,0);
+});
+
 /** Preserves profile IDs without converting them into interpreter enums or guessed implementations. */
 test('managed SDK sends exact profiles and permits the configured default', async () => {
   const f = fixture();

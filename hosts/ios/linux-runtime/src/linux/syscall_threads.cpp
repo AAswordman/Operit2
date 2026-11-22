@@ -122,13 +122,6 @@ struct Futex2Timeout {
         return (deadline && *deadline <= TaskClock::now()) ||
                (realtime && futex2_realtime_expired(*realtime));
     }
-    std::function<std::optional<int64_t>()> clock_poll() const {
-        if (!realtime)
-            return {};
-        return [timeout = *realtime]() -> std::optional<int64_t> {
-            return futex2_realtime_expired(timeout) ? std::optional<int64_t>(-110) : std::nullopt;
-        };
-    }
 };
 Futex2Timeout futex2_timeout(Memory &memory, uint64_t address, int32_t clock) {
     Futex2Timeout result;
@@ -583,7 +576,10 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
                 guest_error(110);
             if (interrupt_for_pending_signal())
                 guest_error(4);
-            scheduler_.wait_futex_vector(std::move(queued), timeout.deadline, timeout.clock_poll());
+            std::vector<pollfd> descriptors;
+            auto clock_poll = threads::futex_realtime_timeout(timeout.realtime, descriptors);
+            scheduler_.wait_futex_vector(std::move(queued), timeout.deadline, std::move(clock_poll));
+            task.wait_descriptors = std::move(descriptors);
             return 0;
         } catch (const std::bad_alloc &) {
             guest_error(12);
@@ -626,9 +622,11 @@ int64_t Syscalls::dispatch_threads(CpuState &cpu) {
                 guest_error(110);
             if (interrupt_for_pending_signal())
                 guest_error(4);
-            auto clock_poll = timeout.clock_poll();
+            std::vector<pollfd> descriptors;
+            auto clock_poll = threads::futex_realtime_timeout(timeout.realtime, descriptors);
             scheduler_.wait_futex(key.address, uint32_t(a[2]), timeout.deadline, key.space);
             task.poll = std::move(clock_poll);
+            task.wait_descriptors = std::move(descriptors);
             return 0;
         } catch (const std::bad_alloc &) {
             guest_error(12);

@@ -1,13 +1,18 @@
+use operit_host_api::terminalSessionKey as sessionKey;
+use operit_host_api::TerminalText::{appendPtyOutput, csiParams, csiValue, nonBlank, parseExitCode, rfindBytes, stripPtyDeviceStatusReports, stripPtyPromptMarkers, scanPtyOutput, updatePtyCursor, PtyCursor};
 #[path = "../../../../common/terminal_command.rs"]
 mod terminal_command;
+mod conpty;
 mod powershell_runtime;
 
+use operit_host_api::TerminalControl::{controlToSequence, normalizeControl};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Condvar, Mutex};
-use std::thread;
+use std::sync::{Arc, Mutex};
+use std::process::Command as CommandBuilder;
+#[cfg(test)]
 use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD as BASE64_STANDARD;
@@ -17,14 +22,13 @@ use operit_host_api::{
     TerminalHost, TerminalInfo, TerminalInputOutput, TerminalScreenOutput, TerminalSessionInfo,
     TerminalSessionListEntry, TerminalTypeInfo,
 };
-use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
+use operit_host_api::HostRuntimeTaskSchedulerHost;
 use uuid::Uuid;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(1);
 const PTY_OUTPUT_LIMIT: usize = 1024 * 1024;
 const PTY_PROMPT_MARKER_PREFIX: &[u8] = b"\x1b]133;OperitPrompt=";
 const PTY_PROMPT_MARKER_END: u8 = 7;
-const COMMAND_CANCEL_SETTLE_TIMEOUT_MS: u64 = 3000;
 const PLATFORM: &str = "windows";
 const TERMINAL: &str = "native";
 const PRIMARY_TERMINAL_TYPE: &str = "powershell";
@@ -55,8 +59,7 @@ struct PtySession {
     terminalType: String,
     kind: TerminalKind,
     workingDir: String,
-    child: Box<dyn portable_pty::Child + Send + Sync>,
-    master: Box<dyn MasterPty + Send>,
+    process: conpty::Process,
     writer: Arc<Mutex<Box<dyn Write + Send>>>,
     output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: PtyCommandOutput,
@@ -65,21 +68,14 @@ struct PtySession {
     exitCode: Option<i32>,
 }
 
-type PtyCommandOutput = Arc<(Mutex<VecDeque<u8>>, Condvar)>;
-
-#[derive(Debug)]
-struct PtyCursor {
-    row: usize,
-    col: usize,
-}
+type PtyCommandOutput = Arc<operit_host_api::TerminalCommand::TerminalCommandBuffer>;
 
 type PtyCursorState = Arc<Mutex<PtyCursor>>;
 
 impl Drop for PtySession {
     /// Reaps the interpreter before releasing a session's workspace and runtime files.
     fn drop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
+        self.commandOutput.fail(HostError::new("Terminal session was closed"));
     }
 }
 
@@ -284,15 +280,12 @@ impl TerminalHost for WindowsTerminalHost {
     }
 
     fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
-        let state = self.lockState()?;
+        let mut state = self.lockState()?;
         let session = state
             .ptySessions
-            .get(sessionId)
+            .get_mut(sessionId)
             .ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
-        session
-            .master
-            .resize(ptySize(rows, cols))
-            .map_err(toHostError)
+        session.process.resize(rows, cols)
     }
 
     fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
@@ -304,9 +297,8 @@ impl TerminalHost for WindowsTerminalHost {
         if session.exitCode.is_some() {
             return Ok(session.exitCode);
         }
-        match session.child.try_wait()? {
-            Some(status) => {
-                let code = status.exit_code() as i32;
+        match session.process.try_wait()? {
+            Some(code) => {
                 session.exitCode = Some(code);
                 Ok(Some(code))
             }
@@ -314,18 +306,16 @@ impl TerminalHost for WindowsTerminalHost {
         }
     }
 
+    /// Removes registry ownership before tearing down a potentially blocking OS process.
     fn closePtySession(&self, sessionId: &str) -> HostResult<()> {
-        let mut state = self.lockState()?;
-        let removed = state.ptySessions.remove(sessionId);
-        match removed {
-            Some(_) => {
-                removeSessionMappings(&mut state, sessionId);
-                Ok(())
-            }
-            None => Err(HostError::new(format!(
-                "PTY session does not exist: {sessionId}"
-            ))),
-        }
+        let removed = {
+            let mut state = self.lockState()?;
+            let removed = state.ptySessions.remove(sessionId).ok_or_else(|| HostError::new(format!("PTY session does not exist: {sessionId}")))?;
+            removeSessionMappings(&mut state, sessionId);
+            removed
+        };
+        drop(removed);
+        Ok(())
     }
 
     fn listSessions(&self) -> HostResult<Vec<TerminalSessionListEntry>> {
@@ -333,8 +323,8 @@ impl TerminalHost for WindowsTerminalHost {
         let mut entries = Vec::new();
         for (sessionId, session) in state.ptySessions.iter_mut() {
             if session.exitCode.is_none() {
-                if let Some(status) = session.child.try_wait()? {
-                    session.exitCode = Some(status.exit_code() as i32);
+                if let Some(code) = session.process.try_wait()? {
+                    session.exitCode = Some(code);
                 }
             }
             if session.exitCode.is_some() {
@@ -419,86 +409,20 @@ impl TerminalHost for WindowsTerminalHost {
         self.executeInSessionStreaming(sessionId, command, timeoutMs, &mut |_| Ok(()))
     }
 
+    /// Runs explicit synchronous callers through the same event-driven command state.
     fn executeInSessionStreaming(
-        &self,
-        sessionId: &str,
-        command: &str,
-        timeoutMs: u64,
+        &self, sessionId: &str, command: &str, timeoutMs: u64,
         onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
     ) -> HostResult<TerminalCommandOutput> {
-        let normalizedSessionId = nonBlank(sessionId, "session_id")?;
-        let normalizedCommand = nonBlank(command, "command")?;
-        let (terminalType, kind, commandOutput, renderer, commandEcho) = {
-            let mut state = self.lockState()?;
-            let session = state
-                .ptySessions
-                .get_mut(&normalizedSessionId)
-                .ok_or_else(|| {
-                    HostError::new(format!("Terminal session does not exist: {sessionId}"))
-                })?;
-            let renderer = ptyScreenRenderer(session)?;
-            if session.commandRunning {
-                return Err(HostError::new(
-                    "Terminal session already has a command in progress",
-                ));
-            }
-            clearPtyCommandOutput(&session.commandOutput)?;
-            let commandEcho = ptyCommandLine(&normalizedCommand, session.kind);
-            let commandInput = format!("{commandEcho}\r");
-            let mut writer = session
-                .writer
-                .lock()
-                .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
-            writer.write_all(commandInput.as_bytes())?;
-            writer.flush()?;
-            session.commandRunning = true;
-            (
-                session.terminalType.clone(),
-                session.kind,
-                session.commandOutput.clone(),
-                renderer,
-                commandEcho,
-            )
-        };
+        operit_host_native_common::runTerminalCommandSynchronously(
+            Box::new(self.beginCommand(sessionId, command, timeoutMs)?), onOutput,
+        )
+    }
 
-        let result = executePtyCommandInSession(
-            commandOutput,
-            kind,
-            &commandEcho,
-            timeoutMs,
-            renderer,
-            onOutput,
-        );
-        {
-            let mut state = self.lockState()?;
-            if let Some(session) = state.ptySessions.get_mut(&normalizedSessionId) {
-                // Release the busy flag even if interrupting a broken PTY fails.
-                // The state lock still excludes new commands during cancellation.
-                session.commandRunning = false;
-                if result.as_ref().map_or(true, |receipt| receipt.timedOut) {
-                    if let Some(workingDir) = cancelTimedOutPtyCommand(session)? {
-                        session.workingDir = workingDir;
-                    }
-                } else if let Some(workingDir) = result
-                    .as_ref()
-                    .ok()
-                    .and_then(|receipt| receipt.workingDir.clone())
-                {
-                    session.workingDir = workingDir;
-                }
-            }
-        }
-        let result = result?;
-        Ok(TerminalCommandOutput {
-            command: normalizedCommand,
-            output: result.output,
-            exitCode: result.exitCode,
-            sessionId: normalizedSessionId,
-            platform: PLATFORM.to_string(),
-            terminal: TERMINAL.to_string(),
-            terminalType,
-            timedOut: result.timedOut,
-        })
+    /// Returns command state whose output waits never occupy a host worker.
+    fn beginInSessionStreaming(self: Arc<Self>, sessionId: String, command: String, timeoutMs: u64)
+        -> HostResult<Box<dyn operit_host_api::TerminalCommand::TerminalCommandExecution>> {
+        Ok(Box::new(self.beginCommand(&sessionId, &command, timeoutMs)?))
     }
 
     fn executeHiddenCommand(
@@ -564,13 +488,7 @@ impl TerminalHost for WindowsTerminalHost {
 
     fn closeSession(&self, sessionId: &str) -> HostResult<TerminalCloseOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
-        let mut state = self.lockState()?;
-        if state.ptySessions.remove(&normalizedSessionId).is_none() {
-            return Err(HostError::new(format!(
-                "Terminal session does not exist: {sessionId}"
-            )));
-        }
-        removeSessionMappings(&mut state, &normalizedSessionId);
+        self.closePtySession(&normalizedSessionId)?;
         Ok(TerminalCloseOutput {
             sessionId: normalizedSessionId.clone(),
             success: true,
@@ -590,8 +508,10 @@ impl TerminalHost for WindowsTerminalHost {
         if session.commandRunning {
             return Err(HostError::new("Terminal session has a command in progress"));
         }
-        state.ptySessions.remove(&id);
+        let removed = state.ptySessions.remove(&id);
         removeSessionMappings(&mut state, &id);
+        drop(state);
+        drop(removed);
         Ok(TerminalCloseOutput { sessionId: id.clone(), success: true, message: format!("Idle terminal session closed: {id}") })
     }
 
@@ -672,12 +592,214 @@ fn hiddenPtySessionId(
     Ok(sessionId)
 }
 
-struct SessionCommandResult {
-    output: String,
-    exitCode: i32,
-    timedOut: bool,
+/// Owns command parsing independently of the executor thread awaiting terminal events.
+struct CooperativeCommand {
+    host: WindowsTerminalHost,
+    sessionId: String,
+    command: String,
+    terminalType: String,
+    commandEcho: String,
+    commandOutput: PtyCommandOutput,
+    timeoutMs: u64,
+    collected: Vec<u8>,
     workingDir: Option<String>,
+    kind: TerminalKind,
+    renderer: TerminalTextRenderer,
+    writer: Arc<Mutex<Box<dyn Write + Send>>>,
 }
+
+impl WindowsTerminalHost {
+    /// Submits one command and reserves its session before asynchronous observation begins.
+    fn beginCommand(
+        &self,
+        sessionId: &str,
+        command: &str,
+        timeoutMs: u64,
+    ) -> HostResult<CooperativeCommand> {
+        let normalizedSessionId = nonBlank(sessionId, "session_id")?;
+        let normalizedCommand = nonBlank(command, "command")?;
+        let (terminalType, kind, commandOutput, renderer, commandEcho, writer) = {
+            let mut state = self.lockState()?;
+            let session = state
+                .ptySessions
+                .get_mut(&normalizedSessionId)
+                .ok_or_else(|| {
+                    HostError::new(format!("Terminal session does not exist: {sessionId}"))
+                })?;
+            let renderer = ptyScreenRenderer(session)?;
+            if session.commandRunning {
+                return Err(HostError::new(
+                    "Terminal session already has a command in progress",
+                ));
+            }
+            clearPtyCommandOutput(&session.commandOutput)?;
+            let commandEcho = ptyCommandLine(&normalizedCommand, session.kind);
+            let commandInput = format!("{commandEcho}\r");
+            let mut writer = session
+                .writer
+                .lock()
+                .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
+            writer.write_all(commandInput.as_bytes())?;
+            writer.flush()?;
+            session.commandRunning = true;
+            (
+                session.terminalType.clone(),
+                session.kind,
+                session.commandOutput.clone(),
+                renderer,
+                commandEcho,
+                session.writer.clone(),
+            )
+        };
+
+        Ok(CooperativeCommand {
+            host: self.clone(),
+            commandEcho: commandEcho,
+            sessionId: normalizedSessionId,
+            command: normalizedCommand,
+            terminalType,
+            commandOutput,
+            timeoutMs,
+            collected: Vec::new(),
+            workingDir: None,
+            writer,
+            kind,
+            renderer,
+        })
+    }
+}
+
+impl operit_host_api::TerminalCommand::TerminalCommandExecution for CooperativeCommand {
+    /// Registers a wakeup and parses available protocol records without waiting.
+    fn pollOutput(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+        expired: bool,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
+    ) -> std::task::Poll<HostResult<TerminalCommandOutput>> {
+        let result = (|| -> HostResult<Option<TerminalCommandOutput>> {
+            let previousLength = self.collected.len();
+            let readerError = self.commandOutput.pollDrain(context, &mut self.collected)?;
+            if self.collected.len() > previousLength {
+                onOutput(&self.collected[previousLength..])?;
+            }
+            if self.timeoutMs == 0 && self.collected.len() > PTY_OUTPUT_LIMIT {
+                self.collected
+                    .drain(..self.collected.len() - PTY_OUTPUT_LIMIT);
+            }
+            let (output, exitCode, timedOut) =
+                if let Some((marker, output)) = completedPtyPrompt(
+                    &self.collected, self.kind, self.renderer.clone(), Some(&self.commandEcho),
+                )? {
+                    self.workingDir = Some(marker.workingDir);
+                    (output, marker.exitCode, false)
+                } else {
+                    if let Some(error) = readerError {
+                        return Err(error);
+                    }
+                    if !expired {
+                        return Ok(None);
+                    }
+                    (
+                        dropCommandEcho(renderPtyOutput(&self.collected, self.renderer.clone()), &self.commandEcho),
+                        -1,
+                        true,
+                    )
+                };
+            Ok(Some(TerminalCommandOutput {
+                command: self.command.clone(),
+                output,
+                exitCode,
+                sessionId: self.sessionId.clone(),
+                platform: PLATFORM.to_string(),
+                terminal: TERMINAL.to_string(),
+                terminalType: self.terminalType.clone(),
+                timedOut,
+            }))
+        })();
+        match result {
+            Ok(Some(receipt)) => std::task::Poll::Ready(Ok(receipt)),
+            Ok(None) => std::task::Poll::Pending,
+            Err(error) => std::task::Poll::Ready(Err(error)),
+        }
+    }
+
+    /// Keeps execution lifetime independent from the foreground observation deadline.
+    fn timeoutMs(&self) -> u64 {
+        self.timeoutMs
+    }
+
+    /// Sends Ctrl+C on the finite OS boundary without retaining the session registry lock.
+    fn beginInterrupt(&mut self) -> HostResult<()> {
+        self.commandOutput.clear()?;
+        self.collected.clear();
+        let mut writer = self
+            .writer
+            .lock()
+            .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
+        writer.write_all(b"\x03")?;
+        writer.flush()?;
+        Ok(())
+    }
+
+    /// Awaits the shell readiness marker through output notifications, including silent close.
+    fn pollInterrupt(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+        expired: bool,
+    ) -> std::task::Poll<HostResult<()>> {
+        let result = (|| -> HostResult<Option<()>> {
+            let readerError = self.commandOutput.pollDrain(context, &mut self.collected)?;
+            if let Some((marker, _)) = completedPtyPrompt(
+                &self.collected, self.kind, TerminalTextRenderer::new(self.renderer.rows, self.renderer.cols), None,
+            )? {
+                self.workingDir = Some(marker.workingDir);
+                return Ok(Some(()));
+            }
+            if let Some(error) = readerError {
+                return Err(error);
+            }
+            if expired {
+                return Err(HostError::new(
+                    "Timed out waiting for the interrupted terminal to become ready",
+                ));
+            }
+            Ok(None)
+        })();
+        match result {
+            Ok(Some(())) => std::task::Poll::Ready(Ok(())),
+            Ok(None) => std::task::Poll::Pending,
+            Err(error) => std::task::Poll::Ready(Err(error)),
+        }
+    }
+
+    /// Releases the busy flag only after completion, or closes an unresponsive session.
+    fn finish(
+        self: Box<Self>,
+        result: HostResult<TerminalCommandOutput>,
+        settled: HostResult<()>,
+    ) -> HostResult<TerminalCommandOutput> {
+        let mut state = self.host.lockState()?;
+        if let Err(error) = settled {
+            removeSessionMappings(&mut state, &self.sessionId);
+            let removed = state.ptySessions.remove(&self.sessionId);
+            drop(state);
+            drop(removed);
+            return Err(HostError::new(format!(
+                "Terminal session {} closed because its command could not be interrupted: {}",
+                self.sessionId, error.message
+            )));
+        }
+        if let Some(session) = state.ptySessions.get_mut(&self.sessionId) {
+            session.commandRunning = false;
+            if let Some(workingDir) = &self.workingDir {
+                session.workingDir = workingDir.clone();
+            }
+        }
+        result
+    }
+}
+
 
 #[allow(non_snake_case)]
 /// Prepares the selected interpreter before allocating its PTY.
@@ -695,15 +817,10 @@ fn createPtySession(
         Some(profile) => configuredPtyCommand(profile, kind, &workingDir)?,
         None => ptyCommand(powershell, kind, &workingDir)?,
     };
-    let ptySystem = native_pty_system();
-    let pair = ptySystem
-        .openpty(ptySize(rows, cols))
-        .map_err(toHostError)?;
-    let mut child = pair.slave.spawn_command(command).map_err(toHostError)?;
-    let mut reader = pair.master.try_clone_reader().map_err(toHostError)?;
-    let writer = Arc::new(Mutex::new(pair.master.take_writer().map_err(toHostError)?));
+    let (process, writer, reader) = conpty::Process::spawn(command, rows, cols)?;
+    let writer: Arc<Mutex<Box<dyn Write + Send>>> = Arc::new(Mutex::new(Box::new(writer)));
     let output = Arc::new(Mutex::new(VecDeque::new()));
-    let commandOutput: PtyCommandOutput = Arc::new((Mutex::new(VecDeque::new()), Condvar::new()));
+    let commandOutput: PtyCommandOutput = Arc::new(operit_host_api::TerminalCommand::TerminalCommandBuffer::new(PTY_OUTPUT_LIMIT));
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
     let cursorState: PtyCursorState = Arc::new(Mutex::new(PtyCursor { row: 1, col: 1 }));
     let outputForThread = output.clone();
@@ -711,42 +828,45 @@ fn createPtySession(
     let screenOutputForThread = screenOutput.clone();
     let writerForThread = writer.clone();
     let cursorStateForThread = cursorState.clone();
-    let reader_task =
-        operit_host_native_common::scheduleNativeServiceTask("operit-pty-reader", move || {
-            let mut buffer = [0u8; 4096];
-            loop {
-                match reader.read(&mut buffer) {
-                    Ok(0) => break,
-                    Ok(count) => {
+    operit_host_native_common::NativeHostRuntimeTaskSchedulerHost::new()
+        .scheduleHostRuntimeCooperativeAsyncTask("operit-pty-reader", Box::new(move || Box::pin(async move {
+            use std::os::windows::io::IntoRawHandle;
+            use tokio::io::AsyncReadExt;
+            let result: HostResult<()> = async {
+                let mut reader = unsafe { tokio::net::windows::named_pipe::NamedPipeServer::from_raw_handle(reader.into_raw_handle()) }?;
+                reader.connect().await?;
+                let mut buffer = [0u8; 64 * 1024];
+                loop {
+                    match reader.read(&mut buffer).await? {
+                    0 => return Err(HostError::new("PTY reader reached EOF")),
+                    count => {
                         let chunk = &buffer[..count];
-                        processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk);
+                        processPtyTerminalQueries(&writerForThread, &cursorStateForThread, chunk)?;
                         let commandChunk = stripPtyDeviceStatusReports(chunk);
                         let visibleChunk = stripPtyPromptMarkers(&commandChunk);
-                        appendPtyOutput(&outputForThread, &visibleChunk);
-                        appendPtyOutput(&screenOutputForThread, &visibleChunk);
+                        appendPtyOutput(&outputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
+                        appendPtyOutput(&screenOutputForThread, &visibleChunk, PTY_OUTPUT_LIMIT);
                         appendPtyCommandOutput(&commandOutputForThread, &commandChunk);
                     }
-                    Err(_) => break,
+                    }
                 }
-            }
-        });
-    if let Err(error) = reader_task {
-        let _ = child.kill();
-        return Err(error);
-    }
-    if let Err(error) = waitForInitialPtyPrompt(commandOutput.clone(), Duration::from_millis(10000))
-    {
-        let _ = child.kill();
-        return Err(error);
-    }
+            }.await;
+            commandOutputForThread.fail(result.unwrap_err());
+        })))?;
+    operit_host_native_common::waitForTerminalPrompt(
+        &commandOutput,
+        10000,
+        |bytes| completedPtyPrompt(bytes, kind, TerminalTextRenderer::new(usize::from(rows), usize::from(cols)), None)
+            .map(|prompt| prompt.is_some()),
+        |_| HostError::new("Timed out waiting for terminal prompt"),
+    )?;
     clearPtyCommandOutput(&commandOutput)?;
     Ok(PtySession {
         sessionName,
         terminalType,
         kind,
         workingDir,
-        child,
-        master: pair.master,
+        process,
         writer,
         output,
         commandOutput,
@@ -756,13 +876,13 @@ fn createPtySession(
     })
 }
 
-/// Encodes a multiline script as one input line for its selected interactive interpreter.
+/// Encodes scripts that interactive line editors cannot accept losslessly as one UTF-8 input line.
 #[allow(non_snake_case)]
 fn ptyCommandLine(command: &str, kind: TerminalKind) -> String {
     match kind {
         TerminalKind::Bash => terminal_command::posixCommandLine(command),
         TerminalKind::PowerShell => {
-            if !command.chars().any(char::is_control) {
+            if command.is_ascii() && !command.chars().any(char::is_control) {
                 return command.to_string();
             }
             let encoded = BASE64_STANDARD.encode(command.as_bytes());
@@ -791,7 +911,7 @@ fn ptyCommand(powershell: &PowerShellSource, kind: TerminalKind, workingDir: &st
             command.arg("--noprofile");
             command.arg("--norc");
             command.arg("-i");
-            command.cwd(workingDir);
+            command.current_dir(workingDir);
             command.env("TERM", "xterm-256color");
             command.env("COLORTERM", "truecolor");
             command.env("LANG", "C.UTF-8");
@@ -844,7 +964,7 @@ fn configuredPtyCommand(
             command.env("PROMPT_COMMAND", r#"__operit_status=$?; printf '\033]133;OperitPrompt=%s:%s\007' "$__operit_status" "$PWD""#);
         }
     }
-    command.cwd(workingDir);
+    command.current_dir(workingDir);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("LANG", "C.UTF-8");
@@ -971,7 +1091,7 @@ fn windowsPtyCommand(powershell: &PowerShellSource, workingDir: &str) -> HostRes
     command.arg("-NoExit");
     command.arg("-Command");
     command.arg(powershellPtyInitScript());
-    command.cwd(workingDir);
+    command.current_dir(workingDir);
     command.env("TERM", "xterm-256color");
     command.env("COLORTERM", "truecolor");
     command.env("LANG", "C.UTF-8");
@@ -985,264 +1105,38 @@ fn powershellPtyInitScript() -> &'static str {
 }
 
 #[allow(non_snake_case)]
-fn ptySize(rows: u16, cols: u16) -> PtySize {
-    PtySize {
-        rows,
-        cols,
-        pixel_width: 0,
-        pixel_height: 0,
-    }
-}
+/// Uses the session-owned event buffer for command output.
+fn appendPtyCommandOutput(output: &PtyCommandOutput, data: &[u8]) { output.append(data); }
 
 #[allow(non_snake_case)]
-fn appendPtyOutput(output: &Arc<Mutex<VecDeque<u8>>>, data: &[u8]) {
-    if let Ok(mut buffer) = output.lock() {
-        buffer.extend(data.iter().copied());
-        while buffer.len() > PTY_OUTPUT_LIMIT {
-            buffer.pop_front();
-        }
-    }
-}
-
-#[allow(non_snake_case)]
-fn appendPtyCommandOutput(output: &PtyCommandOutput, data: &[u8]) {
-    let (lock, condvar) = &**output;
-    if let Ok(mut buffer) = lock.lock() {
-        buffer.extend(data.iter().copied());
-        while buffer.len() > PTY_OUTPUT_LIMIT {
-            buffer.pop_front();
-        }
-        condvar.notify_all();
-    }
-}
-
-#[allow(non_snake_case)]
+/// Keeps finite cursor replies off the cooperative output reader's IOCP executor.
 fn processPtyTerminalQueries(
     writer: &Arc<Mutex<Box<dyn Write + Send>>>,
     cursorState: &PtyCursorState,
     data: &[u8],
-) {
-    let mut index = 0usize;
-    while index < data.len() {
-        if data[index..].starts_with(b"\x1b[6n") {
-            if let Ok(cursor) = cursorState.lock() {
-                let response = format!("\x1b[{};{}R", cursor.row, cursor.col);
-                if let Ok(mut writer) = writer.lock() {
-                    let _ = writer.write_all(response.as_bytes());
-                    let _ = writer.flush();
-                }
-            }
-            index += 4;
-            continue;
-        }
-        if data[index..].starts_with(PTY_PROMPT_MARKER_PREFIX) {
-            let payloadStart = index + PTY_PROMPT_MARKER_PREFIX.len();
-            if let Some(relativeEnd) = data[payloadStart..]
-                .iter()
-                .position(|value| *value == PTY_PROMPT_MARKER_END)
-            {
-                index = payloadStart + relativeEnd + 1;
-                continue;
-            }
-        }
-        if data[index] == b'\x1b' {
-            if index + 1 < data.len() && data[index + 1] == b'[' {
-                index += 2;
-                while index < data.len() {
-                    let value = data[index];
-                    index += 1;
-                    if value >= b'@' && value <= b'~' {
-                        break;
-                    }
-                }
-                continue;
-            }
-            if index + 1 < data.len() && data[index + 1] == b']' {
-                index += 2;
-                while index < data.len() {
-                    let value = data[index];
-                    index += 1;
-                    if value == PTY_PROMPT_MARKER_END {
-                        break;
-                    }
-                }
-                continue;
-            }
-        }
-        updatePtyCursor(cursorState, data[index]);
-        index += 1;
-    }
+) -> HostResult<()> {
+    scanPtyOutput(data, || {
+        let cursor = cursorState.lock().map_err(|_| HostError::new("PTY cursor state is poisoned"))?;
+        let response = format!("\x1b[{};{}R", cursor.row, cursor.col);
+        let writer = writer.clone();
+        operit_host_native_common::scheduleNativeBlockingTask("terminal-cursor-response", move || {
+            let mut writer = writer.lock().map_err(|_| HostError::new("PTY writer is poisoned"))?;
+            writer.write_all(response.as_bytes())?;
+            writer.flush().map_err(HostError::from)
+        })?;
+        Ok(())
+    }, |value| updatePtyCursor(cursorState, value))
 }
 
 #[allow(non_snake_case)]
-fn updatePtyCursor(cursorState: &PtyCursorState, value: u8) {
-    if let Ok(mut cursor) = cursorState.lock() {
-        match value {
-            b'\r' => cursor.col = 1,
-            b'\n' => {
-                cursor.row += 1;
-                cursor.col = 1;
-            }
-            8 => {
-                if cursor.col > 1 {
-                    cursor.col -= 1;
-                }
-            }
-            0x20..=0x7e => cursor.col += 1,
-            _ => {}
-        }
-    }
-}
+/// Uses the session-owned event buffer for command output.
+fn clearPtyCommandOutput(output: &PtyCommandOutput) -> HostResult<()> { output.clear() }
 
-#[allow(non_snake_case)]
-fn clearPtyCommandOutput(output: &PtyCommandOutput) -> HostResult<()> {
-    let (lock, _) = &**output;
-    let mut buffer = lock
-        .lock()
-        .map_err(|_| HostError::new("pty command output mutex poisoned"))?;
-    buffer.clear();
-    Ok(())
-}
 
-#[allow(non_snake_case)]
-fn waitForInitialPtyPrompt(output: PtyCommandOutput, timeout: Duration) -> HostResult<()> {
-    let deadline = Instant::now() + timeout;
-    let mut collected = Vec::new();
-    let mut promptSeenAt = None;
-    let quietPeriod = Duration::from_millis(150);
-    loop {
-        let drained = drainPtyCommandOutput(&output, &mut collected, deadline)?;
-        if drained > 0 {
-            promptSeenAt = None;
-        }
-        if findLastPtyPromptMarker(&collected)?.is_some() && promptSeenAt.is_none() {
-            promptSeenAt = Some(Instant::now());
-        }
-        if promptSeenAt.is_some_and(|seenAt| seenAt.elapsed() >= quietPeriod) {
-            return Ok(());
-        }
-        if Instant::now() >= deadline {
-            return Err(HostError::new("Timed out waiting for terminal prompt"));
-        }
-    }
-}
-
-#[allow(non_snake_case)]
-/// Waits for a typed PTY command to complete and extracts its output.
-fn executePtyCommandInSession(
-    output: PtyCommandOutput,
-    kind: TerminalKind,
-    command: &str,
-    timeoutMs: u64,
-    renderer: TerminalTextRenderer,
-    onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
-) -> HostResult<SessionCommandResult> {
-    let deadline = (timeoutMs != 0).then(|| Instant::now() + Duration::from_millis(timeoutMs));
-    let mut collected = Vec::new();
-    let mut promptSeenAt = None;
-    let quietPeriod = Duration::from_millis(150);
-    loop {
-        let previousLength = collected.len();
-        let waitDeadline = deadline.unwrap_or_else(|| Instant::now() + Duration::from_millis(100));
-        let drained = drainPtyCommandOutput(&output, &mut collected, waitDeadline)?;
-        onOutput(&collected[previousLength..])?;
-        if timeoutMs == 0 && collected.len() > PTY_OUTPUT_LIMIT {
-            collected.drain(..collected.len() - PTY_OUTPUT_LIMIT);
-        }
-        if drained > 0 {
-            promptSeenAt = None;
-        }
-        if let Some(marker) = findLastPtyPromptMarker(&collected)? {
-            if promptSeenAt.is_none() {
-                promptSeenAt = Some(Instant::now());
-            }
-            if !promptSeenAt.is_some_and(|seenAt| seenAt.elapsed() >= quietPeriod) {
-                if deadline.map_or(true, |deadline| Instant::now() < deadline) {
-                    continue;
-                }
-            }
-            let output = ptyCommandOutputText(
-                &collected,
-                kind,
-                command,
-                Some(&marker.workingDir),
-                renderer,
-            )?;
-            return Ok(SessionCommandResult {
-                output,
-                exitCode: marker.exitCode,
-                timedOut: false,
-                workingDir: Some(marker.workingDir),
-            });
-        }
-        if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
-            let output = ptyCommandOutputText(&collected, kind, command, None, renderer)?;
-            return Ok(SessionCommandResult {
-                output,
-                exitCode: -1,
-                timedOut: true,
-                workingDir: None,
-            });
-        }
-    }
-}
-
-#[allow(non_snake_case)]
-fn cancelTimedOutPtyCommand(session: &mut PtySession) -> HostResult<Option<String>> {
-    {
-        let mut writer = session
-            .writer
-            .lock()
-            .map_err(|_| HostError::new("pty writer mutex poisoned"))?;
-        writer.write_all(b"\x03")?;
-        writer.flush()?;
-    }
-
-    let deadline = Instant::now() + Duration::from_millis(COMMAND_CANCEL_SETTLE_TIMEOUT_MS);
-    let mut collected = Vec::new();
-    while Instant::now() < deadline {
-        let drained = drainPtyCommandOutput(&session.commandOutput, &mut collected, deadline)?;
-        if drained == 0 {
-            continue;
-        }
-        if let Some(marker) = findLastPtyPromptMarker(&collected)? {
-            return Ok(Some(marker.workingDir));
-        }
-    }
-    Ok(None)
-}
-
-#[allow(non_snake_case)]
-fn drainPtyCommandOutput(
-    output: &PtyCommandOutput,
-    collected: &mut Vec<u8>,
-    deadline: Instant,
-) -> HostResult<usize> {
-    let (lock, condvar) = &**output;
-    let mut buffer = lock
-        .lock()
-        .map_err(|_| HostError::new("pty command output mutex poisoned"))?;
-    if buffer.is_empty() {
-        let now = Instant::now();
-        if now < deadline {
-            let wait = (deadline - now).min(Duration::from_millis(100));
-            let result = condvar
-                .wait_timeout(buffer, wait)
-                .map_err(|_| HostError::new("pty command output mutex poisoned"))?;
-            buffer = result.0;
-        }
-    }
-    let mut drained = 0usize;
-    while let Some(value) = buffer.pop_front() {
-        collected.push(value);
-        drained += 1;
-    }
-    Ok(drained)
-}
 
 #[derive(Clone, Debug)]
 struct PtyPromptMarker {
-    start: usize,
+    end: usize,
     workingDir: String,
     exitCode: i32,
 }
@@ -1269,20 +1163,10 @@ fn findLastPtyPromptMarker(data: &[u8]) -> HostResult<Option<PtyPromptMarker>> {
     let workingDir = workingDir.to_string();
     let exitCode = parseExitCode(exitCodeText)?;
     Ok(Some(PtyPromptMarker {
-        start,
+        end: payloadEnd + 1,
         workingDir,
         exitCode,
     }))
-}
-
-#[allow(non_snake_case)]
-fn rfindBytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || haystack.len() < needle.len() {
-        return None;
-    }
-    haystack
-        .windows(needle.len())
-        .rposition(|window| window == needle)
 }
 
 #[allow(non_snake_case)]
@@ -1296,30 +1180,37 @@ fn findBytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 #[allow(non_snake_case)]
-/// Renders command output from the captured viewport and removes the shell-owned echo and prompt.
-fn ptyCommandOutputText(
-    raw: &[u8],
-    kind: TerminalKind,
-    command: &str,
-    workingDir: Option<&str>,
-    mut renderer: TerminalTextRenderer,
-) -> HostResult<String> {
+/// Renders bytes from the captured viewport without assuming ConPTY has flushed its final frame.
+fn renderPtyOutput(raw: &[u8], mut renderer: TerminalTextRenderer) -> String {
     let startRow = renderer.logicalLineStart();
     renderer.write(&String::from_utf8_lossy(raw));
-    let withoutEcho = dropCommandEcho(renderer.textFrom(startRow), command);
-    let Some(workingDir) = workingDir else {
-        return Ok(withoutEcho.trim().to_string());
+    renderer.textFrom(startRow)
+}
+
+#[allow(non_snake_case)]
+/// Waits for both OSC metadata and its rendered prompt because ConPTY forwards OSC before flushing text.
+fn completedPtyPrompt(raw: &[u8], kind: TerminalKind, renderer: TerminalTextRenderer, command: Option<&str>)
+    -> HostResult<Option<(PtyPromptMarker, String)>> {
+    let Some(marker) = findLastPtyPromptMarker(raw)? else {
+        return Ok(None);
     };
-    match kind {
-        TerminalKind::PowerShell => dropTrailingPowerShellPrompt(&withoutEcho, workingDir),
-        TerminalKind::Bash => dropTrailingBashPrompt(&withoutEcho, workingDir),
+    let prompt = match kind {
+        TerminalKind::PowerShell => format!("PS {}>", marker.workingDir),
+        TerminalKind::Bash => format!("{} $", marker.workingDir),
+    };
+    let flushed = renderPtyOutput(&raw[marker.end..], TerminalTextRenderer::new(renderer.rows, renderer.cols));
+    if dropTrailingPtyPrompt(&flushed, &prompt).is_none() { return Ok(None); }
+    let mut rendered = renderPtyOutput(raw, renderer);
+    if let Some(command) = command {
+        rendered = dropCommandEcho(rendered, command);
     }
+    Ok(dropTrailingPtyPrompt(&rendered, &prompt).map(|output| (marker, output)))
 }
 
 #[allow(non_snake_case)]
 /// Reconstructs the terminal viewport and scrollback using the session's actual dimensions.
 fn ptyScreenRenderer(session: &PtySession) -> HostResult<TerminalTextRenderer> {
-    let size = session.master.get_size().map_err(toHostError)?;
+    let size = &session.process;
     let buffer = session
         .screenOutput
         .lock()
@@ -1336,42 +1227,7 @@ fn ptyScreenContent(session: &PtySession) -> HostResult<String> {
     Ok(ptyScreenRenderer(session)?.textFrom(0))
 }
 
-#[allow(non_snake_case)]
-fn stripPtyPromptMarkers(raw: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(raw.len());
-    let mut index = 0usize;
-    while index < raw.len() {
-        if raw[index..].starts_with(PTY_PROMPT_MARKER_PREFIX) {
-            let payloadStart = index + PTY_PROMPT_MARKER_PREFIX.len();
-            if let Some(relativeEnd) = raw[payloadStart..]
-                .iter()
-                .position(|value| *value == PTY_PROMPT_MARKER_END)
-            {
-                index = payloadStart + relativeEnd + 1;
-                continue;
-            }
-        }
-        output.push(raw[index]);
-        index += 1;
-    }
-    output
-}
-
-#[allow(non_snake_case)]
-fn stripPtyDeviceStatusReports(raw: &[u8]) -> Vec<u8> {
-    let mut output = Vec::with_capacity(raw.len());
-    let mut index = 0usize;
-    while index < raw.len() {
-        if raw[index..].starts_with(b"\x1b[6n") {
-            index += 4;
-            continue;
-        }
-        output.push(raw[index]);
-        index += 1;
-    }
-    output
-}
-
+#[derive(Clone)]
 struct TerminalTextRenderer {
     lines: Vec<Vec<char>>,
     wrappedRows: BTreeSet<usize>,
@@ -1649,32 +1505,6 @@ impl TerminalTextRenderer {
     }
 }
 
-#[allow(non_snake_case)]
-fn csiParams(params: &str) -> Vec<Option<usize>> {
-    let params = params
-        .trim_start_matches('?')
-        .trim_start_matches('>')
-        .trim_start_matches('!');
-    params
-        .split(';')
-        .map(|value| {
-            if value.is_empty() {
-                None
-            } else {
-                value.parse::<usize>().ok()
-            }
-        })
-        .collect()
-}
-
-#[allow(non_snake_case)]
-fn csiValue(values: &[Option<usize>], index: usize, defaultValue: usize) -> usize {
-    values
-        .get(index)
-        .and_then(|value| *value)
-        .unwrap_or(defaultValue)
-}
-
 /// Removes the submitted command echo across physical terminal line wraps.
 #[allow(non_snake_case)]
 fn dropCommandEcho(value: String, command: &str) -> String {
@@ -1700,21 +1530,9 @@ fn dropCommandEcho(value: String, command: &str) -> String {
     lines.join("\n").trim().to_string()
 }
 
+/// Recognizes the complete rendered prompt across physical ConPTY rows without altering output newlines.
 #[allow(non_snake_case)]
-/// Removes the trailing PowerShell prompt from command output.
-fn dropTrailingPowerShellPrompt(value: &str, workingDir: &str) -> HostResult<String> {
-    dropTrailingPtyPrompt(value, &format!("PS {workingDir}>"))
-}
-
-#[allow(non_snake_case)]
-/// Removes the trailing Git Bash prompt from command output.
-fn dropTrailingBashPrompt(value: &str, workingDir: &str) -> HostResult<String> {
-    dropTrailingPtyPrompt(value, &format!("{workingDir} $"))
-}
-
-/// Matches the shell-owned prompt across physical ConPTY rows without altering command output.
-#[allow(non_snake_case)]
-fn dropTrailingPtyPrompt(value: &str, prompt: &str) -> HostResult<String> {
+fn dropTrailingPtyPrompt(value: &str, prompt: &str) -> Option<String> {
     let value = value.trim_end();
     let mut cells = value
         .char_indices()
@@ -1724,36 +1542,15 @@ fn dropTrailingPtyPrompt(value: &str, prompt: &str) -> HostResult<String> {
     for expected in prompt.chars().rev() {
         match cells.next() {
             Some((index, actual)) if actual == expected => start = index,
-            _ => {
-                let tail = value
-                    .chars()
-                    .rev()
-                    .take(prompt.chars().count() + 80)
-                    .collect::<Vec<_>>()
-                    .into_iter()
-                    .rev()
-                    .collect::<String>();
-                return Err(HostError::new(format!(
-                    "Missing terminal prompt suffix: expected={prompt:?}, renderedTail={tail:?}",
-                )));
-            }
+            _ => return None,
         }
     }
-    Ok(value[..start].trim().to_string())
+    Some(value[..start].trim().to_string())
 }
 
 #[allow(non_snake_case)]
 fn toHostError(error: impl std::fmt::Display) -> HostError {
     HostError::new(error.to_string())
-}
-
-#[allow(non_snake_case)]
-fn parseExitCode(exitCodeText: &str) -> HostResult<i32> {
-    exitCodeText.trim().parse::<i32>().map_err(|error| {
-        HostError::new(format!(
-            "Invalid terminal exit code marker '{exitCodeText}': {error}"
-        ))
-    })
 }
 
 #[allow(non_snake_case)]
@@ -1789,95 +1586,6 @@ fn applyPtyTerminalInput(
 }
 
 #[allow(non_snake_case)]
-fn controlToSequence(control: &str, input: Option<&str>) -> HostResult<String> {
-    match control {
-        "enter" => Ok("\n".to_string()),
-        "tab" => Ok("\t".to_string()),
-        "esc" => Ok("\x1b".to_string()),
-        "up" => Ok("\x1b[A".to_string()),
-        "down" => Ok("\x1b[B".to_string()),
-        "right" => Ok("\x1b[C".to_string()),
-        "left" => Ok("\x1b[D".to_string()),
-        "home" => Ok("\x1b[H".to_string()),
-        "end" => Ok("\x1b[F".to_string()),
-        "pageup" => Ok("\x1b[5~".to_string()),
-        "pagedown" => Ok("\x1b[6~".to_string()),
-        "delete" => Ok("\x1b[3~".to_string()),
-        "backspace" => Ok("\x7f".to_string()),
-        "ctrl" | "control" => ctrlSequence(input),
-        "alt" | "meta" | "cmd" => Ok(format!("\x1b{}", input.unwrap_or(""))),
-        "shift" => Ok(input.unwrap_or("").to_uppercase()),
-        other => Err(HostError::new(format!(
-            "Unsupported terminal control: {other}"
-        ))),
-    }
-}
-
-#[allow(non_snake_case)]
-fn ctrlSequence(input: Option<&str>) -> HostResult<String> {
-    let input = input.ok_or_else(|| HostError::new("ctrl control requires input"))?;
-    let mut chars = input.chars();
-    let value = chars
-        .next()
-        .ok_or_else(|| HostError::new("ctrl control requires input"))?;
-    if chars.next().is_some() {
-        return Err(HostError::new(
-            "ctrl control input must be a single character",
-        ));
-    }
-    let code = match value.to_ascii_uppercase() {
-        'A'..='Z' => value.to_ascii_uppercase() as u8 - b'A' + 1,
-        '[' => 27,
-        '\\' => 28,
-        ']' => 29,
-        '^' => 30,
-        '_' => 31,
-        '?' => 127,
-        other => {
-            return Err(HostError::new(format!(
-                "Unsupported ctrl control input: {other}"
-            )))
-        }
-    };
-    Ok((code as char).to_string())
-}
-
-#[allow(non_snake_case)]
-fn normalizeControl(rawControl: &str) -> Option<&'static str> {
-    match rawControl.trim().to_ascii_lowercase().as_str() {
-        "" => None,
-        "return" => Some("enter"),
-        "escape" => Some("esc"),
-        "arrowup" => Some("up"),
-        "arrowdown" => Some("down"),
-        "arrowleft" => Some("left"),
-        "arrowright" => Some("right"),
-        "pgup" | "page_up" => Some("pageup"),
-        "pgdn" | "page_down" => Some("pagedown"),
-        "del" => Some("delete"),
-        "enter" => Some("enter"),
-        "tab" => Some("tab"),
-        "esc" => Some("esc"),
-        "up" => Some("up"),
-        "down" => Some("down"),
-        "left" => Some("left"),
-        "right" => Some("right"),
-        "home" => Some("home"),
-        "end" => Some("end"),
-        "pageup" => Some("pageup"),
-        "pagedown" => Some("pagedown"),
-        "delete" => Some("delete"),
-        "backspace" => Some("backspace"),
-        "ctrl" | "control" => Some("ctrl"),
-        "alt" => Some("alt"),
-        "shift" => Some("shift"),
-        "meta" => Some("meta"),
-        "cmd" => Some("cmd"),
-        _ => None,
-    }
-}
-
-#[allow(non_snake_case)]
 fn normalizeTerminalType(terminalType: &str) -> HostResult<(String, TerminalKind)> {
     match terminalType.trim() {
         "powershell" => Ok(("powershell".to_string(), TerminalKind::PowerShell)),
@@ -1899,25 +1607,11 @@ fn requireNativeTerminal(terminal: &str) -> HostResult<()> {
 }
 
 #[allow(non_snake_case)]
-fn sessionKey(terminalType: &str, name: &str) -> String {
-    format!("{terminalType}:{name}")
-}
-
-#[allow(non_snake_case)]
 fn removeSessionMappings(state: &mut TerminalState, sessionId: &str) {
     state.sessionNameToId.retain(|_, value| value != sessionId);
     state
         .hiddenExecutorKeyToSessionId
         .retain(|_, value| value != sessionId);
-}
-
-#[allow(non_snake_case)]
-fn nonBlank(value: &str, paramName: &str) -> HostResult<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return Err(HostError::new(format!("{paramName} parameter is required")));
-    }
-    Ok(trimmed.to_string())
 }
 
 #[allow(non_snake_case)]
@@ -1929,6 +1623,88 @@ fn nextSessionId() -> String {
 mod tests {
     use super::*;
     use operit_host_api::TerminalHost;
+
+    /// Keeps more silent ConPTY sessions than service workers live, including Unicode output and teardown.
+    #[test]
+    fn iocp_terminal_sessions_do_not_consume_service_capacity() {
+        let host = WindowsTerminalHost::new();
+        let powershell = PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32/WindowsPowerShell/v1.0/powershell.exe");
+        let host = host.configuredTerminal(&operit_host_api::TerminalProfile {
+            id: "iocp".into(), name: "IOCP".into(), nameKey: None,
+            terminal: TERMINAL.into(), terminalType: "powershell".into(),
+            options: BTreeMap::from([("executable".into(), powershell.display().to_string())]),
+        }).unwrap();
+        let mut sessions = Vec::new();
+        for index in 0..32 {
+            sessions.push(host.createOrGetSession(&format!("iocp-{index}")).unwrap().sessionId);
+        }
+        assert_eq!(host.listSessions().unwrap().len(), sessions.len());
+        host.resizePtySession(&sessions[0], 30, 100).unwrap();
+        let result = host.executeInSession(&sessions[0], "Write-Output '雪🌍'; Write-Output 'ready'", 5000).unwrap();
+        assert!(!result.timedOut);
+        assert_eq!(result.exitCode, 0);
+        assert_eq!(result.output, "雪🌍\nready");
+
+        for (command, expected, code) in [
+            ("$null", String::new(), 0),
+            ("cmd /c exit 7", String::new(), 7),
+            ("1..80 | ForEach-Object { 'line-' + $_ }", (1..=80).map(|index| format!("line-{index}")).collect::<Vec<_>>().join("\n"), 0),
+            ("Write-Output ready", "ready".into(), 0),
+        ] {
+            let result = host.executeInSession(&sessions[0], command, 5000).unwrap();
+            assert!(!result.timedOut, "{command}");
+            assert_eq!(result.exitCode, code, "{command}");
+            assert_eq!(result.output, expected, "{command}");
+        }
+
+        let mut streamed = Vec::new();
+        let mut beforeLast = false;
+        let result = host.executeInSessionStreaming(&sessions[0],
+            "Write-Output (('first','chunk') -join '-'); Start-Sleep -Milliseconds 300; Write-Output (('last','chunk') -join '-')",
+            5000, &mut |bytes| {
+                streamed.extend_from_slice(bytes);
+                beforeLast |= findBytes(&streamed, b"first-chunk").is_some()
+                    && findBytes(&streamed, b"last-chunk").is_none();
+                Ok(())
+            }).unwrap();
+        assert!(beforeLast, "first output was not streamed before the final output");
+        assert_eq!(result.output, "first-chunk\nlast-chunk");
+
+        let timed = host.executeInSession(&sessions[0], "Start-Sleep -Seconds 30", 300).unwrap();
+        assert!(timed.timedOut);
+        assert_eq!(host.executeInSession(&sessions[0], "Write-Output recovered", 5000).unwrap().output, "recovered");
+        assert!(!host.listSessions().unwrap().iter().find(|session| session.sessionId == sessions[0]).unwrap().commandRunning);
+
+        let active = host.clone().beginInSessionStreaming(sessions[1].clone(), "Start-Sleep -Seconds 30".into(), 0).unwrap();
+        assert!(host.clone().beginInSessionStreaming(sessions[1].clone(), "Write-Output concurrent".into(), 5000).is_err());
+        let (completed, closed) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            completed.send(operit_host_native_common::runTerminalCommandSynchronously(active, &mut |_| Ok(()))).unwrap();
+        });
+        host.closeSession(&sessions.remove(1)).unwrap();
+        assert!(closed.recv_timeout(Duration::from_secs(5)).unwrap().is_err());
+        waiter.join().unwrap();
+        for session in sessions { host.closeSession(&session).unwrap(); }
+        assert!(host.listSessions().unwrap().is_empty());
+    }
+
+    /// Retains pending state through fragmented OSC, old prompt frames, and the final ConPTY text flush.
+    #[test]
+    fn iocp_completion_requires_newly_flushed_prompt() {
+        let command = "Write-Output done";
+        let marker = "\x1b]133;OperitPrompt=0:C:\\work\x07";
+        let mut initial = TerminalTextRenderer::new(3, 80);
+        initial.write("PS C:\\work> ");
+        let complete = |raw: &str| completedPtyPrompt(raw.as_bytes(), TerminalKind::PowerShell, initial.clone(), Some(command)).unwrap();
+        assert!(complete(marker).is_none());
+        assert!(complete(&format!("{command}\r\n{}", &marker[..marker.len() - 1])).is_none());
+        assert!(complete(&format!("{command}\r\n{marker}")).is_none());
+        assert!(complete(&format!("{command}\r\n{marker}done\r\nPS C:\\wo")).is_none());
+        assert_eq!(complete(&format!("{command}\r\n{marker}done\r\nPS C:\\work> ")).unwrap().1, "done");
+        assert_eq!(completedPtyPrompt(format!("truncated-output\r\n{marker}PS C:\\work> ").as_bytes(),
+            TerminalKind::PowerShell, TerminalTextRenderer::new(3, 80), Some(command)).unwrap().unwrap().1, "truncated-output");
+    }
 
     /// Verifies WSL receives explicit guest environment values and never a Windows guest cwd.
     #[test]
@@ -1947,8 +1723,7 @@ mod tests {
         let command =
             configuredPtyCommand(&profile, TerminalKind::Bash, "/mnt/c/work space").unwrap();
         let argv: Vec<_> = command
-            .get_argv()
-            .iter()
+            .get_args()
             .map(|value| value.to_string_lossy().into_owned())
             .collect();
         assert!(argv.windows(4).any(|args| args
@@ -1965,7 +1740,7 @@ mod tests {
             &argv[argv.len() - 4..],
             ["/bin/bash", "--noprofile", "--norc", "-i"]
         );
-        assert!(command.get_cwd().is_none());
+        assert!(command.get_current_dir().is_none());
     }
 
     /// Preserves exact PowerShell 5 or 7 executable selection and argv boundaries.
@@ -1991,9 +1766,7 @@ mod tests {
             };
             let command =
                 configuredPtyCommand(&profile, TerminalKind::PowerShell, "C:/work").unwrap();
-            let argv: Vec<_> = command
-                .get_argv()
-                .iter()
+            let argv: Vec<_> = std::iter::once(command.get_program()).chain(command.get_args())
                 .map(|value| value.to_string_lossy().into_owned())
                 .collect();
             assert_eq!(
@@ -2037,9 +1810,7 @@ mod tests {
             }
         }
         assert!(dropTrailingPtyPrompt("hello\nPS wrong>", "PS expected>")
-            .unwrap_err()
-            .message
-            .contains("renderedTail="));
+            .is_none());
     }
 
     /// Exercises the reported long workspace prompt across narrow ConPTY viewports.

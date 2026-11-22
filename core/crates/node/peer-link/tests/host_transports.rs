@@ -53,12 +53,6 @@ impl HostRuntimeTaskSchedulerHost for Scheduler {
         });
         Ok(())
     }
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async {
-            tokio::task::yield_now().await;
-            Ok(())
-        })
-    }
     fn waitForHostRuntimeDelay(&self, ms: u64) -> HostRuntimeTurnFuture {
         Box::pin(async move {
             tokio::time::sleep(Duration::from_millis(ms)).await;

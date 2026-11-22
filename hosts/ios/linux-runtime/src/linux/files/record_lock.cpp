@@ -1,4 +1,5 @@
 #include "linux/files/record_lock.h"
+#include "linux/files/native_lock_wait.h"
 #include "linux/error_mapping.h"
 #include <algorithm>
 #include <cerrno>
@@ -54,11 +55,47 @@ struct Segment {
 struct Record : Segment {
     Owner owner;
 };
+// Each blocked request owns its pipe, including requests on another VM coordinator.
+struct LockEvents {
+    uintptr_t scheduler;
+    FD reader, writer;
+    // Native readiness needs no guest task or memory access on its producer.
+    explicit LockEvents(uintptr_t owner) : scheduler(owner) {
+        auto pipe = timers::ready_pipe();
+        reader = std::move(pipe.first);
+        writer = std::move(pipe.second);
+    }
+    // The pipe is level-triggered; a full marker queue already represents a wake.
+    void signal() {
+        const char byte = 1;
+        while (::write(writer.get(), &byte, 1) < 0 && errno == EINTR) {}
+    }
+    // Consume only this request's signal; another VM must retain its own readiness.
+    void drain() {
+        char bytes[64];
+        while (::read(reader.get(), bytes, sizeof(bytes)) > 0 || errno == EINTR) {}
+    }
+};
+struct NativeRangeWait {
+    std::shared_ptr<LockEvents> events;
+    Segment range;
+    int before;
+    std::unique_ptr<NativeLockWait> worker;
+    void start(const std::shared_ptr<FD> &anchor);
+};
 struct FileLocks {
     std::shared_ptr<FD> anchor;
     int mode = 0;
     std::vector<Record> records;
     std::vector<Segment> native;
+    std::vector<std::weak_ptr<LockEvents>> events;
+    std::vector<std::weak_ptr<NativeRangeWait>> native_waits;
+    Segment blocked{};
+    int before = -1;
+    // Empty lock files remain pinned while blocked syscalls still observe their producer.
+    bool idle() const {
+        return records.empty() && std::none_of(events.begin(), events.end(), [](const auto &event) { return !event.expired(); });
+    }
 };
 struct Registry {
     std::mutex mutex;
@@ -75,6 +112,15 @@ ProcessKey process_key(Scheduler &scheduler, uint32_t pid) {
 }
 int native_type(int type) {
     return type < 0 ? F_UNLCK : (type ? F_WRLCK : F_RDLCK);
+}
+// Re-arm an unchanged blocked range without generating a coordinator wake of its own.
+void NativeRangeWait::start(const std::shared_ptr<FD> &anchor) {
+    struct flock native{};
+    native.l_type = native_type(range.type);
+    native.l_whence = SEEK_SET;
+    native.l_start = range.start;
+    native.l_len = range.end == forever ? 0 : range.end - range.start;
+    worker = std::make_unique<NativeLockWait>(anchor, false, 0, native, events->writer.get());
 }
 int64_t checked_sum(int64_t base, int64_t offset) {
     if ((offset > 0 && base > INT64_MAX - offset) || (offset < 0 && base < INT64_MIN - offset))
@@ -119,11 +165,22 @@ int set_native(FileLocks &file, const Segment &segment) {
         return 0;
     return errno == EACCES || errno == EAGAIN ? 11 : linux_errno(errno);
 }
-int commit(FileLocks &file, std::vector<Record> records) {
+int commit(FileLocks &file, std::vector<Record> records, const NativeRangeWait *caller = nullptr) {
     auto desired = aggregate(records);
     for (const auto &part : desired)
         if ((part.type == 0 && file.mode == O_WRONLY) || (part.type == 1 && file.mode == O_RDONLY))
             return 95;
+    std::vector<std::shared_ptr<NativeRangeWait>> active;
+    for (auto it = file.native_waits.begin(); it != file.native_waits.end();) {
+        if (auto wait = it->lock()) {
+            if (wait->worker) { wait->worker.reset(); active.push_back(std::move(wait)); }
+            ++it;
+        } else it = file.native_waits.erase(it);
+    }
+    // Join every kernel request before restoring overlapping temporary grants.
+    for (const auto &wait : active)
+        if (set_native(file, {wait->range.start, wait->range.end, wait->before}))
+            throw Failure("cannot restore a cancelled native lock wait");
     struct Delta {
         uint64_t start, end;
         int before, after;
@@ -167,6 +224,11 @@ int commit(FileLocks &file, std::vector<Record> records) {
             for (auto it = acquired.rbegin(); it != acquired.rend(); ++it)
                 if (set_native(file, {it->start, it->end, it->before}))
                     throw Failure("cannot restore native OFD lock after a failed range conversion");
+            file.blocked = {change.start, change.end, change.after};
+            file.before = change.before;
+            // A failed commit leaves the authoritative aggregate unchanged.
+            // Keep other requests asleep on their kernel producers, including disjoint ranges.
+            for (const auto &wait : active) if (wait.get() != caller) wait->start(file.anchor);
             return error;
         }
         acquired.push_back(change);
@@ -176,6 +238,10 @@ int commit(FileLocks &file, std::vector<Record> records) {
             throw Failure("cannot release native OFD lock range");
     file.records = std::move(records);
     file.native = std::move(desired);
+    for (auto it = file.events.begin(); it != file.events.end();) {
+        if (auto event = it->lock()) { event->signal(); ++it; }
+        else it = file.events.erase(it);
+    }
     return 0;
 }
 std::vector<Record> replace(const std::vector<Record> &records, const Segment &range, const Owner &owner) {
@@ -283,6 +349,8 @@ struct Request {
     uint64_t argument;
     uint32_t tid;
     bool query, waiting;
+    std::shared_ptr<LockEvents> events;
+    std::shared_ptr<NativeRangeWait> native_wait;
     std::optional<int64_t> attempt() {
         auto &state = registry();
         std::lock_guard<std::mutex> guard(state.mutex);
@@ -290,6 +358,11 @@ struct Request {
             return -state.error;
         auto inserted = state.files.try_emplace(identity);
         auto &file = inserted.first->second;
+        if (events) events->drain();
+        if (native_wait && native_wait->worker) {
+            const auto result = native_wait->worker->result();
+            if (!result || *result < 0) return result;
+        }
         if (!file.anchor) {
             try {
                 file.anchor = anchor(filesystem, path, source->get(), identity);
@@ -320,6 +393,10 @@ struct Request {
         auto blocked = [&]() -> std::optional<int64_t> {
             if (!waiting)
                 return -11;
+            if (!events) {
+                events = std::make_shared<LockEvents>(owner.process.scheduler);
+                file.events.push_back(events);
+            }
             if (!owner.ofd) {
                 for (const auto &dependency : dependencies) {
                     std::set<ProcessKey> visited;
@@ -368,21 +445,31 @@ struct Request {
                 }
             }
             memory.copy_in(argument, &result, sizeof(result));
-            if (file.records.empty())
+            if (file.idle())
                 state.files.erase(inserted.first);
             return 0;
         }
         if (range.type >= 0 && conflict)
             return blocked();
-        const int error = commit(file, replace(file.records, range, owner));
+        const int error = commit(file, replace(file.records, range, owner), native_wait.get());
         if (error == 11) {
             auto result = blocked();
-            if (!waiting && file.records.empty())
+            if (waiting && !result) {
+                if (!native_wait) {
+                    native_wait = std::make_shared<NativeRangeWait>();
+                    native_wait->events = events;
+                    file.native_waits.push_back(native_wait);
+                }
+                native_wait->range = file.blocked;
+                native_wait->before = file.before;
+                native_wait->start(file.anchor);
+            }
+            if (!waiting && file.idle())
                 state.files.erase(inserted.first);
             return result;
         }
         state.waiters.erase(waiter_key);
-        if (file.records.empty())
+        if (file.idle())
             state.files.erase(inserted.first);
         return -error;
     }
@@ -396,7 +483,7 @@ template <class Predicate> void release_matching(Registry &state, Predicate matc
             if (error)
                 guest_error(error);
         }
-        if (it->second.records.empty())
+        if (it->second.idle())
             it = state.files.erase(it);
         else
             ++it;
@@ -471,19 +558,23 @@ int64_t record_lock(Memory &memory, Filesystem &filesystem, Scheduler &scheduler
         return *result;
     const auto waiter_key = std::make_pair(owner.process.scheduler, task.tid);
     auto previous_cleanup = std::move(scheduler.current().wait_cleanup);
-    scheduler.current().wait_cleanup = [waiter_key, identity = request->identity, previous_cleanup]() {
+    scheduler.current().wait_cleanup = [waiter_key, request, previous_cleanup]() {
         auto &state = registry();
         {
             std::lock_guard<std::mutex> guard(state.mutex);
             state.waiters.erase(waiter_key);
-            auto file = state.files.find(identity);
-            if (file != state.files.end() && file->second.records.empty())
-                state.files.erase(file);
+            auto file = state.files.find(request->identity);
+            if (file != state.files.end()) {
+                if (request->native_wait) commit(file->second, file->second.records);
+                request->native_wait.reset();
+                request->events.reset();
+                if (file->second.idle()) state.files.erase(file);
+            }
         }
         if (previous_cleanup)
             previous_cleanup();
     };
-    scheduler.block({}, -4, [request]() { return request->attempt(); });
+    scheduler.block({}, -4, [request]() { return request->attempt(); }, {{request->events->reader.get(), POLLIN, 0}});
     return 0;
 }
 void record_lock_close(Scheduler &scheduler, uint32_t pid, const Descriptor &entry) {
@@ -506,7 +597,7 @@ void record_lock_close(Scheduler &scheduler, uint32_t pid, const Descriptor &ent
     const int error = commit(found->second, std::move(records));
     if (error)
         guest_error(error);
-    if (found->second.records.empty())
+    if (found->second.idle())
         state.files.erase(found);
 }
 void record_lock_process_exit(Scheduler &scheduler, uint32_t pid) {
@@ -526,6 +617,19 @@ void record_lock_vm_exit(Scheduler &scheduler) {
     std::lock_guard<std::mutex> guard(state.mutex);
     const uintptr_t identity = reinterpret_cast<uintptr_t>(&scheduler);
     release_matching(state, [&](const Record &record) { return record.owner.process.scheduler == identity; });
+    for (auto it = state.files.begin(); it != state.files.end();) {
+        auto &file = it->second;
+        const auto belongs = [identity](const auto &weak) {
+            auto event = weak.lock();
+            return !event || event->scheduler == identity;
+        };
+        if (std::any_of(file.events.begin(), file.events.end(), belongs)) {
+            commit(file, file.records);
+            file.events.erase(std::remove_if(file.events.begin(), file.events.end(), belongs), file.events.end());
+        }
+        if (file.idle()) it = state.files.erase(it);
+        else ++it;
+    }
     for (auto it = state.waiters.begin(); it != state.waiters.end();)
         if (it->first.first == identity)
             it = state.waiters.erase(it);

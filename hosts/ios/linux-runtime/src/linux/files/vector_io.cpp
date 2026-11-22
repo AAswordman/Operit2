@@ -101,11 +101,6 @@ void IoVectors::scatter(Memory &memory, const void *data, size_t size) const {
 namespace operit::arm64 {
 namespace {
 constexpr uint32_t rwf_dsync = 2, rwf_sync = 4, rwf_append = 16, rwf_noappend = 32, rwf_nosignal = 256;
-struct TerminalReadWait {
-    size_t previous_available = 0;
-    TaskDeadline deadline;
-    bool initialized = false;
-};
 int64_t positioned_write(int fd, const void *data, size_t count, uint64_t offset, bool append) {
     if (!append) {
         const ssize_t result = ::pwrite(fd, data, count, off_t(offset));
@@ -198,7 +193,7 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
     const bool datagram = description->socket && description->socket->type != SOCK_STREAM;
     const bool nonblocking = description->flags & 2048;
     const uint32_t tid = scheduler_.current().tid, pid = scheduler_.current().pid;
-    auto terminal_wait = std::make_shared<TerminalReadWait>();
+    auto terminal_wait = std::make_shared<TerminalManager::ReadState>();
     ort_arm64_io callback =
         !positioned && description->standard_stream >= 0 ? (writing ? config_.write : config_.read) : nullptr;
     // A terminal endpoint must retain its line discipline and guest job control.
@@ -278,35 +273,12 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
             if (event.revents & POLLNVAL)
                 return -9;
             const bool hungup = event.revents & (POLLHUP | POLLERR);
-            if (terminal && !writing && !terminal->master && !nonblocking && !hungup) {
-                const auto attributes = terminals_->attributes(*terminal);
-                if (!(attributes.local & 2)) {
-                    const size_t minimum = std::min<size_t>(vectors->size(), attributes.characters[6]);
-                    const unsigned deciseconds = attributes.characters[5];
-                    const size_t available = size_t(terminals_->input_queued(*terminal));
-                    const auto now = TaskClock::now();
-                    if (!terminal_wait->initialized) {
-                        terminal_wait->initialized = true;
-                        if (!minimum && deciseconds)
-                            terminal_wait->deadline = now + std::chrono::milliseconds(deciseconds * 100);
-                    }
-                    if (minimum && deciseconds) {
-                        if (!available)
-                            terminal_wait->deadline.reset();
-                        else if (available > terminal_wait->previous_available)
-                            terminal_wait->deadline = now + std::chrono::milliseconds(deciseconds * 100);
-                    }
-                    terminal_wait->previous_available = available;
-                    const bool expired = terminal_wait->deadline && now >= *terminal_wait->deadline;
-                    if (!available) {
-                        if ((!minimum && !deciseconds) || expired)
-                            return 0;
-                        return {};
-                    }
-                    if (minimum && available < minimum && !expired)
-                        return {};
-                    ready = 1;
-                }
+            if (terminal && !writing) {
+                const auto status = terminals_->read_status(*terminal, vectors->size(), nonblocking,
+                                                            event.revents & POLLIN, hungup, *terminal_wait);
+                if (status == TerminalManager::ReadStatus::Empty) return 0;
+                if (status == TerminalManager::ReadStatus::Waiting) return {};
+                ready = 1;
             }
             if (!ready && !hungup)
                 return {};
@@ -491,7 +463,14 @@ int64_t Syscalls::vector_io(CpuState &cpu) {
     }
     if (interrupt_for_pending_signal())
         return -4;
-    scheduler_.block(deadline, -11, [attempt, host]() { return attempt(host->get()); });
+    if (description->terminal) deadline = terminal_wait->deadline;
+    std::vector<pollfd> descriptors{{host->get(), short(writing ? POLLOUT : POLLIN), 0}};
+    if (description->inotify) descriptors.push_back({description->inotify->backend_handle(), POLLIN, 0});
+    scheduler_.block(deadline, description->terminal ? 0 : -11, [this, attempt, host, terminal_wait, description]() {
+        auto result = attempt(host->get());
+        if (!result && description->terminal) scheduler_.current().deadline = terminal_wait->deadline;
+        return result;
+    }, std::move(descriptors));
     return 0;
 }
 } // namespace operit::arm64

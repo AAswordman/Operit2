@@ -120,7 +120,7 @@ int64_t Syscalls::socket_wait(Descriptor &entry, bool writing, bool nonblocking,
         if (!result && timeout_value)
             scheduler_.find(tid).timeout_result = timeout_value();
         return result;
-    });
+    }, {{host->get(), short(writing ? POLLOUT : POLLIN), 0}});
     return 0;
 }
 int64_t Syscalls::dispatch_socket(CpuState &cpu) {

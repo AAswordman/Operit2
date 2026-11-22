@@ -6,7 +6,9 @@
 #include "runtime/process/controller.h"
 #include <algorithm>
 #include <array>
-#include <thread>
+#include <cerrno>
+#include <climits>
+#include "linux/error_mapping.h"
 
 namespace operit::arm64 {
 namespace {
@@ -89,6 +91,7 @@ void Scheduler::complete(Task &task, int64_t value) {
     task.futex_vector_result = -1;
     task.deadline.reset();
     task.poll = {};
+    task.wait_descriptors.clear();
     if (processes_)
         processes_->wait_completed(task.tid);
 }
@@ -101,6 +104,7 @@ void Scheduler::retire(Task &task) {
     dequeue_realtime(task);
     task.state = Task::State::Exited;
     task.poll = {};
+    task.wait_descriptors.clear();
     task.futex = 0;
     task.futex_space = 0;
     task.futex_requeue_pi = false;
@@ -449,13 +453,14 @@ void Scheduler::reap_process(uint32_t pid) {
     }
 }
 void Scheduler::block(TaskDeadline deadline, int64_t timeout_result,
-                      std::function<std::optional<int64_t>()> poll) {
+                      std::function<std::optional<int64_t>()> poll, std::vector<pollfd> descriptors) {
     auto &task = current();
     dequeue_realtime(task);
     task.state = Task::State::Waiting;
     task.deadline = deadline;
     task.timeout_result = timeout_result;
     task.poll = std::move(poll);
+    task.wait_descriptors = std::move(descriptors);
     task.futex = 0;
     task.futex_space = 0;
     task.futex_requeue_pi = false;
@@ -690,6 +695,7 @@ void Scheduler::replace_process_image(uint32_t pid, const CpuState &entry) {
     survivor.futex_vector_result = -1;
     survivor.deadline.reset();
     survivor.poll = {};
+    survivor.wait_descriptors.clear();
     survivor.wait_cleanup = {};
     if (survivor.realtime_queue_priority < 100) {
         auto &queue = realtime_queues_.at(survivor.realtime_queue_priority);
@@ -711,7 +717,7 @@ void Scheduler::replace_process_image(uint32_t pid, const CpuState &entry) {
     set_current_tid(pid);
     exited_ = false;
 }
-TaskClock::time_point Scheduler::poll_waiting() {
+TaskDeadline Scheduler::poll_waiting() {
     // Workers have stopped here. Pump readiness before polling guest waits,
     // including each select() iteration when every guest task is blocked.
     if (processes_)
@@ -719,7 +725,6 @@ TaskClock::time_point Scheduler::poll_waiting() {
     else
         InotifyFile::service_all();
     const auto now = TaskClock::now();
-    auto next_poll = now + std::chrono::milliseconds(1);
     for (auto &[tid, task] : tasks_) {
         if (task.state != Task::State::Waiting || task.ptrace_deferred_exit)
             continue;
@@ -749,20 +754,31 @@ TaskClock::time_point Scheduler::poll_waiting() {
         if (task.deadline) {
             if (now >= *task.deadline)
                 complete(task, task.timeout_result);
-            else
-                next_poll = std::min(next_poll, *task.deadline);
         }
     }
-    if (processes_)
-        if (const auto deadline = processes_->next_runtime_deadline())
-            next_poll = std::min(next_poll, *deadline);
-    return next_poll;
+    return wait_deadline();
+}
+// Collect only operations that remain blocked after their latest retry.
+std::vector<pollfd> Scheduler::wait_descriptors() const {
+    std::vector<pollfd> descriptors = processes_ ? processes_->runtime_wait_descriptors() : std::vector<pollfd>{};
+    for (const auto &[tid, task] : tasks_)
+        if (task.state == Task::State::Waiting && !task.ptrace_deferred_exit)
+            descriptors.insert(descriptors.end(), task.wait_descriptors.begin(), task.wait_descriptors.end());
+    return descriptors;
+}
+// Preserve indefinite waits; only guest deadlines may arm a host timer.
+TaskDeadline Scheduler::wait_deadline() const {
+    TaskDeadline next = processes_ ? processes_->next_runtime_deadline() : TaskDeadline{};
+    for (const auto &[tid, task] : tasks_)
+        if (task.state == Task::State::Waiting && !task.ptrace_deferred_exit && task.deadline)
+            if (!next || *task.deadline < *next) next = task.deadline;
+    return next;
 }
 bool Scheduler::select(bool blocking) {
     if (exited_)
         return false;
     for (;;) {
-        const auto next_poll = poll_waiting();
+        const auto deadline = poll_waiting();
         const auto candidates = ordered_candidates();
         if (!candidates.empty()) {
             const auto [priority, selected] = candidates.front();
@@ -779,7 +795,12 @@ bool Scheduler::select(bool blocking) {
         }
         if (!blocking)
             return false;
-        std::this_thread::sleep_until(next_poll);
+        auto descriptors = wait_descriptors();
+        const auto nanos = deadline ? std::max<int64_t>(0, std::chrono::duration_cast<std::chrono::nanoseconds>(
+            *deadline - TaskClock::now()).count()) : -1;
+        const int timeout = nanos < 0 ? -1 : int(std::min<int64_t>(INT_MAX, nanos / 1000000 + (nanos % 1000000 != 0)));
+        if (::poll(descriptors.data(), descriptors.size(), timeout) < 0 && errno != EINTR)
+            guest_error(linux_errno(errno));
     }
 }
 } // namespace operit::arm64

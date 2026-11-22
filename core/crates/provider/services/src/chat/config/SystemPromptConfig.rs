@@ -43,7 +43,9 @@ const PACKAGE_SYSTEM_GUIDELINES_EN: &str = r#"PACKAGE SYSTEM
   <param name="package_name">package_name_here</param>
   </tool>
 - This will show you all the tools in the package and how to use them
-- Only after activating a package, you can use its tools directly"#;
+- Only after activating a package, you can use its tools directly
+- Package calls return execution_id and wait at most 20 seconds. Running work continues in the background. Call package_wait to collect subsequent output and completion; do not repeat the original operation to wait for it.
+- Operations in one response execute in order through actual completion, including after foreground expiry. Different response batches can overlap; package_wait reads progress independently of their operation queues."#;
 
 const PACKAGE_SYSTEM_GUIDELINES_CN: &str = r#"包系统：
 - 一些额外功能通过包提供
@@ -52,7 +54,9 @@ const PACKAGE_SYSTEM_GUIDELINES_CN: &str = r#"包系统：
   <param name="package_name">package_name_here</param>
   </tool>
 - 这将显示包中的所有工具及其使用方法
-- 只有在激活包后，才能直接使用其工具"#;
+- 只有在激活包后，才能直接使用其工具
+- 包调用返回 execution_id，默认最多等待20秒。到时任务继续运行，使用 package_wait 收取后续输出与完成结果，不要重复执行原操作来等待。
+- 同一次响应中的操作按实际完成顺序串行执行，前台超时不会放行后续操作；不同响应批次可以并行，package_wait 独立读取进度。"#;
 
 const PACKAGE_SYSTEM_GUIDELINES_TOOL_CALL_EN: &str = r#"PACKAGE SYSTEM
 - Some additional functionality is available through packages
@@ -60,7 +64,10 @@ const PACKAGE_SYSTEM_GUIDELINES_TOOL_CALL_EN: &str = r#"PACKAGE SYSTEM
 - If use_package for a package has appeared earlier in this chat, treat that package as activated
 - For package tools, call package_proxy:
   - Set tool_name to the actual package tool name (e.g. packageName:toolName)
-  - Put target tool arguments in params as a JSON object"#;
+  - Put target tool arguments in params as a JSON object
+  - Optional top-level timeout_ms controls foreground waiting from 0 to 20000 milliseconds (default 20000); it is separate from the package's arguments
+- Every package execution returns execution_id. A running result means work continues; use package_wait with that ID, or omit the ID to collect previous executions in this chat. Do not re-run an operation just to wait for its result.
+- Operations in one response execute in order through actual completion, including after foreground expiry. Different response batches can overlap; package_wait reads progress independently of their operation queues."#;
 
 const PACKAGE_SYSTEM_GUIDELINES_TOOL_CALL_CN: &str = r#"包系统：
 - 一些额外功能通过包提供
@@ -68,7 +75,10 @@ const PACKAGE_SYSTEM_GUIDELINES_TOOL_CALL_CN: &str = r#"包系统：
 - 只要本次聊天中该包曾出现过 use_package，就视为该包已激活
 - 调用包工具请使用 package_proxy：
   - tool_name 填写真实工具名（例如 packageName:toolName）
-  - 将目标工具参数放入 params（JSON对象）"#;
+  - 将目标工具参数放入 params（JSON对象）
+  - 顶层 timeout_ms 控制前台等待，0至20000毫秒，默认20000，与包内参数独立
+- 每次包执行返回 execution_id。running 表示后台仍在执行；用 package_wait 和该 ID 收取后续输出与结果，省略 ID 可收取当前对话前面的执行。不要重复原操作来等待结果。
+- 同一次响应中的操作按实际完成顺序串行执行，前台超时不会放行后续操作；不同响应批次可以并行，package_wait 独立读取进度。"#;
 
 pub const SYSTEM_PROMPT_TEMPLATE: &str = r#"BEGIN_SELF_INTRODUCTION_SECTION
 

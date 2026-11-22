@@ -139,6 +139,11 @@ impl CliToolModeSupport {
                             required: true,
                             default: None,
                         },
+                        ToolParameterSchema {
+                            name: "timeout_ms".into(), r#type: "integer".into(),
+                            description: "Package execution foreground wait, 0 to 20000 milliseconds; default 20000".into(),
+                            required: false, default: Some("20000".into()),
+                        },
                     ]),
                     details: String::new(),
                     notes: String::new(),
@@ -190,6 +195,11 @@ impl CliToolModeSupport {
                             required: true,
                             default: None,
                         },
+                        ToolParameterSchema {
+                            name: "timeout_ms".into(), r#type: "integer".into(),
+                            description: "包执行前台等待毫秒数，0至20000，默认20000".into(),
+                            required: false, default: Some("20000".into()),
+                        },
                     ]),
                     details: String::new(),
                     notes: String::new(),
@@ -205,13 +215,17 @@ impl CliToolModeSupport {
 - Only two public tools are available: `search` and `proxy`.
 - `search` only searches the hidden tool catalog. It does not read files, search code, or browse the web.
 - All real capabilities are hidden behind `proxy`.
-- Do not call hidden tools directly. Use `search` first, then call `proxy` with the discovered target tool name and JSON params."#
+- Do not call hidden tools directly. Use `search` first, then call `proxy` with the discovered target tool name and JSON params.
+- Package executions return an execution_id after at most 20 seconds and continue in the background. Collect their output and completion through `proxy` targeting `package_wait`; omit execution_id to collect earlier executions in this chat.
+- Operations in one response execute serially through actual completion, including after foreground expiry. Different batches can overlap; `package_wait` observes progress independently."#
         } else {
             r#"CLI 工具模式
 - 当前只有两个公开工具：`search` 和 `proxy`。
 - `search` 只搜索隐藏工具目录，不会直接读文件、搜代码或访问网页。
 - 所有真实能力都隐藏在 `proxy` 后面。
-- 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 JSON 参数调用 `proxy`。"#
+- 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 JSON 参数调用 `proxy`。
+- 包执行最多等待20秒，返回 execution_id 后在后台继续运行。使用 `proxy` 调用 `package_wait` 收取输出和完成结果，省略 execution_id 可收取当前对话前面的执行。
+- 同一次响应中的操作按实际完成顺序串行执行，前台超时不会放行后续操作；不同批次可以并行，`package_wait` 独立读取进度。"#
         };
         let category = SystemToolPromptCategory {
             categoryName: if useEnglish {

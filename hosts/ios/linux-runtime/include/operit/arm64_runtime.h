@@ -72,6 +72,17 @@ int ort_arm64_load(ort_arm64_vm *vm, const char *executable, const char *const *
  * This bounds execution steps, not wall time: synchronous I/O can block.
  * Each fixed helper invocation consumes one step when acceleration is enabled. */
 ort_arm64_result ort_arm64_run(ort_arm64_vm *vm, uint64_t instruction_budget);
+/* Snapshot after WAITING. Sources are borrowed until the next VM operation;
+ * cancel host registrations before the next call; registration must not retain
+ * the guest's open descriptions or extend their lifetime.
+ * timeout_ns is relative to the host's steady clock, or -1 for no deadline.
+ * Returns the required capacity. Call again to copy when capacity was smaller.
+ * terminal_write requests readiness for queued host input as well as output. */
+#define ORT_ARM64_WAIT_READ 1u
+#define ORT_ARM64_WAIT_WRITE 2u
+typedef struct { int fd; uint32_t events; } ort_arm64_wait_source;
+size_t ort_arm64_wait_sources(ort_arm64_vm *vm, ort_arm64_wait_source *sources, size_t capacity,
+                             int64_t *timeout_ns, int terminal_write);
 /* Attach a real guest console after load and before the first run. Control
  * operations return 0 or -1 with last_error; byte I/O returns a count or a
  * negative Linux errno. All calls use the VM's owning serial thread. */

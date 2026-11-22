@@ -153,7 +153,7 @@ test("policy bootstrap registers exactly the existing lifecycle and prompt handl
 /** Runs production policy against a full production-resolved snapshot, not current stored card permissions. */
 test("actual execution policy accepts only frozen builtin and registered source permissions", async t => {
   const runtime = await environment(t), context = await bind(runtime), before = ioCounts(runtime);
-  for (const name of ["read_file", "approved_package:read", "approved_skill:task", "approved_server:request", "search", "proxy", "package_proxy"]) assert.equal((await runtime.toolCallPolicy(event(name, context))).action, "allow", name);
+  for (const name of ["read_file", "approved_package:read", "approved_skill:task", "approved_server:request", "search", "package_wait", "proxy", "package_proxy"]) assert.equal((await runtime.toolCallPolicy(event(name, context))).action, "allow", name);
   for (const name of ["delete_file", "another_package:read", "approved_package_name_collision:read"]) {
     const decision = await runtime.toolCallPolicy(event(name, context));
     assert.equal(decision.action, "block", name); assert.equal(decision.reason, "Selected execution participant is not allowed to access tool: " + name);

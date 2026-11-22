@@ -658,6 +658,10 @@ export namespace System {
      */
     function run(request: TerminalRunRequest): Promise<TerminalCommandResultData>;
     /**
+     * Streams a named-session command until it completes; returning detaches its observation.
+     */
+    function runStream(request: TerminalRunStreamRequest): AsyncIterable<TerminalExecEvent>;
+    /**
      * Get the current visible terminal screen content for a session (single screen only, no history).
      * @param sessionId The ID of the session.
      * @returns Promise resolving to the current screen snapshot result.
@@ -739,6 +743,16 @@ export interface TerminalRunRequest {
    * Limits foreground waiting only; zero returns as soon as execution starts.
    */
   waitMs: number;
+}
+
+/**
+ * Streams a named-session command until actual completion, independently of foreground waits.
+ */
+export interface TerminalRunStreamRequest {
+  sessionName: string;
+  profileId?: string;
+  terminalType?: TerminalType;
+  command: string;
 }
 
 /**

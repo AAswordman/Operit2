@@ -10,6 +10,7 @@ use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::data::preferences::ApiPreferences::ApiPreferences;
 use operit_runtime::data::preferences::PreferenceStorageManager::PreferenceStorageManager;
 use operit_runtime::data::preferences::ThemeConfigManager::ThemeConfigManager;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use serde_json::{json, Value};
 
 /// Gives the complete application and command futures a dedicated test stack.
@@ -52,7 +53,7 @@ async fn exercise_settings() {
     hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
     hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     let mut app = OperitApplication::newWithContext(hosts);
-    app.packageManager().lock().unwrap().loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(app.packageManager()).await.unwrap();
 
     for args in [
         vec!["terminal"],

@@ -159,6 +159,8 @@ pub struct ToolResultMap {
     pub list_core_nodes: String,
     pub switch_core: String,
     pub package_proxy: ToolResultData,
+    #[display(action = "wait", icon = "time", target = "execution_id")]
+    pub package_wait: JsonResultData,
     pub get_terminal_info: TerminalInfoResultData,
     #[display(action = "execute", icon = "terminal", target = "command")]
     pub execute_in_terminal_session: TerminalCommandResultData,

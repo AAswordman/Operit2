@@ -14,7 +14,7 @@ pub struct ToolPkgLoader;
 impl ToolPkgLoader {
     /// Loads a ToolPkg archive through the supplied file-system host.
     #[allow(non_snake_case)]
-    pub fn loadToolPkgFromExternalFile<FReportPackageLoadError>(
+    pub async fn loadToolPkgFromExternalFile<FReportPackageLoadError>(
         filesystem: &VisualFileSystem,
         sourcePath: &str,
         configScope: ToolPkgConfigScope,
@@ -35,12 +35,12 @@ impl ToolPkgLoader {
             configScope,
             jsEngine,
             reportPackageLoadError,
-        )
+        ).await
     }
 
     /// Loads a ToolPkg archive from an embedded non-core external asset.
     #[allow(non_snake_case)]
-    pub fn loadToolPkgFromBundledExternalAsset<FReportPackageLoadError>(
+    pub async fn loadToolPkgFromBundledExternalAsset<FReportPackageLoadError>(
         assetName: &str,
         bytes: &'static [u8],
         jsEngine: &dyn JsExecutionEngine,
@@ -61,12 +61,12 @@ impl ToolPkgLoader {
             scope,
             jsEngine,
             reportPackageLoadError,
-        )
+        ).await
     }
 
     /// Loads a ToolPkg archive from embedded application asset bytes.
     #[allow(non_snake_case)]
-    pub fn loadToolPkgFromBuiltInAsset<FReportPackageLoadError>(
+    pub async fn loadToolPkgFromBuiltInAsset<FReportPackageLoadError>(
         assetName: &str,
         bytes: &'static [u8],
         jsEngine: &dyn JsExecutionEngine,
@@ -83,12 +83,12 @@ impl ToolPkgLoader {
             ToolPkgConfigScope::Device,
             jsEngine,
             reportPackageLoadError,
-        )
+        ).await
     }
 
     /// Loads a raw protected ToolPkg ZIP after its local market installation seal has verified.
     #[allow(non_snake_case)]
-    pub fn loadToolPkgFromMarketFile<FReportPackageLoadError>(
+    pub async fn loadToolPkgFromMarketFile<FReportPackageLoadError>(
         filesystem: &VisualFileSystem,
         sourcePath: &str,
         configScope: ToolPkgConfigScope,
@@ -109,12 +109,12 @@ impl ToolPkgLoader {
             configScope,
             jsEngine,
             reportPackageLoadError,
-        )
+        ).await
     }
 
     /// Parses one already-unwrapped ToolPkg ZIP using its trusted source classification.
     #[allow(non_snake_case)]
-    pub fn loadToolPkgFromArchiveBytes<FReportPackageLoadError>(
+    pub async fn loadToolPkgFromArchiveBytes<FReportPackageLoadError>(
         archiveBytes: &[u8],
         sourceType: ToolPkgSourceType,
         sourcePath: &str,
@@ -161,25 +161,26 @@ impl ToolPkgLoader {
                 }
             },
             |mainScriptText, toolPkgId, mainScriptPath, apiVersion, environmentNames| {
-                parseMainRegistration(
-                    mainScriptText,
-                    toolPkgId,
-                    mainScriptPath,
-                    apiVersion,
-                    environmentNames,
+                let textResources = textResources.clone();
+                async move { parseMainRegistration(
+                    &mainScriptText,
+                    &toolPkgId,
+                    &mainScriptPath,
+                    &apiVersion,
+                    &environmentNames,
                     configScope,
                     jsEngine,
-                    textResources.clone(),
-                )
+                    textResources,
+                ).await }
             },
             |packageName, error| reportPackageLoadError(&packageName, &error),
-        )
+        ).await
     }
 }
 
 /// Parses declarations exported by a ToolPkg main registration script.
 #[allow(non_snake_case)]
-fn parseMainRegistration(
+async fn parseMainRegistration(
     mainScriptText: &str,
     toolPkgId: &str,
     mainScriptPath: &str,
@@ -198,7 +199,7 @@ fn parseMainRegistration(
         configScope,
         jsEngine,
         Some(textResources),
-    )
+    ).await
 }
 
 /// Reads every UTF-8 archive entry for registration-time resource access.

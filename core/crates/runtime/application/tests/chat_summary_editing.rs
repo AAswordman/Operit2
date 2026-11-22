@@ -46,9 +46,6 @@ impl HostRuntimeTaskSchedulerHost for EditScheduler {
     ) -> HostResult<()> {
         panic!("summary editing must not schedule timers")
     }
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
         panic!("summary editing must not wait for timers")
     }

@@ -359,6 +359,14 @@ impl JsToolManager {
         &self,
         request: &JsPackageToolCallRequest,
     ) -> JsPackageToolCallResult {
+        self.executeScriptWithOutput(request, None).await
+    }
+
+    /// Keeps the intermediate sink attached until the actual package function completes.
+    async fn executeScriptWithOutput(
+        &self, request: &JsPackageToolCallRequest,
+        onIntermediateResult: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> JsPackageToolCallResult {
         let Some((packageName, functionName)) = Self::parsePackageToolName(&request.tool_name)
         else {
             return Self::failure(
@@ -378,8 +386,8 @@ impl JsToolManager {
 
         let result = self
             .withExecutionEngineForPackage(selection.toolpkg_runtime.as_ref(), |engine| {
-                engine.execute_script_function_owned(
-                    selection.definition.script, functionName, runtimeParams, BTreeMap::new(),
+                engine.execute_script_function_owned_with_output(
+                    selection.definition.script, functionName, runtimeParams, BTreeMap::new(), onIntermediateResult,
                 )
             })
             .await;
@@ -399,13 +407,14 @@ impl JsToolManager {
 
 impl JsPackageExecutor for JsToolManager {
     /// Executes one package tool through this manager's bound runtime context.
-    fn execute_package_tool(
+    fn execute_package_tool_streaming(
         &self,
         request: &JsPackageToolCallRequest,
+        on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> JsExecutionCompletion<JsPackageToolCallResult> {
         let manager = self.clone();
         let request = request.clone();
-        Box::pin(async move { manager.executeScript(&request).await })
+        Box::pin(async move { manager.executeScriptWithOutput(&request, on_intermediate_result).await })
     }
 }
 
@@ -601,8 +610,8 @@ mod tests {
         }
 
         /// Rejects package import in manager tests.
-        fn import_package(&self, _package_name: &str) -> Result<String, String> {
-            Err("Package import is not part of this test".to_string())
+        fn import_package(&self, _package_name: &str) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<String, String>> {
+            Box::pin(async { Err("Package import is not part of this test".to_string()) })
         }
 
         /// Rejects package removal in manager tests.
@@ -638,10 +647,6 @@ mod tests {
             Ok(())
         }
 
-        /// Completes one JavaScript runtime turn immediately in manager tests.
-        fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-            Box::pin(async { Ok(()) })
-        }
     }
 
     #[derive(Clone, Copy)]
@@ -1201,7 +1206,7 @@ mod tests {
     }
 
     /// Loads a downloaded ToolPkg through the standard external-file path.
-    fn load_downloaded_toolpkg(downloaded_bytes: Vec<u8>) -> ToolPkgLoadResult {
+    async fn load_downloaded_toolpkg(downloaded_bytes: Vec<u8>) -> ToolPkgLoadResult {
         let source_path = "/marketplace/downloaded/market_flow_toolpkg.toolpkg";
         let host = DownloadedToolPkgFileSystemHost::new(source_path, downloaded_bytes);
         let filesystem = test_filesystem(Arc::new(host));
@@ -1219,7 +1224,7 @@ mod tests {
                     .push(format!("{package_name}: {error}"));
             },
         )
-        .expect("installed market ToolPkg should load");
+        .await.expect("installed market ToolPkg should load");
         let load_errors = load_errors.lock().expect("load error mutex poisoned");
         assert!(
             load_errors.is_empty(),
@@ -1445,7 +1450,7 @@ mod tests {
         ));
         assert_eq!(asset_bytes, b"asset-secret-value");
 
-        let load_result = load_downloaded_toolpkg(downloaded_bytes);
+        let load_result = load_downloaded_toolpkg(downloaded_bytes).await;
         assert_eq!(
             load_result.containerRuntime.sourceType,
             ToolPkgSourceType::EXTERNAL

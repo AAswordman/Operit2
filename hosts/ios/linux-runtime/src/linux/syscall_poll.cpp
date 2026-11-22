@@ -208,7 +208,14 @@ int64_t Syscalls::dispatch_poll(CpuState &cpu) {
             signals::end_temporary_mask(task.signals, task.signal_mask);
             return -4;
         }
-        scheduler_.block({}, 0, std::move(attempt));
+        std::vector<pollfd> descriptors;
+        for (const auto &item : *entries)
+            if (item.host) {
+                descriptors.push_back({item.host->get(), native_events(item.events), 0});
+                if (item.description->inotify)
+                    descriptors.push_back({item.description->inotify->backend_handle(), POLLIN, 0});
+            }
+        scheduler_.block(deadline, 0, std::move(attempt), std::move(descriptors));
         task.wait_cleanup = [this, tid = task.tid] {
             auto &waiting = scheduler_.find(tid);
             signals::end_temporary_mask(waiting.signals, waiting.signal_mask);

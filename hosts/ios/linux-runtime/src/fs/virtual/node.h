@@ -1,5 +1,6 @@
 #pragma once
 #include "base/fd.h"
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <string>

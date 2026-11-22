@@ -589,6 +589,17 @@ impl TerminalHost for OhosTerminalHost {
             .map(|output| mapCommandOutput(output, backend))
     }
 
+    /// Preserves the selected backend while observing its command through producer events.
+    fn beginInSessionStreaming(self: Arc<Self>, sessionId: String, command: String, timeoutMs: u64)
+        -> HostResult<Box<dyn operit_host_api::TerminalCommand::TerminalCommandExecution>> {
+        let backend = self.backendForSession(&sessionId)?;
+        let execution = Arc::new(self.ptyHost(backend).clone())
+            .beginInSessionStreaming(sessionId, command, timeoutMs)?;
+        Ok(operit_host_api::TerminalCommand::mapTerminalCommandExecution(
+            execution, move |output| Ok(mapCommandOutput(output, backend)),
+        ))
+    }
+
     /// Executes one hidden command in the primary QEMU-vroot Alpine environment.
     fn executeHiddenCommand(
         &self,

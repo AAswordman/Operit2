@@ -49,6 +49,7 @@ struct FileTransfer {
     std::function<void()> file_size_signal;
     std::shared_ptr<TerminalManager> terminals;
     uint32_t pid = 0;
+    pollfd blocked{-1, 0, 0};
 
     void buffer(uint64_t address, size_t length, unsigned permissions) {
         if (!memory.accessible(address, length, permissions))
@@ -85,6 +86,7 @@ struct FileTransfer {
     std::optional<int64_t> waiting(const TransferEndpoint &endpoint, bool writing) {
         if ((endpoint.description->flags & 2048) || (endpoint.pipe() && (flags & 2)))
             return -11;
+        blocked = {endpoint.fd->get(), short(writing ? POLLOUT : POLLIN), 0};
         if (!deadline_set) {
             deadline_set = true;
             if (endpoint.description->socket) {
@@ -322,7 +324,14 @@ int64_t Syscalls::dispatch_file_transfer(CpuState &cpu) {
         return 0;
     if (auto result = state->attempt())
         return *result;
-    scheduler_.block(state->deadline, -11, [state]() { return state->attempt(); });
+    scheduler_.block(state->deadline, -11, [this, state]() {
+        auto result = state->attempt();
+        if (!result) {
+            scheduler_.current().deadline = state->deadline;
+            scheduler_.current().wait_descriptors = {state->blocked};
+        }
+        return result;
+    }, {state->blocked});
     return 0;
 }
 } // namespace operit::arm64

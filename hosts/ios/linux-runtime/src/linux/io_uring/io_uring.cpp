@@ -790,6 +790,10 @@ CompletionContext::~CompletionContext() {
 std::shared_ptr<CompletionContext> make_completion_context() {
     return std::make_shared<CompletionContext>();
 }
+// Host workers signal this pipe before the coordinator publishes guest CQEs.
+int completion_descriptor(const std::shared_ptr<CompletionContext> &context) {
+    return context->queue->reader.get();
+}
 
 void service_completions(const std::shared_ptr<CompletionContext> &context, Scheduler &scheduler) {
     if (!context)

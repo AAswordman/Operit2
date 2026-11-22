@@ -94,13 +94,29 @@ impl RuntimeEventIngressService {
                 Self::updateNetworkFlow().set_value(updateNetwork(&network));
             }
         }
-        match event.topic {
-            RuntimeEventTopic::AppLifecycleResumed => self.toolpkg_runtime.tool_handler().runtimeSupport().setScheduledChatForeground(true),
-            RuntimeEventTopic::AppLifecycleInactive | RuntimeEventTopic::AppLifecyclePaused |
-            RuntimeEventTopic::AppLifecycleHidden | RuntimeEventTopic::AppLifecycleDetached => self.toolpkg_runtime.tool_handler().runtimeSupport().setScheduledChatForeground(false),
-            _ => {},
+        let lifecycleEvent = appLifecycleEventName(&event.topic);
+        match lifecycleEvent {
+            Some(TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND) => self
+                .toolpkg_runtime
+                .tool_handler()
+                .runtimeSupport()
+                .setScheduledChatForeground(true),
+            Some(
+                TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND | TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
+            ) => self
+                .toolpkg_runtime
+                .tool_handler()
+                .runtimeSupport()
+                .setScheduledChatForeground(false),
+            _ => {}
         }
-        dispatchAppLifecycleEvent(&self.toolpkg_runtime, &event, payload.clone());
+        if let Some(eventName) = lifecycleEvent {
+            ToolPkgAppLifecycleHookBridge::dispatchEvent(
+                &self.toolpkg_runtime,
+                eventName,
+                serde_json::json!({ "extras": payload.clone() }),
+            );
+        }
         if event.topic == RuntimeEventTopic::AppLifecycleResumed {
             ToolPkgToolPermissionBridge::notify();
         }
@@ -128,6 +144,40 @@ fn updateNetwork(network: &ToolPkgBroadcastNetworkChangedData) -> ApplicationUpd
 mod tests {
     use super::*;
 
+    /// Focus changes must not open background surfaces or change scheduled delivery eligibility.
+    #[test]
+    fn inactive_preserves_application_visibility() {
+        assert_eq!(
+            appLifecycleEventName(&RuntimeEventTopic::AppLifecycleInactive),
+            None
+        );
+    }
+
+    /// Hidden and paused indicate background visibility while detach retains termination semantics.
+    #[test]
+    fn application_visibility_maps_only_visible_lifecycle_transitions() {
+        for (topic, expected) in [
+            (
+                RuntimeEventTopic::AppLifecycleResumed,
+                TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND,
+            ),
+            (
+                RuntimeEventTopic::AppLifecycleHidden,
+                TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND,
+            ),
+            (
+                RuntimeEventTopic::AppLifecyclePaused,
+                TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND,
+            ),
+            (
+                RuntimeEventTopic::AppLifecycleDetached,
+                TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
+            ),
+        ] {
+            assert_eq!(appLifecycleEventName(&topic), Some(expected));
+        }
+    }
+
     /// Cellular and unknown costs stay distinguishable from a disconnected network.
     #[test]
     fn update_network_preserves_connectivity_and_unmetered_eligibility() {
@@ -152,18 +202,14 @@ mod tests {
     }
 }
 
-/// Dispatches normalized application lifecycle runtime events to ToolPkg app lifecycle hooks.
+/// Maps application visibility and activity events without treating transient focus loss as background.
 #[allow(non_snake_case)]
-fn dispatchAppLifecycleEvent(
-    runtime: &ToolPkgBridgeRuntime,
-    event: &RuntimeEvent,
-    hostEventPayload: Value,
-) {
-    let eventName = match event.topic.clone() {
+fn appLifecycleEventName(topic: &RuntimeEventTopic) -> Option<&'static str> {
+    Some(match topic {
         RuntimeEventTopic::AppLifecycleResumed => TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND,
-        RuntimeEventTopic::AppLifecycleInactive
-        | RuntimeEventTopic::AppLifecyclePaused
-        | RuntimeEventTopic::AppLifecycleHidden => TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND,
+        RuntimeEventTopic::AppLifecyclePaused | RuntimeEventTopic::AppLifecycleHidden => {
+            TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND
+        }
         RuntimeEventTopic::AppLifecycleDetached => TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
         RuntimeEventTopic::AppLifecycleLowMemory => TOOLPKG_EVENT_APPLICATION_ON_LOW_MEMORY,
         RuntimeEventTopic::AppLifecycleTrimMemory => TOOLPKG_EVENT_APPLICATION_ON_TRIM_MEMORY,
@@ -173,13 +219,6 @@ fn dispatchAppLifecycleEvent(
         RuntimeEventTopic::ActivityLifecyclePause => TOOLPKG_EVENT_ACTIVITY_ON_PAUSE,
         RuntimeEventTopic::ActivityLifecycleStop => TOOLPKG_EVENT_ACTIVITY_ON_STOP,
         RuntimeEventTopic::ActivityLifecycleDestroy => TOOLPKG_EVENT_ACTIVITY_ON_DESTROY,
-        _ => return,
-    };
-    ToolPkgAppLifecycleHookBridge::dispatchEvent(
-        runtime,
-        eventName,
-        serde_json::json!({
-            "extras": hostEventPayload,
-        }),
-    );
+        _ => return None,
+    })
 }

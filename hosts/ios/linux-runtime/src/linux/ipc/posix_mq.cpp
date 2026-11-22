@@ -3,6 +3,7 @@
 #include "fs/descriptor_table.h"
 #include "linux/signals/signals.h"
 #include "linux/timers/ready_pipe.h"
+#include "linux/timers/timer_file.h"
 #include "memory/address_space.h"
 #include "memory/fault.h"
 #include "runtime/tasks/scheduler.h"
@@ -356,11 +357,20 @@ int64_t wait_for(Scheduler &scheduler, const PosixMqContext &context, const std:
     waiter->priority_address = priority_address;
     auto &list = send ? file->queue->senders : file->queue->receivers;
     list.push_back(waiter);
-    scheduler.block({}, -110, [waiter]() -> std::optional<int64_t> {
+    std::shared_ptr<TimerFile> timer;
+    std::shared_ptr<FD> timeout_source;
+    std::vector<pollfd> descriptors;
+    if (deadline) {
+        timer = TimerFile::create(0);
+        timer->set_time(TimerFile::absolute, {{}, {deadline->seconds, deadline->nanoseconds}});
+        timeout_source = std::make_shared<FD>(timer->duplicate_descriptor());
+        descriptors.push_back({timeout_source->get(), POLLIN, 0});
+    }
+    scheduler.block({}, -110, [waiter, timer, timeout_source]() -> std::optional<int64_t> {
         if (expired(waiter->deadline))
             return -110;
         return {};
-    });
+    }, std::move(descriptors));
     return 0;
 }
 std::string status(const Queue &queue) {

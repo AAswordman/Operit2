@@ -115,11 +115,6 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
         )
     }
 
-    /// Yields one asynchronous executor turn.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        crate::NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeTaskTurn()
-    }
-
     /// Waits on the timer driver owned by the current Host worker.
     fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture {
         crate::NativeHostRuntimeTaskSchedulerHost.waitForHostRuntimeDelay(delayMs)

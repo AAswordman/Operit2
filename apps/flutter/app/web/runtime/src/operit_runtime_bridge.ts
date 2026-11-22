@@ -464,7 +464,7 @@ interface LinuxVmSession {
   progressVisible: boolean;
   activeCommand: LinuxVmCommand | null;
   pendingCommands: LinuxVmCommand[];
-  managedExecution: { output: number[]; result: LinuxVmCommandResult | null; error: string | null } | null;
+  managedExecution: { output: number[]; result: LinuxVmCommandResult | null; error: string | null; waiters: Set<Int32Array> } | null;
   screen: number[];
   workingDir: string;
 }
@@ -657,6 +657,7 @@ interface RuntimeWorkerLeaderMessage {
   method?: string;
   args?: unknown[];
   control?: SharedArrayBuffer;
+  filesystem?: SharedArrayBuffer;
 }
 
 interface RuntimeWorkerShutdownComplete {
@@ -765,16 +766,26 @@ interface ModelInstallWorkerError {
   }
 
   let terminalFilesystemBuffer: SharedArrayBuffer | null = null;
-  let terminalFilesystemControl: Int32Array | null = null;
   let notifyTerminalFilesystemWorker: (() => void) | null = null;
+
+  /** Wakes the owner independently of the page serving its current Host call. */
+  function wakeRuntimeWorkerHost(): void {
+    if (terminalFilesystemBuffer === null) throw new Error("Terminal filesystem owner is unavailable");
+    const header = new Int32Array(terminalFilesystemBuffer, 0, 3);
+    Atomics.add(header, 2, 1);
+    Atomics.notify(header, 2);
+  }
 
   /** Calls the OPFS owner directly, including while it waits for a guest command. */
   async function callTerminalFilesystem(method: string, args: unknown[]): Promise<unknown> {
     const buffer = terminalFilesystemBuffer;
     if (buffer === null) throw new Error("Terminal filesystem owner is unavailable");
-    const header = new Int32Array(buffer, 0, 2), payload = new Uint8Array(buffer, 8);
-    while (Atomics.compareExchange(header, 0, 0, 4) !== 0) {
-      await new Promise(resolve => setTimeout(resolve, 1));
+    const header = new Int32Array(buffer, 0, 3), payload = new Uint8Array(buffer, 12);
+    for (;;) {
+      const state = Atomics.compareExchange(header, 0, 0, 4);
+      if (state === 0) break;
+      if (state === -1) throw new Error("Terminal filesystem owner stopped");
+      await Atomics.waitAsync(header, 0, state).value;
     }
     try {
       const request = MessagePack.encode([method, args]);
@@ -782,20 +793,21 @@ interface ModelInstallWorkerError {
       payload.set(request);
       Atomics.store(header, 1, request.length);
       Atomics.store(header, 0, 1);
-      const control = terminalFilesystemControl;
-      if (control !== null) {
-        Atomics.compareExchange(control, 0, 0, 3);
-        Atomics.notify(control, 0);
-      }
+      wakeRuntimeWorkerHost();
       notifyTerminalFilesystemWorker?.();
-      while (Atomics.load(header, 0) !== 2) {
-        await new Promise(resolve => setTimeout(resolve, 1));
+      for (;;) {
+        const state = Atomics.load(header, 0);
+        if (state === 2) break;
+        if (state === -1) throw new Error("Terminal filesystem owner stopped");
+        await Atomics.waitAsync(header, 0, state).value;
       }
       const response = MessagePack.decode(payload.slice(0, Atomics.load(header, 1)));
       if (!Array.isArray(response) || response[0] !== 0) throw new Error(String(response[1]));
       return response[1];
     } finally {
-      Atomics.store(header, 0, 0);
+      Atomics.compareExchange(header, 0, 2, 0);
+      Atomics.compareExchange(header, 0, 4, 0);
+      Atomics.notify(header, 0);
     }
   }
 
@@ -3513,8 +3525,18 @@ self.onmessage = (event) => {
       if (execution !== null) {
         execution.output.push(byte);
         if (execution.output.length >= 1048576) execution.output.splice(0, 524288);
+        notifyLinuxVmCommand(execution);
       }
     }
+  }
+
+  /** Publishes durable producer signals for output, completion, failure, and close. */
+  function notifyLinuxVmCommand(execution: NonNullable<LinuxVmSession["managedExecution"]>): void {
+    for (const waiter of execution.waiters) {
+      Atomics.store(waiter, 0, 1);
+      Atomics.notify(waiter, 0);
+    }
+    execution.waiters.clear();
   }
 
   /** Parses one exact OSC command lifecycle marker emitted by the guest shell. */
@@ -4035,12 +4057,23 @@ self.onmessage = (event) => {
       startPtyCommand(sessionId: string, command: string): void {
         const session = linuxVmSession(sessionId);
         if (session.activeCommand !== null || session.pendingCommands.length > 0) throw new Error("Terminal session is busy");
-        const execution = { output: [] as number[], result: null as LinuxVmCommandResult | null, error: null as string | null };
+        const execution = { output: [] as number[], result: null as LinuxVmCommandResult | null, error: null as string | null, waiters: new Set<Int32Array>() };
         session.managedExecution = execution;
         void executeLinuxVmCommand(sessionId, command, 0).then(
-          result => { execution.result = result; },
-          error => { execution.error = String(error); },
+          result => { execution.result = result; notifyLinuxVmCommand(execution); },
+          error => { execution.error = String(error); notifyLinuxVmCommand(execution); },
         );
+      },
+      /** Registers a worker-owned signal, checking retained state before accepting a wait. */
+      armPtyCommand(sessionId: string, signal: SharedArrayBuffer): void {
+        const execution = linuxVmSession(sessionId).managedExecution;
+        if (execution === null) throw new Error("Terminal has no managed command");
+        const header = new Int32Array(signal);
+        if (header.length !== 1) throw new Error("Invalid terminal command signal");
+        execution.waiters.add(header);
+        if (execution.output.length > 0 || execution.result !== null || execution.error !== null) {
+          notifyLinuxVmCommand(execution);
+        }
       },
       /** Drains command output and reads its original receipt without sending terminal input. */
       pollPtyCommand(sessionId: string) {
@@ -5457,6 +5490,7 @@ self.onmessage = (event) => {
       if (typeof message.id !== "number" || typeof message.clientId !== "string" || !(message.control instanceof SharedArrayBuffer)) {
         throw new Error("runtime worker host call is invalid");
       }
+      if (message.filesystem instanceof SharedArrayBuffer) terminalFilesystemBuffer = message.filesystem;
       if (leaderClientHasDisconnectedRoute(message.clientId)) {
         respondToDisconnectedHostCall(message.id, message.control);
         return;
@@ -5648,6 +5682,7 @@ self.onmessage = (event) => {
       Atomics.store(control, 1, payload.byteLength);
       Atomics.store(control, 0, 1);
       Atomics.notify(control, 0);
+      wakeRuntimeWorkerHost();
     }
 
     /** Completes the Dedicated Worker's second Host payload phase after page disconnection. */
@@ -5669,6 +5704,7 @@ self.onmessage = (event) => {
       const control = new Int32Array(controlBuffer);
       Atomics.store(control, 0, 2);
       Atomics.notify(control, 0);
+      wakeRuntimeWorkerHost();
     }
 
     /** Returns the globally routed request map for one client page. */
@@ -5704,6 +5740,12 @@ self.onmessage = (event) => {
     /** Rejects local requests when acquiring or maintaining the Web Lock fails. */
     function rejectRuntimeRequests(error: unknown): void {
       const failure = error instanceof Error ? error : new Error(String(error));
+      if (terminalFilesystemBuffer !== null) {
+        const header = new Int32Array(terminalFilesystemBuffer, 0, 3);
+        Atomics.store(header, 0, -1);
+        Atomics.notify(header, 0);
+        wakeRuntimeWorkerHost();
+      }
       for (const pending of pendingRequests.values()) {
         pending.reject(failure);
       }
@@ -5809,7 +5851,6 @@ self.onmessage = (event) => {
   ): Promise<void> {
     if (message.filesystem instanceof SharedArrayBuffer) {
       terminalFilesystemBuffer = message.filesystem;
-      terminalFilesystemControl = new Int32Array(message.control);
     }
     let encoded: Uint8Array;
     try {
@@ -5832,6 +5873,7 @@ self.onmessage = (event) => {
     Atomics.store(control, 1, encoded.byteLength);
     Atomics.store(control, 0, 1);
     Atomics.notify(control, 0);
+    wakeRuntimeWorkerHost();
   }
 
   /** Copies one prepared host response into the worker-provided shared buffer. */
@@ -5852,6 +5894,7 @@ self.onmessage = (event) => {
     const control = new Int32Array(message.control);
     Atomics.store(control, 0, 2);
     Atomics.notify(control, 0);
+    wakeRuntimeWorkerHost();
   }
 
   /** Converts one local runtime worker exception into a stable host error message. */

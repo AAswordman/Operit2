@@ -169,6 +169,12 @@ for cross-axis alignment.
 
 ## Script deadlines
 
+AI package invocations are owned by Core's execution registry. Their foreground
+wait defaults to 20 seconds and returns an `execution_id` when still running;
+`package_wait` collects later output and final results without cancelling the
+execution. Direct calls inside packages keep their final-result await semantics.
+See [Package executions](package-executions.md) for the complete contract.
+
 Ordinary JavaScript calls, workflows, IPC, public APIs, notifications and after
 hooks run until completion, caller cancellation or runtime destruction. Active
 cancellation can interrupt synchronous loops.

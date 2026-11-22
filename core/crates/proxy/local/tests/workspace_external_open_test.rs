@@ -186,10 +186,6 @@ impl HostRuntimeTaskSchedulerHost for FaultScheduler {
         self.inner.scheduleDelayedHostRuntimeTask(name, delayMs, task)
     }
 
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        self.inner.waitForHostRuntimeTaskTurn()
-    }
-
     fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture {
         self.inner.waitForHostRuntimeDelay(delayMs)
     }

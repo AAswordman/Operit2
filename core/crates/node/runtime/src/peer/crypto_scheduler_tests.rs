@@ -43,9 +43,6 @@ impl HostRuntimeTaskSchedulerHost for RecordingScheduler {
     ) -> HostResult<()> {
         unreachable!()
     }
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        unreachable!()
-    }
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
         unreachable!()
     }

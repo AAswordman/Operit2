@@ -812,6 +812,14 @@ fn basic_tools_en() -> SystemToolPromptCategory {
         "Available tools",
         vec![
             tool(
+                "package_wait",
+                "Collect new output and final results from earlier package executions in this chat. Waits at most 20 seconds without cancelling running work. Omit execution_id to collect all existing uncollected executions; any new output or completion returns early.",
+                vec![
+                    param("execution_id", "string", "Execution ID returned by a package call; omit to collect earlier executions in this chat", false, None),
+                    param("timeout_ms", "integer", "Foreground wait from 0 to 20000 milliseconds; 0 reads immediately", false, Some("20000")),
+                ],
+            ),
+            tool(
                 "sleep",
                 "Wait for the specified duration before continuing.",
                 vec![param(
@@ -857,6 +865,14 @@ fn basic_tools_cn() -> SystemToolPromptCategory {
     category(
         "可用工具",
         vec![
+            tool(
+                "package_wait",
+                "收取当前对话前面包执行的新输出和最终结果。最多等待20秒，到时后台任务继续运行；有新输出或任务完成时提前返回。省略 execution_id 会收取当前已有的未领取执行。",
+                vec![
+                    param("execution_id", "string", "包调用返回的执行 ID；省略时收取当前对话前面的执行", false, None),
+                    param("timeout_ms", "integer", "前台等待毫秒数，0至20000，0表示立即读取", false, Some("20000")),
+                ],
+            ),
             tool(
                 "sleep",
                 "等待指定时长后再继续执行。",

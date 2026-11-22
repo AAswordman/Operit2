@@ -1406,10 +1406,6 @@ impl operit_host_api::HostRuntimeTaskSchedulerHost for ImmediatePreferenceObserv
         ))
     }
 
-    fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
-
     fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
         Box::pin(async {
             Err(HostError::new(

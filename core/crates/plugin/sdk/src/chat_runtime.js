@@ -7,7 +7,7 @@ function __operitChatRequestValue(request, label) {
 }
 
 /** Returns one bounded pull-based iterator with tool-specific disposal semantics. */
-function __operitCreateToolStream(toolName, request) {
+function __operitCreateToolStream(toolName, request, openOperation) {
     var requestValue = __operitChatRequestValue(request, toolName === "terminal_observe" ? "Terminal execution" : undefined);
     var label = toolName === "terminal_observe" ? "Terminal execution" : "Chat observation";
     var opening = null, streamId = null, disposal = null, closed = false, pulling = false;
@@ -15,7 +15,7 @@ function __operitCreateToolStream(toolName, request) {
     /** Starts the sole accepted send lazily on its first consumer pull. */
     function open() {
         if (opening === null) {
-            opening = toolCall(toolName, { observation: { op: 'open', request: requestValue } }).then(
+            opening = toolCall(toolName, { observation: { op: openOperation === undefined ? 'open' : openOperation, request: requestValue } }).then(
                 /** Retains only the private native observation identity. */
                 function(result) { var id = result.handle; streamId = id; return id; }
             );

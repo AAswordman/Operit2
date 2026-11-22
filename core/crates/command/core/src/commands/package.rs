@@ -49,10 +49,9 @@ pub async fn run_package_command(
                 "usage: operit2 package import <js-ts-hjson-toolpkg-path>".to_string()
             })?;
             let package_manager = package_manager(&tool_handler);
-            let mut guard = package_manager
-                .lock()
-                .expect("package manager mutex poisoned");
-            let result = guard.addPackageFileFromExternalStorageResult(path)?;
+            let import = package_manager.lock().expect("package manager mutex poisoned")
+                .addPackageFileFromExternalStorageResult(path);
+            let result = import.await?;
             output.push_stdout_line(format!("Package imported: {}", result.packageName));
             output.push_stdout_line(format!("Format: {}", result.packageFormat));
             output.push_stdout_line(format!("Stored: {}", result.storedPath));
@@ -73,8 +72,8 @@ pub async fn run_package_command(
                 .ok_or_else(|| "usage: operit2 package delete <name>".to_string())?;
             delete_package(tool_handler, name, output)
         }
-        "enable" => set_package_enabled(tool_handler, args.get(1), true, output),
-        "disable" => set_package_enabled(tool_handler, args.get(1), false, output),
+        "enable" => set_package_enabled(tool_handler, args.get(1), true, output).await,
+        "disable" => set_package_enabled(tool_handler, args.get(1), false, output).await,
         "use" => {
             let name = args
                 .get(1)
@@ -485,7 +484,7 @@ fn delete_package(
 }
 
 /// Sets the enabled state for one package.
-fn set_package_enabled(
+async fn set_package_enabled(
     tool_handler: AIToolHandler,
     name: Option<&String>,
     enabled: bool,
@@ -499,13 +498,11 @@ fn set_package_enabled(
         }
     })?;
     let package_manager = package_manager(&tool_handler);
-    let mut guard = package_manager
-        .lock()
-        .expect("package manager mutex poisoned");
     let message = if enabled {
-        guard.enablePackage(name)
+        let enabled = package_manager.lock().expect("package manager mutex poisoned").enablePackage(name);
+        enabled.await
     } else {
-        guard.disablePackage(name)
+        package_manager.lock().expect("package manager mutex poisoned").disablePackage(name)
     };
     output.push_stdout_line(format!("Package {}: {name}", enabled_status(enabled)));
     output.push_stdout_line(message.clone());

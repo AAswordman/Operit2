@@ -567,7 +567,7 @@ int64_t Syscalls::socket_message(CpuState &cpu) {
             task.timeout_result = request->completed ? int64_t(request->completed) : -11;
         }
         return result;
-    });
+    }, {{host->get(), short(sending ? POLLOUT : POLLIN), 0}});
     arm_message_wait(scheduler_.current(), [this, tid, partial] {
         // Interruption can be initiated while another guest process is current.
         Scheduler::ScopedTask context(scheduler_, tid);

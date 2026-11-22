@@ -130,7 +130,7 @@ int64_t Syscalls::terminal_ioctl(CpuState &cpu) {
             return *result;
         if (interrupt_for_pending_signal())
             return -4;
-        scheduler_.block({}, -4, std::move(attempt));
+        scheduler_.block({}, -4, std::move(attempt), {{host->get(), POLLOUT, 0}});
         return 0;
     }
     case 0x5409:   // TCSBRK: nonzero argument drains without sending a break.
@@ -165,7 +165,14 @@ int64_t Syscalls::terminal_ioctl(CpuState &cpu) {
             return *result;
         if (interrupt_for_pending_signal())
             return -4;
-        scheduler_.block({}, -4, std::move(attempt));
+        scheduler_.block(state->asserted ? TaskDeadline(state->until) : TaskDeadline{}, 0, [this, attempt, state]() {
+            auto result = attempt();
+            if (!result && state->asserted) {
+                scheduler_.current().deadline = state->until;
+                scheduler_.current().wait_descriptors.clear();
+            }
+            return result;
+        }, state->asserted ? std::vector<pollfd>{} : std::vector<pollfd>{{state->fd->get(), POLLOUT, 0}});
         return 0;
     }
     case 0x540a: // TCXONC
@@ -402,7 +409,11 @@ int64_t Syscalls::terminal_io(bool writing, uint64_t fd, uint64_t address, uint6
                 live->cancel_read(tid);
         };
     }
-    scheduler_.block({}, -4, std::move(attempt));
+    scheduler_.block(wait->deadline, 0, [this, attempt, wait]() {
+        auto result = attempt();
+        if (!result) scheduler_.current().deadline = wait->deadline;
+        return result;
+    }, {{host->get(), short(writing ? POLLOUT : POLLIN), 0}});
     return 0;
 }
 } // namespace operit::arm64

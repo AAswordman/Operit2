@@ -1,4 +1,5 @@
 use super::*;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_store::ExtensionStore::ExtensionStore;
 use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStore};
 
@@ -6,18 +7,10 @@ use operit_store::PreferencesDataStore::{stringPreferencesKey, CoreNodeStateStor
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn failed_package_deletion_removes_builtin_and_external_installations() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage.clone());
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    ui_resource_tests::configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = ui_resource_tests::package_test_application();
     let packages = app.packageManager();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
     let name = "com.operit.goal_mode_bundle";
     let store = ExtensionStore::new(storage.clone());
     let mut record = store.record("package", name).unwrap();
@@ -48,7 +41,9 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
         )
         .unwrap();
 
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     let issue = manager
         .getToolPkgLoadIssues()
         .into_iter()
@@ -59,20 +54,27 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
     manager.deleteToolPkgLoadIssue(issue).unwrap();
     assert!(!storage.exists(&record_path).unwrap());
     assert!(!storage.exists(&record_path.replace("/space/", "/device/")).unwrap());
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     assert!(store.record("package", name).is_err());
     assert!(manager.getToolPkgContainerRuntime(name).is_none());
     assert!(manager.getBundledExternalPackageCandidates().iter()
         .any(|candidate| candidate.packageName == name));
     let imported = manager.importBundledExternalToolPkgContainer(name);
     assert!(imported.starts_with("Successfully"), "{imported}");
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     assert!(manager.getToolPkgContainerRuntime(name).is_some());
 
     // A malformed archive has neither a package ID nor an ownership record.
     let paths = operit_store::RuntimeStorePaths::RuntimeStorePaths::default();
     let broken = paths.runtime_storage_path("runtime/extensions/device/packages/broken.toolpkg");
     std::fs::write(&broken, b"invalid archive").unwrap();
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     let issue = manager
         .getToolPkgLoadIssues()
         .into_iter()
@@ -88,12 +90,17 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
     let extra = "com.operit.context_limiter";
     let imported = manager.importBundledExternalToolPkgContainer(extra);
     assert!(imported.starts_with("Successfully"), "{imported}");
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     let valid = store.record("package", extra).unwrap();
     let original = paths
         .runtime_storage_path("runtime/extensions/device/packages")
         .join(&valid.sourceName);
     std::fs::write(&original, b"corrupted installed archive").unwrap();
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     let issue = manager
         .getToolPkgLoadIssues()
         .into_iter()
@@ -105,10 +112,15 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
     assert!(store.record("package", extra).is_err());
     let imported = manager.importBundledExternalToolPkgContainer(extra);
     assert!(imported.starts_with("Successfully"), "{imported}");
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     let duplicate =
         paths.runtime_storage_path("runtime/extensions/device/packages/zzz_duplicate.toolpkg");
     std::fs::copy(original, &duplicate).unwrap();
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     let issue = manager
         .getToolPkgLoadIssues()
         .into_iter()
@@ -126,7 +138,10 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
     std::fs::create_dir_all(rejected.parent().unwrap()).unwrap();
     std::fs::write(&rejected, b"invalid import archive").unwrap();
     let rejected_path = rejected.to_str().unwrap();
-    assert!(manager.addPackageFileFromExternalStorageResult(rejected_path).is_err());
+    let rejected_import = manager.addPackageFileFromExternalStorageResult(rejected_path);
+    drop(manager);
+    assert!(rejected_import.await.is_err());
+    manager = packages.lock().unwrap();
     let issue = manager
         .getToolPkgLoadIssues()
         .into_iter()
@@ -150,18 +165,10 @@ async fn failed_package_deletion_removes_builtin_and_external_installations() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn builtin_character_package_can_be_deleted_and_reinstalled() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage.clone());
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    ui_resource_tests::configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = ui_resource_tests::package_test_application();
     let packages = app.packageManager();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
     let name = "com.operit.character_cards";
     let store = ExtensionStore::new(storage.clone());
     let original = store.record("package", name).unwrap();
@@ -176,7 +183,9 @@ async fn builtin_character_package_can_be_deleted_and_reinstalled() {
     shared.settings["installationScope"] = json!("space");
     shared.settings["order"] = json!(17);
     store.setSettings("package", name, shared.settings).unwrap();
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     let repaired = store.record("package", name).unwrap();
     assert_eq!(repaired.scope, "space");
     assert_eq!(repaired.settings["order"], 17);
@@ -188,7 +197,9 @@ async fn builtin_character_package_can_be_deleted_and_reinstalled() {
     assert_eq!(storage.readBytes(&data_path).unwrap(), b"existing character data");
     assert!(manager.deletePackage(name));
     for _ in 0..2 {
-        manager.loadAvailablePackages();
+        drop(manager);
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+        manager = packages.lock().unwrap();
         assert!(store.record("package", name).is_err());
         assert!(manager.getToolPkgContainerRuntime(name).is_none());
         assert!(!manager.getEnabledPackageNames().iter().any(|enabled| enabled == name));
@@ -197,6 +208,9 @@ async fn builtin_character_package_can_be_deleted_and_reinstalled() {
         .any(|candidate| candidate.packageName == name));
     let imported = manager.importBundledExternalToolPkgContainer(name);
     assert!(imported.starts_with("Successfully"), "{imported}");
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     assert!(manager.getToolPkgContainerRuntime(name).is_some());
     assert_eq!(storage.readBytes(&data_path).unwrap(), b"existing character data");
 }
@@ -205,18 +219,10 @@ async fn builtin_character_package_can_be_deleted_and_reinstalled() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shared_builtin_owner_keeps_its_own_settings() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage.clone());
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    ui_resource_tests::configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = ui_resource_tests::package_test_application();
     let packages = app.packageManager();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
     let name = "com.operit.goal_mode_bundle";
     let store = ExtensionStore::new(storage.clone());
     let canonical = store.record("package", name).unwrap();
@@ -246,7 +252,9 @@ async fn shared_builtin_owner_keeps_its_own_settings() {
         .unwrap();
     assert!(store.record("package", name).is_err());
 
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
 
     assert!(manager
         .getToolPkgLoadIssues()
@@ -263,18 +271,10 @@ async fn shared_builtin_owner_keeps_its_own_settings() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shared_builtin_modes_ignore_device_local_retirement() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage.clone());
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    ui_resource_tests::configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = ui_resource_tests::package_test_application();
     let packages = app.packageManager();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
     let store = ExtensionStore::new(storage.clone());
     let modes = [
         ("com.operit.goal_mode_bundle", "goal_mode.toolpkg"),
@@ -297,7 +297,9 @@ async fn shared_builtin_modes_ignore_device_local_retirement() {
             json!(["goal_mode.toolpkg", "plan_mode.toolpkg"]),
         );
     }).unwrap();
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     for (name, _) in modes {
         assert!(manager.getToolPkgContainerRuntime(name).is_some(),
             "Shared package {name} was hidden by local retirement preferences");
@@ -309,7 +311,9 @@ async fn shared_builtin_modes_ignore_device_local_retirement() {
         assert_eq!(record.settings["builtin"], true);
         assert_eq!(record.settings["order"], 9);
     }
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    manager = packages.lock().unwrap();
     for (name, _) in modes {
         assert!(manager.getToolPkgContainerRuntime(name).is_some());
         assert!(manager.getToolPkgLoadIssues().iter()
@@ -321,17 +325,9 @@ async fn shared_builtin_modes_ignore_device_local_retirement() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn builtin_scope_uses_dependencies_instead_of_user_ranks() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage.clone());
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    ui_resource_tests::configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = ui_resource_tests::package_test_application();
     let packages = app.packageManager();
-    packages.lock().unwrap().loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let scopes = app.getExtensionScopes("package".into()).unwrap();
     assert!(scopes.values().all(|scope| scope == "device" || scope == "space"));
     let name = "com.operit.character_cards";
@@ -369,23 +365,17 @@ async fn builtin_scope_uses_dependencies_instead_of_user_ranks() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bundled_source_updates_preserve_device_and_space_installations() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage.clone());
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    ui_resource_tests::configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = ui_resource_tests::package_test_application();
     let packages = app.packageManager();
-    let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let store = ExtensionStore::new(storage.clone());
     let paths = operit_store::RuntimeStorePaths::RuntimeStorePaths::default();
     for name in ["com.operit.character_cards", "com.operit.context_limiter"] {
+        let mut manager = packages.lock().unwrap();
         let imported = manager.importBundledExternalToolPkgContainer(name);
         assert!(imported.starts_with("Successfully"), "{imported}");
+        drop(manager);
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
         let data_path = format!(
             "{}/bundle-update-data.bin",
             ExtensionStore::spaceDataPath(name).unwrap()
@@ -394,16 +384,21 @@ async fn bundled_source_updates_preserve_device_and_space_installations() {
             .writeBytes(&data_path, b"preserved user data")
             .unwrap();
         for scope in ["device", "space"] {
+            let mut manager = packages.lock().unwrap();
             manager.setPackageScope(name, scope).unwrap();
             if scope == "device" {
                 manager.disableToolPkgContainer(name);
+                drop(manager);
             } else {
-                manager.enableToolPkgContainer(name);
+                let enabled = manager.enableToolPkgContainer(name);
+                drop(manager);
+                enabled.await;
             }
             let mut record = store.record("package", name).unwrap();
             record.settings["updateTestConfig"] = json!({"value": "retained", "count": 7});
             store.setSettings("package", name, record.settings).unwrap();
-            manager.loadAvailablePackages();
+            RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+            let mut manager = packages.lock().unwrap();
             assert!(!manager
                 .getBundledExternalPackageCandidates()
                 .iter()
@@ -423,7 +418,9 @@ async fn bundled_source_updates_preserve_device_and_space_installations() {
                 .unwrap();
             std::io::Write::write_all(&mut archive, b"previous application bundle").unwrap();
             std::fs::write(&source, archive.finish().unwrap().into_inner()).unwrap();
-            manager.loadAvailablePackages();
+            drop(manager);
+            RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+            let mut manager = packages.lock().unwrap();
             let updates = manager.getBundledExternalPackageCandidates();
             let update = updates
                 .iter()
@@ -432,6 +429,9 @@ async fn bundled_source_updates_preserve_device_and_space_installations() {
             assert_eq!(update.version, version);
             let imported = manager.importBundledExternalToolPkgContainer(name);
             assert!(imported.starts_with("Successfully"), "{imported}");
+            drop(manager);
+            RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+            manager = packages.lock().unwrap();
             let after = store.record("package", name).unwrap();
             assert_eq!(after.scope, scope);
             assert_eq!(after.sourceName, before.sourceName);

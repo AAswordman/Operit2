@@ -14,7 +14,7 @@ use std::time::Duration;
 
 enum NativeJavaScriptStateRequest {
     Enqueue {
-        task: HostJavaScriptRuntimeStateTask,
+        task: HostJavaScriptRuntimeStateAsyncTask,
         interrupt: HostJavaScriptExecutionInterrupt,
     },
     Execute {
@@ -103,7 +103,7 @@ impl HostJavaScriptRuntimeHost for NativeHostJavaScriptRuntimeHost {
                     while let Some(request) = requestReceiver.recv().await {
                         match request {
                             NativeJavaScriptStateRequest::Enqueue { task, interrupt } => {
-                                if let Err(error) = task(state.as_mut(), interrupt) {
+                                if let Err(error) = task(state.as_mut(), interrupt).await {
                                     operit_host_api::logHostError(
                                         "JavaScriptRuntime",
                                         &error.to_string(),
@@ -169,7 +169,7 @@ impl HostJavaScriptRuntimeHost for NativeHostJavaScriptRuntimeHost {
         &self,
         handle: HostJavaScriptRuntimeStateHandle,
         interrupt: HostJavaScriptExecutionInterrupt,
-        task: HostJavaScriptRuntimeStateTask,
+        task: HostJavaScriptRuntimeStateAsyncTask,
     ) -> HostResult<()> {
         let worker = self.stateWorker(handle)?;
         worker

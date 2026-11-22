@@ -22,7 +22,7 @@ pub struct ToolPkgMainRegistrationScriptParser;
 
 impl ToolPkgMainRegistrationScriptParser {
     /// Parses a device-scope ToolPkg main script without preloaded text resources.
-    pub fn parse(
+    pub async fn parse(
         script: &str,
         toolPkgId: &str,
         mainScriptPath: &str,
@@ -37,12 +37,12 @@ impl ToolPkgMainRegistrationScriptParser {
             ToolPkgConfigScope::Device,
             jsEngine,
             None,
-        )
+        ).await
     }
 
     /// Parses ToolPkg main-script registrations with archive text resources available to JavaScript.
     #[allow(non_snake_case)]
-    pub(crate) fn parseWithTextResources(
+    pub(crate) async fn parseWithTextResources(
         script: &str,
         toolPkgId: &str,
         mainScriptPath: &str,
@@ -88,7 +88,7 @@ impl ToolPkgMainRegistrationScriptParser {
                 "registerToolPkg",
                 &params,
                 textResources,
-            );
+            ).await;
         let captured = match capturedResult {
             std::result::Result::Ok(captured) => captured,
             std::result::Result::Err(ref error) => {

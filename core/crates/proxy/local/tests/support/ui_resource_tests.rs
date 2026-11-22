@@ -1,4 +1,5 @@
 use super::*;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_host_api::{
     AppListData, AppOperationData, AppUsageTimeResultData, DeviceInfoData, LocationData,
     NotificationData, OCRLanguage, OCRQuality, SystemNotificationRequest, SystemOperationHost,
@@ -50,17 +51,9 @@ async fn package_ui_headless_latency_probe() {
     use operit_plugin_sdk::toolpkg::ToolPkgPackageService::ToolPkgPackageHost;
     use std::time::Instant;
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage);
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = package_test_application();
     let packages = app.packageManager();
-    packages.lock().unwrap().loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let proxy = LocalCoreProxy::new(app);
     let package = "com.operit.character_cards";
     {
@@ -337,7 +330,7 @@ async fn blocked_ui_resources_do_not_block_engines_or_resurrect_closed_sessions(
     configure_package_hosts(&mut hosts);
     let app = OperitApplication::newWithContext(hosts);
     let packages = app.packageManager();
-    packages.lock().unwrap().loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let package = "com.operit.character_cards";
     let runtime = packages
         .lock()
@@ -543,6 +536,20 @@ impl operit_host_api::HttpStreamHost for NoNetworkHttpHost {
     }
 }
 
+/// Creates real package hosts with isolated storage and explicit registration ownership.
+pub(super) fn package_test_application() -> (Arc<TestRuntimeStorageHost>, OperitApplication) {
+    let storage = register_test_runtime_roots();
+    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
+    hosts.runtimeStorageHost = Some(storage.clone());
+    hosts.runtimeSqliteHost = Some(storage.clone());
+    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
+    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
+    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
+    configure_package_hosts(&mut hosts);
+    let app = OperitApplication::newWithContext(hosts);
+    (storage, app)
+}
+
 /// Supplies locale and tool-registration capabilities required by real package loading.
 pub(super) fn configure_package_hosts(hosts: &mut HostManager) {
     hosts.systemOperationHost = Some(Arc::new(TestSystemLocale));
@@ -565,17 +572,9 @@ fn character_preferences_request() -> operit_plugin_sdk::javascript::JsToolPkgIp
 /// Creates a canonical registry whose startup has been scheduled but has not published a catalog.
 fn public_api_startup_fixture() -> (
     LocalCoreProxy,
-    Arc<Mutex<operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager>>,
+    Arc<Mutex<RuntimePackageManager>>,
 ) {
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage);
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = package_test_application();
     let packages = app.packageManager();
     assert!(packages.lock().unwrap().claimInitialPackageRegistryLoad().unwrap());
     (LocalCoreProxy::new(app), packages)
@@ -600,7 +599,6 @@ fn public_api_startup_requests() -> Vec<CoreCallRequest> {
 /// Chat discovery and invocation wait without holding proxy locks, then read the newly published catalog.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn public_api_startup_waits_for_canonical_publication() {
-    use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
     let (proxy, packages) = public_api_startup_fixture();
     let mut pending = public_api_startup_requests().into_iter()
@@ -622,7 +620,7 @@ async fn public_api_startup_waits_for_canonical_publication() {
         assert!(tokio::time::timeout(Duration::from_millis(20), call).await.is_err(),
             "chat API calls must wait until the scan publishes its catalog");
     }
-    RuntimePackageManager::reloadRegistry(packages.clone()).await.unwrap();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     for (index, call) in pending.into_iter().enumerate() {
         let response = tokio::time::timeout(Duration::from_secs(10), call).await.unwrap();
         let value: Value = fromCoreValue(response.result.unwrap()).unwrap();
@@ -660,18 +658,10 @@ async fn public_api_and_ipc_preserve_the_engine_after_installation_settings_chan
     use operit_store::ExtensionStore::ExtensionStore;
     use operit_tools::tools::ToolJsRuntime::invokeToolPkgIpc;
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage.clone());
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = package_test_application();
     let packages = app.packageManager();
     let handler = app.aiToolHandler();
-    packages.lock().unwrap().loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let package = "com.operit.character_cards";
     let context = format!("toolpkg_main:{package}");
     let proxy = LocalCoreProxy::new(app);
@@ -687,7 +677,7 @@ async fn public_api_and_ipc_preserve_the_engine_after_installation_settings_chan
     let mut record = store.record("package", package).unwrap();
     record.settings["order"] = json!(9);
     store.setSettings("package", package, record.settings).unwrap();
-    packages.lock().unwrap().loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let current = packages.lock().unwrap().getToolPkgExecutionEngine(&context, package).unwrap();
     assert!(Arc::ptr_eq(&engine, &current), "Settings changes must retain the running plugin realm");
     assert_eq!(store.record("package", package).unwrap().settings["order"], 9);
@@ -706,28 +696,25 @@ async fn public_api_and_ipc_preserve_the_engine_after_installation_settings_chan
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn bundled_subpackage_toggle_preserves_explicit_state() {
     let _test_guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    let storage = register_test_runtime_roots();
-    let mut hosts = HostManager::withFileSystemHost(Arc::new(PosixFileSystemHost::new()));
-    hosts.runtimeStorageHost = Some(storage.clone());
-    hosts.runtimeSqliteHost = Some(storage);
-    hosts.hostSecretStore = Some(Arc::new(TestSecretStore::default()));
-    hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
-    hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
-    configure_package_hosts(&mut hosts);
-    let app = OperitApplication::newWithContext(hosts);
+    let (storage, app) = package_test_application();
     let packages = app.packageManager();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
     let container = "com.operit.plan_mode_bundle";
     let child = "plan_mode_tools";
     assert!(manager.isPackageEnabled(child));
     assert!(manager.setToolPkgSubpackageEnabled(child, false), "default-enabled child must accept disablement");
     assert!(!manager.isPackageEnabled(child));
     assert!(!manager.getToolPkgContainerDetails(container, false).unwrap().subpackages[0].enabled);
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+    let mut manager = packages.lock().unwrap();
     assert!(!manager.isPackageEnabled(child), "catalog reload must retain explicit disablement");
     manager.disablePackage(container);
-    manager.enablePackage(container);
+    let enabled = manager.enablePackage(container);
+    drop(manager);
+    enabled.await;
+    let mut manager = packages.lock().unwrap();
     assert!(!manager.isPackageEnabled(child), "container activation must retain child preference");
     assert!(manager.setToolPkgSubpackageEnabled(child, true));
     assert!(manager.isPackageEnabled(child));
@@ -735,6 +722,9 @@ async fn bundled_subpackage_toggle_preserves_explicit_state() {
     assert!(!manager.isPackageEnabled(child), "a disabled container cannot expose its child");
     assert!(manager.setToolPkgSubpackageEnabled(child, true));
     assert!(!manager.isPackageEnabled(child), "editing a child must not enable its container");
-    manager.enablePackage(container);
+    let enabled = manager.enablePackage(container);
+    drop(manager);
+    enabled.await;
+    let manager = packages.lock().unwrap();
     assert!(manager.isPackageEnabled(child));
 }

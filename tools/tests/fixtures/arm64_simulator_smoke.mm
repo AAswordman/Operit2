@@ -1,11 +1,17 @@
 #import "Arm64TerminalBridge.mm"
 #include <stdexcept>
+#define ORT_TEST_CALL operit_ios_arm64_terminal_call
+#define ORT_TEST_START operit_ios_arm64_terminal_execute_async
+#define ORT_TEST_FREE operit_ios_arm64_terminal_free
+#include "arm64_async_command.h"
+
 #include "../../../hosts/ios/linux-runtime/tests/native_descriptor_budget.h"
 
 static void Check(bool condition, NSString *message) {
   if (!condition) throw std::runtime_error(message.UTF8String ?: "ARM64 simulator check failed");
 }
 static NSDictionary *Envelope(NSString *command, NSDictionary *request) {
+  if ([command isEqualToString:@"terminalExecute"]) return ORTTestExecute(request);
   NSData *json = [NSJSONSerialization dataWithJSONObject:request options:0 error:nil];
   NSString *text = [[NSString alloc] initWithData:json encoding:NSUTF8StringEncoding];
   char *raw = operit_ios_arm64_terminal_call(command.UTF8String, text.UTF8String);
@@ -54,13 +60,7 @@ static bool Stream(void *context, const uint8_t *bytes, size_t size) {
   return true;
 }
 static NSDictionary *ExecuteStream(NSString *session, NSString *command, Capture &capture) {
-  NSData *request = [NSJSONSerialization dataWithJSONObject:@{ @"sessionId": session, @"command": command, @"timeoutMs": @15000 } options:0 error:nil];
-  NSString *json = [[NSString alloc] initWithData:request encoding:NSUTF8StringEncoding];
-  char *raw = operit_ios_arm64_terminal_execute_streaming("terminalExecute", json.UTF8String, &capture, Stream);
-  Check(raw != nullptr, @"Streaming returned no response");
-  NSData *data = [NSData dataWithBytes:raw length:strlen(raw)];
-  operit_ios_arm64_terminal_free(raw);
-  return [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  return ORTTestExecute(@{ @"sessionId": session, @"command": command, @"timeoutMs": @15000 }, &capture, Stream, capture.cancelAt);
 }
 int main(int argc, const char **argv) {
   @autoreleasepool {
@@ -106,14 +106,7 @@ int main(int argc, const char **argv) {
       canceled.cancel = true;
       NSDictionary *cancel = ExecuteStream(session, @"printf '\\nLIVE_A\\n'; sleep 30", canceled);
       Check([cancel[@"error"] isKindOfClass:NSString.class], @"Output cancellation was ignored");
-      // The foreground interrupt is delivered asynchronously through the VM queue.
-      const double deadline = NSProcessInfo.processInfo.systemUptime + 5;
-      for (;;) {
-        NSDictionary *screen = Call(@"terminalScreen", @{ @"sessionId": session });
-        if (![screen[@"commandRunning"] boolValue]) break;
-        Check(NSProcessInfo.processInfo.systemUptime < deadline, @"Canceled shell did not become idle");
-        [NSThread sleepForTimeInterval:.01];
-      }
+      Check(![Call(@"terminalScreen", @{ @"sessionId": session })[@"commandRunning"] boolValue], @"Cancellation returned before readiness");
       Execute(session, @"printf '__AFTER_CANCEL__\\n'", 0, @"__AFTER_CANCEL__");
       Capture silent;
       silent.cancelAt = NSProcessInfo.processInfo.systemUptime + .2;

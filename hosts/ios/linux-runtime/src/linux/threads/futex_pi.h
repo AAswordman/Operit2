@@ -13,6 +13,9 @@ struct FutexPiTimeout {
     bool realtime = false;
 };
 std::optional<FutexPiTimeout> futex_pi_timeout(Memory &memory, uint64_t address, bool realtime);
+// Absolute wall-clock waits share the native timer producer instead of scheduler scans.
+std::function<std::optional<int64_t>()> futex_realtime_timeout(
+    const std::optional<FutexPiTimeout> &timeout, std::vector<pollfd> &descriptors);
 int64_t futex_pi_lock(Scheduler &scheduler, Memory &memory, uint64_t address, bool private_futex,
                       bool trylock, std::optional<FutexPiTimeout> timeout = {},
                       const std::function<bool()> &interrupted = {});

@@ -8,6 +8,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <poll.h>
 #include <vector>
 
 namespace operit::arm64 {
@@ -72,6 +73,7 @@ struct Task {
     TaskDeadline deadline;
     int64_t timeout_result = 0;
     std::function<std::optional<int64_t>()> poll;
+    std::vector<pollfd> wait_descriptors;
     std::function<void()> wait_cleanup;
 };
 } // namespace operit::arm64

@@ -10,7 +10,6 @@ impl HostRuntimeTaskSchedulerHost for ElapsedScheduler {
     fn scheduleHostRuntimeCooperativeAsyncTask(&self, _: &str, _: HostRuntimeAsyncTask) -> HostResult<()> { unreachable!() }
     fn scheduleHostRuntimeTask(&self, _: &str, _: HostRuntimeTask) -> HostResult<()> { unreachable!() }
     fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: HostRuntimeTask) -> HostResult<()> { unreachable!() }
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture { unreachable!() }
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
 }
 struct SilentPeer { endpoint: PeerEndpoint, transport: PeerTransport, blockedSend: bool }

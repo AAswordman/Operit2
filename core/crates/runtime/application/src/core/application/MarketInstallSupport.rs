@@ -15,6 +15,8 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 use super::OperitApplication::OperitApplication;
+use operit_host_api::HostManager::HostManager;
+use operit_tools::tools::AIToolHandler::AIToolHandler;
 
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -167,9 +169,45 @@ fn a2a_marker_origins(tools: &operit_tools::tools::AIToolHandler::AIToolHandler)
     }).collect())
 }
 
+/// Downloads and validates an artifact without holding the package manager across registration.
+pub(super) async fn install_artifact(
+    host: &HostManager,
+    tools: &AIToolHandler,
+    asset_id: String,
+    file_name: String,
+    expected_sha256: String,
+) -> Result<String, String> {
+    let file_name = file_name.trim();
+    if file_name.is_empty()
+        || file_name.contains(['/', '\\'])
+        || Path::new(file_name).file_name().and_then(|name| name.to_str()) != Some(file_name)
+    {
+        return Err("Market artifact file name is invalid".into());
+    }
+    let digest = expected_sha256.trim().to_ascii_lowercase();
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("Market artifact SHA-256 is invalid".into());
+    }
+    let packages = tools.getOrCreatePackageManager();
+    let target = packages.lock().map_err(|error| error.to_string())?
+        .prepareMarketArtifactDownload(file_name)?;
+    let fs = host.vfs()?;
+    let result = async {
+        MarketStatsApiService::new().download_asset_to_file(&asset_id, &target, &fs)?;
+        let import = packages.lock().map_err(|error| error.to_string())?
+            .addMarketArtifactFile(target.clone(), digest);
+        Ok(import.await)
+    }.await;
+    if let Some(directory) = Path::new(&target).parent() {
+        let _ = fs.deleteFile(&directory.to_string_lossy(), true);
+    }
+    result
+}
+
 /// Imports a market entry and records only the version that actually succeeded.
-pub(super) fn install_entry(
-    app: &OperitApplication,
+pub(super) async fn install_entry(
+    host: &HostManager,
+    tools: &AIToolHandler,
     entry_id: &str,
     requested_version_id: Option<&str>,
 ) -> Result<String, String> {
@@ -185,7 +223,7 @@ pub(super) fn install_entry(
         })
         .filter(|id| !id.is_empty())
         .ok_or("Marketplace entry has no installable version")?;
-    let fs = app.hostManager.vfs()?;
+    let fs = host.vfs()?;
     match entry.r#type.as_str() {
         "script" | "package" => {
             let asset = entry
@@ -199,7 +237,7 @@ pub(super) fn install_entry(
                 .filter(|name| !name.trim().is_empty())
                 .ok_or("Marketplace asset has no file name")?;
             let result =
-                app.installMarketArtifact(asset.id.clone(), file_name.into(), asset.sha256.clone());
+                install_artifact(host, tools, asset.id.clone(), file_name.into(), asset.sha256.clone()).await;
             let result = result?;
             if !result
                 .to_ascii_lowercase()
@@ -225,12 +263,12 @@ pub(super) fn install_entry(
             let version = entry.latest_version.as_ref().filter(|version| version.id == version_id)
                 .ok_or("Requested A2A market version has no installation manifest")?;
             let config = version.install_config.as_deref().or_else(|| entry.repo_version.as_ref().and_then(|repo| repo.install_config.as_deref())).ok_or("A2A market entry has no installation configuration")?;
-            let repository = operit_tools::tools::a2a::A2ARepository::A2ARepository::new(app.hostManager.clone())?;
+            let repository = operit_tools::tools::a2a::A2ARepository::A2ARepository::new(host.clone())?;
             repository.import_market(config, &entry.id, version_id)?;
-            app.packageManager().lock().map_err(|e| e.to_string())?.reloadA2APackages();
+            tools.getOrCreatePackageManager().lock().map_err(|e| e.to_string())?.reloadA2APackages();
         }
         "skill" => {
-            install_skill(app, &entry, version_id)?;
+            install_skill(host, tools, &entry, version_id)?;
         }
         "mcp" => {
             let config = entry
@@ -250,7 +288,7 @@ pub(super) fn install_entry(
                 .map(|source| source.url.trim())
                 .unwrap_or_default();
             if repo_url.is_empty() {
-                let mcp = MCPLocalServer::getInstance(&app.hostManager);
+                let mcp = MCPLocalServer::getInstance(host);
                 let parsed: serde_json::Value =
                     serde_json::from_str(config).map_err(|error| error.to_string())?;
                 let servers = parsed
@@ -275,7 +313,7 @@ pub(super) fn install_entry(
                     .join(&plugin_id);
                 let backup = stage_existing_directory(&fs, &root)?;
                 let result = (|| {
-                    app.mcpRepository().installMCPServerWithObjectForFlutter(
+                    operit_tools::tools::mcp_runtime::MCPRepository::MCPRepository::getInstance(host, tools.runtimeSupport()).installMCPServerWithObjectForFlutter(
                         plugin_id.clone(),
                         repo_url.into(),
                         entry.title.clone(),
@@ -293,7 +331,8 @@ pub(super) fn install_entry(
 }
 
 fn install_skill(
-    app: &OperitApplication,
+    host: &HostManager,
+    tools: &AIToolHandler,
     entry: &MarketEntrySummary,
     version_id: &str,
 ) -> Result<(), String> {
@@ -303,8 +342,8 @@ fn install_skill(
         .map(|source| source.url.trim())
         .filter(|url| !url.is_empty())
         .ok_or("Skill repository URL is missing")?;
-    let fs = app.hostManager.vfs()?;
-    let repo = app.skillRepository();
+    let fs = host.vfs()?;
+    let repo = operit_tools::tools::skill_runtime::SkillRepository::SkillRepository::getInstance(host, tools.runtimeSupport());
     let old_root = repo
         .getAvailableSkillPackages()
         .into_values()

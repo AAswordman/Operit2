@@ -527,6 +527,12 @@ impl TerminalHost for ProfileTerminalHost {
             .executeInSessionStreaming(id, command, timeout, output)
     }
     /// Preserves event-loop scheduling supplied by Web and emulator hosts.
+    /// Retains the exact profile backend while handing out event-driven command state.
+    fn beginInSessionStreaming(self: Arc<Self>, id: String, command: String, timeout: u64)
+        -> HostResult<Box<dyn crate::TerminalCommand::TerminalCommandExecution>> {
+        self.session(&id)?.beginInSessionStreaming(id, command, timeout)
+    }
+
     fn scheduleInSessionStreaming(
         self: Arc<Self>,
         scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,

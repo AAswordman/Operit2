@@ -1,4 +1,5 @@
 use super::*;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use operit_host_api::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
     GrepCodeResult, HostEnvironmentDescriptor, HostError,
@@ -95,13 +96,13 @@ fn archive(version: &str, publisher: &str) -> Vec<u8> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn authenticated_market_updates_preserve_owner_scope_configuration_and_enabled_state() {
     let _guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    verify_market_update(false);
+    verify_market_update(false).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn legacy_market_archives_update_in_place_without_losing_their_scope() {
     let _guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
-    verify_market_update(true);
+    verify_market_update(true).await;
 }
 
 fn application(
@@ -123,31 +124,31 @@ async fn external_manifest_origin_alone_cannot_authorize_market_replacement() {
     let _guard = SHARED_CONCURRENCY_TEST_LOCK.lock().await;
     let (_storage, app) = application(Arc::new(FaultFileSystem::default()));
     let packages = app.packageManager();
-    let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let original = ToolPkgProtection::unwrapMarketArchive(&archive("1.0.0", "publisher")).unwrap();
-    let path = manager
+    let path = packages.lock().unwrap()
         .prepareMarketArtifactDownload("ordinary.toolpkg")
         .unwrap();
     assert!(path.starts_with("/operitapp/data/cache/toolpkg/"));
     let vfs = (&app.hostManager).vfs().unwrap();
     vfs.writeFileBytes(&path, &original).unwrap();
-    let result = manager.addPackageFileFromExternalStorage(&path);
+    let import = packages.lock().unwrap().addPackageFileFromExternalStorage(&path);
+    let result = import.await;
     assert!(result.starts_with("Successfully"), "{result}");
-    let runtime = manager
+    let runtime = packages.lock().unwrap()
         .getToolPkgContainerRuntime("dev.test.market-update")
         .unwrap();
     assert_eq!(runtime.sourceType, ToolPkgSourceType::EXTERNAL);
     let incoming = archive("2.0.0", "publisher");
-    let result = manager.addMarketArtifactBytes(
+    let result = import_artifact(&packages,
         incoming.clone(),
         "plugin.toolpkg".into(),
         format!("{:x}", Sha256::digest(&incoming)),
-    );
+    ).await;
     assert!(!result.starts_with("Successfully"), "{result}");
     assert_eq!(vfs.readFileBytes(&runtime.sourcePath).unwrap(), original);
     assert_eq!(
-        manager
+        packages.lock().unwrap()
             .getToolPkgContainerRuntime("dev.test.market-update")
             .unwrap()
             .version,
@@ -155,54 +156,67 @@ async fn external_manifest_origin_alone_cannot_authorize_market_replacement() {
     );
 }
 
-fn verify_market_update(legacy: bool) {
+/// Imports fixture bytes after releasing the manager's synchronous registry lock.
+async fn import_artifact(
+    packages: &Arc<Mutex<RuntimePackageManager>>,
+    bytes: Vec<u8>,
+    file_name: String,
+    expected_sha256: String,
+) -> String {
+    let import = packages.lock().unwrap().addMarketArtifactBytes(bytes, file_name, expected_sha256);
+    import.await
+}
+
+/// Exercises authenticated and legacy updates through the asynchronous registration boundary.
+async fn verify_market_update(legacy: bool) {
     let filesystem = Arc::new(FaultFileSystem::default());
     let (storage, app) = application(filesystem.clone());
     let vfs = (&app.hostManager).vfs().unwrap();
     let packages = app.packageManager();
-    let mut manager = packages.lock().unwrap();
-    manager.loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let name = "dev.test.market-update";
     let first = archive("1.0.0", "publisher");
     let result = if legacy {
-        let path = manager
+        let path = packages.lock().unwrap()
             .prepareMarketArtifactDownload("plugin.toolpkg")
             .unwrap();
         let vfs = (&app.hostManager).vfs().unwrap();
         vfs.writeFileBytes(&path, &first).unwrap();
         // Reproduce the old release's generic import route exactly.
-        manager.addPackageFileFromExternalStorage(&path)
+        let import = packages.lock().unwrap().addPackageFileFromExternalStorage(&path);
+        import.await
     } else {
-        manager.addMarketArtifactBytes(
+        import_artifact(&packages,
             first.clone(),
             "plugin.toolpkg".into(),
             format!("{:x}", Sha256::digest(&first)),
-        )
+        ).await
     };
     assert!(result.starts_with("Successfully"), "{result}");
     assert_eq!(
-        manager.getToolPkgContainerRuntime(name).unwrap().sourceType,
+        packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap().sourceType,
         if legacy {
             ToolPkgSourceType::EXTERNAL
         } else {
             ToolPkgSourceType::MARKET
         }
     );
-    manager.setPackageScope(name, "space").unwrap();
-    manager.setEnabledPackageNames(&[name.into()]).unwrap();
+    packages.lock().unwrap().setPackageScope(name, "space").unwrap();
+    let enable = packages.lock().unwrap().setEnabledPackageNames(&[name.into()]);
+    enable.await.unwrap();
     let store = ExtensionStore::new(storage.clone());
     let config = format!("{}/keep.json", store.configPath(name).unwrap());
     storage.writeBytes(&config, br#"{"value":"keep"}"#).unwrap();
     let before = store.record("package", name).unwrap();
-    let old_runtime = manager.getToolPkgContainerRuntime(name).unwrap();
+    let old_runtime = packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap();
     let next = archive("2.0.0", "publisher");
-    let result = manager.addMarketArtifactBytes(
+    let result = import_artifact(&packages,
         next.clone(),
         "plugin.toolpkg".into(),
         format!("{:x}", Sha256::digest(&next)),
-    );
+    ).await;
     assert!(result.starts_with("Successfully"), "{result}");
-    let runtime = manager.getToolPkgContainerRuntime(name).unwrap();
+    let runtime = packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap();
     assert_eq!(runtime.version, "2.0.0");
     assert_eq!(runtime.sourceType, ToolPkgSourceType::MARKET);
     assert_eq!(runtime.sourcePath, old_runtime.sourcePath);
@@ -211,7 +225,7 @@ fn verify_market_update(legacy: bool) {
     assert_eq!(after.sourceName, before.sourceName);
     assert_eq!(after.settings, before.settings);
     assert_eq!(storage.readBytes(&config).unwrap(), br#"{"value":"keep"}"#);
-    assert!(manager.getEnabledPackageNames().contains(&name.into()));
+    assert!(packages.lock().unwrap().getEnabledPackageNames().contains(&name.into()));
     // A failed move (after deleting the old destination), or a failed reload
     // after the swap, must restore both the old archive and installation state.
     let before_archive = vfs.readFileBytes(&runtime.sourcePath).unwrap();
@@ -223,16 +237,16 @@ fn verify_market_update(legacy: bool) {
             moved: false,
         };
         let failed = archive("3.0.0", "publisher");
-        let result = manager.addMarketArtifactBytes(
+        let result = import_artifact(&packages,
             failed.clone(),
             "plugin.toolpkg".into(),
             format!("{:x}", Sha256::digest(&failed)),
-        );
+        ).await;
         assert!(result.contains("injected"), "{result}");
         assert!(!result.starts_with("Successfully"), "{result}");
         assert_eq!(vfs.readFileBytes(&runtime.sourcePath).unwrap(), before_archive);
         assert_eq!(
-            manager.getToolPkgContainerRuntime(name).unwrap().version,
+            packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap().version,
             "2.0.0"
         );
         assert_eq!(
@@ -241,37 +255,37 @@ fn verify_market_update(legacy: bool) {
         );
         assert_eq!(store.record("package", name).unwrap().scope, "space");
         assert_eq!(storage.readBytes(&config).unwrap(), br#"{"value":"keep"}"#);
-        assert!(manager.getEnabledPackageNames().contains(&name.into()));
+        assert!(packages.lock().unwrap().getEnabledPackageNames().contains(&name.into()));
     }
     // Another publisher with the same ID cannot replace the owned installation.
-    let before_archive = manager.readToolPkgArchiveBytes(name).unwrap();
+    let before_archive = packages.lock().unwrap().readToolPkgArchiveBytes(name).unwrap();
     let rejected = archive("3.0.0", "other-publisher");
-    let result = manager.addMarketArtifactBytes(
+    let result = import_artifact(&packages,
         rejected.clone(),
         "plugin.toolpkg".into(),
         format!("{:x}", Sha256::digest(&rejected)),
-    );
+    ).await;
     assert!(!result.starts_with("Successfully"), "{result}");
     assert_eq!(
-        manager.readToolPkgArchiveBytes(name).unwrap(),
+        packages.lock().unwrap().readToolPkgArchiveBytes(name).unwrap(),
         before_archive
     );
-    manager.loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     assert_eq!(
-        manager.getToolPkgContainerRuntime(name).unwrap().version,
+        packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap().version,
         "2.0.0"
     );
     // Disabled catalog metadata must retain authenticated publisher identity for updates.
-    manager.disablePackage(name);
-    manager.loadAvailablePackages();
+    packages.lock().unwrap().disablePackage(name);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
     let disabledSettings = store.record("package", name).unwrap().settings;
     let update = archive("4.0.0", "publisher");
-    let result = manager.addMarketArtifactBytes(
+    let result = import_artifact(&packages,
         update.clone(), "plugin.toolpkg".into(), format!("{:x}", Sha256::digest(&update)),
-    );
+    ).await;
     assert!(result.starts_with("Successfully"), "{result}");
-    assert_eq!(manager.getToolPkgContainerRuntime(name).unwrap().version, "4.0.0");
-    assert!(!manager.isPackageEnabled(name), "updating a disabled installation must preserve disablement");
+    assert_eq!(packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap().version, "4.0.0");
+    assert!(!packages.lock().unwrap().isPackageEnabled(name), "updating a disabled installation must preserve disablement");
     assert_eq!(store.record("package", name).unwrap().settings, disabledSettings);
     assert_eq!(storage.readBytes(&config).unwrap(), br#"{"value":"keep"}"#);
 }
@@ -305,18 +319,18 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
         let (storage, app) = application(filesystem.clone());
         let vfs = (&app.hostManager).vfs().unwrap();
         let packages = app.packageManager();
-        let mut manager = packages.lock().unwrap();
-        manager.loadAvailablePackages();
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
         let name = "dev.test.market-script";
         let first = script("1.0.0", "publisher");
-        let result = manager.addMarketArtifactBytes(
+        let result = import_artifact(&packages,
             first.clone(),
             format!("old.{extension}"),
             format!("{:x}", Sha256::digest(&first)),
-        );
+        ).await;
         assert!(result.starts_with("Successfully"), "{result}");
-        manager.setPackageScope(name, "space").unwrap();
-        manager.setEnabledPackageNames(&[name.into()]).unwrap();
+        packages.lock().unwrap().setPackageScope(name, "space").unwrap();
+        let enable = packages.lock().unwrap().setEnabledPackageNames(&[name.into()]);
+        enable.await.unwrap();
         let store = ExtensionStore::new(storage.clone());
         let config = format!("{}/keep.json", store.configPath(name).unwrap());
         storage
@@ -330,14 +344,14 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
                 record.sourceName
             ));
         let next = script("2.0.0", "publisher");
-        let result = manager.addMarketArtifactBytes(
+        let result = import_artifact(&packages,
             next.clone(),
             format!("new.{extension}"),
             format!("{:x}", Sha256::digest(&next)),
-        );
+        ).await;
         assert!(result.starts_with("Successfully"), "{result}");
         assert_eq!(vfs.readFileBytes(&path.to_string_lossy()).unwrap(), next);
-        assert!(manager.getExecutableAvailablePackages()[name].tools[0]
+        assert!(packages.lock().unwrap().getExecutableAvailablePackages()[name].tools[0]
             .script
             .contains("2.0.0"));
         assert_eq!(
@@ -356,14 +370,14 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
                 moved: false,
             };
             let incoming = script("3.0.0", "publisher");
-            let result = manager.addMarketArtifactBytes(
+            let result = import_artifact(&packages,
                 incoming.clone(),
                 format!("new.{extension}"),
                 format!("{:x}", Sha256::digest(&incoming)),
-            );
+            ).await;
             assert!(result.contains("injected"), "{result}");
             assert_eq!(vfs.readFileBytes(&path.to_string_lossy()).unwrap(), next);
-            assert!(manager.getExecutableAvailablePackages()[name].tools[0]
+            assert!(packages.lock().unwrap().getExecutableAvailablePackages()[name].tools[0]
                 .script
                 .contains("2.0.0"));
             assert_eq!(
@@ -372,14 +386,14 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
             );
             assert_eq!(store.record("package", name).unwrap().scope, "space");
             assert_eq!(storage.readBytes(&config).unwrap(), b"keep-script-settings");
-            assert!(manager.getEnabledPackageNames().contains(&name.into()));
+            assert!(packages.lock().unwrap().getEnabledPackageNames().contains(&name.into()));
         }
         let incoming = script("3.0.0", "other-publisher");
-        let result = manager.addMarketArtifactBytes(
+        let result = import_artifact(&packages,
             incoming.clone(),
             format!("new.{extension}"),
             format!("{:x}", Sha256::digest(&incoming)),
-        );
+        ).await;
         assert!(!result.starts_with("Successfully"), "{result}");
         assert_eq!(vfs.readFileBytes(&path.to_string_lossy()).unwrap(), next);
     }

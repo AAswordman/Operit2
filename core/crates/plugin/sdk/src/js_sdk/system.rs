@@ -238,6 +238,16 @@ pub struct TerminalRunRequest {
     pub waitMs: u64,
 }
 
+/// Streams a named-session command until actual completion, independently of foreground waits.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalRunStreamRequest {
+    pub sessionName: String,
+    pub profileId: Option<String>,
+    pub terminalType: Option<TerminalType>,
+    pub command: String,
+}
+
 /// Carries live PTY output followed by the complete execution receipt.
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "lowercase")]
@@ -645,6 +655,8 @@ pub trait SystemTerminalHost: Send + Sync {
     /// Runs a command under session ownership. Expired foreground waits retain the running command.
     /// A yielded session is reserved; the next run with this name acquires a new session generation.
     fn run(&self, request: TerminalRunRequest) -> JsFuture<TerminalCommandResultData>;
+    /// Streams a named-session command until it completes; returning detaches its observation.
+    fn runStream(&self, request: TerminalRunStreamRequest) -> JsAsyncIterable<TerminalExecEvent>;
     /// Waits for the original managed command without writing anything to its terminal.
     /// Expired waits return timedOut=true while the command continues in its original session.
     fn wait(&self, sessionId: String, waitMs: u64) -> JsFuture<TerminalCommandResultData>;

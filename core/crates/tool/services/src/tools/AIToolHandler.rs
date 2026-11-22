@@ -104,6 +104,7 @@ impl Drop for ToolInvocationLifecycle {
 }
 
 pub struct AIToolHandlerState {
+    packageExecutions: Arc<crate::PackageExecution::PackageExecutionManager>,
     toolExecutors: BTreeMap<String, Arc<RegisteredToolExecutor>>,
     toolVisibility: BTreeMap<String, ToolRegistrationVisibility>,
     defaultToolsRegistration: Arc<std::sync::OnceLock<()>>,
@@ -185,6 +186,7 @@ impl AIToolHandler {
     pub fn new(context: HostManager, runtimeDependencies: ToolRuntimeDependencies) -> Self {
         Self {
             inner: Arc::new(Mutex::new(AIToolHandlerState {
+                packageExecutions: Default::default(),
                 toolExecutors: BTreeMap::new(),
                 toolVisibility: BTreeMap::new(),
                 defaultToolsRegistration: Default::default(),
@@ -1004,14 +1006,82 @@ impl AIToolHandler {
     /// Executes every caller through one pipeline, with hooks and permissions selected by native AI policy.
     #[allow(non_snake_case)]
     pub async fn executeToolInvocation(
-        &mut self,
+        &self,
         request: &ToolCall,
         policy: ToolExecutionPolicy,
     ) -> Result<Vec<ToolResult>, String> {
         let context = ToolInvocationContext::capture(self.clone());
-        operit_util::AppLogger::AppLogger::batch_future_file_writes(
-            context.clone().scope(self.executeInvocationInContext(request, policy, &context)),
-        ).await
+        if matches!(policy, ToolExecutionPolicy::Ai { .. }) {
+            if let Ok(target) = request.resolveTarget(&context) {
+                if target.name.split_once(':').is_some() {
+                    return self.executePackageInBackground(request, policy, context, target.name).await;
+                }
+            }
+        }
+        let batchTurn = if matches!(policy, ToolExecutionPolicy::Ai { .. })
+            && request.resolveTarget(&context).is_ok_and(|target| target.name != "package_wait") {
+            ToolExecutionManager::reserveBatchTurn()
+        } else { None };
+        if let Some(turn) = &batchTurn { turn.wait().await; }
+        let mut handler = self.clone();
+        let result = operit_util::AppLogger::AppLogger::batch_future_file_writes(
+            context.clone().scope(handler.executeInvocationInContext(request, policy, &context)),
+        ).await;
+        drop(batchTurn);
+        result
+    }
+
+    /// Shares the runtime-owned execution registry across turns and handler clones.
+    pub(crate) fn packageExecutions(&self) -> Arc<crate::PackageExecution::PackageExecutionManager> {
+        self.inner.lock().expect("AIToolHandler mutex poisoned").packageExecutions.clone()
+    }
+
+    /// Transfers package ownership to the Host scheduler before starting a bounded foreground wait.
+    async fn executePackageInBackground(
+        &self, request: &ToolCall, policy: ToolExecutionPolicy,
+        context: ToolInvocationContext, toolName: String,
+    ) -> Result<Vec<ToolResult>, String> {
+        let waitMs = if matches!(request.name.as_str(), "package_proxy" | "proxy") {
+            match crate::PackageExecution::waitBudget(request.parameters.get("timeout_ms")) {
+                Ok(value) => value,
+                Err(error) => return Ok(vec![Self::failedInvocation(&request.toLegacyTool(), error)]),
+            }
+        } else { crate::PackageExecution::DEFAULT_WAIT_MS };
+        let scheduler = self.getContext().hostRuntimeTaskSchedulerHost
+            .ok_or("Runtime task scheduler host is unavailable")?;
+        let manager = self.packageExecutions();
+        let execution = manager.create(toolName.clone(), &context)?;
+        let batchTurn = ToolExecutionManager::reserveBatchTurn();
+        let running = execution.clone();
+        let request = request.clone();
+        let mut handler = self.clone();
+        let task: operit_host_api::HostRuntimeAsyncTask = Box::new(move || Box::pin(async move {
+            if let Some(turn) = &batchTurn { turn.wait().await; }
+            let output = running.clone().scope(context.clone().scope(async {
+                operit_util::AppLogger::AppLogger::batch_future_file_writes(
+                    handler.executeInvocationInContext(&request, policy, &context),
+                ).await
+            })).await;
+            running.finish(output);
+            drop(batchTurn);
+        }));
+        if let Err(error) = scheduler.scheduleHostRuntimeBlockingAsyncTask("package-execution", task) {
+            execution.finish(Err(error.to_string()));
+        }
+        let receipt = manager.wait(&[execution], scheduler.as_ref(), waitMs, false).await?;
+        let entry = &receipt["executions"][0];
+        let success = entry["status"] != "failed";
+        let error = if success { None } else {
+            Some(entry["error"].as_str().map(str::to_owned).unwrap_or_else(|| {
+                entry["results"].as_array().expect("Execution results must be an array").iter()
+                    .filter_map(|result| result["error"].as_str()).collect::<Vec<_>>().join("\n")
+            }))
+        };
+        Ok(vec![ToolResult {
+            toolName, success,
+            result: ToolResultData::JsonResultData(crate::tools::ToolResultDataClasses::JsonResultData { value: receipt }),
+            error,
+        }])
     }
 
     /// Executes under the native caller context and dispatches lifecycle hooks only for AI requests.
@@ -1065,7 +1135,8 @@ impl AIToolHandler {
                     return Ok(vec![denied]);
                 }
             }
-            if isAiInvocation {
+            // Reading admitted executions must not queue behind the package hooks being observed.
+            if isAiInvocation && request.name != "package_wait" {
                 let interception = self.checkToolInterception(tool()).await?;
                 if let AIToolHookDecision::Block(_) = interception {
                     return Ok(vec![Self::toolInterceptionResult(tool(), interception)]);
@@ -1621,12 +1692,13 @@ impl JsExecutionHost for AIToolHandler {
     }
 
     /// Imports one package.
-    fn import_package(&self, package_name: &str) -> Result<String, String> {
-        Ok(self
+    fn import_package(&self, package_name: &str) -> operit_plugin_sdk::javascript::JsExecutionFuture<Result<String, String>> {
+        let enabled = self
             .getOrCreatePackageManager()
             .lock()
             .expect("package manager mutex poisoned")
-            .enablePackage(package_name))
+            .enablePackage(package_name);
+        Box::pin(async move { Ok(enabled.await) })
     }
 
     /// Removes one package.
@@ -1869,14 +1941,6 @@ impl JsExecutionHost for AIToolHandler {
         })
     }
 
-    /// Waits for the runtime scheduler to advance JavaScript work on a later host turn.
-    fn wait_for_javascript_runtime_turn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-        self.getContext()
-            .hostRuntimeTaskSchedulerHost
-            .as_ref()
-            .expect("HostRuntimeTaskSchedulerHost is required for JavaScript execution")
-            .waitForHostRuntimeTaskTurn()
-    }
 }
 
 pub struct FnToolExecutor {
@@ -2156,6 +2220,23 @@ mod tests {
     fn generateUnifiedDiff(&self, oldContent: &str, newContent: &str) -> String { panic!("Unexpected runtime service: generateUnifiedDiff") }
     }
 
+    /// Bounds verification through the configured platform timer instead of a Tokio-specific deadline.
+    fn hostTimeout<'a, T: 'a>(
+        waitMs: u64, future: impl std::future::Future<Output = T> + 'a,
+    ) -> futures_util::future::LocalBoxFuture<'a, Result<T, &'static str>> {
+        let future = Box::pin(future);
+        Box::pin(async move {
+            let scheduler = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();
+            tokio::select! {
+                result = future => Ok(result),
+                elapsed = scheduler.waitForHostRuntimeDelay(waitMs) => {
+                    elapsed.expect("Platform deadline timer must complete successfully");
+                    Err("Platform deadline elapsed")
+                }
+            }
+        })
+    }
+
     struct PipelineFixture {
         handler: AIToolHandler,
         root: std::path::PathBuf,
@@ -2206,6 +2287,7 @@ mod tests {
             permissions.saveAiPermissionMode(AiPermissionMode::ReadOnly).unwrap();
             let handler = AIToolHandler {
                 inner: Arc::new(Mutex::new(AIToolHandlerState {
+                    packageExecutions: Default::default(),
                     toolExecutors: BTreeMap::new(),
                     toolVisibility: BTreeMap::new(), defaultToolsRegistration: Arc::new(std::sync::OnceLock::from(())),
                     context: HostManager { runtimeStorageHost: Some(storage.clone()), runtimeSqliteHost: Some(storage),
@@ -2322,41 +2404,47 @@ mod tests {
         operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
         let packages = fixture.handler.getOrCreatePackageManager();
         *provider.scanningOwner.lock().unwrap() = Some(Arc::downgrade(&packages));
-        RuntimePackageManager::reloadRegistry(packages.clone()).await.unwrap();
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
         *provider.scanningOwner.lock().unwrap() = None;
-        let mut manager = packages.lock().unwrap();
-        let startupIssues = manager.getToolPkgLoadIssues();
-        let startupReady = manager.packageRegistryReadiness().require_ready();
-        let startupEnabled = manager.isPackageEnabled("scan.probe");
-        drop(manager);
-        assert!(startupEnabled, "registry={startupReady:?}; issues={startupIssues:?}");
-        let mut manager = packages.lock().unwrap();
-        assert_eq!(provider.registrations.load(Ordering::SeqCst), 1);
-        manager.loadAvailablePackages();
+        {
+            let manager = packages.lock().unwrap();
+            assert!(manager.isPackageEnabled("scan.probe"), "issues={:?}", manager.getToolPkgLoadIssues());
+        }
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
         assert_eq!(provider.registrations.load(Ordering::SeqCst), 1, "unchanged scans must reuse registrations");
-        manager.disablePackage("scan.probe");
-        assert!(!manager.isPackageEnabled("scan.probe"));
-        assert!(manager.getToolPkgContainerRuntime("scan.probe").unwrap().publicApis.is_empty());
+        packages.lock().unwrap().disablePackage("scan.probe");
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+        {
+            let manager = packages.lock().unwrap();
+            assert!(!manager.isPackageEnabled("scan.probe"));
+            assert!(manager.getToolPkgContainerRuntime("scan.probe").unwrap().publicApis.is_empty());
+        }
         assert_eq!(provider.registrations.load(Ordering::SeqCst), 1);
-        drop(manager);
 
-        let mut cold = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
+        *packages.lock().unwrap() = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
         let session = showPluginLoading();
-        cold.loadAvailablePackages();
-        assert!(!cold.isPackageEnabled("scan.probe"));
-        assert!(cold.getToolPkgContainerRuntime("scan.probe").is_some(), "disabled packages remain manageable");
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+        {
+            let cold = packages.lock().unwrap();
+            assert!(!cold.isPackageEnabled("scan.probe"));
+            assert!(cold.getToolPkgContainerRuntime("scan.probe").is_some(), "disabled packages remain manageable");
+        }
         assert!(observePluginLoadingProgress().value().plugins.is_empty(), "disabled packages must not report loading success");
         completePluginLoadingSession(session);
         assert_eq!(provider.registrations.load(Ordering::SeqCst), 1, "disabled cold starts must never create an engine");
-        assert!(cold.enablePackage("scan.probe").starts_with("Successfully enabled"));
-        assert_eq!(cold.getToolPkgContainerRuntime("scan.probe").unwrap().publicApis.len(), 1);
+        let enabled = packages.lock().unwrap().enablePackage("scan.probe");
+        assert!(enabled.await.starts_with("Successfully enabled"));
+        assert_eq!(packages.lock().unwrap().getToolPkgContainerRuntime("scan.probe").unwrap().publicApis.len(), 1);
         assert_eq!(provider.registrations.load(Ordering::SeqCst), 2);
-        cold.loadAvailablePackages();
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
         assert_eq!(provider.registrations.load(Ordering::SeqCst), 2);
-        cold.disablePackage("scan.probe");
-        cold.enablePackage("scan.probe");
+        packages.lock().unwrap().disablePackage("scan.probe");
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+        let enabled = packages.lock().unwrap().enablePackage("scan.probe");
+        enabled.await;
         assert_eq!(provider.registrations.load(Ordering::SeqCst), 3);
-        cold.disablePackage("scan.probe");
+        packages.lock().unwrap().disablePackage("scan.probe");
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
 
         let mut external = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
         for (name, source) in [
@@ -2370,27 +2458,31 @@ mod tests {
         vfs.makeDirectory("/operitapp/data/cache/scan", true).unwrap();
         let source = "/operitapp/data/cache/scan/external.toolpkg";
         vfs.writeFileBytes(source, &external.finish().unwrap().into_inner()).unwrap();
-        cold.addPackageFileFromExternalStorageResult(source).unwrap();
+        let imported = packages.lock().unwrap().addPackageFileFromExternalStorageResult(source);
+        imported.await.unwrap();
         let afterImport = provider.registrations.load(Ordering::SeqCst);
-        cold.loadAvailablePackages();
-        assert!(!cold.isPackageEnabled("scan.external"), "external defaults never override installation activation");
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+        assert!(!packages.lock().unwrap().isPackageEnabled("scan.external"), "external defaults never override installation activation");
         assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport);
-        assert!(cold.enablePackage("scan.external").starts_with("Successfully enabled"));
+        let enabled = packages.lock().unwrap().enablePackage("scan.external");
+        assert!(enabled.await.starts_with("Successfully enabled"));
         assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport + 1);
-        cold.loadAvailablePackages();
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
         assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport + 1);
-        cold.disablePackage("scan.external");
-        let mut restarted = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
-        restarted.loadAvailablePackages();
+        packages.lock().unwrap().disablePackage("scan.external");
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+        packages.lock().unwrap().executionEngineShutdown()();
+        *packages.lock().unwrap() = RuntimePackageManager::new(RuntimeStorePaths::default(), fixture.handler.clone());
+        RuntimePackageManager::reloadRegistry(Arc::clone(&packages)).await.unwrap();
+        let restarted = packages.lock().unwrap();
         assert!(restarted.getToolPkgContainerRuntime("scan.external").is_some());
         assert!(!restarted.isPackageEnabled("scan.external"));
         assert_eq!(provider.registrations.load(Ordering::SeqCst), afterImport + 1);
         restarted.executionEngineShutdown()();
-        cold.executionEngineShutdown()();
     }
     /// An older application's bundled archive must not replace a newer shared installation.
-    #[test]
-    fn bundled_updates_only_offer_newer_versions_after_peer_sync() {
+    #[tokio::test]
+    async fn bundled_updates_only_offer_newer_versions_after_peer_sync() {
         use std::io::Write;
         use operit_host_api::RuntimeStorageHost;
         use operit_store::{ExtensionStore::ExtensionStore, RuntimeFileSyncStore::RuntimeFileSyncStore,
@@ -2452,8 +2544,8 @@ mod tests {
             }
             received = log.localClock().unwrap();
             assert_eq!(target.modifiedAt(ARCHIVE).unwrap(), modified);
+            RuntimePackageManager::reloadRegistry(Arc::clone(&manager)).await.unwrap();
             let mut manager = manager.lock().unwrap();
-            manager.loadAvailablePackages();
             assert_eq!(manager.getToolPkgContainerRuntime(ID).unwrap().version, version);
             assert_eq!(manager.getBundledExternalPackageCandidates().iter()
                 .any(|candidate| candidate.packageName == ID), available, "installed {version}");
@@ -2542,6 +2634,12 @@ mod tests {
             assert_eq!(self.root.parent(), Some(std::env::temp_dir().as_path()));
             std::fs::remove_dir_all(&self.root).unwrap();
         }
+    }
+
+    /// Publishes the canonical package catalog before a fixture reads registration state.
+    async fn load_registry(manager: &Arc<Mutex<RuntimePackageManager>>) {
+        assert!(manager.lock().unwrap().claimInitialPackageRegistryLoad().unwrap());
+        RuntimePackageManager::reloadRegistry(Arc::clone(manager)).await.unwrap();
     }
 
     /// Constructs an internal transfer request without translating its VFS arguments.
@@ -2696,11 +2794,7 @@ mod tests {
             operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
 
             let manager = fixture.handler.getOrCreatePackageManager();
-            {
-                let mut guard = manager.lock().unwrap();
-                assert!(guard.claimInitialPackageRegistryLoad().unwrap());
-                guard.loadAvailablePackages();
-            }
+            load_registry(&manager).await;
             let permissions = fixture.handler.getToolPermissionSystem();
             permissions.saveAiPermissionMode(mode).unwrap();
             let approvals = Arc::new(AtomicUsize::new(0));
@@ -2748,10 +2842,15 @@ mod tests {
                 });
             }
             for (index, request) in requests.iter().enumerate() {
-                let result = fixture.handler.executeToolInvocation(
+                let turn = ToolRuntimeContext {
+                    callerName: None, callerChatId: Some("approval-chat".into()), callerParticipantId: None,
+                    workspacePath: None, workspaceFolders: Vec::new(), toolExposureMode: ToolExposureMode::FULL,
+                    extensionOwner: "config-owner".into(), executionData: Default::default(),
+                };
+                let result = ToolExecutionManager::scopeToolRuntimeContext(turn, fixture.handler.executeToolInvocation(
                     request,
                     ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL },
-                ).await.unwrap();
+                )).await.unwrap();
                 assert!(!result[0].success, "{}", request.name);
                 assert_eq!(result[0].error.as_deref(), Some("User cancelled the tool execution."));
                 assert_eq!(approvals.load(Ordering::SeqCst), index + 1, "{}", request.name);
@@ -2797,11 +2896,7 @@ mod tests {
         operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
         operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
         let shared = fixture.handler.getOrCreatePackageManager();
-        {
-            let mut manager = shared.lock().unwrap();
-            assert!(manager.claimInitialPackageRegistryLoad().unwrap());
-            manager.loadAvailablePackages();
-        }
+        load_registry(&shared).await;
         let manager = RuntimePackageManager::readySnapshot(shared).await.unwrap();
         assert!(manager.getToolPkgLoadIssues().is_empty(), "{:?}", manager.getToolPkgLoadIssues());
         // Window requests authenticate the bound engine even when JavaScript
@@ -2885,26 +2980,27 @@ mod tests {
         let context = fixture.handler.getContext();
         setDefaultRuntimeStorageHost(context.runtimeStorageHost.clone().unwrap());
         setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.clone().unwrap());
-        let paths = RuntimeStorePaths::default();
-        let mut manager = RuntimePackageManager::new(paths, fixture.handler.clone());
-        assert!(manager.claimInitialPackageRegistryLoad().unwrap());
-        let readiness = manager.packageRegistryReadiness();
+        let shared = fixture.handler.getOrCreatePackageManager();
+        assert!(shared.lock().unwrap().claimInitialPackageRegistryLoad().unwrap());
+        let readiness = shared.lock().unwrap().packageRegistryReadiness();
         let waiter = tokio::spawn(async move { readiness.wait_until_ready().await });
         tokio::task::yield_now().await;
         assert!(!waiter.is_finished());
-        manager.loadAvailablePackages();
+        RuntimePackageManager::reloadRegistry(Arc::clone(&shared)).await.unwrap();
         assert_eq!(waiter.await.unwrap(), Ok(()));
+        let manager = shared.lock().unwrap();
         assert!(manager.getAvailablePackages().contains_key("healthy_plugin"));
         assert!(!manager.getAvailablePackages().contains_key("broken_theme"));
         let issues = manager.getToolPkgLoadIssues();
         assert_eq!(issues.len(), 1, "unexpected package failures: {issues:?}");
         assert!(issues[0].sourcePath.contains("broken_theme.toolpkg"));
-        let manager = Arc::new(Mutex::new(manager));
-        let snapshot = RuntimePackageManager::readySnapshot(manager.clone()).await.unwrap();
+        drop(manager);
+        let manager = shared;
+        let snapshot = RuntimePackageManager::readySnapshot(Arc::clone(&manager)).await.unwrap();
         assert!(snapshot.getAvailablePackages().contains_key("healthy_plugin"));
         assert_eq!(snapshot.getToolPkgLoadIssues().len(), 1);
         // Cached failures and subsequent rescans must preserve the same isolation.
-        manager.lock().unwrap().loadAvailablePackages();
+        RuntimePackageManager::reloadRegistry(Arc::clone(&manager)).await.unwrap();
         let snapshot = RuntimePackageManager::readySnapshot(manager).await.unwrap();
         assert!(snapshot.getAvailablePackages().contains_key("healthy_plugin"));
         assert_eq!(snapshot.getToolPkgLoadIssues().len(), 1);
@@ -3203,7 +3299,7 @@ mod tests {
                 assert_eq!(value["turn"], serde_json::to_value(turn).unwrap());
             }
         });
-        tokio::time::timeout(std::time::Duration::from_secs(5), futures_util::future::join_all(calls))
+        hostTimeout(5_000, futures_util::future::join_all(calls))
             .await.expect("all 24 requests must enter without waiting for a same-name invocation to finish");
     }
 
@@ -3288,7 +3384,7 @@ mod tests {
                     result: stringResultData(depth.to_string()), error: None }
             })),
         }));
-        let result = tokio::time::timeout(std::time::Duration::from_secs(5),
+        let result = hostTimeout(5_000,
             fixture.handler.execute_tool_call(probeRequest(json!({"depth": 12}))))
             .await.expect("nested calls must not wait on the parent's executor");
         assert!(result.success, "{:?}", result.error);
@@ -3338,6 +3434,88 @@ mod tests {
         assert_eq!(results.iter().map(|result| result.result.toString()).collect::<Vec<_>>(), ["0", "1", "2"]);
     }
 
+    /// Keeps timed-out package tasks ordered while another batch uses the same handler concurrently.
+    #[tokio::test]
+    async fn ai_package_batches_preserve_actual_order_after_foreground_expiry_and_run_independently() {
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::with_package_assets(Some(&[]));
+        let context = fixture.handler.getContext();
+        operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
+        operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
+        fixture.handler.getToolPermissionSystem().saveAiPermissionMode(AiPermissionMode::Full).unwrap();
+        let packages = fixture.handler.getOrCreatePackageManager();
+        load_registry(&packages).await;
+        fixture.handler.registerBuiltinTool(BuiltinToolName::PackageWait,
+            RegisteredToolExecutor::Shared(Arc::new(crate::PackageExecution::PackageWaitExecutor)),
+            ToolRegistrationVisibility::PUBLIC);
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let observed = events.clone();
+        let began = started.clone();
+        let gate = release.clone();
+        fixture.handler.registerAsyncTool("fixture:ordered".into(), Box::new(AsyncFnToolExecutor {
+            effect: ToolEffect::READ,
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            invoke: Arc::new(move |tool, _| {
+                let events = observed.clone();
+                let began = began.clone();
+                let gate = gate.clone();
+                Box::pin(async move {
+                    let label = tool.parameters.iter().find(|parameter| parameter.name == "label").unwrap().value.clone();
+                    events.lock().unwrap().push(format!("start:{label}"));
+                    if label == "a0" { began.notify_one(); gate.notified().await; }
+                    events.lock().unwrap().push(format!("finish:{label}"));
+                    ToolResult { toolName: tool.name, success: true, result: stringResultData(label), error: None }
+                })
+            }),
+        }));
+        let invocation = |label: &str, timeout: &str| crate::ToolExecutionManager::ToolInvocation {
+            tool: AITool { name: "package_proxy".into(), parameters: vec![
+                ToolParameter { name: "tool_name".into(), value: "fixture:ordered".into() },
+                ToolParameter { name: "params".into(), value: json!({"label": label}).to_string() },
+                ToolParameter { name: "timeout_ms".into(), value: timeout.into() },
+            ] }, rawText: String::new(), responseLocation: (0, 0),
+        };
+        let observe = crate::ToolExecutionManager::ToolInvocation {
+            tool: AITool { name: "package_wait".into(), parameters: vec![ToolParameter {
+                name: "timeout_ms".into(), value: "0".into(),
+            }] }, rawText: String::new(), responseLocation: (0, 0),
+        };
+        let first = hostTimeout(5_000, ToolExecutionManager::executeInvocations(
+            &[invocation("a0", "0"), invocation("a1", "0"), observe], &fixture.handler,
+            None, Some("shared-chat".into()), None, None, Vec::new(), ToolExposureMode::FULL,
+            "configuration-owner".into(), Default::default(),
+        )).await.expect("Foreground receipts and observations must not wait for queued work").unwrap();
+        let queued: Value = serde_json::from_str(&first.results[1].result.toString()).unwrap();
+        assert_eq!(queued["executions"][0]["status"], "running");
+        hostTimeout(5_000, started.notified()).await.unwrap();
+        let second = hostTimeout(5_000, ToolExecutionManager::executeInvocations(
+            &[invocation("b0", "20000")], &fixture.handler,
+            None, Some("shared-chat".into()), None, None, Vec::new(), ToolExposureMode::FULL,
+            "configuration-owner".into(), Default::default(),
+        )).await.unwrap().unwrap();
+        let completed: Value = serde_json::from_str(&second.results[0].result.toString()).unwrap();
+        assert_eq!(completed["executions"][0]["status"], "completed");
+        assert_eq!(*events.lock().unwrap(), ["start:a0", "start:b0", "finish:b0"]);
+        release.notify_one();
+        let wait = crate::ToolExecutionManager::ToolInvocation {
+            tool: AITool { name: "package_wait".into(), parameters: vec![ToolParameter {
+                name: "execution_id".into(), value: queued["executions"][0]["execution_id"].as_str().unwrap().into(),
+            }] }, rawText: String::new(), responseLocation: (0, 0),
+        };
+        let finalBatch = hostTimeout(5_000, ToolExecutionManager::executeInvocations(
+            &[wait], &fixture.handler,
+            None, Some("shared-chat".into()), None, None, Vec::new(), ToolExposureMode::FULL,
+            "configuration-owner".into(), Default::default(),
+        )).await.unwrap().unwrap();
+        let finalReceipt: Value = serde_json::from_str(&finalBatch.results[0].result.toString()).unwrap();
+        assert_eq!(finalReceipt["executions"][0]["status"], "completed");
+        assert_eq!(*events.lock().unwrap(), ["start:a0", "start:b0", "finish:b0", "finish:a0", "start:a1", "finish:a1"]);
+    }
+
     /// Runs Promise.all through the real native JS bridge and repeated ordinary tool dispatch.
     #[tokio::test]
     async fn javascript_promise_all_executes_repeated_tools_concurrently() {
@@ -3362,7 +3540,7 @@ mod tests {
         let engine = fixture.handler.runtimeDependencies().js_execution_provider()
             .create_execution_engine(fixture.handler.capture_tool_invocation_host()).unwrap();
         let params = BTreeMap::from([("__operit_toolpkg_api_version".into(), json!("2.0.0"))]);
-        let result = tokio::time::timeout(std::time::Duration::from_secs(10),
+        let result = hostTimeout(10_000,
             engine.execute_script_function_owned(r#"
                 exports.run = async function () {
                     return await Promise.all(Array.from({length: 40}, (_, index) =>
@@ -3374,6 +3552,105 @@ mod tests {
         let values: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(values, json!((0..40).map(|index| index.to_string()).collect::<Vec<_>>()));
         engine.destroy();
+    }
+
+    /// Runs two serial AI batches concurrently through the same persistent ToolPkg JavaScript realm.
+    #[tokio::test]
+    async fn ai_tool_batches_overlap_in_one_toolpkg_javascript_runtime() {
+        use std::io::{Cursor, Write};
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        for (name, source) in [
+            ("manifest.json", r#"{"toolpkg_id":"parallel_probe_container","api_version":"2.0.0","main":"main.js","enabled_by_default":true,
+                "subpackages":[{"id":"parallel_probe","entry":"tool.js","display_name":"Parallel probe"}]}"#),
+            ("main.js", "exports.registerToolPkg = function() {};"),
+            ("tool.js", r#"/* METADATA
+                {"name":"parallel_probe","description":"Concurrent execution probe","enabledByDefault":true,
+                 "tools":[{"name":"run","description":"Wait for a concurrent invocation","parameters":[{"name":"label","type":"string","required":true}]}]}
+                */
+                exports.run = async function (params) {
+                    if (globalThis.parallelProbeCount === undefined) globalThis.parallelProbeCount = 0;
+                    const order = ++globalThis.parallelProbeCount;
+                    await toolCall('pipeline_probe', {label: params.label});
+                    return {label: params.label, order};
+                };
+            "#),
+        ] {
+            archive.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+            archive.write_all(source.as_bytes()).unwrap();
+        }
+        let assets = Box::leak(vec![RuntimePluginAsset {
+            name: "parallel_probe.toolpkg", sha256: "",
+            bytes: Box::leak(archive.finish().unwrap().into_inner().into_boxed_slice()),
+        }].into_boxed_slice());
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::with_package_assets(Some(assets));
+        fixture.handler.authenticatedExtensionOwner = None;
+        fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
+        let context = fixture.handler.getContext();
+        operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
+        operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
+        fixture.handler.getToolPermissionSystem().saveAiPermissionMode(AiPermissionMode::Full).unwrap();
+        let packages = fixture.handler.getOrCreatePackageManager();
+        load_registry(&packages).await;
+        {
+            let registry = packages.lock().unwrap();
+            assert!(registry.isPackageEnabled("parallel_probe"), "{:?}", registry.getToolPkgLoadIssues());
+        }
+        fixture.handler.registerAsyncTool("parallel_probe:run".into(), Box::new(
+            crate::tools::PackageToolExecutor::PackageToolExecutor::new("parallel_probe".into(), packages)));
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let observed = events.clone();
+        fixture.handler.registerAsyncTool("pipeline_probe".into(), Box::new(AsyncFnToolExecutor {
+            effect: ToolEffect::READ,
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            invoke: Arc::new(move |tool, _| {
+                let barrier = barrier.clone();
+                let events = observed.clone();
+                Box::pin(async move {
+                    let label = tool.parameters.iter().find(|parameter| parameter.name == "label").unwrap().value.clone();
+                    events.lock().unwrap().push(format!("start:{label}"));
+                    barrier.wait().await;
+                    events.lock().unwrap().push(format!("finish:{label}"));
+                    ToolResult { toolName: tool.name, success: true, result: stringResultData(label), error: None }
+                })
+            }),
+        }));
+        let invocations = |group: &str| (0..2).map(|index| crate::ToolExecutionManager::ToolInvocation {
+            tool: AITool { name: "parallel_probe:run".into(), parameters: vec![ToolParameter {
+                name: "label".into(), value: format!("{group}{index}"),
+            }] }, rawText: String::new(), responseLocation: (0, 0),
+        }).collect::<Vec<_>>();
+        let first = invocations("a");
+        let second = invocations("b");
+        let batches = hostTimeout(10_000, futures_util::future::try_join(
+            ToolExecutionManager::executeInvocations(&first, &fixture.handler,
+                None, Some("shared-chat".into()), None, None, Vec::new(), ToolExposureMode::FULL,
+                "configuration-owner".into(), Default::default()),
+            ToolExecutionManager::executeInvocations(&second, &fixture.handler,
+                None, Some("shared-chat".into()), None, None, Vec::new(), ToolExposureMode::FULL,
+                "configuration-owner".into(), Default::default()),
+        )).await.expect("Different batches must enter the same JS realm concurrently").unwrap();
+        let mut orders = Vec::new();
+        for (batch, labels) in [(batches.0, ["a0", "a1"]), (batches.1, ["b0", "b1"])] {
+            for (result, label) in batch.results.iter().zip(labels) {
+                let receipt: Value = serde_json::from_str(&result.result.toString()).unwrap();
+                assert_eq!(receipt["executions"][0]["status"], "completed", "{receipt}");
+                let value: Value = serde_json::from_str(receipt["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap();
+                assert_eq!(value["label"], label);
+                orders.push(value["order"].as_u64().unwrap());
+            }
+        }
+        orders.sort();
+        assert_eq!(orders, [1, 2, 3, 4], "Every invocation must share the original package realm");
+        let events = events.lock().unwrap();
+        for group in ["a", "b"] {
+            let finish = events.iter().position(|event| event == &format!("finish:{group}0")).unwrap();
+            let start = events.iter().position(|event| event == &format!("start:{group}1")).unwrap();
+            assert!(finish < start, "{events:?}");
+        }
     }
 
     /// Proves captured hosts retain turn and hook state independently across a scheduler boundary.
@@ -3479,6 +3756,230 @@ mod tests {
         assert!(fixture.handler.hasToolExecutor("tts_set_current_config_id"));
     }
 
+    /// Keeps accepted package work alive after foreground expiry while SDK dependencies still await completion.
+    #[tokio::test]
+    async fn package_proxy_retains_background_work_and_wait_reads_output_without_reexecution() {
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::with_package_assets(Some(&[]));
+        let context = fixture.handler.getContext();
+        operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
+        operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
+        let packages = fixture.handler.getOrCreatePackageManager();
+        load_registry(&packages).await;
+        fixture.handler.getToolPermissionSystem().saveAiPermissionMode(AiPermissionMode::Full).unwrap();
+        fixture.handler.registerBuiltinTool(BuiltinToolName::PackageWait,
+            RegisteredToolExecutor::Shared(Arc::new(crate::PackageExecution::PackageWaitExecutor)),
+            ToolRegistrationVisibility::PUBLIC);
+        struct WaitInterceptionProbe;
+        impl AIToolHook for WaitInterceptionProbe {
+            /// Names the policy that must never own execution-record observations.
+            fn id(&self) -> &str { "wait-interception-probe" }
+            /// Fails observations if they incorrectly re-enter package policy hooks.
+            fn onToolCallIntercept(&self, tool: &AITool) -> AIToolHookDecision {
+                if tool.name == "package_wait" { AIToolHookDecision::Block("Wait entered a package hook".into()) }
+                else { AIToolHookDecision::Allow }
+            }
+        }
+        fixture.handler.addToolHook(Arc::new(WaitInterceptionProbe));
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(AtomicUsize::new(0));
+        let began = started.clone();
+        let gate = release.clone();
+        let invoked = calls.clone();
+        fixture.handler.registerAsyncTool("fixture:slow".into(), Box::new(AsyncFnToolExecutor {
+            effect: ToolEffect::READ,
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            invoke: Arc::new(move |tool, context| {
+                let began = began.clone();
+                let gate = gate.clone();
+                let invoked = invoked.clone();
+                Box::pin(async move {
+                    invoked.fetch_add(1, Ordering::SeqCst);
+                    assert_eq!(context.turnSnapshot().unwrap().workspacePath.as_deref(), Some("/operitapp/workspaces/example"));
+                    let output = crate::PackageExecution::PackageExecution::outputCallback();
+                    if let Some(output) = &output { output("first".into()); }
+                    began.notify_one();
+                    gate.notified().await;
+                    if let Some(output) = &output { output("last".into()); }
+                    ToolResult { toolName: tool.name, success: true, result: stringResultData("finished"), error: None }
+                })
+            }),
+        }));
+        let turn = ToolRuntimeContext {
+            callerName: None, callerChatId: Some("background-chat".into()), callerParticipantId: None,
+            workspacePath: Some("/operitapp/workspaces/example".into()), workspaceFolders: Vec::new(),
+            toolExposureMode: ToolExposureMode::FULL, extensionOwner: "config-owner".into(), executionData: Default::default(),
+        };
+        let request = ToolCall { name: "package_proxy".into(), parameters: BTreeMap::from([
+            ("tool_name".into(), json!("fixture:slow")), ("params".into(), json!({})), ("timeout_ms".into(), json!(0)),
+        ]) };
+        let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
+            &request, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
+        let first: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
+        assert_eq!(first["executions"][0]["status"], "running");
+        let id = first["executions"][0]["execution_id"].as_str().unwrap().to_string();
+        hostTimeout(2_000, started.notified()).await.unwrap();
+        let wait = ToolCall { name: "package_wait".into(), parameters: BTreeMap::from([
+            ("execution_id".into(), json!(id)), ("timeout_ms".into(), json!(0)),
+        ]) };
+        let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
+            &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
+        let progress: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
+        let output = first["executions"][0]["output"].as_array().unwrap().iter()
+            .chain(progress["executions"][0]["output"].as_array().unwrap()).collect::<Vec<_>>();
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0]["value"], "first");
+        release.notify_one();
+        let wait = ToolCall { name: "package_wait".into(), parameters: BTreeMap::from([("execution_id".into(), json!(id))]) };
+        let completed = hostTimeout(2_000, async {
+            loop {
+                let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
+                    &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
+                let value: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
+                if value["executions"][0]["status"] == "completed" { break value; }
+            }
+        }).await.unwrap();
+        assert_eq!(completed["executions"][0]["results"][0]["result"], "finished");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        // A direct SDK dependency still waits for the real result and never receives a receipt.
+        let direct = ToolCall { name: "fixture:slow".into(), parameters: BTreeMap::new() };
+        let mut future = Box::pin(ToolExecutionManager::scopeToolRuntimeContext(turn.clone(),
+            fixture.handler.executeToolInvocation(&direct, ToolExecutionPolicy::Direct)));
+        tokio::select! {
+            result = &mut future => panic!("Direct dependency returned before completion: {}", result.is_ok()),
+            _ = started.notified() => {},
+        }
+        release.notify_one();
+        let results = future.await.unwrap();
+        assert_eq!(results[0].result.toString(), "finished");
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+
+        // Dropping the waiting model future cannot drop the separately owned package execution.
+        let request = ToolCall { parameters: BTreeMap::from([
+            ("tool_name".into(), json!("fixture:slow")), ("params".into(), json!({})),
+        ]), ..request };
+        let mut foreground = Box::pin(ToolExecutionManager::scopeToolRuntimeContext(turn.clone(),
+            fixture.handler.executeToolInvocation(&request, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })));
+        tokio::select! {
+            result = &mut foreground => panic!("Foreground completed before its gated task: {}", result.is_ok()),
+            _ = started.notified() => {},
+        }
+        drop(foreground);
+        release.notify_one();
+        let implicit = ToolCall { name: "package_wait".into(), parameters: BTreeMap::new() };
+        let completed = hostTimeout(2_000, async {
+            loop {
+                let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
+                    &implicit, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
+                let value: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
+                if value["executions"][0]["status"] == "completed" { break value; }
+            }
+        }).await.unwrap();
+        assert_eq!(completed["executions"][0]["results"][0]["result"], "finished");
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+    }
+
+    /// Carries real JavaScript intermediate callbacks across a timed-out package proxy and native dependency.
+    #[tokio::test]
+    async fn package_wait_receives_real_javascript_intermediate_output_and_final_result() {
+        static ASSETS: &[RuntimePluginAsset] = &[RuntimePluginAsset {
+            name: "execution_probe.js", sha256: "", bytes: br#"/* METADATA
+            {"name":"execution_probe","description":"Execution output probe","enabledByDefault":true,
+             "tools":[{"name":"run","description":"Emit output around a native dependency","parameters":[]}]}
+            */
+            exports.run = async function () {
+                sendIntermediateResult({phase: 'first'});
+                await toolCall('pipeline_probe', {});
+                sendIntermediateResult({phase: 'last'});
+                return 'finished';
+            };
+            "#,
+        }];
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::with_package_assets(Some(ASSETS));
+        fixture.handler.inner.lock().unwrap().context.systemOperationHost = Some(Arc::new(LanguageHost));
+        let context = fixture.handler.getContext();
+        operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
+        operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
+        fixture.handler.getToolPermissionSystem().saveAiPermissionMode(AiPermissionMode::Full).unwrap();
+        let packages = fixture.handler.getOrCreatePackageManager();
+        load_registry(&packages).await;
+        {
+            let registry = packages.lock().unwrap();
+            assert!(registry.isPackageEnabled("execution_probe"));
+        }
+        fixture.handler.registerAsyncTool("execution_probe:run".into(), Box::new(
+            crate::tools::PackageToolExecutor::PackageToolExecutor::new("execution_probe".into(), packages)));
+        fixture.handler.registerBuiltinTool(BuiltinToolName::PackageWait,
+            RegisteredToolExecutor::Shared(Arc::new(crate::PackageExecution::PackageWaitExecutor)),
+            ToolRegistrationVisibility::PUBLIC);
+        let started = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let began = started.clone();
+        let gate = release.clone();
+        fixture.handler.registerAsyncTool("pipeline_probe".into(), Box::new(AsyncFnToolExecutor {
+            effect: ToolEffect::READ,
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            invoke: Arc::new(move |tool, _| {
+                let began = began.clone();
+                let gate = gate.clone();
+                Box::pin(async move {
+                    began.notify_one();
+                    gate.notified().await;
+                    ToolResult { toolName: tool.name, success: true, result: stringResultData("dependency"), error: None }
+                })
+            }),
+        }));
+        let turn = ToolRuntimeContext {
+            callerName: None, callerChatId: Some("javascript-output-chat".into()), callerParticipantId: None,
+            workspacePath: None, workspaceFolders: Vec::new(), toolExposureMode: ToolExposureMode::FULL,
+            extensionOwner: "config-owner".into(), executionData: Default::default(),
+        };
+        let proxy = ToolCall { name: "package_proxy".into(), parameters: BTreeMap::from([
+            ("tool_name".into(), json!("execution_probe:run")), ("params".into(), json!({})), ("timeout_ms".into(), json!(0)),
+        ]) };
+        let result = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
+            &proxy, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
+        let first: Value = serde_json::from_str(&result[0].result.toString()).unwrap();
+        assert_eq!(first["executions"][0]["status"], "running");
+        let id = first["executions"][0]["execution_id"].clone();
+        hostTimeout(5_000, started.notified()).await.unwrap();
+        let wait = ToolCall { name: "package_wait".into(), parameters: BTreeMap::from([
+            ("execution_id".into(), id), ("timeout_ms".into(), json!(0)),
+        ]) };
+        let result = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
+            &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
+        let progress: Value = serde_json::from_str(&result[0].result.toString()).unwrap();
+        let output = first["executions"][0]["output"].as_array().unwrap().iter()
+            .chain(progress["executions"][0]["output"].as_array().unwrap()).collect::<Vec<_>>();
+        assert_eq!(output.len(), 1);
+        assert_eq!(serde_json::from_str::<Value>(output[0]["value"].as_str().unwrap()).unwrap(), json!({"phase":"first"}));
+        let wait = ToolCall { parameters: BTreeMap::from([
+            ("execution_id".into(), first["executions"][0]["execution_id"].clone()),
+        ]), ..wait };
+        release.notify_one();
+        let mut later = Vec::new();
+        let completed = hostTimeout(5_000, async {
+            loop {
+                let result = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
+                    &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
+                let value: Value = serde_json::from_str(&result[0].result.toString()).unwrap();
+                later.extend(value["executions"][0]["output"].as_array().unwrap().iter().cloned());
+                if value["executions"][0]["status"] != "running" { break value; }
+            }
+        }).await.unwrap();
+        assert_eq!(completed["executions"][0]["status"], "completed", "{completed}");
+        assert_eq!(serde_json::from_str::<Value>(completed["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap(), json!("finished"));
+        assert_eq!(later.len(), 1);
+        assert_eq!(serde_json::from_str::<Value>(later[0]["value"].as_str().unwrap()).unwrap(), json!({"phase":"last"}));
+    }
+
     /// Both proxy entry points preserve typed JSON objects and legacy JSON text.
     #[tokio::test]
     async fn proxy_json_objects_and_legacy_text_resolve_to_identical_parameters() {
@@ -3516,12 +4017,7 @@ mod tests {
         operit_store::RuntimeStorageHost::setDefaultRuntimeStorageHost(context.runtimeStorageHost.unwrap());
         operit_store::RuntimeStorageHost::setDefaultRuntimeSqliteHost(context.runtimeSqliteHost.unwrap());
 
-        {
-            let manager = fixture.handler.getOrCreatePackageManager();
-            let mut manager = manager.lock().unwrap();
-            assert!(manager.claimInitialPackageRegistryLoad().unwrap());
-            manager.loadAvailablePackages();
-        }
+        load_registry(&fixture.handler.getOrCreatePackageManager()).await;
         let hooks = Arc::new(LifecycleProbe::default());
         let probe = Arc::new(SharedProbe::default());
         fixture.handler.addToolHook(hooks.clone());
@@ -3580,7 +4076,11 @@ mod tests {
                     assert!(results[0].success);
                     assert_eq!(results[0].toolName, "fixture:probe");
                     let ToolResultData::JsonResultData(data) = &results[0].result else { panic!("Expected probe result") };
-                    assert_eq!(data.value["parameters"], json!({"command": "git status", "timeoutMs": "120000"}));
+                    let value = if matches!(policy, ToolExecutionPolicy::Ai { .. }) {
+                        assert_eq!(data.value["executions"][0]["status"], "completed");
+                        serde_json::from_str::<Value>(data.value["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap()
+                    } else { data.value.clone() };
+                    assert_eq!(value["parameters"], json!({"command": "git status", "timeoutMs": "120000"}));
                     assert_eq!(probe.calls.load(Ordering::SeqCst), calls + 1);
                     if matches!(policy, ToolExecutionPolicy::Ai { .. }) {
                         assert_eq!(hooks.take(), ["requested", "intercept", "started", "result", "finished"]);
@@ -3649,7 +4149,8 @@ mod tests {
             assert!(batch.message.contains("Invalid tool invocation:"));
             assert!(batch.results[2].success);
             let value: Value = serde_json::from_str(&batch.results[2].result.toString()).unwrap();
-            assert_eq!(value["parameters"]["command"], command);
+            let result: Value = serde_json::from_str(value["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap();
+            assert_eq!(result["parameters"]["command"], command);
             assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
             assert_eq!(probe.accessCalls.load(Ordering::SeqCst), 1);
         }

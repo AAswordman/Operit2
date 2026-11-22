@@ -120,6 +120,22 @@ synchronous creation. Factories implement `acquireToolPkgExecutionEngine` for th
 registry lock, then publishes a counted lease only if the package and factory generations still
 match. Acquisition futures use `JsExecutionFuture` so the Host can preserve executor affinity.
 
+ToolPkg registration also returns `JsExecutionCompletion`: callers await
+`execute_toolpkg_main_registration_function_with_text_resources` before reading declarations.
+`ToolPkgMainRegistrationScriptParser::parse` / `parseWithTextResources`, all `ToolPkgLoader` load
+methods, and `ToolPkgArchiveParser::parseToolPkgFromIndexedEntries` are asynchronous. Archive parser
+registration callbacks receive owned strings and environment names and return a future. Hosts
+prepare the input outside the live registry, await package registration without holding its mutex,
+and publish the verified declarations together. `JsExecutionHost::import_package` is asynchronous
+for the same reason; JavaScript continues to await the existing package-import Promise.
+
+The Host executes arbitrary module code, lifecycle calls, Promise jobs, and registration bridge
+updates through `executeHostJavaScriptCommand`. Web awaits the independent JavaScript worker while
+Core timers and other tasks keep running; synchronous guest-to-host callbacks retain their original
+return-value semantics. A foreground package observation timeout leaves an unlimited background
+execution running. Promise waits release the realm's current step so other asynchronous calls can
+start before the first call completes.
+
 ## Rust Package Execution Runtime
 
 Rust callers invoke JavaScript package tools through `JsPackageToolCallRequest` and receive

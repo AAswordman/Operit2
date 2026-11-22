@@ -121,7 +121,8 @@ int64_t Syscalls::dispatch_events(CpuState &cpu) {
                 signals::end_temporary_mask(task.signals, task.signal_mask);
                 return -4;
             }
-            scheduler_.block(deadline, 0, std::move(read_events));
+            scheduler_.block(deadline, 0, std::move(read_events),
+                             {{description->poll->native_handle(), POLLIN, 0}});
             task.wait_cleanup = [this, tid = task.tid] {
                 auto &waiting = scheduler_.find(tid);
                 signals::end_temporary_mask(waiting.signals, waiting.signal_mask);

@@ -113,6 +113,32 @@ class BrowserJavaScriptRuntime {
     }
   }
 
+  /** Yields host calls to the awaiting Rust task so its invocation context is restored first. */
+  async *executeAsync(command: unknown, control: Int32Array): AsyncGenerator<unknown, unknown, unknown> {
+    if (this.disposed) throw new Error("JavaScript runtime has been destroyed");
+    const transport = JavaScriptTransport.create(control);
+    this.host.postCommand(this.id, command, transport.buffer, control);
+    try {
+      for (;;) {
+        const response = await transport.receiveAsync();
+        switch (response.kind) {
+          case javascriptFrame.hostCall:
+            await transport.sendAsync(javascriptFrame.hostResult, yield response.value);
+            break;
+          case javascriptFrame.result:
+            return response.value;
+          case javascriptFrame.error:
+            throw new JavaScriptGuestError(String(response.value));
+          default:
+            throw new Error("Unexpected JavaScript worker response");
+        }
+      }
+    } catch (error) {
+      if (!(error instanceof JavaScriptGuestError)) this.dispose();
+      throw error;
+    }
+  }
+
   /** Terminates the realm and releases all pending plugin tasks and memory. */
   dispose(): void {
     this.disposed = true;

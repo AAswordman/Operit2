@@ -2,7 +2,7 @@ use js_sys::{Array, Function, Object, Reflect};
 use operit_host_api::{
     HostError, HostJavaScriptAsyncJsonCallback, HostJavaScriptExecutionInterrupt,
     HostJavaScriptInterruptController, HostJavaScriptInterruptSubscription, HostJavaScriptCallback, HostJavaScriptRuntime,
-    HostJavaScriptValue, HostJavaScriptRuntimeHost, HostJavaScriptRuntimeState, HostJavaScriptRuntimeStateAsyncTask,
+    HostJavaScriptValue, HostJavaScriptCommand, HostJavaScriptRuntimeHost, HostJavaScriptRuntimeState, HostJavaScriptRuntimeStateAsyncTask,
     HostJavaScriptRuntimeStateFactory, HostJavaScriptRuntimeStateHandle,
     HostJavaScriptRuntimeStateOutput, HostJavaScriptRuntimeStateOutputFuture,
     HostJavaScriptRuntimeStateTask, HostResult,
@@ -139,11 +139,8 @@ struct WebHostJavaScriptRuntime {
 }
 
 impl WebHostJavaScriptRuntime {
-    /// Executes one structured command while servicing callbacks on the owning Core executor.
-    fn execute(&self, command: serde_json::Value) -> HostResult<JsValue> {
-        let bindings = self.bindings.clone();
-        let callback = Closure::wrap(Box::new(
-            move |name: String, arguments: JsValue| -> Result<JsValue, JsValue> {
+    /// Executes one callback only while its owning Rust invocation scope is installed.
+    fn callback(bindings: &RefCell<BTreeMap<String, WebJavaScriptBinding>>, name: String, arguments: JsValue) -> Result<JsValue, JsValue> {
                 let arguments = Array::from(&arguments).iter().map(|argument| {
                     if argument.is_instance_of::<js_sys::Uint8Array>() {
                         return Ok(HostJavaScriptValue::Buffer(js_sys::Uint8Array::new(&argument).to_vec().into()));
@@ -181,8 +178,12 @@ impl WebHostJavaScriptRuntime {
                 }
                 .map_err(|error| JsValue::from_str(&error.to_string()))?;
                 structuredValue(&value).map_err(|error| JsValue::from_str(&error.to_string()))
-            },
-        )
+    }
+
+    /// Executes only trusted startup operations through the synchronous initialization boundary.
+    fn execute(&self, command: serde_json::Value) -> HostResult<JsValue> {
+        let bindings = self.bindings.clone();
+        let callback = Closure::wrap(Box::new(move |name, arguments| Self::callback(&bindings, name, arguments))
             as Box<dyn FnMut(String, JsValue) -> Result<JsValue, JsValue>>);
         let function = Reflect::get(&self.runtime, &JsValue::from_str("execute"))
             .map_err(crate::common::js_error)?
@@ -196,6 +197,36 @@ impl WebHostJavaScriptRuntime {
                 self.interrupts.signalView().as_ref(),
             )
             .map_err(crate::common::js_error)
+    }
+
+    /// Awaits guest events and invokes host callbacks inside the resumed Rust future's scope.
+    async fn executeAsync(&self, command: serde_json::Value) -> HostResult<JsValue> {
+        let function = Reflect::get(&self.runtime, &JsValue::from_str("executeAsync"))
+            .and_then(|value| value.dyn_into::<Function>()).map_err(crate::common::js_error)?;
+        let iterator = function.call2(&self.runtime, &structuredValue(&command)?, &self.interrupts.signalView())
+            .map_err(crate::common::js_error)?;
+        let next = Reflect::get(&iterator, &JsValue::from_str("next"))
+            .and_then(|value| value.dyn_into::<Function>()).map_err(crate::common::js_error)?;
+        let mut response = JsValue::UNDEFINED;
+        loop {
+            let waiting = next.call1(&iterator, &response).map_err(crate::common::js_error)?;
+            let step = wasm_bindgen_futures::JsFuture::from(waiting.dyn_into::<js_sys::Promise>()
+                .map_err(crate::common::js_error)?).await.map_err(crate::common::js_error)?;
+            let value = Reflect::get(&step, &JsValue::from_str("value")).map_err(crate::common::js_error)?;
+            if Reflect::get(&step, &JsValue::from_str("done")).map_err(crate::common::js_error)?.as_bool() == Some(true) {
+                return Ok(value);
+            }
+            let arguments = Array::from(&value);
+            let name = arguments.get(0).as_string().ok_or_else(|| HostError::new("JavaScript callback name is not text"))?;
+            let (ok, result) = match Self::callback(&self.bindings, name, arguments.get(1)) {
+                Ok(value) => (true, value),
+                Err(error) => (false, JsValue::from_str(&crate::common::js_error(error).to_string())),
+            };
+            let envelope = Object::new();
+            Reflect::set(&envelope, &JsValue::from_str("ok"), &JsValue::from_bool(ok)).map_err(crate::common::js_error)?;
+            Reflect::set(&envelope, &JsValue::from_str("value"), &result).map_err(crate::common::js_error)?;
+            response = envelope.into();
+        }
     }
 }
 
@@ -211,6 +242,19 @@ impl Drop for WebHostJavaScriptRuntime {
 }
 
 impl HostJavaScriptRuntime for WebHostJavaScriptRuntime {
+    /// Leaves the Core Worker responsive while arbitrary guest code and Promise jobs execute.
+    fn executeHostJavaScriptCommand<'a>(&'a mut self, command: HostJavaScriptCommand<'a>)
+        -> std::pin::Pin<Box<dyn std::future::Future<Output = HostResult<serde_json::Value>> + 'a>> {
+        let command = match command {
+            HostJavaScriptCommand::Evaluate(name, source) => serde_json::json!({"operation":"evaluateVoid","name":name,"source":source}),
+            HostJavaScriptCommand::Call(name, arguments) => serde_json::json!({"operation":"call","name":name,"args":arguments}),
+            HostJavaScriptCommand::Jobs => serde_json::json!({"operation":"jobs"}),
+            HostJavaScriptCommand::Settle(id, value, reject) => serde_json::json!({"operation":"settle","args":[id,value,reject]}),
+            HostJavaScriptCommand::Cancel(scope) => serde_json::json!({"operation":"cancel","args":[scope]}),
+        };
+        Box::pin(async move { structuredArgument(&self.executeAsync(command).await?, 0, &mut 0) })
+    }
+
     fn registerHostJavaScriptBinaryFunction(&mut self, name: &str, callback: operit_host_api::HostJavaScriptBinaryCallback) -> HostResult<()> {
         self.execute(serde_json::json!({"operation":"binding","name":name,"factory":"syncBinding"}))?;
         self.bindings.borrow_mut().insert(name.to_string(), WebJavaScriptBinding::Binary(callback));
@@ -519,12 +563,12 @@ impl HostJavaScriptRuntimeHost for WebHostJavaScriptRuntimeHost {
         )
     }
 
-    /// Posts one finite continuation through the browser event loop and the existing state lease.
+    /// Posts one asynchronous continuation through the browser event loop and existing state lease.
     fn enqueueHostJavaScriptRuntimeStateTask(
         &self,
         handle: HostJavaScriptRuntimeStateHandle,
         interrupt: HostJavaScriptExecutionInterrupt,
-        task: HostJavaScriptRuntimeStateTask,
+        task: HostJavaScriptRuntimeStateAsyncTask,
     ) -> HostResult<()> {
         JAVASCRIPT_STATE_LOCKS.with(|locks| {
             if locks.borrow().contains_key(&handle.id) {
@@ -536,11 +580,7 @@ impl HostJavaScriptRuntimeHost for WebHostJavaScriptRuntimeHost {
                 )))
             }
         })?;
-        let pending = self.executeHostJavaScriptRuntimeStateAsyncTask(
-            handle,
-            interrupt,
-            Box::new(move |state, interrupt| Box::pin(std::future::ready(task(state, interrupt)))),
-        );
+        let pending = self.executeHostJavaScriptRuntimeStateAsyncTask(handle, interrupt, task);
         wasm_bindgen_futures::spawn_local(async move {
             if let Err(error) = pending.await {
                 operit_host_api::logHostError("JavaScriptRuntime", &error.to_string());

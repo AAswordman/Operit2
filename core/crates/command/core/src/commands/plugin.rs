@@ -39,10 +39,9 @@ pub async fn run_plugin_command(
                 .get(1)
                 .ok_or_else(|| "usage: operit2 plugin import <toolpkg-path>".to_string())?;
             let package_manager = package_manager(&tool_handler);
-            let mut guard = package_manager
-                .lock()
-                .expect("package manager mutex poisoned");
-            let result = guard.addPackageFileFromExternalStorageResult(path)?;
+            let import = package_manager.lock().expect("package manager mutex poisoned")
+                .addPackageFileFromExternalStorageResult(path);
+            let result = import.await?;
             output.push_stdout_line(format!("Plugin imported: {}", result.packageName));
             output.push_stdout_line(format!("Format: {}", result.packageFormat));
             output.push_stdout_line(format!("Stored: {}", result.storedPath));
@@ -61,8 +60,8 @@ pub async fn run_plugin_command(
                 .ok_or_else(|| "usage: operit2 plugin delete <name>".to_string())?;
             delete_plugin(tool_handler, name, output)
         }
-        "enable" => set_plugin_enabled(tool_handler, args.get(1), true, output),
-        "disable" => set_plugin_enabled(tool_handler, args.get(1), false, output),
+        "enable" => set_plugin_enabled(tool_handler, args.get(1), true, output).await,
+        "disable" => set_plugin_enabled(tool_handler, args.get(1), false, output).await,
         _ => {
             print_plugin_usage(output);
             Ok(())
@@ -323,7 +322,7 @@ fn bundled_external_candidate_json(
 }
 
 /// Sets the enabled state for one ToolPkg plugin.
-fn set_plugin_enabled(
+async fn set_plugin_enabled(
     tool_handler: AIToolHandler,
     name: Option<&String>,
     enabled: bool,
@@ -337,13 +336,11 @@ fn set_plugin_enabled(
         }
     })?;
     let package_manager = package_manager(&tool_handler);
-    let mut guard = package_manager
-        .lock()
-        .expect("package manager mutex poisoned");
     let message = if enabled {
-        guard.enableToolPkgContainer(name)
+        let enabled = package_manager.lock().expect("package manager mutex poisoned").enableToolPkgContainer(name);
+        enabled.await
     } else {
-        guard.disableToolPkgContainer(name)
+        package_manager.lock().expect("package manager mutex poisoned").disableToolPkgContainer(name)
     };
     output.push_stdout_line(format!("Plugin {}: {name}", enabled_status(enabled)));
     output.push_stdout_line(message.clone());

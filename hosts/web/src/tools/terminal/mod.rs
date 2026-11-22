@@ -9,7 +9,7 @@ use operit_host_api::{
     TerminalInfo, TerminalInputOutput, TerminalOutputCallback, TerminalScreenOutput,
     TerminalSessionInfo, TerminalSessionListEntry, TerminalTypeInfo,
 };
-use wasm_bindgen::JsValue;
+use wasm_bindgen::{JsCast, JsValue};
 
 use crate::common::{
     bytes_to_js, call_terminal, js_i64, js_usize, read_bool_property, read_i32_property,
@@ -295,7 +295,7 @@ impl TerminalHost for WebTerminalHost {
         })
     }
 
-    /// Polls browser-owned execution while yielding the Rust worker between output frames.
+    /// Observes browser-owned output through shared-memory producer notifications.
     fn scheduleInSessionStreaming(
         self: Arc<Self>,
         scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
@@ -314,7 +314,6 @@ impl TerminalHost for WebTerminalHost {
             "startPtyCommand",
             &[JsValue::from_str(&sessionId), JsValue::from_str(&command)],
         )?;
-        let delay = scheduler.clone();
         scheduler.scheduleHostRuntimeAsyncTask(
             "browser-terminal-command",
             Box::new(move || {
@@ -325,7 +324,7 @@ impl TerminalHost for WebTerminalHost {
                             if let Some(receipt) = receipt {
                                 return Ok(receipt);
                             }
-                            delay.waitForHostRuntimeDelay(50).await?;
+                            waitForBrowserCommandChange(&sessionId).await?;
                         }
                     }
                     .await;
@@ -391,6 +390,28 @@ impl TerminalHost for WebTerminalHost {
             commandRunning: read_bool_property(&state, "commandRunning")?,
         })
     }
+}
+
+/// Arms a producer notification before asynchronously waiting, so close and output cannot race registration.
+async fn waitForBrowserCommandChange(sessionId: &str) -> HostResult<()> {
+    let signal = js_sys::SharedArrayBuffer::new(4);
+    let header = js_sys::Int32Array::new(&signal);
+    call_terminal("armPtyCommand", &[JsValue::from_str(sessionId), signal.into()])?;
+    let atomics = js_sys::Reflect::get(&js_sys::global(), &JsValue::from_str("Atomics"))
+        .map_err(crate::common::js_error)?;
+    let wait = js_sys::Reflect::get(&atomics, &JsValue::from_str("waitAsync"))
+        .map_err(crate::common::js_error)?.dyn_into::<js_sys::Function>()
+        .map_err(|_| HostError::new("Browser terminal requires Atomics.waitAsync"))?;
+    let waiting = wait.call3(&atomics, &header, &JsValue::from_f64(0.0), &JsValue::from_f64(0.0))
+        .map_err(crate::common::js_error)?;
+    let asynchronous = read_bool_property(&waiting, "async")?;
+    if asynchronous {
+        let promise = js_sys::Reflect::get(&waiting, &JsValue::from_str("value"))
+            .map_err(crate::common::js_error)?.dyn_into::<js_sys::Promise>()
+            .map_err(|_| HostError::new("Browser terminal wait returned no Promise"))?;
+        wasm_bindgen_futures::JsFuture::from(promise).await.map_err(crate::common::js_error)?;
+    }
+    Ok(())
 }
 
 /// Decodes a synchronous browser poll before the async task yields to its Host scheduler.

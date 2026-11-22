@@ -160,7 +160,7 @@ class Scheduler {
     // Final process reap releases exited-task queues and UID admission charges.
     void reap_process(uint32_t pid);
     void block(TaskDeadline deadline, int64_t timeout_result,
-               std::function<std::optional<int64_t>()> poll = {});
+               std::function<std::optional<int64_t>()> poll = {}, std::vector<pollfd> descriptors = {});
     void wait_futex(uint64_t address, uint32_t mask, TaskDeadline deadline, uint64_t space = 0);
     void wait_futex_vector(std::vector<Task::FutexVectorEntry> entries, TaskDeadline deadline,
                            std::function<std::optional<int64_t>()> clock_poll = {});
@@ -183,7 +183,10 @@ class Scheduler {
     void exit_process(uint32_t pid, int code);
     void replace_process_image(uint32_t pid, const CpuState &entry);
     // Call only after workers stop; completes waits without selecting a task.
-    TaskClock::time_point poll_waiting();
+    TaskDeadline poll_waiting();
+    // Borrowed descriptors remain valid until the next coordinator operation.
+    std::vector<pollfd> wait_descriptors() const;
+    TaskDeadline wait_deadline() const;
     bool select(bool blocking = true);
 };
 } // namespace operit::arm64

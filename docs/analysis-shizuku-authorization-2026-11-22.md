@@ -7,8 +7,42 @@
 实际工具调用名、参数、退出码或 Android 异常。因此不能把聊天文字当作 Host 的原始错误。
 
 本次对照 OP2、`D:/Code/prog/assistance` Kotlin 版、缓存的 Shizuku 13.1.5 依赖及
-已有 release APK；未重建 APK。当前连接的本地设备没有运行 Shizuku，不是截图中
-“Shizuku 已运行”的复现场景，不能据此确认原设备故障原因。
+已有 release APK；未重建 APK。用户随后确认当前连接的 PLK110 就有问题，已在该机
+复现 Shizuku 管理页整页为空，并检查实际安装的 OP2 APK、授权配置和系统接口。
+
+## 真机已确认：Shizuku 的旧系统接口使管理列表为空
+
+实际系统 `ro.build.version.sdk=37`、`ro.build.version.release=17`。安装的管理器为
+`13.6.0.r1086.2650830c`。此前按 API 36 判断这台设备不准确，以本次现场读取为准。
+
+从已安装 Shizuku APK 的 DEX 核对，其 `ShizukuService.onTransact(10001)` 调用的
+应用枚举 helper 为 `rikka.shizuku.sr.q(int,long)`。该 helper 仍链接旧签名：
+
+```text
+IPackageManager.getInstalledPackages(long,int): android.content.pm.ParceledListSlice
+```
+
+而手机实际 framework 的方法为：
+
+```text
+IPackageManager.getInstalledPackages(long,int): android.content.pm.PackageInfoList
+```
+
+方法链接包含返回类型，因此两个签名不兼容。Shizuku helper 捕获所有异常后返回
+`Collections.EMPTY_LIST`，管理页因而为空。独立临时 DEX 在相同 Root UID 下加载
+手机上的 Shizuku APK，调用其原有 helper 得到用户 0/10 的应用数均为 0；直接反射
+调用当前 framework 方法分别得到 509/468 个包，包含 `app.operit`，用户 0 也包含
+`com.ai.assistance.operit`，两者 Shizuku marker 和权限均正确。这将故障定位到已安装
+Shizuku 的枚举兼容实现，不需要用 OP2 的 Manifest 或授权状态解释空列表。
+
+另外，旧用户枚举代码调用 `IUserManager.getUsers(boolean,boolean,boolean)`；该机只
+提供 `getUsers(boolean)`。Shizuku 将此异常转为只含用户 0 的集合，会同时漏掉分身用户。
+
+授权与枚举独立。现场 `/data/user_de/0/com.android.shell/shizuku.json` 后续存在
+`{"uid":10309,"flags":2,"packages":["app.operit"]}`，OP2 进程 SDK 的
+`permissionGranted=1`、Binder 存活，管理页仍为空。因此当前“已授予”有真实授权记录
+支持。更早快照没有该记录、SDK 值为 0；期间进程和授权发生变化，触发操作未确定，
+不能把前后状态当成同一时刻的误显示证据。
 
 ## 已排除：OP2 缺少 Shizuku Manifest 声明
 
@@ -20,7 +54,8 @@ Manifest 显式声明 `moe.shizuku.manager.permission.API_V23`；OP2 由 Provide
 `apps/flutter/app/build/app/outputs/flutter-apk/app-arm64-v8a-release.apk`
 （本地修改时间 2026-11-21）：最终 APK 包含上述权限、识别标记和
 `rikka.shizuku.ShizukuProvider`，authority 为 `app.operit.shizuku`。
-这只能证明已检查的产物，不能证明截图用户安装的 APK 内容。
+随后从故障手机拉取的实际安装 APK（`app.operit`，versionCode 49，versionName
+2.0.0）也通过 `aapt2` 核对，包含同样的权限、识别标记和 Provider。
 
 上游 Shizuku 的 `ShizukuService.getApplications` 枚举 Android 用户及已安装包；有
 权限配置记录的包会列出，否则按 V3_SUPPORT 与 API_V23 识别声明支持的应用。
@@ -82,9 +117,12 @@ Shizuku UserService 的绑定或 JNI 调用仍可能失败，必须查看实际�
 Android CI 增加该检查及现有原生接线契约。检查不等同于设备端 Shizuku 集成验证。
 本次运行上述行为检查以及 `android_terminal_privileges`、`android_root_commands`、
 `android_runtime_contracts`，共 42 项全部通过；`git diff --check` 通过。
-未编译 Kotlin/Rust 或 Flutter，未构建、安装新 APK，也未验证故障设备。
+未编译 Kotlin/Rust 或 Flutter，未构建、安装新 APK。已在故障设备验证管理页、实际
+APK、授权记录、SDK 字段及 Shizuku/系统包枚举差异。临时编译的只是独立诊断 DEX，
+没有替换应用。尚未从正在运行的 OP2 Host 成功取得一次实际命令执行结果，因此
+不能声称 AndroidUtils 修正已在手机生效，或把截图插件的调用失败全部归于此处。
 
-要确定截图故障，还需要同一设备上的实际 APK 版本和 Manifest、Android 用户、
-Shizuku/Sui 后端、创建会话的 transport 及 `id` 输出、实际工具调用和完整异常。
+管理页空列表的原因已经确认。要进一步闭合截图插件的命令失败，仍需要创建会话的
+transport 及 `id` 输出、实际工具调用和完整异常。
 可在该设备上保留以下日志进行定点核对：`ShizukuApplication`、`OperitTerminal`、
 `buildAndroidSystemShellCommand`。避免将截图聊天中的诊断句作为原始错误归因。

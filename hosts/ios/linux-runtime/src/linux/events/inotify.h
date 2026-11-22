@@ -67,6 +67,8 @@ class InotifyFile final {
     void remove_watch(int32_t wd);
     FD duplicate_handle() const;
     int native_handle() const noexcept;
+    // Native queue readiness precedes production of guest event records.
+    int backend_handle() const noexcept;
 
     // Whole little-endian Linux records, with NUL names padded to 16 bytes.
     // Empty queue: try_read returns nullopt, read throws GuestError{11}.

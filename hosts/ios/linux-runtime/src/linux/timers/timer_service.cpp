@@ -100,11 +100,9 @@ struct TimerService::Impl {
                 continue;
             }
             ++it;
-            if (!state->cancel_on_set)
-                continue;
-            if (changed)
+            if (state->cancel_on_set && changed)
                 state->cancelled = true;
-            if (!events.can_cancel_on_set())
+            if (state->wall_clock && !events.can_cancel_on_set())
                 state->error = 95;
             update_readiness(*state);
         }
@@ -132,7 +130,6 @@ struct TimerService::Impl {
                 refresh_clock();
                 const int64_t mono = clock_now(false), wall = clock_now(true);
                 std::optional<int64_t> delay;
-                bool wall_timer = false;
                 for (const auto &item : timers) {
                     auto state = item.second.lock();
                     if (!state)
@@ -144,10 +141,7 @@ struct TimerService::Impl {
                     const int64_t remaining = state->deadline - now;
                     if (!delay || remaining < *delay)
                         delay = remaining;
-                    wall_timer |= state->wall_clock;
                 }
-                if (wall_timer && !events.can_cancel_on_set() && (!delay || *delay > 100000000))
-                    delay = 100000000;
                 lock.unlock();
                 events.wait(delay);
                 lock.lock();
@@ -212,7 +206,7 @@ TimerSpec TimerService::set_time(timers::State &state, uint32_t flags, const Tim
     std::lock_guard<std::mutex> lock(impl_->mutex);
     impl_->check();
     impl_->refresh_clock();
-    if (cancellable && !impl_->events.can_cancel_on_set())
+    if (wall_clock && !impl_->events.can_cancel_on_set())
         guest_error(95);
     const int64_t old_now = clock_now(state.wall_clock);
     expire(state, old_now);

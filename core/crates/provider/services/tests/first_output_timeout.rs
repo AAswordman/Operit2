@@ -68,11 +68,6 @@ impl HostRuntimeTaskSchedulerHost for Scheduler {
         panic!("provider must use asynchronous Host delays")
     }
 
-    /// Allows an immediate event-loop turn in the fixture.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
-
     /// Exposes the exact production deadline and retry delays to deterministic test control.
     fn waitForHostRuntimeDelay(&self, delay_ms: u64) -> HostRuntimeTurnFuture {
         let (expired, elapsed) = oneshot::channel();

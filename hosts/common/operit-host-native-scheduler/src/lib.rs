@@ -10,11 +10,13 @@ mod javascript_runtime;
 mod javascript_values;
 mod runtime_event_scheduler;
 mod runtime_task_scheduler;
+mod terminal_command;
 
 #[cfg(feature = "javascript")]
 pub use javascript_runtime::NativeHostJavaScriptRuntimeHost;
 pub use runtime_event_scheduler::NativeHostRuntimeEventSchedulerHost;
 pub use runtime_task_scheduler::NativeHostRuntimeTaskSchedulerHost;
+pub use terminal_command::{runTerminalCommandSynchronously, waitForTerminalPrompt};
 
 #[cfg(feature = "esp32-compat")]
 mod stack_budget;
@@ -27,6 +29,10 @@ pub use local_task_scheduler::{
 };
 
 mod task_handle;
+#[cfg(unix)]
+mod fd_io;
+#[cfg(unix)]
+pub use fd_io::{scheduleNativeFdReader, NativeFdReader, NativeFdWriter};
 pub use task_handle::{
     scheduleNativeBlockingTask, scheduleNativeServiceTask, scheduleNativeServiceTasks,
     NativeTaskHandle,

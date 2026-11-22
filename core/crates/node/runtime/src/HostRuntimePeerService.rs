@@ -1563,7 +1563,6 @@ mod single_channel_tests {
         }
         fn scheduleHostRuntimeTask(&self, _: &str, _: HostRuntimeTask) -> HostResult<()> { unreachable!() }
         fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: HostRuntimeTask) -> HostResult<()> { unreachable!() }
-        fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture { unreachable!() }
         fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture { unreachable!() }
     }
 

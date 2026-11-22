@@ -7,7 +7,7 @@ int main() {
   char *response = operit_macos_arm64_terminal_call("terminalCreate", "{}");
   assert(response && std::strcmp(response, expected) == 0);
   operit_macos_arm64_terminal_free(response);
-  response = operit_macos_arm64_terminal_execute_streaming("terminalExecute", "{}", nullptr, nullptr);
+  response = operit_macos_arm64_terminal_execute_async("terminalExecuteAsync", "{}", nullptr, nullptr, nullptr);
   assert(response && std::strcmp(response, expected) == 0);
   operit_macos_arm64_terminal_free(response);
 }

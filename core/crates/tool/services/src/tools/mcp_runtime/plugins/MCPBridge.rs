@@ -1564,9 +1564,6 @@ mod startup_tests {
         ) -> HostResult<()> {
             unreachable!()
         }
-        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-            unreachable!()
-        }
         fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
             unreachable!()
         }

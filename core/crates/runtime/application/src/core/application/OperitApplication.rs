@@ -673,47 +673,10 @@ impl OperitApplication {
         assetId: String,
         fileName: String,
         expectedSha256: String,
-    ) -> Result<String, String> {
-        let fileName = fileName.trim().to_string();
-        if fileName.is_empty()
-            || fileName.contains(['/', '\\'])
-            || std::path::Path::new(&fileName)
-                .file_name()
-                .and_then(|name| name.to_str())
-                != Some(fileName.as_str())
-        {
-            return Err("Market artifact file name is invalid".to_string());
-        }
-        let normalizedSha256 = expectedSha256.trim().to_ascii_lowercase();
-        if normalizedSha256.len() != 64
-            || !normalizedSha256
-                .bytes()
-                .all(|byte| byte.is_ascii_hexdigit())
-        {
-            return Err("Market artifact SHA-256 is invalid".to_string());
-        }
-
-        let packageManager = self.packageManager();
-        let targetPath = packageManager
-            .lock()
-            .map_err(|error| error.to_string())?
-            .prepareMarketArtifactDownload(&fileName)?;
-        let vfs = (&self.hostManager).vfs()?;
-        let directory = std::path::Path::new(&targetPath)
-            .parent()
-            .map(|path| path.to_string_lossy().to_string());
-        let result = (|| {
-            operit_providers::market::MarketStatsApiService::MarketStatsApiService::new()
-                .download_asset_to_file(&assetId, &targetPath, &vfs)?;
-            Ok(packageManager
-                .lock()
-                .map_err(|error| error.to_string())?
-                .addMarketArtifactFile(targetPath.clone(), normalizedSha256))
-        })();
-        if let Some(directory) = directory {
-            let _ = vfs.deleteFile(&directory, true);
-        }
-        result
+    ) -> impl std::future::Future<Output = Result<String, String>> + 'static {
+        let tools = self.toolHandler.clone();
+        let host = self.hostManager.clone();
+        async move { super::MarketInstallSupport::install_artifact(&host, &tools, assetId, fileName, expectedSha256).await }
     }
 
     /// Returns marketplace entry/version markers for plugins that are still installed.
@@ -728,8 +691,10 @@ impl OperitApplication {
         &self,
         entryId: String,
         versionId: Option<String>,
-    ) -> Result<String, String> {
-        super::MarketInstallSupport::install_entry(self, &entryId, versionId.as_deref())
+    ) -> impl std::future::Future<Output = Result<String, String>> + 'static {
+        let tools = self.toolHandler.clone();
+        let host = self.hostManager.clone();
+        async move { super::MarketInstallSupport::install_entry(&host, &tools, &entryId, versionId.as_deref()).await }
     }
 
     /// Returns package names enabled in this application runtime.

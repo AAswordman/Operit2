@@ -1,4 +1,5 @@
 #include "linux/threads/futex_pi.h"
+#include "linux/timers/timer_file.h"
 #include <algorithm>
 #include <map>
 #include <memory>
@@ -265,6 +266,22 @@ void handoff(State &state, const std::shared_ptr<PiLock> &lock, Memory *memory,
 }
 } // namespace
 
+// Keep the timer and its borrowed readiness descriptor alive for precisely this guest wait.
+std::function<std::optional<int64_t>()> futex_realtime_timeout(
+    const std::optional<FutexPiTimeout> &timeout, std::vector<pollfd> &descriptors) {
+    if (!timeout || !timeout->realtime) return {};
+    auto timer = TimerFile::create(0);
+    timer->set_time(TimerFile::absolute, {{}, {timeout->seconds, timeout->nanoseconds}});
+    auto source = std::make_shared<FD>(timer->duplicate_descriptor());
+    descriptors.push_back({source->get(), POLLIN, 0});
+    return [timer, source]() -> std::optional<int64_t> {
+        try { timer->read(); return -110; }
+        catch (const GuestError &error) {
+            if (error.number != 11) throw;
+            return {};
+        }
+    };
+}
 std::optional<FutexPiTimeout> futex_pi_timeout(Memory &memory, uint64_t address, bool realtime) {
     if (!address)
         return {};
@@ -323,14 +340,8 @@ int64_t futex_pi_lock(Scheduler &scheduler, Memory &memory, uint64_t address, bo
     auto waiter = std::make_shared<Waiter>(Waiter{task.tid, task.pid, {&memory, address, private_futex},
                                                 timeout, lock, false, {}, {}, false});
     auto cleanup = wait_cleanup(state, waiter);
-    std::function<std::optional<int64_t>()> clock_poll;
-    if (timeout && timeout->realtime) {
-        // Only the absolute clock is sampled. Lock acquisition is exclusively
-        // driven by unlock/owner-exit handoff, never by this callback.
-        clock_poll = [timeout]() -> std::optional<int64_t> {
-            return expired(timeout) ? std::optional<int64_t>(-110) : std::nullopt;
-        };
-    }
+    std::vector<pollfd> descriptors;
+    auto clock_poll = futex_realtime_timeout(timeout, descriptors);
     const auto deadline = monotonic_deadline(timeout);
     lock->waiters.push_back(waiter);
     try {
@@ -342,7 +353,7 @@ int64_t futex_pi_lock(Scheduler &scheduler, Memory &memory, uint64_t address, bo
         throw;
     }
     waiter->queued = true;
-    scheduler.block(deadline, -110, std::move(clock_poll));
+    scheduler.block(deadline, -110, std::move(clock_poll), std::move(descriptors));
     task.wait_cleanup = std::move(cleanup);
     return 0;
 } catch (const std::bad_alloc &) {
@@ -385,17 +396,15 @@ int64_t futex_wait_requeue_pi(Scheduler &scheduler, Memory &memory, uint64_t sou
     waiter->target = to;
     waiter->requeue_pi = true;
     auto cleanup = wait_cleanup(state, waiter);
-    std::function<std::optional<int64_t>()> clock_poll;
-    if (timeout && timeout->realtime)
-        clock_poll = [timeout]() -> std::optional<int64_t> {
-            return expired(timeout) ? std::optional<int64_t>(-110) : std::nullopt;
-        };
+    std::vector<pollfd> descriptors;
+    auto clock_poll = futex_realtime_timeout(timeout, descriptors);
     const auto deadline = monotonic_deadline(timeout);
     state->waiting.emplace(task.tid, waiter);
     waiter->queued = true;
     scheduler.wait_futex(from.second, UINT32_MAX, deadline, from.first);
     task.futex_requeue_pi = true;
     task.poll = std::move(clock_poll);
+    task.wait_descriptors = std::move(descriptors);
     task.wait_cleanup = std::move(cleanup);
     return 0;
 } catch (const std::bad_alloc &) {

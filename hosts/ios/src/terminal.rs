@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
-use std::thread;
-use std::time::{Duration, Instant};
 
 use operit_host_api::{
     HiddenTerminalCommandOutput, HostError, HostResult, TerminalCloseOutput, TerminalCommandOutput,
@@ -11,7 +9,7 @@ use operit_host_api::{
 use operit_host_native_common::NativePtyTerminalHost;
 use serde_json::{json, Value};
 
-use crate::bridge::{arm64RuntimeConfigurationId, callArm64Terminal, callArm64TerminalStreaming};
+use crate::bridge::{arm64RuntimeConfigurationId, callArm64Terminal, beginArm64TerminalCommand, Arm64CommandEvents};
 
 const SHELL_TERMINAL_TYPE: &str = "shell";
 #[cfg(not(target_os = "macos"))]
@@ -32,7 +30,6 @@ enum IosTerminalBackend {
 struct IosTerminalState {
     arm64ConfigurationId: Option<String>,
     sessionBackends: BTreeMap<String, IosTerminalBackend>,
-    sessionWrites: BTreeMap<String, Arc<Mutex<()>>>,
 }
 
 /// Hosts ARM64 terminals and privileged system /bin/sh terminals on iOS.
@@ -125,10 +122,6 @@ impl IosTerminalHost {
     fn recordSession(&self, sessionId: &str, backend: IosTerminalBackend) -> HostResult<()> {
         let mut state = self.lockState()?;
         state.sessionBackends.insert(sessionId.to_string(), backend);
-        state
-            .sessionWrites
-            .entry(sessionId.to_string())
-            .or_default();
         Ok(())
     }
 
@@ -136,7 +129,6 @@ impl IosTerminalHost {
     fn removeSession(&self, sessionId: &str) -> HostResult<()> {
         let mut state = self.lockState()?;
         state.sessionBackends.remove(sessionId);
-        state.sessionWrites.remove(sessionId);
         Ok(())
     }
 
@@ -154,7 +146,6 @@ impl IosTerminalHost {
                 .collect();
             for sessionId in retired {
                 state.sessionBackends.remove(&sessionId);
-                state.sessionWrites.remove(&sessionId);
             }
             state.arm64ConfigurationId = identifier.clone();
         }
@@ -273,40 +264,8 @@ impl IosTerminalHost {
     }
 
     /// Executes one complete command in an already registered iOS terminal session.
-    fn executeSession(
-        &self,
-        backend: IosTerminalBackend,
-        sessionId: &str,
-        command: &str,
-        timeoutMs: u64,
-    ) -> HostResult<TerminalCommandOutput> {
-        let command = requiredText(command, "command")?;
-        match backend {
-            IosTerminalBackend::Arm64 => {
-                let response = callArm64Terminal(
-                    "terminalExecute",
-                    json!({
-                        "sessionId": requiredText(sessionId, "session_id")?,
-                        "command": command,
-                        "timeoutMs": timeoutMs,
-                    }),
-                )?;
-                Ok(TerminalCommandOutput {
-                    command,
-                    output: terminalText(&response, "outputBytes")?,
-                    exitCode: requiredI32(&response, "exitCode")?,
-                    sessionId: requiredString(&response, "sessionId")?,
-                    platform: PLATFORM.to_string(),
-                    terminal: ARM64_TERMINAL.to_string(),
-                    terminalType: shellTerminalType(&requiredString(&response, "terminalType")?)?,
-                    timedOut: requiredBool(&response, "timedOut")?,
-                })
-            }
-            IosTerminalBackend::SystemShell => systemCommandOutput(
-                self.systemShell
-                    .executeInSession(sessionId, &command, timeoutMs)?,
-            ),
-        }
+    fn executeSession(&self, _backend: IosTerminalBackend, sessionId: &str, command: &str, timeoutMs: u64) -> HostResult<TerminalCommandOutput> {
+        self.executeInSessionStreaming(sessionId, command, timeoutMs, &mut |_| Ok(()))
     }
 }
 
@@ -399,44 +358,10 @@ impl TerminalHost for IosTerminalHost {
         match self.sessionBackend(sessionId)? {
             IosTerminalBackend::Arm64 => {
                 let sessionId = requiredText(sessionId, "session_id")?;
-                let writeLock = self
-                    .lockState()?
-                    .sessionWrites
-                    .get(&sessionId)
-                    .cloned()
-                    .ok_or_else(|| HostError::new("ARM64 terminal writer is not registered"))?;
-                let _writer = writeLock
-                    .lock()
-                    .map_err(|_| HostError::new("ARM64 terminal writer mutex poisoned"))?;
-                // Match the shared native host's write_all behavior. Managed
-                // runtime callers rely on an entire protocol frame being sent.
-                // Each native request reports only bytes accepted by the PTY.
-                let deadline = Instant::now() + Duration::from_secs(30);
-                let mut written = 0usize;
-                while written < data.len() {
-                    let end = written.saturating_add(16 * 1024).min(data.len());
-                    let response = callArm64Terminal(
-                        "terminalWrite",
-                        json!({"sessionId": sessionId, "bytes": &data[written..end]}),
-                    )?;
-                    let accepted = requiredUsize(&response, "acceptedBytes")?;
-                    if accepted > end - written {
-                        return Err(HostError::new(
-                            "ARM64 terminal returned an invalid write count",
-                        ));
-                    }
-                    written += accepted;
-                    if written < data.len() && Instant::now() >= deadline {
-                        return Err(HostError::new(format!(
-                            "ARM64 terminal input timed out after accepting {written} of {} bytes",
-                            data.len()
-                        )));
-                    }
-                    if accepted == 0 {
-                        thread::sleep(Duration::from_millis(1));
-                    }
-                }
-                Ok(written)
+                let response = callArm64Terminal("terminalWrite", json!({"sessionId": sessionId, "bytes": data}))?;
+                let accepted = requiredUsize(&response, "acceptedBytes")?;
+                if accepted != data.len() { return Err(HostError::new("ARM64 terminal returned an invalid input queue receipt")); }
+                Ok(accepted)
             }
             IosTerminalBackend::SystemShell => self.systemShell.writePtySession(sessionId, data),
         }
@@ -562,37 +487,27 @@ impl TerminalHost for IosTerminalHost {
     }
 
     /// Observes the real backend command loop without draining the terminal screen separately.
-    fn executeInSessionStreaming(
-        &self,
-        sessionId: &str,
-        command: &str,
-        timeoutMs: u64,
-        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
-    ) -> HostResult<TerminalCommandOutput> {
-        match self.sessionBackend(sessionId)? {
+    fn executeInSessionStreaming(&self, sessionId: &str, command: &str, timeoutMs: u64,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>) -> HostResult<TerminalCommandOutput> {
+        operit_host_native_common::runTerminalCommandSynchronously(
+            Arc::new(self.clone()).beginInSessionStreaming(sessionId.into(), command.into(), timeoutMs)?, onOutput,
+        )
+    }
+
+    /// Observes either backend through the same event-driven Host command contract.
+    fn beginInSessionStreaming(self: Arc<Self>, sessionId: String, command: String, timeoutMs: u64)
+        -> HostResult<Box<dyn operit_host_api::TerminalCommand::TerminalCommandExecution>> {
+        match self.sessionBackend(&sessionId)? {
             IosTerminalBackend::Arm64 => {
-                let command = requiredText(command, "command")?;
-                let response = callArm64TerminalStreaming(
-                    json!({
-                        "sessionId": requiredText(sessionId, "session_id")?, "command": command, "timeoutMs": timeoutMs,
-                    }),
-                    onOutput,
-                )?;
-                Ok(TerminalCommandOutput {
-                    command,
-                    output: terminalText(&response, "outputBytes")?,
-                    exitCode: requiredI32(&response, "exitCode")?,
-                    sessionId: requiredString(&response, "sessionId")?,
-                    platform: PLATFORM.into(),
-                    terminal: ARM64_TERMINAL.into(),
-                    terminalType: shellTerminalType(&requiredString(&response, "terminalType")?)?,
-                    timedOut: requiredBool(&response, "timedOut")?,
-                })
+                let command = requiredText(&command, "command")?;
+                let events = beginArm64TerminalCommand(&sessionId, &command, timeoutMs)?;
+                Ok(Box::new(Arm64Command { host: (*self).clone(), sessionId, command,
+                    events, timeoutMs, collected: Vec::new() }))
             }
-            IosTerminalBackend::SystemShell => systemCommandOutput(
-                self.systemShell
-                    .executeInSessionStreaming(sessionId, command, timeoutMs, onOutput)?,
-            ),
+            IosTerminalBackend::SystemShell => {
+                let execution = Arc::new(self.systemShell.clone()).beginInSessionStreaming(sessionId, command, timeoutMs)?;
+                Ok(operit_host_api::TerminalCommand::mapTerminalCommandExecution(execution, systemCommandOutput))
+            }
         }
     }
 
@@ -855,5 +770,110 @@ fn controlSequence(control: &str) -> HostResult<&'static str> {
         value => Err(HostError::new(format!(
             "unsupported iOS terminal control sequence: {value}"
         ))),
+    }
+}
+
+/// Retains guest command frames while the native session queue owns execution and readiness.
+struct Arm64Command {
+    host: IosTerminalHost,
+    sessionId: String,
+    command: String,
+    events: Arc<Arm64CommandEvents>,
+    timeoutMs: u64,
+    collected: Vec<u8>,
+}
+
+impl operit_host_api::TerminalCommand::TerminalCommandExecution for Arm64Command {
+    /// Drains output and registers a wakeup for output, completion, or session close.
+    fn pollOutput(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+        expired: bool,
+        onOutput: &mut dyn FnMut(&[u8]) -> HostResult<()>,
+    ) -> std::task::Poll<HostResult<TerminalCommandOutput>> {
+        let result = (|| -> HostResult<Option<TerminalCommandOutput>> {
+            let offset = self.collected.len();
+            if let Some(error) = self.events.output.pollDrain(context, &mut self.collected)? {
+                return Err(error);
+            }
+            if self.collected.len() > offset {
+                onOutput(&self.collected[offset..])?;
+            }
+            let completion = self.events.completion()?;
+            if completion.is_some() {
+                // Completion follows the final native frame; drain again if it raced the first drain.
+                let offset = self.collected.len();
+                self.events.output.pollDrain(context, &mut self.collected)?;
+                if self.collected.len() > offset {
+                    onOutput(&self.collected[offset..])?;
+                }
+            }
+            if self.timeoutMs == 0 && self.collected.len() > 1024 * 1024 {
+                self.collected.drain(..self.collected.len() - 1024 * 1024);
+            }
+            let timedOut = completion.is_none();
+            let exitCode = match completion {
+                Some(result) => requiredI32(&result?, "exitCode")?,
+                None if expired => -1,
+                None => return Ok(None),
+            };
+            Ok(Some(TerminalCommandOutput {
+                command: self.command.clone(),
+                output: String::from_utf8_lossy(&self.collected).into_owned(),
+                exitCode,
+                sessionId: self.sessionId.clone(),
+                platform: PLATFORM.into(),
+                terminal: ARM64_TERMINAL.into(),
+                terminalType: SHELL_TERMINAL_TYPE.into(),
+                timedOut,
+            }))
+        })();
+        match result {
+            Ok(Some(receipt)) => std::task::Poll::Ready(Ok(receipt)),
+            Ok(None) => std::task::Poll::Pending,
+            Err(error) => std::task::Poll::Ready(Err(error)),
+        }
+    }
+    /// Preserves the execution deadline independently from foreground observation.
+    fn timeoutMs(&self) -> u64 {
+        self.timeoutMs
+    }
+    /// Requests interruption on the guest's owning queue without waiting for readiness.
+    fn beginInterrupt(&mut self) -> HostResult<()> {
+        callArm64Terminal("terminalCancel", json!({"sessionId": self.sessionId})).map(|_| ())
+    }
+    /// Accepts readiness only after native completion or a terminal failure notification.
+    fn pollInterrupt(
+        &mut self,
+        context: &mut std::task::Context<'_>,
+        expired: bool,
+    ) -> std::task::Poll<HostResult<()>> {
+        let result = (|| -> HostResult<Option<()>> {
+            self.events.output.pollDrain(context, &mut self.collected)?;
+            match self.events.completion()? {
+                Some(result) => result.map(|_| Some(())),
+                None if expired => Err(HostError::new(
+                    "ARM64 terminal did not stop after interruption",
+                )),
+                None => Ok(None),
+            }
+        })();
+        match result {
+            Ok(Some(())) => std::task::Poll::Ready(Ok(())),
+            Ok(None) => std::task::Poll::Pending,
+            Err(error) => std::task::Poll::Ready(Err(error)),
+        }
+    }
+    /// Closes an unresponsive guest; native completion releases callback ownership.
+    fn finish(
+        self: Box<Self>,
+        result: HostResult<TerminalCommandOutput>,
+        settled: HostResult<()>,
+    ) -> HostResult<TerminalCommandOutput> {
+        if let Err(error) = settled {
+            self.host.closeSession(&self.sessionId)?;
+            return Err(error);
+        }
+        result
     }
 }

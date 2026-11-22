@@ -41,6 +41,15 @@ extern "C" ort_arm64_result ort_arm64_run(ort_arm64_vm *vm, uint64_t budget) {
     }
     return vm->machine.run(budget);
 }
+// Expose coordinator-owned native readiness without moving guest state to the host.
+extern "C" size_t ort_arm64_wait_sources(ort_arm64_vm *vm, ort_arm64_wait_source *sources,
+                                         size_t capacity, int64_t *timeout, int writing) {
+    if (!vm) {
+        if (timeout) *timeout = -1;
+        return 0;
+    }
+    return vm->machine.wait_sources(sources, capacity, timeout, writing != 0);
+}
 extern "C" int ort_arm64_terminal_open(ort_arm64_vm *vm, uint32_t columns, uint32_t rows) {
     if (!vm) {
         creation_error = "terminal operation requires a VM";

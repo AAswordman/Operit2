@@ -25,9 +25,10 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 const TEST_ID: &str = "local.update.fixture";
 
-fn serialTest() -> std::sync::MutexGuard<'static, ()> {
-    static SERIAL: Mutex<()> = Mutex::new(());
-    SERIAL.lock().unwrap_or_else(|error| error.into_inner())
+/// Serializes fixtures without retaining a synchronous guard across registration awaits.
+async fn serialTest() -> tokio::sync::MutexGuard<'static, ()> {
+    static SERIAL: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    SERIAL.lock().await
 }
 
 #[derive(Clone)]
@@ -277,7 +278,6 @@ impl HostRuntimeTaskSchedulerHost for RecordingScheduler {
     fn scheduleDelayedHostRuntimeTask(&self, name: &str, delay: u64, task: HostRuntimeTask) -> HostResult<()> {
         self.inner.scheduleDelayedHostRuntimeTask(name, delay, task)
     }
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture { self.inner.waitForHostRuntimeTaskTurn() }
     fn waitForHostRuntimeDelay(&self, delay: u64) -> HostRuntimeTurnFuture { self.inner.waitForHostRuntimeDelay(delay) }
 }
 
@@ -292,13 +292,16 @@ struct LocalUpdateFixture {
 }
 
 impl LocalUpdateFixture {
-    fn new() -> Self { Self::withAssets(&[], &[]) }
+    /// Creates an initialized registry before a test can import packages.
+    async fn new() -> Self { Self::withAssets(&[], &[]).await }
 
-    fn withAssets(builtin: &'static [RuntimePluginAsset], bundled: &'static [RuntimePluginAsset]) -> Self {
-        Self::build(builtin, bundled, false)
+    /// Awaits registration of the fixture's declared plugin assets.
+    async fn withAssets(builtin: &'static [RuntimePluginAsset], bundled: &'static [RuntimePluginAsset]) -> Self {
+        Self::build(builtin, bundled, false).await
     }
 
-    fn build(builtin: &'static [RuntimePluginAsset], bundled: &'static [RuntimePluginAsset], recordNotifications: bool) -> Self {
+    /// Installs native hosts and scans packages after releasing the canonical manager lock.
+    async fn build(builtin: &'static [RuntimePluginAsset], bundled: &'static [RuntimePluginAsset], recordNotifications: bool) -> Self {
         let root = std::env::temp_dir().join(format!("operit-local-update-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(root.join("artifacts")).unwrap();
         let storage = Arc::new(FaultStorage {
@@ -328,27 +331,27 @@ impl LocalUpdateFixture {
             hostEnvironment: HostEnvironmentDescriptor::linux(), ..Default::default()
         }, ToolRuntimeDependencies::new(Arc::new(TestPackageRuntimeSupport { builtin, bundled }), provider.clone()));
         let manager = handler.getOrCreatePackageManager();
-        {
-            let mut registry = manager.lock().unwrap();
-            assert!(registry.claimInitialPackageRegistryLoad().unwrap());
-            registry.loadAvailablePackages();
-            registry.packageRegistryReadiness().require_ready().unwrap();
-        }
+        assert!(manager.lock().unwrap().claimInitialPackageRegistryLoad().unwrap());
+        RuntimePackageManager::reloadRegistry(Arc::clone(&manager)).await.unwrap();
+        manager.lock().unwrap().packageRegistryReadiness().require_ready().unwrap();
         Self { root, storage, filesystem, provider, handler, manager, scheduler }
     }
 
-    fn import(&self, filename: &str, bytes: &[u8]) -> Result<ExternalPackageImportResult, String> {
+    /// Awaits untrusted registration after the manager has returned its owned import future.
+    async fn import(&self, filename: &str, bytes: &[u8]) -> Result<ExternalPackageImportResult, String> {
         let path = self.root.join("artifacts").join(filename);
         std::fs::write(&path, bytes).unwrap();
-        self.manager.lock().unwrap().addPackageFileFromExternalStorageResult(&path.to_string_lossy())
+        let import = self.manager.lock().unwrap().addPackageFileFromExternalStorageResult(&path.to_string_lossy());
+        import.await
     }
 
-    fn install(&self, scope: &str) {
+    /// Imports and enables the original installation without holding a registry guard while awaiting.
+    async fn install(&self, scope: &str) {
         let bytes = packageArchive(TEST_ID, Some(scope), "1.0.0", "v1", &[("kept.child", true)]);
-        self.import("previous.toolpkg", &bytes).unwrap();
-        let mut manager = self.manager.lock().unwrap();
-        manager.enablePackage(TEST_ID);
-        assert!(manager.isPackageEnabled(TEST_ID));
+        self.import("previous.toolpkg", &bytes).await.unwrap();
+        let enable = self.manager.lock().unwrap().enablePackage(TEST_ID);
+        enable.await;
+        assert!(self.manager.lock().unwrap().isPackageEnabled(TEST_ID));
     }
 
     async fn probe(&self, payload: Value) -> Value {
@@ -356,6 +359,13 @@ impl LocalUpdateFixture {
             TEST_ID, "test.configuration", payload, 10_000,
         );
         invocation.await.unwrap()
+    }
+
+    /// Fails archive validation only after the replacement runtime has been published.
+    fn failNextPublication(&self) {
+        let registry = self.manager.lock().unwrap().toolPkgManager().clone();
+        *self.filesystem.failAfterPublication.lock().unwrap() =
+            Some((self.nativeSuffix(), registry, "2.0.0".into()));
     }
 
     fn record(&self) -> ExtensionRecord {
@@ -512,13 +522,14 @@ fn nextArchive(scope: Option<&str>) -> Vec<u8> {
     packageArchive(TEST_ID, scope, "2.0.0", "v2", &[("kept.child", false), ("new.child", true)])
 }
 
-#[test]
-fn owner_check_skips_extension_scan_until_an_a2a_package_is_published() {
+/// Verifies owner lookups avoid extension scans until an A2A package is published.
+#[tokio::test(flavor = "current_thread")]
+async fn owner_check_skips_extension_scan_until_an_a2a_package_is_published() {
     use crate::tools::a2a::A2ARepository::{A2AConfig, A2ARepository};
 
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let mut manager = fixture.manager.lock().unwrap();
     let repository = A2ARepository::new(manager.context.as_ref().clone()).unwrap();
     repository.save("test-agent", A2AConfig { url: "https://example.invalid/".into(), ..Default::default() }).unwrap();
@@ -537,13 +548,13 @@ fn owner_check_skips_extension_scan_until_an_a2a_package_is_published() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn local_same_id_update_preserves_configuration_and_scope() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     for scope in ["device", "space"] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install(scope);
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install(scope).await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
         let replacement = nextArchive(None);
-        let result = fixture.import("different-filename.toolpkg", &replacement).unwrap();
+        let result = fixture.import("different-filename.toolpkg", &replacement).await.unwrap();
         let record = fixture.record();
         assert_eq!(result.packageName, TEST_ID);
         assert_eq!(record.sourceName, snapshot.record.sourceName);
@@ -733,35 +744,41 @@ fn member_merge_keeps_old_effective_states_and_disables_new_children() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn transaction_file_failures_restore_the_old_installation() {
-    let _serial = serialTest();
-    for phase in ["staging", "staging_after", "backup", "backup_after", "record_backup", "delete", "move", "move_after", "scan", "cache"] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install("device");
+    let _serial = serialTest().await;
+    for phase in ["staging", "staging_after", "backup", "backup_after", "record_backup", "delete", "move", "move_after", "publication", "cache"] {
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install("device").await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
         let (oldEngine, oldLease) = fixture.manager.lock().unwrap().toolPkgManager()
             .leaseToolPkgMainExecutionEngine(TEST_ID).unwrap();
         let suffix = fixture.nativeSuffix();
-        let fault = match phase {
-            "staging" => Fault::new("write", ".staging", false),
-            "staging_after" => Fault::new("write", ".staging", true),
-            "backup" => Fault::new("write", ".backup", false),
-            "backup_after" => Fault::new("write", ".backup", true),
-            "record_backup" => Fault::new("write", ".record-backup", false),
-            "delete" => Fault::new("delete", &suffix, false),
-            "move" => Fault::new("move", &suffix, false),
-            "move_after" => Fault::new("move", &suffix, true),
-            "scan" => Fault::new("list", "/extensions/device/packages", false),
-            "cache" => {
-                let manager = fixture.manager.lock().unwrap();
-                let runtime = manager.getToolPkgContainerRuntime(TEST_ID).unwrap();
-                let cache = manager.ensureToolPkgCache(&runtime).unwrap();
-                let key = RuntimeStorePaths::default().runtime_storage_key(&cache).unwrap();
-                Fault::new("delete", format!("/{}", key.strip_prefix("runtime/").unwrap()), false)
-            }
-            _ => unreachable!(),
-        };
-        fixture.filesystem.faults.arm(fault);
-        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err(), "{phase}");
+        if phase == "publication" {
+            fixture.failNextPublication();
+        } else {
+            let fault = match phase {
+                "staging" => Fault::new("write", ".staging", false),
+                "staging_after" => Fault::new("write", ".staging", true),
+                "backup" => Fault::new("write", ".backup", false),
+                "backup_after" => Fault::new("write", ".backup", true),
+                "record_backup" => Fault::new("write", ".record-backup", false),
+                "delete" => Fault::new("delete", &suffix, false),
+                "move" => Fault::new("move", &suffix, false),
+                "move_after" => Fault::new("move", &suffix, true),
+                "cache" => {
+                    let manager = fixture.manager.lock().unwrap();
+                    let runtime = manager.getToolPkgContainerRuntime(TEST_ID).unwrap();
+                    let cache = manager.ensureToolPkgCache(&runtime).unwrap();
+                    let key = RuntimeStorePaths::default().runtime_storage_key(&cache).unwrap();
+                    Fault::new("delete", format!("/{}", key.strip_prefix("runtime/").unwrap()), false)
+                }
+                _ => unreachable!(),
+            };
+            fixture.filesystem.faults.arm(fault);
+        }
+        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err(), "{phase}");
+        if phase == "publication" {
+            assert!(fixture.filesystem.failAfterPublication.lock().unwrap().is_none(), "publication fault was not exercised");
+        }
         if matches!(phase, "staging" | "staging_after" | "backup" | "backup_after" | "record_backup") {
             let current = fixture.manager.lock().unwrap().toolPkgManager()
                 .findToolPkgExecutionEngine(&format!("toolpkg_main:{TEST_ID}"), TEST_ID).unwrap();
@@ -778,24 +795,29 @@ async fn transaction_file_failures_restore_the_old_installation() {
 }
 
 #[tokio::test(flavor = "current_thread")]
-async fn final_registration_and_scan_failures_restore_old_code() {
-    let _serial = serialTest();
-    for registration in [1, 2] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install("device");
+async fn registration_and_publication_failures_restore_old_code() {
+    let _serial = serialTest().await;
+    for phase in ["registration", "publication"] {
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install("device").await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
-        fixture.provider.failRegistration(registration);
-        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err(), "registration {registration}");
-        assert_eq!(fixture.provider.failAt.load(Ordering::SeqCst), 0, "fault was not exercised");
+        if phase == "registration" { fixture.provider.failRegistration(1); }
+        else { fixture.failNextPublication(); }
+        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err(), "{phase}");
+        if phase == "registration" {
+            assert_eq!(fixture.provider.failAt.load(Ordering::SeqCst), 0, "fault was not exercised");
+        } else {
+            assert!(fixture.filesystem.failAfterPublication.lock().unwrap().is_none(), "fault was not exercised");
+        }
         snapshot.assertRollback(&fixture).await;
     }
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn invalid_and_partial_staging_never_replace_the_owned_archive() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let snapshot = InstallationSnapshot::capture(&fixture).await;
     let mut missingMain = packageEntries(TEST_ID, None, "2.0.0", "v2", &[("kept.child", true)]);
     missingMain.retain(|(name, _)| name != "main.js");
@@ -808,17 +830,17 @@ async fn invalid_and_partial_staging_never_replace_the_owned_archive() {
     parsed["subpackages"].as_array_mut().unwrap().push(json!({"id":"missing.child","entry":"missing.js"}));
     *manifest = parsed.to_string();
     for invalid in [b"not a ZIP".to_vec(), archiveEntries(missingMain), archiveEntries(brokenRegistration), archiveEntries(partial)] {
-        assert!(fixture.import("invalid.toolpkg", &invalid).is_err());
+        assert!(fixture.import("invalid.toolpkg", &invalid).await.is_err());
         snapshot.assertRollback(&fixture).await;
     }
 }
 
 /// A registration failure visible in the manager must also be an error-level plugin log.
-#[test]
-fn registration_load_issues_are_logged_without_relogging_ui_reads() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+#[tokio::test(flavor = "current_thread")]
+async fn registration_load_issues_are_logged_without_relogging_ui_reads() {
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let mut entries = packageEntries(TEST_ID, Some("device"), "2.0.0", "v2", &[]);
     entries.iter_mut().find(|(name, _)| name == "main.js").unwrap().1 = r#"
         function studio() {}
@@ -827,8 +849,8 @@ fn registration_load_issues_are_logged_without_relogging_ui_reads() {
         };
     "#.into();
     fixture.storage.writeBytes(&fixture.archiveKey(), &archiveEntries(entries)).unwrap();
-    let mut manager = fixture.manager.lock().unwrap();
-    manager.loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&fixture.manager)).await.unwrap();
+    let manager = fixture.manager.lock().unwrap();
     let issue = manager.getToolPkgLoadIssues().into_iter()
         .find(|issue| issue.message.contains("requires an exported ToolPkg function reference"))
         .expect("broken route must remain visible as a load diagnostic");
@@ -851,22 +873,23 @@ fn registration_load_issues_are_logged_without_relogging_ui_reads() {
     manager.getToolPkgLoadIssues();
     manager.getToolPkgLoadIssues();
     assert_eq!(logged().len(), count, "reading diagnostics must not emit new errors");
-    manager.loadAvailablePackages();
+    drop(manager);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&fixture.manager)).await.unwrap();
     assert_eq!(logged().len(), count + 1, "a failed registration retry must emit its own error");
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn partial_descriptor_write_is_restored_from_original_bytes() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     for scope in ["device", "space"] {
         for partial in [false, true] {
-            let fixture = LocalUpdateFixture::new();
-            fixture.install(scope);
+            let fixture = LocalUpdateFixture::new().await;
+            fixture.install(scope).await;
             let snapshot = InstallationSnapshot::capture(&fixture).await;
             let mut fault = Fault::new("store_write", fixture.descriptorKey(), true);
             fault.partial = partial;
             fixture.storage.faults.arm(fault);
-            assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err());
+            assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err());
             snapshot.assertRollback(&fixture).await;
             if scope == "space" {
                 assert_eq!(fixture.latestFileBytes(&fixture.archiveKey()), snapshot.archive);
@@ -878,13 +901,13 @@ async fn partial_descriptor_write_is_restored_from_original_bytes() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn space_archive_write_failure_restores_and_publishes_previous_bytes() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     for after in [false, true] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install("space");
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install("space").await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
         fixture.storage.faults.arm(Fault::new("store_write", fixture.archiveKey(), after));
-        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err());
+        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err());
         snapshot.assertRollback(&fixture).await;
         assert_eq!(fixture.latestFileBytes(&fixture.archiveKey()), snapshot.archive);
         assert_eq!(fixture.latestFileBytes(&fixture.descriptorKey()), snapshot.descriptor);
@@ -893,15 +916,15 @@ async fn space_archive_write_failure_restores_and_publishes_previous_bytes() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn cross_scope_update_is_rejected_before_registration_or_staging() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     for (scope, other) in [("device", "space"), ("space", "device")] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install(scope);
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install(scope).await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
         fixture.provider.failRegistration(0);
         fixture.filesystem.faults.mutations.lock().unwrap().clear();
         fixture.storage.faults.mutations.lock().unwrap().clear();
-        assert!(fixture.import("replacement.toolpkg", &nextArchive(Some(other))).is_err());
+        assert!(fixture.import("replacement.toolpkg", &nextArchive(Some(other))).await.is_err());
         assert_eq!(fixture.provider.registrations.load(Ordering::SeqCst), 0);
         assert!(fixture.filesystem.faults.mutations.lock().unwrap().is_empty());
         assert!(fixture.storage.faults.mutations.lock().unwrap().is_empty());
@@ -911,27 +934,28 @@ async fn cross_scope_update_is_rejected_before_registration_or_staging() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn disabled_parent_and_restarts_do_not_enable_new_children() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let snapshot = InstallationSnapshot::capture(&fixture).await;
     fixture.manager.lock().unwrap().disablePackage(TEST_ID);
-    fixture.import("replacement.toolpkg", &nextArchive(None)).unwrap();
+    fixture.import("replacement.toolpkg", &nextArchive(None)).await.unwrap();
     {
         let manager = fixture.manager.lock().unwrap();
         assert!(!manager.isPackageEnabled(TEST_ID));
         assert!(!manager.isPackageEnabled("new.child"));
     }
-    fixture.manager.lock().unwrap().enablePackage(TEST_ID);
+    let enable = fixture.manager.lock().unwrap().enablePackage(TEST_ID);
+    enable.await;
     assert!(fixture.manager.lock().unwrap().isPackageEnabled("kept.child"));
     assert!(!fixture.manager.lock().unwrap().isPackageEnabled("new.child"));
     {
         let context = fixture.handler.getContext();
         let restarted = AIToolHandler::new(context, fixture.handler.runtimeDependencies());
         let shared = restarted.getOrCreatePackageManager();
-        let mut manager = shared.lock().unwrap();
-        assert!(manager.claimInitialPackageRegistryLoad().unwrap());
-        manager.loadAvailablePackages();
+        assert!(shared.lock().unwrap().claimInitialPackageRegistryLoad().unwrap());
+        RuntimePackageManager::reloadRegistry(Arc::clone(&shared)).await.unwrap();
+        let manager = shared.lock().unwrap();
         assert!(manager.isPackageEnabled(TEST_ID));
         assert!(!manager.isPackageEnabled("new.child"));
         let shutdown = manager.executionEngineShutdown();
@@ -943,31 +967,32 @@ async fn disabled_parent_and_restarts_do_not_enable_new_children() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn raw_market_artifact_cannot_use_local_replacement() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let snapshot = InstallationSnapshot::capture(&fixture).await;
     let bytes = nextArchive(None);
     let path = fixture.root.join("artifacts/market-raw.toolpkg");
     std::fs::write(&path, &bytes).unwrap();
-    let result = fixture.manager.lock().unwrap().addMarketArtifactFile(
+    let import = fixture.manager.lock().unwrap().addMarketArtifactFile(
         path.to_string_lossy().into_owned(), sha256Hex(&bytes),
     );
+    let result = import.await;
     assert!(!result.starts_with("Successfully imported"), "raw market must retain its old duplicate-name rejection");
     snapshot.assertRollback(&fixture).await;
-    fixture.import("same-bytes-local.toolpkg", &bytes).unwrap();
+    fixture.import("same-bytes-local.toolpkg", &bytes).await.unwrap();
     assert_eq!(fixture.probe(json!({})).await["codeVersion"], "v2");
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn failed_restoration_reports_both_errors_and_keeps_recovery_backups() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let snapshot = InstallationSnapshot::capture(&fixture).await;
     fixture.filesystem.faults.arm(Fault::new("move", fixture.nativeSuffix(), true));
     fixture.filesystem.faults.arm(Fault::new("write", fixture.nativeSuffix(), false));
-    let error = fixture.import("replacement.toolpkg", &nextArchive(None)).unwrap_err();
+    let error = fixture.import("replacement.toolpkg", &nextArchive(None)).await.unwrap_err();
     assert!(error.contains("injected move failure"), "{error}");
     assert!(error.contains("injected write failure"), "{error}");
     assert!(error.contains("rollback failed"), "{error}");
@@ -986,9 +1011,9 @@ fn bundledAsset(name: &'static str, bytes: Vec<u8>) -> &'static [RuntimePluginAs
 
 #[tokio::test(flavor = "current_thread")]
 async fn builtin_and_customized_owners_keep_their_existing_import_flow() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     let bytes = packageArchive(TEST_ID, Some("device"), "1.0.0", "v1", &[]);
-    let fixture = LocalUpdateFixture::withAssets(bundledAsset("builtin-fixture.toolpkg", bytes), &[]);
+    let fixture = LocalUpdateFixture::withAssets(bundledAsset("builtin-fixture.toolpkg", bytes), &[]).await;
     let before = fixture.record();
     assert_eq!(before.settings["builtin"], true);
     let preview = RuntimePackageManager::readToolPkgImportManifest(&nextArchive(None)).unwrap();
@@ -996,8 +1021,8 @@ async fn builtin_and_customized_owners_keep_their_existing_import_flow() {
     assert_eq!(fixture.record(), before, "the ordinary replacement gate must not customize a builtin");
     drop(fixture);
 
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let mut settings = fixture.record().settings;
     settings["customized"] = json!(true);
     ExtensionStore::new(fixture.storage.clone()).setSettings("package", TEST_ID, settings).unwrap();
@@ -1008,24 +1033,26 @@ async fn builtin_and_customized_owners_keep_their_existing_import_flow() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn bundled_source_cannot_be_replaced_by_local_import() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     let bytes = packageArchive(TEST_ID, Some("device"), "1.0.0", "v1", &[("kept.child", true)]);
-    let fixture = LocalUpdateFixture::withAssets(&[], bundledAsset("bundled-fixture.toolpkg", bytes));
+    let fixture = LocalUpdateFixture::withAssets(&[], bundledAsset("bundled-fixture.toolpkg", bytes)).await;
     let imported = fixture.manager.lock().unwrap().importBundledExternalToolPkgContainer(TEST_ID);
     assert!(imported.starts_with("Successfully imported"), "{imported}");
-    fixture.manager.lock().unwrap().enablePackage(TEST_ID);
+    RuntimePackageManager::reloadRegistry(Arc::clone(&fixture.manager)).await.unwrap();
+    let enable = fixture.manager.lock().unwrap().enablePackage(TEST_ID);
+    enable.await;
     let snapshot = InstallationSnapshot::capture(&fixture).await;
-    let error = fixture.import("replacement.toolpkg", &nextArchive(None)).unwrap_err();
+    let error = fixture.import("replacement.toolpkg", &nextArchive(None)).await.unwrap_err();
     assert!(error.contains("Bundled"), "{error}");
     snapshot.assertRollback(&fixture).await;
 }
 
 #[tokio::test(flavor = "current_thread")]
 async fn market_and_mismatched_runtime_owners_are_rejected_without_staging() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     for mismatch in ["market", "container_name", "source_path"] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install("device");
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install("device").await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
         let mut manager = fixture.manager.lock().unwrap();
         let mut containers = manager.toolPkgManager().getToolPkgContainerRuntimeMap();
@@ -1042,7 +1069,7 @@ async fn market_and_mismatched_runtime_owners_are_rejected_without_staging() {
         drop(manager);
         fixture.provider.failRegistration(0);
         fixture.filesystem.faults.mutations.lock().unwrap().clear();
-        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err(), "{mismatch}");
+        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err(), "{mismatch}");
         assert_eq!(fixture.provider.registrations.load(Ordering::SeqCst), 0);
         assert!(fixture.filesystem.faults.mutations.lock().unwrap().is_empty());
         assert_eq!(fixture.record(), snapshot.record);
@@ -1053,16 +1080,16 @@ async fn market_and_mismatched_runtime_owners_are_rejected_without_staging() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn legacy_external_market_seal_cannot_use_ordinary_replacement() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let before = fixture.record();
     let archive = fixture.storage.readBytes(&fixture.archiveKey()).unwrap();
     let identity = decodeMarketToolPkgInstallationId(before.settings["installationId"].as_str().unwrap()).unwrap();
     let sealed = ToolPkgProtection::attachMarketInstallSeal(&archive, &identity).unwrap();
     fixture.storage.writeBytes(&fixture.archiveKey(), &sealed).unwrap();
     fixture.provider.failRegistration(0);
-    assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err());
+    assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err());
     assert_eq!(fixture.provider.registrations.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.storage.readBytes(&fixture.archiveKey()).unwrap(), sealed);
     assert_eq!(fixture.record(), before);
@@ -1070,10 +1097,10 @@ async fn legacy_external_market_seal_cannot_use_ordinary_replacement() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn missing_archive_and_directory_sources_cannot_be_updated() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     for directory in [false, true] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install("device");
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install("device").await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
         let key = fixture.archiveKey();
         fixture.storage.delete(&key, false).unwrap();
@@ -1083,7 +1110,7 @@ async fn missing_archive_and_directory_sources_cannot_be_updated() {
             std::fs::create_dir_all(native).unwrap();
         }
         fixture.provider.failRegistration(0);
-        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err());
+        assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err());
         assert_eq!(fixture.provider.registrations.load(Ordering::SeqCst), 0);
         assert_eq!(fixture.record(), snapshot.record);
         snapshot.assertData(&fixture);
@@ -1093,14 +1120,14 @@ async fn missing_archive_and_directory_sources_cannot_be_updated() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn standalone_owner_cannot_be_replaced_by_a_toolpkg() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
     let script = format!("/* METADATA {{\"name\":\"{TEST_ID}\",\"tools\":[]}} */");
-    fixture.import("standalone.js", script.as_bytes()).unwrap();
+    fixture.import("standalone.js", script.as_bytes()).await.unwrap();
     let before = fixture.record();
     let key = fixture.archiveKey();
     fixture.provider.failRegistration(0);
-    assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err());
+    assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err());
     assert_eq!(fixture.provider.registrations.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.record(), before);
     assert_eq!(fixture.storage.readBytes(&key).unwrap(), script.as_bytes());
@@ -1108,9 +1135,9 @@ async fn standalone_owner_cannot_be_replaced_by_a_toolpkg() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn duplicated_scope_records_are_not_merged_or_overwritten() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let snapshot = InstallationSnapshot::capture(&fixture).await;
     let originalKey = fixture.descriptorKey();
     let originalArchiveKey = fixture.archiveKey();
@@ -1122,7 +1149,7 @@ async fn duplicated_scope_records_are_not_merged_or_overwritten() {
     let shadow = serde_json::to_vec(&duplicate).unwrap();
     fixture.storage.writeBytes(&shadowKey, &shadow).unwrap();
     fixture.provider.failRegistration(0);
-    assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).is_err());
+    assert!(fixture.import("replacement.toolpkg", &nextArchive(None)).await.is_err());
     assert_eq!(fixture.provider.registrations.load(Ordering::SeqCst), 0);
     assert_eq!(fixture.storage.readBytes(&originalKey).unwrap(), snapshot.descriptor);
     assert_eq!(fixture.storage.readBytes(&shadowKey).unwrap(), shadow);
@@ -1132,10 +1159,10 @@ async fn duplicated_scope_records_are_not_merged_or_overwritten() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn same_version_size_and_mtime_update_refreshes_resources_and_syncs_bytes() {
-    let _serial = serialTest();
+    let _serial = serialTest().await;
     for scope in ["device", "space"] {
-        let fixture = LocalUpdateFixture::new();
-        fixture.install(scope);
+        let fixture = LocalUpdateFixture::new().await;
+        fixture.install(scope).await;
         let snapshot = InstallationSnapshot::capture(&fixture).await;
         let bytes = packageArchive(TEST_ID, Some(scope), "1.0.0", "v2", &[("kept.child", true)]);
         assert_eq!(bytes.len(), snapshot.archive.len());
@@ -1147,7 +1174,7 @@ async fn same_version_size_and_mtime_update_refreshes_resources_and_syncs_bytes(
         fixture.storage.frozen.lock().unwrap().insert(fixture.archiveKey(), stamp);
         let (oldEngine, lease) = fixture.manager.lock().unwrap().toolPkgManager()
             .leaseToolPkgMainExecutionEngine(TEST_ID).unwrap();
-        fixture.import("same-version.toolpkg", &bytes).unwrap();
+        fixture.import("same-version.toolpkg", &bytes).await.unwrap();
         let read = fixture.probe(json!({})).await;
         assert_eq!(read["preference"], "saved preference");
         assert_eq!(read["codeVersion"], "v2", "metadata signatures alone cannot invalidate old resources");
@@ -1164,23 +1191,21 @@ async fn same_version_size_and_mtime_update_refreshes_resources_and_syncs_bytes(
 
 #[tokio::test(flavor = "current_thread")]
 async fn rollback_does_not_deliver_uncommitted_new_runtime_notifications() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::build(&[], &[], true);
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::build(&[], &[], true).await;
+    fixture.install("device").await;
     let snapshot = InstallationSnapshot::capture(&fixture).await;
     fixture.scheduler.runNotificationsInReverse();
     let observed = Arc::new(Mutex::new(Vec::new()));
     let notifications = observed.clone();
-    let registry = fixture.manager.lock().unwrap().toolPkgManager().clone();
     fixture.manager.lock().unwrap().addToolPkgRuntimeChangeListener(Arc::new(move |containers| {
         for runtime in containers.into_iter().filter(|runtime| runtime.packageName == TEST_ID) {
             notifications.lock().unwrap().push(runtime.version);
         }
     }));
     observed.lock().unwrap().clear();
-    *fixture.filesystem.failAfterPublication.lock().unwrap() =
-        Some((fixture.nativeSuffix(), registry, "2.0.0".into()));
-    let error = fixture.import("replacement.toolpkg", &nextArchive(None)).unwrap_err();
+    fixture.failNextPublication();
+    let error = fixture.import("replacement.toolpkg", &nextArchive(None)).await.unwrap_err();
     assert!(error.contains("injected post-publication validation failure"), "{error}");
     assert!(fixture.filesystem.failAfterPublication.lock().unwrap().is_none(), "validation fault did not run");
     fixture.scheduler.runNotificationsInReverse();
@@ -1191,18 +1216,18 @@ async fn rollback_does_not_deliver_uncommitted_new_runtime_notifications() {
 
 #[tokio::test(flavor = "current_thread")]
 async fn removed_children_drop_state_but_keep_configuration_namespaces() {
-    let _serial = serialTest();
-    let fixture = LocalUpdateFixture::new();
-    fixture.install("device");
+    let _serial = serialTest().await;
+    let fixture = LocalUpdateFixture::new().await;
+    fixture.install("device").await;
     let mut settings = fixture.record().settings;
     settings["enabledNames"] = json!([TEST_ID, "kept.child", "new.child"]);
     settings["disabledNames"] = json!(["kept.child", "new.child"]);
     settings["subpackageStates"] = json!({"kept.child": true, "new.child": true});
     ExtensionStore::new(fixture.storage.clone()).setSettings("package", TEST_ID, settings).unwrap();
-    fixture.manager.lock().unwrap().loadAvailablePackages();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&fixture.manager)).await.unwrap();
     let snapshot = InstallationSnapshot::capture(&fixture).await;
     let bytes = packageArchive(TEST_ID, None, "2.0.0", "v2", &[("new.child", true)]);
-    fixture.import("without-old-child.toolpkg", &bytes).unwrap();
+    fixture.import("without-old-child.toolpkg", &bytes).await.unwrap();
     let record = fixture.record();
     assert_eq!(record.settings["members"], json!([TEST_ID, "new.child"]));
     assert_eq!(record.settings["enabledNames"], json!([TEST_ID]));

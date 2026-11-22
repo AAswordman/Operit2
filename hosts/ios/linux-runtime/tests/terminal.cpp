@@ -1,5 +1,6 @@
 #include "operit/arm64_runtime.h"
 #include "native_descriptor_budget.h"
+#include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -8,7 +9,8 @@
 #include <memory>
 #include <stdexcept>
 #include <string>
-#include <thread>
+#include <poll.h>
+#include <vector>
 #include <unistd.h>
 
 namespace {
@@ -54,6 +56,8 @@ class Terminal {
             step();
             require(result_.status != ORT_ARM64_EXITED, "shell exited before expected output: " + output_);
             require(Clock::now() < deadline, "missing terminal output: " + text + "\nreceived: " + output_);
+            if (output_.find(text, from) == std::string::npos && result_.status == ORT_ARM64_WAITING)
+                wait_sources(deadline);
         }
     }
     void wait() {
@@ -84,10 +88,31 @@ class Terminal {
     size_t size() const {
         return output_.size();
     }
+    // A prompt waiting indefinitely for host input must not invent a periodic tick.
+    void require_idle() {
+        wait();
+        int64_t timeout = 0;
+        require(ort_arm64_wait_sources(vm_.get(), nullptr, 0, &timeout, 0) > 0 && timeout == -1,
+                "idle terminal must expose sources without a periodic deadline");
+    }
 
   private:
     std::string error() const {
         return ort_arm64_last_error(vm_.get());
+    }
+    // Bound the test itself while observing only actual VM producers and deadlines.
+    void wait_sources(Clock::time_point test_deadline) {
+        int64_t timeout = -1;
+        std::vector<ort_arm64_wait_source> sources(ort_arm64_wait_sources(vm_.get(), nullptr, 0, &timeout, 0));
+        require(ort_arm64_wait_sources(vm_.get(), sources.data(), sources.size(), &timeout, 0) == sources.size(), error());
+        const auto remaining = std::chrono::duration_cast<std::chrono::nanoseconds>(test_deadline - Clock::now()).count();
+        timeout = timeout < 0 ? remaining : std::min(timeout, remaining);
+        require(timeout >= 0, "terminal test deadline expired");
+        std::vector<pollfd> descriptors;
+        for (const auto &source : sources)
+            descriptors.push_back({source.fd, short((source.events & ORT_ARM64_WAIT_READ ? POLLIN : 0) |
+                                                   (source.events & ORT_ARM64_WAIT_WRITE ? POLLOUT : 0)), 0});
+        require(::poll(descriptors.data(), descriptors.size(), int((timeout + 999999) / 1000000)) >= 0, "terminal event wait failed");
     }
     void step() {
         result_ = ort_arm64_run(vm_.get(), 50000);
@@ -100,8 +125,6 @@ class Terminal {
             require(count > 0, error());
             output_.append(bytes, size_t(count));
         }
-        if (result_.status == ORT_ARM64_WAITING)
-            std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     std::unique_ptr<ort_arm64_vm, decltype(&ort_arm64_destroy)> vm_;
     ort_arm64_result result_{};
@@ -160,6 +183,7 @@ int main(int argc, char **argv) {
         }
         Terminal terminal(argv[1]);
         terminal.expect("ORT> ");
+        terminal.require_idle();
         terminal.write("stty -echo\n");
         terminal.wait();
         terminal.resize();
@@ -174,6 +198,9 @@ int main(int argc, char **argv) {
                        "cat \"$d/link\" | tr a-z A-Z; rm -rf \"$d\"\n");
         terminal.expect("SANDBOX-PIPE-OK\r\n", start);
         terminal.wait();
+        start = terminal.size();
+        terminal.write("sleep 0.04; printf '__DEADLINE_WAKE__\\n'\n");
+        terminal.expect("__DEADLINE_WAKE__\r\n", start);
         terminal.write("sleep 30\n");
         terminal.wait();
         start = terminal.size();

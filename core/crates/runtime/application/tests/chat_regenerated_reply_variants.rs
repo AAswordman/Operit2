@@ -52,9 +52,6 @@ impl HostRuntimeTaskSchedulerHost for VariantScheduler {
     ) -> HostResult<()> {
         panic!("message persistence must not schedule delayed work")
     }
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
         panic!("message persistence must not wait for a timer")
     }

@@ -71,9 +71,21 @@ await import(workerData);
     function call(runtime, command, callback = () => { throw new Error('Unexpected host callback'); }) {
       return runtime.execute(command, callback, controlFor(3000));
     }
+    /** Resumes host callbacks under the awaiting caller, matching the Rust async adapter. */
+    async function callAsync(runtime, command, callback = () => { throw new Error('Unexpected host callback'); }, control = controlFor(3000)) {
+      const execution = runtime.executeAsync(command, control);
+      let response;
+      for (;;) {
+        const step = await execution.next(response);
+        if (step.done) return step.value;
+        try { response = { ok: true, value: callback(...step.value) }; }
+        catch (error) { response = { ok: false, value: String(error) }; }
+      }
+    }
+    /** Supplies an exact command deadline or an explicitly unlimited background execution. */
     function controlFor(timeout) {
       const control = new Int32Array(new SharedArrayBuffer(16));
-      const deadline = Date.now() + timeout;
+      const deadline = timeout === 0 ? 0 : Date.now() + timeout;
       Atomics.store(control, 2, deadline >>> 0);
       Atomics.store(control, 3, Math.floor(deadline / 0x1_0000_0000));
       return control;
@@ -85,11 +97,11 @@ await import(workerData);
       const other = await create();
       assert.equal(call(other, { operation: 'evaluateString', name: 'isolation.js', source: 'typeof marker' }), 'undefined');
     });
-    await t.test('preserves synchronous callbacks and multi-frame Unicode values', () => {
+    await t.test('preserves synchronous callbacks and multi-frame Unicode values while Core awaits', async () => {
       call(runtime, { operation: 'binding', name: 'hostEcho', factory: 'syncBinding' });
       const text = '角色卡🙂'.repeat(150_000);
       call(runtime, { operation: 'evaluateVoid', name: 'echo.js', source: 'globalThis.echo=value=>hostEcho(value);' });
-      const result = call(runtime, { operation: 'call', name: 'echo', args: [{ text, values: [null, false, 42], nested: { enabled: true } }] }, (name, args) => {
+      const result = await callAsync(runtime, { operation: 'call', name: 'echo', args: [{ text, values: [null, false, 42], nested: { enabled: true } }] }, (name, args) => {
         assert.equal(name, 'hostEcho');
         assert.equal(args[0].text, text);
         return args[0];
@@ -105,7 +117,7 @@ await import(workerData);
         assert.equal(name, '__operitNativeLoadToolPkgWasm'); assert.deepEqual(args, ['memory.fixture', 'state']); reads++;
         return { metadata: { exports: ['next', 'sum'] }, bytes };
       };
-      call(runtime, { operation: 'evaluateVoid', name: 'wasm.js', source: source + `
+      await callAsync(runtime, { operation: 'evaluateVoid', name: 'wasm.js', source: source + `
         globalThis.wasmResult=null;globalThis.wasmFailure=null;
         globalThis.api=__operitCreateToolPkgWasmApi(()=>"memory.fixture",false);
         api.open("state").then(instance=>{
@@ -117,55 +129,74 @@ await import(workerData);
       assert.equal(call(runtime, { operation: 'evaluateString', name: 'wasm-result.js', source: 'JSON.stringify({result:wasmResult,error:wasmFailure})' }), '{"result":[1,2,7.75],"error":null}');
       assert.equal(reads, 1);
     });
-    await t.test('drains native Promise continuations before releasing command ownership', () => {
+    await t.test('drains native Promise continuations before releasing command ownership', async () => {
       const requests = [];
       call(runtime, { operation: 'binding', name: 'hostAsync', factory: 'binding' });
-      call(runtime, { operation: 'evaluateVoid', name: 'promise.js', source: 'globalThis.answer=null;hostAsync("scope",21).then(value=>Promise.resolve(value*2)).then(value=>{answer=value;});' }, (name, args) => {
+      await callAsync(runtime, { operation: 'evaluateVoid', name: 'promise.js', source: 'globalThis.answer=null;hostAsync("scope",21).then(value=>Promise.resolve(value*2)).then(value=>{answer=value;});' }, (name, args) => {
         requests.push([name, args]);
         return null;
       });
       assert.deepEqual(requests, [['hostAsync', [1, 21]]]);
-      call(runtime, { operation: 'settle', args: [1, 21, false] });
+      await callAsync(runtime, { operation: 'settle', args: [1, 21, false] });
       assert.equal(call(runtime, { operation: 'evaluateString', name: 'answer.js', source: 'String(answer)' }), '42');
     });
-    await t.test('cancels scoped completions and preserves the realm after script errors', () => {
+    await t.test('cancels scoped completions and preserves the realm after script errors', async () => {
       call(runtime, { operation: 'evaluateVoid', name: 'cancel.js', source: 'globalThis.cancelCleanup=0;globalThis.cancelReason=null;hostAsync("cancelled").then(()=>{answer=99;},reason=>{cancelReason=reason;}).finally(()=>{cancelCleanup++;});' }, () => null);
-      call(runtime, { operation: 'cancel', args: ['cancelled'] });
+      await callAsync(runtime, { operation: 'cancel', args: ['cancelled'] });
       assert.equal(call(runtime, { operation: 'evaluateString', name: 'cleanup.js', source: 'String(cancelCleanup)' }), '1');
       assert.equal(call(runtime, { operation: 'evaluateString', name: 'reason.js', source: 'cancelReason' }), 'JavaScript execution was cancelled');
       call(runtime, { operation: 'settle', args: [2, 99, false] });
       assert.equal(call(runtime, { operation: 'evaluateString', name: 'unchanged.js', source: 'String(answer)' }), '42');
-      assert.throws(() => call(runtime, { operation: 'evaluateVoid', name: 'throw.js', source: 'throw new Error("script exception");' }), /script exception/);
+      await assert.rejects(callAsync(runtime, { operation: 'evaluateVoid', name: 'throw.js', source: 'throw new Error("script exception");' }), /script exception/);
       assert.equal(call(runtime, { operation: 'evaluateString', name: 'alive.js', source: 'String(marker)' }), '17');
     });
-    await t.test('waits for an execution result without periodic wakeups', () => {
+    await t.test('awaits a slow synchronous step without blocking Core timers or using Atomics.wait', async () => {
       const originalWait = Atomics.wait;
-      let waits = 0;
-      Atomics.wait = (...args) => { waits++; return originalWait(...args); };
+      Atomics.wait = () => { throw new Error('Core must not block on a guest'); };
+      let completed = false;
+      const execution = callAsync(runtime, { operation: 'evaluateVoid', name: 'finite.js', source: 'const end=Date.now()+200;while(Date.now()<end){}' })
+        .then(() => { completed = true; });
       try {
-        call(runtime, { operation: 'evaluateVoid', name: 'finite.js', source: 'const end=Date.now()+100;while(Date.now()<end){}' });
+        await new Promise(resolve => setTimeout(resolve, 20));
+        assert.equal(completed, false);
+        await execution;
       } finally { Atomics.wait = originalWait; }
-      assert.ok(waits <= 4, `expected event notifications, observed ${waits} waits`);
     });
-    await t.test('cancellation notifications wake a blocked caller and terminate a busy worker', async () => {
+    await t.test('keeps the original execution after a foreground observer times out', async () => {
+      call(runtime, { operation: 'evaluateVoid', name: 'background.js', source: 'globalThis.starts=0;globalThis.slow=()=>{starts++;const end=Date.now()+200;while(Date.now()<end){}return starts;};' });
+      const execution = callAsync(runtime, { operation: 'call', name: 'slow', args: [] }, undefined, controlFor(0));
+      const foreground = await Promise.race([execution, new Promise(resolve => setTimeout(() => resolve('pending'), 20))]);
+      assert.equal(foreground, 'pending');
+      const other = await create();
+      assert.equal(await callAsync(other, { operation: 'evaluateString', name: 'available.js', source: '"available"' }), 'available');
+      assert.equal(await execution, 1);
+      assert.equal(await callAsync(runtime, { operation: 'evaluateString', name: 'starts.js', source: 'String(starts)' }), '1');
+    });
+    await t.test('allows Core and another realm to progress while an unlimited guest loops', async () => {
+      const busy = await create(), other = await create();
+      const control = controlFor(0);
+      const execution = callAsync(busy, { operation: 'evaluateVoid', name: 'unlimited.js', source: 'for(;;){}' }, undefined, control);
+      let observed = false;
+      const rejected = assert.rejects(execution, /interrupted/).then(() => { observed = true; });
+      await new Promise(resolve => setTimeout(resolve, 50));
+      assert.equal(observed, false);
+      assert.equal(await callAsync(other, { operation: 'evaluateString', name: 'parallel.js', source: '"parallel"' }), 'parallel');
+      Atomics.store(control, 1, 1); Atomics.add(control, 0, 1); Atomics.notify(control, 0);
+      await rejected;
+    });
+    await t.test('Core cancellation notifications wake an async observer and terminate a busy worker', async () => {
       const control = controlFor(3000);
-      const canceller = new NodeWorker(`
-        const {workerData,parentPort}=require('node:worker_threads');
-        const signal=new Int32Array(workerData);
-        parentPort.postMessage('ready');
-        setTimeout(()=>{Atomics.store(signal,1,1);Atomics.add(signal,0,1);Atomics.notify(signal,0);},100);
-      `, { eval: true, workerData: control.buffer });
-      await new Promise(resolve => canceller.once('message', resolve));
       const started = Date.now();
-      assert.throws(() => runtime.execute({ operation: 'evaluateVoid', name: 'loop.js', source: 'for(;;){}' }, () => null, control), /interrupted/);
+      const canceller = setTimeout(() => { Atomics.store(control, 1, 1); Atomics.add(control, 0, 1); Atomics.notify(control, 0); }, 100);
+      await assert.rejects(callAsync(runtime, { operation: 'evaluateVoid', name: 'loop.js', source: 'for(;;){}' }, undefined, control), /interrupted/);
       assert.ok(Date.now() - started < 1000);
-      await canceller.terminate();
+      clearTimeout(canceller);
       assert.throws(() => call(runtime, { operation: 'jobs' }), /destroyed/);
     });
     await t.test('an exact deadline stops a worker without a predicate callback', async () => {
       const timed = await create();
       const started = Date.now();
-      assert.throws(() => timed.execute({ operation: 'evaluateVoid', name: 'deadline.js', source: 'for(;;){}' }, () => null, controlFor(100)), /deadline expired/);
+      await assert.rejects(callAsync(timed, { operation: 'evaluateVoid', name: 'deadline.js', source: 'for(;;){}' }, undefined, controlFor(100)), /deadline expired/);
       assert.ok(Date.now() - started < 1000);
     });
   } finally {

@@ -4115,11 +4115,6 @@ mod tests {
             Ok(())
         }
 
-        /// Completes one host turn wait immediately in tests.
-        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture {
-            Box::pin(async { Ok(()) })
-        }
-
         /// Waits for one host delay on the active Tokio timer.
         fn waitForHostRuntimeDelay(&self, delayMs: u64) -> operit_host_api::HostRuntimeTurnFuture {
             Box::pin(async move {

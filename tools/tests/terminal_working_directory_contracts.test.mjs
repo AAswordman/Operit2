@@ -91,9 +91,9 @@ test('manual launch errors are not promoted to chat errors', () => {
 /** Retains non-shell startup output in the returned error rather than only device logs. */
 test('Android startup errors return the real process output', () => {
   const android = source('hosts/android/src/terminal.rs');
-  assert.match(android, /return Err\(androidPtyStartupError\(&collected\)\)/);
-  const error = section(android, 'fn androidPtyStartupError(', 'fn androidPtyLogSnippet(');
-  assert.match(error, /stripAndroidPtyPromptMarkers\(data\)/);
+  assert.match(android, /waitForTerminalPrompt\([\s\S]*?androidPtyStartupError,/);
+  const error = section(android, 'fn androidPtyStartupError(', 'struct AndroidPtyPromptMarker');
+  assert.match(error, /stripPtyPromptMarkers\(data\)/);
   assert.match(error, /renderTerminalText/);
   assert.match(error, /Startup output:/);
 });

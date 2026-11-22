@@ -2,6 +2,11 @@
 #import <objc/runtime.h>
 #import "OperitFlutterBridge.h"
 #include <stdexcept>
+#define ORT_TEST_CALL operit_macos_arm64_terminal_call
+#define ORT_TEST_START operit_macos_arm64_terminal_execute_async
+#define ORT_TEST_FREE operit_macos_arm64_terminal_free
+#include "arm64_async_command.h"
+
 #include "../../../hosts/ios/linux-runtime/tests/native_descriptor_budget.h"
 
 // Isolate Foundation's Application Support lookup without changing production
@@ -35,7 +40,8 @@ static NSString *Encode(NSDictionary *request) {
   return [[NSString alloc] initWithData:data encoding:NSUTF8StringEncoding];
 }
 static NSDictionary *Call(NSString *command, NSDictionary *request) {
-  NSDictionary *envelope = Decode(operit_macos_arm64_terminal_call(command.UTF8String, Encode(request).UTF8String));
+  NSDictionary *envelope = [command isEqualToString:@"terminalExecute"] ? ORTTestExecute(request) :
+      Decode(operit_macos_arm64_terminal_call(command.UTF8String, Encode(request).UTF8String));
   Check(envelope[@"error"] == nil, envelope.description);
   return envelope[@"result"];
 }
@@ -123,14 +129,14 @@ int main(int argc, const char **argv) {
       Capture capture;
       capture.session = session; capture.command = @"printf 'STREAM_%s' A; sleep 1; printf STREAM_B";
       NSDictionary *request = @{ @"sessionId": session, @"command": capture.command, @"timeoutMs": @15000 };
-      NSDictionary *stream = Decode(operit_macos_arm64_terminal_execute_streaming("terminalExecute", Encode(request).UTF8String, &capture, Stream));
+      NSDictionary *stream = ORTTestExecute(request, &capture, Stream);
       Check(stream[@"error"] == nil && [Output(stream[@"result"]) isEqualToString:@"STREAM_ASTREAM_B"], stream.description);
       Check(capture.live && ![capture.terminal containsString:@".operit-command-"] && ![capture.terminal containsString:@"begin:"], @"Terminal stream missing or exposed internal protocol");
       Check([Output(Call(@"terminalScreen", @{ @"sessionId": session })) containsString:capture.command], @"Command missing from terminal history");
       Capture canceled;
       canceled.cancel = true;
       request = @{ @"sessionId": session, @"command": @"printf STREAM_A; sleep 10", @"timeoutMs": @15000 };
-      NSDictionary *cancel = Decode(operit_macos_arm64_terminal_execute_streaming("terminalExecute", Encode(request).UTF8String, &canceled, Stream));
+      NSDictionary *cancel = ORTTestExecute(request, &canceled, Stream);
       Check(cancel[@"error"] != nil, @"Streaming cancellation did not interrupt execution");
       Execute(session, @"printf RECOVERED", @"RECOVERED");
       // Host workspaces share their actual files, and adding one never closes another VM.

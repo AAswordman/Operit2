@@ -18,6 +18,7 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
   const calls = [];
   const files = new Map();
   const errors = [];
+  const intermediate = [];
   let chatId = 'chat-a';
   let sessionSequence = 0;
   const terminalInfo = {
@@ -31,6 +32,8 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
     OPERIT_CLEAN_ON_EXIT_DIR: '/operitapp/data/temp/clean_on_exit',
     /** Supplies the active chat identity without a platform-dependent branch. */
     getChatId() { return chatId; },
+    /** Captures the live package execution output separately from its final return value. */
+    sendIntermediateResult(event) { intermediate.push(structuredClone(event)); },
     console: {
       /** Keeps command logging out of test output. */
       log() {},
@@ -49,26 +52,20 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
       },
       System: {
         terminal: {
-          /** Models session-owned execution through the public managed terminal SDK. */
-          async run(request) {
-            calls.push({ operation: 'observe', observation: { op: 'run', ...structuredClone(request) } });
+          /** Streams the original command until actual completion without a foreground wait. */
+          async *runStream(request) {
+            calls.push({ operation: 'observe', observation: { op: 'runstream', ...structuredClone(request) } });
             let nameToUse = request.sessionName;
             for (let generation = 1; sessions.get(`${request.terminalType}:${nameToUse}`)?.commandRunning; generation++) {
               nameToUse = `${request.sessionName}_generation_${generation}`;
             }
             const created = await this.create(nameToUse, request.terminalType);
-            const result = await this.execStreaming(created.sessionId, request.command, { timeoutMs: request.waitMs });
-            result.timedOut = timedOut || request.waitMs === 0;
             const session = [...sessions.values()].find(value => value.sessionId === created.sessionId);
-            session.commandRunning = result.timedOut;
-            return result;
-          },
-          /** Waits without writing a second command into the running session. */
-          async wait(sessionId, waitMs) {
-            calls.push({ operation: 'observe', observation: { op: 'wait', sessionId, waitMs } });
-            const session = [...sessions.values()].find(value => value.sessionId === sessionId);
-            assert.ok(session);
-            return { ...session, command: 'original command', output, exitCode: 0, timedOut };
+            session.commandRunning = true;
+            yield { type: 'start', ...created, command: request.command };
+            yield { type: 'chunk', ...created, command: request.command, chunk: output, chunkIndex: 0, receivedChars: output.length };
+            session.commandRunning = false;
+            yield { type: 'completed', result: { ...created, command: request.command, output, exitCode: 0, timedOut } };
           },
           /** Returns capabilities whose default may differ from the selected session. */
           async info() { return terminalInfo; },
@@ -119,7 +116,7 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
   });
   vm.runInContext(stripTypeScriptTypes(source('plugins/packages/buildin/super_admin.ts')), context);
   return {
-    context, tools: context.exports, sessions, calls, files, errors, terminalInfo,
+    context, tools: context.exports, sessions, calls, files, errors, intermediate, terminalInfo,
     /** Changes the active chat to exercise session identity isolation. */
     setChatId(value) { chatId = value; },
   };
@@ -133,6 +130,9 @@ test('one execution entry point advertises discovery without platform presets', 
   assert.ok(metadata.tools.some(tool => tool.name === 'terminal'));
   assert.ok(metadata.tools.some(tool => tool.name === 'list_terminals'));
   assert.ok(metadata.tools.some(tool => tool.name === 'close'));
+  assert.ok(!metadata.tools.some(tool => tool.name === 'terminal_wait'));
+  assert.equal(fixture().tools.terminal_wait, undefined);
+  assert.deepEqual(metadata.tools.find(tool => tool.name === 'terminal').parameters.map(parameter => parameter.name), ['command', 'profileId']);
   for (const name of ['powershell', 'bash', 'zsh', 'shell']) assert.ok(!metadata.tools.some(tool => tool.name === name));
 });
 
@@ -151,11 +151,11 @@ function managedFixture(options = {}) {
   f.terminalInfo.defaultProfileId = 'ubuntu_a';
   f.terminalInfo.profiles = profiles();
   // The fixture's old interpreter model remains useful for session lifetime and output handling.
-  const originalRun = f.context.Tools.System.terminal.run;
-  f.context.Tools.System.terminal.run = async function(request) {
+  const originalRun = f.context.Tools.System.terminal.runStream;
+  f.context.Tools.System.terminal.runStream = async function*(request) {
     const profile = f.terminalInfo.profiles.find(value => value.id === request.profileId);
     f.calls.push({operation:'selectedProfile', profileId:request.profileId});
-    return originalRun.call(this, {...request, terminalType:profile.terminalType});
+    yield* originalRun.call(this, {...request, terminalType:profile.terminalType});
   };
   return f;
 }
@@ -186,17 +186,47 @@ test('invalid profile selection fails without starting a command', async () => {
   assert.equal(f.calls.length,0);
 });
 
-/** Retains foreground timeout, background, large-output, and close behavior through the unified entry point. */
-test('profile execution retains command ownership and file-backed output', async () => {
+/** Keeps terminal completion and large output independent of package foreground wait controls. */
+test('profile execution streams session identity and output before returning the final result', async () => {
   const f = managedFixture({output:'x'.repeat(12001)});
   const first = await f.tools.terminal({command:'printf large'});
-  assert.equal(first.timeoutMsUsed,20000);
+  assert.equal(first.status, 'completed');
+  assert.deepEqual(f.intermediate.map(event => event.type), ['start', 'chunk']);
+  assert.equal(f.intermediate[0].sessionId, first.sessionId);
+  assert.equal(f.intermediate[1].chunk.length, 12001);
   assert.equal(f.files.get(first.output_saved_to).length,12001);
-  const background = await f.tools.terminal({command:'sleep 30',background:'true',profileId:'system'});
-  assert.equal(background.background,true);
-  assert.equal(background.terminal,'android-system');
+  const system = await f.tools.terminal({command:'id',profileId:'system'});
+  assert.equal(system.terminal,'android-system');
+  assert.ok(f.calls.filter(call => call.operation === 'observe').every(call => !Object.hasOwn(call.observation, 'waitMs')));
   const result = await f.tools.close({sessionId:first.sessionId});
   assert.equal(result.success,true);
   assert.notEqual((await f.tools.terminal({command:'pwd'})).sessionId,first.sessionId);
-  await assert.rejects(f.tools.terminal({command:'pwd',timeoutMs:999}),/1000/);
+});
+
+/** Prevents a running receipt from being mistaken for the final package result. */
+test('an incomplete terminal stream fails explicitly instead of completing the package early', async () => {
+  const f = managedFixture({timedOut:true});
+  await assert.rejects(f.tools.terminal({command:'slow'}), /before command completion/);
+});
+
+/** Exercises a real pending async iterator and verifies package output arrives before final resolution. */
+test('a slow command emits live output while its package promise remains pending', async () => {
+  const f = managedFixture();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.runStream = async function*() {
+    yield {type:'start',sessionId:'slow-session'};
+    yield {type:'chunk',sessionId:'slow-session',chunk:'first\n'};
+    await gate;
+    yield {type:'chunk',sessionId:'slow-session',chunk:'second\n'};
+    yield {type:'completed',result:{sessionId:'slow-session',platform:'android',terminal:'proot',terminalType:'bash',output:'first\nsecond\n',exitCode:0,timedOut:false}};
+  };
+  let completed = false;
+  const running = f.tools.terminal({command:'slow'}).then(value => { completed = true; return value; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(completed, false);
+  assert.equal(f.intermediate[1].chunk, 'first\n');
+  release();
+  assert.equal((await running).output, 'first\nsecond\n');
+  assert.equal(f.intermediate[2].chunk, 'second\n');
 });

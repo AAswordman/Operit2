@@ -3,6 +3,14 @@
 #include <memory>
 
 namespace operit::arm64 {
+// Descriptor ownership pins every returned backend until the next guest operation.
+std::vector<pollfd> Syscalls::runtime_wait_descriptors() {
+    std::vector<pollfd> descriptors;
+    for (int fd : descriptors_.numbers())
+        if (const auto &file = descriptors_.get(fd).description->inotify)
+            descriptors.push_back({file->backend_handle(), POLLIN, 0});
+    return descriptors;
+}
 namespace {
 // Linux AT_FDCWD differs from the host value on Darwin.
 constexpr uint64_t guest_at_fdcwd = uint64_t(int64_t{-100});

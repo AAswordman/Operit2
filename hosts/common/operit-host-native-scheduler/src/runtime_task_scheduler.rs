@@ -761,14 +761,6 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
         )
     }
 
-    /// Waits for a later native executor turn without occupying the caller thread.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async {
-            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
-            Ok(())
-        })
-    }
-
     /// Waits through the native timer executor for one platform-owned delay.
     fn waitForHostRuntimeDelay(&self, delayMs: u64) -> HostRuntimeTurnFuture {
         Box::pin(async move {

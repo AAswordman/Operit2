@@ -44,10 +44,6 @@ impl HostRuntimeTaskSchedulerHost for Clock {
     ) -> HostResult<()> {
         unreachable!()
     }
-    /// Rejects an unexpected executor-turn dependency.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        unreachable!()
-    }
     /// Releases exactly one sending turn when the test explicitly advances its clock.
     fn waitForHostRuntimeDelay(&self, delay: u64) -> HostRuntimeTurnFuture {
         assert_eq!(delay, FLUSH_INTERVAL_MS);

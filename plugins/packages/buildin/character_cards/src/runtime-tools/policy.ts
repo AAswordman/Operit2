@@ -49,7 +49,7 @@ function executionToolPolicy(context: ExecutionContext): CharacterRecord["toolAc
 export function toolAllowed(config: CharacterRecord["toolAccessConfig"], name: string, activationSource?: string): boolean {
   if (!config.enabled) return true;
   const sources = new Set([...config.allowedPackages, ...config.allowedSkills, ...config.allowedMcpServers]);
-  if (name === "search") return true;
+  if (name === "search" || name === "package_wait") return true;
   if (name === "proxy" || name === "package_proxy") return sources.size !== 0 || config.allowedBuiltinTools.length !== 0;
   if (name === "use_package") {
     if (activationSource === undefined) throw new Error("use_package requires its actual package_name");

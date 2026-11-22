@@ -89,6 +89,8 @@ class Machine final : public ProcessController {
     int terminal_resize(uint32_t columns, uint32_t rows);
     int terminal_signal(int number);
     int terminal_close();
+    // Snapshots borrowed sources and remaining host-monotonic nanoseconds.
+    size_t wait_sources(ort_arm64_wait_source *sources, size_t capacity, int64_t *timeout, bool writing);
     Process *find_process(uint32_t pid);
     Scheduler &scheduler() {
         return scheduler_;
@@ -111,6 +113,7 @@ class Machine final : public ProcessController {
                                            bool whole_group) const override;
     void poll_runtime_events() override;
     signals::Deadline next_runtime_deadline() override;
+    std::vector<pollfd> runtime_wait_descriptors() override;
     int64_t process_timer(CpuState &cpu, Memory &memory) override;
     signals::Hooks signal_hooks() override;
     void wait_completed(uint32_t tid) override;

@@ -8,6 +8,7 @@ use operit_host_native_scheduler::{
 };
 use operit_host_native_storage::NativeRuntimeStorageHost;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
+use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use serde_json::{json, Value};
 
 const CONTAINER_ID: &str = "io.github.test.cli_container";
@@ -54,12 +55,9 @@ async fn exercise_package_commands() {
     hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     hosts.systemOperationHost = Some(Arc::new(LanguageHost));
     let mut app = OperitApplication::newWithContext(hosts);
-    {
-        let package_manager = app.packageManager();
-        let mut manager = package_manager.lock().unwrap();
-        manager.claimInitialPackageRegistryLoad().unwrap();
-        manager.loadAvailablePackages();
-    }
+    let package_manager = app.packageManager();
+    package_manager.lock().unwrap().claimInitialPackageRegistryLoad().unwrap();
+    RuntimePackageManager::reloadRegistry(Arc::clone(&package_manager)).await.unwrap();
 
     let archive_path = root.join("artifacts/cli.toolpkg");
     std::fs::write(&archive_path, container_archive()).unwrap();

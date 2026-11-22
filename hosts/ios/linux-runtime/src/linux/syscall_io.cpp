@@ -221,7 +221,9 @@ int64_t Syscalls::io(bool writing, uint64_t fd, uint64_t address, uint64_t lengt
     }
     if (interrupt_for_pending_signal())
         return -4;
-    scheduler_.block(deadline, -11, [attempt, host]() { return attempt(host->get()); });
+    std::vector<pollfd> descriptors{{host->get(), short(writing ? POLLOUT : POLLIN), 0}};
+    if (description->inotify) descriptors.push_back({description->inotify->backend_handle(), POLLIN, 0});
+    scheduler_.block(deadline, -11, [attempt, host]() { return attempt(host->get()); }, std::move(descriptors));
     return 0;
 }
 } // namespace operit::arm64

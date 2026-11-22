@@ -10,14 +10,16 @@ extern "C" {
 #endif
 
 void *operit_flutter_bridge_create(void);
-// A zero-length frame polls cancellation while the guest command is silent.
-// Return false to interrupt the command and recover its shell before returning.
-typedef bool (*operit_ios_arm64_terminal_output_callback)(void *context, const uint8_t *bytes, size_t length);
+/// Output callbacks retain their owned context until the completion callback releases it.
+typedef void (*operit_ios_arm64_terminal_output_callback)(void *context, const uint8_t *bytes, size_t length);
+/// Transfers ownership of the encoded result to the completion callback.
+typedef void (*operit_ios_arm64_terminal_completion_callback)(void *context, char *result_json);
 char *operit_ios_arm64_terminal_call(const char *command, const char *request_json);
 void operit_ios_arm64_terminal_free(char *value);
-char *operit_ios_arm64_terminal_execute_streaming(
+char *operit_ios_arm64_terminal_execute_async(
     const char *command, const char *request_json, void *context,
-    operit_ios_arm64_terminal_output_callback on_output);
+    operit_ios_arm64_terminal_output_callback on_output,
+    operit_ios_arm64_terminal_completion_callback on_complete);
 void *operit_flutter_bridge_create_with_storage_roots(
     const char *runtime_root,
     const char *workspace_root);

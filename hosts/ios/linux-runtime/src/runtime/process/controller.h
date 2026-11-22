@@ -3,6 +3,7 @@
 #include "linux/signals/signals.h"
 #include <functional>
 #include <optional>
+#include <poll.h>
 #include <string>
 #include <vector>
 
@@ -78,6 +79,8 @@ class ProcessController {
     // Scheduler idle polling uses the same event pump as Machine::run.
     virtual void poll_runtime_events() = 0;
     virtual signals::Deadline next_runtime_deadline() = 0;
+    // Native producers wake an idle coordinator without periodic task retries.
+    virtual std::vector<pollfd> runtime_wait_descriptors() = 0;
     virtual int64_t process_timer(CpuState &cpu, Memory &memory) = 0;
     virtual signals::Hooks signal_hooks() = 0;
     virtual void wait_completed(uint32_t) {}

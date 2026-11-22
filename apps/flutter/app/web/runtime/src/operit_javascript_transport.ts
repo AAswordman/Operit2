@@ -1,53 +1,48 @@
 import { MessagePack } from "./operit_messagepack.js";
 
 export const javascriptFrame = { hostCall: 1, hostResult: 2, result: 3, error: 4 } as const;
-const headerBytes = 24;
-const frameBytes = 65_536;
-const load = Atomics.load;
-const store = Atomics.store;
-const notify = Atomics.notify;
-const wait = Atomics.wait;
-const add = Atomics.add;
-const Bytes = Uint8Array;
-const encode = MessagePack.encode;
-const decode = MessagePack.decode;
-const now = Date.now;
+const headerBytes = 24, frameBytes = 65_536;
+const { load, store, notify, add } = Atomics;
 
-/** Carries structured frames and cancellation through explicit atomic notifications. */
+/** Shares one framing protocol between the guest's synchronous calls and Core's async observer. */
 export class JavaScriptTransport {
   private readonly header: Int32Array;
   private readonly bytes: Uint8Array;
   private seen = 0;
 
+  /** Binds an existing channel to its producer notification word. */
   constructor(readonly buffer: SharedArrayBuffer, private readonly control: Int32Array) {
     this.header = new Int32Array(buffer, 0, headerBytes / 4);
-    this.bytes = new Bytes(buffer, headerBytes);
+    this.bytes = new Uint8Array(buffer, headerBytes);
   }
 
+  /** Allocates one command channel independently of the execution deadline. */
   static create(control: Int32Array): JavaScriptTransport {
     return new JavaScriptTransport(new SharedArrayBuffer(headerBytes + frameBytes), control);
   }
 
+  /** Publishes a durable frame or acknowledgement notification. */
   private signal(): void {
     add(this.control, 0, 1);
     notify(this.control, 0);
   }
 
-  /** Waits for a message, acknowledgment, cancellation, or the exact execution deadline. */
-  private until(ready: () => boolean): void {
+  /** Yields only while awaiting a producer event, cancellation, or the exact deadline. */
+  private *until(ready: () => boolean): Generator<[number, number], void, unknown> {
     for (;;) {
       const version = load(this.control, 0);
       if (load(this.control, 1) !== 0) throw new Error("JavaScript execution was interrupted");
       const deadline = (load(this.control, 2) >>> 0) + (load(this.control, 3) >>> 0) * 0x1_0000_0000;
-      const remaining = deadline === 0 ? Infinity : deadline - now();
+      const remaining = deadline === 0 ? Infinity : deadline - Date.now();
       if (remaining <= 0) throw new Error("JavaScript execution deadline expired");
       if (ready()) return;
-      wait(this.control, 0, version, remaining);
+      yield [version, remaining];
     }
   }
 
-  send(kind: number, value: unknown): void {
-    const encoded = encode(value);
+  /** Fragments one structured frame and waits for each consumer acknowledgement. */
+  private *sending(kind: number, value: unknown): Generator<[number, number], void, unknown> {
+    const encoded = MessagePack.encode(value);
     for (let offset = 0; offset < encoded.byteLength; offset += frameBytes) {
       const chunk = encoded.subarray(offset, offset + frameBytes);
       this.bytes.set(chunk);
@@ -58,16 +53,17 @@ export class JavaScriptTransport {
       this.seen = sequence;
       store(this.header, 3, sequence);
       this.signal();
-      this.until(() => load(this.header, 4) === sequence);
+      yield* this.until(() => load(this.header, 4) === sequence);
     }
   }
 
-  receive(): { kind: number; value: unknown } {
+  /** Reassembles a complete frame before releasing its final acknowledgement. */
+  private *receiving(): Generator<[number, number], { kind: number; value: unknown }, unknown> {
     const chunks: Uint8Array[] = [];
     let length = 0;
     let kind = 0;
     for (;;) {
-      this.until(() => load(this.header, 3) !== this.seen);
+      yield* this.until(() => load(this.header, 3) !== this.seen);
       const sequence = load(this.header, 3);
       const nextKind = load(this.header, 0);
       const byteLength = load(this.header, 1);
@@ -83,12 +79,39 @@ export class JavaScriptTransport {
       this.signal();
       if (final) break;
     }
-    const encoded = new Bytes(length);
+    const encoded = new Uint8Array(length);
     let offset = 0;
     for (const chunk of chunks) {
       encoded.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return { kind, value: decode(encoded) };
+    return { kind, value: MessagePack.decode(encoded) };
   }
+
+  /** Parks only the dedicated guest worker or an explicit synchronous startup boundary. */
+  private blocking<T>(operation: Generator<[number, number], T, unknown>): T {
+    for (;;) {
+      const next = operation.next();
+      if (next.done === true) return next.value;
+      Atomics.wait(this.control, 0, ...next.value);
+    }
+  }
+
+  /** Leaves the Core event loop available while the guest executes or awaits a callback. */
+  private async cooperative<T>(operation: Generator<[number, number], T, unknown>): Promise<T> {
+    for (;;) {
+      const next = operation.next();
+      if (next.done === true) return next.value;
+      await Atomics.waitAsync(this.control, 0, ...next.value).value;
+    }
+  }
+
+  /** Sends from the dedicated guest or an explicit synchronous startup boundary. */
+  send(kind: number, value: unknown): void { this.blocking(this.sending(kind, value)); }
+  /** Receives at an explicit synchronous boundary. */
+  receive(): { kind: number; value: unknown } { return this.blocking(this.receiving()); }
+  /** Sends without blocking the Core Worker. */
+  sendAsync(kind: number, value: unknown): Promise<void> { return this.cooperative(this.sending(kind, value)); }
+  /** Receives without blocking timers, other realms, or package progress reads. */
+  receiveAsync(): Promise<{ kind: number; value: unknown }> { return this.cooperative(this.receiving()); }
 }

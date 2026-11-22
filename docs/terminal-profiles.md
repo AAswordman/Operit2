@@ -58,8 +58,9 @@ WSL 发行版填写 `wsl --list --quiet` 列出的名称，例如 `Ubuntu-24.04`
 ## 插件接口
 
 超级管理员插件统一提供 `list_terminals` 和 `terminal`，不再通过平台预设声明
-固定的 powershell/bash/zsh/shell 工具。`close`、`terminal_wait`、`get_screen`、
-`input` 保留。公开 SDK 的实现、解释器枚举继续描述真实环境，配置 ID 另行传递。
+固定的 powershell/bash/zsh/shell 工具。`close`、`get_screen`、`input` 保留。
+AI 使用统一的 `package_wait` 领取包执行的后续输出和结果，原 `terminal_wait`
+已删除。公开 SDK 的实现、解释器枚举继续描述真实环境，配置 ID 另行传递。
 
 ```typescript
 const info = await Tools.System.terminal.info();
@@ -71,6 +72,13 @@ const result = await Tools.System.terminal.run({
   command: "pwd",
   waitMs: 20000,
 });
+
+// 包工具使用持续输出流，前台等待预算由外层 package_proxy 管理。
+for await (const event of Tools.System.terminal.runStream({
+  sessionName: "build", profileId: info.defaultProfileId, command: "pwd",
+})) {
+  if (event.type !== "completed") sendIntermediateResult(event);
+}
 ```
 
 `run` 同时省略 `profileId` 和 `terminalType` 时使用默认配置。保留旧调用的
@@ -81,6 +89,7 @@ const result = await Tools.System.terminal.run({
 超级管理员会话按对话和配置隔离；前台等待结束后，命令继续在原会话运行，
 后续同名命令按现有代次机制取得可用会话。命令输出中的 `terminal` 和
 `terminalType` 仍为实际执行环境。
+统一执行 ID、20秒等待和增量领取契约见 [包执行说明](package-executions.md)。
 
 ## 存储及实现边界
 

@@ -81,9 +81,10 @@ impl AsyncToolExecutor for PackageToolExecutor {
         let runtime = Arc::new(PackageManagerJsRuntime::new(self.packageManager.clone(), host.clone()));
         let executor = host.runtimeDependencies().js_execution_provider()
             .create_package_executor(runtime, Arc::new(host));
+        let onOutput = crate::PackageExecution::PackageExecution::outputCallback();
         Box::pin(async move {
             let request = packageToolCallRequest(tool);
-            vec![packageToolResult(executor.execute_package_tool(&request).await)]
+            vec![packageToolResult(executor.execute_package_tool_streaming(&request, onOutput).await)]
         })
     }
 }

@@ -7,6 +7,7 @@
 #include "linux/files/descriptor_access.h"
 #include "linux/files/metadata.h"
 #include "linux/files/memory_file.h"
+#include "linux/files/native_lock_wait.h"
 #include "linux/files/open_how.h"
 #include "linux/files/record_lock.h"
 #include "linux/syscalls.h"
@@ -309,8 +310,19 @@ int64_t Syscalls::dispatch_file(CpuState &cpu) {
             return -4;
         FD host(::fcntl(entry.host.get(), F_DUPFD_CLOEXEC, 0));
         check_host(host.get());
-        auto held = std::make_shared<Descriptor>(std::move(host), entry, true);
-        scheduler_.block({}, -4, [attempt, held]() { return attempt(held->host.get()); });
+        auto held = std::make_shared<FD>(std::move(host));
+        auto wait = std::make_shared<files::NativeLockWait>(held, true, operation);
+        auto granted = std::make_shared<bool>(false);
+        scheduler_.block({}, -4, [wait, granted]() {
+            auto result = wait->result();
+            if (result) *granted = *result == 0;
+            return result;
+        }, {{wait->native_handle(), POLLIN, 0}});
+        scheduler_.current().wait_cleanup = [wait, held, granted] {
+            wait->stop();
+            // A cancelled conversion must not acquire a lock after guest EINTR.
+            if (!*granted) ::flock(held->get(), LOCK_UN);
+        };
         return 0;
     }
     case 34: { // mkdirat

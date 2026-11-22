@@ -148,6 +148,8 @@ class Syscalls {
     void exec_reset(const std::string &path, uint64_t stack, uint64_t heap_end);
     void release_task_resources(Task &task, bool preserve_sem_undo = false);
     void close_descriptors();
+    // Native filesystem producers owned by this guest descriptor table.
+    std::vector<pollfd> runtime_wait_descriptors();
     TerminalOpen open_console(uint32_t columns, uint32_t rows);
     void set_heap(uint64_t end) {
         process_memory_->bounds.start_brk = process_memory_->bounds.brk = align_up(end);

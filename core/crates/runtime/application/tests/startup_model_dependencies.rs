@@ -89,10 +89,6 @@ impl HostRuntimeTaskSchedulerHost for StartupScheduler {
     ) -> HostResult<()> {
         Ok(())
     }
-    /// Completes observer turns immediately.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-        Box::pin(async { Ok(()) })
-    }
     /// Rejects unplanned waits.
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
         panic!("unexpected delay")
@@ -129,7 +125,7 @@ impl HostJavaScriptRuntimeHost for UnusedJavaScript {
         &self,
         _: HostJavaScriptRuntimeStateHandle,
         _: HostJavaScriptExecutionInterrupt,
-        _: HostJavaScriptRuntimeStateTask,
+        _: HostJavaScriptRuntimeStateAsyncTask,
     ) -> HostResult<()> {
         panic!("unexpected JS")
     }

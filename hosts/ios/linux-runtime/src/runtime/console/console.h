@@ -14,5 +14,7 @@ class Console {
     int64_t write(const void *bytes, size_t length);
     void resize(uint32_t columns, uint32_t rows);
     void signal(int number);
+    // The embedding host observes output and retries queued input through this fd.
+    int native_handle() const { return master_.host.get(); }
 };
 } // namespace operit::arm64

@@ -39,8 +39,6 @@ impl HostRuntimeTaskSchedulerHost for StartupScheduler {
     fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: HostRuntimeTask) -> HostResult<()> {
         panic!("history selection restoration must not schedule timers")
     }
-    /// Completes observer turns without waiting.
-    fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
     /// Rejects delays outside the startup history boundary.
     fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
         panic!("history selection restoration must not wait for timers")

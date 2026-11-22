@@ -2428,13 +2428,15 @@ impl ChatServiceCore {
             return;
         }
 
+        if isStandardPackage {
+            let enabled = packageManager.lock().expect("package manager mutex poisoned")
+                .enablePackage(packageName);
+            enabled.await;
+        }
         {
             let mut packageManagerGuard = packageManager
                 .lock()
                 .expect("package manager mutex poisoned");
-            if isStandardPackage {
-                packageManagerGuard.enablePackage(packageName);
-            }
             let packageContent = packageManagerGuard.usePackage(packageName);
             if isPackageAttachmentError(packageName, &packageContent) {
                 self.messageProcessingDelegate
@@ -3637,8 +3639,6 @@ mod chat_deletion_tests {
         fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> {
             panic!("chat deletion must not schedule timers")
         }
-        /// Completes observer turns without delay.
-        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
         /// Rejects timer futures outside this lifecycle test.
         fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture {
             panic!("chat deletion must not wait for timers")
@@ -3895,7 +3895,6 @@ mod chat_input_menu_summary_tests {
             self.scheduleHostRuntimeAsyncTask(name, task)
         }
         fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, _: operit_host_api::HostRuntimeTask) -> operit_host_api::HostResult<()> { Ok(()) }
-        fn waitForHostRuntimeTaskTurn(&self) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
         fn waitForHostRuntimeDelay(&self, _: u64) -> operit_host_api::HostRuntimeTurnFuture { Box::pin(async { Ok(()) }) }
     }
 
@@ -4049,9 +4048,6 @@ mod pending_queue_attachment_tests {
         fn scheduleDelayedHostRuntimeTask(&self, _: &str, _: u64, task: HostRuntimeTask) -> HostResult<()> {
             task();
             Ok(())
-        }
-        fn waitForHostRuntimeTaskTurn(&self) -> HostRuntimeTurnFuture {
-            Box::pin(async { Ok(()) })
         }
         fn waitForHostRuntimeDelay(&self, _: u64) -> HostRuntimeTurnFuture {
             Box::pin(async { Ok(()) })
