@@ -855,6 +855,14 @@ export interface ChatFindResultData {
  */
 export interface AgentStatusResultData {
   /**
+   * Title of the current execution, when the chat has started real work.
+   */
+  taskTitle?: string;
+  /**
+   * Actual model response rounds in this execution; zero before the first response.
+   */
+  currentRound: number;
+  /**
    * Target chat id
    */
   chatId: string;

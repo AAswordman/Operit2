@@ -17,7 +17,8 @@ async function snapshot(): Promise<Task[]> {
   for (let offset = 0; offset < chats.length; offset += 8) {
     const batch = await Promise.all(chats.slice(offset, offset + 8).map(async chat => {
       const status = await Tools.Chat.agentStatus(chat.id);
-      return { chatId: chat.id, state: status.state, active: status.isProcessing, message: status.message ?? "" };
+      return { chatId: chat.id, state: status.state, active: status.isProcessing, message: status.message ?? "",
+        title: status.taskTitle || chat.title, round: status.currentRound };
     }));
     tasks.push(...batch);
   }
@@ -27,6 +28,8 @@ async function snapshot(): Promise<Task[]> {
 /** Creates the plugin's one state owner lazily, outside registration capture. */
 function owner(): PetService {
   if (service === null) service = new PetService({
+    /** Keeps default diagnostics visible without dumping chat text, approval parameters or sprite data. */
+    log(level, event, fields) { console[level](`[task-status-pet] ${event} ${JSON.stringify(fields)}`); },
     /** Loads durable controls without persisting transient task data. */
     async load() { return (await configuration()).settings; },
     /** Commits settings before applying window changes. */
@@ -66,12 +69,10 @@ export function onRuntime(event: ToolPkg.ChatRuntimeHookEvent): Promise<void> { 
 export function onPermissions(event: ToolPkg.ToolPermissionHookEvent): Promise<void> { return owner().permissions(event.eventPayload.requests); }
 
 /** Applies application lifecycle notifications from every supported host. */
-export function onLifecycle(event: ToolPkg.AppLifecycleHookEvent): Promise<void> { return owner().lifecycle(event.eventName); }
-
-/** Applies Flutter visibility broadcasts without treating transient inactive focus as background. */
-export function onVisibility(event: ToolPkg.HostEventBroadcastHookEvent<"app.lifecycle.resumed" | "app.lifecycle.paused" | "app.lifecycle.hidden" | "app.lifecycle.detached">): Promise<void> {
-  const topic = event.eventPayload.payload.topic;
-  return owner().lifecycle(topic === "app.lifecycle.resumed" ? "application_on_foreground" : topic === "app.lifecycle.detached" ? "application_on_terminate" : "application_on_background");
+export function onLifecycle(event: ToolPkg.AppLifecycleHookEvent): Promise<void> {
+  const extras = event.eventPayload.extras;
+  return owner().lifecycle(event.eventName, { source: "application-hook", hookId: event.hookId, topic: extras?.topic,
+    platform: extras?.platform, occurredAtMillis: extras?.occurredAtMillis, receivedAtMillis: Date.now() });
 }
 
 ToolPkg.ipc.on<Request, Status>(CHANNEL, receive);
@@ -87,7 +88,5 @@ export function registerToolPkg(): boolean {
   ToolPkg.registerToolPermissionHook({ id: "approvals", function: onPermissions });
   for (const event of ["application_on_create", "application_on_foreground", "application_on_background", "application_on_terminate"] as const)
     ToolPkg.registerAppLifecycleHook({ id: event, event, function: onLifecycle });
-  for (const topic of ["app.lifecycle.resumed", "app.lifecycle.paused", "app.lifecycle.hidden", "app.lifecycle.detached"] as const)
-    ToolPkg.registerHostEventHook({ id: topic, source: "broadcast", trigger: { kind: "broadcast", topic }, function: onVisibility });
   return true;
 }

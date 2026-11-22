@@ -18,6 +18,31 @@ pub(crate) struct ChatRuntimeProcessingState {
 }
 
 impl ChatRuntimeProcessingState {
+    /// Reads the same authoritative snapshot for occupancy and round reporting.
+    #[allow(non_snake_case)]
+    pub(crate) fn agentStatus(
+        &self,
+        chatId: &str,
+    ) -> Result<operit_plugin_sdk::js_sdk::results::AgentStatusResultData, String> {
+        let sources = self
+            .sources
+            .read()
+            .map_err(|_| "Chat processing state registry lock poisoned".to_string())?;
+        let state = sources
+            .values()
+            .filter_map(|source| source.value().get(chatId).cloned())
+            .max_by_key(|state| (state.isProcessing(), state.currentRound));
+        let isProcessing = state.as_ref().is_some_and(ChatExecutionState::isProcessing);
+        Ok(operit_plugin_sdk::js_sdk::results::AgentStatusResultData {
+            chatId: chatId.to_string(),
+            state: if isProcessing { "processing" } else { "idle" }.to_string(),
+            message: operit_plugin_sdk::js_sdk::JsOptional::Null,
+            isIdle: !isProcessing,
+            isProcessing,
+            currentRound: state.as_ref().map_or(0, |state| state.currentRound),
+            taskTitle: state.and_then(|state| state.taskTitle),
+        })
+    }
     /// Registers the actual core flow, including runtimes created after tools have been bound.
     fn register(
         &self,
@@ -36,21 +61,6 @@ impl ChatRuntimeProcessingState {
             .write()
             .expect("Chat processing state registry lock poisoned")
             .clear();
-    }
-
-    /// Reads current logical occupancy across all registered runtime slots.
-    #[allow(non_snake_case)]
-    pub(crate) fn isChatProcessing(&self, chatId: &str) -> Result<bool, String> {
-        let sources = self
-            .sources
-            .read()
-            .map_err(|_| "Chat processing state registry lock poisoned".to_string())?;
-        Ok(sources.values().any(|source| {
-            source
-                .value()
-                .get(chatId)
-                .is_some_and(ChatExecutionState::isProcessing)
-        }))
     }
 }
 

@@ -735,13 +735,10 @@ impl ToolRuntimeSupport for RuntimeToolSupport {
         Ok(())
     }
 
-    /// Returns whether the requested chat is currently processing.
-    #[allow(non_snake_case)]
-    fn isChatProcessing(&self, chatId: &str) -> Result<bool, String> {
-        self.chatProcessingState
-            .get()
+    fn chatAgentStatus(&self, chatId: &str) -> Result<operit_plugin_sdk::js_sdk::results::AgentStatusResultData, String> {
+        self.chatProcessingState.get()
             .ok_or_else(|| "Tool runtime chat processing state is not bound".to_string())?
-            .isChatProcessing(chatId)
+            .agentStatus(chatId)
     }
 
     /// Switches the main chat only after its registered configuration owner has resolved the actual binding.

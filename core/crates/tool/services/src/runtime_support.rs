@@ -574,9 +574,9 @@ pub trait ToolRuntimeSupport: Send + Sync {
     #[allow(non_snake_case)]
     fn stopChatServices(&self) -> Result<(), String>;
 
-    /// Returns whether the requested chat is currently processing.
+    /// Reads execution occupancy and the actual model round from one shared snapshot.
     #[allow(non_snake_case)]
-    fn isChatProcessing(&self, chatId: &str) -> Result<bool, String>;
+    fn chatAgentStatus(&self, chatId: &str) -> Result<operit_plugin_sdk::js_sdk::results::AgentStatusResultData, String>;
 
     /// Switches the parent-owned main chat runtime to a chat id.
     #[allow(non_snake_case)]

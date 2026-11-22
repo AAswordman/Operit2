@@ -523,6 +523,21 @@ exports.onInputMenuToggle = onInputMenuToggle;
 - `activity_on_stop`
 - `activity_on_destroy`
 
+应用级前后台由宿主统一判断，插件只使用上面的 `registerAppLifecycleHook`：
+
+| 事件 | 产品含义 |
+| --- | --- |
+| `application_on_create` | 当前 runtime 初始化；插件后启用时回放 |
+| `application_on_foreground` | 主界面显示：桌面窗口显示且未最小化，移动端场景可见，Web 标签页可见 |
+| `application_on_background` | 主界面收起：桌面最小化／隐藏／关闭后进程继续运行，移动端退后台，Web 标签页隐藏 |
+| `application_on_terminate` | runtime 有机会报告的正常终止；系统强杀时不保证收到 |
+
+失焦、输入法、系统弹窗、被其他窗口遮挡和插件辅助窗口都不改变应用级前后台。
+注册激活时按创建、当前前台或后台的顺序回放，不回放过期的前台状态；重复状态不重复通知。
+宿主尚未报告可见状态时不猜测前后台。`detached` 只代表 Flutter 视图分离，不代表 runtime 终止。
+Android 的 `activity_*` 仍表达 Activity 事实；跨平台产品行为应使用 `application_*`。
+普通插件不需要同时订阅 `registerHostEventHook` 的原始生命周期广播，也不需要按系统分别判断。
+
 **Compose DSL 运行时**：
 - 使用 JavaScript 编写声明式 UI
 - 提供丰富的 UI 组件（Column, Row, Button, TextField 等）

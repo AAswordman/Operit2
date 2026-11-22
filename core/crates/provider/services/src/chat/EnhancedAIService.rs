@@ -99,6 +99,8 @@ pub struct EnhancedAIService {
 
 #[derive(Clone, Debug, Default)]
 pub struct EnhancedAISharedState {
+    /// Actual model response rounds in the current main send.
+    pub responseRound: i32,
     pub turn_token_usage: TurnTokenUsage,
     pub request_window_estimate: Option<i64>,
     pub active_execution_contexts: BTreeMap<i32, MessageExecutionContext>,
@@ -1784,6 +1786,7 @@ impl EnhancedAIService {
 
         let mut lifecycle = Vec::new();
         if !isSubTask {
+            self.shared_state().responseRound = 0;
             lifecycle.push(SendMessageLifecycleStage::SetProcessingState);
             self.setInputProcessingState(InputProcessingState::Processing {
                 message: "enhanced_processing_message".to_string(),
@@ -2053,6 +2056,7 @@ impl EnhancedAIService {
         });
         lifecycle.push(SendMessageLifecycleStage::StartAssistantResponseRound);
         self.startAssistantResponseRound(&mut execContext);
+        if !isSubTask { self.shared_state().responseRound = execContext.roundManager.roundIndex; }
 
         lifecycle.push(SendMessageLifecycleStage::CollectResponseStream);
         let mut totalChars = 0;
@@ -2432,6 +2436,7 @@ impl EnhancedAIService {
             return Ok(false);
         }
         self.startAssistantResponseRound(context);
+        if !isSubTask { self.shared_state().responseRound = context.roundManager.roundIndex; }
         AppLogger::v_with_level(
             TAG,
             &format!(

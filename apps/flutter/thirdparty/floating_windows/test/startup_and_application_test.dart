@@ -1,4 +1,6 @@
 import 'dart:async';
+import 'dart:convert';
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
@@ -35,9 +37,76 @@ void main() {
     });
   });
   tearDown(() {
+    FloatingWindows.onDiagnostic = null;
     for (final channel in [FloatingWindows.channel, desktop, wire]) {
       messenger.setMockMethodCallHandler(channel, null);
     }
+    debugDefaultTargetPlatformOverride = null;
+  });
+  testWidgets('hidden desktop child shows before waiting for its first frame', (
+    tester,
+  ) async {
+    final stages = <String>[];
+    final native = <String>[];
+    FloatingWindows.onDiagnostic = stages.add;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    messenger.setMockMethodCallHandler(desktop, (call) async {
+      if (call.method != 'getWindowDefinition') {
+        throw StateError('Unexpected desktop operation ${call.method}');
+      }
+      return {'windowId': 'startup-child', 'windowArgument': ''};
+    });
+    messenger.setMockMethodCallHandler(wire, (call) async {
+      if (![
+        'registerMethodHandler',
+        'unregisterMethodHandler',
+      ].contains(call.method)) {
+        throw StateError('Unexpected wire operation ${call.method}');
+      }
+      return null;
+    });
+    messenger.setMockMethodCallHandler(FloatingWindows.channel, (call) async {
+      native.add(call.method);
+      if (call.method == 'show') {
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+      }
+      return null;
+    });
+    var ready = false;
+    final startup =
+        FloatingWindows.run(
+          arguments: [
+            'multi_window',
+            'startup-child',
+            jsonEncode({
+              'kind': 'floating_windows.window',
+              'payload': {'windowId': 'cat', 'route': 'pet'},
+              'options': <String, Object?>{},
+            }),
+          ],
+          windowBuilder: (_) => const SizedBox(),
+          application: () async =>
+              fail('Child must not run the main application'),
+        ).then((_) {
+          ready = true;
+        });
+    await tester.idle();
+    // No frame has been pumped; the native surface must already be shown.
+    expect(native, ['configure', 'show']);
+    expect(ready, false);
+    await tester.pump();
+    await startup;
+    expect(ready, true);
+    expect(stages.any((line) => line.contains('child.ready')), true);
+    expect(
+      stages.indexWhere((line) => line.contains('child.shown')),
+      lessThan(stages.indexWhere((line) => line.contains('child.ready'))),
+    );
+    await (await WindowController.fromCurrentEngine()).setWindowMethodHandler(
+      null,
+    );
     debugDefaultTargetPlatformOverride = null;
   });
   test(

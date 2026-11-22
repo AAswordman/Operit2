@@ -20,8 +20,7 @@ use operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::{
     TOOLPKG_EVENT_ACTIVITY_ON_PAUSE, TOOLPKG_EVENT_ACTIVITY_ON_RESUME,
     TOOLPKG_EVENT_ACTIVITY_ON_START, TOOLPKG_EVENT_ACTIVITY_ON_STOP,
     TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND, TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND,
-    TOOLPKG_EVENT_APPLICATION_ON_LOW_MEMORY, TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
-    TOOLPKG_EVENT_APPLICATION_ON_TRIM_MEMORY,
+    TOOLPKG_EVENT_APPLICATION_ON_LOW_MEMORY, TOOLPKG_EVENT_APPLICATION_ON_TRIM_MEMORY,
 };
 use operit_store::PreferencesDataStore::StateFlow;
 
@@ -94,16 +93,16 @@ impl RuntimeEventIngressService {
                 Self::updateNetworkFlow().set_value(updateNetwork(&network));
             }
         }
-        let lifecycleEvent = appLifecycleEventName(&event.topic);
+        // Raw platform/Flutter lifecycle is diagnostic data. Only the owner's
+        // product visibility changes foreground/background, never blur or detach.
+        let lifecycleEvent = appLifecycleEventName(&event.topic, &event.payload);
         match lifecycleEvent {
             Some(TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND) => self
                 .toolpkg_runtime
                 .tool_handler()
                 .runtimeSupport()
                 .setScheduledChatForeground(true),
-            Some(
-                TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND | TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
-            ) => self
+            Some(TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND) => self
                 .toolpkg_runtime
                 .tool_handler()
                 .runtimeSupport()
@@ -117,10 +116,18 @@ impl RuntimeEventIngressService {
                 serde_json::json!({ "extras": payload.clone() }),
             );
         }
-        if event.topic == RuntimeEventTopic::AppLifecycleResumed {
+        if lifecycleEvent == Some(TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND) {
             ToolPkgToolPermissionBridge::notify();
         }
-        ToolPkgHostEventHookBridge::dispatchHostEvent(&self.toolpkg_runtime, "broadcast", payload);
+        // Main UI state belongs to registerAppLifecycleHook; do not create a
+        // second public subscription for the host's internal normalization.
+        if event.topic != RuntimeEventTopic::AppVisibilityChanged {
+            ToolPkgHostEventHookBridge::dispatchHostEvent(
+                &self.toolpkg_runtime,
+                "broadcast",
+                payload,
+            );
+        }
         serde_json::json!({
             "ok": true,
         })
@@ -148,33 +155,34 @@ mod tests {
     #[test]
     fn inactive_preserves_application_visibility() {
         assert_eq!(
-            appLifecycleEventName(&RuntimeEventTopic::AppLifecycleInactive),
+            appLifecycleEventName(&RuntimeEventTopic::AppLifecycleInactive, &Value::Null),
             None
         );
     }
 
-    /// Hidden and paused indicate background visibility while detach retains termination semantics.
+    /// Raw Flutter events do not determine product visibility or process termination.
     #[test]
     fn application_visibility_maps_only_visible_lifecycle_transitions() {
-        for (topic, expected) in [
-            (
-                RuntimeEventTopic::AppLifecycleResumed,
-                TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND,
-            ),
-            (
-                RuntimeEventTopic::AppLifecycleHidden,
-                TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND,
-            ),
-            (
-                RuntimeEventTopic::AppLifecyclePaused,
-                TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND,
-            ),
-            (
-                RuntimeEventTopic::AppLifecycleDetached,
-                TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
-            ),
+        for topic in [
+            RuntimeEventTopic::AppLifecycleResumed,
+            RuntimeEventTopic::AppLifecycleInactive,
+            RuntimeEventTopic::AppLifecycleHidden,
+            RuntimeEventTopic::AppLifecyclePaused,
+            RuntimeEventTopic::AppLifecycleDetached,
         ] {
-            assert_eq!(appLifecycleEventName(&topic), Some(expected));
+            assert_eq!(appLifecycleEventName(&topic, &Value::Null), None);
+        }
+        for (visibility, expected) in [
+            ("visible", TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND),
+            ("hidden", TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND),
+        ] {
+            assert_eq!(
+                appLifecycleEventName(
+                    &RuntimeEventTopic::AppVisibilityChanged,
+                    &serde_json::json!({"visibility": visibility}),
+                ),
+                Some(expected)
+            );
         }
     }
 
@@ -204,13 +212,13 @@ mod tests {
 
 /// Maps application visibility and activity events without treating transient focus loss as background.
 #[allow(non_snake_case)]
-fn appLifecycleEventName(topic: &RuntimeEventTopic) -> Option<&'static str> {
+fn appLifecycleEventName(topic: &RuntimeEventTopic, payload: &Value) -> Option<&'static str> {
     Some(match topic {
-        RuntimeEventTopic::AppLifecycleResumed => TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND,
-        RuntimeEventTopic::AppLifecyclePaused | RuntimeEventTopic::AppLifecycleHidden => {
-            TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND
-        }
-        RuntimeEventTopic::AppLifecycleDetached => TOOLPKG_EVENT_APPLICATION_ON_TERMINATE,
+        RuntimeEventTopic::AppVisibilityChanged => match payload["visibility"].as_str() {
+            Some("visible") => TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND,
+            Some("hidden") => TOOLPKG_EVENT_APPLICATION_ON_BACKGROUND,
+            _ => return None,
+        },
         RuntimeEventTopic::AppLifecycleLowMemory => TOOLPKG_EVENT_APPLICATION_ON_LOW_MEMORY,
         RuntimeEventTopic::AppLifecycleTrimMemory => TOOLPKG_EVENT_APPLICATION_ON_TRIM_MEMORY,
         RuntimeEventTopic::ActivityLifecycleCreate => TOOLPKG_EVENT_ACTIVITY_ON_CREATE,

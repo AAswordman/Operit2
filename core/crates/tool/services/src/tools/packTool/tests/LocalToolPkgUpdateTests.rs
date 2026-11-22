@@ -620,7 +620,7 @@ impl ToolRuntimeSupport for TestPackageRuntimeSupport {
     fn generateMcpPluginDescription<'a>(&'a self, pluginName: &'a str, toolDescriptions: &'a [String]) -> ToolRuntimeSupportFuture<'a, Result<String, String>> { panic!("Unexpected runtime service: generateMcpPluginDescription") }
     fn startChatServices(&self) -> Result<(), String> { panic!("Unexpected runtime service: startChatServices") }
     fn stopChatServices(&self) -> Result<(), String> { panic!("Unexpected runtime service: stopChatServices") }
-    fn isChatProcessing(&self, chatId: &str) -> Result<bool, String> { panic!("Unexpected runtime service: isChatProcessing") }
+    fn chatAgentStatus(&self, chatId: &str) -> Result<operit_plugin_sdk::js_sdk::results::AgentStatusResultData, String> { panic!("Unexpected runtime service: chatAgentStatus") }
     fn switchMainChat<'a>(&'a self, chatId: &'a str) -> ToolRuntimeSupportFuture<'a, Result<(), String>> { panic!("Unexpected runtime service: switchMainChat") }
     fn createChatRuntime<'a>(&'a self, setAsCurrentChat: bool, sourceChatId: Option<String>, parentChatId: Option<String>, input: Option<serde_json::Value>) -> ToolRuntimeSupportFuture<'a, Result<String, String>> { panic!("Unexpected runtime service: createChatRuntime") }
     fn listScheduledChatMessages<'a>(&'a self, owner: &'a str)

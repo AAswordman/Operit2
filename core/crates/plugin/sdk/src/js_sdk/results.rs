@@ -1338,6 +1338,12 @@ pub struct ChatFindResultData {
 #[derive(Clone, Serialize, Deserialize)]
 /// Reports a chat agent's current state and whether it is idle or processing.
 pub struct AgentStatusResultData {
+    /// Title of the current execution, when the chat has started real work.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub taskTitle: Option<String>,
+    /// Actual model response rounds in this execution; zero before the first response.
+    #[serde(default)]
+    pub currentRound: i32,
     ///Target chat id
     #[serde(rename = "chatId")]
     pub chatId: String,

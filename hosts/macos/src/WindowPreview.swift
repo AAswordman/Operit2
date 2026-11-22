@@ -20,20 +20,57 @@ final class PreviewImageView: NSImageView {
     }
 }
 
+/// Renders capture frames on the stream queue and delivers images to the AppKit main actor.
+@available(macOS 12.3, *)
+private final class PreviewStreamOutput: NSObject, SCStreamOutput {
+    private let context = CIContext()
+    private let sourceHeight: CGFloat
+    private let titlebarInset: CGFloat
+    private let present: @MainActor @Sendable (CGImage) -> Void
+    private let fail: @MainActor @Sendable (String) -> Void
+
+    init(sourceHeight: CGFloat, titlebarInset: CGFloat,
+         present: @escaping @MainActor @Sendable (CGImage) -> Void,
+         fail: @escaping @MainActor @Sendable (String) -> Void) {
+        self.sourceHeight = sourceHeight; self.titlebarInset = titlebarInset
+        self.present = present; self.fail = fail
+    }
+
+    /// Crops single-window streams using their actual frame metadata rather than sourceRect.
+    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        guard type == .screen, CMSampleBufferIsValid(sampleBuffer),
+              let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
+              let raw = attachments.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
+        guard let dictionary = attachments.first?[.contentRect] as? [String: Any],
+              let content = CGRect(dictionaryRepresentation: dictionary as CFDictionary), content.width > 0, content.height > 0,
+              let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
+            DispatchQueue.main.async { [fail] in fail("ScreenCaptureKit returned a frame without valid content geometry") }
+            return
+        }
+        let inset = titlebarInset * content.height / sourceHeight
+        let crop = CGRect(x: content.minX, y: CGFloat(CVPixelBufferGetHeight(buffer)) - content.maxY,
+            width: content.width, height: content.height - inset)
+        guard let image = context.createCGImage(CIImage(cvPixelBuffer: buffer), from: crop) else {
+            DispatchQueue.main.async { [fail] in fail("ScreenCaptureKit could not render the selected window content") }
+            return
+        }
+        DispatchQueue.main.async { [present] in present(image) }
+    }
+}
+
 /// Owns one independent window stream while leaving its source visible and interactive.
 @available(macOS 12.3, *)
-final class WindowPreview: NSObject, SCStreamOutput, SCStreamDelegate, NSWindowDelegate {
+@MainActor
+final class WindowPreview: NSObject, SCStreamDelegate, NSWindowDelegate {
     private let imageView = PreviewImageView()
     private let panel = NSPanel(contentRect: NSRect(x: 0, y: 0, width: 320, height: 240),
         styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
-    private let context = CIContext()
     private let frames = DispatchQueue(label: "app.operit.window-preview.frames")
     private var stream: SCStream?
+    private var output: PreviewStreamOutput?
     private var sourceApplication: NSRunningApplication?
     private var sourceWindow: AXUIElement?
-    private var sourceFrame = CGRect.zero
     private var contentSize = CGSize.zero
-    private var titlebarInset: CGFloat = 0
     private var expandedFrame = CGRect.zero
     private var ready = false
     private var closing = false
@@ -110,9 +147,8 @@ final class WindowPreview: NSObject, SCStreamOutput, SCStreamDelegate, NSWindowD
         guard native.count == 1 else {
             throw NSError(domain: "OperitWindowPreview", code: 5, userInfo: [NSLocalizedDescriptionKey: "The exact selected capture window is unavailable"])
         }
-        sourceApplication = application; sourceWindow = matches[0]; sourceFrame = frame
+        sourceApplication = application; sourceWindow = matches[0]
         let inset = titleInset(matches[0], frame: frame)
-        titlebarInset = inset
         contentSize = CGSize(width: frame.width, height: frame.height - inset)
         panel.title = "Operit Window Preview"
         panel.isFloatingPanel = true; panel.level = .floating
@@ -142,14 +178,20 @@ final class WindowPreview: NSObject, SCStreamOutput, SCStreamDelegate, NSWindowD
         configuration.minimumFrameInterval = CMTime(value: 1, timescale: 15)
         configuration.queueDepth = 3; configuration.showsCursor = false
         let capture = SCStream(filter: SCContentFilter(desktopIndependentWindow: native[0]), configuration: configuration, delegate: self)
-        try capture.addStreamOutput(self, type: .screen, sampleHandlerQueue: frames)
+        let output = PreviewStreamOutput(sourceHeight: frame.height, titlebarInset: inset,
+            present: { [weak self] image in self?.present(image) },
+            fail: { [weak self] message in self?.fail(message) })
+        try capture.addStreamOutput(output, type: .screen, sampleHandlerQueue: frames)
+        self.output = output
         stream = capture
         try await capture.startCapture()
         lifetime = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-            guard let self = self, let window = self.sourceWindow else { return }
-            var role: CFTypeRef?
-            if self.sourceApplication?.isTerminated == true || AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role) != .success {
-                self.shutdown()
+            MainActor.assumeIsolated {
+                guard let self = self, let window = self.sourceWindow else { return }
+                var role: CFTypeRef?
+                if self.sourceApplication?.isTerminated == true || AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &role) != .success {
+                    self.shutdown()
+                }
             }
         }
     }
@@ -220,37 +262,18 @@ final class WindowPreview: NSObject, SCStreamOutput, SCStreamDelegate, NSWindowD
     @objc private func closePreview() { shutdown() }
 
     /// Presents complete frames directly, without encoding a screenshot for every refresh.
-    func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        guard type == .screen, CMSampleBufferIsValid(sampleBuffer),
-              let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
-              let raw = attachments.first?[.status] as? Int, SCFrameStatus(rawValue: raw) == .complete else { return }
-        guard let dictionary = attachments.first?[.contentRect] as? CFDictionary,
-              let content = CGRect(dictionaryRepresentation: dictionary), content.width > 0, content.height > 0,
-              let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            DispatchQueue.main.async { self.fail("ScreenCaptureKit returned a frame without valid content geometry") }
-            return
-        }
-        // Single-window streams ignore sourceRect; crop their real frame metadata after capture.
-        let inset = titlebarInset * content.height / sourceFrame.height
-        let crop = CGRect(x: content.minX, y: CGFloat(CVPixelBufferGetHeight(buffer)) - content.maxY,
-            width: content.width, height: content.height - inset)
-        guard let image = context.createCGImage(CIImage(cvPixelBuffer: buffer), from: crop) else {
-            DispatchQueue.main.async { self.fail("ScreenCaptureKit could not render the selected window content") }
-            return
-        }
-        DispatchQueue.main.async { [weak self] in
-            guard let self = self, !self.closing else { return }
-            self.imageView.image = NSImage(cgImage: image, size: NSSize(width: CGFloat(image.width), height: CGFloat(image.height)))
-            if !self.ready {
-                self.panel.orderFrontRegardless(); self.panel.invalidateShadow()
-                self.ready = true
-                print("{\"ready\":true}"); fflush(stdout)
-            }
+    private func present(_ image: CGImage) {
+        guard !closing else { return }
+        imageView.image = NSImage(cgImage: image, size: NSSize(width: CGFloat(image.width), height: CGFloat(image.height)))
+        if !ready {
+            panel.orderFrontRegardless(); panel.invalidateShadow()
+            ready = true
+            print("{\"ready\":true}"); fflush(stdout)
         }
     }
 
     /// Reports the actual capture failure and closes the viewing panel.
-    func stream(_ stream: SCStream, didStopWithError error: Error) {
+    nonisolated func stream(_ stream: SCStream, didStopWithError error: Error) {
         DispatchQueue.main.async { self.fail(error.localizedDescription) }
     }
 
@@ -277,7 +300,7 @@ final class WindowPreview: NSObject, SCStreamOutput, SCStreamDelegate, NSWindowD
 }
 
 /// Runs the native helper under the host-owned pipe rather than creating an independent user session.
-@main struct WindowPreviewMain {
+@main @MainActor struct WindowPreviewMain {
     private static var controller: AnyObject?
 
     /// Starts only after validating the explicit source request and supported system capture API.

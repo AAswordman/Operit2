@@ -8,6 +8,7 @@
 #include "crash_channel.h"
 #include "operit_runtime_channel.h"
 #include "window_chrome.h"
+#include "app_visibility.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
@@ -180,6 +181,7 @@ static void my_application_activate(GApplication* application) {
   }
   register_operit_runtime_channel(view);
   register_operit_window_chrome(view);
+  register_operit_app_visibility(view);
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

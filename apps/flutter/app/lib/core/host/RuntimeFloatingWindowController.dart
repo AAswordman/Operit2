@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:floating_windows/floating_windows.dart';
 import 'package:flutter/widgets.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
+import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../../ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 import 'RuntimeWindowRecording.dart';
@@ -52,10 +53,53 @@ class RuntimeFloatingWindowController {
   static Timer? _audit;
   static StreamSubscription<void>? _catalog;
   static RuntimeWindowRecording? _activeRecording;
+  static int _serial = 0;
+
+  /// Records lifecycle boundaries at info level and routine updates at debug level.
+  static void _log(String message, {bool routine = false}) {
+    if (!ClientLogger.isInitialized) return;
+    if (routine) {
+      ClientLogger.d(message, tag: 'RuntimeFloatingWindow');
+    } else {
+      ClientLogger.i(message, tag: 'RuntimeFloatingWindow');
+    }
+  }
 
   /// Serializes lifecycle mutations while letting a pending recording finish independently.
   static Future<Object?> command(Map<String, Object?> request) {
-    final work = _tail.then((_) => _command(request));
+    final serial = ++_serial;
+    final waiting = Stopwatch()..start();
+    final identity =
+        'command=$serial owner=${request['packageName']} '
+        'operation=${request['operation']} id=${request['id']}';
+    _log('$identity queued', routine: true);
+    final work = _tail.then((_) async {
+      final elapsed = Stopwatch()..start();
+      _log(
+        '$identity begin queueWaitMs=${waiting.elapsedMilliseconds}',
+        routine: waiting.elapsedMilliseconds < 250,
+      );
+      try {
+        final result = await _command(request);
+        _log(
+          '$identity done elapsedMs=${elapsed.elapsedMilliseconds} '
+          'totalMs=${waiting.elapsedMilliseconds}',
+          routine: elapsed.elapsedMilliseconds < 250,
+        );
+        return result;
+      } catch (error, stack) {
+        if (ClientLogger.isInitialized) {
+          ClientLogger.e(
+            '$identity failed elapsedMs=${elapsed.elapsedMilliseconds} '
+            'totalMs=${waiting.elapsedMilliseconds}',
+            tag: 'RuntimeFloatingWindow',
+            error: error,
+            stackTrace: stack,
+          );
+        }
+        rethrow;
+      }
+    });
     _tail = work.then<void>((_) {}, onError: (Object _, StackTrace stack) {});
     return work.then((value) async {
       if (value is! (_OwnedFloatingWindow, RuntimeWindowRecording)) {
@@ -194,6 +238,7 @@ class RuntimeFloatingWindowController {
         ? 'permission_required'
         : null;
     if (unavailable != null) {
+      _log('set unavailable owner=$owner id=$id reason=$unavailable');
       if (owned != null) await _close(key, owned);
       return unavailable;
     }
@@ -216,6 +261,8 @@ class RuntimeFloatingWindowController {
     String key,
     Map<String, Object?> request,
   ) async {
+    final stopwatch = Stopwatch()..start();
+    _log('open.begin owner=$owner id=$id route=${request['route']}');
     if (_owners.values.where((value) => value == owner).length >= 16) {
       throw StateError('A plugin may own at most 16 floating windows');
     }
@@ -259,6 +306,10 @@ class RuntimeFloatingWindowController {
     _owners[key] = owner;
     _ids[key] = id;
     _startAudit();
+    _log(
+      'open.done owner=$owner id=$id nativeId=${window.id} '
+      'elapsedMs=${stopwatch.elapsedMilliseconds}',
+    );
     return owned;
   }
 
@@ -287,9 +338,14 @@ class RuntimeFloatingWindowController {
 
   /// Closes the native surface before releasing its plugin-local identity.
   static Future<void> _close(String key, _OwnedFloatingWindow owned) async {
+    final stopwatch = Stopwatch()..start();
+    final identity =
+        'owner=${_owners[key]} id=${_ids[key]} nativeId=${owned.window.id}';
+    _log('close.begin $identity');
     _discardRecording(owned);
     await owned.window.close();
     _remove(key);
+    _log('close.done $identity elapsedMs=${stopwatch.elapsedMilliseconds}');
   }
 
   /// Validates a supplied capture interval without rounding or clamping it.
@@ -335,7 +391,13 @@ class RuntimeFloatingWindowController {
     if (_windows.isEmpty) return;
     final live = await FloatingWindows.liveIds();
     for (final entry in _windows.entries.toList()) {
-      if (!live.contains(entry.value.window.id)) _remove(entry.key);
+      if (!live.contains(entry.value.window.id)) {
+        _log(
+          'prune owner=${_owners[entry.key]} id=${_ids[entry.key]} '
+          'nativeId=${entry.value.window.id} reason=native-window-absent',
+        );
+        _remove(entry.key);
+      }
     }
   }
 

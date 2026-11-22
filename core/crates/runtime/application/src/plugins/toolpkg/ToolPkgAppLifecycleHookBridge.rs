@@ -85,7 +85,9 @@ impl ToolPkgAppLifecycleHookBridge {
     /// Dispatches an app lifecycle event to matching ToolPkg hooks.
     #[allow(non_snake_case)]
     pub fn dispatchEvent(runtime: &ToolPkgBridgeRuntime, eventName: &str, eventPayload: Value) {
-        rememberReplayableEvent(eventName, eventPayload.clone());
+        if !rememberReplayableEvent(eventName, eventPayload.clone()) {
+            return;
+        }
         let activeHooks = APP_LIFECYCLE_HOOKS
             .get_or_init(|| Mutex::new(Vec::new()))
             .lock()
@@ -106,21 +108,87 @@ impl ToolPkgAppLifecycleHookBridge {
 
 /// Stores application-level lifecycle events that newly registered hooks should receive.
 #[allow(non_snake_case)]
-fn rememberReplayableEvent(eventName: &str, eventPayload: Value) {
-    match eventName {
-        operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_APPLICATION_ON_CREATE
-        | operit_plugin_sdk::toolpkg::ToolPkgCommonPluginConstants::TOOLPKG_EVENT_APPLICATION_ON_FOREGROUND => {
-            let mut events = REPLAYABLE_APP_EVENTS
-                .get_or_init(|| Mutex::new(Vec::new()))
-                .lock()
-                .expect("toolpkg app lifecycle replay mutex poisoned");
-            events.retain(|event| event.eventName != eventName);
-            events.push(AppLifecycleReplayEvent {
-                eventName: eventName.to_string(),
-                payload: eventPayload,
-            });
+fn rememberReplayableEvent(eventName: &str, eventPayload: Value) -> bool {
+    let mut events = REPLAYABLE_APP_EVENTS
+        .get_or_init(|| Mutex::new(Vec::new()))
+        .lock()
+        .expect("toolpkg app lifecycle replay mutex poisoned");
+    updateReplayEvents(&mut events, eventName, eventPayload)
+}
+
+/// Replays creation followed by the current UI state, never an obsolete foreground.
+#[allow(non_snake_case)]
+fn updateReplayEvents(
+    events: &mut Vec<AppLifecycleReplayEvent>,
+    eventName: &str,
+    payload: Value,
+) -> bool {
+    let isVisibility = |name: &str| {
+        matches!(
+            name,
+            "application_on_foreground" | "application_on_background"
+        )
+    };
+    if eventName == "application_on_terminate" {
+        events.clear();
+    } else if eventName == "application_on_create" {
+        events.clear();
+        events.push(AppLifecycleReplayEvent {
+            eventName: eventName.to_string(),
+            payload,
+        });
+    } else if isVisibility(eventName) {
+        if events.iter().any(|event| event.eventName == eventName) {
+            return false;
         }
-        _ => {}
+        events.retain(|event| !isVisibility(&event.eventName));
+        events.push(AppLifecycleReplayEvent {
+            eventName: eventName.to_string(),
+            payload,
+        });
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn activation_replays_creation_and_only_current_visibility() {
+        let mut events = Vec::new();
+        for name in [
+            "application_on_create",
+            "application_on_foreground",
+            "application_on_background",
+        ] {
+            assert!(updateReplayEvents(&mut events, name, Value::Null));
+        }
+        assert_eq!(
+            events
+                .iter()
+                .map(|event| event.eventName.as_str())
+                .collect::<Vec<_>>(),
+            vec!["application_on_create", "application_on_background"]
+        );
+        assert!(!updateReplayEvents(
+            &mut events,
+            "application_on_background",
+            Value::Null
+        ));
+        assert!(updateReplayEvents(
+            &mut events,
+            "application_on_foreground",
+            Value::Null
+        ));
+        assert_eq!(
+            events.last().unwrap().eventName,
+            "application_on_foreground"
+        );
+        updateReplayEvents(&mut events, "application_on_terminate", Value::Null);
+        assert!(events.is_empty());
+        updateReplayEvents(&mut events, "application_on_create", Value::Null);
+        assert_eq!(events.len(), 1);
     }
 }
 

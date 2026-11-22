@@ -57,6 +57,8 @@ impl ToolPkgChatRuntimeHookBridge {
         currentTurnToolInvocationCount: i32,
         activeConversationCount: i32,
         currentSessionToolCount: i32,
+        currentRound: i32,
+        taskTitle: Option<String>,
     ) {
         let chatId = chatId.to_owned();
         let state = state.to_owned();
@@ -84,6 +86,8 @@ impl ToolPkgChatRuntimeHookBridge {
                         currentTurnToolInvocationCount,
                         activeConversationCount,
                         currentSessionToolCount,
+                        currentRound,
+                        taskTitle,
                     );
                     let manager = runtime.package_manager();
                     for hook in hooks {
@@ -151,10 +155,14 @@ fn buildPayload(
     currentTurnToolInvocationCount: i32,
     activeConversationCount: i32,
     currentSessionToolCount: i32,
+    currentRound: i32,
+    taskTitle: Option<String>,
 ) -> serde_json::Value {
     activeChatIds.sort();
     serde_json::json!({
         "chatId": chatId,
+        "taskTitle": taskTitle,
+        "currentRound": currentRound,
         "slot": "main",
         "state": stateName(state),
         "message": stateMessage(state),

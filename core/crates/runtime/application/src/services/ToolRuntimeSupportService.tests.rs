@@ -27,14 +27,14 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
     let holder = Arc::new(AsyncMutex::new(runtime));
     let support = ToolRuntimeSupportService::create(host, holder.clone());
     assert_eq!(
-        support.isChatProcessing("missing").unwrap_err(),
+        support.chatAgentStatus("missing").err().unwrap(),
         "Tool runtime chat processing state is not bound",
     );
     support.bindChatProcessingState(state).unwrap();
 
     let mut locked = holder.lock().await;
     assert!(holder.try_lock().is_err());
-    assert!(!support.isChatProcessing("missing").unwrap());
+    assert!(!support.chatAgentStatus("missing").unwrap().isProcessing);
     for (slot, chat_id) in [
         (ChatRuntimeSlot::MAIN, "main-chat"),
         (ChatRuntimeSlot::FLOATING, "floating-chat"),
@@ -43,12 +43,16 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
         let delegate = &mut locked.getCore(slot).messageProcessingDelegate;
         for execution in [
             ChatExecutionState {
+                taskTitle: Some("整理文档".into()),
+                currentRound: 3,
                 isLoading: true,
                 inputProcessingState: InputProcessingState::Receiving {
                     message: "streaming".into(),
                 },
             },
             ChatExecutionState {
+                taskTitle: Some("整理文档".into()),
+                currentRound: 3,
                 isLoading: false,
                 inputProcessingState: InputProcessingState::Summarizing {
                     message: "summarizing".into(),
@@ -56,7 +60,10 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
             },
         ] {
             delegate.setChatExecutionStateForTest(chat_id.into(), execution);
-            assert!(support.isChatProcessing(chat_id).unwrap());
+            let status = support.chatAgentStatus(chat_id).unwrap();
+            assert!(status.isProcessing);
+            assert_eq!(status.currentRound, 3);
+            assert_eq!(status.taskTitle.as_deref(), Some("整理文档"));
         }
         for terminal in [
             InputProcessingState::Completed,
@@ -68,11 +75,13 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
             delegate.setChatExecutionStateForTest(
                 chat_id.into(),
                 ChatExecutionState {
+                    taskTitle: None,
+                    currentRound: 0,
                     isLoading: false,
                     inputProcessingState: terminal,
                 },
             );
-            assert!(!support.isChatProcessing(chat_id).unwrap());
+            assert!(!support.chatAgentStatus(chat_id).unwrap().isProcessing);
         }
     }
 
@@ -84,6 +93,8 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
             .setChatExecutionStateForTest(
                 "shared-chat".into(),
                 ChatExecutionState {
+                    taskTitle: None,
+                    currentRound: 0,
                     isLoading: true,
                     inputProcessingState: InputProcessingState::Idle,
                 },
@@ -93,7 +104,7 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
         .getCore(ChatRuntimeSlot::MAIN)
         .messageProcessingDelegate
         .setChatExecutionStateForTest("shared-chat".into(), ChatExecutionState::idle());
-    assert!(support.isChatProcessing("shared-chat").unwrap());
+    assert!(support.chatAgentStatus("shared-chat").unwrap().isProcessing);
     let mut stopped_worker = locked
         .getCore(ChatRuntimeSlot::FLOATING)
         .messageProcessingDelegate
@@ -101,10 +112,12 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
     drop(locked);
 
     support.stopChatServices().unwrap();
-    assert!(!support.isChatProcessing("shared-chat").unwrap());
+    assert!(!support.chatAgentStatus("shared-chat").unwrap().isProcessing);
     stopped_worker.setChatExecutionStateForTest(
         "shared-chat".into(),
         ChatExecutionState {
+            taskTitle: None,
+            currentRound: 0,
             isLoading: false,
             inputProcessingState: InputProcessingState::Summarizing {
                 message: "obsolete worker".into(),
@@ -113,19 +126,21 @@ async fn chat_status_reads_live_execution_states_without_locking_the_holder() {
     );
     support.startChatServices().unwrap();
     let mut restarted = holder.lock().await;
-    assert!(!support.isChatProcessing("shared-chat").unwrap());
+    assert!(!support.chatAgentStatus("shared-chat").unwrap().isProcessing);
     restarted
         .getCore(ChatRuntimeSlot::MAIN)
         .messageProcessingDelegate
         .setChatExecutionStateForTest(
             "shared-chat".into(),
             ChatExecutionState {
+                taskTitle: None,
+                currentRound: 0,
                 isLoading: false,
                 inputProcessingState: InputProcessingState::Connecting {
                     message: "new generation".into(),
                 },
             },
         );
-    assert!(support.isChatProcessing("shared-chat").unwrap());
-    assert!(!support.isChatProcessing("missing").unwrap());
+    assert!(support.chatAgentStatus("shared-chat").unwrap().isProcessing);
+    assert!(!support.chatAgentStatus("missing").unwrap().isProcessing);
 }

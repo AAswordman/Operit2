@@ -2064,6 +2064,14 @@ export namespace ToolPkg {
      */
     chatId: string;
     /**
+     * Title of the real work item owned by this execution, when available.
+     */
+    taskTitle?: string;
+    /**
+     * Actual model response rounds in the current execution; not tool invocation count.
+     */
+    currentRound: number;
+    /**
      * Identifies the runtime slot that owns the chat.
      */
     slot: ChatRuntimeSlotName;
@@ -2865,7 +2873,12 @@ export namespace ToolPkg {
   }
 
   /**
-   * Binds an application lifecycle event to a plugin callback.
+   * Binds an application lifecycle event to a durable plugin callback.
+   * Application foreground/background describe the main UI, across all platforms:
+   * minimized/hidden desktop windows, background mobile scenes and hidden Web tabs
+   * are background. Focus loss, occlusion and plugin windows never change this state.
+   * New registrations receive application creation and the latest known foreground
+   * or background state. No raw host-event subscription or visibility query is needed.
    */
   export interface AppLifecycleHookRegistration {
     /**
@@ -4350,7 +4363,9 @@ export namespace ToolPkg {
      */
     registerDesktopWidget(definition: DesktopWidgetRegistration): void;
     /**
-     * Registers a callback for an application or activity lifecycle event.
+     * Registers a durable callback for an application or activity lifecycle event.
+     * Application foreground/background use host-normalized main UI visibility,
+     * independent of focus and plugin windows; activation replays the latest state.
      */
     registerAppLifecycleHook(definition: AppLifecycleHookRegistration): void;
     /**
@@ -4524,7 +4539,9 @@ export namespace ToolPkg {
    */
   function registerApi<TPayload, TResult>(definition: PublicApiRegistration<TPayload, TResult>): void;
   /**
-   * Registers a callback for an application or activity lifecycle event.
+   * Registers a durable callback for an application or activity lifecycle event.
+   * Application foreground/background use host-normalized main UI visibility,
+   * independent of focus and plugin windows; activation replays the latest state.
    */
   function registerAppLifecycleHook(definition: AppLifecycleHookRegistration): void;
   /**

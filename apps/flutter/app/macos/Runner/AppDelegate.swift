@@ -58,15 +58,14 @@ class AppDelegate: FlutterAppDelegate, UNUserNotificationCenterDelegate {
     return false
   }
 
-  /// Restores hidden application windows when the Dock icon is activated.
+  /// Dock activation restores the main UI even when an auxiliary window is visible.
   override func applicationShouldHandleReopen(
     _ sender: NSApplication,
-    hasVisibleWindows flag: Bool
+    hasVisibleWindows _: Bool
   ) -> Bool {
-    if !flag {
-      for window in sender.windows {
-        window.makeKeyAndOrderFront(nil)
-      }
+    if let window = sender.windows.first(where: { $0 is MainFlutterWindow }) {
+      if window.isMiniaturized { window.deminiaturize(nil) }
+      window.makeKeyAndOrderFront(nil)
     }
     return true
   }

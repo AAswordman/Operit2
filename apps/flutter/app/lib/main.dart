@@ -66,6 +66,8 @@ void main(List<String> arguments) async {
       final bindingElapsedMs = bindingStopwatch.elapsedMilliseconds;
       final loggerStopwatch = Stopwatch()..start();
       await ClientLogger.initialize();
+      FloatingWindows.onDiagnostic = (message) =>
+          ClientLogger.i(message, tag: 'FloatingWindows');
       ClientLogger.v(
         'widgets binding initialized elapsedMs=$bindingElapsedMs',
         tag: _appStartupLogTag,

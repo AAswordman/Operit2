@@ -8,12 +8,12 @@ use crate::runtime_support::{
 };
 use crate::tools::ToolInvocation::prepareInvocation;
 use crate::tools::ToolResultDataClasses::{
-    stringResultData, AgentStatusResultData, ChatCallResultData, ChatCallTurnData,
+    stringResultData, ChatCallResultData, ChatCallTurnData,
     ChatCancelResultData, ChatCreationResultData, ChatDeleteExtensionResultData,
     ChatDeleteResultData, ChatFindResultData, ChatInfo, ChatListResultData, ChatMessageInfo,
     ChatMessagesResultData, ChatObservationResultData, ChatReadExtensionResultData,
     ChatSendMessageResultData, ChatServiceStartResultData, ChatSwitchResultData,
-    ChatTitleUpdateResultData, ChatWriteExtensionResultData, JsNullable, JsOptional,
+    ChatTitleUpdateResultData, ChatWriteExtensionResultData, JsNullable,
     MessageSendResultData, ToolResultData,
 };
 use crate::ConversationMarkupManager::ToolResult;
@@ -260,19 +260,13 @@ impl StandardChatManagerTool {
         if chatId.trim().is_empty() {
             return toolError(tool, "Invalid parameter: missing chat_id".to_string());
         }
-        let isProcessing = match self.runtimeSupport.isChatProcessing(&chatId) {
+        let status = match self.runtimeSupport.chatAgentStatus(&chatId) {
             Ok(value) => value,
             Err(error) => return toolError(tool, error),
         };
         successData(
             tool,
-            ToolResultData::AgentStatusResultData(AgentStatusResultData {
-                chatId,
-                state: if isProcessing { "processing" } else { "idle" }.to_string(),
-                message: JsOptional::Null,
-                isIdle: !isProcessing,
-                isProcessing,
-            }),
+            ToolResultData::AgentStatusResultData(status),
         )
     }
 

@@ -200,6 +200,19 @@ class FloatingWindows {
       ].contains(defaultTargetPlatform);
   static Future<void> Function()? beforeClose;
 
+  /// Lets the application retain engine startup diagnostics in its normal log sink.
+  static void Function(String message)? onDiagnostic;
+
+  static void _diagnostic(String message) {
+    final line = 'platform=${defaultTargetPlatform.name} $message';
+    final sink = onDiagnostic;
+    if (sink != null) {
+      sink(line);
+    } else {
+      debugPrint('[FloatingWindows] $line');
+    }
+  }
+
   static FloatingWindowLaunch? parseLaunch(List<String> arguments) {
     String? text;
     if (arguments.length == 3 && arguments[0] == 'multi_window')
@@ -283,6 +296,11 @@ class FloatingWindows {
     bool fill = false,
     Duration startupTimeout = const Duration(seconds: 30),
   }) async {
+    final stopwatch = Stopwatch()..start();
+    _diagnostic(
+      'open.begin route=${payload['route']} windowId=${payload['windowId']} '
+      'startupTimeoutMs=${startupTimeout.inMilliseconds}',
+    );
     if (startupTimeout <= Duration.zero)
       throw ArgumentError.value(startupTimeout, 'startupTimeout');
     if (fill && (options.hasBounds || options.draggable == true)) {
@@ -308,6 +326,9 @@ class FloatingWindows {
       }
       return _applicationHost!.open(payload, normalized, fill: fill);
     }
+    _diagnostic(
+      'open.create scope=${support['scope']} elapsedMs=${stopwatch.elapsedMilliseconds}',
+    );
     final encoded = jsonEncode({
       'kind': _kind,
       'payload': payload,
@@ -330,6 +351,17 @@ class FloatingWindows {
       );
       window = FloatingWindow._(controller.windowId, fill: fill);
     }
+    _diagnostic(
+      'open.created nativeId=${window.id} elapsedMs=${stopwatch.elapsedMilliseconds}',
+    );
+    var probes = 0;
+    var lastReply = 'pending';
+    final progress = Timer.periodic(const Duration(seconds: 5), (_) {
+      _diagnostic(
+        'open.waiting nativeId=${window.id} probes=$probes lastReply=$lastReply '
+        'elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+    });
     try {
       final deadline = DateTime.now().add(startupTimeout);
       while (true) {
@@ -337,8 +369,11 @@ class FloatingWindows {
           final remaining = deadline.difference(DateTime.now());
           if (remaining <= Duration.zero)
             throw TimeoutException('Floating window startup timed out');
+          probes++;
           if (await window._command('ready').timeout(remaining) == true) break;
+          lastReply = 'not-ready';
         } on WindowChannelException catch (error) {
+          lastReply = error.code;
           if (![
             'CHANNEL_NOT_FOUND',
             'CHANNEL_NOT_REGISTERED',
@@ -347,20 +382,30 @@ class FloatingWindows {
           ].contains(error.code))
             rethrow;
         } on PlatformException catch (error) {
+          lastReply = error.code;
           if (!['CHANNEL_NOT_FOUND', 'NO_HANDLER'].contains(error.code))
             rethrow;
         } on MissingPluginException catch (_) {
+          lastReply = 'missing-plugin';
           /* The child has not installed its handler. */
         }
         if (DateTime.now().isAfter(deadline))
           throw TimeoutException('Floating window startup timed out');
         await Future<void>.delayed(const Duration(milliseconds: 50));
       }
+      _diagnostic(
+        'open.ready nativeId=${window.id} probes=$probes elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       return window;
     } catch (error, stack) {
+      _diagnostic(
+        'open.failed nativeId=${window.id} probes=$probes lastReply=$lastReply '
+        'elapsedMs=${stopwatch.elapsedMilliseconds} error=$error',
+      );
       // The owner transport can destroy children that never installed a handler.
       try {
         await _destroyNative(window.id).timeout(const Duration(seconds: 5));
+        _diagnostic('open.reclaimed nativeId=${window.id}');
       } catch (cleanupError, cleanupStack) {
         FlutterError.reportError(
           FlutterErrorDetails(
@@ -372,6 +417,8 @@ class FloatingWindows {
         );
       }
       Error.throwWithStackTrace(error, stack);
+    } finally {
+      progress.cancel();
     }
   }
 
@@ -393,6 +440,10 @@ class FloatingWindows {
       await application();
       return;
     }
+    final stopwatch = Stopwatch()..start();
+    final identity =
+        'windowId=${launch.payload['windowId']} route=${launch.payload['route']}';
+    _diagnostic('child.launch $identity');
     final content = ValueNotifier<FloatingWindowLaunch>(launch);
     final dragPointers = <int>{};
     var ready = false;
@@ -469,8 +520,10 @@ class FloatingWindows {
       throw MissingPluginException();
     });
     if (!_android) {
-      await (await WindowController.fromCurrentEngine()).setWindowMethodHandler(
-        receive,
+      final controller = await WindowController.fromCurrentEngine();
+      await controller.setWindowMethodHandler(receive);
+      _diagnostic(
+        'child.handler $identity nativeId=${controller.windowId} elapsedMs=${stopwatch.elapsedMilliseconds}',
       );
     }
     try {
@@ -479,6 +532,9 @@ class FloatingWindows {
         ...launch.options.toMap(),
         if (launch.fill) 'fill': true,
       });
+      _diagnostic(
+        'child.configured $identity elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
       runApp(
         Listener(
           onPointerDown: (event) => dragPointers.add(event.pointer),
@@ -490,10 +546,22 @@ class FloatingWindows {
           ),
         ),
       );
-      await WidgetsBinding.instance.endOfFrame;
+      // Hidden macOS engines may suspend frames until their window is visible.
+      // Showing cannot depend on a first frame that itself depends on showing.
+      final firstFrame = WidgetsBinding.instance.endOfFrame;
       await channel.invokeMethod<void>('show');
+      _diagnostic(
+        'child.shown $identity elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
+      await firstFrame;
       ready = true;
+      _diagnostic(
+        'child.ready $identity elapsedMs=${stopwatch.elapsedMilliseconds}',
+      );
     } catch (error) {
+      _diagnostic(
+        'child.failed $identity elapsedMs=${stopwatch.elapsedMilliseconds} error=$error',
+      );
       startupError = error;
       rethrow;
     }

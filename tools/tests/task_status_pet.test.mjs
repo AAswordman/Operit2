@@ -13,10 +13,11 @@ const { DEFAULTS, selectView } = require('../../plugins/packages/external/task_s
 
 /** Creates an isolated main owner with observable host calls and deterministic completion time. */
 function fixture(settings = {}) {
-  const calls = [], decisions = [], timers = [], switches = [];
+  const calls = [], decisions = [], timers = [], switches = [], logs = [];
   let pending = [], saved = { ...DEFAULTS, ...settings }, storedTasks = [], resourceFailure = false;
   const windows = new Map();
   const port = {
+    log(level, event, fields) { logs.push({ level, ...fields, event }); },
     async load() { return saved; },
     async save(value) { saved = value; },
     async snapshot() { return storedTasks; },
@@ -42,7 +43,7 @@ function fixture(settings = {}) {
     async switchChat(id) { switches.push(id); },
     schedule(work) { const timer = { work, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
   };
-  return { service: new PetService(port), calls, decisions, timers, switches, port, windows,
+  return { service: new PetService(port), calls, decisions, timers, switches, logs, port, windows,
     /** Moves the native surface without notifying the plugin state machine. */
     drag(x, y) { Object.assign(windows.get('cat').options, { x, y }); },
     pending(value) { pending = value; }, snapshot(value) { storedTasks = value; },
@@ -61,7 +62,7 @@ function runtime(chatId, state, activeChatIds = []) {
 function approval(id = 'r1') { return { chatId: 'a', requestId: id, description: 'Write a file', requestedAtMillis: 1, tool: { name: 'file_write', parameters: [] } }; }
 
 /** Runs the packaged settings screen and serialized callbacks against its real state owner. */
-function settingsUi(owner) {
+function settingsUi(owner, screen = 'settingsScreen') {
   const requests = [];
   const context = vm.createContext({ console, module: { exports: {} },
     ToolPkg: { ipc: { async call(channel, request, options) {
@@ -79,12 +80,12 @@ function settingsUi(owner) {
   vm.runInContext(composeContextScript(), context);
   const source = readFileSync(new URL('../../plugins/packages/external/task_status_pet/dist/ui.js', import.meta.url), 'utf8');
   vm.runInContext(wrapComposeScript(compileComposeModule(source, 'task-status-pet-ui') +
-    '\nObject.defineProperty(module.exports, "__operit_compose_entry_export", {value: "settingsScreen"});'), context);
+    `\nObject.defineProperty(module.exports, "__operit_compose_entry_export", {value: ${JSON.stringify(screen)}});`), context);
   const stream = composeStreamFixture(context);
   stream.adapt();
   return { requests, stream,
-    render() { return context.__operit_render_compose_dsl({ executionContextKey: 'task-cat-settings' }); },
-    action(node, property = 'onClick') { return context.__operit_dispatch_compose_dsl_action({ actionId: node.props[property].__actionId }); },
+    render(state = {}) { return context.__operit_render_compose_dsl({ executionContextKey: 'task-cat-settings', state }); },
+    action(node, property = 'onClick', payload) { return context.__operit_dispatch_compose_dsl_action({ actionId: node.props[property].__actionId, payload }); },
   };
 }
 
@@ -125,6 +126,42 @@ test('settings reports a failed show and a later click can complete normally', a
   assert.equal(owner.latest().state.sprite, 'vfs:/cat/idle.webp');
   assert.ok(uiNodes(result.tree).some(node => node.props.text === '任务猫已显示'));
   assert.deepEqual(ui.stream.errors, []);
+});
+
+test('size slider previews locally and saves only the final value, including the smaller minimum', async () => {
+  const owner = fixture();
+  const ui = settingsUi(owner);
+  let result = await ui.action(ui.render().tree, 'onLoad');
+  const slider = () => uiNodes(result.tree).find(node => node.type === 'Slider');
+  assert.equal(slider().props.min, 64);
+  assert.equal(slider().props.max, 256);
+  for (const value of [104, 88, 64]) {
+    result = await ui.action(slider(), 'onValueChange', value);
+    assert.equal(slider().props.value, value);
+  }
+  assert.deepEqual(ui.requests, ['status']);
+  result = await ui.action(slider(), 'onValueChangeFinished', 64);
+  assert.deepEqual(ui.requests, ['status', 'save']);
+  assert.equal((await owner.service.request({ kind: 'status' })).settings.width, 64);
+  await owner.service.request({ kind: 'show' });
+  assert.equal(owner.latest().options.width, 64);
+  await assert.rejects(owner.service.request({ kind: 'save', settings: { ...DEFAULTS, width: 63 } }), /设置无效/);
+});
+
+test('cat caption uses the real task, round and tool without confusing calls with rounds', async () => {
+  const owner = fixture({ backgroundOnly: false });
+  await owner.service.runtime({ ...runtime('a', 'executing_tool', ['a']),
+    taskTitle: '整理项目文档', currentRound: 3, toolName: 'file_write', currentTurnToolInvocationCount: 12 });
+  const view = owner.latest().state.view;
+  const ui = settingsUi(owner, 'petScreen');
+  const result = ui.render({ view, sprite: 'vfs:/cat/working.webp' });
+  const lines = uiNodes(result.tree).filter(node => node.type === 'Text');
+  assert.ok(lines.every(node => node.props.maxLines === 1));
+  const caption = lines.map(node => node.props.text).join('\n');
+  assert.equal(caption, '整理项目文档\n第 3 轮 · 执行 file_write');
+  assert.ok(!caption.includes('12 轮'));
+  await owner.service.runtime({ ...runtime('b', 'receiving', ['a', 'b']), taskTitle: '检查测试', currentRound: 1 });
+  assert.equal(owner.latest().state.view.tasks.find(task => task.chatId === 'a').round, 3);
 });
 
 test('background opens one host-dragged window and foreground closes all surfaces', async () => {
@@ -279,6 +316,52 @@ test('window failures reach callers and later events retain serialized ownership
   assert.equal(f.latest().state.view.mood, 'working');
 });
 
+test('diagnostics explain normalized lifecycle changes and repeated state', async () => {
+  const f = fixture();
+  await f.service.lifecycle('application_on_background', {
+    source: 'application-hook', topic: 'app.visibility.changed', platform: 'macos', occurredAtMillis: 123,
+  });
+  await f.service.lifecycle('application_on_background', {
+    source: 'application-hook', topic: 'app.visibility.changed', platform: 'macos', occurredAtMillis: 123,
+  });
+  const events = f.logs.filter(log => log.event === 'lifecycle');
+  assert.deepEqual(events.map(log => log.source), ['application-hook', 'application-hook']);
+  assert.deepEqual(events.map(log => log.unchanged), [false, true]);
+  assert.equal(f.logs.filter(log => log.event === 'visibility').length, 1);
+  assert.ok(f.logs.some(log => log.event === 'visibility' && log.visible && log.reason === 'background'));
+  await f.service.lifecycle('application_on_foreground');
+  assert.ok(f.logs.some(log => log.event === 'visibility' && !log.visible && log.reason === 'foreground'));
+});
+
+test('diagnostics identify a blocked window operation and queued foreground without dumping content', async () => {
+  const f = fixture();
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  let notify;
+  const waiting = new Promise(resolve => { notify = resolve; });
+  const set = f.port.set;
+  f.port.set = async (id, content) => {
+    if (id === 'cat' && content) { notify(); await gate; }
+    return set(id, content);
+  };
+  const opening = f.service.lifecycle('application_on_background');
+  await waiting;
+  const closing = f.service.lifecycle('application_on_foreground');
+  assert.ok(f.logs.some(log => log.event === 'received' && log.pending === 2));
+  release();
+  await Promise.all([opening, closing]);
+  const operations = f.logs.filter(log => log.event === 'begin');
+  assert.deepEqual(operations.map(log => log.operation), [1, 2]);
+  assert.ok(operations.every(log => log.queueWaitMs >= 0));
+  f.resourceFailure(true);
+  await assert.rejects(f.service.request({ kind: 'show' }), /Resource decode/);
+  assert.ok(f.logs.some(log => log.event === 'stage.failed' && log.stage === 'resource.idle' && /Resource decode/.test(log.error)));
+  assert.equal(f.latest(), null);
+  const serialized = JSON.stringify(f.logs);
+  assert.ok(!serialized.includes('vfs:/cat/'));
+  assert.ok(!serialized.includes('随时待命'));
+});
+
 test('a stale approval never outranks the current broker snapshot after ordered updates', async () => {
   const f = fixture({ backgroundOnly: false });
   await Promise.all([f.service.permissions([approval()]), f.service.permissions([]), f.service.runtime(runtime('b', 'receiving', ['b']))]);
@@ -336,6 +419,6 @@ test('registration installs durable hooks and routes without reading chats or op
     assert.equal(runtimeHook.function, plugin.onRuntime);
     assert.equal(permissionHook.function, plugin.onPermissions);
     assert.equal(lifecycle.length, 4);
-    assert.equal(broadcasts.length, 4);
+    assert.equal(broadcasts.length, 0);
   } finally { globalThis.ToolPkg = before; }
 });

@@ -5,6 +5,7 @@
 #include <flutter/flutter_view_controller.h>
 
 #include <memory>
+#include <functional>
 
 #include "win32_window.h"
 
@@ -29,6 +30,8 @@ class FlutterWindow : public Win32Window {
   // The Flutter instance hosted by this window.
   std::unique_ptr<flutter::FlutterViewController> flutter_controller_;
   bool data_rescue_ = false;
+  bool last_minimized_for_diagnostics_ = false;
+  std::function<void()> publish_visibility_;
 };
 
 #endif  // RUNNER_FLUTTER_WINDOW_H_

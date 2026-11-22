@@ -44,6 +44,12 @@ the surface; owner cleanup has the same bounded deadline. Dart callers can set
 `window.close(timeout: ...)` when they need a shorter deadline. Failed child
 startup is reclaimed through the native owner transport. Startup waits have a bounded deadline, including the individual ready call, and retry the desktop transports' handler-not-registered errors.
 
+The child configures and shows its native surface before waiting for its first
+Flutter frame, since hidden desktop engines may suspend frame delivery. Readiness
+still requires that frame. Set `FloatingWindows.onDiagnostic` to retain startup
+stages, native IDs, periodic readiness waits, failures and reclamation in the
+embedding application's logger. Diagnostics omit application payload contents.
+
 Geometry uses logical pixels. Width/height must be 16–4096. Updates are partial.
 Defaults: 240×240, always on top, pointer input enabled, keyboard focus disabled.
 `clickThrough` passes input through the whole rectangle, not alpha-shaped regions.

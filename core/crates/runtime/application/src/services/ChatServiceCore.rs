@@ -3680,6 +3680,8 @@ mod chat_deletion_tests {
             runtime.responseStream = Some(stream.clone());
             core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert(id.into(), runtime);
             core.messageProcessingDelegate.setChatExecutionStateForTest(id.into(), ChatExecutionState {
+                taskTitle: None,
+                currentRound: 0,
                 isLoading: true,
                 inputProcessingState: InputProcessingState::Processing { message: "processing".into() },
             });
@@ -3721,6 +3723,8 @@ mod chat_deletion_tests {
 
         // A summary occupies the chat after streaming resources have finished.
         core.messageProcessingDelegate.setChatExecutionStateForTest("live-chat".into(), ChatExecutionState {
+            taskTitle: None,
+            currentRound: 0,
             isLoading: false,
             inputProcessingState: InputProcessingState::Summarizing { message: "summarizing".into() },
         });
@@ -3839,6 +3843,8 @@ mod chat_deletion_tests {
             turn.responseStream = Some(response.clone());
             core.messageProcessingDelegate.chatRuntimes.lock().unwrap().insert("route-chat".into(), turn);
             core.messageProcessingDelegate.setChatExecutionStateForTest("route-chat".into(), ChatExecutionState {
+                taskTitle: None,
+                currentRound: 0,
                 isLoading: true,
                 inputProcessingState: InputProcessingState::Processing { message: "processing".into() },
             });
@@ -4082,6 +4088,8 @@ mod pending_queue_attachment_tests {
         let mut core = queueTestCore();
         let chatId = "queue-chat".to_string();
         core.messageProcessingDelegate.setChatExecutionStateForTest(chatId.clone(), ChatExecutionState {
+            taskTitle: None,
+            currentRound: 0,
             isLoading: false,
             inputProcessingState: InputProcessingState::Summarizing { message: "compressing".into() },
         });

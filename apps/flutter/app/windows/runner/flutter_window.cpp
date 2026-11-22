@@ -1,6 +1,7 @@
 #include "flutter_window.h"
 
 #include <optional>
+#include <cstdio>
 #include <dwmapi.h>
 #include <flutter/method_channel.h>
 #include <flutter/standard_method_codec.h>
@@ -16,6 +17,30 @@
 #include "system_audio_input_channel.h"
 
 namespace {
+
+/// Focus and auxiliary windows do not change the main application's visibility.
+std::function<void()> RegisterAppVisibilityChannel(flutter::FlutterEngine* engine, HWND window) {
+  using flutter::EncodableValue;
+  auto channel = std::make_shared<flutter::MethodChannel<EncodableValue>>(
+      engine->messenger(), "operit/app_visibility",
+      &flutter::StandardMethodCodec::GetInstance());
+  channel->SetMethodCallHandler([window](const auto& call, auto result) {
+    if (call.method_name() == "getVisibility") {
+      result->Success(EncodableValue(IsWindowVisible(window) && !IsIconic(window)));
+    } else {
+      result->NotImplemented();
+    }
+  });
+  RegisterOperitEngineChannelShutdown(engine, [channel]() {
+    channel->SetMethodCallHandler(nullptr);
+  });
+  return [channel, window, last = std::optional<bool>()]() mutable {
+    const bool visible = IsWindowVisible(window) && !IsIconic(window);
+    if (last == visible) return;
+    last = visible;
+    channel->InvokeMethod("visibilityChanged", std::make_unique<EncodableValue>(visible));
+  };
+}
 
 /// Detaches recording transport before Flutter invalidates this engine's messenger.
 void RegisterRecordingPluginLifetime(flutter::FlutterEngine* engine) {
@@ -117,6 +142,7 @@ bool FlutterWindow::OnCreate() {
     RegisterRecordingPluginLifetime(flutter_controller_->engine());
   }
   RegisterOperitRuntimeChannel(flutter_controller_->engine(), GetHandle());
+  publish_visibility_ = RegisterAppVisibilityChannel(flutter_controller_->engine(), GetHandle());
   if (!data_rescue_) {
     RegisterOperitCrashChannel(flutter_controller_->engine());
     RegisterSystemAudioInputChannel(flutter_controller_->engine());
@@ -156,6 +182,7 @@ bool FlutterWindow::OnCreate() {
 
 /// Closes secondary engines before releasing the runtime and main controller.
 void FlutterWindow::OnDestroy() {
+  publish_visibility_ = nullptr;
   auto controller = std::move(flutter_controller_);
   if (controller) {
     DesktopMultiWindowShutdown();
@@ -174,6 +201,23 @@ LRESULT
 FlutterWindow::MessageHandler(HWND hwnd, UINT const message,
                               WPARAM const wparam,
                               LPARAM const lparam) noexcept {
+  const bool minimized = IsIconic(hwnd) != FALSE;
+  if (message == WM_ACTIVATE || message == WM_SHOWWINDOW ||
+      (message == WM_SIZE && minimized != last_minimized_for_diagnostics_)) {
+    std::fprintf(stdout,
+        "[MainWindowLifecycle] platform=windows event=%s visible=%d minimized=%d "
+        "foreground=%d eventValue=%llu\n",
+        message == WM_ACTIVATE ? "WM_ACTIVATE" :
+        message == WM_SHOWWINDOW ? "WM_SHOWWINDOW" : "WM_SIZE",
+        IsWindowVisible(hwnd) != FALSE, minimized,
+        GetForegroundWindow() == hwnd, static_cast<unsigned long long>(wparam));
+    std::fflush(stdout);
+  }
+  if (message == WM_SIZE) last_minimized_for_diagnostics_ = minimized;
+  // WINDOWPOSCHANGED observes the applied show/hide state, unlike WM_SHOWWINDOW.
+  if (publish_visibility_ && (message == WM_WINDOWPOSCHANGED || message == WM_SIZE)) {
+    publish_visibility_();
+  }
   LRESULT operit_runtime_result = 0;
   if (HandleOperitNotificationActivationWindowMessage(
           message, wparam, lparam, &operit_runtime_result)) {

@@ -2149,7 +2149,7 @@ mod tests {
         /// Rejects unexpected application service access in execution pipeline tests.
     fn stopChatServices(&self) -> Result<(), String> { panic!("Unexpected runtime service: stopChatServices") }
         /// Rejects unexpected application service access in execution pipeline tests.
-    fn isChatProcessing(&self, chatId: &str) -> Result<bool, String> { panic!("Unexpected runtime service: isChatProcessing") }
+    fn chatAgentStatus(&self, chatId: &str) -> Result<operit_plugin_sdk::js_sdk::results::AgentStatusResultData, String> { panic!("Unexpected runtime service: chatAgentStatus") }
         /// Rejects unexpected application service access in execution pipeline tests.
     fn switchMainChat<'a>(
         &'a self,

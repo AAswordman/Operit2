@@ -4,15 +4,83 @@ import FlutterMacOS
 import file_selector_macos
 
 class MainFlutterWindow: NSWindow {
+  private var lifecycleObservers: [NSObjectProtocol] = []
+  private var visibilityChannel: FlutterMethodChannel?
+  private var lastVisibility: Bool?
+
+  private var mainUiVisible: Bool { isVisible && !isMiniaturized && !NSApp.isHidden }
+
+  /// Only the retained main window determines application foreground/background.
+  private func publishVisibility() {
+    guard let channel = visibilityChannel else { return }
+    let visible = mainUiVisible
+    guard lastVisibility != visible else { return }
+    lastVisibility = visible
+    channel.invokeMethod("visibilityChanged", arguments: visible)
+  }
+
+  override func order(_ place: NSWindow.OrderingMode, relativeTo otherWin: Int) {
+    super.order(place, relativeTo: otherWin)
+    publishVisibility()
+  }
+
+  /// Distinguishes focus, minimization, application hiding and compositor occlusion.
+  private func logLifecycle(_ event: String) {
+    NSLog("[MainWindowLifecycle] platform=macos event=%@ window=%ld visible=%@ miniaturized=%@ key=%@ appActive=%@ appHidden=%@ occluded=%@",
+      event, windowNumber, String(isVisible), String(isMiniaturized), String(isKeyWindow),
+      String(NSApp.isActive), String(NSApp.isHidden), String(!occlusionState.contains(.visible)))
+  }
+
+  private func observeLifecycle() {
+    for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification,
+                 NSWindow.didMiniaturizeNotification, NSWindow.didDeminiaturizeNotification,
+                 NSWindow.didChangeOcclusionStateNotification, NSWindow.willCloseNotification] {
+      lifecycleObservers.append(NotificationCenter.default.addObserver(
+        forName: name, object: self, queue: .main
+      ) { [weak self] notification in
+        self?.logLifecycle(notification.name.rawValue)
+        self?.publishVisibility()
+        if notification.name == NSWindow.willCloseNotification {
+          DispatchQueue.main.async { [weak self] in self?.publishVisibility() }
+        }
+      })
+    }
+    for name in [NSApplication.didBecomeActiveNotification, NSApplication.didResignActiveNotification,
+                 NSApplication.didHideNotification, NSApplication.didUnhideNotification] {
+      lifecycleObservers.append(NotificationCenter.default.addObserver(
+        forName: name, object: nil, queue: .main
+      ) { [weak self] notification in
+        self?.logLifecycle(notification.name.rawValue)
+        self?.publishVisibility()
+      })
+    }
+    logLifecycle("observers-installed")
+  }
+
+  deinit {
+    for observer in lifecycleObservers { NotificationCenter.default.removeObserver(observer) }
+  }
+
   /// Creates the Flutter engine while retaining the window after close.
   override func awakeFromNib() {
     isReleasedWhenClosed = false
+    observeLifecycle()
     let flutterViewController = FlutterViewController()
     let windowFrame = self.frame
     self.contentViewController = flutterViewController
     self.setFrame(windowFrame, display: true)
 
     registerPlugins(for: flutterViewController)
+    let channel = FlutterMethodChannel(
+      name: "operit/app_visibility", binaryMessenger: flutterViewController.engine.binaryMessenger)
+    visibilityChannel = channel
+    channel.setMethodCallHandler { [weak self] call, result in
+      guard call.method == "getVisibility" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      result(self?.mainUiVisible ?? false)
+    }
     AppleRuntimeChannel.register(binaryMessenger: flutterViewController.engine.binaryMessenger)
     if !ProcessInfo.processInfo.arguments.contains("--data-rescue") {
       FlutterMultiWindowPlugin.setOnWindowCreatedCallback { childFlutterViewController in

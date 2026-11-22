@@ -69,6 +69,9 @@ pub enum RuntimeEventPlatform {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum RuntimeEventTopic {
+    /// Authoritative product visibility of the main UI, normalized by the owner host.
+    #[serde(rename = "app.visibility.changed")]
+    AppVisibilityChanged,
     #[serde(rename = "app.lifecycle.resumed")]
     AppLifecycleResumed,
     #[serde(rename = "app.lifecycle.inactive")]
@@ -175,6 +178,15 @@ impl RuntimeEvent {
     #[allow(non_snake_case)]
     fn canonicalData(&self) -> Result<Value, String> {
         match self.topic {
+            RuntimeEventTopic::AppVisibilityChanged => {
+                let visibility = self
+                    .payload
+                    .get("visibility")
+                    .and_then(Value::as_str)
+                    .filter(|value| matches!(*value, "visible" | "hidden"))
+                    .ok_or("Invalid application visibility: expected visible or hidden")?;
+                Ok(serde_json::json!({"visibility": visibility}))
+            }
             RuntimeEventTopic::AppLifecycleResumed
             | RuntimeEventTopic::AppLifecycleInactive
             | RuntimeEventTopic::AppLifecyclePaused
@@ -256,6 +268,26 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn main_ui_visibility_requires_a_known_boolean_state() {
+        for (visibility, valid) in [
+            ("visible", true),
+            ("hidden", true),
+            ("unknown", false),
+            ("inactive", false),
+        ] {
+            let event = RuntimeEvent {
+                domain: RuntimeEventDomain::Host,
+                source: RuntimeEventSource::FlutterLifecycle,
+                topic: RuntimeEventTopic::AppVisibilityChanged,
+                platform: RuntimeEventPlatform::Macos,
+                payload: serde_json::json!({"visibility": visibility}),
+                occurredAtMillis: 1,
+            };
+            assert_eq!(event.hostEventPayload().is_ok(), valid);
+        }
+    }
 
     /// Verifies every supported host platform can enter the normalized runtime event model.
     #[test]

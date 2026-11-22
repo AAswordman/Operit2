@@ -1,14 +1,15 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
-import { CHANNEL, DEFAULTS, LABELS, selectView, type Request, type Status, type Settings, type View } from "./model";
+import { CHANNEL, DEFAULTS, LABELS, MIN_WIDTH, MAX_WIDTH, petCaption, taskProgress, selectView, type Request, type Status, type Settings, type View } from "./model";
 
 /** Sends UI operations to the main runtime instead of maintaining per-window task state. */
 function call(request: Request): Promise<Status> { return ToolPkg.ipc.call<Request, Status>(CHANNEL, request, { targetRuntime: "main" }); }
 
-/** Renders the one animated WebP and a compact task count; the host decodes every frame. */
+/** Renders the animation with the actual selected task and execution round. */
 export function petScreen(ctx: ComposeDslContext): ComposeNode {
   const [view] = ctx.useState<View>("view", selectView([], [], null, 0));
   const [sprite] = ctx.useState("sprite", "");
   const [error, setError] = ctx.useState("error", "");
+  const [title, progress] = petCaption(view).split("\n");
   /** Opens current details without submitting any approval from a pet click. */
   async function open(): Promise<void> {
     try { await call({ kind: "details" }); setError(""); }
@@ -18,8 +19,11 @@ export function petScreen(ctx: ComposeDslContext): ComposeNode {
     ctx.UI.Image({ key: "task-cat", uri: sprite, animationKey: `${view.mood}:${view.sequence}`, contentScale: "fit", fillMaxWidth: true, weight: 1,
       contentDescription: `${LABELS[view.mood]}，点击查看任务，按住拖动`, modifier: ctx.Modifier.clickable(open) }),
     ctx.UI.Box({ height: 32, fillMaxWidth: true, contentAlignment: "center", modifier: ctx.Modifier.clickable(open) }, [
-      ctx.UI.Text({ text: error || `${LABELS[view.mood]}${view.approvals.length > 0 ? ` · ${view.approvals.length} 项` : view.count > 0 ? ` · ${view.count}` : ""}`,
-        fontSize: 11, maxLines: 2, color: "#EAF6FF", modifier: ctx.Modifier.background("#D91B3144", { type: "rounded", cornerRadius: 8 }).padding(5) }),
+      ctx.UI.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 0,
+        modifier: ctx.Modifier.background("#D91B3144", { type: "rounded", cornerRadius: 8 }).padding(3) }, [
+        ctx.UI.Text({ text: error || title, fontSize: 10, maxLines: 1, color: "#EAF6FF" }),
+        ...(!error ? [ctx.UI.Text({ text: progress, fontSize: 10, maxLines: 1, color: "#EAF6FF" })] : []),
+      ]),
     ]),
   ]);
 }
@@ -57,8 +61,9 @@ export function detailsScreen(ctx: ComposeDslContext): ComposeNode {
             UI.Text({ text: parameter.name, color: colors.primary }), UI.Text({ text: parameter.value, style: "bodySmall" }),
           ])),
         ] : view.tasks.map(task => UI.Column({ fillMaxWidth: true, spacing: 4 }, [
-          UI.Text({ text: task.chatId, style: "labelSmall", maxLines: 1 }),
-          UI.Text({ text: task.message || task.state, style: "bodyMedium" }),
+          UI.Text({ text: task.title || "当前任务", style: "titleSmall", maxLines: 2 }),
+          UI.Text({ text: taskProgress(task), style: "bodyMedium" }),
+          ...(task.state === "error" && task.message ? [UI.Text({ text: task.message, color: colors.error })] : []),
           UI.TextButton({ text: "切换到此对话", enabled: !busy, onClick: () => act({ kind: "switchChat", chatId: task.chatId }) }),
         ]))),
       ])]),
@@ -115,8 +120,10 @@ export function settingsScreen(ctx: ComposeDslContext): ComposeNode {
     ]),
     toggle("enabled", "启用任务猫"), toggle("backgroundOnly", "只在 Operit 后台时显示"), toggle("keepIdle", "完成后保留空闲状态"),
     UI.Text({ text: `大小 · ${settings.width} 逻辑像素` }),
-    UI.FlowRow({ spacing: 8 }, [96, 128, 160, 192, 256].map(width => UI.TextButton({ text: `${width}`, enabled: ready && !busy,
-      onClick: () => act({ kind: "save", settings: { ...settings, width } }) }))),
+    UI.Slider({ value: settings.width, min: MIN_WIDTH, max: MAX_WIDTH, divisions: (MAX_WIDTH - MIN_WIDTH) / 8,
+      label: `${settings.width}`, enabled: ready && !busy,
+      onValueChange: value => setSettings({ ...settings, width: Math.round(value) }),
+      onValueChangeFinished: value => act({ kind: "save", settings: { ...settings, width: Math.round(value) } }) }),
     UI.Text({ text: "按住拖动；点击查看详情。多任务共用一只猫，待批准请求优先显示。单次完成动作 3 秒后转入空闲。", style: "bodySmall" }),
     UI.Text({ text: "Windows、macOS、Android、X11 使用系统悬浮能力；iOS、Web、OHOS、Wayland 当前只能在应用内显示。后台执行仍受宿主进程生命周期约束。", style: "bodySmall" }),
     UI.Text({ text: "只保存六个无损透明动画 WebP，不携带序列图集和预览副本。", style: "bodySmall" }),
