@@ -200,6 +200,15 @@ impl Journal {
         Ok(rows[0].valueAt(0)?.asI64()?)
     }
 
+    /// Highest business time already durable in this journal, including received
+    /// peer work and compacted identities. Local appends use it as a hybrid
+    /// logical clock floor so a peer with a fast wall clock cannot outrank every
+    /// later local edit. Both tables index business_time, keeping this O(1).
+    pub(crate) fn highest_business_time(&mut self) -> Result<i64, Error> {
+        let rows = self.0.query("SELECT MAX(COALESCE((SELECT MAX(business_time) FROM originals),0),COALESCE((SELECT MAX(business_time) FROM _operit_compacted),0))", vec![])?;
+        Ok(rows[0].valueAt(0)?.asI64()?)
+    }
+
     pub(crate) fn imported(&mut self) -> Result<bool, Error> {
         Ok(!self.0.query("SELECT 1 FROM journal_meta WHERE key='legacy_imported'", vec![])?.is_empty())
     }

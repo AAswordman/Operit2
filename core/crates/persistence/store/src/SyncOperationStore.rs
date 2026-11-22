@@ -1889,7 +1889,11 @@ impl SyncOperationStore {
                 opId: format!("{originDeviceId}:{sequence}"), originDeviceId: originDeviceId.into(), sequence,
                 domain: operation.domain, entityType: operation.entityType, entityId: operation.entityId,
                 operation: operation.operation, semantics: operation.semantics, payload: operation.payload,
-                createdAt: currentTimeMillis()?, schemaVersion: 1,
+                // Hybrid logical clock: never stamp a local edit below a business time
+                // this journal already holds (received peer work included), so a device
+                // with a fast wall clock cannot win LWW forever. A normal local clock
+                // still wins whenever it is ahead of everything seen.
+                createdAt: currentTimeMillis()?.max(journal.highest_business_time()?.saturating_add(1)), schemaVersion: 1,
             };
             let stored = self.encodeOperationPayload(&op)?;
             journal.transaction(|tx| {
