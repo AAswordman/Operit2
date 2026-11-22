@@ -2077,6 +2077,50 @@ fn incremental_object_merge_bookkeeping_does_not_require_a_full_snapshot() {
     source.dispose(); target.dispose();
 }
 
+/// Merge aliases describe one equivalence graph; spelling it at a different depth is not content drift.
+#[test]
+fn merge_alias_chain_depth_is_not_business_content() {
+    let fixture = Fixture::new("alias-closure");
+    let _handle = open_object_merge_fixture(&fixture);
+    let store = SqliteStore::openWithHost(fixture.host.clone(), &fixture.path).unwrap();
+    let text = |value: &str| operit_host_api::SqliteValue::Text(value.to_owned());
+    // Returns both summary paths: the stored one streams from disk, the decoded one compares values,
+    // so a rule that only holds in one of them cannot pass unnoticed.
+    let summary = |rows: &[(&str, &str, &str)]| {
+        store.executeBatch("DELETE FROM _operit_merge_map").unwrap();
+        for (collection, remote, canonical) in rows {
+            store.execute("INSERT INTO _operit_merge_map VALUES(?1,'preferences',?2,?3)",
+                vec![text(collection), text(remote), text(canonical)]).unwrap();
+        }
+        let snapshot = PluginStorage::syncSnapshot(fixture.host.clone(), &fixture.path, fixture.device).unwrap();
+        let mut decoded = snapshot.clone();
+        decoded.data = serde_json::from_slice(&serde_json::to_vec(&decoded.data).unwrap()).unwrap();
+        (PluginStorage::snapshotContentSummary(&snapshot).unwrap(), PluginStorage::snapshotContentSummary(&decoded).unwrap())
+    };
+    // One peer rewrites `x -> b -> z` into `x -> z`; another re-declares `x -> b`. Both mean the same.
+    assert_eq!(summary(&[("cards", "x", "b"), ("cards", "b", "z")]),
+        summary(&[("cards", "x", "z"), ("cards", "b", "z")]));
+    // A preference alias qualifies its source with the declaring file; the chain still follows.
+    assert_eq!(
+        summary(&[("_preference_aliases", "cards.preferences.json\u{1f}x", "b"),
+            ("_preference_aliases", "cards.preferences.json\u{1f}b", "z")]),
+        summary(&[("_preference_aliases", "cards.preferences.json\u{1f}x", "z"),
+            ("_preference_aliases", "cards.preferences.json\u{1f}b", "z")]));
+    // Names from different files are not one equivalence space, so their chains never join.
+    assert_ne!(
+        summary(&[("_preference_aliases", "cards.preferences.json\u{1f}x", "b"),
+            ("_preference_aliases", "chats.preferences.json\u{1f}b", "z")]),
+        summary(&[("_preference_aliases", "cards.preferences.json\u{1f}x", "z"),
+            ("_preference_aliases", "cards.preferences.json\u{1f}b", "z")]));
+    // The same depth with a different surviving identity is still an identity disagreement.
+    assert_ne!(summary(&[("cards", "x", "z"), ("cards", "b", "z")]),
+        summary(&[("cards", "x", "y"), ("cards", "b", "z")]));
+    // An unresolvable chain keeps its recorded targets instead of inventing a closure.
+    assert_ne!(summary(&[("cards", "x", "z"), ("cards", "b", "z")]),
+        summary(&[("cards", "x", "b"), ("cards", "b", "x")]));
+    drop(store); fixture.dispose();
+}
+
 #[test]
 fn corrected_plugin_logs_collapse_on_both_peers_and_initialize_an_offline_peer() {
     let source = Fixture::new("compaction-source");

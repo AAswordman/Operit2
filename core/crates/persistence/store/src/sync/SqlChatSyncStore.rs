@@ -141,8 +141,8 @@ impl SqlChatSyncStore {
     pub fn snapshotContentSummary(snapshot: &crate::Transaction::Snapshot) -> Result<(String, u64), String> {
         if let Some(sql)=&snapshot.data.sql { return sql.content_summary(&snapshot.data.owner); }
         snapshot.projected_content_summary(|table, value| match table {
-            "messages" => crate::Transaction::project_sql_table(value, &["messageId"], None).map(Some),
-            "message_variants" => crate::Transaction::project_sql_table(value, &["variantId"], None).map(Some),
+            "messages" => crate::Transaction::project_sql_table(value, &["messageId"]).map(Some),
+            "message_variants" => crate::Transaction::project_sql_table(value, &["variantId"]).map(Some),
             _ => Ok(None),
         })
     }

@@ -140,7 +140,7 @@ impl SqlSnapshot {
         if self.columns.values().any(Vec::is_empty) { return Err("Missing synchronized SQL table".into()); }
         let mut projected_columns = self.columns.clone();
         for (name, columns) in &self.columns {
-            let (local, identity): (&[&str],Option<(&str,&str)>) = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH {
+            let (local, alias): (&[&str],Option<(&str,&str)>) = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH {
                 match name.as_str() {
                     "messages"=>( &["messageId"],None), "message_variants"=>( &["variantId"],None),
                     // Scope clocks record which device last wrote each range, not the range contents.
@@ -149,14 +149,29 @@ impl SqlSnapshot {
             } else {
                 match name.as_str() {
                     "_operit_values"=>( &["version"],None),
+                    // Aliases only mean something together, so this table is resolved as one graph.
                     "_operit_merge_map"=>( &["origin"],Some(("remote_key","canonical_key"))),
                     // Last writer per synchronized record; two peers holding the same record still differ here.
                     "_operit_versions"=>( &["created_at","origin","sequence"],None),
                     _=>continue }
             };
-            let identity = identity.map(|(a,b)| Ok::<_,String>((columns.iter().position(|v|v==a).ok_or("Missing identity source column")?,columns.iter().position(|v|v==b).ok_or("Missing identity destination column")?))).transpose()?;
             let removed = columns.iter().enumerate().filter_map(|(i,v)|local.contains(&v.as_str()).then_some(i)).collect::<Vec<_>>();
             projected_columns.insert(name.clone(),columns.iter().filter(|v|!local.contains(&v.as_str())).cloned().collect());
+            if let Some((source,target)) = alias {
+                // Tiny by construction: the alias graph is rows of identity equivalence, not payload.
+                let resolved = super::project_sql_alias_closure(&self.table(name)?, local, source, target)?;
+                let rows = resolved["rows"].as_array().ok_or("Missing projected alias rows")?
+                    .iter().map(|row| serde_json::to_string(row).map_err(|e|e.to_string())).collect::<Result<Vec<_>>>()?;
+                self.store().transaction(|tx| {
+                    tx.execute("DELETE FROM projected WHERE name=?1",vec![SqliteValue::Text(name.clone())])?;
+                    for row in &rows {
+                        tx.execute("INSERT OR IGNORE INTO projected(name,value) VALUES(?1,?2)",
+                            vec![SqliteValue::Text(name.clone()),SqliteValue::Text(row.clone())])?;
+                    }
+                    Ok(())
+                }).map_err(|e|e.to_string())?;
+                continue;
+            }
             // SQLite projects and sorts on disk without a Rust row or sort-key collection.
             self.store().transaction(|tx| {
                 let params=vec![SqliteValue::Text(name.clone())];
@@ -165,8 +180,7 @@ impl SqlSnapshot {
                 tx.execute("DELETE FROM projected WHERE name=?1",params.clone())?;
                 let paths=removed.iter().rev().map(|i|format!(",'$[{i}]'")).collect::<String>();
                 let value=if paths.is_empty() { "value".into() } else { format!("json_remove(value{paths})") };
-                let filter=identity.map_or(String::new(),|(a,b)|format!(" AND json_extract(value,'$[{a}]')!=json_extract(value,'$[{b}]')"));
-                tx.execute(&format!("INSERT OR IGNORE INTO projected SELECT name,{value} FROM rows WHERE name=?1{filter}"),params)?;
+                tx.execute(&format!("INSERT OR IGNORE INTO projected SELECT name,{value} FROM rows WHERE name=?1"),params)?;
                 Ok(())
             }).map_err(|e|e.to_string())?;
         }

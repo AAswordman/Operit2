@@ -1577,13 +1577,15 @@ pub fn snapshotContentSummary(snapshot: &crate::Transaction::Snapshot) -> Result
     if let Some(sql)=&snapshot.data.sql { return sql.content_summary(&snapshot.data.owner); }
     snapshot.projected_content_summary(|table, value| match table {
         // Derived reference/name projection may allocate a device-local CAS token.
-        "_operit_values" => crate::Transaction::project_sql_table(value, &["version"], None).map(Some),
+        "_operit_values" => crate::Transaction::project_sql_table(value, &["version"]).map(Some),
         // Last writer per synchronized record: two peers that hold identical records still
         // differ here, so it cannot participate in content equality.
-        "_operit_versions" => crate::Transaction::project_sql_table(value, &["created_at", "origin", "sequence"], None).map(Some),
-        // A receipt's self mapping and the origin recording an equivalent alias do not change its meaning.
-        // Real aliases remain in the comparison so an identity disagreement still requires correction.
-        "_operit_merge_map" => crate::Transaction::project_sql_table(value, &["origin"], Some(("remote_key", "canonical_key"))).map(Some),
+        "_operit_versions" => crate::Transaction::project_sql_table(value, &["created_at", "origin", "sequence"]).map(Some),
+        // A receipt's self mapping and the origin recording an equivalent alias do not change its meaning,
+        // and neither does the chain depth peers use to spell the same equivalence: one rewrites
+        // `a -> b -> c` into `a -> c`, another re-declares `a -> b`. Aliases are compared as resolved
+        // identities, so a genuine identity disagreement still requires correction.
+        "_operit_merge_map" => crate::Transaction::project_sql_alias_closure(value, &["origin"], "remote_key", "canonical_key").map(Some),
         _ => Ok(None),
     })
 }
