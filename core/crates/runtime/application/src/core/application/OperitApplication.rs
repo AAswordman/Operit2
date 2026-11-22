@@ -945,7 +945,7 @@ impl OperitApplication {
         let managedFiles = self.runtimeWorkspaceFileSyncStore()?;
         for reference in managedFiles.deferredBlobs()? {
             operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
-                "sync_clock.blob hash={} bytes={} source=deferred", &reference.contentHash[..12], reference.size));
+                "sync_clock.blob hash={} bytes={} source=deferred", syncTraceHashPrefix(&reference.contentHash), reference.size));
             blobs.insert(reference.contentHash.clone(), reference);
         }
         for operation in states.into_values() {
@@ -955,7 +955,7 @@ impl OperitApplication {
                 Ok(Some(reference)) => {
                     operit_util::AppLogger::AppLogger::trace("CoreSyncTrace", &format!(
                         "sync_clock.blob hash={} bytes={} source=pending-op op={} entity={}",
-                        &reference.contentHash[..12], reference.size, operation.opId, operation.entityId));
+                        syncTraceHashPrefix(&reference.contentHash), reference.size, operation.opId, operation.entityId));
                     blobs.insert(reference.contentHash.clone(), reference);
                 }
                 Ok(None) => {}
@@ -1362,6 +1362,33 @@ fn synchronizedChatId(operation: &SyncOperation) -> Option<String> {
 impl Default for OperitApplication {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Returns a short log prefix without panicking on malformed or multibyte content hashes.
+fn syncTraceHashPrefix(contentHash: &str) -> &str {
+    contentHash.get(..12).unwrap_or(contentHash)
+}
+
+#[cfg(test)]
+mod sync_trace_hash_prefix_tests {
+    use super::syncTraceHashPrefix;
+
+    #[test]
+    fn long_hash_uses_first_twelve_bytes() {
+        assert_eq!(syncTraceHashPrefix("0123456789abcdef0123"), "0123456789ab");
+    }
+
+    #[test]
+    fn short_or_empty_hash_is_returned_whole() {
+        assert_eq!(syncTraceHashPrefix("abc"), "abc");
+        assert_eq!(syncTraceHashPrefix(""), "");
+    }
+
+    #[test]
+    fn multibyte_hash_falls_back_to_whole_value() {
+        let hash = "a".repeat(11) + "中";
+        assert_eq!(syncTraceHashPrefix(&hash), hash);
     }
 }
 

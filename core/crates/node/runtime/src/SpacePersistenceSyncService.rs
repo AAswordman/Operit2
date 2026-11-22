@@ -1211,7 +1211,7 @@ impl SpacePersistenceSyncService {
                         .map(|ids| ids.join(",")).unwrap_or_else(|| "receipt".to_string());
                     operit_util::AppLogger::AppLogger::i("CoreSyncTrace", &format!(
                         "sync_blobs.required target={targetNodeId} hash={} bytes={} holder={} ops={}",
-                        &reference.contentHash[..12], reference.size, if local {"local"} else {"remote"}, ops));
+                        reference.contentHash.get(..12).unwrap_or(&reference.contentHash), reference.size, if local {"local"} else {"remote"}, ops));
                     pending.push((reference,local));
                 },
                 Err(error) => errors.push(error),
