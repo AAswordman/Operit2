@@ -23,7 +23,7 @@ operit-host-native-common = { path = "../common/operit-host-native-common", defa
 operit-host-native-plugin-sdk-ipc = { path = "../common/operit-host-native-plugin-sdk-ipc" }
 portable-pty = "0.9.0"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["http2", "blocking", "multipart", "rustls-tls"] }
 serde = "1"
 serde_json = "1"
 tungstenite = "0.24"

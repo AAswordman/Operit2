@@ -22,7 +22,7 @@ operit-host-api = { path = "../../core/crates/foundation/host-api" }
 operit-host-native-common = { path = "../common/operit-host-native-common", default-features = false, features = ["tcp", "serial", "fs", "http", "scheduler", "storage", "app-install"] }
 operit-host-native-plugin-sdk-ipc = { path = "../common/operit-host-native-plugin-sdk-ipc" }
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["blocking", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["http2", "blocking", "multipart", "rustls-tls"] }
 serde = "1"
 serde_json = "1"
 sha2 = "0.10"

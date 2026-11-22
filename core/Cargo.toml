@@ -43,7 +43,7 @@ publish = false
 async-trait = "0.1"
 futures-util = "0.3"
 getrandom = "0.2"
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "blocking", "multipart", "rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["http2", "json", "stream", "blocking", "multipart", "rustls-tls"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["unbounded_depth"] }
 semver = "1"

@@ -9,13 +9,18 @@ publish = false
 async-trait = "0.1"
 axum = { version = "0.7", features = ["ws"] }
 http-body-util = "0.1"
-hyper = { version = "1", features = ["server", "http1"] }
-hyper-util = { version = "0.1", features = ["tokio"] }
+hyper = { version = "1", features = ["server", "http1", "http2"] }
+hyper-util = { version = "0.1", features = ["tokio", "server-auto"] }
 tower = "0.5"
 futures-util = "0.3"
 operit-host-native-scheduler = { path = "../operit-host-native-scheduler", default-features = false }
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
-reqwest = { version = "0.12", default-features = false, features = ["multipart", "rustls-tls", "stream"] }
+# HTTP/2 must be explicit because reqwest's default features are disabled.
+reqwest = { version = "0.12", default-features = false, features = ["http2", "multipart", "rustls-tls", "stream"] }
 # Match reqwest's bundled trust roots; iOS has no Unix CA certificate store.
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-webpki-roots"] }
 tokio = { version = "1", features = ["io-util", "macros", "net", "rt", "sync", "time"] }
+
+[dev-dependencies]
+rcgen = "0.13"
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }

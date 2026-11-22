@@ -39,7 +39,7 @@ operit-node-runtime = { path = "../../../../core/crates/node/runtime" }
 operit-host-native-storage = { path = "../../../../hosts/common/operit-host-native-storage" }
 hmac = "0.12"
 rand_core = { version = "0.6", features = ["getrandom"] }
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["http2", "rustls-tls"] }
 sha2 = "0.10"
 tokio = { version = "1", default-features = false, features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 mdns-sd = "0.12"

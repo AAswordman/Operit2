@@ -414,6 +414,7 @@ mod tests {
             (b"POST /link HTTP/1.1\r\n".as_slice(), true),
             (b"OPTIONS /link HTTP/1.1\r\n".as_slice(), true),
             (b"M-SEARCH * HTTP/1.1\r\n".as_slice(), true),
+            (b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".as_slice(), true),
             (b"\x00\x00\x00\x04\x92\x01\x02\x03".as_slice(), false),
             (b"POST\x92\x01\x02\x03".as_slice(), false),
             (b"GET \x92\x01\x02\x03".as_slice(), false),
