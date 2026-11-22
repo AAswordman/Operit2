@@ -731,6 +731,9 @@ class _ToolInlineDetailSurfaceState extends State<ToolInlineDetailSurface> {
               constraints: const BoxConstraints.tightFor(width: 28, height: 28),
               padding: EdgeInsets.zero,
               visualDensity: VisualDensity.compact,
+              style: IconButton.styleFrom(
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
               icon: Icon(Icons.copy, size: 14, color: color),
               onPressed: () => Clipboard.setData(ClipboardData(text: _text)),
             ),

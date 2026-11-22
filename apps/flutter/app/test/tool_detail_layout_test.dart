@@ -278,4 +278,40 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('updated'), findsNothing);
   });
+
+  testWidgets('detail header keeps compact height on mobile platforms', (
+    tester,
+  ) async {
+    Widget surfaceFor(TargetPlatform platform) {
+      return MaterialApp(
+        theme: ThemeData(platform: platform),
+        home: const Scaffold(
+          body: Align(
+            alignment: Alignment.topLeft,
+            child: SizedBox(
+              width: 320,
+              child: ToolInlineDetailSurface(
+                title: 'Parameters',
+                text: 'payload',
+                initiallyCollapsed: true,
+              ),
+            ),
+          ),
+        ),
+      );
+    }
+
+    await tester.pumpWidget(surfaceFor(TargetPlatform.macOS));
+    final desktopSize = tester.getSize(find.byType(ToolInlineDetailSurface));
+
+    await tester.pumpWidget(surfaceFor(TargetPlatform.android));
+    final androidSize = tester.getSize(find.byType(ToolInlineDetailSurface));
+
+    await tester.pumpWidget(surfaceFor(TargetPlatform.iOS));
+    final iosSize = tester.getSize(find.byType(ToolInlineDetailSurface));
+
+    expect(androidSize.height, desktopSize.height);
+    expect(iosSize.height, desktopSize.height);
+    expect(androidSize.height, lessThan(36));
+  });
 }
