@@ -670,7 +670,8 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("action", "string", "one of: list, create, select, close", true, None),
-                        param("index", "integer", "optional tab index used by select or close", false, None)
+                        param("index", "integer", "optional tab index used by select or close", false, None),
+                        param("url", "string", "optional URL to open in the created tab", false, None)
                     ],
                     "",
                     "",
@@ -1908,7 +1909,8 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                     "",
                     vec![
                         param("action", "string", "list/create/select/close 之一", true, None),
-                        param("index", "integer", "可选，select 或 close 使用的 tab 索引", false, None)
+                        param("index", "integer", "可选，select 或 close 使用的 tab 索引", false, None),
+                        param("url", "string", "可选，create 时新 tab 打开的 URL", false, None)
                     ],
                     "",
                     "",
