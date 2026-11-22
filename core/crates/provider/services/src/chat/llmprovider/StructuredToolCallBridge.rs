@@ -1191,6 +1191,11 @@ fn removeThinkingContent(content: &str) -> String {
     let mut ranges = ChatMarkupRegex::think_ranges(content);
     ranges.sort_by_key(|range| range.0);
     for (start, end) in ranges {
+        // think/thinking ranges can nest or overlap; never slice backwards.
+        if start < cursor {
+            cursor = cursor.max(end);
+            continue;
+        }
         output.push_str(&content[cursor..start]);
         cursor = end;
     }
@@ -1549,5 +1554,22 @@ mod tests {
             let expected = block.body.strip_prefix("<content>").unwrap().strip_suffix("</content>").unwrap();
             assert_eq!(result.get("content").and_then(Value::as_str), Some(expected));
         }
+    }
+
+    /// Verifies overlapping think/thinking ranges cannot invert the slice cursor.
+    #[test]
+    fn removeThinkingContentToleratesOverlappingThinkRanges() {
+        assert_eq!(
+            super::removeThinkingContent("<think>a<thinking>b</thinking>c</think>tail"),
+            "tail"
+        );
+        assert_eq!(
+            super::removeThinkingContent("<think>abc<thinking>def</thinking>tail"),
+            ""
+        );
+        assert_eq!(
+            super::removeThinkingContent("visible<think>hidden</think>after"),
+            "visibleafter"
+        );
     }
 }

@@ -1427,6 +1427,11 @@ fn remove_thinking_content(content: &str) -> String {
     let mut ranges = ChatMarkupRegex::think_ranges(content);
     ranges.sort_by_key(|range| range.0);
     for (start, end) in ranges {
+        // think/thinking ranges can nest or overlap; never slice backwards.
+        if start < cursor {
+            cursor = cursor.max(end);
+            continue;
+        }
         output.push_str(&content[cursor..start]);
         cursor = end;
     }
