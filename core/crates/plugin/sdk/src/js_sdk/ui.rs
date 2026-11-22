@@ -89,8 +89,8 @@ pub struct UIWindowList {
 pub trait UIHost: Send + Sync {
     /// Lists native windows with stable IDs, titles, bounds and focus state.
     fn listWindows(&self) -> JsFuture<UIWindowList>;
-    /// Focuses exactly the native window returned by listWindows.
-    fn focusWindow(&self, window_id: String) -> JsFuture<UIActionResultData>;
+    /// Selects a native window; omit the ID to clear selection, and pass close_windows to release hosted screens.
+    fn focusWindow(&self, window_id: Option<String>, close_windows: Option<bool>) -> JsFuture<UIActionResultData>;
     ///
     ///Get current page information
     ///

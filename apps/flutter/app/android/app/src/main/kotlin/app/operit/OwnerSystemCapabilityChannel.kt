@@ -84,7 +84,10 @@ class OwnerSystemCapabilityChannel(
 
     private var cachedMediaProjectionCaptureManager: MediaProjectionCaptureManager? = null
     private val uiServer = AndroidUiServer(activity.applicationContext)
-    private val uiAutomation = AndroidUiAutomation(activity.applicationContext, uiServer)
+    private val uiAutomation = AndroidUiAutomation(activity.applicationContext, uiServer) {
+        val file = File(captureScreenshotToFile())
+        try { file.readBytes() } finally { file.delete() }
+    }
     private var cachedMediaProjection: MediaProjection? = null
     private val ttsPlaybackLock = Any()
     private val ttsPlaybackSynthesisLock = Any()

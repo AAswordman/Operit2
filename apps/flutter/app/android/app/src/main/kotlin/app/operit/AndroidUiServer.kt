@@ -56,6 +56,13 @@ internal class AndroidUiServer(private val context: Context) {
         server?.let { call(it, JSONObject().put("operation", "close_package").put("packageName", packageName)) }
     }
 
+    /** Releases hosted screens after automation completes without terminating the reusable window server. */
+    @Synchronized
+    fun closeWindows() {
+        check(!released) { "Android window owner has been released" }
+        server?.let { call(it, JSONObject().put("operation", "close_windows")) }
+    }
+
     /** Disposes windows through Host scheduling without blocking Android's lifecycle thread. */
     fun release() {
         released = true
@@ -128,7 +135,7 @@ internal class AndroidUiServer(private val context: Context) {
                 "${quote(nonce)} ${quote(nativeLibrary)} > ${quote("$directory/server.log")} 2>&1 < /dev/null &")
             launched = true
             val endpoint = ready.get(12, TimeUnit.SECONDS)
-            check(endpoint.protocolVersion == 1) { "Unsupported Android window server protocol" }
+            check(endpoint.protocolVersion == 2) { "Unsupported Android window server protocol" }
             val windowSession = Class.forName("android.view.WindowManagerGlobal")
                 .getMethod("getWindowSession").invoke(null) as android.os.IInterface
             endpoint.attach(owner, windowSession.asBinder())

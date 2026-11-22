@@ -391,6 +391,9 @@ fn append_ui_summary(node: &SimplifiedUINode, prefix: &str, depth: usize, output
         if node.properties.get("isEnabled").and_then(serde_json::Value::as_bool) == Some(false) {
             fields.push("disabled".into());
         }
+        if node.properties.get("isVisible").and_then(serde_json::Value::as_bool) == Some(false) {
+            fields.push("invisible".into());
+        }
         if node.properties.get("isCheckable").and_then(serde_json::Value::as_bool) == Some(true)
             && node.properties.get("isChecked").and_then(serde_json::Value::as_bool) == Some(false) {
             fields.push("unchecked".into());
@@ -452,6 +455,17 @@ mod ui_summary_tests {
         assert!(summary.contains('…'));
         assert!(summary.len() < 1500);
         assert!(root.children[0].text.as_ref().unwrap().len() > 30_000);
+    }
+
+    /// Preserves hidden native nodes while telling the model they are not current input targets.
+    #[test]
+    fn summary_marks_invisible_and_disabled_nodes() {
+        let mut node = button("Offscreen item");
+        node.properties.insert("isVisible".into(), serde_json::json!(false));
+        node.properties.insert("isEnabled".into(), serde_json::json!(false));
+        let summary = node.toTreeString(None);
+        assert!(summary.contains("disabled invisible"));
+        assert_eq!(node.text.as_deref(), Some("Offscreen item"));
     }
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]

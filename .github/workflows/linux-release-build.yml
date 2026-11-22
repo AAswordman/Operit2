@@ -55,7 +55,22 @@ jobs:
             libc6-dev-arm64-cross \
             musl-tools \
             ninja-build \
-            pkg-config
+            pkg-config \
+            python3-pyatspi \
+            python3-gi-cairo \
+            python3-cairo \
+            libxcomposite1 \
+            libxtst6 \
+            at-spi2-core \
+            dbus-x11 \
+            xvfb \
+            openbox \
+            xcompmgr
+
+      - name: Check native Linux window automation
+        run: |
+          /usr/bin/python3 tools/tests/test_ui_automation_linux.py
+          dbus-run-session -- /usr/bin/python3 tools/tests/test_linux_window_preview.py
 
       - name: Install bootstrap Dart
         uses: dart-lang/setup-dart@v1

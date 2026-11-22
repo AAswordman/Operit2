@@ -55,6 +55,7 @@ impl UiToolExecutor {
                 truncated: page.truncated,
                 scope: match page.scope {
                     UiScope::Desktop => "desktop",
+                    UiScope::Window => "window",
                 }
                 .into(),
             };
@@ -69,7 +70,7 @@ impl UiToolExecutor {
         }
         let mut operation = tool.name.as_str();
         let allowed = match operation {
-            "focus_window" => &["window_id"][..],
+            "focus_window" => &["window_id", "close_windows"][..],
             "tap" | "long_press" => &["x", "y"][..],
             "swipe" => &["start_x", "start_y", "end_x", "end_y", "duration"][..],
             "set_input_text" => &["text", "resource_id"][..],
@@ -97,11 +98,7 @@ impl UiToolExecutor {
             let node = matches
                 .get(index)
                 .ok_or("No accessible element matches the requested selector and index")?;
-            let (x, y) = bounds_center(
-                node.bounds
-                    .as_deref()
-                    .ok_or("Selected element has no bounds")?,
-            )?;
+            let (x, y) = click_position(node)?;
             parameters =
                 Map::from_iter([("x".into(), Value::from(x)), ("y".into(), Value::from(y))]);
             operation = "tap";
@@ -141,8 +138,17 @@ impl UiToolExecutor {
         if operation == "press_key" && !parameters.contains_key("key_code") {
             return Err("keyCode is required".into());
         }
-        if operation == "focus_window" && !parameters.get("window_id").is_some_and(|value| !text(value).trim().is_empty()) {
-            return Err("window_id is required and must not be empty".into());
+        if operation == "focus_window" && parameters.get("window_id").is_some_and(|value| text(value).trim().is_empty()) {
+            return Err("window_id must not be empty; omit it to return to the main screen".into());
+        }
+        if operation == "focus_window" {
+            if let Some(value) = parameters.get("close_windows") {
+                let close = text(value).parse::<bool>().map_err(|_| "close_windows must be boolean")?;
+                if close && parameters.contains_key("window_id") {
+                    return Err("close_windows requires clearing selection; omit window_id".into());
+                }
+                parameters.insert("close_windows".into(), Value::Bool(close));
+            }
         }
         let coordinates = parameters
             .get("x")
@@ -338,7 +344,20 @@ fn collect_matches<'a>(
     Ok(())
 }
 
-/// Parses the canonical bounds grammar and rejects inverted or empty rectangles.
+/// Rejects unavailable native elements before resolving their input coordinates.
+fn click_position(node: &UiNode) -> Result<(f64, f64), String> {
+    if node.properties.get("isVisible").and_then(Value::as_bool) == Some(false)
+        || node.properties.get("isOffscreen").and_then(Value::as_bool) == Some(true)
+    {
+        return Err("Selected element is not visible; scroll it into view and read a fresh tree".into());
+    }
+    if node.properties.get("isEnabled").and_then(Value::as_bool) == Some(false) {
+        return Err("Selected element is disabled".into());
+    }
+    bounds_center(node.bounds.as_deref().ok_or("Selected element has no bounds")?)
+}
+
+/// Parses canonical bounds and rejects inverted, empty or one-pixel clipped rectangles.
 fn bounds_center(bounds: &str) -> Result<(f64, f64), String> {
     let pattern = regex::Regex::new(r"^\[(-?\d+),(-?\d+)\]\[(-?\d+),(-?\d+)\]$")
         .expect("static bounds regex");
@@ -354,6 +373,9 @@ fn bounds_center(bounds: &str) -> Result<(f64, f64), String> {
         .collect::<Result<Vec<_>, _>>()?;
     if values[2] <= values[0] || values[3] <= values[1] {
         return Err("Element has empty or inverted bounds".into());
+    }
+    if i64::from(values[2]) - i64::from(values[0]) <= 1 || i64::from(values[3]) - i64::from(values[1]) <= 1 {
+        return Err("Selected element has only a clipped edge visible; scroll it into view and read a fresh tree".into());
     }
     Ok((
         (values[0] as f64 + values[2] as f64) / 2.0,
@@ -375,6 +397,10 @@ mod tests {
         actions: Mutex<Vec<(String, Value)>>,
     }
     impl UiAutomationHost for FakeHost {
+        /// Rejects screenshots in tests that exercise only tree and input operations.
+        fn capture_screenshot(&self) -> HostResult<Vec<u8>> {
+            Err(operit_host_api::HostError::new("Unexpected screenshot"))
+        }
         /// Supplies a stable native window identity for discovery tests.
         fn list_windows(&self) -> HostResult<Vec<operit_host_api::UiAutomation::UiWindow>> {
             Ok(vec![operit_host_api::UiAutomation::UiWindow {
@@ -495,6 +521,12 @@ mod tests {
         assert!(executor.execute(&call("focus_window", &[("window_id", "")])).is_err());
         assert!(executor.execute(&call("get_page_info", &[("window_id", "")])).is_err());
         assert!(executor.execute(&call("list_windows", &[("window_id", "editor:1")])).is_err());
+        executor.execute(&call("focus_window", &[])).unwrap();
+        assert_eq!(host.actions.lock().unwrap().last().unwrap(), &("focus_window".into(), serde_json::json!({})));
+        executor.execute(&call("focus_window", &[("close_windows", "true")])).unwrap();
+        assert_eq!(host.actions.lock().unwrap().last().unwrap(), &("focus_window".into(), serde_json::json!({"close_windows": true})));
+        assert!(executor.execute(&call("focus_window", &[("window_id", "editor:1"), ("close_windows", "true")])).is_err());
+        assert!(executor.execute(&call("focus_window", &[("close_windows", "invalid")])).is_err());
     }
 
     /// Exercises exact selection, partial matching, indexes and negative monitor coordinates.
@@ -544,6 +576,28 @@ mod tests {
             assert!(executor.execute(&tool).is_err());
         }
         assert!(host.actions.lock().unwrap().is_empty());
+    }
+
+    /// Rejects a one-pixel viewport remnant instead of tapping a clipped scrolling item.
+    #[test]
+    fn clipped_edges_are_not_click_targets() {
+        assert!(bounds_center("[252,1907][419,1908]").unwrap_err().contains("scroll"));
+        assert!(bounds_center("[10,20][11,50]").is_err());
+        assert_eq!(bounds_center("[-20,40][0,60]").unwrap(), (-10.0, 50.0));
+    }
+
+    /// Uses native visibility and enabled flags without discarding nodes from inspection.
+    #[test]
+    fn unavailable_nodes_are_not_click_targets() {
+        let mut node: UiNode = serde_json::from_value(serde_json::json!({
+            "bounds": "[10,20][30,40]", "isClickable": true, "children": [],
+        })).unwrap();
+        assert_eq!(click_position(&node).unwrap(), (20.0, 30.0));
+        for (key, value) in [("isVisible", false), ("isEnabled", false), ("isOffscreen", true)] {
+            node.properties.clear();
+            node.properties.insert(key.into(), Value::Bool(value));
+            assert!(click_position(&node).is_err(), "{key}");
+        }
     }
 
     /// Empty input remains a valid request to clear the selected text field.

@@ -10,6 +10,7 @@ repository = "https://github.com/AAswordman/Operit2"
 documentation = "https://docs.rs/operit-host-contract"
 
 [dependencies]
+base64.workspace = true
 chrono.workspace = true
 bytes = "1"
 http = "1"

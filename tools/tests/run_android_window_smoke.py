@@ -94,7 +94,7 @@ def verify(output):
     def grip(window):
         """Finds the top-center handle relative to the card's live content bounds."""
         left, top, right, _ = bounds(window)
-        return (left + right) // 2, top + round(13 * density)
+        return (left + right) // 2, top + round(10 * density)
 
     def minimize(window):
         """Taps the compact handle and its transient first menu action."""
@@ -165,6 +165,29 @@ def verify(output):
     assert_aspect(resized_left)
     evidence["resize_both_corners"] = [resized_right, resized_left]
 
+    docked_from_resize = []
+    for side in (1, -1):
+        before_resize = current(documents)
+        left, top, right, bottom = bounds(before_resize)
+        corner_x = right - round(17 * density) if side > 0 else left + round(17 * density)
+        corner_y = bottom - round(15 * density)
+        shrink = round(144 * density) - (right - left)
+        shell("input", "swipe", corner_x, corner_y,
+              corner_x + side * shrink, corner_y + round(1.5 * shrink), 850)
+        time.sleep(0.55)
+        docked = current(documents)
+        assert docked["isMinimized"] and docked["displayId"] == documents["displayId"], docked
+        control(operation="focus", windowId=documents["windowId"])
+        time.sleep(0.55)
+        expanded = current(documents)
+        assert not expanded["isMinimized"], expanded
+        assert bounds(expanded)[2] - bounds(expanded)[0] == round(184 * density), expanded
+        assert bounds(expanded)[1] == top, expanded
+        assert bounds(expanded)[0 if side > 0 else 2] == (left if side > 0 else right), expanded
+        docked_from_resize.append({"side": side, "docked": docked, "restored": expanded})
+    evidence["resize_to_dock"] = docked_from_resize
+    resized_left = current(documents)
+
     evidence["documents"] = current(documents)
     evidence["two_windows"] = control(operation="windows")
     assert len(evidence["two_windows"]["windows"]) == 2
@@ -203,6 +226,24 @@ def verify(output):
         evidence["stale_id_rejected"] = str(error)
     else:
         raise AssertionError("Closed window ID was accepted")
+
+    task_before = next(block for block in re.split(r"(?m)(?=^RootTask id=)", shell("am", "stack", "list"))
+                       if re.search(rf"^RootTask id=\d+ .* displayId={clock['displayId']}\b", block))
+    task_id = re.match(r"RootTask id=(\d+)", task_before).group(1)
+    clock = current(clock)
+    center, handle_y = grip(clock)
+    shell("input", "tap", center, handle_y)
+    time.sleep(0.2)
+    shell("input", "tap", center, bounds(clock)[1] + round(84 * density))
+    time.sleep(0.7)
+    task_after = next(block for block in re.split(r"(?m)(?=^RootTask id=)", shell("am", "stack", "list"))
+                      if re.match(rf"RootTask id={task_id}\b", block))
+    assert re.search(r"^RootTask .* displayId=0\b", task_after), task_after
+    assert "mWindowingMode=fullscreen" in task_after, task_after
+    assert "com.google.android.deskclock" in task_after, task_after
+    capture("06-fullscreen-same-task.png")
+    evidence["fullscreen_task"] = {"before": task_before, "after": task_after}
+    assert not control(operation="windows")["windows"]
     process = next(line for line in shell("ps", "-A", "-o", "UID,PID,ARGS").splitlines()
                    if "app.operit.uiserver.UiServerMain" in line)
     assert process.split()[0] == "2000", process
@@ -215,7 +256,7 @@ def verify(output):
     time.sleep(1)
     assert "app.operit.uiserver.UiServerMain" not in shell("ps", "-A", "-o", "ARGS")
     assert "operit-ui-device-smoke" not in shell("ls", "/data/local/tmp")
-    print("PASS: direct Surface, physical touch, per-display trees/input, inertial drag, both resize corners, upper-right dock, touch/Binder restore, owner cleanup")
+    print("PASS: direct Surface, physical touch, per-display trees/input, inertial drag, both resize corners, resize-to-dock, touch/Binder restore, same-task fullscreen, owner cleanup")
 
 
 def main():

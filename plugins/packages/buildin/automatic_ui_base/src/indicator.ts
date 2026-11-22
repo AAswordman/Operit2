@@ -14,6 +14,7 @@ let visibility: "unknown" | "foreground" | "background" | "detached" = "unknown"
 let pending: Promise<void> = Promise.resolve();
 let refresh: ReturnType<typeof setTimeout> | undefined;
 let querying = false;
+let closeWindowsPending = false;
 
 /** Serializes chat changes, target refreshes and host requests. */
 function enqueue(action: () => Promise<void>): Promise<void> {
@@ -23,22 +24,31 @@ function enqueue(action: () => Promise<void>): Promise<void> {
 }
 
 /** Keeps the chosen window across subsequent coordinate/key operations. */
-export function beginOperation(chatId: string, windowId?: string): Promise<void> {
+export function beginOperation(chatId: string, windowId?: string | null): Promise<void> {
   return enqueue(async () => {
     if (!chatId?.trim()) throw new Error("UI operation requires a chat context");
     if (visibility === "detached") return;
-    activeChats.set(chatId, windowId?.trim() || activeChats.get(chatId));
+    activeChats.set(chatId, windowId === null ? undefined : windowId?.trim() || activeChats.get(chatId));
     await reconcile();
   });
 }
 
 /** Releases only this chat's target, including retries after host errors. */
-export function completeOperation(chatId: string): Promise<void> {
+export function completeOperation(chatId: string, closeWindows = false): Promise<void> {
   return enqueue(async () => {
     if (!chatId?.trim()) throw new Error("UI operation requires a chat context");
+    closeWindowsPending ||= closeWindows || activeChats.has(chatId);
     activeChats.delete(chatId);
+    await releaseScreens();
     await reconcile();
   });
+}
+
+/** Awaits host-owned screen disposal only after the last active operation releases it. */
+async function releaseScreens(): Promise<void> {
+  if (!closeWindowsPending || activeChats.size) return;
+  await Tools.UI.focusWindow(undefined, true);
+  closeWindowsPending = false;
 }
 
 /** Parses native coordinates without converting physical pixels in JavaScript. */
@@ -131,9 +141,11 @@ export async function onToolLifecycle(event: ToolPkg.ToolLifecycleHookEvent): Pr
   if (event.eventName !== "tool_execution_started" || visibility === "detached") return;
   const { toolName, runtimeContext, parameters } = event.eventPayload;
   if (querying && toolName === "list_windows") return;
+  if (toolName === "focus_window" && parameters?.close_windows === "true") return;
   const chatId = runtimeContext?.chatId;
   if (!chatId || !AUTOMATION_TOOLS.has(toolName)) return;
-  await beginOperation(chatId, toolName === "focus_window" || toolName === "get_page_info" ? parameters?.window_id : undefined);
+  await beginOperation(chatId, toolName === "focus_window" ? parameters?.window_id ?? null :
+    toolName === "get_page_info" ? parameters?.window_id : undefined);
 }
 
 export async function onChatState(event: ToolPkg.ChatRuntimeHookEvent): Promise<void> {
@@ -146,7 +158,11 @@ export async function onAppLifecycle(event: ToolPkg.AppLifecycleHookEvent): Prom
     event.eventName === "application_on_background" ? "background" : "detached";
   await enqueue(async () => {
     visibility = next;
-    if (next === "detached") activeChats.clear();
+    if (next === "detached") {
+      closeWindowsPending ||= activeChats.size > 0;
+      activeChats.clear();
+      await releaseScreens();
+    }
     await reconcile();
   });
 }

@@ -4,6 +4,7 @@ from pathlib import Path
 import sys
 import types
 import unittest
+from unittest.mock import patch
 
 
 class State:
@@ -39,8 +40,12 @@ class Node:
         return self.state
 
     def get_interfaces(self):
-        """Expose no optional patterns for simple container nodes."""
-        return []
+        """Expose real desktop bounds for local-coordinate conversion."""
+        return ["Component"]
+
+    def queryComponent(self):
+        """Expose a stable frame at a nonzero desktop offset."""
+        return types.SimpleNamespace(getExtents=lambda coords: types.SimpleNamespace(x=120, y=80, width=640, height=480))
 
     def getRole(self):
         """Return a non-password role."""
@@ -63,7 +68,9 @@ class LinuxWindowAutomationTests(unittest.TestCase):
         for state in ("ACTIVE", "FOCUSED", "ENABLED", "FOCUSABLE", "EDITABLE", "SHOWING", "ICONIFIED"):
             setattr(fake, "STATE_" + state, state.lower())
         fake.ROLE_PASSWORD_TEXT = 99
-        fake.Registry = types.SimpleNamespace(getDesktop=lambda index: [self.app])
+        fake.DESKTOP_COORDS = 0
+        self.mouse = []
+        fake.Registry = types.SimpleNamespace(getDesktop=lambda index: [self.app], generateMouseEvent=lambda *args: self.mouse.append(args))
         self.original = sys.modules.get("pyatspi")
         sys.modules["pyatspi"] = fake
         path = Path(__file__).resolve().parents[2] / "hosts/linux/src/ui_automation.py"
@@ -87,8 +94,68 @@ class LinuxWindowAutomationTests(unittest.TestCase):
         self.assertEqual(page["activityName"], "background")
         self.assertEqual(page["windowId"], "42:/background")
         self.assertFalse(page["truncated"])
+        self.assertEqual(page["scope"], "window")
+        self.assertEqual(page["uiElements"]["bounds"], "[0,0][640,480]")
         with self.assertRaisesRegex(RuntimeError, "unavailable"):
             self.provider.execute({"operation": "get_page_info", "parameters": {"window_id": "closed"}})
+
+    def test_local_input_and_main_screen_coordinates(self):
+        """Translate local input once and leave unselected screen input unchanged."""
+        sent = []
+        surface = types.ModuleType("window_surface")
+        surface.send_window_input = lambda *args: sent.append(args)
+        with patch.dict(sys.modules, {"window_surface": surface}):
+            self.provider.execute({"operation": "tap", "parameters": {"window_id": "42:/active", "x": 10, "y": 20}})
+            self.provider.execute({"operation": "tap", "parameters": {"window_id": "42:/background", "x": 10, "y": 20}})
+        self.assertEqual([(item[3]["x"], item[3]["y"]) for item in sent], [(130, 100), (130, 100)])
+        self.assertEqual(self.mouse, [])
+        self.provider.execute({"operation": "tap", "parameters": {"x": 10, "y": 20}})
+        self.assertEqual(self.mouse[-1], (10, 20, "b1c"))
+        page = self.provider.execute({"operation": "get_page_info", "parameters": {}})
+        self.assertEqual(page["scope"], "desktop")
+        self.assertEqual(page["uiElements"]["bounds"], "[120,80][760,560]")
+        with self.assertRaisesRegex(ValueError, "outside"):
+            self.provider.execute({"operation": "tap", "parameters": {"window_id": "42:/active", "x": 640, "y": 20}})
+
+    def test_screenshot_keeps_the_explicit_surface(self):
+        """Route screenshots to the selected object and reject stale identities."""
+        self.provider.capture_surface = lambda window: {"target": None if window is None else window.path}
+        self.assertEqual(self.provider.execute({"operation": "capture_screenshot", "parameters": {}}), {"target": None})
+        self.assertEqual(self.provider.execute({"operation": "capture_screenshot", "parameters": {"window_id": "42:/active"}}), {"target": "/active"})
+        with self.assertRaisesRegex(RuntimeError, "unavailable"):
+            self.provider.execute({"operation": "capture_screenshot", "parameters": {"window_id": "closed"}})
+
+    def test_hosted_input_targets_the_selected_background_source(self):
+        """Avoid global desktop input while converting selected local coordinates exactly once."""
+        sent = []
+        surface = types.ModuleType("window_surface")
+        surface.send_window_input = lambda *args: sent.append(args)
+        with patch.dict(sys.modules, {"window_surface": surface}):
+            self.provider.execute({"operation": "focus_window", "parameters": {
+                "window_id": "42:/background", "hosted_window": True}})
+            self.provider.execute({"operation": "tap", "parameters": {
+                "window_id": "42:/background", "hosted_window": True, "x": 10, "y": 20}})
+        self.assertEqual(sent[0][:3], (42, (120, 80, 640, 480), "tap"))
+        self.assertEqual((sent[0][3]["x"], sent[0][3]["y"]), (130, 100))
+        self.assertEqual(self.mouse, [])
+
+    def test_preview_is_excluded_and_only_indicator_bounds_change(self):
+        """Keep source identity and tree coordinates independent from the visible viewing card."""
+        preview = Node("preview", "/preview")
+        preview.get_process_id = lambda: 99
+        preview.children = [Node("viewing card", "/card")]
+        registry = sys.modules["pyatspi"].Registry
+        registry.getDesktop = lambda index: [self.app, preview]
+        surface = types.ModuleType("window_surface")
+        surface.preview_bounds = lambda pid: "[900,20][1220,260]"
+        with patch.dict(sys.modules, {"window_surface": surface}):
+            entries = self.provider.execute({"operation": "list_windows", "parameters": {
+                "preview_process_id": 99, "preview_window_id": "42:/background"}})
+        self.assertEqual(len(entries), 2)
+        self.assertEqual(entries[1]["windowId"], "42:/background")
+        self.assertEqual(entries[1]["bounds"], "[900,20][1220,260]")
+        page = self.provider.execute({"operation": "get_page_info", "parameters": {"window_id": "42:/background"}})
+        self.assertEqual(page["uiElements"]["bounds"], "[0,0][640,480]")
 
     def test_full_tree_exceeds_the_old_width_and_depth_limits(self):
         """Retain the final descendant after more than 4000 nodes and 40 levels."""

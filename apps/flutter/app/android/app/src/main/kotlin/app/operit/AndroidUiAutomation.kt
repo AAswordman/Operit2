@@ -5,8 +5,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
 import android.os.IBinder
+import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 import app.operit.accessibility.IUiAutomationProvider
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
@@ -14,7 +19,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** Adapts the in-repository accessibility companion to the platform-neutral UI Host. */
-internal class AndroidUiAutomation(private val context: Context, private val uiServer: AndroidUiServer) {
+internal class AndroidUiAutomation(
+    private val context: Context,
+    private val uiServer: AndroidUiServer,
+    private val capturePrimary: () -> ByteArray,
+) {
     private val lock = Any()
     private val operationLock = Any()
     private var connection: ProviderConnection? = null
@@ -83,7 +92,7 @@ internal class AndroidUiAutomation(private val context: Context, private val uiS
             return synchronized(lock) {
                 check(!released && connection === binding) { "UI automation owner has been released" }
                 val service = binding.service ?: error("Operit2 Accessibility rejected the connection")
-                check(service.protocolVersion == 2) { "Update Operit2 Accessibility through the UI automation grant action" }
+                check(service.protocolVersion == 3) { "Update Operit2 Accessibility through the UI automation grant action" }
                 service
             }
         } catch (error: Exception) {
@@ -96,9 +105,17 @@ internal class AndroidUiAutomation(private val context: Context, private val uiS
 
     /** Reads the full streamed response and preserves native provider failures. */
     fun execute(request: JSONObject): JSONObject = synchronized(operationLock) {
-        val provider = requireProvider()
         val operation = request.getString("operation")
         val parameters = JSONObject(request.getJSONObject("parameters").toString())
+        if (operation == "focus_window" && !parameters.has("window_id")) {
+            if (parameters.optBoolean("close_windows", false)) uiServer.closeWindows()
+            selectedWindowId = null
+            return@synchronized JSONObject()
+        }
+        if (operation == "capture_screenshot" && selectedWindowId == null) {
+            return@synchronized JSONObject().put("pngBase64", Base64.encodeToString(capturePrimary(), Base64.NO_WRAP))
+        }
+        val provider = requireProvider()
         val hosted = uiServer.windows().objects().associateBy { it.getInt("displayId") }
         if (operation == "list_windows") {
             val result = readResponse(provider, request)
@@ -123,6 +140,19 @@ internal class AndroidUiAutomation(private val context: Context, private val uiS
             selectedWindowId?.let { parameters.put("window_id", it) }
         }
         val targetId = parameters.optString("window_id").takeIf { it.isNotEmpty() }
+        if (operation == "capture_screenshot" && Build.VERSION.SDK_INT < 30) {
+            val frame = readResponse(provider, JSONObject().put("operation", "get_window_frame").put("parameters", parameters))
+            val bytes = capturePrimary()
+            val bitmap = checkNotNull(BitmapFactory.decodeByteArray(bytes, 0, bytes.size)) { "Android returned an invalid primary screenshot" }
+            try {
+                val cropped = Bitmap.createBitmap(bitmap, frame.getInt("left"), frame.getInt("top"), frame.getInt("width"), frame.getInt("height"))
+                try {
+                    val output = ByteArrayOutputStream()
+                    check(cropped.compress(Bitmap.CompressFormat.PNG, 100, output)) { "Android could not encode the selected window screenshot" }
+                    return@synchronized JSONObject().put("pngBase64", Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP))
+                } finally { if (cropped !== bitmap) cropped.recycle() }
+            } finally { bitmap.recycle() }
+        }
         val virtual = hosted.values.singleOrNull { it.getString("windowId") == targetId }
         if (virtual != null) {
             val displayId = virtual.getInt("displayId")
@@ -137,6 +167,7 @@ internal class AndroidUiAutomation(private val context: Context, private val uiS
         val result = readResponse(provider, JSONObject().put("operation", operation).put("parameters", parameters))
         if (operation == "focus_window") selectedWindowId = checkNotNull(targetId)
         if (virtual != null && operation == "get_page_info") result.put("windowId", targetId)
+        if (operation == "get_page_info" && targetId != null) selectedWindowId = targetId
         result.remove("displayId")
         result
     }

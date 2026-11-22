@@ -15,6 +15,7 @@ pub mod registry;
 pub mod tools;
 #[path = "../../common/ui_automation.rs"]
 mod ui_automation;
+mod ui_provider;
 
 pub use host_runtime_event::WindowsHostRuntimeEventHost;
 pub use operit_host_native_common::NativeHostJavaScriptRuntimeHost as WindowsHostJavaScriptRuntimeHost;
@@ -38,6 +39,9 @@ pub fn createRuntimeHostManager(
     workspaceRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
 ) -> HostManager {
+    let provider_directory = runtimeRoot.join("native/ui-automation");
+    let provider_command: Arc<dyn Fn() -> operit_host_api::HostResult<std::process::Command> + Send + Sync> =
+        Arc::new(move || ui_provider::command(&provider_directory));
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
@@ -55,10 +59,9 @@ pub fn createRuntimeHostManager(
         runtimeSqliteHost,
     )
     .withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::new()))
-    .withUiAutomationHost(Arc::new(ui_automation::ScriptUiAutomationHost::new(
-        "powershell.exe",
-        &["-NoProfile", "-NonInteractive", "-STA", "-Command", include_str!("ui_automation.ps1")],
-    )))
+    .withUiAutomationHost(Arc::new(ui_automation::ScriptUiAutomationHost::from_command(
+        provider_command.clone(),
+    ).with_window_previews(provider_command)))
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(WindowsHttpHost::new()))
     .withHttpServerHost(Arc::new(operit_host_native_common::NativeHttpServerHost))

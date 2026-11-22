@@ -106,6 +106,7 @@ fn installTools(
         Some(host),
         None,
         None,
+        None,
         vfs.clone(),
         FileToolRouting::new(vfs, storage, gateway),
     )

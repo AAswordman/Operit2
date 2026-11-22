@@ -91,7 +91,7 @@ public final class UiServerMain {
 
     private final IUiServer.Stub binder = new IUiServer.Stub() {
         /** Exposes the wire version only to the process that launched this server. */
-        @Override public int getProtocolVersion() { checkCaller(); return 1; }
+        @Override public int getProtocolVersion() { checkCaller(); return 2; }
 
         /** Ties every window to one live Android Host Binder token. */
         @Override public void attach(IBinder token, IBinder windowSession) {
@@ -176,7 +176,9 @@ public final class UiServerMain {
             result.complete(new JSONObject().put("windows", entries));
             return;
         }
-        if (operation.equals("close_package")) {
+        if (operation.equals("close_windows")) {
+            for (DisplayWindow window : new ArrayList<>(windows.values())) window.close();
+        } else if (operation.equals("close_package")) {
             for (DisplayWindow window : new ArrayList<>(windows.values())) {
                 if (window.packageName.equals(request.getString("packageName"))) window.close();
             }

@@ -134,9 +134,9 @@ export namespace UI {
    */
   function clickElement(type: HostClickElementType, value: string, index: number): Promise<UIActionResultData>;
   /**
-   * Focuses exactly the native window returned by listWindows.
+   * Selects a native window; omit the ID to clear selection, and pass close_windows to release hosted screens.
    */
-  function focusWindow(window_id: string): Promise<UIActionResultData>;
+  function focusWindow(window_id?: string, close_windows?: boolean): Promise<UIActionResultData>;
   /**
    * Get current page information
    */

@@ -17,6 +17,7 @@ pub fn decode_ui_json<T: serde::de::DeserializeOwned>(bytes: &[u8]) -> HostResul
 #[serde(rename_all = "snake_case")]
 pub enum UiScope {
     Desktop,
+    Window,
 }
 
 /// Preserves the plugin node wire format across accessibility backends.
@@ -69,7 +70,10 @@ pub struct UiPage {
 )]
 pub enum UiAction {
     FocusWindow {
-        window_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        window_id: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        close_windows: Option<bool>,
     },
     Tap {
         x: f64,
@@ -102,6 +106,8 @@ pub trait UiAutomationHost: Send + Sync {
     fn list_windows(&self) -> HostResult<Vec<UiWindow>>;
     /// Reads the complete native subtree of the selected or active window.
     fn get_page_info(&self, window_id: Option<&str>) -> HostResult<UiPage>;
+    /// Captures the selected window, or the desktop when selection is cleared, as PNG bytes.
+    fn capture_screenshot(&self) -> HostResult<Vec<u8>>;
     /// Executes one validated input operation using the platform provider.
     fn perform_action(&self, action: &UiAction) -> HostResult<()>;
 }
@@ -130,6 +136,11 @@ impl UiAutomationHost for OwnerUiAutomationHost {
             .map_err(|error| crate::HostError::new(format!("Invalid UI snapshot: {error}")))
     }
 
+    /// Decodes the same owner surface used for accessibility and input.
+    fn capture_screenshot(&self) -> HostResult<Vec<u8>> {
+        decode_ui_screenshot(&(self.invoke)("capture_screenshot", serde_json::json!({}))?)
+    }
+
     /// Forwards input to the same owner that supplied the snapshot.
     fn perform_action(&self, action: &UiAction) -> HostResult<()> {
         let envelope = serde_json::to_value(action)
@@ -139,6 +150,19 @@ impl UiAutomationHost for OwnerUiAutomationHost {
             .expect("UiAction operation is a string");
         (self.invoke)(operation, envelope["parameters"].clone()).map(|_| ())
     }
+}
+
+/// Decodes a provider PNG without accepting an empty or unrelated file as a screenshot.
+pub fn decode_ui_screenshot(value: &serde_json::Value) -> HostResult<Vec<u8>> {
+    use base64::Engine;
+    let encoded = value["pngBase64"].as_str()
+        .ok_or_else(|| crate::HostError::new("UI provider returned no screenshot"))?;
+    let bytes = base64::engine::general_purpose::STANDARD.decode(encoded)
+        .map_err(|error| crate::HostError::new(format!("Invalid UI screenshot: {error}")))?;
+    if !bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        return Err(crate::HostError::new("UI provider did not return a PNG screenshot"));
+    }
+    Ok(bytes)
 }
 
 #[cfg(test)]

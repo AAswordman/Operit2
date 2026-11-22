@@ -60,9 +60,9 @@ storage. The report screen runs in a separate process and offers a copy action.
 Android can block the report screen from opening after a background crash. Open
 the companion from the launcher to review and clear the saved report.
 
-## Protocol version 2
+## Protocol version 3
 
-`getProtocolVersion()` returns `2`. `execute(requestJson)` returns a
+`getProtocolVersion()` returns `3`. `execute(requestJson)` returns a
 `ParcelFileDescriptor`; read it to EOF as UTF-8 JSON:
 
 ```json
@@ -76,13 +76,24 @@ all exposed descendants and native state properties. Password contents are
 excluded. Android 11+ window discovery includes all displays.
 
 Supported operations are `list_windows`, `focus_window`, `get_page_info`, `tap`,
-`long_press`, `swipe`, `set_input_text` and `press_key`. `list_windows` returns
+`long_press`, `swipe`, `set_input_text`, `press_key`, `get_window_frame` and
+`capture_screenshot`. `list_windows` returns
 `{"windows":[...]}`. Explicit window reads do not change input focus. Input
 operations accept an internal exact `window_id` or `display_id` supplied by the
 Android Host. An omitted target uses the primary display's active window. Window
 and snapshot responses include internal `displayId` metadata, removed by the
 Android Host before returning the shared schema. Gesture coordinates belong to
-the target display and completion waits for Android's callback. Global key
+the target display for a hosted display, or the local native window frame for
+an explicit window ID. Trees subtract the same frame offset that gestures add.
+`capture_screenshot` returns a streamed `pngBase64` image using Android 11+'s
+accessibility screenshot API on the exact target display. Android 14+ selected
+native windows use `takeScreenshotOfWindow` to exclude accessibility overlays;
+Android 11–13 selected windows are cropped to their frame. Hosted displays retain their native
+resolution. The service declares `canTakeScreenshot`. Android 8–10 selected
+windows are cropped by the owner from its approved primary capture mechanism
+using `get_window_frame`. The owner controls selection and main-screen capture;
+clearing selection requires no companion call. Gesture completion waits for
+Android's callback. Global key
 actions are limited to the primary display; hosted-window keys go directly to
 the standalone window server.
 Focus is verified against Android's input-focused window; a denied request

@@ -984,12 +984,12 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "focus_window",
-                    "Focus the exact native windowId returned by list_windows. Reports denied activation or a stale window ID.",
-                    "", vec![param("window_id", "string", "native window ID from list_windows", true, None)], "", "",
+                    "Select a native window through its host; Windows/macOS/Linux X11 open a viewing preview without foreground activation. Trees, screenshots and input share source-local coordinates starting at (0,0). Omit window_id to close the preview, clear selection and return to the main screen. Reports native hosting errors or stale IDs.",
+                    "", vec![param("window_id", "string", "native window ID from list_windows; omit to clear selection", false, None), param("close_windows", "boolean", "when clearing selection, also release all host-owned automation screens", false, None)], "", "",
                 ),
                 tool(
                     "get_page_info",
-                    "Collect the selected window's complete native accessibility tree and present a bounded compact text summary to the model, with selectors, key states and omission counts. Omit window_id for the active window. Discover windows with list_windows and focus the target before input.",
+                    "Collect the complete native accessibility tree with selectors and key states. An explicit window_id selects that window for subsequent trees, screenshots and input using local coordinates. Omit the ID to keep the current selection; with no selection, inspect the primary active surface in screen coordinates. Use focus_window without an ID to clear selection.",
                     "",
                     vec![param("window_id", "string", "optional native window ID from list_windows", false, None)],
                     "",
@@ -1070,7 +1070,7 @@ fn internalToolCategoriesEnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "capture_screenshot",
-                    "Capture a screenshot and return a file path.",
+                    "Capture the selected window using the same local coordinates as its UI tree and input, or the main screen when window selection is cleared. Return a VFS file path.",
                     "",
                     Vec::new(),
                     "",
@@ -2223,12 +2223,12 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "focus_window",
-                    "按 list_windows 返回的原生 windowId 聚焦窗口。系统拒绝或窗口已关闭时返回错误。",
-                    "", vec![param("window_id", "string", "list_windows 返回的系统窗口 ID", true, None)], "", "",
+                    "传入原生 windowId 选择窗口；Windows/macOS/Linux X11 由宿主打开预览小窗，不抢占用户前台。UI 树、截图、输入统一使用原窗口左上角 (0,0) 坐标。省略 window_id 关闭预览、取消选择并回到主屏幕。原生宿主失败或窗口失效时返回错误。",
+                    "", vec![param("window_id", "string", "系统窗口 ID；省略可取消选择", false, None), param("close_windows", "boolean", "取消选择时一并关闭宿主自动化小窗并释放屏幕", false, None)], "", "",
                 ),
                 tool(
                     "get_page_info",
-                    "底层读取指定系统窗口的完整原生无障碍树，向模型返回有长度预算的精简文本摘要，保留定位信息、关键状态并标注省略数量。省略 window_id 则读取活动窗口。先 list_windows，输入前 focus_window。",
+                    "读取完整原生无障碍树，返回保留定位信息和关键状态的精简摘要。传入 window_id 会选择该窗口，后续 UI 树、截图、输入共用窗口坐标；省略则保持已有选择，未选择时读取主屏活动界面并使用屏幕坐标。focus_window 不传 ID 可取消选择。",
                     "",
                     vec![param("window_id", "string", "可选，list_windows 返回的系统窗口 ID", false, None)],
                     "",
@@ -2309,7 +2309,7 @@ fn internalToolCategoriesCnSource() -> Vec<SystemToolPromptCategory> {
                 ),
                 tool(
                     "capture_screenshot",
-                    "截取屏幕截图并返回文件路径。",
+                    "截取当前选中的窗口，与 UI 树和输入共用窗口坐标；取消窗口选择后截取主屏幕。返回 VFS 文件路径。",
                     "",
                     Vec::new(),
                     "",

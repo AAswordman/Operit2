@@ -42,12 +42,13 @@ final class WindowChrome {
     private final float density;
     private final int bufferWidth;
     private final int shadow;
+    private final ViewTreeObserver.OnPreDrawListener radiusFrame = this::applyLayerRadius;
     private float cornerRadius;
     private boolean updateLayerRadius;
 
     /** Creates native window affordances without reserving a title or footer bar. */
     WindowChrome(Context context, CharSequence name, int densityDpi, int bufferWidth, Runnable back, Runnable minimize,
-            Runnable close, Runnable expand) throws ReflectiveOperationException {
+            Runnable fullscreen, Runnable close, Runnable expand) throws ReflectiveOperationException {
         this.bufferWidth = bufferWidth;
         density = densityDpi / 160f;
         shadow = dp(32);
@@ -67,7 +68,17 @@ final class WindowChrome {
         getSurfaceControl = SurfaceView.class.getMethod("getSurfaceControl");
         setLayerRadius = SurfaceControl.Transaction.class.getMethod("setCornerRadius", SurfaceControl.class, float.class);
         card.addView(surface, new FrameLayout.LayoutParams(-1, -1));
-        root.getViewTreeObserver().addOnPreDrawListener(this::applyLayerRadius);
+        surface.addOnAttachStateChangeListener(new View.OnAttachStateChangeListener() {
+            /** Runs after SurfaceView's own pre-draw update so its raw radius cannot overwrite ours. */
+            @Override public void onViewAttachedToWindow(View view) {
+                view.getViewTreeObserver().addOnPreDrawListener(radiusFrame);
+                updateLayerRadius = true;
+            }
+            /** Removes the listener before a restack attaches this same SurfaceView again. */
+            @Override public void onViewDetachedFromWindow(View view) {
+                view.getViewTreeObserver().removeOnPreDrawListener(radiusFrame);
+            }
+        });
         surface.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
             if (right - left != oldRight - oldLeft) updateLayerRadius = true;
         });
@@ -75,7 +86,7 @@ final class WindowChrome {
         grip.setContentDescription("Window actions");
         grip.setOnClickListener(view -> openActions());
         grip.setFocusable(true);
-        card.addView(grip, new FrameLayout.LayoutParams(dp(68), dp(27), Gravity.TOP | Gravity.CENTER_HORIZONTAL));
+        card.addView(grip, new FrameLayout.LayoutParams(dp(68), dp(20), Gravity.TOP | Gravity.CENTER_HORIZONTAL));
         resizeLeft = new Mark(context, Glyph.LEFT);
         resizeRight = new Mark(context, Glyph.RIGHT);
         card.addView(resizeLeft, new FrameLayout.LayoutParams(dp(34), dp(31), Gravity.BOTTOM | Gravity.LEFT));
@@ -95,6 +106,7 @@ final class WindowChrome {
         menuFrame.topMargin = dp(14);
         actions.addView(menu, menuFrame);
         addAction(menu, "Minimize", minimize);
+        addAction(menu, "Fullscreen", fullscreen);
         addAction(menu, "Back", back);
         addAction(menu, "Close", close);
         dismissActions();
@@ -197,6 +209,7 @@ final class WindowChrome {
             throw new IllegalStateException("Cannot round the SurfaceView viewport", error);
         }
         updateLayerRadius = true;
+        root.invalidate();
         float controls = Math.max(0, 1 - 2 * dock);
         grip.setAlpha(controls);
         grip.setVisibility(controls > 0 ? View.VISIBLE : View.INVISIBLE);
@@ -247,9 +260,8 @@ final class WindowChrome {
             paint.setColor(isPressed() ? PANEL : HANDLE);
             switch (glyph) {
                 case GRIP -> {
-                    canvas.drawRoundRect(-24, -6, 24, 6, 6, 6, paint);
-                    paint.setColor(INK);
-                    canvas.drawRoundRect(-12, -1.4f, 12, 1.4f, 2, 2, paint);
+                    paint.setColor(isPressed() ? 0xffbec5d0 : 0xffe1e5ec);
+                    canvas.drawRoundRect(-15, -1.5f, 15, 1.5f, 2, 2, paint);
                 }
                 case LEFT, RIGHT -> {
                     canvas.scale(glyph == Glyph.LEFT ? -1 : 1, 1);

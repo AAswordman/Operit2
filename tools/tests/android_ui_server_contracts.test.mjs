@@ -27,6 +27,22 @@ test('the independent DEX payload is built and embedded without installed Androi
   assert.doesNotMatch(client, /sourceDir|AccessibilityService|ContentResolver|su 2000|requestPermission\(/);
 });
 
+test('automation completion releases hosted displays without needing an accessibility connection or restarting the server', () => {
+  const owner = source(android + 'AndroidUiAutomation.kt');
+  const client = source(android + 'AndroidUiServer.kt');
+  const main = source(payload + 'src/main/java/app/operit/uiserver/UiServerMain.java');
+  const clear = owner.slice(owner.indexOf('if (operation == "focus_window"'), owner.indexOf('val provider = requireProvider()', owner.indexOf('fun execute(')));
+  assert.match(clear, /optBoolean\("close_windows", false\)\) uiServer\.closeWindows\(\)/);
+  assert.match(clear, /selectedWindowId = null/);
+  const release = client.slice(client.indexOf('fun closeWindows()'), client.indexOf('/** Disposes windows'));
+  assert.match(release, /server\?\.let \{ call\(it, JSONObject\(\)\.put\("operation", "close_windows"\)\) \}/);
+  assert.doesNotMatch(release, /requireServer\(|shutdown|server = null/);
+  const dispatch = main.slice(main.indexOf('if (operation.equals("close_windows"))'), main.indexOf('} else if (operation.equals("close_package"))'));
+  assert.match(dispatch, /new ArrayList<>\(windows\.values\(\)\)\) window\.close\(\)/);
+  assert.match(client, /endpoint\.protocolVersion == 2/);
+  assert.match(main, /getProtocolVersion\(\) \{ checkCaller\(\); return 2; \}/);
+});
+
 test('Root and Shizuku use the existing Host shell identity boundary before the payload starts Binder', () => {
   const client = source(android + 'AndroidUiServer.kt');
   assert.match(client, /AndroidPrivilegedCommandExecutor\.execute\(context, target/);
@@ -119,6 +135,7 @@ test('ordinary launch and window selection share the existing public abstraction
   assert.match(host, /virtual\.getString\("windowId"\)/);
   assert.match(host, /parameters\.put\("display_id", displayId\)/);
   assert.match(host, /result\.put\("windowId", targetId\)/);
+  assert.match(host, /operation == "get_page_info" && targetId != null\) selectedWindowId = targetId/);
   assert.match(host, /overlay\.remove\("displayId"\)/);
   const service = source('tools/android-accessibility/src/main/kotlin/app/operit/accessibility/UiAccessibilityService.kt');
   assert.match(service, /it\.isActive && displayIdOf\(it\) == displayId/);

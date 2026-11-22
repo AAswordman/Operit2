@@ -2,6 +2,8 @@
 #[cfg(target_os = "macos")]
 #[path = "../../common/ui_automation.rs"]
 mod ui_automation;
+#[cfg(target_os = "macos")]
+mod window_preview;
 
 #[cfg(target_os = "macos")]
 pub use operit_host_apple_native::AppleServiceDiscoveryHost as MacosServiceDiscoveryHost;
@@ -48,6 +50,7 @@ pub fn createRuntimeHostManager(
     workspaceRoot: PathBuf,
     webVisitHost: Arc<dyn operit_host_api::WebVisitHost>,
 ) -> HostManager {
+    let preview_directory = runtimeRoot.join("native/window-preview");
     let archiveStagingHost = Arc::new(operit_host_native_common::NativeArchiveStagingHost::new(
         runtimeRoot.clone(),
     ));
@@ -67,7 +70,7 @@ pub fn createRuntimeHostManager(
     .withLocalInferenceHost(Arc::new(operit_host_local_inference::NativeLocalInferenceHost::new()))
     .withUiAutomationHost(Arc::new(ui_automation::ScriptUiAutomationHost::new(
         "/usr/bin/osascript", &["-l", "JavaScript", "-e", include_str!("ui_automation.js")],
-    )))
+    ).with_window_previews(Arc::new(move || window_preview::command(&preview_directory)))))
     .withHostSecretStore(hostSecretStore)
     .withWebSocketHost(Arc::new(MacosHttpHost::new()))
     .withHttpServerHost(Arc::new(operit_host_native_common::NativeHttpServerHost))

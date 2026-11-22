@@ -1277,7 +1277,16 @@ dependencies = [
 name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
+ "operit-host-contract",
+ "operit-vfs",
+]
+
+[[package]]
+name = "operit-host-contract"
+version = "0.1.0"
+dependencies = [
  "async-trait",
+ "base64",
  "bytes",
  "chrono",
  "http",
@@ -1735,6 +1744,16 @@ dependencies = [
  "tokio",
  "uuid",
  "zip",
+]
+
+[[package]]
+name = "operit-vfs"
+version = "0.1.0"
+dependencies = [
+ "operit-host-contract",
+ "serde",
+ "serde_json",
+ "uuid",
 ]
 
 [[package]]

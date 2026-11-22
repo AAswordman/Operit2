@@ -87,6 +87,7 @@ impl ToolGetter {
             context.systemOperationHost.clone(),
             context.toastHost.clone(),
             context.clipboardHost.clone(),
+            context.uiAutomationHost.clone(),
             Self::getVirtualFileSystem(context),
             crate::files::FileToolRouting::FileToolRouting::new(
                 Self::getVirtualFileSystem(context),

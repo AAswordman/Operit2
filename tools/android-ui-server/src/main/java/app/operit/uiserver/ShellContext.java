@@ -27,6 +27,9 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.List;
+import java.util.ArrayList;
+import java.util.Comparator;
 
 /** Initializes the Android framework for an uninstalled app_process payload. */
 final class ShellContext extends ContextWrapper {
@@ -267,6 +270,32 @@ final class ShellContext extends ContextWrapper {
         int result = (Integer) method.invoke(manager, null, getPackageName(), intent, null, null, null,
                 0, 0, null, options, userId);
         if (result < 0) throw new IllegalStateException("Android rejected application launch: " + result);
+    }
+
+    /** Transfers this display's existing task stacks in order and focuses them on the physical screen. */
+    void moveToPrimaryDisplay(int displayId) throws Exception {
+        if (displayId == Display.DEFAULT_DISPLAY) throw new IllegalArgumentException("Expected a hosted display");
+        Object manager = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null);
+        Class<?> service = Class.forName("android.app.IActivityTaskManager");
+        boolean rootTasks = Build.VERSION.SDK_INT >= 31;
+        Class<?> info = Class.forName(rootTasks ? "android.app.ActivityTaskManager$RootTaskInfo"
+                : "android.app.ActivityManager$StackInfo");
+        Method query = service.getMethod(rootTasks ? "getAllRootTaskInfosOnDisplay" : "getAllStackInfosOnDisplay", int.class);
+        Field identity = info.getField(rootTasks ? "taskId" : "stackId");
+        Field position = info.getField("position");
+        List<int[]> tasks = new ArrayList<>();
+        for (Object task : (List<?>) query.invoke(manager, displayId)) {
+            tasks.add(new int[]{position.getInt(task), identity.getInt(task)});
+        }
+        if (tasks.isEmpty()) throw new IllegalStateException("The hosted display has no task to show fullscreen");
+        tasks.sort(Comparator.comparingInt(task -> task[0]));
+        Method move = service.getMethod(rootTasks ? "moveRootTaskToDisplay" : "moveStackToDisplay", int.class, int.class);
+        for (int[] task : tasks) move.invoke(manager, task[1], Display.DEFAULT_DISPLAY);
+        service.getMethod(rootTasks ? "setFocusedRootTask" : "setFocusedStack", int.class)
+                .invoke(manager, tasks.get(tasks.size() - 1)[1]);
+        if (!((List<?>) query.invoke(manager, displayId)).isEmpty()) {
+            throw new IllegalStateException("Android did not move every hosted task to the physical display");
+        }
     }
 
     /** Supplies explicit shell UID attribution on Android 12 and newer. */

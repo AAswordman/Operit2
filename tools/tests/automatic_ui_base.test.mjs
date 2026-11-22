@@ -64,7 +64,7 @@ test('the ToolPkg preserves the existing namespace, default disabled state and t
 
 test('window discovery and focus preserve identities while model results contain only the compact summary', async () => {
   const calls = [];
-  const page = {windowId: 'native:42', scope: 'desktop', truncated: false, summary: 'Button "Save" id="save" [0,0][10,10]', uiElements: {children: Array.from({length: 4501}, (_, index) => ({text: `node-${index}`}))}};
+  const page = {windowId: 'native:42', scope: 'window', truncated: false, summary: 'Button "Save" id="save" [0,0][10,10]', uiElements: {children: Array.from({length: 4501}, (_, index) => ({text: `node-${index}`}))}};
   const {tools, results} = runtime({UI: {
     async listWindows() { calls.push(['list']); return {windows: [{windowId: 'native:42'}]}; },
     async focusWindow(id) { calls.push(['focus', id]); return {}; },
@@ -78,6 +78,8 @@ test('window discovery and focus preserve identities while model results contain
   assert.equal(results[2].data.uiElements, undefined);
   assert.equal(results[2].data.summary, page.summary);
   assert.equal(results[2].data.windowId, 'native:42');
+  assert.match(results[2].data.coordinateNote, /window-local coordinates/);
+  assert.match(results[2].data.coordinateNote, /scroll clipped or offscreen/i);
 });
 
 test('swipe duration, input clearing and element criteria reach the v2 UI provider', async () => {
@@ -111,6 +113,27 @@ test('screenshots use the system capture tool and register its VFS image', async
   assert.deepEqual(plain(results[0].data), { file_path: path, image_link: 'image:test' });
 });
 
+test('clearing selection returns the packaged tools and indicator to the main surface', async () => {
+  const plugin = indicatorRuntime({ nativeWindows: [nativeWindow('selected')] });
+  const focused = [];
+  const instance = runtime({ UI: {
+    async focusWindow(id) { focused.push(id); return {}; },
+    async getPageInfo() { return {windowId: 'active', scope: 'desktop', summary: 'Main surface'}; },
+  } }, undefined, { chatId: 'chat', async ipc(channel, payload) {
+    if (channel === 'ui_automation.begin') return plugin.begin(payload.chatId, payload.windowId);
+    return plugin.complete(payload.chatId, payload.closeWindows);
+  } });
+  await instance.tools.focus_window({window_id: 'selected'});
+  await instance.tools.focus_window({});
+  await instance.tools.get_page_info({});
+  assert.deepEqual(focused, ['selected', undefined]);
+  assert.equal(plugin.windows.get('automation-activity').fill, true);
+  assert.ok(![...plugin.windows.keys()].some(id => id.startsWith('automation-activity-window-')));
+  assert.match(instance.results.at(-1).data.coordinateNote, /No window is selected/);
+  assert.equal(plugin.timers.size, 0);
+  await instance.tools.complete_ui_operation({});
+});
+
 test('app launch reports failure without listing or launching other apps', async () => {
   const calls = [];
   const operation = { success: false, details: 'Application is unavailable' };
@@ -135,17 +158,24 @@ test('provider failures remain errors and package main performs no input', async
 });
 
 /** Loads the actual plugin modules with a recorded floating-window host. */
-function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFailures = 0, register = true, nativeWindows = [], onQuery } = {}) {
+function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFailures = 0, screenCloseFailures = 0, register = true, nativeWindows = [], onQuery } = {}) {
   const routes = new Map();
   const hooks = new Map();
   const windows = new Map([['other-surface', { id: 'other-surface' }]]);
   const commands = [];
+  const screenCalls = [];
   const timers = new Map();
   let timerSerial = 0;
   const context = vm.createContext({ console,
     setTimeout(callback) { const id = ++timerSerial; timers.set(id, callback); return id; },
     clearTimeout(id) { timers.delete(id); },
-    Tools: { UI: { async listWindows() { await onQuery?.(); return { windows: nativeWindows }; } } },
+    Tools: { UI: {
+      async listWindows() { await onQuery?.(); return { windows: nativeWindows }; },
+      async focusWindow(id, closeWindows) {
+        screenCalls.push([id, closeWindows]);
+        if (screenCloseFailures > 0) { screenCloseFailures--; throw new Error('Native screen close failed'); }
+      },
+    } },
     ToolPkg: {
     registerUiRoute(definition) { routes.set(definition.id, definition); },
     registerNavigationEntry() { assert.fail('Automation must not create a standalone page'); },
@@ -194,15 +224,15 @@ function indicatorRuntime({ scope = 'system', permissionGranted = true, closeFai
   const main = load('main');
   if (register) assert.equal(main.registerToolPkg(), true);
   assert.deepEqual(commands, []);
-  return { context, commands, routes, windows, timers,
+  return { context, commands, screenCalls, routes, windows, timers,
     async poll() {
       assert.equal(timers.size, 1);
       const [id, callback] = timers.entries().next().value;
       timers.delete(id); callback();
       await new Promise(resolve => setImmediate(resolve));
     },
-    begin(chatId, windowId) { return context.ToolPkg.ipc.call('ui_automation.begin', { chatId, ...(windowId ? { windowId } : {}) }); },
-    complete(chatId) { return context.ToolPkg.ipc.call('ui_automation.complete', { chatId }); },
+    begin(chatId, windowId) { return context.ToolPkg.ipc.call('ui_automation.begin', { chatId, ...(windowId !== undefined ? { windowId } : {}) }); },
+    complete(chatId, closeWindows) { return context.ToolPkg.ipc.call('ui_automation.complete', { chatId, closeWindows }); },
     /** Delivers a normalized application lifecycle event. */
     app(state) {
       const eventName = `application_on_${state}`;
@@ -323,7 +353,7 @@ test('packaged tools await the overlay before input and completion reaches its o
   } }, undefined, { chatId: 'chat', async ipc(channel, payload, options) {
     calls.push([channel, plain(payload), plain(options)]);
     if (channel === 'ui_automation.begin') await plugin.begin(payload.chatId);
-    else if (channel === 'ui_automation.complete') await plugin.complete(payload.chatId);
+    else if (channel === 'ui_automation.complete') await plugin.complete(payload.chatId, payload.closeWindows);
     else assert.fail(channel);
   } });
   await instance.tools.tap({ x: 1, y: 2 });
@@ -331,7 +361,7 @@ test('packaged tools await the overlay before input and completion reaches its o
   assert.deepEqual(calls, [
     ['ui_automation.begin', { chatId: 'chat' }, { targetRuntime: 'main' }],
     'tap',
-    ['ui_automation.complete', { chatId: 'chat' }, { targetRuntime: 'main' }],
+    ['ui_automation.complete', { chatId: 'chat', closeWindows: true }, { targetRuntime: 'main' }],
   ]);
   assert.ok(instance.results.every(result => result.success));
   assert.ok(!plugin.windows.has('automation-activity'));
@@ -364,6 +394,40 @@ test('failed host cleanup can be retried without losing ownership or poisoning t
   await plugin.begin('chat');
   await plugin.finish('chat');
   assert.deepEqual(plugin.commands.map(([command]) => command), ['open', 'close', 'open', 'close']);
+});
+
+test('completion propagates screen closure and defers disposal until the last active chat', async () => {
+  const plugin = indicatorRuntime({ nativeWindows: [nativeWindow('phone'), nativeWindow('pc')] });
+  await plugin.begin('first', 'phone');
+  await plugin.begin('second', 'pc');
+  await plugin.complete('first', true);
+  assert.deepEqual(plugin.screenCalls, []);
+  assert.ok([...plugin.windows.keys()].some(id => id.startsWith('automation-activity-window-')));
+  await plugin.complete('second', true);
+  assert.deepEqual(plugin.screenCalls, [[undefined, true]]);
+  assert.deepEqual([...plugin.windows.keys()], ['other-surface']);
+  await plugin.finish('unrelated');
+  assert.equal(plugin.screenCalls.length, 1);
+  await plugin.complete('second', true);
+  assert.equal(plugin.screenCalls.length, 2, 'Repeated completion must still await idempotent host cleanup');
+  await plugin.tool('focus_window', 'cleanup', 'tool_execution_started', {close_windows: 'true'});
+  assert.deepEqual([...plugin.windows.keys()], ['other-surface'], 'Host cleanup must not start another automation operation');
+});
+
+test('native screen cleanup errors stay visible and a repeated completion retries before dismissing the overlay', async () => {
+  const plugin = indicatorRuntime({ screenCloseFailures: 1 });
+  await plugin.begin('chat');
+  await assert.rejects(plugin.complete('chat', true), /Native screen close failed/);
+  assert.ok(plugin.windows.has('automation-activity'));
+  await plugin.complete('chat', true);
+  assert.deepEqual(plugin.screenCalls, [[undefined, true], [undefined, true]]);
+  assert.ok(!plugin.windows.has('automation-activity'));
+  await plugin.begin('chat');
+  await plugin.finish('chat');
+  assert.equal(plugin.screenCalls.length, 3, 'Turn completion must release screens too');
+  await plugin.begin('next');
+  await plugin.app('terminate');
+  assert.equal(plugin.screenCalls.length, 4, 'Application termination must await the same host cleanup');
 });
 
 test('the indicator route renders host-animated glow with a separate activity orb', async () => {
@@ -478,10 +542,10 @@ test('packaged focus and snapshots propagate the selected and actual active wind
       assert.ok([...plugin.windows.values()].some(window => window.options?.screenBounds));
       return {};
     },
-    async getPageInfo() { return { windowId: 'b', summary: 'Active window B' }; },
+    async getPageInfo() { return { windowId: 'b', scope: 'window', summary: 'Selected window B' }; },
   } }, undefined, { chatId: 'chat', async ipc(channel, payload) {
     if (channel === 'ui_automation.begin') return plugin.begin(payload.chatId, payload.windowId);
-    return plugin.complete(payload.chatId);
+    return plugin.complete(payload.chatId, payload.closeWindows);
   } });
   await instance.tools.focus_window({ window_id: 'a' });
   const first = plugin.commands[0][1].id;

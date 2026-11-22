@@ -56,6 +56,8 @@ test('UI methods preserve selectors and dispatch through the selected device', a
   await vm.runInContext(`Tools.device('desktop').UI.listWindows()`, context);
   await vm.runInContext(`Tools.device('desktop').UI.focusWindow('native:42')`, context);
   await vm.runInContext(`Tools.device('desktop').UI.getPageInfo('native:42')`, context);
+  await vm.runInContext(`Tools.device('desktop').UI.focusWindow()`, context);
+  await vm.runInContext(`Tools.device('phone').UI.focusWindow(undefined, true)`, context);
   assert.equal(requests[0][2], 'get_page_info');
   assert.equal(requests[0][4].nodeId, 'desktop');
   assert.deepEqual(plain(requests[1][3]), {resourceId:'save', text:'Save', partialMatch:false, index:1});
@@ -67,6 +69,12 @@ test('UI methods preserve selectors and dispatch through the selected device', a
   assert.deepEqual(plain(requests[6][3]), {window_id:'native:42'});
   assert.deepEqual(plain(requests[7][3]), {window_id:'native:42'});
   assert.equal(requests[7][4].nodeId, 'desktop');
+  assert.equal(requests[8][2], 'focus_window');
+  assert.deepEqual(plain(requests[8][3]), {});
+  assert.equal(requests[8][4].nodeId, 'desktop');
+  assert.equal(requests[9][2], 'focus_window');
+  assert.deepEqual(plain(requests[9][3]), {close_windows:true});
+  assert.equal(requests[9][4].nodeId, 'phone');
 });
 
 test('generated Tools.device preserves Files overloads and leaves local Tools independent', async () => {

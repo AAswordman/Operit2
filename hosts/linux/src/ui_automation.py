@@ -1,13 +1,16 @@
-"""AT-SPI window discovery, complete window trees and desktop input."""
+"""AT-SPI window discovery, exact X11 surfaces and desktop input."""
 import json
 import sys
 import time
 import pyatspi
 
-def windows():
+
+def windows(excluded_pid=None):
     """Enumerate native accessibility windows with process-qualified identities."""
     desktop = pyatspi.Registry.getDesktop(0)
     for app in desktop:
+        if app.get_process_id() == excluded_pid:
+            continue
         for window in app:
             yield f"{app.get_process_id()}:{window.path}", app, window
 
@@ -39,7 +42,7 @@ def selected_surface(identity):
     raise RuntimeError("The selected AT-SPI window is unavailable; enable accessibility and refresh list_windows")
 
 
-def read_node(node):
+def read_node(node, origin=(0, 0)):
     """Preserve every exposed descendant and its native role and states."""
     interfaces = node.get_interfaces()
     text = None
@@ -54,8 +57,8 @@ def read_node(node):
     if "Component" in interfaces:
         rect = node.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
         if rect.width > 0 and rect.height > 0:
-            bounds = f"[{rect.x},{rect.y}][{rect.x + rect.width},{rect.y + rect.height}]"
-    children = [read_node(child) for child in node if child is not None]
+            bounds = f"[{rect.x - origin[0]},{rect.y - origin[1]}][{rect.x + rect.width - origin[0]},{rect.y + rect.height - origin[1]}]"
+    children = [read_node(child, origin) for child in node if child is not None]
     state = node.getState()
     return {
         "className": node.getRoleName(),
@@ -85,24 +88,86 @@ def find_inputs(node, resource_id, matches):
             find_inputs(child, resource_id, matches)
 
 
+def pointer_action(node, x, y):
+    """Resolve the deepest native click action at the selected source coordinate."""
+    interfaces = node.get_interfaces()
+    if "Component" not in interfaces:
+        return None
+    rect = node.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+    if not (rect.x <= x < rect.x + rect.width and rect.y <= y < rect.y + rect.height):
+        return None
+    for child in node:
+        if child is not None:
+            action = pointer_action(child, x, y)
+            if action is not None:
+                return action
+    if "Action" in interfaces:
+        actions = node.queryAction()
+        for index in range(actions.nActions):
+            if actions.getName(index).casefold() in ("click", "press", "activate"):
+                if not node.getState().contains(pyatspi.STATE_ENABLED):
+                    raise RuntimeError("The selected accessible control is disabled")
+                return actions, index
+    return None
+
+
+def capture_surface(window):
+    """Read the selected XComposite surface, including when another window covers it."""
+    from window_surface import screenshot
+    if window is None:
+        return screenshot()
+    rect = window.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+    return screenshot(window.get_process_id(), (rect.x, rect.y, rect.width, rect.height))
+
+
 def execute(request):
     """Execute a single structured request without interpreting shell source."""
-    operation, params = request["operation"], request["parameters"]
+    operation, params = request["operation"], dict(request["parameters"])
     if operation == "list_windows":
-        return [describe_window(*entry) for entry in windows()]
+        result = [describe_window(*entry) for entry in windows(params.get("preview_process_id"))]
+        if params.get("preview_process_id"):
+            from window_surface import preview_bounds
+            bounds = preview_bounds(params["preview_process_id"])
+            for entry in result:
+                if bounds is not None and entry["windowId"] == params["preview_window_id"]:
+                    entry["bounds"] = bounds
+        return result
+    if operation == "capture_screenshot" and "window_id" not in params:
+        return capture_surface(None)
     identity, app, window = selected_surface(params.get("window_id"))
+    if operation == "preview_window":
+        from window_surface import show_preview
+        rect = window.queryComponent().getExtents(pyatspi.DESKTOP_COORDS)
+        show_preview(app.get_process_id(), (rect.x, rect.y, rect.width, rect.height))
+        return None
     if operation == "focus_window":
-        if not window.queryComponent().grabFocus():
-            raise RuntimeError("AT-SPI rejected focus for the selected window")
-        deadline = time.monotonic() + 2
-        while not window.getState().contains(pyatspi.STATE_ACTIVE):
-            if time.monotonic() >= deadline:
-                raise RuntimeError("The selected AT-SPI window did not become active")
-            time.sleep(0.02)
+        # Selection is owned by the Host; only the preview's explicit menu raises the original.
         return {}
+    selected = "window_id" in params
+    if selected and window.getState().contains(pyatspi.STATE_ICONIFIED):
+        raise RuntimeError("Focus the minimized window before inspecting or operating it")
+    rect = window.queryComponent().getExtents(pyatspi.DESKTOP_COORDS) if selected else None
+    origin = (rect.x, rect.y) if selected else (0, 0)
     if operation == "get_page_info":
-        tree = read_node(window)
-        return {"windowId": identity, "packageName": app.name, "activityName": window.name, "uiElements": tree, "scope": "desktop", "truncated": False}
+        tree = read_node(window, origin)
+        return {"windowId": identity, "packageName": app.name, "activityName": window.name, "uiElements": tree, "scope": "window" if selected else "desktop", "truncated": False}
+    if operation == "capture_screenshot":
+        return capture_surface(window)
+    for xkey, ykey in (("x", "y"), ("start_x", "start_y"), ("end_x", "end_y")):
+        if xkey in params:
+            if selected and not (0 <= params[xkey] < rect.width and 0 <= params[ykey] < rect.height):
+                raise ValueError("Input coordinate is outside the selected window")
+            params[xkey], params[ykey] = params[xkey] + origin[0], params[ykey] + origin[1]
+    if selected and operation in ("tap", "long_press", "swipe", "press_key"):
+        action = pointer_action(window, params["x"], params["y"]) if operation == "tap" else None
+        if action is not None:
+            actions, index = action
+            if not actions.doAction(index):
+                raise RuntimeError("AT-SPI rejected the selected control's click action")
+            return {}
+        from window_surface import send_window_input
+        send_window_input(app.get_process_id(), (rect.x, rect.y, rect.width, rect.height), operation, params)
+        return {}
     if operation in ("tap", "long_press"):
         x, y = int(params["x"]), int(params["y"])
         if operation == "tap":
@@ -138,4 +203,13 @@ def execute(request):
 
 
 if __name__ == "__main__":
-    json.dump(execute(json.load(sys.stdin)), sys.stdout, ensure_ascii=False)
+    request = json.loads(sys.stdin.readline())
+    try:
+        result = execute(request)
+        if request["operation"] != "preview_window":
+            json.dump(result, sys.stdout, ensure_ascii=False)
+    except Exception as error:
+        if request["operation"] == "preview_window":
+            print(json.dumps({"ready": False, "error": str(error)}), flush=True)
+        else:
+            raise

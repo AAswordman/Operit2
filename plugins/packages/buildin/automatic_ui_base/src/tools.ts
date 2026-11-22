@@ -16,8 +16,8 @@
         {
             "name": "usage_advice",
             "description": {
-                "zh": "先用 list_windows 发现系统窗口及其 windowId，再用 focus_window 聚焦目标窗口，用 get_page_info(window_id) 获取基于完整原生树生成的精简文本摘要。窗口 ID 只对当前系统会话有效，窗口关闭后须重新列出。根据文本、资源标识、内容描述或边界定位元素；用 index 选择同名元素，partialMatch 显式启用部分匹配。坐标使用树中的屏幕坐标系。操作后重新取摘要确认结果。未授权或平台不支持时报告实际错误。UI 操作期间自动显示悬浮提示；完成操作或放弃操作时，必须调用 complete_ui_operation 结束当前 UI 操作并关闭提示，然后再回复用户。",
-                "en": "Discover system windows with list_windows, focus the target windowId with focus_window, then read a compact text summary of its complete native tree with get_page_info(window_id). Window IDs belong to the current session; refresh discovery after a window closes. Target elements by text, resource ID, description or bounds; use index for duplicates and partialMatch for explicit substring matching. Use the tree's screen coordinates and read a fresh summary after input. Report permission or platform errors. An activity overlay appears during UI operations. After completing or abandoning UI operations, you must call complete_ui_operation to end the current UI operation and dismiss its indicator before replying to the user."
+                "zh": "先用 list_windows 发现系统窗口，再用 focus_window(window_id) 聚焦并选择目标。选择后 UI 树、截图和输入统一使用窗口左上角 (0,0) 坐标；Android 小窗使用其原始虚拟屏幕，窗口列表 bounds 只表示物理预览位置。不传 ID 的 get_page_info 保持当前选择，传入 ID 会选择该窗口但不激活它。focus_window 不传 window_id 可取消选择，恢复主屏幕截图和屏幕坐标。app_launch 按设备配置打开原生小窗属于正常工作模式。树保留屏外节点；不可见或只露出边缘的元素须先滚动进入视口并重新读取，disabled 元素不能点击。根据文本、资源标识、内容描述或边界定位元素；用 index 选择同名元素，partialMatch 显式启用部分匹配。操作后读取页面确认实际变化。失效窗口、未授权或平台不支持时报告实际错误。UI 悬浮提示会穿透点击。完成或放弃操作后，调用 complete_ui_operation 关闭宿主小窗、释放屏幕和提示后再回复用户。",
+                "en": "Discover windows with list_windows and select one with focus_window(window_id). Trees, screenshots and input then share window-local coordinates with (0,0) at the top left; Android floating windows use their original virtual display. Window-list bounds only locate the physical preview. get_page_info without an ID retains selection; an explicit ID selects that window without activating it. Omit window_id from focus_window to clear selection and restore desktop capture and screen coordinates. Native floating app launches are normal. Scroll invisible or edge-clipped nodes into view and refresh the tree; disabled controls cannot be clicked. Select by text, ID, description or bounds; use index for duplicates and partialMatch for substrings. Inspect the page after input to confirm its effect. Report stale windows, permission and unsupported-platform errors. The indicator passes through input. Call complete_ui_operation after completing or abandoning UI operations, before replying."
             },
             "parameters": [],
             "advice": true,
@@ -32,8 +32,8 @@
         {
             "name": "complete_ui_operation",
             "description": {
-                "zh": "结束当前对话的 UI 自动化操作并关闭悬浮提示。完成或放弃 UI 操作后、回复用户前调用；重复调用安全。如有其他对话仍在操作，提示保留至最后一个对话完成。再次使用 UI 自动化工具会重新显示提示。",
-                "en": "Finish this chat's UI automation and dismiss its activity overlay. Call after completing or abandoning UI operations, before replying to the user. Safe to repeat. The overlay stays while other chats are still operating. A subsequent UI automation tool shows it again."
+                "zh": "结束当前对话的 UI 自动化操作；最后一个操作结束时关闭宿主小窗、释放屏幕、取消窗口选择并关闭提示。完成或放弃 UI 操作后、回复用户前调用，等待关闭完成；重复调用安全。其他对话仍在操作时延后释放。",
+                "en": "Finish this chat's UI automation. After the last active operation, close hosted windows, release screens, clear selection and dismiss the overlay. Await completion before replying to the user. Safe to repeat. Release is deferred while another chat is operating."
             },
             "parameters": [],
             "display": { "label": { "zh": "完成 UI 操作", "en": "Complete UI operation" }, "icon": "check" }
@@ -41,8 +41,8 @@
         {
             "name": "app_launch",
             "description": {
-                "zh": "根据设备应用标识启动应用，失败时返回实际错误。",
-                "en": "Launch an app by its device application identifier and report the actual failure."
+                "zh": "根据设备应用标识启动应用，按设备配置使用原生小窗或主屏；小窗是正常工作模式。启动后用 list_windows、focus_window 和 get_page_info 选择并检查新窗口。失败时返回实际错误。",
+                "en": "Launch an app by its device identifier using the configured native window or primary screen. A floating window is a normal mode. Discover, focus and inspect its window after launch. Report the actual failure."
             },
             "parameters": [
                 {
@@ -76,21 +76,21 @@
         {
             "name": "focus_window",
             "description": {
-                "zh": "按 list_windows 返回的 windowId 聚焦系统窗口；窗口不存在或系统拒绝聚焦时返回错误。",
-                "en": "Focus the exact windowId returned by list_windows; report stale windows or denied activation."
+                "zh": "传入 list_windows 返回的 windowId 选择该窗口；Windows/macOS/Linux X11 在宿主预览小窗中显示原窗口，不抢占用户的前台工作。后续 UI 树、截图和输入共用窗口左上角 (0,0) 坐标。省略 window_id 可取消选择，恢复主屏幕截图和屏幕坐标。窗口失效时返回错误。",
+                "en": "Select a native windowId. Windows/macOS/Linux X11 show a host-owned preview without bringing the source in front of the user. Trees, screenshots and input then share window-local coordinates with (0,0) at the top left. Omit window_id to clear selection and return to desktop capture and screen coordinates. Stale targets fail."
             },
-            "parameters": [{ "name": "window_id", "type": "string", "required": true,
-                "description": { "zh": "系统窗口 ID。", "en": "Native system window ID." } }],
+            "parameters": [{ "name": "window_id", "type": "string", "required": false,
+                "description": { "zh": "系统窗口 ID；省略可取消窗口选择。", "en": "Native window ID; omit to clear selection." } }],
             "display": { "label": { "zh": "聚焦系统窗口", "en": "Focus system window" }, "icon": "screen", "targetParameter": "window_id" }
         },
         {
             "name": "get_page_info",
             "description": {
-                "zh": "底层读取指定窗口的完整无障碍 UI 树，给 AI 返回有长度预算的精简文本摘要，包含可操作元素、定位信息和关键状态；摘要标注省略数量。不传 window_id 时读取当前活动窗口。",
-                "en": "Collect the selected window's full exposed accessibility tree and return a bounded compact text summary with actionable elements, selectors, key states and omission counts. Omit window_id to read the active window."
+                "zh": "读取完整无障碍树并返回有长度预算的精简摘要。传入 window_id 选择窗口，后续 UI 树、截图和输入共用窗口坐标；省略则保持选择，未选择时读取主屏活动界面并使用屏幕坐标。",
+                "en": "Read the complete accessibility tree and return a bounded summary. An explicit window_id selects that window for local tree, screenshot and input coordinates. Omit it to retain selection, or inspect the active main surface in screen coordinates when no window is selected."
             },
             "parameters": [{ "name": "window_id", "type": "string", "required": false,
-                "description": { "zh": "list_windows 返回的系统窗口 ID；省略则取当前活动窗口。", "en": "System window ID from list_windows; omit for the active window." } }],
+                "description": { "zh": "系统窗口 ID；省略则保持当前选择。", "en": "Native window ID; omit to retain the current selection." } }],
             "display": {
                 "label": {
                     "zh": "读取窗口 UI 树",
@@ -102,8 +102,8 @@
         {
             "name": "get_page_screenshot_image",
             "description": {
-                "zh": "通过系统 Host 截取设备屏幕，返回 VFS 文件路径和已注册图片链接。",
-                "en": "Capture the device screen through the system Host and return a VFS file path and registered image link."
+                "zh": "截取当前选中窗口，截图像素与 UI 树、输入共用窗口左上角 (0,0) 坐标。未选择窗口时截取主屏幕。返回 VFS 文件路径和已注册图片链接。",
+                "en": "Capture the selected window with screenshot pixels matching its tree and input coordinates from (0,0). Capture the main surface when selection is cleared. Return a VFS path and registered image link."
             },
             "parameters": [],
             "display": {
@@ -451,22 +451,25 @@ const UIAutomationTools = (() => {
         return { success: true, message: '成功获取系统窗口列表', data: await Tools.UI.listWindows() };
     }
 
-    /** Activates exactly the native window chosen by the caller. */
-    async function focus_window(params: { window_id: string }): Promise<ToolResponse> {
+    /** Selects the caller's native target or clears it through the owning host. */
+    async function focus_window(params: { window_id?: string }): Promise<ToolResponse> {
         const data = await Tools.UI.focusWindow(params.window_id);
         await markTarget(params.window_id);
-        return { success: true, message: '成功聚焦系统窗口', data };
+        return { success: true, message: params.window_id ? '成功选择系统窗口' : '已取消窗口选择，回到主屏幕', data };
     }
 
     /** Returns the complete accessibility tree of the selected native window. */
     async function get_page_info(params: { window_id?: string }): Promise<ToolResponse> {
         const page = await Tools.UI.getPageInfo(params.window_id);
-        if (page.windowId) await markTarget(page.windowId);
+        if (page.scope === 'window' && page.windowId) await markTarget(page.windowId);
         return {
             success: true, message: '成功获取窗口 UI 摘要',
             data: {
                 windowId: page.windowId, packageName: page.packageName, activityName: page.activityName,
                 scope: page.scope, truncated: page.truncated, summary: page.summary,
+                coordinateNote: page.scope === 'window'
+                    ? 'Tree bounds, screenshot pixels and input share window-local coordinates with (0,0) at the top left. Window-list bounds only locate the preview on the desktop. Desktop previews show the selected source without requiring foreground activation. Scroll clipped or offscreen elements into view and read again. Call focus_window without window_id to return to the main screen.'
+                    : 'No window is selected. Tree bounds, input and screenshot use desktop coordinates. Supply window_id to select a window and use its local coordinates and screenshot. Scroll clipped or offscreen elements into view and read again.',
             },
         };
     }
@@ -557,17 +560,17 @@ const UIAutomationTools = (() => {
     }
 
     /** Reconciles a focused/restored window or the actual window returned by a snapshot. */
-    async function markTarget(windowId: string): Promise<void> {
+    async function markTarget(windowId?: string): Promise<void> {
         const chatId = getChatId();
-        if (chatId) await ToolPkg.ipc.call("ui_automation.begin", { chatId, windowId }, { targetRuntime: "main" });
+        if (chatId) await ToolPkg.ipc.call("ui_automation.begin", { chatId, windowId: windowId ?? null }, { targetRuntime: "main" });
     }
 
     /** Awaits the owning main runtime instead of changing isolated tool-runtime state. */
     async function complete_ui_operation(): Promise<ToolResponse> {
         const chatId = getChatId();
         if (!chatId) throw new Error('当前调用没有对话上下文，无法结束 UI 操作');
-        await ToolPkg.ipc.call("ui_automation.complete", { chatId }, { targetRuntime: "main" });
-        return { success: true, message: '当前对话的 UI 操作已完成；悬浮提示已释放，其他对话仍在操作时继续显示' };
+        await ToolPkg.ipc.call("ui_automation.complete", { chatId, closeWindows: true }, { targetRuntime: "main" });
+        return { success: true, message: '当前对话的 UI 操作已完成；最后一个操作结束时已关闭宿主小窗、释放屏幕并取消选择，其他对话仍在操作时延后释放' };
     }
 
     /** Reports package readiness without performing any device input. */

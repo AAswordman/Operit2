@@ -4,6 +4,7 @@ import android.accessibilityservice.AccessibilityService
 import android.accessibilityservice.GestureDescription
 import android.content.Intent
 import android.graphics.Path
+import android.graphics.Bitmap
 import android.graphics.Rect
 import android.os.Build
 import android.os.Bundle
@@ -14,6 +15,8 @@ import android.view.Display
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import android.view.accessibility.AccessibilityWindowInfo
+import android.util.Base64
+import java.io.ByteArrayOutputStream
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import org.json.JSONArray
@@ -21,6 +24,7 @@ import org.json.JSONObject
 
 /** Owns Android native window discovery, complete accessibility trees and input. */
 class UiAccessibilityService : AccessibilityService() {
+    private var lastScreenshotAt = 0L
     companion object {
         @Volatile var connected: UiAccessibilityService? = null
             private set
@@ -64,20 +68,39 @@ class UiAccessibilityService : AccessibilityService() {
                         .put("displayId", displayIdOf(window))
                         .put("packageName", root.packageName?.toString() ?: "")
                         .put("activityName", window.title?.toString() ?: "")
-                        .put("scope", "desktop").put("truncated", false).put("uiElements", readNode(root))
+                        .put("scope", if (windowId != null || params.has("display_id")) "window" else "desktop")
+                        .put("truncated", false).put("uiElements", readNode(root, windowOrigin(window, windowId != null)))
                 } finally { root.recycle() }
+            }
+            "get_window_frame" -> return withWindow(windowId, displayId) { window ->
+                val rect = Rect().also { window.getBoundsInScreen(it) }
+                JSONObject().put("left", rect.left).put("top", rect.top).put("width", rect.width()).put("height", rect.height())
+            }
+            "capture_screenshot" -> return withWindow(windowId, displayId) { window ->
+                captureSurface(displayIdOf(window), if (windowId != null) Rect().also { window.getBoundsInScreen(it) } else null,
+                    if (windowId != null) window.id else null)
             }
             "focus_window" -> focusWindow(windowId, displayId)
             "tap", "long_press", "swipe" -> {
+                val origin = withWindow(windowId, displayId) { window -> windowOrigin(window, windowId != null) }
+                if (windowId != null) {
+                    val coordinates = if (operation == "swipe") listOf("start_x" to "start_y", "end_x" to "end_y") else listOf("x" to "y")
+                    coordinates.forEach { (xKey, yKey) ->
+                        require(params.getDouble(xKey) >= 0 && params.getDouble(xKey) < origin.width() &&
+                            params.getDouble(yKey) >= 0 && params.getDouble(yKey) < origin.height()) {
+                            "Input coordinate is outside the selected window"
+                        }
+                    }
+                }
                 val path = Path()
                 val duration: Long
                 if (operation == "swipe") {
-                    path.moveTo(params.getDouble("start_x").toFloat(), params.getDouble("start_y").toFloat())
-                    path.lineTo(params.getDouble("end_x").toFloat(), params.getDouble("end_y").toFloat())
+                    path.moveTo(params.getDouble("start_x").toFloat() + origin.left, params.getDouble("start_y").toFloat() + origin.top)
+                    path.lineTo(params.getDouble("end_x").toFloat() + origin.left, params.getDouble("end_y").toFloat() + origin.top)
                     duration = params.getLong("duration")
                 } else {
-                    val x = params.getDouble("x").toFloat()
-                    val y = params.getDouble("y").toFloat()
+                    val x = params.getDouble("x").toFloat() + origin.left
+                    val y = params.getDouble("y").toFloat() + origin.top
                     path.moveTo(x, y); path.lineTo(x, y)
                     duration = if (operation == "tap") 50 else 600
                 }
@@ -159,12 +182,13 @@ class UiAccessibilityService : AccessibilityService() {
     }
 
     /** Preserves all exposed descendants, non-important views and native accessibility states. */
-    private fun readNode(node: AccessibilityNodeInfo): JSONObject {
+    private fun readNode(node: AccessibilityNodeInfo, origin: Rect): JSONObject {
         val rect = Rect().also { node.getBoundsInScreen(it) }
+        rect.offset(-origin.left, -origin.top)
         val children = JSONArray()
         for (index in 0 until node.childCount) {
             val child = node.getChild(index) ?: continue
-            try { children.put(readNode(child)) } finally { child.recycle() }
+            try { children.put(readNode(child, origin)) } finally { child.recycle() }
         }
         return JSONObject().put("className", node.className?.toString() ?: JSONObject.NULL)
             .put("text", if (node.isPassword) JSONObject.NULL else node.text?.toString() ?: JSONObject.NULL)
@@ -177,6 +201,53 @@ class UiAccessibilityService : AccessibilityService() {
                 .put("isSelected", node.isSelected).put("isCheckable", node.isCheckable)
                 .put("isChecked", node.isChecked).put("isPassword", node.isPassword)
                 .put("actions", JSONArray(node.actionList.map { it.id })))
+    }
+
+    /** Uses local coordinates only for an explicitly selected native window. */
+    private fun windowOrigin(window: AccessibilityWindowInfo, selected: Boolean): Rect =
+        Rect().also { if (selected) window.getBoundsInScreen(it) }
+
+    /** Captures the exact native display and crops only explicitly selected primary windows. */
+    private fun captureSurface(displayId: Int, frame: Rect?, windowId: Int?): JSONObject {
+        check(Build.VERSION.SDK_INT >= 30) { "Native display screenshots require Android 11 or later" }
+        val wait = 350 - (SystemClock.uptimeMillis() - lastScreenshotAt)
+        if (wait > 0) SystemClock.sleep(wait)
+        lastScreenshotAt = SystemClock.uptimeMillis()
+        val windowCapture = windowId != null && Build.VERSION.SDK_INT >= 34
+        val finished = CountDownLatch(1)
+        var bytes: ByteArray? = null
+        var failure: Exception? = null
+        val callback = object : TakeScreenshotCallback {
+            /** Copies and closes the hardware buffer before publishing the PNG. */
+            override fun onSuccess(result: ScreenshotResult) {
+                try {
+                    val hardware = try { checkNotNull(Bitmap.wrapHardwareBuffer(result.hardwareBuffer, result.colorSpace)) }
+                        finally { result.hardwareBuffer.close() }
+                    val image = try { checkNotNull(hardware.copy(Bitmap.Config.ARGB_8888, false)) }
+                        finally { hardware.recycle() }
+                    try {
+                        val cropped = if (frame == null || windowCapture) image else Bitmap.createBitmap(image, frame.left, frame.top, frame.width(), frame.height())
+                        try {
+                            val output = ByteArrayOutputStream()
+                            check(cropped.compress(Bitmap.CompressFormat.PNG, 100, output)) { "Android could not encode the selected screenshot" }
+                            bytes = output.toByteArray()
+                        } finally { if (cropped !== image) cropped.recycle() }
+                    } finally { image.recycle() }
+                } catch (error: Exception) { failure = error }
+                finally { finished.countDown() }
+            }
+
+            /** Preserves permission, secure-content and display capture failures. */
+            override fun onFailure(errorCode: Int) {
+                failure = IllegalStateException("Android rejected the selected display screenshot: $errorCode")
+                finished.countDown()
+            }
+        }
+        if (windowCapture) takeScreenshotOfWindow(checkNotNull(windowId), mainExecutor, callback)
+        else takeScreenshot(displayId, mainExecutor, callback)
+        check(finished.await(10, TimeUnit.SECONDS)) { "Android screenshot timed out" }
+        failure?.let { throw it }
+        return JSONObject().put("pngBase64", Base64.encodeToString(checkNotNull(bytes), Base64.NO_WRAP))
     }
 
     /** Requests input focus from a focusable descendant without generating touch input. */

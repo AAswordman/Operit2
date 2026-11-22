@@ -68,6 +68,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
     private final Consumer<DisplayWindow> foreground;
     private final OverScroller scroller;
     private final Runnable flingFrame = this::stepFling;
+    private final Runnable layoutFrame = this::applyFrame;
     private final ViewConfiguration gestures;
     private final int displayWidth;
     private final int displayHeight;
@@ -86,6 +87,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
     private float downX;
     private float downY;
     private boolean moved;
+    private boolean layoutScheduled;
     private VelocityTracker velocity;
     private ValueAnimator transition;
 
@@ -113,7 +115,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
         PackageManager packages = context.getPackageManager();
         ApplicationInfo application = packages.getApplicationInfo(packageName, 0);
         chrome = new WindowChrome(viewContext, application.loadLabel(packages), density, displayWidth,
-                this::back, this::minimize, this::close, this::raise);
+                this::back, this::minimize, this::fullscreen, this::close, this::raise);
         chrome.grip.setOnTouchListener((view, event) -> gesture(event, 0));
         chrome.resizeLeft.setOnTouchListener((view, event) -> gesture(event, -1));
         chrome.resizeRight.setOnTouchListener((view, event) -> gesture(event, 1));
@@ -171,13 +173,31 @@ final class DisplayWindow implements SurfaceHolder.Callback {
         layout.y = top - shadow;
         layout.width = cardWidth + 2 * shadow;
         layout.height = cardHeight + 2 * shadow;
-        if (attached) manager.updateViewLayout(chrome.root, layout);
+        if (attached && !layoutScheduled) {
+            layoutScheduled = true;
+            chrome.root.postOnAnimation(layoutFrame);
+        }
+    }
+
+    /** Commits the latest geometry once per display frame instead of relayouts per input sample. */
+    private void applyFrame() {
+        layoutScheduled = false;
+        if (attached && !closed) manager.updateViewLayout(chrome.root, layout);
     }
 
     /** Delivers Back to the hosted application. */
     private void back() {
         try { input.key(displayId(), KeyEvent.KEYCODE_BACK); }
         catch (Exception error) { report(error); }
+    }
+
+    /** Moves the live task onto the physical display before destroying its former virtual display. */
+    private void fullscreen() {
+        if (closed || transition != null) return;
+        try {
+            context.moveToPrimaryDisplay(displayId());
+            close();
+        } catch (Exception error) { report(error); }
     }
 
     /** Attaches the floating window and bounds asynchronous Surface initialization. */
@@ -252,6 +272,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
     void launch(String target) throws Exception {
         requireOpen();
         ActivityOptions options = ActivityOptions.makeBasic().setLaunchDisplayId(displayId());
+        ActivityOptions.class.getMethod("setLaunchWindowingMode", int.class).invoke(options, 1);
         Intent intent = new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
                 .setComponent(ComponentName.unflattenFromString(target))
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -288,6 +309,11 @@ final class DisplayWindow implements SurfaceHolder.Callback {
 
     /** Reserves a top-right dock slot and animates the live content into it. */
     private void minimize() {
+        minimize(frame);
+    }
+
+    /** Preserves the last usable expanded size when an inward resize crosses the dock threshold. */
+    private void minimize(Rect restoreFrame) {
         if (minimized || transition != null) return;
         int previewWidth = Math.min(chrome.dp(80), maxWidth(area.width()));
         int previewHeight = contentHeight(previewWidth);
@@ -300,7 +326,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
             return;
         }
         minimized = true;
-        restoredFrame.set(frame);
+        restoredFrame.set(restoreFrame);
         dockSlot = slot;
         dockSlots.set(dockSlot);
         int right = area.right - dockSlot / rows * (previewWidth + gap);
@@ -395,9 +421,17 @@ final class DisplayWindow implements SurfaceHolder.Callback {
         int verticalSpace = area.bottom - gestureFrame.top;
         int maximum = Math.min(horizontalSpace, (int) (verticalSpace / ASPECT));
         int minimum = Math.min(maximum, chrome.dp(184));
-        int cardWidth = Math.max(minimum, Math.min(maximum, gestureFrame.width() + widthDelta));
+        int threshold = minimum - Math.min(chrome.dp(32), Math.max(1, minimum / 5));
+        int requested = gestureFrame.width() + widthDelta;
+        int cardWidth = Math.max(threshold, Math.min(maximum, requested));
         int left = side < 0 ? gestureFrame.right - cardWidth : gestureFrame.left;
         setFrame(left, gestureFrame.top, cardWidth, 0);
+        if (requested <= threshold) {
+            int restoreLeft = side < 0 ? gestureFrame.right - minimum : gestureFrame.left;
+            minimize(new Rect(restoreLeft, gestureFrame.top, restoreLeft + minimum,
+                    gestureFrame.top + contentHeight(minimum)));
+            finishGesture();
+        }
     }
 
     /** Continues a fast drag with bounded native inertial deceleration. */
@@ -476,6 +510,8 @@ final class DisplayWindow implements SurfaceHolder.Callback {
         if (closed) return;
         closed = true;
         stopFling();
+        chrome.root.removeCallbacks(layoutFrame);
+        layoutScheduled = false;
         finishGesture();
         if (transition != null) transition.cancel();
         releaseDockSlot();

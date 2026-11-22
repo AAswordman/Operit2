@@ -3,7 +3,7 @@ use std::sync::Arc;
 use operit_host_api::{
     AppListData as HostAppListData, AppOperationData as HostAppOperationData,
     AppUsageTimeResultData as HostAppUsageTimeResultData, DeviceInfoData as HostDeviceInfoData,
-    ClipboardHost, LocationData as HostLocationData, NotificationData as HostNotificationData,
+    ClipboardHost, FileTarget, LocationData as HostLocationData, NotificationData as HostNotificationData,
     SystemNotificationActivation, SystemNotificationRequest, SystemOperationHost,
     SystemSettingData as HostSystemSettingData, ToastHost,
 };
@@ -28,6 +28,7 @@ pub struct StandardSystemOperationTools {
     pub systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
     pub toastHost: Option<Arc<dyn ToastHost>>,
     pub clipboardHost: Option<Arc<dyn ClipboardHost>>,
+    pub uiAutomationHost: Option<Arc<dyn operit_host_api::UiAutomation::UiAutomationHost>>,
     vfs: VisualFileSystem,
     fileRouting: FileToolRouting,
 }
@@ -69,6 +70,7 @@ impl StandardSystemOperationTools {
         systemOperationHost: Option<Arc<dyn SystemOperationHost>>,
         toastHost: Option<Arc<dyn ToastHost>>,
         clipboardHost: Option<Arc<dyn ClipboardHost>>,
+        uiAutomationHost: Option<Arc<dyn operit_host_api::UiAutomation::UiAutomationHost>>,
         vfs: VisualFileSystem,
         fileRouting: FileToolRouting,
     ) -> Self {
@@ -76,6 +78,7 @@ impl StandardSystemOperationTools {
             systemOperationHost,
             toastHost,
             clipboardHost,
+            uiAutomationHost,
             vfs,
             fileRouting,
         }
@@ -408,7 +411,10 @@ impl StandardSystemOperationTools {
             self.vfs.makeDirectory(parent, true).map_err(operit_host_api::HostError::new)?;
             let path = format!("{parent}/{}.png", uuid::Uuid::new_v4());
             let target = self.vfs.file(&path).map_err(operit_host_api::HostError::new)?;
-            self.host()?.captureScreenshotTo(&target)?;
+            match self.uiAutomationHost.as_deref() {
+                Some(host) => target.writeBytes(&host.capture_screenshot()?)?,
+                None => self.host()?.captureScreenshotTo(&target)?,
+            }
             Ok(path)
         })();
         match capture {

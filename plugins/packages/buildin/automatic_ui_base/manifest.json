@@ -6,8 +6,8 @@
   "main": "dist/main.js",
   "display_name": { "zh": "UI 自动化", "en": "UI Automation" },
   "description": {
-    "zh": "让 AI 读取和操作系统界面，操作时自动显示悬浮状态球和边框，并通过 complete_ui_operation 结束操作、关闭提示。",
-    "en": "Lets the AI read and operate device interfaces with an automatic activity overlay, dismissed by complete_ui_operation when operations finish."
+    "zh": "让 AI 读取和操作系统界面，操作时自动显示悬浮状态球和边框，并通过 complete_ui_operation 释放宿主屏幕、关闭小窗和提示。",
+    "en": "Lets the AI read and operate device interfaces with an activity overlay. complete_ui_operation releases hosted screens, viewing windows and the overlay."
   },
   "enabled_by_default": false,
   "subpackages": [{ "id": "Automatic_ui_base", "entry": "dist/tools.js" }]
