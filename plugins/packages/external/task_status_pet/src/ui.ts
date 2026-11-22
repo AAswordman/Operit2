@@ -17,8 +17,8 @@ export function petScreen(ctx: ComposeDslContext): ComposeNode {
   }
   return ctx.UI.Column({ fillMaxSize: true, horizontalAlignment: "center", spacing: 0 }, [
     ctx.UI.Image({ key: "task-cat", uri: sprite, animationKey: `${view.mood}:${view.sequence}`, contentScale: "fit", fillMaxWidth: true, weight: 1,
-      contentDescription: `${LABELS[view.mood]}，点击查看任务，按住拖动`, modifier: ctx.Modifier.clickable(open) }),
-    ctx.UI.Box({ height: 32, fillMaxWidth: true, contentAlignment: "center", modifier: ctx.Modifier.clickable(open) }, [
+      contentDescription: `${LABELS[view.mood]}，点击查看任务，按住拖动`, modifier: ctx.Modifier.tapGestures({ onTap: open }) }),
+    ctx.UI.Box({ height: 32, fillMaxWidth: true, contentAlignment: "center", modifier: ctx.Modifier.tapGestures({ onTap: open }) }, [
       ctx.UI.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 0,
         modifier: ctx.Modifier.background("#D91B3144", { type: "rounded", cornerRadius: 8 }).padding(3) }, [
         ctx.UI.Text({ text: error || title, fontSize: 10, maxLines: 1, color: "#EAF6FF" }),
