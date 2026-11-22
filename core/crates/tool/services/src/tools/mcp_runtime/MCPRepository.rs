@@ -168,6 +168,9 @@ impl MCPRepository {
     ) -> InstallResult {
         progressCallback(InstallProgress::Preparing);
 
+        if let Err(message) = validatePluginId(pluginId) {
+            return InstallResult::Error { message };
+        }
         let pluginDir = joinHostPath(&self.pluginsBaseDir, pluginId);
         if let Err(message) = self.preparePluginDirectory(&pluginDir) {
             return InstallResult::Error { message };
@@ -224,6 +227,9 @@ impl MCPRepository {
     ) -> InstallResult {
         progressCallback(InstallProgress::Preparing);
 
+        if let Err(message) = validatePluginId(pluginId) {
+            return InstallResult::Error { message };
+        }
         let source = (|| -> Result<_, String> {
             let storage = self.context.runtimeStorageHost.clone().ok_or("Runtime storage is required for MCP import")?;
             let context = crate::ToolExecutionManager::ToolExecutionManager::currentToolRuntimeContext();
@@ -668,4 +674,36 @@ fn joinHostPath(directory: &str, relativePath: &str) -> String {
         directory.trim_end_matches(['/', '\\']),
         relativePath
     )
+}
+
+/// Rejects plugin ids that could escape the plugins base directory when joined,
+/// because preparePluginDirectory recursively deletes the joined path.
+#[allow(non_snake_case)]
+fn validatePluginId(pluginId: &str) -> Result<(), String> {
+    if pluginId.is_empty() || pluginId == "." || pluginId == ".." {
+        return Err(format!("Invalid MCP plugin id: {pluginId:?}"));
+    }
+    if pluginId.chars().any(|character| matches!(character, '/' | '\\' | ':') || character.is_control()) {
+        return Err(format!("Invalid MCP plugin id: {pluginId:?}"));
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod plugin_id_validation_tests {
+    use super::validatePluginId;
+
+    #[test]
+    fn rejects_traversal_and_separator_ids() {
+        for id in ["../../x", "..", ".", "", "a/b", "a\\b", "C:evil", "/abs", "a\0b"] {
+            assert!(validatePluginId(id).is_err(), "must reject {id:?}");
+        }
+    }
+
+    #[test]
+    fn accepts_plain_plugin_ids() {
+        for id in ["my-plugin", "plugin_1.2", "owner-repo"] {
+            assert!(validatePluginId(id).is_ok(), "must accept {id:?}");
+        }
+    }
 }
