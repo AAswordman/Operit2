@@ -2836,9 +2836,14 @@ fn textScriptResult(result: JsExecutionResult<Option<Value>>) -> JsExecutionResu
 }
 
 /// Preserves text callbacks for ordinary scripts while keeping the internal channel structured.
+/// Plugin-supplied values may be non-text; serialize them instead of panicking the host.
 fn textIntermediateCallback(callback: Option<Arc<dyn Fn(String) + Send + Sync>>) -> Option<Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>> {
     callback.map(|callback| Arc::new(move |value| {
-        let operit_host_api::HostJavaScriptValue::Json(Value::String(text)) = value else { panic!("Text intermediate callback received a non-text value"); };
+        let text = match value {
+            operit_host_api::HostJavaScriptValue::Json(Value::String(text)) => text,
+            operit_host_api::HostJavaScriptValue::Json(other) => other.to_string(),
+            operit_host_api::HostJavaScriptValue::Buffer(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        };
         callback(text);
     }) as Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>)
 }
@@ -3359,6 +3364,18 @@ fn storeExecutionResult(callId: String, result: String) -> HostResult<()> {
     Ok(())
 }
 
+/// Resolves a structured error message with a raw-text fallback so plugin-supplied
+/// payloads (empty or non-structured) can never panic the host.
+fn executionErrorMessage(error: &str) -> String {
+    extractJsExecutionErrorMessage(Some(error)).unwrap_or_else(|| {
+        if error.trim().is_empty() {
+            "JavaScript execution failed without an error message".to_string()
+        } else {
+            error.to_string()
+        }
+    })
+}
+
 /// Reports and stores an execution error through the external listener contract.
 #[allow(non_snake_case)]
 fn storeExecutionError(callId: String, error: String) -> HostResult<()> {
@@ -3369,9 +3386,36 @@ fn storeExecutionError(callId: String, error: String) -> HostResult<()> {
         listener.on_failed(&callId, &error);
     }
     CURRENT_CALL_RESULTS.with(|results| {
-        results.borrow_mut().insert(callId, Err(JsExecutionError::runtime(extractJsExecutionErrorMessage(Some(&error)).expect("Native error must contain a structured error message"))));
+        results.borrow_mut().insert(callId, Err(JsExecutionError::runtime(executionErrorMessage(&error))));
     });
     Ok(())
+}
+
+#[cfg(test)]
+mod plugin_panic_guard_tests {
+    use super::{executionErrorMessage, textIntermediateCallback};
+    use operit_host_api::HostJavaScriptValue;
+    use serde_json::json;
+    use std::sync::{Arc, Mutex};
+
+    #[test]
+    fn empty_or_non_structured_errors_fall_back_without_panicking() {
+        assert_eq!(executionErrorMessage(""), "JavaScript execution failed without an error message");
+        assert_eq!(executionErrorMessage("plain failure"), "plain failure");
+        assert_eq!(executionErrorMessage(r#"{"success":false,"message":"boom"}"#), "boom");
+    }
+
+    #[test]
+    fn text_callback_serializes_non_string_values() {
+        let collected = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink = collected.clone();
+        let callback = textIntermediateCallback(Some(Arc::new(move |text| sink.lock().unwrap().push(text)))).unwrap();
+        callback(HostJavaScriptValue::Json(json!({"a":1})));
+        callback(HostJavaScriptValue::Json(json!("hello")));
+        let texts = collected.lock().unwrap();
+        assert_eq!(texts[0], "{\"a\":1}");
+        assert_eq!(texts[1], "hello");
+    }
 }
 
 /// Publishes native ownership metadata for versioned SDK adapters without accepting caller aliases.
