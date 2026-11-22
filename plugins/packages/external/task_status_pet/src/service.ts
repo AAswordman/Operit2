@@ -7,6 +7,7 @@ export interface Port {
   approvals(): Promise<ToolPkg.ToolPermissionRequest[]>;
   resource(mood: Mood): Promise<string>;
   capabilities(): Promise<{ scope: string; permissionGranted: boolean }>;
+  windows(): Promise<ToolPkg.FloatingWindowInfo[]>;
   set(id: string, content: ToolPkg.FloatingWindowContent | null): Promise<string>;
   respond(chatId: string, requestId: string, decision: ToolPkg.ToolPermissionDecision): Promise<void>;
   switchChat(chatId: string): Promise<unknown>;
@@ -29,6 +30,7 @@ export class PetService {
   private sequence = 0;
   private visual = "";
   private presentation = "closed";
+  private position: Pick<ToolPkg.FloatingWindowOptions, "x" | "y"> | null = null;
   private tail: Promise<unknown> = Promise.resolve();
   /** Binds the host port without performing storage or window work at construction. */
   constructor(private readonly port: Port) {}
@@ -61,10 +63,14 @@ export class PetService {
     if (visual !== this.visual) { this.visual = visual; this.sequence++; view.sequence = this.sequence; }
     const visible = !this.terminated && this.settings.enabled && !this.dismissed && (this.manual || !this.settings.backgroundOnly || this.background)
       && (view.mood !== "idle" || this.settings.keepIdle || this.manual);
+    if (!visible && this.presentation === "shown" && !this.terminated) {
+      const cat = (await this.port.windows()).find(window => window.id === "cat");
+      if (cat) this.position = { x: cat.options.x, y: cat.options.y };
+    }
     this.presentation = await this.port.set("cat", visible ? {
       route: PET_ROUTE,
       state: { view, sprite: await this.port.resource(view.mood) },
-      options: { width: this.settings.width, height: this.settings.width + 32, alwaysOnTop: true, focusable: false, draggable: true },
+      options: { ...(this.presentation !== "shown" ? this.position : null), width: this.settings.width, height: this.settings.width + 32, alwaysOnTop: true, focusable: false, draggable: true },
     } : null);
     if (this.details && !this.terminated && this.settings.enabled && !this.dismissed) {
       await this.port.set("details", { route: DETAILS_ROUTE, state: { view }, options: { width: 360, height: 460, alwaysOnTop: true, focusable: false, draggable: true } });
@@ -103,8 +109,10 @@ export class PetService {
     return this.enqueue(async () => {
       if (event === "application_on_terminate") {
         this.terminated = true; this.details = false;
+        this.position = null;
         this.finish?.(); this.finish = null;
         await this.port.set("cat", null); await this.port.set("details", null);
+        this.presentation = "closed";
         return;
       }
       if (event === "application_on_create") this.terminated = false;

@@ -9,7 +9,7 @@
  * - Device control (screen, volume, etc.)
  * 
  * All functions ultimately use the Shell commands to execute their operations.
- * This library requires Shizuku service to be running with proper permissions.
+ * Commands use the Android Host's system-shell identity; privileged operations require Root or Shizuku authorization.
  * 
  * Example usage:
  * ```javascript
@@ -23,19 +23,36 @@
  * ```
  */
 
-function executeShell(command, timeout = 15000) {
-    return Tools.System.terminal.hiddenExec(command, {
-        executorKey: 'android-utils',
-        timeoutMs: timeout
-    }).then(function(result) {
-        if (result && result.output !== undefined) {
-            return result.output;
+const androidUtilsShellScope = Date.now().toString(36) + '_' + Math.random().toString(36).slice(2);
+let androidUtilsShellSequence = 0;
+
+/** Runs Android commands in an owned system-shell session using the Host's privilege policy. */
+async function executeShell(command, timeout = 15000) {
+    // hiddenExec selects proot/bash on Android; the v1 terminal facade also selects Linux.
+    const terminal = __operitCanonicalTools.System.terminal;
+    const session = await terminal.create('android_utils_' + androidUtilsShellScope + '_' + (++androidUtilsShellSequence), 'shell');
+    let failed = false;
+    try {
+        const result = await terminal.exec(session.sessionId, command, timeout);
+        if (result.timedOut) {
+            throw new Error('Android shell timed out: ' + result.output);
         }
-        if (result && result.content !== undefined) {
-            return result.content;
+        if (result.exitCode !== 0) {
+            throw new Error('Android shell exited with code ' + result.exitCode + ': ' + result.output);
         }
-        return '';
-    });
+        return result.output;
+    } catch (error) {
+        failed = true;
+        throw error;
+    } finally {
+        try {
+            const closed = await terminal.close(session.sessionId);
+            if (!closed.success) throw new Error('Android shell cleanup failed: ' + closed.message);
+        } catch (error) {
+            if (!failed) throw error;
+            console.error('AndroidUtils shell cleanup failed', error);
+        }
+    }
 }
 
 function parseKeyValueOutput(output, separator = ': ') {

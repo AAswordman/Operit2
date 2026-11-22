@@ -25,6 +25,20 @@ android {
     }
 }
 
+val frameworkStubs = tasks.register<JavaCompile>("compileWindowFrameworkStubs") {
+    source(fileTree("framework-stubs") { include("**/*.java") })
+    classpath = files(android.bootClasspath)
+    destinationDirectory.set(layout.buildDirectory.dir("framework-stubs/classes"))
+    sourceCompatibility = "17"
+    targetCompatibility = "17"
+}
+val frameworkStubJar = tasks.register<Jar>("windowFrameworkStubJar") {
+    from(frameworkStubs.flatMap { it.destinationDirectory })
+    archiveFileName.set("window-framework-stubs.jar")
+    destinationDirectory.set(layout.buildDirectory.dir("framework-stubs"))
+}
+dependencies { compileOnly(files(frameworkStubJar.flatMap { it.archiveFile })) }
+
 androidComponents {
     onVariants(selector().all()) { variant ->
         configurations.create("${variant.name}Apk") {

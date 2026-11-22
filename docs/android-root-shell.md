@@ -86,12 +86,23 @@ stdin 接 `/dev/null`，并复用与 PTY 相同的 `dropRootToShellIdentity` 降
 token），终端会话与一次性命令共享同一连接与会话表；退出码轮询、超时预算和销毁沿用
 `AndroidCommandProcessRunner.collect`。
 
+内置 `AndroidUtils`（`Android`、`PackageManager`、`ContentProvider`、`SystemManager`、
+`DeviceController`）同样显式创建 `shell` 会话，每次调用独立拥有并关闭该会话。
+它使用 SDK 内部的 canonical terminal，避免 v1 终端兼容适配选择 Linux；不能使用
+`hiddenExec`，因为 Android Host 的该入口固定选择 proot/bash，不参与系统 shell 的
+特权身份选择。命令原文和超时传入系统会话，非零退出码与超时向调用者抛错，保留底层
+输出，不将权限错误当作正常结果返回。
+
+Shizuku 识别、授权显示与命令执行的排查证据及限制见
+[2026-11-22 排查记录](analysis-shizuku-authorization-2026-11-22.md)。
+
 ## 维护检查
 
 原生接线契约（无需 Android SDK）：
 
 ```sh
 node --test tools/tests/android_root_commands.test.mjs \
+  tools/tests/android_utils_shell.test.mjs \
   tools/tests/android_terminal_privileges.test.mjs \
   tools/tests/android_runtime_contracts.test.mjs \
   tools/tests/super_admin_terminal_routing.test.mjs

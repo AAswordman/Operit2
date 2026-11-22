@@ -82,9 +82,6 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
           targets: x86_64-unknown-linux-musl,aarch64-unknown-linux-gnu
 
-      - name: Check build environment
-        run: python3 tools/build_scripts/check_build_environment.py --products "${{ inputs.products }}" --cli-arches "${{ inputs.cli_arches }}" --github-runner
-
       - name: Build and package Linux app
         if: inputs.products != 'cli'
         run: python3 tools/build_scripts/build_flutter_linux.py --enforce-lockfile

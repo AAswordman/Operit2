@@ -469,6 +469,9 @@ pub(crate) fn applyDeclaredOperations<F>(
 ) -> Result<BTreeMap<String,String>,PreferencesDataStoreError>
 where F: Fn(&str,&str)->bool {
     let path = store.path().to_str().ok_or_else(||PreferencesDataStoreError::Message("Invalid preference path".into()))?;
+    let ownsAlias = |key: &String| key.split_once('\u{1f}').is_some_and(|(owner, _)| owner == path);
+    let mut externalAliases = externalAliases.clone();
+    externalAliases.retain(|key, _| !ownsAlias(key));
     // Covered opaque history has no compaction work. Reuse committed state when
     // identity decisions leave its declared records and references unchanged,
     // without requiring old migration context to replay already applied originals.
@@ -477,15 +480,16 @@ where F: Fn(&str,&str)->bool {
     {
         let declared = schema.stores.iter().find(|owner| owner.path == path);
         if let Some(declared) = declared {
-            if let Ok(snapshot) = store.syncSnapshot() {
-                let decisions_absorbed = aliasesAbsorbed(declared, &snapshot.data, externalAliases)?;
+            if let Ok(mut snapshot) = store.syncSnapshot() {
+                let decisions_absorbed = aliasesAbsorbed(declared, &snapshot.data, &externalAliases)?;
                 let history_absorbed = crate::SyncOperationStore::SyncOperationStore::new(
                         store.storageHost.clone(), operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH)
                     .archivedPreferenceHistory(path).map(|history| {
                         history.iter().all(|op| snapshot.covered.contains(&op.opId))
                     }).unwrap_or(false);
                 if decisions_absorbed && history_absorbed {
-                    return Ok(snapshot.data.aliases.clone());
+                    snapshot.data.aliases.retain(|key, _| ownsAlias(key));
+                    return Ok(snapshot.data.aliases);
                 }
             }
         }
@@ -601,9 +605,7 @@ where F: Fn(&str,&str)->bool {
                 .then(|| key.to_owned())
         }).collect::<Vec<_>>();
         for key in retiredKeys { preferences.remove(&stringPreferencesKey(&key)); }
-        let mut snapshots = BTreeMap::from([(path.to_owned(), preferences.clone())]);
-        rewriteReferences(&mut snapshots, schema, &aliases)?;
-        *preferences = snapshots.remove(path).expect("dataset snapshot");
+        rewriteReferences(preferences, schema, &aliases)?;
         for (_, catalog) in schema.catalogs() {
             let records = currentRecords(preferences, catalog).map_err(PreferencesDataStoreError::Message)?;
             let records = nameRecords(records, catalog).map_err(PreferencesDataStoreError::Message)?;
@@ -633,33 +635,26 @@ where F: Fn(&str,&str)->bool {
                 _ => return Err(PreferencesDataStoreError::Message("Projection selection must be an identity or null".into())),
             }
         }
+        // Foreign decisions remain durable reference inputs, never this owner's published identities.
+        aliases.retain(|key, _| ownsAlias(key));
         Ok((aliases, retired))
     })
 }
 
-/// Checks pending identity decisions through the same catalog and reference selectors as replay.
+/// Checks external identity decisions through the same reference selectors as replay.
 fn aliasesAbsorbed(
     store: &PreferenceMergeStore,
     data: &crate::Transaction::Data,
     aliases: &BTreeMap<String, String>,
 ) -> Result<bool, PreferencesDataStoreError> {
-    let pending = aliases.iter()
-        .filter(|(key, value)| data.aliases.get(*key) != Some(*value))
-        .map(|(key, value)| (key.clone(), value.clone())).collect::<BTreeMap<_, _>>();
-    if pending.is_empty() { return Ok(true); }
-    if let Some(catalog) = &store.merge.catalog {
-        for key in data.values.keys().filter(|key| keyMatches(key, catalog)) {
-            let id = catalogIdentity(key, catalog).map_err(PreferencesDataStoreError::Message)?;
-            if pending.contains_key(&referenceKey(&store.path, id)) { return Ok(false); }
-        }
-    }
+    if aliases.is_empty() { return Ok(true); }
     for reference in &store.merge.references {
-        if !pending.keys().any(|key| key.split_once('\u{1f}').is_some_and(|(path, _)| path == reference.target)) {
+        if !aliases.keys().any(|key| key.split_once('\u{1f}').is_some_and(|(path, _)| path == reference.target)) {
             continue;
         }
         for (_, value) in data.values.iter().filter(|(key, _)| reference.key.matches(key)) {
             let mut rewritten = value.clone();
-            rewriteReferenceValue(&mut rewritten, &reference.path, &reference.target, &pending)
+            rewriteReferenceValue(&mut rewritten, &reference.path, &reference.target, aliases)
                 .map_err(PreferencesDataStoreError::Message)?;
             if rewritten != *value { return Ok(false); }
         }
@@ -669,15 +664,12 @@ fn aliasesAbsorbed(
 
 /// Rewrites declared references using the executor's canonical identity map.
 fn rewriteReferences(
-    staged: &mut BTreeMap<String, Preferences>,
+    preferences: &mut Preferences,
     schema: &PreferenceMergeSchema,
     referenceMap: &BTreeMap<String, String>,
 ) -> Result<(), PreferencesDataStoreError> {
     for store in &schema.stores {
         for reference in &store.merge.references {
-            let preferences = staged.get_mut(&store.path).ok_or_else(|| {
-                PreferencesDataStoreError::Message("Declared preference reference store is missing".into())
-            })?;
             let keys = preferences.iterEntries().filter(|(key, _)| reference.key.matches(key))
                 .map(|(key, _)| stringPreferencesKey(key)).collect::<Vec<_>>();
             for key in keys {

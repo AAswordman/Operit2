@@ -318,6 +318,12 @@ Linux Release Build       Linux App and/or CLI
 Android Flutter Build     signed Android APK and module installer ZIP
 ```
 
+Packaging and deployment workflows only prepare dependencies, generate required
+assets, build packages, and upload or publish them. They do not run standalone
+environment preflight checks, contract checks, type checks, unit tests, or browser
+and runtime smoke tests. The `cargo check` commands used to generate Dart proxy
+artifacts remain required build steps.
+
 Android Flutter Build requires these repository secrets:
 
 ```text

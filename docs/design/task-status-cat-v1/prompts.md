@@ -1,6 +1,10 @@
-# ImageGen 生成提示词记录
+# 动画素材与初版设计记录
 
-当前工作动作 `working.webp` 已替换为用户于 2026-11-22 提供的原始 APNG（附件 `codex-clipboard-a1081f12-d4ce-4bd7-af97-df429311dd6d.png`）。只作无损 WebP 格式转换，没有重绘、缩放或使用新的 ImageGen 提示词。保留 720×704、48 帧、4 秒无限循环；WebP 使用整数毫秒时间戳，83/84 ms 帧间隔保持完整的 4 秒周期。逐帧解码比对确认全部 RGBA 像素与附件一致。下文记录初次生成过程；其 typing 图集与后续手部重绘候选均未用于当前工作素材。
+工作动作 `working.webp` 来自用户于 2026-11-22 提供的原始 APNG（附件 `codex-clipboard-a1081f12-d4ce-4bd7-af97-df429311dd6d.png`），经无损 WebP 格式转换，保留 720×704、48 帧和 4 秒循环。WebP 使用整数毫秒时间戳，83/84 ms 帧间隔保持完整的 4 秒周期。逐帧解码比对确认可见像素和透明度与附件一致。
+
+从插件 0.1.1 起，其余五种动作采用用户确认的 Python 重绘序列帧。绘制使用工作原图的 90×88 像素网格，头部和前爪按状态编排，尾巴沿用原图的摆动帧。348 张序列帧按整数倍放大到 720×704，以 12 fps 的时间基准编码为透明无损 WebP。完成动作播放一次，其余动作循环。当前六个动画位于 `plugins/packages/external/task_status_pet/resources/`。
+
+## 初版 ImageGen 提示词
 
 模式：内置 `image_gen.imagegen`，六次独立生成，均设置 `transparent_background: true`。没有使用 CLI/API 回退或 Python 绘图。
 
@@ -40,4 +44,4 @@ Cat has stopped typing, ears gently droop, gaze drops toward laptop, head slowly
 
 ## 生成后的编排
 
-源图集由 ImageGen 绘制，仅保存在 Codex 生成目录。裁切和时间编排在内存完成，最终只输出一套无损透明动画 WebP。仓库与插件包不保留图集、静态预览或 APNG 副本。六个最终动画已移至 `plugins/packages/external/task_status_pet/resources/`，插件说明见该目录上级的 README。生成提示约束并不等同于生成结果的逐像素保证：首帧原图与续画存在比例及像素密度差异。交互网页与重复的设计素材目录已删除。
+初版源图集由 ImageGen 绘制，仅保存在 Codex 生成目录。裁切和时间编排在内存完成，输出无损透明动画 WebP。初版续画与原图存在比例及像素密度差异，后续由上面的素材接替。

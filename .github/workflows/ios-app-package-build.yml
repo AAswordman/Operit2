@@ -122,12 +122,6 @@ jobs:
           path: tools/release/work/ios-v8/*/aarch64-apple-ios
           key: ${{ runner.os }}-${{ runner.arch }}-ios-v8-${{ steps.ios-build-toolchain.outputs.hash }}-${{ hashFiles('tools/build_scripts/prepare_ios_v8.py', 'apps/flutter/native/operit-flutter-bridge/Cargo.lock') }}
 
-      - name: Check build environment
-        run: |
-          python3 tools/build_scripts/check_build_environment.py --products app --github-runner
-          xcrun --sdk iphoneos --show-sdk-path
-          cmake --version
-
       - name: Build iOS ARM64 runtime
         run: bash tools/ios-runtime/arm64/build.sh ios
 

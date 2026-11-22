@@ -77,11 +77,38 @@ test('the standalone renderer reuses the registered owner window session on Andr
   const window = source(payload + 'src/main/java/app/operit/uiserver/DisplayWindow.java');
   const client = source(android + 'AndroidUiServer.kt');
   assert.match(context, /ownerInfo\.uid != ownerUid/);
-  assert.match(context, /"sWindowSession", session/);
+  assert.match(context, /"sWindowSession", standalone/);
   assert.match(context, /getSystemPreinstalledFontConfigFromLegacyXml/);
   assert.match(window, /layout\.packageName = viewContext\.getPackageName\(\)/);
   assert.match(client, /Settings\.canDrawOverlays\(context\)/);
   assert.doesNotMatch(window, /TYPE_SYSTEM_DIALOG/);
+});
+
+test('standalone input uses native window channels without application gesture hooks or vendor fields', () => {
+  const context = source(payload + 'src/main/java/app/operit/uiserver/ShellContext.java');
+  const receiver = source(payload + 'src/main/java/app/operit/uiserver/WindowInputReceiver.java');
+  const window = source(payload + 'src/main/java/app/operit/uiserver/DisplayWindow.java');
+  assert.match(context, /INPUT_FEATURE_NO_INPUT_CHANNEL/);
+  assert.match(context, /parameters\[index\] == InputChannel\.class/);
+  assert.match(context, /method\.invoke\(session, arguments\)/);
+  assert.match(receiver, /extends InputEventReceiver/);
+  assert.match(receiver, /root\.dispatchTouchEvent\(motion\)/);
+  assert.match(receiver, /finally \{\s*finishInputEvent\(event, handled\)/);
+  assert.match(receiver, /consumeBatchedInputEvents\(frameTimeNanos\)/);
+  assert.match(window, /receiver\.dispose\(\)/);
+  assert.match(source(payload + 'build.gradle.kts'), /compileOnly\(files\(frameworkStubJar/);
+  assert.doesNotMatch(context + receiver, /Oplus|oplus|OnePlus|mInputEventReceiver|mInputChannel|mViewRootImplExt/);
+});
+
+test('standalone rendering initializes platform libraries and uses public display metrics', () => {
+  const context = source(payload + 'src/main/java/app/operit/uiserver/ShellContext.java');
+  const main = source(payload + 'src/main/java/app/operit/uiserver/UiServerMain.java');
+  assert.ok(main.indexOf('"setArgV0", String.class') < main.indexOf('Looper.prepare();'));
+  assert.match(context, /set\(bindClass, bind, "processName", PROCESS_NAME\)/);
+  assert.match(context, /ZygoteInit.*getDeclaredMethod\("preloadSharedLibraries"\)/);
+  assert.match(context, /getMaximumWindowMetrics\(\)/);
+  assert.match(context, /getInsetsIgnoringVisibility\(WindowInsets\.Type\.systemBars\(\) \| WindowInsets\.Type\.displayCutout\(\)\)/);
+  assert.doesNotMatch(context, /calculateInsets|ApplicationSharedMemory/);
 });
 
 test('ordinary launch and window selection share the existing public abstraction', () => {

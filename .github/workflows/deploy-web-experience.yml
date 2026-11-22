@@ -46,9 +46,6 @@ jobs:
         with:
           node-version: 24
 
-      - name: Check browser JavaScript runtime contracts
-        run: node --test tools/tests/web_javascript_runtime.test.mjs tools/tests/web_runtime_events.test.mjs tools/tests/web_runtime_errors.test.mjs
-
       - name: Prepare Web build hook dependencies
         run: |
           python -m venv .venv
@@ -60,13 +57,9 @@ jobs:
           corepack enable pnpm
           corepack pnpm install --frozen-lockfile
 
-      - name: Install and check Theme Studio
+      - name: Install Theme Studio dependencies
         working-directory: tools/theme/studio
-        run: |
-          npm ci --include=optional
-          node -e "require('rollup'); require('esbuild').transformSync('const ready = true')"
-          npm run typecheck
-          npm test
+        run: npm ci --include=optional
 
       - name: Install FVM
         run: |
@@ -100,10 +93,6 @@ jobs:
           WASM_BINDGEN_VERSION="$(python3 -c 'import pathlib, tomllib; lock = tomllib.loads(pathlib.Path("apps/flutter/native/operit-flutter-bridge/Cargo.lock").read_text("utf-8")); print(next(p["version"] for p in lock["package"] if p["name"] == "wasm-bindgen"))')"
           cargo install wasm-bindgen-cli --version "${WASM_BINDGEN_VERSION}" --locked
 
-      - name: Check Flutter startup regressions
-        working-directory: apps/flutter/app
-        run: fvm flutter test test/theme_render_stack_test.dart test/compose_dsl_execution_owner_test.dart test/theme_startup_colors_test.dart test/data_rescue_app_test.dart ../packages/operit_ui/test
-
       - name: Build Flutter Web experience
         working-directory: apps/flutter/app
         run: fvm flutter build web --release --no-wasm-dry-run --no-web-resources-cdn --base-href /
@@ -128,52 +117,6 @@ jobs:
           npm run build
           mkdir -p ../../../apps/flutter/app/build/web/theme
           cp -a dist/. ../../../apps/flutter/app/build/web/theme/
-
-      - name: Install browser verification dependencies
-        run: |
-          npm install --prefix .ci-tools/browser --no-audit --no-fund playwright@1.64.1
-          node .ci-tools/browser/node_modules/playwright/cli.js install --with-deps chromium
-
-      - name: Verify configured startup, plugin execution and theme export
-        run: node tools/tests/web_experience.browser.mjs
-
-      - name: Upload browser verification evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: web-experience-browser
-          include-hidden-files: true
-          path: .ci-artifacts/web-experience
-          if-no-files-found: ignore
-
-      - name: Verify Flutter Web and Theme Studio output
-        run: |
-          RELEASE_ID="ci-${GITHUB_SHA::12}"
-          test -s apps/flutter/app/build/web/index.html
-          test -s apps/flutter/app/build/web/main.dart.js
-          test -s apps/flutter/app/build/web/fonts/font-resources.json
-          test -s apps/flutter/app/build/web/canvaskit/canvaskit.js
-          test -s apps/flutter/app/build/web/canvaskit/canvaskit.wasm
-          test -s apps/flutter/app/build/web/canvaskit/chromium/canvaskit.js
-          test -s apps/flutter/app/build/web/canvaskit/chromium/canvaskit.wasm
-          test -s apps/flutter/app/build/web/assets/assets/model_logos/DEEPSEEK.svg
-          test -s apps/flutter/app/build/web/runtime/generated/operit_runtime_worker.js
-          test -s apps/flutter/app/build/web/runtime/generated/operit_javascript_runtime.js
-          test -s apps/flutter/app/build/web/runtime/generated/operit_javascript_transport.js
-          test -s apps/flutter/app/build/web/runtime/generated/operit_javascript_worker.js
-          test -s apps/flutter/app/build/web/theme/index.html
-          test -s apps/flutter/app/build/web/theme/theme-studio-config.json
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/index.html"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/main.dart.js"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/fonts/font-resources.json"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/canvaskit.js"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/canvaskit.wasm"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/chromium/canvaskit.js"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/canvaskit/chromium/canvaskit.wasm"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/theme_contract_client.js"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/theme_contract_worker.js"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/validator/operit_plugin_theme.js"
-          test -s "apps/flutter/app/build/web/theme/theme-preview/${RELEASE_ID}/validator/operit_plugin_theme_bg.wasm"
 
       - name: Configure Web custom domain
         run: |

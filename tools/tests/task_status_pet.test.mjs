@@ -15,6 +15,7 @@ const { DEFAULTS, selectView } = require('../../plugins/packages/external/task_s
 function fixture(settings = {}) {
   const calls = [], decisions = [], timers = [], switches = [];
   let pending = [], saved = { ...DEFAULTS, ...settings }, storedTasks = [], resourceFailure = false;
+  const windows = new Map();
   const port = {
     async load() { return saved; },
     async save(value) { saved = value; },
@@ -22,7 +23,17 @@ function fixture(settings = {}) {
     async approvals() { return pending; },
     async resource(mood) { if (resourceFailure) throw Error('Resource decode failed'); return `vfs:/cat/${mood}.webp`; },
     async capabilities() { return { scope: 'system', permissionGranted: true }; },
-    async set(id, content) { calls.push({ id, content }); return content ? 'shown' : 'closed'; },
+    /** Reports measured host geometry independently of the plugin's desired content. */
+    async windows() { return [...windows.values()]; },
+    /** Applies partial options and releases geometry when the native surface closes. */
+    async set(id, content) {
+      calls.push({ id, content });
+      if (content) {
+        const previous = windows.get(id);
+        windows.set(id, { id, route: content.route, visible: true, options: { x: 0, y: 0, ...previous?.options, ...content.options } });
+      } else windows.delete(id);
+      return content ? 'shown' : 'closed';
+    },
     async respond(chatId, requestId, decision) {
       const request = pending.find(item => item.requestId === requestId && item.chatId === chatId);
       if (!request) throw Error('Stale approval');
@@ -31,7 +42,9 @@ function fixture(settings = {}) {
     async switchChat(id) { switches.push(id); },
     schedule(work) { const timer = { work, cancelled: false }; timers.push(timer); return () => { timer.cancelled = true; }; },
   };
-  return { service: new PetService(port), calls, decisions, timers, switches, port,
+  return { service: new PetService(port), calls, decisions, timers, switches, port, windows,
+    /** Moves the native surface without notifying the plugin state machine. */
+    drag(x, y) { Object.assign(windows.get('cat').options, { x, y }); },
     pending(value) { pending = value; }, snapshot(value) { storedTasks = value; },
     resourceFailure(value) { resourceFailure = value; },
     latest() { return calls.filter(call => call.id === 'cat').at(-1).content; },
@@ -127,6 +140,57 @@ test('background opens one host-dragged window and foreground closes all surface
   await f.service.lifecycle('application_on_foreground');
   assert.equal(f.latest(), null);
   assert.equal(f.calls.filter(call => call.id === 'details').at(-1).content, null);
+});
+
+test('cat restores its last measured drag position across visibility cycles without snapping on task updates', async () => {
+  const f = fixture();
+  await f.service.runtime(runtime('a', 'receiving', ['a']));
+  await f.service.lifecycle('application_on_background');
+  f.drag(-240, 360);
+  await f.service.request({ kind: 'details' });
+  Object.assign(f.windows.get('details').options, { x: 900, y: 120 });
+  await f.service.lifecycle('application_on_foreground');
+  assert.equal(f.windows.size, 0);
+  await f.service.lifecycle('application_on_foreground');
+  await f.service.lifecycle('application_on_background');
+  assert.equal(f.latest().options.x, -240);
+  assert.equal(f.latest().options.y, 360);
+  f.drag(480, 0);
+  await f.service.runtime(runtime('a', 'processing', ['a']));
+  assert.equal(f.latest().options.x, undefined);
+  assert.equal(f.latest().options.y, undefined);
+  assert.equal(f.windows.get('cat').options.x, 480);
+  await f.service.lifecycle('application_on_foreground');
+  await f.service.lifecycle('application_on_background');
+  assert.equal(f.latest().options.x, 480);
+  assert.equal(f.latest().options.y, 0);
+});
+
+test('manual hide and disabling retain session position; termination and a new owner reset it', async () => {
+  const f = fixture({ backgroundOnly: false });
+  let saves = 0;
+  const save = f.port.save;
+  f.port.save = async settings => { saves++; return save(settings); };
+  await f.service.request({ kind: 'show' });
+  f.drag(640, 200);
+  await f.service.request({ kind: 'hide' });
+  await f.service.request({ kind: 'show' });
+  assert.equal(f.latest().options.x, 640);
+  assert.equal(saves, 0);
+  f.drag(320, 100);
+  await f.service.request({ kind: 'save', settings: { ...DEFAULTS, backgroundOnly: false, enabled: false } });
+  await f.service.request({ kind: 'save', settings: { ...DEFAULTS, backgroundOnly: false, width: 200 } });
+  assert.equal(f.latest().options.x, 320);
+  assert.equal(f.latest().options.y, 100);
+  assert.equal(f.latest().options.width, 200);
+  await f.service.lifecycle('application_on_terminate');
+  await f.service.lifecycle('application_on_create');
+  assert.equal(f.latest().options.x, undefined);
+  assert.equal(f.latest().options.y, undefined);
+  const next = fixture({ backgroundOnly: false });
+  await next.service.request({ kind: 'show' });
+  assert.equal(next.latest().options.x, undefined);
+  assert.equal(next.latest().options.y, undefined);
 });
 
 test('activation uses real active tasks, not previous completed history', async () => {

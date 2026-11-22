@@ -74,6 +74,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
     private final int density;
     private final Handler main = new Handler(Looper.getMainLooper());
     private VirtualDisplay display;
+    private WindowInputReceiver receiver;
     private Runnable created;
     private boolean attached;
     private boolean closed;
@@ -180,12 +181,13 @@ final class DisplayWindow implements SurfaceHolder.Callback {
     }
 
     /** Attaches the floating window and bounds asynchronous Surface initialization. */
-    void open(Runnable created) throws ReflectiveOperationException {
+    void open(Runnable created) {
         this.created = created;
         try {
             manager.addView(chrome.root, layout);
             attached = true;
-            Insets insets = context.floatingInsets(chrome.root, screen);
+            receiver = new WindowInputReceiver(chrome.root, context.takeInputChannel());
+            Insets insets = context.floatingInsets();
             area.inset(insets);
             positionInitially();
             main.postDelayed(() -> {
@@ -194,7 +196,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
                     close();
                 }
             }, 9000);
-        } catch (RuntimeException | ReflectiveOperationException error) {
+        } catch (RuntimeException error) {
             ready.completeExceptionally(error);
             close();
             throw error;
@@ -271,10 +273,17 @@ final class DisplayWindow implements SurfaceHolder.Callback {
 
     /** Moves a covered overlay to the top using the existing delegated window session. */
     void restack() {
-        manager.removeViewImmediate(chrome.root);
-        attached = false;
-        manager.addView(chrome.root, layout);
-        attached = true;
+        try {
+            receiver.dispose();
+            manager.removeViewImmediate(chrome.root);
+            attached = false;
+            manager.addView(chrome.root, layout);
+            attached = true;
+            receiver = new WindowInputReceiver(chrome.root, context.takeInputChannel());
+        } catch (RuntimeException error) {
+            close();
+            throw new IllegalStateException("Cannot raise the native window", error);
+        }
     }
 
     /** Reserves a top-right dock slot and animates the live content into it. */
@@ -479,6 +488,7 @@ final class DisplayWindow implements SurfaceHolder.Callback {
                 releasing.release();
             }
         } finally {
+            if (receiver != null) { receiver.dispose(); receiver = null; }
             if (attached) { attached = false; manager.removeViewImmediate(chrome.root); }
         }
     }

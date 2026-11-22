@@ -454,7 +454,7 @@ fn declared_variants_and_prefixed_references_use_native_aliases() {
 }
 
 
-/// Merges Rust-owned catalogs and plugin references through the identical declaration model.
+/// Keeps durable plugin references from republishing native aliases after an authoritative correction.
 #[test]
 fn rust_owner_and_plugin_declarations_share_catalog_aliases() {
     use operit_store::PreferenceMerge::PreferenceMergeStore;
@@ -466,7 +466,7 @@ fn rust_owner_and_plugin_declarations_share_catalog_aliases() {
     let large = "ffffffff-ffff-4fff-8fff-ffffffffffff";
     let mut native = descriptor(native_path);
     native["references"] = json!([]);
-    let schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore {
+    let mut schema = PreferenceMergeSchema { stores: vec![PreferenceMergeStore {
         path: native_path.to_string(), encrypted: false,
             open: |storage, path| PreferencesDataStore::newWithStorage(storage, path),
         merge: serde_json::from_value(native).unwrap(),
@@ -490,6 +490,29 @@ fn rust_owner_and_plugin_declarations_share_catalog_aliases() {
     let native = PreferencesDataStore::newWithStorage(receiver.host.clone(), native_path.to_string()).data().unwrap();
     assert!(native.contains(&stringPreferencesKey(&format!("card_{small}"))));
     assert!(!native.contains(&stringPreferencesKey(&format!("card_{large}"))));
+    let store = PreferencesDataStore::newWithStorage(receiver.host.clone(), native_path);
+    let before = store.syncSnapshot().unwrap();
+    let mut restored = before.clone();
+    restored.data.aliases.clear();
+    restored.data.values.insert(format!("card_{large}"), json!({"id":large,"name":"Restored theme","text":"distinct"}));
+    assert!(store.repairSyncedSnapshot(&before.token().unwrap(), &restored).unwrap());
+    let cached = PreferencesDataStore::newWithStorage(receiver.host.clone(), &receiver.path).syncSnapshot().unwrap();
+    assert_eq!(cached.data.aliases.get(&format!("{native_path}\u{001f}{large}")), Some(&small.to_string()));
+    let legacy = operit_store::Transaction::compaction::Initialization::from_snapshot(cached).operation("preferences", false).unwrap();
+    schema.stores.push(PreferenceMergeStore {
+        path: receiver.path.clone(), encrypted: false,
+        open: |storage, path| PreferencesDataStore::newWithStorage(storage, path).withSchema(0, |_, _| Ok(())),
+        merge: serde_json::from_value(plugin).unwrap(),
+    });
+    for incoming in [vec![legacy.clone()], vec![]] {
+        let outcomes = PreferenceMerge::applyIndependentOperations(receiver.host.clone(), &schema,
+            std::slice::from_ref(&legacy), &incoming, |_, _| true);
+        for outcome in outcomes {
+            assert!(outcome.result.unwrap().keys().all(|key| key.split_once('\u{1f}').is_some_and(|(path, _)| outcome.paths.contains(path))));
+        }
+        assert_eq!(store.syncSnapshot().unwrap().data, restored.data);
+    }
+    drop(store);
     first.dispose(); second.dispose(); receiver.dispose();
 }
 

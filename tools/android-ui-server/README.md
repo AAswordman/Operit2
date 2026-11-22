@@ -21,7 +21,9 @@ handling. The server verifies its final UID/GID. It does not invoke another su
 implementation or depend on the installed accessibility companion to bootstrap.
 
 `ShellContext` initializes ActivityThread, configuration, application metadata and
-instrumentation for the uninstalled process. Calls use the shell package and UID.
+instrumentation for the uninstalled process. The bootstrap sets the native process
+name and matching application/bind metadata before creating Views, so framework
+and accessibility integrations can read a valid process identity. Calls use the shell package and UID.
 The ActivityManager shell entry points launch apps and hand off Binder without
 presenting an unregistered application-thread token to system_server.
 
@@ -32,6 +34,22 @@ app-op attribution uses the verified owner's package and existing overlay permis
 Display creation, application launch and input injection still use shell UID 2000.
 The native chrome has no autofill or content-capture service: those features belong
 to the hosted application's own process and do not apply to the window controls.
+The delegated session gives each window's native input channel directly to
+`WindowInputReceiver` in the tmp process. ViewRoot owns drawing and layout, while
+the receiver dispatches native touch, scroll and key events to the same View tree
+and acknowledges each event. Pointer batches follow Choreographer frames. A close
+action finishes its current input event before releasing the channel. This avoids
+application-only ViewRoot gesture integrations that require a process registered
+with ActivityManager. It uses Android's input-channel contract, with no vendor
+fields or replacement gesture implementations. The small framework declarations
+are compile-only and are not packaged into the DEX payload.
+
+The platform's zygote shared-library preload initializes rendering libraries,
+including the running ROM's own extensions. The actual window service supplies
+animator scale without requiring zygote application shared memory. Full-display
+bounds and public maximum-window metrics determine bars and cutouts; no hidden
+InsetsState calculation signature is assumed.
+
 System fonts are initialized before any View is measured. Android 15's standalone
 shell process initializes the font map from the platform's legacy font configuration,
 whose access is permitted by shell SELinux policy.
@@ -44,7 +62,7 @@ the deployment files. An unattached server exits after 15 seconds. A lost server
 never receives old sessions through a replacement connection.
 
 Each application has its own `DisplayWindow` and opaque UUID window identity.
-Repeated launches of an app use its existing display. The server owns the toolbar,
+Repeated launches of an app use its existing display. The server owns the handles,
 SurfaceView, VirtualDisplay and input injection. VirtualDisplay writes directly
 to the SurfaceView's Surface. Binder carries control and geometry only: no frame
 buffers, screenshots, encoders, decoders or video streams. Drag the top handle

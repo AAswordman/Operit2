@@ -39,6 +39,21 @@ conversation orchestration, store access, and tool integration.
 - `src/stt`: built-in speech-to-text provider contracts and implementations.
 - `src/market`: provider market services.
 
+## Market Entry Shards
+
+Market entry lookups use
+`https://static.operit.app/market/v2/entries/{shard}.json`. The shard matches
+the market service and Operit1: apply 32-bit FNV-1a to the entry ID's UTF-16
+code units, convert the unsigned hash to lowercase hexadecimal without zero
+padding, and take the first two characters.
+
+For `package-local-operit-claude-code-theme-artifact-1-6-0`, the hash is
+`b70e521` and the shard is `b7`. Padding to eight digits would request
+`0b.json`, which does not contain the entry. Installation refreshes the entry
+before downloading its asset, so an incorrect shard prevents installation
+even when the release asset is available. The `entry_shard_matches_market_protocol`
+regression test covers this entry, an eight-digit hash, and UTF-16 input.
+
 ## Model Discovery Structure
 
 `ModelListFetcher.rs` owns discovery orchestration and the only network execution

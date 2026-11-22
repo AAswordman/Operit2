@@ -1371,13 +1371,14 @@ fn parse_my_entries(body: &str) -> Result<MarketMyEntriesResponse, String> {
     })
 }
 
+/// Matches the market's UTF-16 FNV-1a hash and unpadded hexadecimal shard prefix.
 fn entry_shard(id: &str) -> String {
     let mut hash = 2166136261u32;
-    for byte in id.bytes() {
-        hash ^= byte as u32;
+    for unit in id.encode_utf16() {
+        hash ^= u32::from(unit);
         hash = hash.wrapping_mul(16777619);
     }
-    format!("{hash:08x}")[0..2].to_string()
+    format!("{hash:x}").chars().take(2).collect()
 }
 
 fn total_pages(total: i32, page_size: i32) -> i32 {
@@ -1535,7 +1536,7 @@ pub use MarketStatsApiService as MarketStatsApiServiceModule;
 
 #[cfg(test)]
 mod tests {
-    use super::{market_comment_body, parse_my_entries, MarketStatsApiService};
+    use super::{entry_shard, market_comment_body, parse_my_entries, MarketStatsApiService};
     use operit_host_api::HostManager::setDefaultHttpHost;
     use operit_host_api::{
         HostError, HostResult, HttpHost, HttpRequestData, HttpResponseData,
@@ -1543,6 +1544,20 @@ mod tests {
         HttpStreamOpenedCallback,
     };
     use std::sync::Arc;
+
+    /// Matches server shard vectors, including the theme whose hash has seven hex digits.
+    #[test]
+    fn entry_shard_matches_market_protocol() {
+        assert_eq!(
+            entry_shard("package-local-operit-claude-code-theme-artifact-1-6-0"),
+            "b7",
+        );
+        assert_eq!(
+            entry_shard("package-com-operit-wechat-claude-bridge"),
+            "d7",
+        );
+        assert_eq!(entry_shard("package-主题-🦀"), "6e");
+    }
 
     #[test]
     fn comment_payload_preserves_reply_parent_without_changing_top_level_comments() {

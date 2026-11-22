@@ -42,6 +42,8 @@ function owner(): PetService {
     },
     /** Reports the actual system or application scope. */
     capabilities() { return ToolPkg.ui.floatingWindows.capabilities(); },
+    /** Reads measured drag coordinates before the cat's host surface is released. */
+    windows() { return ToolPkg.ui.floatingWindows.list(); },
     /** Delegates window ownership, drag coordinates and platform differences to the host. */
     set(id, content) { return ToolPkg.ui.floatingWindows.set(id, content); },
     /** Submits the exact selected approval; stale requests are rejected by the broker. */

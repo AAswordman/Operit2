@@ -438,7 +438,15 @@ class AndroidPlatformChannel(
                     pendingShizukuAuthorizationListener = null
                     val pendingResult = pendingShizukuAuthorizationResult
                     pendingShizukuAuthorizationResult = null
-                    pendingResult?.success(null)
+                    if (grantResult == PackageManager.PERMISSION_GRANTED) {
+                        pendingResult?.success(null)
+                    } else {
+                        pendingResult?.error(
+                            "SHIZUKU_AUTHORIZATION_DENIED",
+                            "Shizuku permission was denied",
+                            null,
+                        )
+                    }
                 }
             }
         pendingShizukuAuthorizationResult = result

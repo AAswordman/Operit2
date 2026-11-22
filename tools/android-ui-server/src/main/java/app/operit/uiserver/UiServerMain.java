@@ -48,6 +48,7 @@ public final class UiServerMain {
             throw new IllegalStateException("Shell process exec unexpectedly returned");
         }
         if (Process.myUid() != 2000 || Os.getgid() != 2000) throw new SecurityException("UI server requires uid/gid 2000");
+        Process.class.getMethod("setArgV0", String.class).invoke(null, ShellContext.PROCESS_NAME);
         Looper.prepare();
         java.lang.reflect.Field mainLooper = Looper.class.getDeclaredField("sMainLooper");
         mainLooper.setAccessible(true);
@@ -59,6 +60,10 @@ public final class UiServerMain {
                 .setPackage(args[1]).putExtra("nonce", args[2]).putExtra("endpoint", endpoint));
         server.main.postDelayed(() -> { if (server.owner == null) server.shutdown(); }, 15000);
         try { Looper.loop(); }
+        catch (Throwable error) {
+            Log.e("OperitUiServer", "Native window event loop failed", error);
+            throw error;
+        }
         finally {
             server.shutdown();
             File payload = new File(System.getenv("CLASSPATH"));
@@ -73,8 +78,8 @@ public final class UiServerMain {
                 if (file.exists() && !file.delete()) Log.w("OperitUiServer", "Cannot remove " + file);
             }
             if (!directory.delete()) Log.w("OperitUiServer", "Cannot remove " + directory);
-            System.exit(0);
         }
+        System.exit(0);
     }
 
     /** Constructs framework and display input after shell identity is verified. */
