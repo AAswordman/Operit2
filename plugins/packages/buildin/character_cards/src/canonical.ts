@@ -112,6 +112,8 @@ export interface CharacterRepository {
   allocateRecordId(): Promise<string>;
   /** Reads only owner job metadata and candidates. */
   readMemoryJobState(ownerKey: string): Promise<import("./model").MemoryJobState>;
+  /** Moves a legacy device cursor out of the synchronized owner record before the next job pass. */
+  adoptLegacyScheduleCursor(ownerKey: string): Promise<boolean>;
   /** Writes job changes under their original exact record versions. */
   writeMemoryJobState(ownerKey: string, state: import("./model").MemoryJobState): Promise<void>;
   /** Retries failures on the selected producer, or clears them when explicitly passed null. */

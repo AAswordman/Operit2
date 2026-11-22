@@ -24,6 +24,7 @@ import type {
 import { RepositorySession } from "../repository";
 import { createMemorySpace, normalizeMemoryRecallSettings } from "./state";
 import { initializeCharacterStorage } from "./initialization";
+import { readNextAutoSaveRun } from "./device-schedule";
 import { migrateCharacterAvatars } from "./avatars";
 import {
   clone,
@@ -303,7 +304,11 @@ export class DatabaseCharacterRepository implements CharacterRepositoryOwner {
 
   /** Reads memory settings without loading bodies, vectors or job objects. */
   readMemorySettings(ownerKey: string): Promise<MemorySettings> {
-    return this.readOwnerMetadata(ownerKey, row => normalizeMemorySettings(row.settings));
+    return this.readOwnerMetadata(ownerKey, async row => {
+      const settings = normalizeMemorySettings(row.settings);
+      // The synchronized record carries a zero placeholder; this device reads its own cursor.
+      return { ...settings, nextAutoSaveRunAtMs: await readNextAutoSaveRun(ownerKey) };
+    });
   }
 
   /** Reads only the selected owner's search weights and mode. */

@@ -8,6 +8,7 @@ import { clone, equal, storedValue } from "./records";
 import { CharacterMemoryDatabase } from "./memory";
 import type { ObjectMutation } from "./memory";
 import { embedTexts, embeddingSpace } from "../memory-jobs/embeddings";
+import { readNextAutoSaveRun, writeNextAutoSaveRun } from "./device-schedule";
 import type { SourceEmbedding } from "../memory-jobs/embeddings";
 import { searchDocumentChunks } from "../search/chunks";
 import { prepareMemoryQuery, searchMemoryDatabase } from "../memory-search";
@@ -45,8 +46,30 @@ export class DatabaseMemoryRepository {
   /** Keeps nullable reads separate from versioned writes to an existing library. */
   private async findOwner(ownerKey: string): Promise<Storage.Entry<Owner> | null> {
     const entry = await this.memoryDatabase.get<Owner>("owners", requireId(ownerKey, "memory owner"));
-    if (entry !== null) entry.value.settings = normalizeMemorySettings(entry.value.settings);
+    if (entry === null) return null;
+    entry.value.settings = normalizeMemorySettings(entry.value.settings);
+    // A non-zero value can only be a legacy write; the live cursor lives in device-local storage.
+    const stored = entry.value.settings.nextAutoSaveRunAtMs;
+    entry.value.settings.nextAutoSaveRunAtMs = stored > 0 ? stored : await readNextAutoSaveRun(ownerKey);
     return entry;
+  }
+
+  /**
+   * Moves a cursor left in the synchronized record by an older build into this device's schedule.
+   *
+   * Older builds stored the writer's own clock there, so two peers with identical
+   * memory never agreed and every comparison looked like content drift. The value is
+   * adopted locally first, then the synchronized record is reset to its zero placeholder.
+   * Only background job passes and explicit writes call this; reads never do.
+   */
+  async adoptLegacyScheduleCursor(ownerKey: string): Promise<boolean> {
+    const entry = await this.memoryDatabase.get<Owner>("owners", requireId(ownerKey, "memory owner"));
+    if (entry === null) return false;
+    const settings = normalizeMemorySettings(entry.value.settings), stored = settings.nextAutoSaveRunAtMs;
+    if (stored === 0) return false;
+    if ((await readNextAutoSaveRun(ownerKey)) === 0) await writeNextAutoSaveRun(ownerKey, stored);
+    await this.commit([put("owners", ownerKey, { ...entry.value, settings: { ...settings, nextAutoSaveRunAtMs: 0 } }, entry.version)]);
+    return true;
   }
 
   async hasMemoryOwner(ownerKey: string): Promise<boolean> { return (await this.findOwner(ownerKey)) !== null; }
@@ -99,15 +122,19 @@ export class DatabaseMemoryRepository {
     assertMemorySettings(settings);
     if (settings.cloudEmbeddingEnabled) embeddingSpace(settings);
     const owner = await this.owner(ownerKey);
-    await this.commit([put("owners", ownerKey, { ...owner.value, settings }, owner.version)]);
+    // The due time is device-local: persist it here and keep the synchronized record at zero.
+    await writeNextAutoSaveRun(ownerKey, settings.nextAutoSaveRunAtMs);
+    await this.commit([put("owners", ownerKey, { ...owner.value, settings: { ...settings, nextAutoSaveRunAtMs: 0 } }, owner.version)]);
   }
 
   /** Saves editor settings and weights atomically while preserving the scheduler's current due time. */
   async writeMemoryOwnerSettings(ownerKey: string, settings: MemorySettings, config: MemorySearchConfig): Promise<{ settings: MemorySettings; config: MemorySearchConfig }> {
     assertMemorySettings(settings); assertSearchConfig(config);
     if (settings.cloudEmbeddingEnabled) embeddingSpace(settings);
-    const owner = await this.owner(ownerKey), saved = { ...settings, nextAutoSaveRunAtMs: owner.value.settings.nextAutoSaveRunAtMs };
-    await this.commit([put("owners", ownerKey, { ...owner.value, settings: saved, searchConfig: config }, owner.version)]);
+    const owner = await this.owner(ownerKey);
+    // The due time belongs to this device only and lives outside synchronized records.
+    const saved = { ...settings, nextAutoSaveRunAtMs: await readNextAutoSaveRun(ownerKey) };
+    await this.commit([put("owners", ownerKey, { ...owner.value, settings: { ...saved, nextAutoSaveRunAtMs: 0 }, searchConfig: config }, owner.version)]);
     return { settings: saved, config };
   }
 

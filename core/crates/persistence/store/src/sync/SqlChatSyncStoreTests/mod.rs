@@ -1623,3 +1623,36 @@ fn correction_preserves_larger_phone_history_after_a_newer_desktop_edit() {
     assert_eq!(SqlChatSyncStore::snapshotContentSummary(&phone.syncSnapshot().unwrap()).unwrap(), SqlChatSyncStore::snapshotContentSummary(&desktop.syncSnapshot().unwrap()).unwrap());
     AppDatabase::closeDatabase();
 }
+
+/// Scope clocks record the last writer of each range, so identical history must not look like drift.
+#[test]
+fn scope_clocks_and_message_ids_are_excluded_from_business_content() {
+    let _guard = DATABASE_MUTEX.lock().unwrap_or_else(|e|e.into_inner());
+    let (_, phone_db, phone) = openTestStore("clock-phone");
+    let (_, desktop_db, desktop) = openTestStore("clock-desktop");
+    let shared = upsertOperation(1, "shared message");
+    phone.applyOperation(&shared).unwrap();
+    desktop.applyOperation(&shared).unwrap();
+    phone.recordChatSnapshot("chat-remote").unwrap();
+    desktop.recordChatSnapshot("chat-remote").unwrap();
+
+    // Each peer keeps its own last-writer clock and its own autoincrement row identity.
+    desktop_db.store().executeBatch("UPDATE sync_sql_versions SET createdAt=createdAt+7000, origin='desktop-writer', sequence=sequence+500;
+        UPDATE messages SET messageId=messageId+900;").unwrap();
+    let phone_snapshot = phone.syncSnapshot().unwrap();
+    let desktop_snapshot = desktop.syncSnapshot().unwrap();
+    let wire = |snapshot: &crate::Transaction::Snapshot| serde_json::to_value(snapshot).unwrap()["data"]["values"].clone();
+    let (phone_wire, desktop_wire) = (wire(&phone_snapshot), wire(&desktop_snapshot));
+    assert_ne!(phone_wire["sync_sql_versions"], desktop_wire["sync_sql_versions"]);
+    assert_ne!(phone_wire["messages"], desktop_wire["messages"]);
+    assert_eq!(SqlChatSyncStore::snapshotContentSummary(&phone_snapshot).unwrap(),
+        SqlChatSyncStore::snapshotContentSummary(&desktop_snapshot).unwrap());
+    assert_ne!(phone_snapshot.token().unwrap(), desktop_snapshot.token().unwrap());
+
+    // A genuinely different clock set is still business drift.
+    desktop_db.store().execute("DELETE FROM sync_sql_versions", vec![]).unwrap();
+    let missing = desktop.syncSnapshot().unwrap();
+    assert_ne!(SqlChatSyncStore::snapshotContentSummary(&phone_snapshot).unwrap(),
+        SqlChatSyncStore::snapshotContentSummary(&missing).unwrap());
+    AppDatabase::closeDatabase();
+}
