@@ -141,9 +141,18 @@ impl SqlSnapshot {
         let mut projected_columns = self.columns.clone();
         for (name, columns) in &self.columns {
             let (local, identity): (&[&str],Option<(&str,&str)>) = if owner.path == operit_util::RuntimeStorageLayout::SQLITE_DATABASE_PATH {
-                match name.as_str() { "messages"=>( &["messageId"],None), "message_variants"=>( &["variantId"],None), _=>continue }
+                match name.as_str() {
+                    "messages"=>( &["messageId"],None), "message_variants"=>( &["variantId"],None),
+                    // Scope clocks record which device last wrote each range, not the range contents.
+                    "sync_sql_versions"=>( &["createdAt","origin","sequence"],None),
+                    _=>continue }
             } else {
-                match name.as_str() { "_operit_values"=>( &["version"],None), "_operit_merge_map"=>( &["origin"],Some(("remote_key","canonical_key"))), _=>continue }
+                match name.as_str() {
+                    "_operit_values"=>( &["version"],None),
+                    "_operit_merge_map"=>( &["origin"],Some(("remote_key","canonical_key"))),
+                    // Last writer per synchronized record; two peers holding the same record still differ here.
+                    "_operit_versions"=>( &["created_at","origin","sequence"],None),
+                    _=>continue }
             };
             let identity = identity.map(|(a,b)| Ok::<_,String>((columns.iter().position(|v|v==a).ok_or("Missing identity source column")?,columns.iter().position(|v|v==b).ok_or("Missing identity destination column")?))).transpose()?;
             let removed = columns.iter().enumerate().filter_map(|(i,v)|local.contains(&v.as_str()).then_some(i)).collect::<Vec<_>>();

@@ -2045,6 +2045,26 @@ fn incremental_object_merge_bookkeeping_does_not_require_a_full_snapshot() {
     values["rows"][0][version] = json!({"Text":"another-local-cas-token"});
     assert_eq!(PluginStorage::snapshotContentSummary(&a).unwrap(), PluginStorage::snapshotContentSummary(&local_cas).unwrap());
     assert_ne!(b.token().unwrap(), local_cas.token().unwrap());
+    // Two peers holding identical records still record different last writers; that is not content drift.
+    let mut last_writer = b.clone();
+    let versions = last_writer.data.values.get_mut("_operit_versions").unwrap();
+    let columns = versions["columns"].as_array().unwrap().clone();
+    let created = columns.iter().position(|column| column == "created_at").unwrap();
+    let origin = columns.iter().position(|column| column == "origin").unwrap();
+    let sequence = columns.iter().position(|column| column == "sequence").unwrap();
+    assert!(!versions["rows"].as_array().unwrap().is_empty());
+    for row in versions["rows"].as_array_mut().unwrap() {
+        row[created] = json!({"Integer": 1795317000000i64});
+        row[origin] = json!({"Text": "another-device-storage-origin"});
+        row[sequence] = json!({"Integer": 424242i64});
+    }
+    assert_eq!(PluginStorage::snapshotContentSummary(&a).unwrap(), PluginStorage::snapshotContentSummary(&last_writer).unwrap());
+    assert_ne!(b.token().unwrap(), last_writer.token().unwrap());
+    // The covered identities themselves remain comparable: a differing record set is real drift.
+    let mut fewer = b.clone();
+    let versions = fewer.data.values.get_mut("_operit_versions").unwrap();
+    versions["rows"].as_array_mut().unwrap().pop();
+    assert_ne!(PluginStorage::snapshotContentSummary(&a).unwrap(), PluginStorage::snapshotContentSummary(&fewer).unwrap());
     let map = local_cas.data.values.get_mut("_operit_merge_map").unwrap();
     let canonical = map["columns"].as_array().unwrap().iter().position(|column| column == "canonical_key").unwrap();
     map["rows"][0][canonical] = json!({"Text":"different-canonical-card"});

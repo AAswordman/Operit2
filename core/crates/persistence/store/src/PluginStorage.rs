@@ -1578,6 +1578,9 @@ pub fn snapshotContentSummary(snapshot: &crate::Transaction::Snapshot) -> Result
     snapshot.projected_content_summary(|table, value| match table {
         // Derived reference/name projection may allocate a device-local CAS token.
         "_operit_values" => crate::Transaction::project_sql_table(value, &["version"], None).map(Some),
+        // Last writer per synchronized record: two peers that hold identical records still
+        // differ here, so it cannot participate in content equality.
+        "_operit_versions" => crate::Transaction::project_sql_table(value, &["created_at", "origin", "sequence"], None).map(Some),
         // A receipt's self mapping and the origin recording an equivalent alias do not change its meaning.
         // Real aliases remain in the comparison so an identity disagreement still requires correction.
         "_operit_merge_map" => crate::Transaction::project_sql_table(value, &["origin"], Some(("remote_key", "canonical_key"))).map(Some),
