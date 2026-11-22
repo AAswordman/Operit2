@@ -4,6 +4,7 @@ use async_trait::async_trait;
 use futures_util::StreamExt;
 use http::header::{HeaderMap, HeaderName, HeaderValue, CONTENT_TYPE};
 use serde_json::{json, Map, Value};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use super::OpenAIProvider::{OpenAIProvider, ResponsesStreamProtocol};
@@ -25,7 +26,7 @@ use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
     with_event_channel_and_failure, RevisableTextStream, RevisableTextStreamLike,
-    TerminalFailureState, TextStreamEventCarrier,
+    ResponseStreamItem, TerminalFailureState, TextStreamEventCarrier, TextStreamEventType,
 };
 use operit_util::stream::Stream::{FnStream, Stream};
 use operit_util::AppLogger::AppLogger;
@@ -691,6 +692,63 @@ impl DeepseekProvider {
         }
         Ok(headers)
     }
+
+    /// Decodes buffered chat or Responses output with the same DSML grammar as streaming.
+    fn parse_response_chunks(&self, response: &Value) -> Result<Vec<String>, AiServiceError> {
+        if self.uses_responses_protocol()? {
+            let parsed = DeepseekResponsesPayloadAdapter::parse_non_streaming_response(response);
+            if let Some(usage) = parsed.usage {
+                self.apply_token_counts(TokenCounts {
+                    input: usage.actualInputTokens,
+                    cached_input: usage.cachedInputTokens,
+                    output: usage.outputTokens,
+                });
+            }
+            let mut chunks = Vec::new();
+            for reasoning in parsed.reasoningChunks {
+                chunks.push(format!("<think>{reasoning}</think>"));
+            }
+            chunks.extend(parsed.reasoningMetadataTags);
+            chunks.extend(parsed.outputItemMetadataTags);
+            chunks.extend(parsed.searchChunks);
+            chunks.push(DeepseekDsmlDecoder::decode(
+                parsed.textChunks.iter().map(String::as_str),
+            )?);
+            if let Value::Array(tool_calls) = parsed.toolCalls {
+                for tool_call in tool_calls {
+                    chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                        &json!([tool_call]).to_string(),
+                    ));
+                }
+            }
+            return Ok(chunks);
+        }
+
+        let token_counts = response
+            .get("usage")
+            .map(parse_usage_counts)
+            .unwrap_or(TokenCounts {
+                input: 0,
+                cached_input: 0,
+                output: 0,
+            });
+        self.apply_token_counts(token_counts);
+        let mut chunks = Vec::new();
+        if let Some(reasoning) = extract_reasoning_chunk(response) {
+            if !reasoning.is_empty() {
+                chunks.push(format!("<think>{reasoning}</think>"));
+            }
+        }
+        if let Some(content) = extract_content_chunk(response) {
+            if !content.is_empty() {
+                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
+                    &DeepseekDsmlDecoder::decode([content.as_str()])?,
+                ));
+            }
+        }
+        chunks.extend(extract_tool_calls_xml_chunks(response));
+        Ok(chunks)
+    }
 }
 
 /// Resolves whether one DeepSeek endpoint selects the Responses protocol.
@@ -799,7 +857,7 @@ impl AIService for DeepseekProvider {
                 let mut result = ownedResult
                     .take()
                     .expect("Deepseek parent stream must only be collected once");
-                let parent = ownedParent
+                let mut parent = ownedParent
                     .take()
                     .expect("Deepseek parent stream must only be collected once");
                 let mut provider = ownedProvider
@@ -807,9 +865,44 @@ impl AIService for DeepseekProvider {
                     .expect("Deepseek parent stream must only be collected once");
                 let producerTerminalFailure = producerTerminalFailure.clone();
                 Box::pin(async move {
-                    result.collect(emit).await;
-                    if let Some(error) = result.terminal_failure() {
+                    let mut decoder = DeepseekDsmlDecoder::default();
+                    let mut savepoints = HashMap::new();
+                    let mut decodingError = None;
+                    result
+                        .collect_ordered(&mut |item| match item {
+                            ResponseStreamItem::Chunk(chunk) if decodingError.is_none() => {
+                                match decoder.push(&chunk) {
+                                    Ok(content) if !content.is_empty() => emit(content),
+                                    Ok(_) => {}
+                                    Err(error) => {
+                                        decodingError = Some(error.to_string());
+                                        parent.cancel_streaming();
+                                    }
+                                }
+                            }
+                            ResponseStreamItem::Revision(event) => match event.event_type {
+                                TextStreamEventType::Savepoint => {
+                                    savepoints.insert(event.id, decoder.clone());
+                                }
+                                TextStreamEventType::Rollback => {
+                                    if let Some(saved) = savepoints.get(&event.id) {
+                                        decoder.clone_from(saved);
+                                    }
+                                }
+                            },
+                            _ => {}
+                        })
+                        .await;
+                    if let Some(error) = decodingError {
                         producerTerminalFailure.set(error);
+                    } else if let Some(error) = result.terminal_failure() {
+                        producerTerminalFailure.set(error);
+                    } else {
+                        match decoder.finish() {
+                            Ok(tail) if !tail.is_empty() => emit(tail),
+                            Ok(_) => {}
+                            Err(error) => producerTerminalFailure.set(error.to_string()),
+                        }
                     }
                     AppLogger::v_with_level(
                         PROVIDER_TRANSPORT_LOG_TAG,
@@ -856,60 +949,9 @@ impl AIService for DeepseekProvider {
         let json_response: Value = response
             .json()
             .await?;
-        if self.uses_responses_protocol()? {
-            let parsed =
-                DeepseekResponsesPayloadAdapter::parse_non_streaming_response(&json_response);
-            if let Some(usage) = parsed.usage {
-                self.apply_token_counts(TokenCounts {
-                    input: usage.actualInputTokens,
-                    cached_input: usage.cachedInputTokens,
-                    output: usage.outputTokens,
-                });
-            }
-            let mut chunks = Vec::new();
-            for reasoning in parsed.reasoningChunks {
-                chunks.push(format!("<think>{reasoning}</think>"));
-            }
-            chunks.extend(parsed.reasoningMetadataTags);
-            chunks.extend(parsed.outputItemMetadataTags);
-            chunks.extend(parsed.searchChunks);
-            chunks.extend(parsed.textChunks);
-            if let Value::Array(tool_calls) = parsed.toolCalls {
-                for tool_call in tool_calls {
-                    chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
-                        &tool_call.to_string(),
-                    ));
-                }
-            }
-            return Ok(response_stream_from_chunks(chunks));
-        }
-
-        let token_counts = json_response
-            .get("usage")
-            .map(parse_usage_counts)
-            .unwrap_or(TokenCounts {
-                input: 0,
-                cached_input: 0,
-                output: 0,
-            });
-        self.apply_token_counts(token_counts.clone());
-
-        let mut chunks = Vec::new();
-        if let Some(reasoning) = extract_reasoning_chunk(&json_response) {
-            if !reasoning.is_empty() {
-                chunks.push(format!("<think>{}</think>", reasoning));
-            }
-        }
-        if let Some(content) = extract_content_chunk(&json_response) {
-            if !content.is_empty() {
-                chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
-                    &content,
-                ));
-            }
-        }
-        chunks.extend(extract_tool_calls_xml_chunks(&json_response));
-
-        Ok(response_stream_from_chunks(chunks))
+        Ok(response_stream_from_chunks(
+            self.parse_response_chunks(&json_response)?,
+        ))
     }
 
     async fn test_connection(&self) -> Result<String, AiServiceError> {
@@ -992,41 +1034,7 @@ fn split_think_content(content: &str) -> (String, String) {
     (visible_content.trim().to_string(), reasoning_content)
 }
 
-fn process_streaming_line(
-    line: &str,
-    chunks: &mut Vec<String>,
-    token_counts: &mut TokenCounts,
-) -> Result<(), AiServiceError> {
-    if !line.starts_with("data:") {
-        return Ok(());
-    }
-
-    let data = line.trim_start_matches("data:").trim();
-    if data == "[DONE]" {
-        return Ok(());
-    }
-
-    let json_response: Value = serde_json::from_str(data)
-        .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
-    if let Some(usage) = json_response.get("usage") {
-        *token_counts = parse_usage_counts(usage);
-    }
-    if let Some(reasoning) = extract_reasoning_chunk(&json_response) {
-        if !reasoning.is_empty() {
-            chunks.push(format!("<think>{}</think>", reasoning));
-        }
-    }
-    if let Some(content) = extract_content_chunk(&json_response) {
-        if !content.is_empty() {
-            chunks.push(StructuredToolCallBridge::convertToolCallPayloadToXml(
-                &content,
-            ));
-        }
-    }
-    chunks.extend(extract_tool_calls_xml_chunks(&json_response));
-    Ok(())
-}
-
+/// Reads DeepSeek's reported prompt, cache, and completion counters.
 fn parse_usage_counts(usage: &Value) -> TokenCounts {
     let prompt_tokens = usage
         .get("prompt_tokens")
@@ -1083,7 +1091,7 @@ fn extract_tool_calls_xml_chunks(value: &Value) -> Vec<String> {
     tool_calls
         .iter()
         .map(|tool_call| {
-            StructuredToolCallBridge::convertToolCallPayloadToXml(&tool_call.to_string())
+            StructuredToolCallBridge::convertToolCallPayloadToXml(&json!([tool_call]).to_string())
         })
         .filter(|content| operit_util::ChatMarkupRegex::ChatMarkupRegex::contains_tool_tag(content))
         .collect()
@@ -1096,3 +1104,520 @@ mod tests;
 #[cfg(test)]
 #[path = "../../../../tests/DeepseekProviderMediaRoleTests.rs"]
 mod media_role_tests;
+
+/// DeepSeek's current and legacy tool-call container tokens.
+const CONTAINERS: [(&str, &str, &str); 8] = [
+    (
+        "<｜｜DSML｜｜calls>",
+        "</｜｜DSML｜｜calls>",
+        "｜｜DSML｜｜",
+    ),
+    (
+        "<｜｜DSML｜｜function_calls>",
+        "</｜｜DSML｜｜function_calls>",
+        "｜｜DSML｜｜",
+    ),
+    ("<||DSML||calls>", "</||DSML||calls>", "||DSML||"),
+    (
+        "<||DSML||function_calls>",
+        "</||DSML||function_calls>",
+        "||DSML||",
+    ),
+    ("<｜DSML｜calls>", "</｜DSML｜calls>", "｜DSML｜"),
+    (
+        "<｜DSML｜function_calls>",
+        "</｜DSML｜function_calls>",
+        "｜DSML｜",
+    ),
+    ("<|DSML|calls>", "</|DSML|calls>", "|DSML|"),
+    (
+        "<|DSML|function_calls>",
+        "</|DSML|function_calls>",
+        "|DSML|",
+    ),
+];
+const MAX_OPENING_LEN: usize = "<｜｜DSML｜｜function_calls>".len();
+
+/// Converts DeepSeek content into Operit markup without exposing partial DSML blocks.
+#[derive(Clone, Default)]
+struct DeepseekDsmlDecoder {
+    pending: String,
+    container: Option<usize>,
+    reasoning: bool,
+}
+
+impl DeepseekDsmlDecoder {
+    /// Emits ordinary text immediately and converts each complete DSML container atomically.
+    fn push(&mut self, text: &str) -> Result<String, AiServiceError> {
+        self.pending.push_str(text);
+        let mut output = String::new();
+        loop {
+            if let Some(index) = self.container {
+                let (_, closing, namespace) = CONTAINERS[index];
+                let Some(end) = self.pending.find(closing) else {
+                    break;
+                };
+                let calls = parse_calls(&self.pending[..end], namespace)?;
+                output.push_str(&StructuredToolCallBridge::convertToolCallPayloadToXml(
+                    &Value::Array(calls).to_string(),
+                ));
+                self.pending.drain(..end + closing.len());
+                self.container = None;
+                continue;
+            }
+
+            let reasoning_tag = if self.reasoning {
+                "</think>"
+            } else {
+                "<think>"
+            };
+            let tokens = CONTAINERS
+                .iter()
+                .map(|(token, _, _)| *token)
+                .enumerate()
+                .filter(|_| !self.reasoning)
+                .chain(std::iter::once((CONTAINERS.len(), reasoning_tag)))
+                .collect::<Vec<_>>();
+            let opening = tokens
+                .iter()
+                .filter_map(|(index, token)| {
+                    self.pending.find(token).map(|offset| (offset, *index))
+                })
+                .min_by_key(|(offset, _)| *offset);
+            if let Some((offset, index)) = opening {
+                output.push_str(&self.pending[..offset]);
+                if index == CONTAINERS.len() {
+                    output.push_str(reasoning_tag);
+                    self.pending.drain(..offset + reasoning_tag.len());
+                    self.reasoning = !self.reasoning;
+                } else {
+                    self.pending.drain(..offset + CONTAINERS[index].0.len());
+                    self.container = Some(index);
+                }
+                continue;
+            }
+
+            // Keep only a suffix that can still become an opening token in the next delta.
+            let retained = self
+                .pending
+                .char_indices()
+                .rev()
+                .take_while(|(offset, _)| self.pending.len() - offset < MAX_OPENING_LEN)
+                .filter_map(|(offset, _)| {
+                    let suffix = &self.pending[offset..];
+                    tokens
+                        .iter()
+                        .any(|(_, token)| token.starts_with(suffix))
+                        .then_some(suffix.len())
+                })
+                .max()
+                .unwrap_or(0);
+            let emitted = self.pending.len() - retained;
+            output.push_str(&self.pending[..emitted]);
+            self.pending.drain(..emitted);
+            break;
+        }
+        Ok(output)
+    }
+
+    /// Rejects truncated DSML while releasing a trailing literal opening angle bracket.
+    fn finish(&mut self) -> Result<String, AiServiceError> {
+        if self.container.is_some()
+            || CONTAINERS
+                .iter()
+                .any(|(_, _, namespace)| self.pending.starts_with(&format!("<{namespace}")))
+        {
+            return Err(invalid_dsml("incomplete tool-call container"));
+        }
+        Ok(std::mem::take(&mut self.pending))
+    }
+
+    /// Converts buffered content through the same decoder used for streaming deltas.
+    fn decode<'a>(chunks: impl IntoIterator<Item = &'a str>) -> Result<String, AiServiceError> {
+        let mut decoder = Self::default();
+        let mut output = String::new();
+        for chunk in chunks {
+            output.push_str(&decoder.push(chunk)?);
+        }
+        output.push_str(&decoder.finish()?);
+        Ok(output)
+    }
+}
+
+/// Parses all invocations before producing executable markup for one container.
+fn parse_calls(mut body: &str, namespace: &str) -> Result<Vec<Value>, AiServiceError> {
+    let mut calls = Vec::new();
+    let invoke_open = format!("<{namespace}invoke");
+    let invoke_close = format!("</{namespace}invoke>");
+    let parameter_open = format!("<{namespace}parameter");
+    let parameter_close = format!("</{namespace}parameter>");
+    while !body.trim_start().is_empty() {
+        let attributes = consume_opening(&mut body, &invoke_open)?;
+        let name = required_attribute(&attributes, "name")?;
+        if attributes.len() != 1 {
+            return Err(invalid_dsml("unexpected invocation attribute"));
+        }
+        let mut arguments = Map::new();
+        loop {
+            body = body.trim_start();
+            if let Some(rest) = body.strip_prefix(&invoke_close) {
+                body = rest;
+                break;
+            }
+            let attributes = consume_opening(&mut body, &parameter_open)?;
+            let key = required_attribute(&attributes, "name")?;
+            let is_string = required_attribute(&attributes, "string")?;
+            if attributes.len() != 2 {
+                return Err(invalid_dsml("unexpected parameter attribute"));
+            }
+            let end = body
+                .find(&parameter_close)
+                .ok_or_else(|| invalid_dsml("missing parameter closing token"))?;
+            let raw = &body[..end];
+            let value = match is_string {
+                "true" => Value::String(raw.to_string()),
+                "false" => serde_json::from_str(raw)
+                    .map_err(|error| invalid_dsml(&format!("invalid JSON parameter: {error}")))?,
+                _ => {
+                    return Err(invalid_dsml(
+                        "parameter string attribute must be true or false",
+                    ))
+                }
+            };
+            if arguments.insert(key.to_string(), value).is_some() {
+                return Err(invalid_dsml("duplicate parameter name"));
+            }
+            body = &body[end + parameter_close.len()..];
+        }
+        calls.push(json!({
+            "type": "function",
+            "function": {"name": name, "arguments": Value::Object(arguments).to_string()}
+        }));
+    }
+    if calls.is_empty() {
+        return Err(invalid_dsml("empty tool-call container"));
+    }
+    Ok(calls)
+}
+
+/// Consumes one opening token and its quoted attributes using the DSML grammar.
+fn consume_opening<'a>(
+    body: &mut &'a str,
+    token: &str,
+) -> Result<Map<String, Value>, AiServiceError> {
+    let rest = body
+        .trim_start()
+        .strip_prefix(token)
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .ok_or_else(|| invalid_dsml(&format!("expected {token}")))?;
+    let mut rest = rest.trim_start();
+    let mut attributes = Map::new();
+    loop {
+        if let Some(tail) = rest.strip_prefix('>') {
+            *body = tail;
+            return Ok(attributes);
+        }
+        let name_end = rest
+            .find(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+            .ok_or_else(|| invalid_dsml("incomplete attribute"))?;
+        if name_end == 0 {
+            return Err(invalid_dsml("invalid attribute name"));
+        }
+        let name = &rest[..name_end];
+        rest = rest[name_end..]
+            .trim_start()
+            .strip_prefix('=')
+            .ok_or_else(|| invalid_dsml("expected attribute assignment"))?
+            .trim_start();
+        let quote = rest
+            .chars()
+            .next()
+            .filter(|quote| matches!(quote, '\'' | '"'))
+            .ok_or_else(|| invalid_dsml("expected quoted attribute"))?;
+        rest = &rest[quote.len_utf8()..];
+        let end = rest
+            .find(quote)
+            .ok_or_else(|| invalid_dsml("unterminated attribute"))?;
+        if attributes
+            .insert(name.to_string(), Value::String(rest[..end].to_string()))
+            .is_some()
+        {
+            return Err(invalid_dsml("duplicate attribute"));
+        }
+        rest = &rest[end + quote.len_utf8()..];
+        if !rest.starts_with('>') && !rest.starts_with(char::is_whitespace) {
+            return Err(invalid_dsml("expected whitespace between attributes"));
+        }
+        rest = rest.trim_start();
+    }
+}
+
+/// Reads a required nonempty attribute without changing its literal value.
+fn required_attribute<'a>(
+    attributes: &'a Map<String, Value>,
+    name: &str,
+) -> Result<&'a str, AiServiceError> {
+    attributes
+        .get(name)
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| invalid_dsml(&format!("missing {name} attribute")))
+}
+
+/// Reports malformed DSML through the provider's existing terminal error path.
+fn invalid_dsml(message: &str) -> AiServiceError {
+    AiServiceError::RequestFailed(format!("Invalid DeepSeek DSML: {message}"))
+}
+
+#[cfg(test)]
+mod dsml_tests {
+    use serde_json::{json, Value};
+
+    use super::DeepseekProvider;
+    use super::{parse_calls, DeepseekDsmlDecoder, CONTAINERS};
+    use crate::chat::llmprovider::ProviderMediaTestSupport::test_runtime_context;
+    use crate::chat::llmprovider::StructuredToolCallBridge::StructuredToolCallBridge;
+    use operit_util::ChatMarkupRegex::ChatMarkupRegex;
+
+    const SCREENSHOT_CALL: &str = concat!(
+        "<｜｜DSML｜｜calls>\n",
+        "<｜｜DSML｜｜invoke name=\"use_package\">\n",
+        "<｜｜DSML｜｜parameter name=\"package_name\" string=\"true\">time</｜｜DSML｜｜parameter>\n",
+        "</｜｜DSML｜｜invoke>\n",
+        "</｜｜DSML｜｜calls>"
+    );
+
+    /// Extracts semantic tool calls without depending on generated tag suffixes.
+    fn decoded_calls(text: &str) -> (String, Vec<Value>) {
+        let (visible, calls) = StructuredToolCallBridge::parseXmlToolCalls(text);
+        (visible, calls.expect("converted tool calls"))
+    }
+
+    /// Verifies the exact DSML call shown in the user's screenshot becomes executable markup.
+    #[test]
+    fn screenshot_dsml_converts_to_operit_tool_markup() {
+        let output = DeepseekDsmlDecoder::decode([SCREENSHOT_CALL]).unwrap();
+        let (visible, calls) = decoded_calls(&output);
+        assert!(visible.is_empty());
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["function"]["name"], "use_package");
+        let arguments: Value =
+            serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments, json!({"package_name": "time"}));
+    }
+
+    /// Checks every UTF-8 split and individual character delta against the same conversion.
+    #[test]
+    fn arbitrary_stream_boundaries_preserve_the_call_and_surrounding_text() {
+        let source = format!("开始😀{SCREENSHOT_CALL}完成");
+        for (offset, _) in source.char_indices() {
+            let output =
+                DeepseekDsmlDecoder::decode([&source[..offset], &source[offset..]]).unwrap();
+            let (visible, calls) = decoded_calls(&output);
+            assert_eq!(visible, "开始😀\n完成", "split at {offset}");
+            assert_eq!(calls.len(), 1, "split at {offset}");
+        }
+        let pieces = source
+            .char_indices()
+            .map(|(offset, ch)| &source[offset..offset + ch.len_utf8()]);
+        let output = DeepseekDsmlDecoder::decode(pieces).unwrap();
+        assert_eq!(decoded_calls(&output).1.len(), 1);
+    }
+
+    /// Ensures plain text is live while DSML emits only after its entire container validates.
+    #[test]
+    fn text_is_live_and_incomplete_dsml_is_never_executable() {
+        let mut decoder = DeepseekDsmlDecoder::default();
+        assert_eq!(
+            decoder.push("普通文本 & <literal>").unwrap(),
+            "普通文本 & <literal>"
+        );
+        assert_eq!(decoder.push("前缀<｜DS").unwrap(), "前缀");
+        assert!(decoder
+            .push("ML｜calls><｜DSML｜invoke name=\"use_package\">")
+            .unwrap()
+            .is_empty());
+        assert!(decoder.push("</｜DSML｜invoke>").unwrap().is_empty());
+        let completed = decoder.push("</｜DSML｜calls>后缀").unwrap();
+        assert_eq!(ChatMarkupRegex::tool_call_matches(&completed).len(), 1);
+        assert!(completed.ends_with("后缀"));
+        assert!(decoder.finish().unwrap().is_empty());
+        assert!(decoder.finish().unwrap().is_empty());
+    }
+
+    /// Covers both DSML container generations and their ASCII token spelling.
+    #[test]
+    fn container_spellings_and_multiple_invocations_are_supported() {
+        for (opening, closing, namespace) in CONTAINERS {
+            let body = format!(
+                "<{namespace}invoke name='first'></{namespace}invoke>\n<{namespace}invoke name=\"second\"></{namespace}invoke>"
+            );
+            let source = format!("{opening}{body}{closing}{opening}{body}{closing}");
+            let output = DeepseekDsmlDecoder::decode([source.as_str()]).unwrap();
+            let names = ChatMarkupRegex::tool_call_matches(&output)
+                .into_iter()
+                .map(|call| call.name)
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["first", "second", "first", "second"]);
+        }
+    }
+
+    /// Preserves raw string bytes and parses explicitly nonstring values as strict JSON.
+    #[test]
+    fn parameter_types_unicode_and_markup_are_preserved() {
+        let body = concat!(
+            "<｜DSML｜invoke name=\"package_proxy\">",
+            "<｜DSML｜parameter name=\"tool_name\" string=\"true\">files:write</｜DSML｜parameter>",
+            "<｜DSML｜parameter name=\"text\" string=\"true\">  中文😀 &amp; <x>\"\\n\n  </｜DSML｜parameter>",
+            "<｜DSML｜parameter name=\"params\" string=\"false\">{\"list\":[1,true,null],\"text\":\"a < b & c\"}</｜DSML｜parameter>",
+            "<｜DSML｜parameter name=\"empty\" string=\"true\"></｜DSML｜parameter>",
+            "<｜DSML｜parameter name=\"number\" string=\"false\">42</｜DSML｜parameter>",
+            "<｜DSML｜parameter name=\"boolean\" string=\"false\">false</｜DSML｜parameter>",
+            "</｜DSML｜invoke>"
+        );
+        let calls = parse_calls(body, "｜DSML｜").unwrap();
+        let arguments: Value =
+            serde_json::from_str(calls[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(arguments["text"], "  中文😀 &amp; <x>\"\\n\n  ");
+        assert_eq!(arguments["empty"], "");
+        assert_eq!(arguments["number"], 42);
+        assert_eq!(arguments["boolean"], false);
+        assert_eq!(
+            arguments["params"],
+            json!({"list": [1, true, null], "text": "a < b & c"})
+        );
+
+        let source = format!("<｜DSML｜calls>{body}</｜DSML｜calls>");
+        let output = DeepseekDsmlDecoder::decode([source.as_str()]).unwrap();
+        assert!(output.find("&amp;amp; &lt;x&gt;&quot;").is_some());
+        let replayed = decoded_calls(&output).1;
+        let replayed_arguments: Value =
+            serde_json::from_str(replayed[0]["function"]["arguments"].as_str().unwrap()).unwrap();
+        assert_eq!(replayed_arguments["params"], arguments["params"]);
+    }
+
+    /// Rejects invalid JSON, duplicate keys, malformed structure, and missing attributes.
+    #[test]
+    fn malformed_dsml_returns_a_provider_error() {
+        for body in [
+            "",
+            "<｜DSML｜invoke></｜DSML｜invoke>",
+            "<｜DSML｜invoke name=\"x\"></｜DSML｜wrong>",
+            "<｜DSML｜invoke name=\"x\"><｜DSML｜parameter name=\"a\" string=\"false\">invalid</｜DSML｜parameter></｜DSML｜invoke>",
+            "<｜DSML｜invoke name=\"x\"><｜DSML｜parameter name=\"a\" string=\"maybe\">x</｜DSML｜parameter></｜DSML｜invoke>",
+            "<｜DSML｜invoke name=\"x\"><｜DSML｜parameter name=\"a\" string=\"true\">x</｜DSML｜parameter><｜DSML｜parameter name=\"a\" string=\"true\">y</｜DSML｜parameter></｜DSML｜invoke>",
+            "<｜DSML｜invoke name=\"x\" name=\"y\"></｜DSML｜invoke>",
+            "<｜DSML｜invoke name=\"x\" unexpected=\"y\"></｜DSML｜invoke>",
+        ] {
+            let source = format!("<｜DSML｜calls>{body}</｜DSML｜calls>");
+            assert!(DeepseekDsmlDecoder::decode([source.as_str()]).is_err(), "{source}");
+        }
+    }
+
+    /// Rejects truncated containers but keeps ordinary trailing token-like text literal.
+    #[test]
+    fn completion_rejects_truncated_dsml_without_changing_literal_text() {
+        for source in [
+            "<｜DSML｜calls",
+            "<｜DSML｜calls>",
+            "<｜DSML｜calls><｜DSML｜invoke name=\"x\">",
+        ] {
+            assert!(DeepseekDsmlDecoder::decode([source]).is_err());
+        }
+        for source in [
+            "普通文本",
+            "a < b",
+            "ending <",
+            "partial <｜DS",
+            "<tool name=\"x\"></tool>",
+        ] {
+            assert_eq!(DeepseekDsmlDecoder::decode([source]).unwrap(), source);
+        }
+    }
+
+    /// Keeps reasoning examples literal, including when thinking tags span text deltas.
+    #[test]
+    fn dsml_in_reasoning_is_not_executed() {
+        let source = format!("<think>{SCREENSHOT_CALL}</think>{SCREENSHOT_CALL}");
+        let pieces = source
+            .char_indices()
+            .map(|(offset, ch)| &source[offset..offset + ch.len_utf8()]);
+        let output = DeepseekDsmlDecoder::decode(pieces).unwrap();
+        assert!(output.starts_with(&format!("<think>{SCREENSHOT_CALL}</think>")));
+        assert_eq!(ChatMarkupRegex::tool_call_matches(&output).len(), 1);
+    }
+
+    /// Restores a clean parser state when the upstream rolls back a partial attempt.
+    #[test]
+    fn retry_savepoint_discards_pending_dsml_and_reasoning_state() {
+        let mut decoder = DeepseekDsmlDecoder::default();
+        let savepoint = decoder.clone();
+        assert!(decoder
+            .push("<｜DSML｜calls><｜DSML｜invoke name=\"partial\">")
+            .unwrap()
+            .is_empty());
+        decoder.clone_from(&savepoint);
+        let output = decoder.push(SCREENSHOT_CALL).unwrap();
+        assert_eq!(
+            decoded_calls(&output).1[0]["function"]["name"],
+            "use_package"
+        );
+        assert!(decoder.finish().unwrap().is_empty());
+    }
+
+    /// Exercises the real nonstreaming provider paths and preserves native tool calls and usage.
+    #[test]
+    fn buffered_chat_and_responses_convert_dsml_and_preserve_native_calls() {
+        use crate::chat::llmprovider::AIService::AIService;
+        for responses in [false, true] {
+            let endpoint = if responses {
+                "responses"
+            } else {
+                "chat/completions"
+            };
+            let provider = DeepseekProvider::new(
+                format!("https://fixture.invalid/{endpoint}"),
+                String::new().into(),
+                "deepseek-flash".into(),
+                "DEEPSEEK".into(),
+                Vec::new(),
+                false,
+                false,
+                false,
+                Vec::new(),
+                false,
+                test_runtime_context(),
+            );
+            let reasoning = format!("Reasoning example: {SCREENSHOT_CALL}");
+            let content = format!("Before{SCREENSHOT_CALL}After");
+            let response = if responses {
+                json!({"output": [
+                    {"type": "reasoning", "content": [{"type": "reasoning_text", "text": reasoning}]},
+                    {"type": "message", "content": [{"type": "output_text", "text": content}]},
+                    {"type": "function_call", "name": "native_call", "arguments": "{}"}
+                ], "usage": {"input_tokens": 100, "input_tokens_details": {"cached_tokens": 20}, "output_tokens": 30}})
+            } else {
+                json!({"choices": [{"message": {
+                    "reasoning_content": reasoning,
+                    "content": content,
+                    "tool_calls": [{"type": "function", "function": {"name": "native_call", "arguments": "{}"}}]
+                }}], "usage": {"prompt_tokens": 100, "prompt_cache_hit_tokens": 20, "completion_tokens": 30}})
+            };
+            let output = provider.parse_response_chunks(&response).unwrap().concat();
+            let names = ChatMarkupRegex::tool_call_matches(&output)
+                .into_iter()
+                .map(|call| call.name)
+                .collect::<Vec<_>>();
+            assert_eq!(names, ["use_package", "native_call"]);
+            assert!(output.starts_with(&format!("<think>{reasoning}</think>")));
+            assert_eq!(
+                (
+                    provider.input_token_count(),
+                    provider.cached_input_token_count(),
+                    provider.output_token_count()
+                ),
+                (100, 20, 30)
+            );
+        }
+    }
+}
