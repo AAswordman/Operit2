@@ -76,6 +76,19 @@ void main() {
     },
   );
 
+  test('completed replies get a localized title suffix', () async {
+    status = 'Satisfied';
+    await bridge.notify('completed', notificationType: 'ai_message_completed');
+
+    expect(bridge.sent, [
+      {
+        'title': 'Operit · Completed',
+        'message': 'Reply ready',
+        'chatId': 'chat-1',
+      },
+    ]);
+  });
+
   test(
     'permission changes take effect without restarting the service',
     () async {
@@ -124,7 +137,7 @@ class _NotificationBridge extends OperitRuntimeBridge {
   late CoreWatchRequest watch;
   final _pending = <String, Completer<void>>{};
 
-  Future<void> notify(String id) {
+  Future<void> notify(String id, {String notificationType = 'reply'}) {
     final done = Completer<void>();
     _pending[id] = done;
     events.add(
@@ -158,7 +171,7 @@ class _NotificationBridge extends OperitRuntimeBridge {
           ])
             field: null,
           'appNotification': {
-            'notificationType': 'reply',
+            'notificationType': notificationType,
             'title': 'Operit',
             'message': 'Reply ready',
             'chatId': 'chat-1',

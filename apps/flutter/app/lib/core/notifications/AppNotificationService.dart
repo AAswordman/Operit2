@@ -6,6 +6,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import '../../l10n/generated/app_localizations.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
@@ -100,8 +101,12 @@ class AppNotificationService with WidgetsBindingObserver {
       if (payload == null) {
         throw StateError('application notification payload is missing');
       }
+      // Core sends a neutral title; the localized status suffix is added here.
+      final title = payload.notificationType == 'ai_message_completed'
+          ? '${payload.title} · ${_localizations().completed}'
+          : payload.title;
       await _sendWhenBackground(
-        payload.title,
+        title,
         payload.message,
         chatId: payload.chatId,
       );
@@ -123,6 +128,14 @@ class AppNotificationService with WidgetsBindingObserver {
     await _subscription?.cancel();
     _subscription = null;
   }
+
+  /// Resolves notification wording against the current device locales.
+  AppLocalizations _localizations() => lookupAppLocalizations(
+    basicLocaleListResolution(
+      WidgetsBinding.instance.platformDispatcher.locales,
+      AppLocalizations.supportedLocales,
+    ),
+  );
 
   /// Sends one system notification only while this application is not foregrounded.
   Future<void> _sendWhenBackground(
