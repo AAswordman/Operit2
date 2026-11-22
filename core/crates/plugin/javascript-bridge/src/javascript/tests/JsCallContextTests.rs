@@ -6,7 +6,7 @@ fn native_context(host: Arc<dyn JsExecutionHost>, owner: &str) -> engine::JsCall
     engine::JsCallContext {
         interrupt: operit_host_api::HostJavaScriptExecutionInterrupt::unlimited(),
         executionHost: Some(host),
-        intermediateCallback: None,
+        intermediateCallback: engine::JsIntermediateCallback::Text(None),
         executionListener: None,
         envOverrides: Arc::new(Mutex::new(BTreeMap::new())),
         environmentOwner: None,

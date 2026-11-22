@@ -1,4 +1,4 @@
-use super::JsEngineState;
+use super::{JsEngineState, JsIntermediateCallback};
 use crate::javascript::TestJsToolsHost::{expect_js_output, register_test_runtime_storage};
 use operit_host_api::HostManager::{
     setDefaultHostJavaScriptRuntimeHost, setDefaultHostRuntimeTaskSchedulerHost,
@@ -5708,7 +5708,7 @@ async fn collector_owned_execution_has_no_wall_deadline_and_cancels_cleanly() {
     ensure_test_runtime_root();let engine=newTestJsEngine(Arc::new(TestPluginConfigExecutionHost::default()));
     let mut waiting=engine.worker.execute_script_function_async(
         "exports.wait=async function(){await new Promise(function(){});};".into(),"wait".into(),
-        testParams(),BTreeMap::new(),None,true, None,None,None,false,
+        testParams(),BTreeMap::new(),JsIntermediateCallback::Text(None),true, None,None,None,false,
     );
     tokio::select! {
         result=&mut waiting=>panic!("Collector wait acquired a wall deadline: {result:?}"),
@@ -5810,7 +5810,7 @@ async fn discarded_queued_start_finishes_without_a_wall_deadline() {
     let worker = engine.worker.clone();
     let result = tokio::time::timeout(Duration::from_secs(2), worker.execute_script_function_async(
         "exports.run = function() { return true; };".into(), "run".into(),
-        BTreeMap::new(), BTreeMap::new(), None, false, None,
+        BTreeMap::new(), BTreeMap::new(), JsIntermediateCallback::Text(None), false, None,
         None, None, false,
     )).await;
     engine.destroy();

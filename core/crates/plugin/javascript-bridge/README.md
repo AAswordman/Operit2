@@ -44,6 +44,12 @@ context until cleanup, and nested execution restores the enclosing realm's capab
 See [JavaScript call context ownership](../../../../docs/js-call-context.md) for the lifecycle,
 historical cause and regression coverage.
 
+Each call also owns its output channel: ordinary scripts deliver text, including JSON
+serialization of `emit(object)`, while Compose delivers transferred binary frames.
+Native bindings reject channel mismatches before invoking a callback. A reported
+`{success:false,message:""}` remains a runtime failure; malformed error envelopes
+complete as protocol failures. Neither path coerces binary data into text.
+
 ## Prepared Page Engines
 
 Native execution uses the four existing affine workers, with one shared V8 isolate per worker.

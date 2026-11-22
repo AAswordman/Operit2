@@ -27,7 +27,7 @@ use operit_host_api::{
 };
 use operit_plugin_sdk::execution_result::{
     build_js_execution_error_payload as buildJsExecutionErrorPayload,
-    extract_js_execution_error_message as extractJsExecutionErrorMessage, JsExecutionError,
+    extract_js_execution_failure as extractJsExecutionFailure, JsExecutionError,
     JsExecutionResult,
 };
 use operit_plugin_sdk::javascript::{
@@ -115,11 +115,18 @@ enum JsTextResourceSource {
     ExecutionHost,
 }
 
+/// Keeps the output channel explicit even when the caller has no intermediate listener.
+#[derive(Clone)]
+enum JsIntermediateCallback {
+    Text(Option<Arc<dyn Fn(String) + Send + Sync>>),
+    Compose(Option<Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>>),
+}
+
 #[derive(Clone)]
 struct JsCallContext {
     interrupt: HostJavaScriptExecutionInterrupt,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
-    intermediateCallback: Option<Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>>,
+    intermediateCallback: JsIntermediateCallback,
     executionListener: Option<JsExecutionListenerRef>,
     envOverrides: Arc<Mutex<BTreeMap<String, String>>>,
     environmentOwner: Option<JsEnvironmentOwner>,
@@ -228,7 +235,7 @@ struct JsScriptRequest {
     functionName: String,
     params: BTreeMap<String, Value>,
     envOverrides: BTreeMap<String, String>,
-    onIntermediateResult: Option<Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>>,
+    onIntermediateResult: JsIntermediateCallback,
     timeout: Option<Duration>,
     interrupt: HostJavaScriptExecutionInterrupt,
     executionListener: Option<JsExecutionListenerRef>,
@@ -443,7 +450,7 @@ impl JsEngineWorker {
         functionName: String,
         params: BTreeMap<String, Value>,
         envOverrides: BTreeMap<String, String>,
-        on_intermediate_result: Option<Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>>,
+        on_intermediate_result: JsIntermediateCallback,
         _dispatchIntermediateOnMain: bool,
         timeout: Option<Duration>,
         executionListener: Option<JsExecutionListenerRef>,
@@ -962,7 +969,7 @@ impl JsEngine {
     ) -> JsExecutionFuture<JsExecutionResult<Option<String>>> {
         textScriptCompletion(self.worker.execute_script_function_async(
             script, functionName, params, envOverrides,
-            textIntermediateCallback(on_intermediate_result), dispatchIntermediateOnMain,
+            JsIntermediateCallback::Text(on_intermediate_result), dispatchIntermediateOnMain,
             None, executionListener, None, false,
         ))
     }
@@ -978,7 +985,7 @@ impl JsEngine {
     ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
         textScriptCompletion(self.worker.execute_script_function_async(
             script.to_owned(), functionName.to_owned(), params.clone(), envOverrides.clone(),
-            textIntermediateCallback(on_intermediate_result), dispatchIntermediateOnMain,
+            JsIntermediateCallback::Text(on_intermediate_result), dispatchIntermediateOnMain,
             timeout, executionListener, None, false,
         ))
     }
@@ -1080,7 +1087,7 @@ impl JsEngine {
             functionName,
             params,
             envOverrides,
-            onIntermediateResult,
+            JsIntermediateCallback::Compose(onIntermediateResult),
             true,
             None,
             None,
@@ -1401,7 +1408,7 @@ impl JsEngineState {
         let context = JsCallContext {
             interrupt: HostJavaScriptExecutionInterrupt::unlimited(),
             executionHost: self.executionHost.clone(),
-            intermediateCallback: textIntermediateCallback(on_intermediate_result),
+            intermediateCallback: JsIntermediateCallback::Text(on_intermediate_result),
             executionListener,
             envOverrides: Arc::new(Mutex::new(envOverrides.clone())),
             environmentOwner: environmentOwner(self.toolPkgContext.as_ref(), params, false)?,
@@ -1471,8 +1478,8 @@ impl JsEngineState {
         };
         clearNativeExecutionSession(&callId);
         clearThreadLocalCallState();
-        if let Some(message) = extractJsExecutionErrorMessage(output.as_deref()) {
-            Err(JsExecutionError::runtime(message))
+        if let Some(failure) = extractJsExecutionFailure(output.as_deref()) {
+            Err(JsExecutionError::runtime(failure.message))
         } else {
             Ok(output)
         }
@@ -1543,7 +1550,7 @@ impl JsEngineState {
             let context = JsCallContext {
                 interrupt: HostJavaScriptExecutionInterrupt::unlimited(),
                 executionHost: self.executionHost.clone(),
-                intermediateCallback: None,
+                intermediateCallback: JsIntermediateCallback::Text(None),
                 executionListener: None,
                 envOverrides: Arc::new(Mutex::new(BTreeMap::new())),
                 environmentOwner,
@@ -2808,7 +2815,7 @@ impl JsExecutionEngine for JsEngine {
         env_overrides: BTreeMap<String, String>,
     ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
         textScriptCompletion(self.worker.execute_script_function_async(
-            script, function_name, params, env_overrides, None, true, None, None, None, false,
+            script, function_name, params, env_overrides, JsIntermediateCallback::Text(None), true, None, None, None, false,
         ))
     }
 
@@ -2819,7 +2826,7 @@ impl JsExecutionEngine for JsEngine {
         on_intermediate_result: Option<Arc<dyn Fn(String) + Send + Sync>>,
     ) -> JsExecutionCompletion<JsExecutionResult<Option<String>>> {
         textScriptCompletion(self.worker.execute_script_function_async(
-            script, function_name, params, env_overrides, textIntermediateCallback(on_intermediate_result),
+            script, function_name, params, env_overrides, JsIntermediateCallback::Text(on_intermediate_result),
             true, None, None, None, false,
         ))
     }
@@ -2938,11 +2945,14 @@ fn deliverIntermediateResult(callId: String, result: String) -> HostResult<()> {
     let context = CURRENT_ACTIVE_CALL_CONTEXTS
         .with(|contexts| contexts.borrow().get(&callId).cloned())
         .ok_or_else(|| HostError::new("Intermediate result requires an active owning call"))?;
+    let JsIntermediateCallback::Text(callback) = context.intermediateCallback else {
+        return Err(HostError::new("Text output requires an ordinary script call"));
+    };
     if let Some(listener) = context.executionListener {
         listener.on_intermediate_result(&callId, &result);
     }
-    if let Some(callback) = context.intermediateCallback {
-        callback(Value::String(result).into());
+    if let Some(callback) = callback {
+        callback(result);
     }
     Ok(())
 }
@@ -2956,20 +2966,12 @@ fn textScriptCompletion(completion: JsExecutionCompletion<JsExecutionResult<Opti
 fn textScriptResult(result: JsExecutionResult<Option<Value>>) -> JsExecutionResult<Option<String>> {
     match result? {
         None => Ok(None),
-        Some(Value::String(text)) => match extractJsExecutionErrorMessage(Some(&text)) {
-            Some(message) => Err(JsExecutionError::runtime(message)),
+        Some(Value::String(text)) => match extractJsExecutionFailure(Some(&text)) {
+            Some(failure) => Err(JsExecutionError::runtime(failure.message)),
             None => Ok(Some(text)),
         },
         Some(_) => Err(JsExecutionError::serialization("Ordinary script returned a structured DSL result")),
     }
-}
-
-/// Preserves text callbacks for ordinary scripts while keeping the internal channel structured.
-fn textIntermediateCallback(callback: Option<Arc<dyn Fn(String) + Send + Sync>>) -> Option<Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>> {
-    callback.map(|callback| Arc::new(move |value| {
-        let operit_host_api::HostJavaScriptValue::Json(Value::String(text)) = value else { panic!("Text intermediate callback received a non-text value"); };
-        callback(text);
-    }) as Arc<dyn Fn(operit_host_api::HostJavaScriptValue) + Send + Sync>)
 }
 
 /// Delivers DSL values through the same registered owner used by active and detached calls.
@@ -2977,7 +2979,13 @@ fn sendStructuredIntermediate(callId: &str, value: operit_host_api::HostJavaScri
     let context = CURRENT_ACTIVE_CALL_CONTEXTS
         .with(|contexts| contexts.borrow().get(callId).cloned())
         .ok_or_else(|| HostError::new("Compose response requires an active owning call"))?;
-    if let Some(callback) = context.intermediateCallback {
+    let JsIntermediateCallback::Compose(callback) = context.intermediateCallback else {
+        return Err(HostError::new("Compose response requires a Compose call"));
+    };
+    if !matches!(&value, operit_host_api::HostJavaScriptValue::Buffer(_)) {
+        return Err(HostError::new("Compose response requires a transferred binary frame"));
+    }
+    if let Some(callback) = callback {
         callback(value);
     }
     Ok(())
@@ -3392,17 +3400,16 @@ fn executeHostOperation(name: &str, arguments: Vec<impl Into<operit_host_api::Ho
             let [callId, value] = exactHostJavaScriptJsonArguments(name, arguments)?;
             let callId = hostJavaScriptStringArgument(callId)?;
             // Execution listeners and the external script result contract own JSON serialization.
-            let serialized = value.to_string();
             match name {
                 "__operitSendIntermediateResult" => deliverIntermediateResult(
                     callId,
                     match value {
                         Value::String(value) => value,
-                        _ => serialized,
+                        value => value.to_string(),
                     },
                 )?,
-                "__operitNativeSetCallResult" => storeExecutionResult(callId, serialized)?,
-                "__operitNativeSetCallError" => storeExecutionError(callId, serialized)?,
+                "__operitNativeSetCallResult" => storeExecutionResult(callId, value.to_string())?,
+                "__operitNativeSetCallError" => storeExecutionError(callId, value)?,
                 _ => unreachable!(),
             }
             Ok(Value::Null)
@@ -3486,15 +3493,23 @@ fn storeExecutionResult(callId: String, result: String) -> HostResult<()> {
 
 /// Reports and stores an execution error through the external listener contract.
 #[allow(non_snake_case)]
-fn storeExecutionError(callId: String, error: String) -> HostResult<()> {
+fn storeExecutionError(callId: String, error: Value) -> HostResult<()> {
     let context = CURRENT_ACTIVE_CALL_CONTEXTS
         .with(|contexts| contexts.borrow().get(&callId).cloned())
         .ok_or_else(|| HostError::new("Execution error requires an active owning call"))?;
+    let (failure, payload) = match (error.get("success"), error.get("message").and_then(Value::as_str)) {
+        (Some(Value::Bool(false)), Some(message)) => (JsExecutionError::runtime(message.trim()), error.to_string()),
+        _ => {
+            let failure = JsExecutionError::protocol("Native execution error requires success:false and a string message");
+            let payload = buildJsExecutionErrorPayload(&failure.message);
+            (failure, payload)
+        }
+    };
     if let Some(listener) = context.executionListener {
-        listener.on_failed(&callId, &error);
+        listener.on_failed(&callId, &payload);
     }
     CURRENT_CALL_RESULTS.with(|results| {
-        results.borrow_mut().insert(callId, Err(JsExecutionError::runtime(extractJsExecutionErrorMessage(Some(&error)).expect("Native error must contain a structured error message"))));
+        results.borrow_mut().insert(callId, Err(failure));
     });
     Ok(())
 }
