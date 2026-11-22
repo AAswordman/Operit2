@@ -89,6 +89,12 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
         assert_eq!(messages[0].sender, "ai");
         assert_eq!(messages[0].displayText(), "Hello from a prepared message");
         assert!(messages[0].completedAt > 0);
+        // Plain-text deliveries carry the same scheduling tag as generated replies so the
+        // host can identify every delivery uniformly; preparedAt records the commit time.
+        assert_eq!(
+            messages[0].pluginExtensions.get("host.chat.scheduled"),
+            Some(&serde_json::json!({ "preparedAt": messages[0].completedAt }))
+        );
         // Genuine generation measurements and immutable author metadata survive delayed persistence.
         let mut snapshot = operit_model::ChatMessage::ChatMessage::new_with_markdown_timestamp("ai".into(), "Contextual reply".into(), 125);
         snapshot.roleName = "Tea companion".into();
@@ -103,6 +109,9 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
         snapshot.completedAt = 180;
         snapshot.pluginExtensions.insert("host.chat.identity".into(), serde_json::json!({"title":"Tea companion","avatarUri":"/virtual/avatar.png"}));
         snapshot.pluginExtensions.insert("com.operit.character_cards".into(), serde_json::json!({"participantId":"tea-role"}));
+        // The generation path stamps its own preparedAt before snapshot commit; the snapshot
+        // commit must keep that tag untouched instead of re-stamping it with the commit time.
+        snapshot.pluginExtensions.insert("host.chat.scheduled".into(), serde_json::json!({ "preparedAt": 180 }));
         assert!(!core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap());
         assert!(core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap());
         let mut persisted = core.chatHistoryDelegate.chatHistoryManager.loadChatMessageVariant("prepared-target", 125, 0).unwrap();
@@ -127,6 +136,19 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
         );
         drop(holder);
         assert!(deliver(request.clone()).await.unwrap().duplicate);
+        // An idempotent retry must not rewrite the committed delivery or its scheduling tag.
+        let mut holder = application.chatRuntimeHolder.lock().await;
+        let retried = holder
+            .getCore(ChatRuntimeSlot::MAIN)
+            .chatHistoryDelegate
+            .chatHistoryManager
+            .loadChatMessageVariant("prepared-target", 123, 0)
+            .unwrap();
+        assert_eq!(
+            retried.pluginExtensions.get("host.chat.scheduled"),
+            Some(&serde_json::json!({ "preparedAt": retried.completedAt }))
+        );
+        drop(holder);
         let mut conflict = request.clone();
         conflict.text = "Conflicting replacement".into();
         assert!(deliver(conflict).await.unwrap_err().contains("conflicts"));
@@ -311,6 +333,11 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
             .unwrap();
         assert_eq!(committed.sender, "ai");
         assert_eq!(committed.displayText(), "Scheduled hello");
+        // Reconciler-driven plain-text deliveries are tagged exactly like direct deliveries.
+        assert_eq!(
+            committed.pluginExtensions.get("host.chat.scheduled"),
+            Some(&serde_json::json!({ "preparedAt": committed.completedAt }))
+        );
         drop(holder);
 
         // A restored prepared reply must be withdrawn when its participant cannot be resolved.
