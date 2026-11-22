@@ -125,3 +125,22 @@ fn audioAndVideoLinksBecomeGeminiInlineDataParts() {
     assert_eq!(parts[1]["inline_data"]["data"], "dmlkZW8=");
     assert_eq!(parts[2]["text"], "listen  watch");
 }
+
+/// Verifies overlapping think/thinking ranges cannot invert the slice cursor.
+#[test]
+fn removeThinkingContentToleratesOverlappingThinkRanges() {
+    use super::remove_thinking_content;
+
+    assert_eq!(
+        remove_thinking_content("<think>a<thinking>b</thinking>c</think>tail"),
+        "tail"
+    );
+    assert_eq!(
+        remove_thinking_content("<think>abc<thinking>def</thinking>tail"),
+        ""
+    );
+    assert_eq!(
+        remove_thinking_content("visible<think>hidden</think>after"),
+        "visibleafter"
+    );
+}
