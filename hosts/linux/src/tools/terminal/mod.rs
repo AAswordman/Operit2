@@ -1231,8 +1231,9 @@ impl TerminalTextRenderer {
     fn eraseChars(&mut self, count: usize) {
         self.ensureCursorLine();
         let line = &mut self.lines[self.row];
-        let end = (self.col + count).min(line.len());
-        for cell in &mut line[self.col..end] {
+        let start = self.col.min(line.len());
+        let end = start.saturating_add(count).min(line.len());
+        for cell in &mut line[start..end] {
             *cell = ' ';
         }
     }
