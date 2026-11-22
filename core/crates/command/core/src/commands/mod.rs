@@ -9,6 +9,7 @@ mod log;
 mod market;
 mod mcp;
 mod model;
+mod model_options;
 mod package;
 mod plugin;
 mod prefs;

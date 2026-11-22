@@ -27,6 +27,10 @@ runtime application context and the existing output shape.
   discovery/explicit execution.
 - `scripts/check-routing.mjs`: source-contract and generic catalog-fixture
   regression checks without Rust compilation.
+- `src/commands/model_options.rs`: per-model capability/request switches,
+  built-in tool and parameter toggles, provider field edits and typed profile
+  section writes through `ModelConfigManager`. See [CLI settings](../../../../docs/cli-settings.md)
+  for fields, inheritance controls and VFS examples.
 
 ## Command Ownership
 

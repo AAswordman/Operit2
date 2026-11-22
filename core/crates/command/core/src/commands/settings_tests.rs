@@ -53,7 +53,9 @@ async fn exercise_settings() {
     hosts.hostJavaScriptRuntimeHost = Some(Arc::new(NativeHostJavaScriptRuntimeHost::new()));
     hosts.hostRuntimeTaskSchedulerHost = Some(Arc::new(NativeHostRuntimeTaskSchedulerHost::new()));
     let mut app = OperitApplication::newWithContext(hosts);
-    RuntimePackageManager::reloadRegistry(app.packageManager()).await.unwrap();
+    RuntimePackageManager::reloadRegistry(app.packageManager())
+        .await
+        .unwrap();
 
     for args in [
         vec!["terminal"],
@@ -113,6 +115,7 @@ async fn exercise_settings() {
         execute(&mut app, &["prefs", "show"]).await.unwrap()["language"],
         "zh-CN"
     );
+    exercise_model_options(&mut app, &root).await;
 
     let mut snapshot: Value = serde_json::from_str(include_str!(
         "../../../../runtime/application/src/data/preferences/theme_snapshot_fixture.json"
@@ -231,6 +234,396 @@ async fn exercise_settings() {
         "audio"
     );
     assert!(execute(&mut app, &["terminal", "profiles"]).await.is_err());
+}
+
+/// Checks single-option edits, inheritance, VFS input and rejected writes through the public router.
+async fn exercise_model_options(app: &mut OperitApplication, root: &std::path::Path) {
+    let created = execute(
+        app,
+        &[
+            "model",
+            "provider-create",
+            "CLI switches",
+            "OPENAI",
+            "https://example.test/v1",
+        ],
+    )
+    .await
+    .unwrap();
+    let provider = created["providerId"].as_str().unwrap();
+    execute(
+        app,
+        &[
+            "model",
+            "provider-model-create",
+            provider,
+            "cli-settings-model",
+        ],
+    )
+    .await
+    .unwrap();
+    let model = "cli-settings-model";
+    execute(
+        app,
+        &["model", "provider-set-key", provider, "preserved-secret"],
+    )
+    .await
+    .unwrap();
+
+    for (field, key) in [
+        ("tool-call", "toolCall"),
+        ("direct-image", "directImage"),
+        ("direct-audio", "directAudio"),
+        ("direct-video", "directVideo"),
+    ] {
+        for enabled in ["true", "false"] {
+            let result = execute(
+                app,
+                &["model", "capabilities-set", provider, model, field, enabled],
+            )
+            .await
+            .unwrap();
+            assert_eq!(result["capabilities"][key], enabled == "true");
+            assert_eq!(result["overrides"][key], enabled == "true");
+            assert_eq!(
+                execute(app, &["model", "show", provider, model])
+                    .await
+                    .unwrap()["capabilities"][key],
+                enabled == "true"
+            );
+        }
+    }
+    let capabilities = execute(app, &["model", "capabilities-show", provider, model])
+        .await
+        .unwrap();
+    for (field, key) in [
+        ("tool-call", "toolCall"),
+        ("direct-image", "directImage"),
+        ("direct-audio", "directAudio"),
+        ("direct-video", "directVideo"),
+    ] {
+        let result = execute(
+            app,
+            &["model", "capabilities-set", provider, model, field, "auto"],
+        )
+        .await
+        .unwrap();
+        assert!(result["overrides"][key].is_null());
+    }
+    for (field, key) in [
+        ("structured-tools", "supportsStructuredTools"),
+        ("claude-1h-prompt-cache", "enableClaude1hPromptCache"),
+    ] {
+        for enabled in ["true", "false", "auto"] {
+            let result = execute(
+                app,
+                &["model", "request-set", provider, model, field, enabled],
+            )
+            .await
+            .unwrap();
+            if enabled == "auto" {
+                assert!(result["overrides"][key].is_null());
+            } else {
+                assert_eq!(result["request"][key], enabled == "true");
+            }
+        }
+    }
+    assert!(execute(app, &["model", "request-show", provider, model])
+        .await
+        .unwrap()["request"]
+        .is_object());
+    let original = execute(app, &["model", "profile-show", provider, model])
+        .await
+        .unwrap();
+    for args in [
+        vec!["model", "capabilities-set", provider, model, "typo", "true"],
+        vec![
+            "model",
+            "capabilities-set",
+            provider,
+            model,
+            "tool-call",
+            "enabled",
+        ],
+        vec!["model", "request-set", provider, model, "tool-call", "true"],
+        vec!["model", "profile-set", provider, model, "id", "\"other\""],
+        vec![
+            "model",
+            "profile-set",
+            provider,
+            model,
+            "local-runtime",
+            "{}",
+        ],
+        vec![
+            "model",
+            "capabilities-set",
+            provider,
+            model,
+            "tool-call",
+            "true",
+            "extra",
+        ],
+    ] {
+        assert!(execute(app, &args).await.is_err());
+    }
+    assert_eq!(
+        execute(app, &["model", "profile-show", provider, model])
+            .await
+            .unwrap(),
+        original
+    );
+    assert!(execute(
+        app,
+        &[
+            "model",
+            "capabilities-set",
+            provider,
+            "missing",
+            "tool-call",
+            "true"
+        ]
+    )
+    .await
+    .is_err());
+
+    let tools = json!([{"toolType":"WebSearch", "displayName":"Search", "enabled":false,
+        "requestFormat":"OpenAiWebSearch", "exclusivity":"CanMixWithExternalTools", "config":{"searchContextSize":"low"}}]);
+    execute(
+        app,
+        &[
+            "model",
+            "profile-set",
+            provider,
+            model,
+            "builtin-tools",
+            &tools.to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+    let enabled = execute(
+        app,
+        &[
+            "model",
+            "builtin-tool-set",
+            provider,
+            model,
+            "WebSearch",
+            "true",
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(enabled["builtinTools"][0]["enabled"], true);
+    assert_eq!(enabled["builtinTools"][0]["config"], tools[0]["config"]);
+    assert_eq!(
+        execute(app, &["model", "builtin-tools-show", provider, model])
+            .await
+            .unwrap()["builtinTools"],
+        enabled["builtinTools"]
+    );
+    assert!(execute(
+        app,
+        &[
+            "model",
+            "builtin-tool-set",
+            provider,
+            model,
+            "CodeExecution",
+            "true"
+        ]
+    )
+    .await
+    .is_err());
+
+    let parameters = json!([{"id":"temperature", "name":"Temperature", "apiName":"temperature", "description":"", "defaultValue":0.7,
+        "currentValue":0.7, "isEnabled":true, "valueType":"FLOAT", "minValue":0, "maxValue":2, "category":"GENERATION", "isCustom":false}]);
+    execute(
+        app,
+        &[
+            "model",
+            "profile-set",
+            provider,
+            model,
+            "parameters",
+            &parameters.to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+    execute(
+        app,
+        &[
+            "model",
+            "param-set",
+            provider,
+            model,
+            "temperature",
+            "false",
+        ],
+    )
+    .await
+    .unwrap();
+    let parameters = execute(app, &["model", "params", provider, model])
+        .await
+        .unwrap();
+    assert_eq!(parameters[0]["isEnabled"], false);
+    assert_eq!(parameters[0]["currentValue"], 0.7);
+    std::fs::write(root.join("workspaces/demo/parameter.json"), "0.3").unwrap();
+    execute(
+        app,
+        &[
+            "model",
+            "param-set",
+            provider,
+            model,
+            "temperature",
+            "true",
+            "@/operitapp/workspaces/demo/parameter.json",
+        ],
+    )
+    .await
+    .unwrap();
+    let parameters = execute(app, &["model", "params", provider, model])
+        .await
+        .unwrap();
+    assert_eq!(parameters[0]["currentValue"], 0.3);
+    assert_eq!(parameters[0]["isEnabled"], true);
+    assert!(execute(
+        app,
+        &[
+            "model",
+            "param-set",
+            provider,
+            model,
+            "temperature",
+            "false",
+            "invalid-json"
+        ]
+    )
+    .await
+    .is_err());
+    assert!(execute(
+        app,
+        &["model", "param-set", provider, model, "missing", "false"]
+    )
+    .await
+    .is_err());
+    assert_eq!(
+        execute(app, &["model", "params", provider, model])
+            .await
+            .unwrap(),
+        parameters
+    );
+
+    let mut runtime = original["localRuntime"].clone();
+    runtime["llamaThreadCount"] = json!(7);
+    std::fs::write(
+        root.join("workspaces/demo/runtime.json"),
+        runtime.to_string(),
+    )
+    .unwrap();
+    execute(
+        app,
+        &[
+            "model",
+            "profile-set",
+            provider,
+            model,
+            "local-runtime",
+            "@/operitapp/workspaces/demo/runtime.json",
+        ],
+    )
+    .await
+    .unwrap();
+    let profile = execute(app, &["model", "profile-show", provider, model])
+        .await
+        .unwrap();
+    assert_eq!(profile["localRuntime"], runtime);
+    assert_eq!(profile["summary"], original["summary"]);
+    assert_eq!(
+        profile["capabilitiesOverride"],
+        original["capabilitiesOverride"]
+    );
+    let pricing = json!({"billingMode":"TOKEN", "inputPricePerMillion":1, "cachedInputPricePerMillion":null,
+        "cacheWritePricePerMillion":null, "outputPricePerMillion":2, "pricePerRequest":0, "currency":"USD"});
+    execute(
+        app,
+        &[
+            "model",
+            "profile-set",
+            provider,
+            model,
+            "pricing",
+            &pricing.to_string(),
+        ],
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        execute(app, &["model", "show", provider, model])
+            .await
+            .unwrap()["pricing"]["inputPricePerMillion"],
+        1.0
+    );
+    execute(
+        app,
+        &["model", "profile-set", provider, model, "pricing", "null"],
+    )
+    .await
+    .unwrap();
+    assert!(execute(app, &["model", "profile-show", provider, model])
+        .await
+        .unwrap()["pricingOverride"]
+        .is_null());
+
+    for (field, value) in [
+        ("name", "CLI renamed"),
+        ("request-limit", "12"),
+        ("max-concurrent", "3"),
+        ("multiple-api-keys", "true"),
+        ("custom-headers", r#"{"X-Source":"cli"}"#),
+    ] {
+        execute(app, &["model", "provider-set", provider, field, value])
+            .await
+            .unwrap();
+    }
+    let saved = execute(app, &["model", "provider-show", provider])
+        .await
+        .unwrap();
+    assert_eq!(saved["requestLimitPerMinute"], 12);
+    assert_eq!(saved["maxConcurrentRequests"], 3);
+    assert_eq!(saved["useMultipleApiKeys"], true);
+    assert_eq!(saved["name"], "CLI renamed");
+    assert_eq!(saved["apiKeyLength"], "preserved-secret".len());
+    assert!(!saved.to_string().contains("preserved-secret"));
+    assert_eq!(
+        saved["models"][0],
+        execute(app, &["model", "profile-show", provider, model])
+            .await
+            .unwrap()
+    );
+    for (field, value) in [
+        ("request-limit", "-1"),
+        ("max-concurrent", "no"),
+        ("multiple-api-keys", "no"),
+        ("custom-headers", r#"{"bad":123}"#),
+        ("models", "[]"),
+    ] {
+        assert!(
+            execute(app, &["model", "provider-set", provider, field, value])
+                .await
+                .is_err()
+        );
+    }
+    assert_eq!(
+        execute(app, &["model", "provider-show", provider])
+            .await
+            .unwrap(),
+        saved
+    );
+    assert!(capabilities["capabilities"].is_object());
 }
 
 /// Invokes the shared command router and requires an explicit machine-readable result.

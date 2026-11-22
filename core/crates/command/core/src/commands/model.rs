@@ -45,6 +45,15 @@ pub async fn run_model_command(
     }
 
     match args[0].as_str() {
+        "capabilities-show" | "capabilities-set" | "request-show" | "request-set"
+        | "provider-set" | "profile-show" | "profile-set" | "builtin-tools-show"
+        | "builtin-tool-set" | "param-set" => {
+            let value = super::model_options::run_model_options_command(&context, args)?;
+            output.push_stdout_line(
+                serde_json::to_string_pretty(&value).map_err(|error| error.to_string())?,
+            );
+            output.setJsonStdout(value);
+        }
         "codex-status" if args.len() == 1 => {
             let status = CodexOAuthService::getInstance().sessionStatus()?;
             output.push_stdout_line(
@@ -477,9 +486,10 @@ pub async fn run_model_command(
                 3,
                 "usage: operit2 model parameters <provider-id> <model-id> <parameters-json>",
             )?;
-            let parameters =
-                serde_json::from_str::<Vec<ModelParameter<serde_json::Value>>>(parametersJson)
-                    .map_err(|error| error.to_string())?;
+            let parameters = serde_json::from_str::<Vec<ModelParameter<serde_json::Value>>>(
+                &crate::commands::util::read_content_arg(&context, parametersJson)?,
+            )
+            .map_err(|error| error.to_string())?;
             command
                 .modelManager()
                 .updateParametersForModel(providerId, modelId, parameters.clone())
@@ -508,8 +518,10 @@ pub async fn run_model_command(
                 3,
                 "usage: operit2 model builtin-tools <provider-id> <model-id> <builtin-tools-json>",
             )?;
-            let builtinTools = serde_json::from_str::<Vec<ModelBuiltinTool>>(builtinToolsJson)
-                .map_err(|error| error.to_string())?;
+            let builtinTools = serde_json::from_str::<Vec<ModelBuiltinTool>>(
+                &crate::commands::util::read_content_arg(&context, builtinToolsJson)?,
+            )
+            .map_err(|error| error.to_string())?;
             command
                 .modelManager()
                 .updateBuiltinToolsForModel(providerId, modelId, builtinTools.clone())
@@ -1030,7 +1042,7 @@ fn optional_number(value: Option<f64>) -> String {
 }
 
 /// Builds a provider profile JSON document without API key material.
-fn provider_profile_json(provider: &ProviderProfile) -> Value {
+pub(super) fn provider_profile_json(provider: &ProviderProfile) -> Value {
     json!({
         "id": &provider.id,
         "name": &provider.name,
@@ -1126,6 +1138,7 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model providers-import <providers-json|@vfs-file>",
         "operit2 model delete <provider-id> <model-id>",
         "operit2 model provider-set-endpoint <provider-id> <endpoint>",
+        "operit2 model provider-set <provider-id> <name|endpoint|api-key|custom-headers|multiple-api-keys|api-key-pool|request-limit|max-concurrent> <value|@vfs-file>",
         "operit2 model provider-model-available-list <provider-id> [fetched|all]",
         "operit2 model provider-model-add <provider-id> <provider-model-id>",
         "operit2 model provider-model-create <provider-id> <provider-model-id>",
@@ -1133,9 +1146,18 @@ fn print_model_usage(output: &mut CoreCommandOutput) {
         "operit2 model catalog-refresh",
         "operit2 model list",
         "operit2 model show [provider-id] [model-id]",
+        "operit2 model profile-show <provider-id> <model-id>",
+        "operit2 model profile-set <provider-id> <model-id> <pricing|context|capabilities|builtin-tools|request|thinking-spec|thinking-level|parameters|summary|local-runtime> <json|@vfs-file>",
+        "operit2 model capabilities-show <provider-id> <model-id>",
+        "operit2 model capabilities-set <provider-id> <model-id> <tool-call|direct-image|direct-audio|direct-video> <true|false|auto>",
+        "operit2 model request-show <provider-id> <model-id>",
+        "operit2 model request-set <provider-id> <model-id> <structured-tools|claude-1h-prompt-cache> <true|false|auto>",
         "operit2 model use <provider-id> <model-id>",
         "operit2 model params [provider-id] [model-id]",
         "operit2 model parameters <provider-id> <model-id> <parameters-json>",
+        "operit2 model param-set <provider-id> <model-id> <parameter-id> <true|false> [value-json|@vfs-file]",
+        "operit2 model builtin-tools-show <provider-id> <model-id>",
+        "operit2 model builtin-tool-set <provider-id> <model-id> <WebSearch|CodeExecution|UrlContext> <true|false>",
         "operit2 model builtin-tools <provider-id> <model-id> <builtin-tools-json>",
         "operit2 model context-show [provider-id] [model-id]",
         "operit2 model context-set <provider-id> <model-id> <max-context-length>",

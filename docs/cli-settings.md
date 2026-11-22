@@ -20,6 +20,11 @@ CLI 身份与 Flutter 身份各有自己的 CoreNode 配置；命令作用于当
 | 插件 pre-hook 超时 | `prefs pre-hook-timeout` |
 | 完整提供商配置及 API key 池 | `model provider-save`、`provider-delete`、`provider-key-failures-clear` |
 | 模型完整配置、删除及规格覆盖重置 | `model profile-save`、`delete`、`spec-reset`、`thinking-spec` |
+| 提供商单字段编辑 | `model provider-set` |
+| 工具调用、图片／音频／视频直传 | `model capabilities-show`、`capabilities-set` |
+| 结构化工具调用、Claude 一小时缓存 | `model request-show`、`request-set` |
+| 内置工具与模型参数单项勾选 | `model builtin-tools-show`、`builtin-tool-set`、`param-set` |
+| 模型配置原始值读取、分区写入 | `model profile-show`、`profile-set` |
 | 功能模型跟随聊天 | `model function-follow-chat [function-type]` |
 | 模型连接及凭据测试 | `model test`、`provider-test-key` |
 | 提供商配置备份导入导出 | `model providers-export`、`providers-import` |
@@ -32,9 +37,61 @@ CLI 身份与 Flutter 身份各有自己的 CoreNode 配置；命令作用于当
 | 当前设备用户名 | `link space user-name` |
 | GitHub 登录状态与退出 | `market auth status/logout` |
 
-原有模型参数、能力、内置工具、上下文与压缩配置，MCP、插件与技能管理，
+原有模型参数、内置工具、上下文与压缩配置，MCP、插件与技能管理，
 存储迁移、备份恢复、用量、空间成员、角色、权限、配对、监听和网络策略入口继续使用。
 `model function-reset` 表示重置到默认绑定，`function-follow-chat` 才表示跟随聊天模型。
+
+## AI 提供商与模型勾选项
+
+这些选项属于提供商下的具体模型，需要同时传入 provider ID 和 model ID；
+先用 `model provider-list`、`model list` 查询。查看命令同时返回生效值和显式覆盖值，
+`true` / `false` 固定该勾选项，`auto` 只删除这一项的覆盖，恢复现有目录／模型列表的继承规则。
+修改其他勾选项、参数、上下文和凭据不会受影响。`prefs tools on/off` 是全局工具开关，
+模型的 `tool-call` 和请求的 `structured-tools` 分别控制模型能力与工具请求格式。
+
+```sh
+operit2 cli --json model capabilities-show <provider-id> <model-id>
+operit2 cli model capabilities-set <provider-id> <model-id> tool-call true
+operit2 cli model capabilities-set <provider-id> <model-id> direct-image true
+operit2 cli model capabilities-set <provider-id> <model-id> direct-audio false
+operit2 cli model capabilities-set <provider-id> <model-id> direct-video auto
+operit2 cli --json model request-show <provider-id> <model-id>
+operit2 cli model request-set <provider-id> <model-id> structured-tools true
+operit2 cli model request-set <provider-id> <model-id> claude-1h-prompt-cache true
+operit2 cli --json model builtin-tools-show <provider-id> <model-id>
+operit2 cli model builtin-tool-set <provider-id> <model-id> WebSearch true
+operit2 cli model param-set <provider-id> <model-id> temperature false
+operit2 cli model param-set <provider-id> <model-id> temperature true 0.7
+```
+
+内置工具使用已配置列表中的 `WebSearch` / `CodeExecution` / `UrlContext`，只修改
+`enabled`，保留请求格式、排他规则和配置；不存在或重复的工具类型会明确报错。
+`param-set` 保留未提供的当前值；提供新值时使用 JSON，字符串需要 JSON 引号，
+也可传 `@<VFS 文件路径>`。参数 ID 以 `model params` 的结果为准。
+
+提供商单字段编辑支持 `name`、`endpoint`、`api-key`、`custom-headers`、
+`multiple-api-keys`、`api-key-pool`、`request-limit`、`max-concurrent`。
+布尔值使用 `true/false`，请求限制为非负整数，0 表示不限制；请求头是字符串值的 JSON 对象，
+key 池使用现有 `ApiKeyInfo[]` 完整结构。字段值均支持 `@<VFS 文件路径>`，输出沿用
+`provider-show` 的凭据脱敏格式。
+
+```sh
+operit2 cli model provider-set <provider-id> request-limit 60
+operit2 cli model provider-set <provider-id> max-concurrent 4
+operit2 cli model provider-set <provider-id> multiple-api-keys true
+operit2 cli model provider-set <provider-id> custom-headers @/operitapp/workspaces/demo/headers.json
+operit2 cli --json model profile-show <provider-id> <model-id>
+operit2 cli model profile-set <provider-id> <model-id> local-runtime @/operitapp/workspaces/demo/runtime.json
+operit2 cli model profile-set <provider-id> <model-id> pricing null
+```
+
+`profile-show` 返回可直接供 `profile-save` 使用的原始 `ModelProfile`；`model show`
+继续返回解析后的运行配置。`profile-set` 替换指定分区，支持 `pricing`、`context`、
+`capabilities`、`builtin-tools`、`request`、`thinking-spec`、`thinking-level`、
+`parameters`、`summary`、`local-runtime`。JSON 类型与原始 profile 中对应字段一致，
+`capabilities` / `request` 使用可空的逐项覆盖对象；可选分区传 `null` 表示删除覆盖。
+分区对象整体替换，不进行递归合并；未指定的分区保持原值。
+`parameters` 和 `builtin-tools` 原有的完整列表写入命令也支持 `@<VFS 文件路径>`。
 
 ## 终端实例
 
