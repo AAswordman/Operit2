@@ -586,6 +586,28 @@ fun ToolPkgChatMessageMenuItemRuntime.toMessagePackValue(): Map<String, Any?> = 
     "dialog" to this.dialog?.let { it.toMessagePackValue() },
 )
 
+data class ToolPkgCommandArgRuntime(
+    val name: String,
+    val required: Boolean,
+    val options: List<String>
+)
+
+fun decodeToolPkgCommandArgRuntime(value: Any?): ToolPkgCommandArgRuntime {
+    val input = value as Map<*, *>
+    return ToolPkgCommandArgRuntime(
+        name = input["name"] as String as String,
+        required = input["required"] as Boolean as Boolean,
+        options = (input["options"] as List<*>).map { item -> item as String } as List<String>,
+    )
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+fun ToolPkgCommandArgRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
+    "name" to this.name,
+    "required" to this.required,
+    "options" to this.options.map { item -> item },
+)
+
 data class ToolPkgContainerRuntime(
     val packageName: String,
     val displayName: LocalizedText,
@@ -773,6 +795,7 @@ data class ToolPkgCoreCommandRuntime(
     val title: LocalizedText,
     val description: LocalizedText,
     val usage: String,
+    val args: List<ToolPkgCommandArgRuntime>,
     val function: String,
     val functionSource: String?
 )
@@ -785,6 +808,7 @@ fun decodeToolPkgCoreCommandRuntime(value: Any?): ToolPkgCoreCommandRuntime {
         title = decodeLocalizedText(input["title"]) as LocalizedText,
         description = decodeLocalizedText(input["description"]) as LocalizedText,
         usage = input["usage"] as String as String,
+        args = (input["args"] as List<*>).map { item -> decodeToolPkgCommandArgRuntime(item) } as List<ToolPkgCommandArgRuntime>,
         function = input["function"] as String as String,
         functionSource = input["functionSource"]?.let { it as String } as String?,
     )
@@ -797,6 +821,7 @@ fun ToolPkgCoreCommandRuntime.toMessagePackValue(): Map<String, Any?> = mapOf(
     "title" to this.title.toMessagePackValue(),
     "description" to this.description.toMessagePackValue(),
     "usage" to this.usage,
+    "args" to this.args.map { item -> item.toMessagePackValue() },
     "function" to this.function,
     "functionSource" to this.functionSource?.let { it },
 )

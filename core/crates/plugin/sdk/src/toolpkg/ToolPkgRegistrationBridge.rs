@@ -786,6 +786,9 @@ mod tests {
                         title: { en: 'Hello' },
                         description: { en: 'Greets the user' },
                         usage: '/hello <name>',
+                        args: [
+                            { name: 'target', required: true, options: ['world'] }
+                        ],
                         function: runHello
                     });
                     "#,
@@ -801,9 +804,19 @@ mod tests {
                     "JSON.parse(globalThis.__operitToolPkgRegistrationCapture.coreCommands[0]).function",
                 )
                 .expect("captured function should be readable");
+            let args_json = context
+                .evaluateHostJavaScriptString("test",
+                    "JSON.stringify(JSON.parse(globalThis.__operitToolPkgRegistrationCapture.coreCommands[0]).args)",
+                )
+                .expect("captured command args should be readable");
 
             assert_eq!(command_name, "hello");
             assert_eq!(function_name, "runHello");
+            let args: serde_json::Value = serde_json::from_str(&args_json)
+                .expect("captured args should be a JSON array");
+            assert_eq!(args[0]["name"], "target");
+            assert_eq!(args[0]["required"], true);
+            assert_eq!(args[0]["options"][0], "world");
         }
     }
 

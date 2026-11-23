@@ -2886,6 +2886,15 @@ pub struct ToolPkgSummaryGenerateHookRegistration {
     /// Provides the callback invoked for this summary generate hook registration.
     pub function: ToolPkgSummaryGenerateHookHandler,
 }
+/// Describes one declared argument of a ToolPkg slash command.
+pub struct ToolPkgCoreCommandArgDeclaration {
+    /// Names the argument as shown by command completion surfaces.
+    pub name: String,
+    /// Marks whether the command cannot run without this argument; defaults to true when omitted.
+    pub required: Option<bool>,
+    /// Lists the known literal values offered by command completion surfaces.
+    pub options: Option<Vec<String>>,
+}
 /// Describes a slash command implemented by a ToolPkg callback.
 pub struct ToolPkgCoreCommandRegistration {
     /// Uniquely identifies this command registration within the package.
@@ -2898,6 +2907,8 @@ pub struct ToolPkgCoreCommandRegistration {
     pub description: ToolPkgLocalizedText,
     /// Documents the command usage displayed by command discovery surfaces.
     pub usage: String,
+    /// Declares structured argument metadata for command completion; omitted for legacy commands.
+    pub args: Option<Vec<ToolPkgCoreCommandArgDeclaration>>,
     /// Provides the callback invoked when this command is executed.
     pub function: ToolPkgCoreCommandHandler,
 }

@@ -600,6 +600,30 @@ export function encodeToolPkgChatMessageMenuItemRuntime(value: ToolPkgChatMessag
   };
 }
 
+export interface ToolPkgCommandArgRuntime {
+  readonly name: string;
+  readonly required: boolean;
+  readonly options: Array<string>;
+}
+
+export function decodeToolPkgCommandArgRuntime(value: unknown): ToolPkgCommandArgRuntime {
+  const input = value as Record<string, unknown>;
+  return {
+    name: input['name'] as string,
+    required: input['required'] as boolean,
+    options: (input['options'] as unknown[]).map((item) => item) as Array<string>,
+  };
+}
+
+/** Encodes a typed SDK model into its Link argument representation. */
+export function encodeToolPkgCommandArgRuntime(value: ToolPkgCommandArgRuntime): Record<string, unknown> {
+  return {
+    'name': value.name,
+    'required': value.required,
+    'options': value.options.map(item => item),
+  };
+}
+
 export interface ToolPkgContainerRuntime {
   readonly packageName: string;
   readonly displayName: LocalizedText;
@@ -789,6 +813,7 @@ export interface ToolPkgCoreCommandRuntime {
   readonly title: LocalizedText;
   readonly description: LocalizedText;
   readonly usage: string;
+  readonly args: Array<ToolPkgCommandArgRuntime>;
   readonly function: string;
   readonly functionSource: string | null;
 }
@@ -801,6 +826,7 @@ export function decodeToolPkgCoreCommandRuntime(value: unknown): ToolPkgCoreComm
     title: decodeLocalizedText(input['title']) as LocalizedText,
     description: decodeLocalizedText(input['description']) as LocalizedText,
     usage: input['usage'] as string,
+    args: (input['args'] as unknown[]).map((item) => decodeToolPkgCommandArgRuntime(item)) as Array<ToolPkgCommandArgRuntime>,
     function: input['function'] as string,
     functionSource: input['functionSource'] == null ? null : input['functionSource'] as string | null,
   };
@@ -814,6 +840,7 @@ export function encodeToolPkgCoreCommandRuntime(value: ToolPkgCoreCommandRuntime
     'title': encodeLocalizedText(value.title),
     'description': encodeLocalizedText(value.description),
     'usage': value.usage,
+    'args': value.args.map(item => encodeToolPkgCommandArgRuntime(item)),
     'function': value.function,
     'functionSource': value.functionSource === null ? null : value.functionSource,
   };
