@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="operit_external_title">External Shizuku</string>
+    <string name="operit_external_description">Already using Shizuku? Start it, then connect and authorize Operit here. Sui users can connect directly below. Switching stops the built-in service; external service startup is managed by its own app.</string>
+    <string name="operit_external_authorize">Connect and authorize</string>
+    <string name="operit_use_sui">Use Sui</string>
+    <string name="operit_stop_service">Stop service</string>
+    <string name="operit_pairing_guide">Pairing guide</string>
+    <string name="operit_wireless_description">No Root required. Pair once, then start the built-in service. Boot recovery is enabled automatically and retains pairing authorization. Recovery requires the system to allow wireless debugging on the connected Wi-Fi network. Stopping the service also stops recovery.</string>
+    <string name="operit_root_description">Activate the built-in service with Root. Boot recovery is enabled automatically; stopping the service also stops recovery.</string>
+    <string name="operit_computer_description">Run the command from a connected computer to activate the built-in service. Boot recovery uses wireless debugging afterward; pair this device above first. No separate recovery switch is needed.</string>
+    <string name="operit_service_choose_activation">Choose a startup method below</string>
+    <string name="operit_service_needs_authorization">Awaiting authorization</string>
+    <string name="operit_service_authorized">Authorized</string>
+    <string name="operit_service_recovery_ready">Authorized · Automatic recovery enabled</string>
+    <string name="operit_service_recovery_pending">Authorized · Preparing automatic recovery</string>
+</resources>

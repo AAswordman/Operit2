@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Adapted from Shizuku's home_start_root.xml (Apache-2.0) for direct external authorization. -->
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    style="?homeCardStyle"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal">
+
+        <ImageView
+            style="@style/CardIcon"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_baseline_link_24" />
+
+        <TextView
+            style="@style/CardTitle"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/home_icon_padding"
+            android:layout_weight="1"
+            android:text="@string/operit_external_title" />
+    </LinearLayout>
+
+    <TextView
+        style="@style/CardContent"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="24dp"
+        android:layout_marginBottom="24dp"
+        android:text="@string/operit_external_description" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@android:id/button1"
+        style="@style/CardButton"
+        android:text="@string/operit_external_authorize"
+        app:icon="@drawable/ic_baseline_link_24" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@android:id/button2"
+        style="@style/CardButton"
+        android:text="@string/operit_use_sui"
+        app:icon="@drawable/ic_root_24dp" />
+</LinearLayout>

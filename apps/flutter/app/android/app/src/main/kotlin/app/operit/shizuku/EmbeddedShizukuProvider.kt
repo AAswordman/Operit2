@@ -16,6 +16,11 @@ class EmbeddedShizukuProvider : ShizukuProvider() {
         Shizuku.addBinderDeadListener {
             if (EmbeddedShizuku.restoreEnabled(app)) EmbeddedShizuku.scheduleRestore(app)
         }
+        Shizuku.addBinderReceivedListener {
+            if (EmbeddedShizuku.selected(app) && !EmbeddedShizuku.restoreEnabled(app)) {
+                EmbeddedShizuku.scheduleRestore(app)
+            }
+        }
         return super.onCreate()
     }
 

@@ -36,8 +36,10 @@ legacy client protocol handling and the unused rish CLI/native library are remov
 Operit's existing UserService/JNI terminal transport executes commands.
 
 The native Host setup screen supports Root, Android 11+ local ADB pairing/connection,
-computer ADB activation and explicit external backend selection. Optional recovery
-uses boot/package-replacement broadcasts, Binder death and a JobScheduler job with
+computer ADB activation and direct external authorization cards. Recovery is enabled
+as part of embedded activation, with its behavior described in the startup cards;
+there is no toolbar menu or separate recovery switch. Explicit stop also cancels recovery.
+Recovery uses boot/package-replacement broadcasts, Binder death and a JobScheduler job with
 network constraints for ADB and exponential retry scheduling. No permanent ADB TCP
 port, global process-killer setting or third-party watchdog code is included.
 

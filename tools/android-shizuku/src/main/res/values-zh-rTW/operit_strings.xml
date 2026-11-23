@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="operit_external_title">外部 Shizuku</string>
+    <string name="operit_external_description">已安裝 Shizuku？啟動後在這裡連線並授權 Operit。使用 Sui 的裝置也可直接連線。切換後會停止內建服務，外部服務的開機啟動由其自身管理。</string>
+    <string name="operit_external_authorize">連線並授權</string>
+    <string name="operit_use_sui">使用 Sui</string>
+    <string name="operit_stop_service">停止服務</string>
+    <string name="operit_pairing_guide">配對與設定</string>
+    <string name="operit_wireless_description">無需 Root。首次配對後，點選啟動即可使用內建服務，並自動啟用開機恢復、保留配對授權。恢復時需要連接 Wi-Fi，且系統允許無線偵錯。停止服務後也會停止自動恢復。</string>
+    <string name="operit_root_description">透過 Root 啟用內建服務，啟動後自動啟用開機恢復。停止服務後也會停止自動恢復。</string>
+    <string name="operit_computer_description">連接電腦執行指令即可啟用內建服務。之後的開機恢復透過無線偵錯完成，請先在上方配對，無需另外開啟恢復開關。</string>
+    <string name="operit_service_choose_activation">選擇下方的啟動方式</string>
+    <string name="operit_service_needs_authorization">等待授權</string>
+    <string name="operit_service_authorized">已授權</string>
+    <string name="operit_service_recovery_ready">已授權 · 已啟用自動恢復</string>
+    <string name="operit_service_recovery_pending">已授權 · 正在準備自動恢復</string>
+</resources>

@@ -3,6 +3,7 @@ package app.operit.shizuku
 import android.content.Context
 import android.content.SharedPreferences
 import android.os.Build
+import android.os.DeadObjectException
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
@@ -107,6 +108,7 @@ object EmbeddedShizuku {
             check(result.exitCode == 0) { "Embedded service activation failed: ${result.stderrText()}" }
         }
         if (started) preferences(context).edit().putString("transport", "root").apply()
+        enableAutomaticRestore(context)
     }
 
     /** Pairs the saved local ADB identity using the system-provided pairing code and port. */
@@ -121,6 +123,7 @@ object EmbeddedShizuku {
         require(port in 1..65535) { "Invalid ADB connection port" }
         val started = awaitReady(context) { launchAdb(context, port) }
         if (started) preferences(context).edit().putString("transport", "adb").apply()
+        enableAutomaticRestore(context)
     }
 
     /** Sends the detached activation command using the same paired key in either boot phase. */
@@ -149,8 +152,13 @@ object EmbeddedShizuku {
         } finally { main.post { mdns.stop() } }
     }
 
-    /** Saves reboot recovery only after an explicit choice in the setup UI. */
-    fun setRestore(context: Context, enabled: Boolean) {
+    /** Prepares reboot recovery as part of activation without a separate user-facing switch. */
+    fun enableAutomaticRestore(context: Context) {
+        if (!restoreEnabled(context)) setRestore(context, true)
+    }
+
+    /** Retains recovery settings while active and restores them after an explicit stop. */
+    private fun setRestore(context: Context, enabled: Boolean) {
         if (enabled) {
             check(selected(context) && preferences(context).contains("transport")) { "Start the embedded service before enabling recovery" }
             if (preferences(context).getString("transport", null) == "adb") {
@@ -192,7 +200,12 @@ object EmbeddedShizuku {
 
     /** Restores the same selected activation mode without switching identities or replaying commands. */
     fun restore(context: Context) {
-        if (!restoreEnabled(context) || Shizuku.pingBinder()) return
+        if (!selected(context)) return
+        if (Shizuku.pingBinder()) {
+            enableAutomaticRestore(context)
+            return
+        }
+        if (!restoreEnabled(context)) return
         when (preferences(context).getString("transport", null)) {
             "root" -> startRoot(context)
             "adb" -> {
@@ -228,7 +241,13 @@ object EmbeddedShizuku {
     fun stop(context: Context) {
         check(selected(context)) { "Embedded service is not selected" }
         setRestore(context, false)
-        if (Shizuku.pingBinder()) Shizuku.exit()
+        if (Shizuku.pingBinder()) {
+            try { Shizuku.exit() }
+            catch (error: RuntimeException) {
+                // A successful remote exit can kill Binder before its synchronous reply arrives.
+                if (error.cause !is DeadObjectException) throw error
+            }
+        }
     }
 
     /** Switches the explicit selection without killing or modifying an external Shizuku server. */

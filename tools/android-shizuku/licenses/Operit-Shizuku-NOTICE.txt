@@ -15,7 +15,8 @@ bounded ADB I/O, in-app activation and opt-in recovery scheduling.
 
 The original Shizuku manager card layouts, styles, icons, English/Chinese strings,
 app bar, pairing tutorial and notification RemoteInput service are also included.
-Card and guide layout XML is copied unchanged; unused standalone-manager resources
+Card and guide layouts retain the upstream design; the status card adds an explicit
+stop control and a matching external authorization card is included. Unused manager resources
 and strings have been removed. Kotlin UI files
 identify their upstream originals; package/resource references, theme selection,
 owner activation callbacks and coroutine ownership are adapted for this APK.

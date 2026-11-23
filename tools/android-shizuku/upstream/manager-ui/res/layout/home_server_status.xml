@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     style="?homeCardStyle"
     android:layout_width="match_parent"
@@ -36,6 +37,15 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:duplicateParentState="true" />
+
+        <!-- Operit: keep the explicit stop action beside the service status. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@android:id/button1"
+            style="@style/CardButton"
+            android:layout_marginTop="12dp"
+            android:text="@string/operit_stop_service"
+            android:visibility="gone"
+            app:icon="@drawable/ic_server_error_24dp" />
 
     </LinearLayout>
 
