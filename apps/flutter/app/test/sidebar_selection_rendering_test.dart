@@ -112,6 +112,8 @@ void main() {
             expect(glass.color, scheme.secondaryContainer);
             final title = tester.widget<Text>(find.text('模型与 AI'));
             expect(title.style!.color, scheme.onSecondaryContainer);
+            final subtitle = tester.widget<Text>(find.text('模型、Key、上下文'));
+            expect(subtitle.style!.color, scheme.onSecondaryContainer);
             final avatar = tester.widget<CircleAvatar>(
               find.descendant(
                 of: settings,

@@ -180,7 +180,9 @@ class SettingsCategoryTile extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
-                          color: foreground.withValues(alpha: 0.70),
+                          color: selected
+                              ? foreground
+                              : foreground.withValues(alpha: 0.70),
                         ),
                       ),
                     ],
