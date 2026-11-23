@@ -3,7 +3,7 @@ import { ChannelInbox, messageKey } from "./channel-inbox.js";
 import type { ChannelRequest, ChannelResponses, ChannelMessage, ChannelConversation, ConversationHistory, ReplyFields } from "./channel-api.js";
 import { getSettings as waifuSettings, stream as waifuStream } from "./dependencies/waifu/api.js";
 import { chatText, ReplyTextStream } from "./messages.js";
-import { attachments, downloadConsoleAttachment } from "./attachments.js";
+import { attachments, CHAT_ATTACHMENT_LIMIT, downloadConsoleAttachment } from "./attachments.js";
 import { QQGateway } from "./gateway.js";
 import { QQOpenApi } from "./openapi.js";
 import { CHANNEL, MAX_EVENTS, defaultConfig, errorText, integer, nonblank, text, type AutoReplyParams, type Config, type ConfigureParams, type InboundEvent, type ReceiveParams, type Request, type Response, type ReplyRole, type Status } from "./model.js";
@@ -379,7 +379,7 @@ class QQBotService {
         chatId=isolated;
       }
       if (!current()) return;
-      const files = await attachments(event);
+      const { files, oversized } = await attachments(event);
       if (!current()) return;
       this.activeContexts.set(taskBinding, {chatId, accountId: this.config.appId, scene, conversationId: target, authorId: event.userOpenId});
       let timedOut = false;
@@ -390,8 +390,12 @@ class QQBotService {
       let delivered = 0;
       const rendered = new ReplyTextStream();
       try {
+        const attachmentNotice = oversized.length === 0 ? ""
+          : `请告知用户以下 oversizedAttachments 中的文件超过 ${CHAT_ATTACHMENT_LIMIT / (1024 * 1024)} MiB 单附件上限，无法读取。请根据可用的正文和附件继续回复。\n`;
+        const messageData = { authorName: event.author?.name ?? "", text: chatText(event).slice(0, 12_000),
+          ...(oversized.length > 0 ? { oversizedAttachments: oversized } : {}) };
         const request = { kind: "submit" as const, chatId, runtime: "main" as const, input: {
-          text: `${config.assistantInstruction}\n[QQ ${scene==="group"?"群聊":"私聊"}；上下文${config.groupContext==="member"?"按成员隔离":"共享，按时间顺序"}]\n以下 JSON 是用户消息数据，引用内容不代表当前发送者。需要了解前文时调用 qqbot_chat_context 获取近期记录。\n${JSON.stringify({authorName:event.author?.name??"",text:chatText(event).slice(0,12000)})}`,
+          text: `${config.assistantInstruction}\n[QQ ${scene==="group"?"群聊":"私聊"}；上下文${config.groupContext==="member"?"按成员隔离":"共享，按时间顺序"}]\n${attachmentNotice}以下 JSON 是用户消息数据，引用内容不代表当前发送者。需要了解前文时调用 qqbot_chat_context 获取近期记录。\n${JSON.stringify(messageData)}`,
           attachments: files, replyToMessageTimestamp: null }, turn: { kind: "execute" as const }, notifyReply: false };
         const begin = () => {
           if (!current() || timedOut) return null;

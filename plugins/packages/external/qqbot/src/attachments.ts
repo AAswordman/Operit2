@@ -4,6 +4,7 @@ import { messageAttachments } from "./messages.js";
 import type { ChannelAttachment } from "./channel-api.js";
 
 export const CONSOLE_LIMIT = 8 * 1024 * 1024;
+export const CHAT_ATTACHMENT_LIMIT = 20 * 1024 * 1024;
 const qqMediaUrl = /^https:\/\/(?:[a-z0-9-]+\.)*(?:qq\.com(?:\.cn)?|qpic\.cn)\//i;
 
 export function consoleAttachment(item: ChannelAttachment) {
@@ -22,26 +23,43 @@ export async function downloadConsoleAttachment(item: NonNullable<ReturnType<typ
   return {fileName:item.fileName, mimeType:item.mimeType, contentBase64:data};
 }
 
-/** Downloads declared QQ attachments through Host files and preserves their Chat input metadata. */
-export async function attachments(event: InboundEvent): Promise<Chat.SendAttachment[]> {
+/** Downloads eligible QQ attachments and reports files above the Chat limit. */
+export async function attachments(event: InboundEvent): Promise<{
+  files: Chat.SendAttachment[];
+  oversized: { fileName: string; sizeBytes: number }[];
+}> {
   const declared = messageAttachments(event);
-  if (declared.length === 0) return [];
-  const directory = `${getPluginConfigDir()}/incoming/message-${encodeURIComponent(event.messageId)}`;
-  const created = await Tools.Files.mkdir(directory, true);
-  if (!created.successful) throw new Error(created.details);
-  const result: Chat.SendAttachment[] = [];
-  for (let index = 0; index < declared.length; index++) {
-    const item = declared[index];
+  const files: Chat.SendAttachment[] = [];
+  const oversized: { fileName: string; sizeBytes: number }[] = [];
+  let directory: string | undefined;
+  for (const [index, item] of declared.entries()) {
+    const fileName = item.voiceWavUrl ? item.fileName.replace(/\.[^.]*$/, "") + ".wav" : nonblank(item.fileName, "attachment.filename");
+    if (item.size !== undefined && item.size > CHAT_ATTACHMENT_LIMIT) {
+      oversized.push({ fileName: fileName.slice(0, 150), sizeBytes: item.size });
+      continue;
+    }
     const url = nonblank(item.voiceWavUrl ?? item.url, "attachment.url");
     if (!/^https:\/\//i.test(url)) throw new Error("QQ attachment URL must use HTTPS");
-    const fileName = item.voiceWavUrl ? item.fileName.replace(/\.[^.]*$/, "") + ".wav" : nonblank(item.fileName, "attachment.filename");
-    const mimeType = item.voiceWavUrl ? "audio/wav" : item.mimeType === "voice" ? "audio/silk" : item.mimeType === "file" ? "application/octet-stream" : item.mimeType;
-    if (item.size !== undefined) integer(item.size, "attachment.size", 0, 20 * 1024 * 1024);
+    if (directory === undefined) {
+      directory = `${getPluginConfigDir()}/incoming/message-${encodeURIComponent(event.messageId)}`;
+      const created = await Tools.Files.mkdir(directory, true);
+      if (!created.successful) throw new Error(created.details);
+    }
     const filePath = `${directory}/${index}`;
     const downloaded = await Tools.Files.download(url, filePath);
     if (!downloaded.successful) throw new Error(downloaded.details);
     const info = await Tools.Files.info(filePath);
-    result.push({ filePath, fileName, mimeType, fileSize: integer(info.size, "downloaded attachment size", 0, 20 * 1024 * 1024), content: filePath });
+    const fileSize = integer(info.size, "downloaded attachment size", 0, Number.MAX_SAFE_INTEGER);
+    if (fileSize > CHAT_ATTACHMENT_LIMIT) {
+      oversized.push({ fileName: fileName.slice(0, 150), sizeBytes: fileSize });
+      try {
+        const deleted = await Tools.Files.deleteFile(filePath, false);
+        if (!deleted.successful) console.error("[qqbot] Could not remove oversized attachment");
+      } catch { console.error("[qqbot] Could not remove oversized attachment"); }
+      continue;
+    }
+    const mimeType = item.voiceWavUrl ? "audio/wav" : item.mimeType === "voice" ? "audio/silk" : item.mimeType === "file" ? "application/octet-stream" : item.mimeType;
+    files.push({ filePath, fileName, mimeType, fileSize, content: filePath });
   }
-  return result;
+  return { files, oversized };
 }

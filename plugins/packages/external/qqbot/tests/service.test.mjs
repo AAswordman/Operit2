@@ -650,3 +650,21 @@ test("delivery reservation survives config persistence and restart never automat
  assert.equal(next.submitted.length,1);assert.match(next.submitted[0].input.text,/第二条反馈/);
  await next.complete(next.service.receive({action:"stop"}));
 });
+
+test("an oversized QQ attachment does not abort automatic reply", async () => {
+  const f = fixture();
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true } }));
+  const frame = c2c("large-file");
+  frame.d.content = "";
+  frame.d.attachments = [{ content_type: "file", filename: "large.zip", size: 21 * 1024 * 1024, url: "https://cdn.example/file" }];
+  f.socket.frame(frame);
+  await f.time.advance(2000);
+  assert.equal(f.submitted.length, 1);
+  const { input } = f.submitted[0];
+  assert.equal(input.attachments.length, 0);
+  assert.match(input.text, /20 MiB/);
+  assert.ok(input.text.includes('large.zip'));
+  assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
