@@ -10,6 +10,7 @@ import 'package:flutter/services.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/host/AppToastController.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/AnimatedLazyIndexedStack.dart';
 import '../../../common/components/PageActivityMixin.dart';
 import '../../../main/navigation/AppNavigationModels.dart';
@@ -132,6 +133,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
   }
 
   void _reportSyncedChanges() {
+    final l10n = AppLocalizations.of(context)!;
     final snapshot = _controller.snapshot;
     if (!mounted || snapshot == null) {
       return;
@@ -147,8 +149,8 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
       return;
     }
     AppToastController.instance.show(
-      '设备空间同步完成，$changed 个扩展有变化',
-      actionLabel: '查看',
+      l10n.extensionsSyncChanged(changed),
+      actionLabel: l10n.extensionsView,
       onAction: () => _selectTab(PackageTab.extensions),
     );
   }
@@ -222,6 +224,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final motion = ExtensionMotion.of(context);
     return ExtensionTopBar(
       title: (context) => _TopBarTitle(
@@ -240,49 +243,49 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
           ValueListenableBuilder<bool>(
             valueListenable: _searchOpen,
             builder: (context, open, child) => IconButton(
-              tooltip: open ? '关闭搜索' : '搜索（Ctrl+F）',
+              tooltip: open ? l10n.extensionsCloseSearch : l10n.extensionsSearchShortcut,
               onPressed: open ? _closeSearch : _openSearch,
               icon: Icon(open ? Icons.close_rounded : Icons.search_rounded),
             ),
           ),
           if (!narrow)
             IconButton(
-              tooltip: '添加扩展',
+              tooltip: l10n.extensionsAdd,
               onPressed: _showAddSheet,
               icon: const Icon(Icons.add_rounded),
             ),
           PopupMenuButton<_MoreAction>(
-            tooltip: '更多',
+            tooltip: l10n.extensionsMore,
             icon: const Icon(Icons.more_vert_rounded),
             onSelected: _onMoreSelected,
             itemBuilder: (context) => <PopupMenuEntry<_MoreAction>>[
               if (narrow)
-                const PopupMenuItem<_MoreAction>(
+                PopupMenuItem<_MoreAction>(
                   value: _MoreAction.add,
                   child: ListTile(
-                    leading: Icon(Icons.add_rounded),
-                    title: Text('添加扩展'),
+                    leading: const Icon(Icons.add_rounded),
+                    title: Text(l10n.extensionsAdd),
                   ),
                 ),
-              const PopupMenuItem<_MoreAction>(
+              PopupMenuItem<_MoreAction>(
                 value: _MoreAction.checkUpdates,
                 child: ListTile(
-                  leading: Icon(Icons.system_update_alt_rounded),
-                  title: Text('检查更新'),
+                  leading: const Icon(Icons.system_update_alt_rounded),
+                  title: Text(l10n.extensionsCheckUpdates),
                 ),
               ),
-              const PopupMenuItem<_MoreAction>(
+              PopupMenuItem<_MoreAction>(
                 value: _MoreAction.environment,
                 child: ListTile(
-                  leading: Icon(Icons.key_outlined),
-                  title: Text('环境变量'),
+                  leading: const Icon(Icons.key_outlined),
+                  title: Text(l10n.extensionsEnvironment),
                 ),
               ),
-              const PopupMenuItem<_MoreAction>(
+              PopupMenuItem<_MoreAction>(
                 value: _MoreAction.refresh,
                 child: ListTile(
-                  leading: Icon(Icons.refresh_rounded),
-                  title: Text('重新加载目录'),
+                  leading: const Icon(Icons.refresh_rounded),
+                  title: Text(l10n.extensionsReload),
                 ),
               ),
             ],
@@ -375,6 +378,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
 
   /// Imports dropped files while ToolPkg updates keep their installation scope.
   Future<void> _importDropped(List<String> paths) async {
+    final l10n = AppLocalizations.of(context)!;
     final rejected = <String>[];
     var imported = false;
     for (final path in paths) {
@@ -399,7 +403,7 @@ class _PackageManagerScreenState extends State<PackageManagerScreen>
     if (rejected.isNotEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('不能直接导入：${rejected.join('、')}。技能和 MCP 请通过「添加扩展」导入。'),
+          content: Text(l10n.extensionsDropRejected(rejected.join(', '))),
           behavior: SnackBarBehavior.floating,
         ),
       );
@@ -527,6 +531,7 @@ class _TopBarTitle extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final motion = ExtensionMotion.of(context);
     return ListenableBuilder(
       listenable: Listenable.merge(<Listenable>[tab, searchOpen, controller]),
@@ -538,8 +543,8 @@ class _TopBarTitle extends StatelessWidget {
             controller: searchController,
             focusNode: searchFocus,
             hintText: switch (tab.value) {
-              PackageTab.extensions => '搜索已安装的扩展',
-              PackageTab.market => '搜索市场和官方扩展',
+              PackageTab.extensions => l10n.extensionsSearchInstalled,
+              PackageTab.market => l10n.extensionsSearchMarket,
             },
             onChanged: onSearchChanged,
           );
@@ -569,14 +574,14 @@ class _TopBarTitle extends StatelessWidget {
                     labels: <Widget>[
                       _TabLabel(
                         icon: Icons.extension_outlined,
-                        label: '扩展',
+                        label: l10n.extensionsTab,
                         compact: compact,
                         count: snapshot?.installed.length,
                         alert: attention > 0,
                       ),
                       _TabLabel(
                         icon: Icons.storefront_outlined,
-                        label: '市场',
+                        label: l10n.market,
                         compact: compact,
                       ),
                     ],
@@ -716,6 +721,7 @@ class _DropOverlay extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     return Padding(
@@ -740,7 +746,7 @@ class _DropOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 8),
               Text(
-                '松手导入扩展',
+                l10n.extensionsDrop,
                 style: theme.textTheme.titleSmall?.copyWith(
                   color: colorScheme.primary,
                   fontWeight: FontWeight.w600,
@@ -748,7 +754,7 @@ class _DropOverlay extends StatelessWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                '支持 .toolpkg、.js、.ts、.hjson',
+                l10n.extensionsDropTypes,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
@@ -767,36 +773,37 @@ class _AddExtensionSheet extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final options = <_AddOption>[
-      const _AddOption(
+      _AddOption(
         kind: StoreKind.toolpkg,
-        title: '导入插件',
-        subtitle: '选择 .toolpkg 文件',
+        title: l10n.extensionsImportPlugin,
+        subtitle: l10n.extensionsSelectToolPkg,
         action: _AddAction.toolpkg,
       ),
-      const _AddOption(
+      _AddOption(
         kind: StoreKind.script,
-        title: '导入脚本包',
-        subtitle: '.js、.ts、.hjson 或 .toolpkg',
+        title: l10n.extensionsImportScript,
+        subtitle: l10n.extensionsScriptTypes,
         action: _AddAction.script,
       ),
-      const _AddOption(
+      _AddOption(
         kind: StoreKind.skill,
-        title: '添加技能',
-        subtitle: 'GitHub 仓库、ZIP 或手写',
+        title: l10n.extensionsAddSkill,
+        subtitle: l10n.extensionsSkillSources,
         action: _AddAction.skill,
       ),
-      const _AddOption(
+      _AddOption(
         kind: StoreKind.mcp,
-        title: '添加 MCP 服务',
-        subtitle: 'GitHub、ZIP、配置或表单',
+        title: l10n.extensionsAddMcp,
+        subtitle: l10n.extensionsMcpSources,
         action: _AddAction.mcp,
       ),
-      const _AddOption(
+      _AddOption(
         kind: StoreKind.a2a,
-        title: '添加 A2A',
-        subtitle: '服务地址、Agent Card 或配置文件',
+        title: l10n.extensionsAddA2a,
+        subtitle: l10n.extensionsA2aSources,
         action: _AddAction.a2a,
       ),
     ];
@@ -808,14 +815,12 @@ class _AddExtensionSheet extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
             Text(
-              '添加扩展',
+              l10n.extensionsAdd,
               style: SettingsControlStyles.sectionTitleTextStyle(context),
             ),
             const SizedBox(height: 4),
             Text(
-              '新扩展默认装在本机，ToolPkg 的固定安装范围遵从插件声明。'
-              '同 ID 的本地 ToolPkg 更新保留现有安装位置和配置。'
-              '桌面端也可以直接把文件拖进来。',
+              l10n.extensionsAddHelp,
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -853,14 +858,14 @@ class _AddExtensionSheet extends StatelessWidget {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
                         Text(
-                          '用 AI 创作插件',
+                          l10n.extensionsAiCreate,
                           style: theme.textTheme.titleSmall?.copyWith(
                             fontWeight: FontWeight.w600,
                           ),
                         ),
                         const SizedBox(height: 2),
                         Text(
-                          '描述你想要的功能，在对话里生成并安装',
+                          l10n.extensionsAiCreateHelp,
                           style: theme.textTheme.bodySmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),

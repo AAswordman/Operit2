@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
 import 'package:operit2/core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -203,9 +204,10 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final size = MediaQuery.of(context).size;
     final topPadding = MediaQuery.of(context).padding.top;
-    final title = _cleanImageTitle(widget.attachment.filename);
+    final title = _cleanImageTitle(widget.attachment.filename, l10n);
 
     return Stack(
       fit: StackFit.expand,
@@ -340,7 +342,7 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
                       padding: const EdgeInsets.only(right: 10),
                       child: _FrostedCircleButton(
                         icon: Icons.copy_rounded,
-                        tooltip: '复制文件位置\n${widget.attachment.fileLocation}',
+                        tooltip: l10n.attachmentCopyLocationPath(widget.attachment.fileLocation!),
                         onTap: () => Clipboard.setData(
                           ClipboardData(text: widget.attachment.fileLocation!),
                         ),
@@ -351,13 +353,13 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
                       padding: const EdgeInsets.only(right: 10),
                       child: _FrostedCircleButton(
                         icon: Icons.zoom_out_map_rounded,
-                        tooltip: '重置缩放',
+                        tooltip: l10n.attachmentResetZoom,
                         onTap: _resetZoom,
                       ),
                     ),
                   _FrostedCircleButton(
                     icon: Icons.close_rounded,
-                    tooltip: '关闭 (Esc)',
+                    tooltip: l10n.attachmentCloseShortcut,
                     onTap: widget.onDismiss,
                   ),
                 ],
@@ -444,6 +446,7 @@ class _GeneralAttachmentViewer extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final isAudio = attachment.mimeType.startsWith('audio/');
@@ -544,14 +547,14 @@ class _GeneralAttachmentViewer extends StatelessWidget {
                         if (isTextLike && attachment.content.isNotEmpty)
                           IconButton(
                             icon: const Icon(Icons.copy_rounded, size: 18),
-                            tooltip: '复制内容',
+                            tooltip: l10n.attachmentCopyContent,
                             onPressed: () {
                               Clipboard.setData(
                                 ClipboardData(text: attachment.content),
                               );
                               ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('已复制到剪贴板'),
+                                SnackBar(
+                                  content: Text(l10n.attachmentCopied),
                                   duration: Duration(seconds: 1),
                                 ),
                               );
@@ -559,7 +562,7 @@ class _GeneralAttachmentViewer extends StatelessWidget {
                           ),
                         IconButton(
                           icon: const Icon(Icons.close_rounded, size: 20),
-                          tooltip: '关闭',
+                          tooltip: l10n.close,
                           onPressed: onDismiss,
                         ),
                       ],
@@ -572,14 +575,14 @@ class _GeneralAttachmentViewer extends StatelessWidget {
                         children: <Widget>[
                           Expanded(
                             child: SelectableText(
-                              '保存位置：${attachment.fileLocation}',
+                              l10n.attachmentLocationPath(attachment.fileLocation!),
                               style: theme.textTheme.bodySmall?.copyWith(
                                 color: colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ),
                           IconButton(
-                            tooltip: '复制文件位置',
+                            tooltip: l10n.attachmentCopyLocation,
                             icon: const Icon(Icons.copy_rounded, size: 18),
                             onPressed: () => Clipboard.setData(
                               ClipboardData(text: attachment.fileLocation!),
@@ -745,9 +748,9 @@ IconData _attachmentIcon({
   return Icons.description_outlined;
 }
 
-String _cleanImageTitle(String filename) {
+String _cleanImageTitle(String filename, AppLocalizations l10n) {
   if (filename.startsWith('pasted_image_')) {
-    return '剪贴板图片';
+    return l10n.attachmentClipboardImage;
   }
   return filename;
 }

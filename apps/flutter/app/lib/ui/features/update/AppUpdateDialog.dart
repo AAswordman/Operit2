@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../../core/update/AppUpdateController.dart';
+import '../../../l10n/generated/app_localizations.dart';
 import '../../../core/update/AppUpdateModels.dart';
 import '../../common/components/OperitDialog.dart';
 
@@ -69,6 +70,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
   Widget build(BuildContext context) => ListenableBuilder(
     listenable: widget.controller,
     builder: (context, _) {
+      final l10n = AppLocalizations.of(context)!;
       final controller = widget.controller;
       final release = controller.release;
       if (release == null) return const SizedBox.shrink();
@@ -79,7 +81,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
         return PopScope(
           canPop: false,
           child: OperitDialogScaffold(
-            title: '暂时无法完成更新',
+            title: l10n.appUpdateUnavailableTitle,
             icon: const Icon(Icons.info_outline),
             maxWidth: 480,
             actions: [
@@ -88,11 +90,11 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                   controller.acknowledgeUnavailable();
                   Navigator.of(context).pop();
                 },
-                child: const Text('知道了'),
+                child: Text(l10n.ok),
               ),
             ],
             child: Text(
-              '当前无法取得更新所需的安装包，且没有可用的完整包。请自行下载 ${release.version} 的安装包进行安装，或找到上一次安装（版本 ${controller.plan?.baseVersion ?? release.currentVersion}）的原始安装包后再试。',
+              l10n.appUpdateUnavailableHelp(release.version, controller.plan?.baseVersion ?? release.currentVersion),
             ),
           ),
         );
@@ -110,40 +112,40 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       final awaiting = phase == AppUpdatePhase.awaitingInstall;
       final permission = phase == AppUpdatePhase.awaitingPermission;
       final status = switch (phase) {
-        AppUpdatePhase.planning => '正在检查更新并自动选择下载源…',
-        AppUpdatePhase.selectingSource => '正在自动选择下载源…',
-        AppUpdatePhase.awaitingBase => '需要上一次安装的原始安装包',
-        AppUpdatePhase.validatingBase => '正在校验所选安装包…',
+        AppUpdatePhase.planning => l10n.appUpdatePlanning,
+        AppUpdatePhase.selectingSource => l10n.appUpdateSelectingSource,
+        AppUpdatePhase.awaitingBase => l10n.appUpdateAwaitingBase,
+        AppUpdatePhase.validatingBase => l10n.appUpdateValidatingBase,
         AppUpdatePhase.downloading =>
           controller.plan?.mode == AppUpdateMode.incremental
-              ? '正在下载增量补丁…'
-              : '正在下载完整安装包…',
+              ? l10n.appUpdateDownloadingPatch
+              : l10n.appUpdateDownloadingFull,
         AppUpdatePhase.reconstructing =>
           switch (controller.preparation?.phase) {
-            AppUpdatePreparationPhase.verifyingBase => '正在校验原安装包…',
-            AppUpdatePreparationPhase.verifyingPatch => '正在校验增量补丁…',
-            AppUpdatePreparationPhase.expandingBase => '正在准备原安装包…',
-            AppUpdatePreparationPhase.verifyingExpandedBase => '正在校验更新文件…',
-            AppUpdatePreparationPhase.applyingPatch => '正在合并补丁…',
-            AppUpdatePreparationPhase.restoringPackage => '正在生成新安装包…',
-            AppUpdatePreparationPhase.verifyingPackage => '正在校验新安装包…',
-            AppUpdatePreparationPhase.savingPackage => '正在保存安装包…',
-            null => '正在准备更新文件…',
+            AppUpdatePreparationPhase.verifyingBase => l10n.appUpdateVerifyingBase,
+            AppUpdatePreparationPhase.verifyingPatch => l10n.appUpdateVerifyingPatch,
+            AppUpdatePreparationPhase.expandingBase => l10n.appUpdateExpandingBase,
+            AppUpdatePreparationPhase.verifyingExpandedBase => l10n.appUpdateVerifyingExpandedBase,
+            AppUpdatePreparationPhase.applyingPatch => l10n.appUpdateApplyingPatch,
+            AppUpdatePreparationPhase.restoringPackage => l10n.appUpdateRestoringPackage,
+            AppUpdatePreparationPhase.verifyingPackage => l10n.appUpdateVerifyingPackage,
+            AppUpdatePreparationPhase.savingPackage => l10n.appUpdateSavingPackage,
+            null => l10n.appUpdatePreparingFiles,
           },
-        AppUpdatePhase.ready => '更新已下载并校验完成，等待你确认安装',
-        AppUpdatePhase.preparing => '正在准备安装，请稍候…',
-        AppUpdatePhase.installing => '正在启动更新安装，应用即将重启…',
+        AppUpdatePhase.ready => l10n.appUpdateReady,
+        AppUpdatePhase.preparing => l10n.appUpdatePreparingInstall,
+        AppUpdatePhase.installing => l10n.appUpdateInstalling,
         AppUpdatePhase.awaitingInstall =>
-          controller.restartRequired ? '下载完成，重启即可安装新版本' : '安装请求已提交，请完成系统确认',
-        AppUpdatePhase.awaitingPermission => '需要允许安装应用',
+          controller.restartRequired ? l10n.appUpdateRestartRequired : l10n.appUpdateInstallSubmitted,
+        AppUpdatePhase.awaitingPermission => l10n.appUpdatePermissionRequired,
         AppUpdatePhase.failed =>
-          controller.packageReceipt == null ? '更新未完成' : '安装未完成',
-        _ => '准备下载更新…',
+          controller.packageReceipt == null ? l10n.appUpdateUpdateIncomplete : l10n.appUpdateInstallIncomplete,
+        _ => l10n.appUpdatePreparingDownload,
       };
       return PopScope(
         canPop: !preparing && !installing && !validatingBase,
         child: OperitDialogScaffold(
-          title: '更新 Operit',
+          title: l10n.appUpdateTitle,
           icon: Icon(
             failed
                 ? Icons.error_outline_rounded
@@ -154,11 +156,11 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
             if (needsBase) ...[
               TextButton(
                 onPressed: () => unawaited(controller.withoutBase()),
-                child: const Text('我没安装包了'),
+                child: Text(l10n.appUpdateNoOriginalInstaller),
               ),
               FilledButton(
                 onPressed: () => unawaited(controller.selectBase()),
-                child: const Text('选择'),
+                child: Text(l10n.appUpdateChooseInstaller),
               ),
             ],
             if (!needsBase && !validatingBase && !preparing && !installing)
@@ -166,24 +168,24 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 onPressed: () => Navigator.of(context).pop(),
                 child: Text(
                   selectingSource || downloading || reconstructing
-                      ? '后台更新'
-                      : '关闭',
+                      ? l10n.appUpdateBackground
+                      : l10n.close,
                 ),
               ),
             if (selectingSource || downloading || reconstructing)
               TextButton(
                 onPressed: controller.cancelDownload,
-                child: const Text('取消更新'),
+                child: Text(l10n.appUpdateCancel),
               ),
             if (failed)
               TextButton(
                 onPressed: () => unawaited(_openReleasePage()),
-                child: const Text('前往发布页'),
+                child: Text(l10n.appUpdateOpenRelease),
               ),
             if (permission)
               FilledButton(
                 onPressed: () => unawaited(controller.confirmInstall()),
-                child: const Text('继续安装'),
+                child: Text(l10n.appUpdateContinueInstall),
               ),
             if (failed || phase == AppUpdatePhase.available)
               FilledButton(
@@ -193,7 +195,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                       : controller.confirmInstall(),
                 ),
                 child: Text(
-                  controller.packageReceipt == null ? '重试更新' : '重新安装',
+                  controller.packageReceipt == null ? l10n.appUpdateRetry : l10n.appUpdateReinstall,
                 ),
               ),
             if (awaiting)
@@ -208,13 +210,13 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                       ? Icons.restart_alt
                       : Icons.open_in_new,
                 ),
-                label: Text(controller.restartRequired ? '重启并安装' : '重新打开安装器'),
+                label: Text(controller.restartRequired ? l10n.appUpdateRestartInstall : l10n.appUpdateReopenInstaller),
               ),
             if (ready)
               FilledButton.icon(
                 onPressed: () => unawaited(controller.confirmInstall()),
                 icon: const Icon(Icons.system_update_alt),
-                label: const Text('重启并更新'),
+                label: Text(l10n.appUpdateRestartUpdate),
               ),
           ],
           child: Column(
@@ -222,31 +224,31 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                '发现新版本 ${release.version}',
+                l10n.appUpdateAvailableVersion(release.version),
                 style: Theme.of(
                   context,
                 ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 6),
               Text(
-                '当前版本 ${release.currentVersion}',
+                l10n.appUpdateInstalledVersion(release.currentVersion),
                 style: TextStyle(color: colors.onSurfaceVariant),
               ),
               const SizedBox(height: 24),
               if (needsBase || validatingBase) ...[
                 Text(
-                  '你还有上一次安装（版本 ${controller.plan!.baseVersion}）的安装包吗？',
+                  l10n.appUpdateOriginalVersionPrompt(controller.plan!.baseVersion.toString()),
                   style: Theme.of(context).textTheme.titleMedium,
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '请选择当时安装此应用的原始安装包。校验通过后，将下载增量补丁并合并为新版本安装包。',
+                  l10n.appUpdateSelectOriginalInstaller,
                   style: TextStyle(color: colors.onSurfaceVariant),
                 ),
                 if (controller.plan!.incrementalBytes != null) ...[
                   const SizedBox(height: 8),
                   Text(
-                    '增量下载约 ${formatUpdateBytes(controller.plan!.incrementalBytes!)}',
+                    l10n.appUpdatePatchSize(formatUpdateBytes(controller.plan!.incrementalBytes!)),
                   ),
                 ],
                 const SizedBox(height: 18),
@@ -299,13 +301,13 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                     if (controller.preparation?.fraction
                         case final double fraction)
                       Text(
-                        '当前步骤 ${(fraction * 100).floor()}%',
+                        l10n.appUpdateStepProgress((fraction * 100).floor()),
                         style: const TextStyle(
                           fontFeatures: [FontFeature.tabularFigures()],
                         ),
                       ),
                     Text(
-                      '已用时 ${formatUpdateDuration(controller.preparationElapsed)}',
+                      l10n.appUpdateElapsed(formatUpdateDuration(controller.preparationElapsed)),
                       style: TextStyle(
                         color: colors.onSurfaceVariant,
                         fontSize: 12,
@@ -315,7 +317,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 ),
                 const SizedBox(height: 10),
                 Text(
-                  '正在本机处理更新文件，生成安装包可能需要一些时间。你可以后台更新，稍后点击 Operit 标志查看进度。',
+                  l10n.appUpdateProcessingHelp,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
                   ),
@@ -328,7 +330,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                     Expanded(
                       child: Text(
                         controller.totalBytes == null
-                            ? '${formatUpdateBytes(controller.receivedBytes)} · 正在获取文件大小'
+                            ? l10n.appUpdateDownloadSizePending(formatUpdateBytes(controller.receivedBytes))
                             : '${formatUpdateBytes(controller.receivedBytes)} / ${formatUpdateBytes(controller.totalBytes!)}',
                         style: TextStyle(
                           color: colors.onSurfaceVariant,
@@ -347,7 +349,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  '下载完成后会校验并保留安装包，等待你确认更新。你可以关闭此窗口，稍后点击 Operit 标志查看进度。',
+                  l10n.appUpdateDownloadHelp,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: colors.onSurfaceVariant,
                   ),
@@ -356,14 +358,14 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
               if (permission) ...[
                 const SizedBox(height: 10),
                 Text(
-                  controller.installMessage ?? '请完成系统授权，再点击继续安装。安装包已保留。',
+                  controller.installMessage ?? l10n.appUpdatePermissionHelp,
                   style: TextStyle(color: colors.onSurfaceVariant),
                 ),
               ],
               if (ready) ...[
                 const SizedBox(height: 10),
                 Text(
-                  '点击“重启并更新”后才会开始安装。系统可能要求安装授权。',
+                  l10n.appUpdateReadyHelp,
                   style: TextStyle(color: colors.onSurfaceVariant),
                 ),
               ],
@@ -371,8 +373,8 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 const SizedBox(height: 10),
                 Text(
                   controller.restartRequired
-                      ? '点击“重启并安装”后，应用会退出、替换为新版本并重新打开。'
-                      : '请在系统安装窗口中完成确认。安装完成后重新打开 Operit；若已关闭安装窗口，可以再次打开。',
+                      ? l10n.appUpdateRestartHelp
+                      : l10n.appUpdateSystemInstallHelp,
                   style: TextStyle(color: colors.onSurfaceVariant),
                 ),
               ],
@@ -385,7 +387,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 if (controller.packageReceipt != null) ...[
                   const SizedBox(height: 8),
                   Text(
-                    '安装包已保留，重试无需重新下载。',
+                    l10n.appUpdateInstallerKept,
                     style: TextStyle(color: colors.onSurfaceVariant),
                   ),
                 ],
@@ -394,7 +396,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
                 const SizedBox(height: 18),
                 ExpansionTile(
                   tilePadding: EdgeInsets.zero,
-                  title: const Text('本次更新内容'),
+                  title: Text(l10n.appUpdateReleaseNotes),
                   children: [
                     Align(
                       alignment: Alignment.centerLeft,
@@ -411,12 +413,13 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
   );
 
   Widget _buildUpdatePrompt(BuildContext context, AppUpdateRelease release) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final ready = widget.controller.phase == AppUpdatePhase.ready;
     final notes = release.releaseNotes.trim();
     return OperitDialogScaffold(
-      title: '发现新版本',
+      title: l10n.appUpdateAvailableTitle,
       icon: Container(
         padding: const EdgeInsets.all(10),
         decoration: BoxDecoration(
@@ -432,7 +435,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
         FilledButton.icon(
           onPressed: () {
@@ -448,7 +451,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
           icon: Icon(
             ready ? Icons.restart_alt : Icons.system_update_alt_rounded,
           ),
-          label: Text(ready ? '重启并更新' : '立即更新'),
+          label: Text(ready ? l10n.appUpdateRestartUpdate : l10n.appUpdateNow),
         ),
       ],
       child: Column(
@@ -456,14 +459,14 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Operit 有新版本可用了',
+            l10n.appUpdateAvailable,
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            ready ? '更新已准备就绪，确认后将重启应用并安装。' : '更新到最新版本，体验最新功能与改进。',
+            ready ? l10n.appUpdatePromptReady : l10n.appUpdatePromptAvailable,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: colors.onSurfaceVariant,
             ),
@@ -481,20 +484,20 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
               runSpacing: 12,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                _versionLabel(context, '当前版本', release.currentVersion),
+                _versionLabel(context, l10n.appUpdateCurrentVersion, release.currentVersion),
                 Icon(
                   Icons.arrow_forward_rounded,
                   color: colors.onSurfaceVariant,
                   size: 20,
                 ),
-                _versionLabel(context, '最新版本', release.version, latest: true),
+                _versionLabel(context, l10n.appUpdateLatestVersion, release.version, latest: true),
               ],
             ),
           ),
           if (notes.isNotEmpty) ...[
             const SizedBox(height: 20),
             Text(
-              '本次更新内容',
+              l10n.appUpdateReleaseNotes,
               style: theme.textTheme.labelLarge?.copyWith(
                 fontWeight: FontWeight.w600,
               ),
@@ -510,7 +513,7 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
           ],
           const SizedBox(height: 20),
           Text(
-            '也可以稍后点击侧栏的 Operit 标志继续更新。',
+            l10n.appUpdatePromptLater,
             style: theme.textTheme.bodySmall?.copyWith(
               color: colors.onSurfaceVariant,
             ),
@@ -550,12 +553,13 @@ class _AppUpdateDialogState extends State<AppUpdateDialog> {
   }
 
   Future<void> _openReleasePage() async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final opened = await launchUrl(
         widget.controller.release!.releasePageUrl,
         mode: LaunchMode.externalApplication,
       );
-      if (!opened) throw StateError('无法打开发布页');
+      if (!opened) throw StateError(l10n.appUpdateOpenReleaseFailed);
     } catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(

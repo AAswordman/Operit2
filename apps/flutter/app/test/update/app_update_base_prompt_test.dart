@@ -109,6 +109,11 @@ Widget _app(Widget child) => OperitTheme(
 /// Exercises user choices while treating Core's plan as the authority.
 void main() {
   setUpAll(ClientLogger.initialize);
+  setUp(() {
+    final dispatcher = TestWidgetsFlutterBinding.instance.platformDispatcher;
+    dispatcher.localesTestValue = const [Locale('zh')];
+    addTearDown(dispatcher.clearLocalesTestValue);
+  });
   test(
     'selected original must pass verification before any patch download',
     () async {
@@ -221,7 +226,7 @@ void main() {
       await tester.tap(find.text('我没安装包了'));
       await tester.pumpAndSettle();
       expect(find.text('暂时无法完成更新'), findsOneWidget);
-      expect(find.text('知道了'), findsOneWidget);
+      expect(find.text('确定'), findsOneWidget);
       expect(find.byType(TextButton), findsNothing);
       expect(find.byType(FilledButton), findsOneWidget);
       await tester.pumpWidget(const SizedBox());

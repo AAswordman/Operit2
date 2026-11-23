@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/ui/features/chat/components/MessageEditorDialog.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
@@ -146,6 +147,9 @@ void main() {
     String? saved;
     await tester.pumpWidget(
       MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
         home: Scaffold(
           body: Builder(
             builder: (context) => TextButton(

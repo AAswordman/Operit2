@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -24,6 +25,7 @@ class AboutOperitScreen extends StatelessWidget {
   /// Builds the Operit2 project information screen.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return LayoutBuilder(
       builder: (context, constraints) {
         return SingleChildScrollView(
@@ -34,17 +36,17 @@ class AboutOperitScreen extends StatelessWidget {
                 maxWidth: 720,
                 minHeight: constraints.maxHeight - 40,
               ),
-              child: const Column(
+              child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: <Widget>[
                   _AboutHeader(),
                   SizedBox(height: 24),
-                  _AboutSection(title: '版本更新', child: _AboutUpdateAction()),
+                  _AboutSection(title: l10n.aboutUpdateSection, child: _AboutUpdateAction()),
                   SizedBox(height: 12),
                   _AboutSection(
                     title: 'Operit2',
                     child: Text(
-                      '面向终端与桌面的 AI 工作台，提供聊天会话、工作区、工具、插件、MCP、远程连接和 Web 访问。',
+                      l10n.aboutAppDescription,
                     ),
                   ),
                   SizedBox(height: 12),
@@ -95,6 +97,7 @@ class _AboutHeaderState extends State<_AboutHeader> {
   /// Builds the application identity header.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     return Column(
       children: <Widget>[
@@ -122,19 +125,19 @@ class _AboutHeaderState extends State<_AboutHeader> {
             final style = Theme.of(context).textTheme.bodyMedium;
             if (snapshot.hasError) {
               return Text(
-                '版本信息读取失败：${snapshot.error}',
+                l10n.aboutReadVersionFailed(snapshot.error.toString()),
                 style: style?.copyWith(color: colorScheme.error),
                 textAlign: TextAlign.center,
               );
             }
             if (snapshot.connectionState != ConnectionState.done) {
               return Text(
-                '正在读取版本信息…',
+                l10n.aboutReadingVersion,
                 style: style?.copyWith(color: colorScheme.onSurfaceVariant),
               );
             }
             return Text(
-              '版本 ${snapshot.requireData}',
+              l10n.aboutVersion(snapshot.requireData),
               style: style?.copyWith(color: colorScheme.onSurfaceVariant),
             );
           },
@@ -156,18 +159,20 @@ class _AboutUpdateAction extends StatelessWidget {
   ) async {
     if (!controller.visible) await controller.check(force: true);
     if (!context.mounted) return;
+  final l10n = AppLocalizations.of(context)!;
     if (controller.visible) {
       await showAppUpdateDialog(context, controller: controller);
     } else if (controller.error == null) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('当前已是最新版本')));
+      ).showSnackBar(SnackBar(content: Text(l10n.aboutUpToDate)));
     }
   }
 
   /// Uses the same controller and dialog as the sidebar logo.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final controller =
         AppUpdateScope.maybeOf(context) ?? AppUpdateController.instance;
     return ListenableBuilder(
@@ -176,18 +181,18 @@ class _AboutUpdateAction extends StatelessWidget {
         final colors = Theme.of(context).colorScheme;
         final checking = controller.phase == AppUpdatePhase.checking;
         final subtitle = checking
-            ? '正在检查更新…'
+            ? l10n.aboutCheckingUpdates
             : controller.visible
             ? controller.busy
-                  ? '正在更新至 ${controller.release!.version}，点击查看进度'
-                  : '发现新版本 ${controller.release!.version}'
+                  ? l10n.aboutUpdatingTo(controller.release!.version)
+                  : l10n.appUpdateAvailableVersion(controller.release!.version)
             : controller.error != null
-            ? '检查更新失败，点击重试'
-            : '点击检查最新版本';
+            ? l10n.aboutRetryCheck
+            : l10n.aboutCheckHint;
         return ListTile(
           contentPadding: EdgeInsets.zero,
           leading: Icon(Icons.system_update_alt, color: colors.primary),
-          title: const Text('检查更新'),
+          title: Text(l10n.extensionsCheckUpdates),
           subtitle: Text(subtitle),
           trailing: checking
               ? const SizedBox.square(
@@ -208,28 +213,29 @@ class _ProjectLinksSection extends StatelessWidget {
   /// Builds the project and license actions.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return _AboutSection(
-      title: '项目',
+      title: l10n.aboutProject,
       child: Column(
         children: <Widget>[
           _AboutActionRow(
             icon: Icons.code_outlined,
-            title: '项目源码',
+            title: l10n.aboutSource,
             subtitle: 'github.com/AAswordman/Operit2',
             onTap: () => _launchExternalUri(context, _projectUri),
           ),
           const Divider(height: 1),
           _AboutActionRow(
             icon: Icons.menu_book_outlined,
-            title: '使用文档',
-            subtitle: 'README 与命令行说明',
+            title: l10n.aboutDocs,
+            subtitle: l10n.aboutDocsSubtitle,
             onTap: () => _launchExternalUri(context, _documentationUri),
           ),
           const Divider(height: 1),
           _AboutActionRow(
             icon: Icons.description_outlined,
-            title: '开源许可证',
-            subtitle: 'Operit2 使用 AGPL-3.0',
+            title: l10n.aboutLicenses,
+            subtitle: l10n.aboutLicenseSubtitle,
             onTap: () => _showOpenSourceLicenses(context),
           ),
         ],
@@ -244,11 +250,12 @@ class _SupportSection extends StatelessWidget {
   /// Builds the maintainer contact action.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return _AboutSection(
-      title: '联系',
+      title: l10n.aboutContact,
       child: _AboutActionRow(
         icon: Icons.alternate_email_outlined,
-        title: '开发者 AAswordman',
+        title: l10n.aboutDeveloper,
         subtitle: 'aaswordsman@foxmail.com',
         onTap: () => _launchExternalUri(context, _contactUri),
       ),
@@ -262,8 +269,9 @@ class _CopyrightNotice extends StatelessWidget {
   /// Builds the project copyright notice.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Text(
-      '© 2025 - 2026 Operit. 保留所有权利。',
+      l10n.aboutCopyright,
       textAlign: TextAlign.center,
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
         color: Theme.of(context).colorScheme.onSurfaceVariant,
@@ -388,6 +396,7 @@ const List<_OpenSourceComponent> _openSourceComponents = <_OpenSourceComponent>[
 /// copies the address to the clipboard and notifies the user instead of
 /// surfacing an unhandled platform exception.
 Future<void> _launchExternalUri(BuildContext context, Uri uri) async {
+  final l10n = AppLocalizations.of(context)!;
   try {
     final launched = await launchUrl(uri, mode: LaunchMode.externalApplication);
     if (!launched) {
@@ -397,7 +406,7 @@ Future<void> _launchExternalUri(BuildContext context, Uri uri) async {
     await Clipboard.setData(ClipboardData(text: uri.toString()));
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('没有应用能打开此链接，已复制到剪贴板：${uri.toString()}')),
+        SnackBar(content: Text(l10n.aboutLinkCopied(uri.toString()))),
       );
     }
   }
@@ -405,11 +414,12 @@ Future<void> _launchExternalUri(BuildContext context, Uri uri) async {
 
 /// Opens the bundled component license list.
 Future<void> _showOpenSourceLicenses(BuildContext context) {
+  final l10n = AppLocalizations.of(context)!;
   return showDialog<void>(
     context: context,
     builder: (dialogContext) {
       return AlertDialog(
-        title: const Text('开源许可证'),
+        title: Text(l10n.aboutLicenses),
         content: SizedBox(
           width: 520,
           child: ListView.separated(
@@ -436,7 +446,7 @@ Future<void> _showOpenSourceLicenses(BuildContext context) {
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('关闭'),
+            child: Text(l10n.close),
           ),
         ],
       );

@@ -164,9 +164,10 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
   /// Builds the STT provider configuration form.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final localModel = _isLocalSttProviderType(_providerType);
     return AlertDialog(
-      title: Text(widget.config == null ? '新建 STT 供应商' : '编辑 STT 供应商'),
+      title: Text(widget.config == null ? l10n.speechNewSttProvider : l10n.speechEditSttProvider),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -179,7 +180,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
                   context,
                   key: ValueKey<String>(_providerType),
                   initialValue: _providerType,
-                  decoration: const InputDecoration(labelText: '供应商类型'),
+                  decoration: InputDecoration(labelText: l10n.speechProviderType),
                   items: _sttProviderCatalogItems(
                     widget.providerCatalogEntries,
                   ),
@@ -190,7 +191,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
                   },
                 ),
                 const SizedBox(height: 10),
-                _field(_nameController, '供应商名称', requiredField: true),
+                _field(_nameController, l10n.speechProviderName, requiredField: true),
                 if (!localModel) ...<Widget>[
                   _field(_endpointController, 'Endpoint', requiredField: true),
                   Padding(
@@ -207,25 +208,25 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
                     tilePadding: EdgeInsets.zero,
                     childrenPadding: EdgeInsets.zero,
                     title: Text(
-                      'Multipart 请求配置',
+                      l10n.speechMultipart,
                       style: Theme.of(context).textTheme.titleSmall,
                     ),
                     children: <Widget>[
                       _field(
                         _fileFieldController,
-                        '音频字段名',
+                        l10n.speechAudioField,
                         requiredField: true,
                       ),
                       _field(
                         _modelFieldController,
-                        '模型字段名',
-                        helperText: '留空表示接口不接收模型参数',
+                        l10n.speechModelField,
+                        helperText: l10n.speechModelFieldHelp,
                         onChanged: (_) => setState(() {}),
                       ),
-                      _field(_languageFieldController, '语言字段名'),
+                      _field(_languageFieldController, l10n.speechLanguageField),
                       _field(
                         _responsePathController,
-                        '识别文本 JSONPath',
+                        l10n.speechTranscriptJsonPath,
                         requiredField: true,
                       ),
                       _field(_headersController, 'Headers JSON', minLines: 3),
@@ -239,11 +240,11 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: _loadingModels || _modelLoadError != null ? null : _submit,
-          child: const Text('保存'),
+          child: Text(l10n.save),
         ),
       ],
     );
@@ -251,10 +252,11 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
 
   /// Builds an editable remote model field or an installed local model selector.
   Widget _buildModelField(bool localModel) {
+    final l10n = AppLocalizations.of(context)!;
     if (!localModel && _modelFieldController.text.trim().isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 10),
-        child: Text('此接口无需指定模型'),
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: Text(l10n.speechModelNotNeeded),
       );
     }
     if (_loadingModels) {
@@ -274,14 +276,14 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
           children: <Widget>[
             Expanded(
               child: Text(
-                '模型列表加载失败：$loadError',
+                l10n.speechModelsFailed(loadError),
                 style: TextStyle(color: Theme.of(context).colorScheme.error),
               ),
             ),
             IconButton(
               onPressed: _loadAvailableModels,
               icon: const Icon(Icons.refresh),
-              tooltip: '重新加载模型',
+              tooltip: l10n.speechReloadModels,
             ),
           ],
         ),
@@ -290,13 +292,13 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
     if (!localModel) {
       return _field(
         _modelController,
-        '模型',
+        l10n.model,
         requiredField: true,
-        helperText: '填写供应商支持的模型 ID，也可从预设中选择',
+        helperText: l10n.speechModelIdHelp,
         suffixIcon: _availableModels.isEmpty
             ? null
             : PopupMenuButton<String>(
-                tooltip: '选择预设模型',
+                tooltip: l10n.speechPresetModel,
                 icon: const Icon(Icons.arrow_drop_down),
                 onSelected: (model) => _modelController.text = model,
                 itemBuilder: (context) => _availableModels
@@ -311,11 +313,11 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
       );
     }
     if (_availableModels.isEmpty) {
-      return const Padding(
-        padding: EdgeInsets.only(bottom: 10),
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
         child: InputDecorator(
-          decoration: InputDecoration(labelText: '模型'),
-          child: Text('没有已安装的 STT 本地模型'),
+          decoration: InputDecoration(labelText: l10n.model),
+          child: Text(l10n.speechNoLocalSttModels),
         ),
       );
     }
@@ -332,7 +334,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
         key: ValueKey<String?>(selectedModel),
         initialValue: selectedModel,
         isExpanded: true,
-        decoration: const InputDecoration(labelText: '模型'),
+        decoration: InputDecoration(labelText: l10n.model),
         items: _availableModels
             .map(
               (model) => DropdownMenuItem<String>(
@@ -350,7 +352,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
             _modelController.text = value;
           }
         },
-        validator: (value) => value == null ? '请选择模型' : null,
+        validator: (value) => value == null ? l10n.speechChooseModel : null,
       ),
     );
   }
@@ -365,6 +367,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
     Widget? suffixIcon,
     ValueChanged<String>? onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
@@ -379,7 +382,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
         maxLines: minLines == 1 ? 1 : 8,
         validator: (value) {
           if (requiredField && (value?.trim().isEmpty ?? true)) {
-            return '$label不能为空';
+            return l10n.speechFieldRequired(label);
           }
           return null;
         },
@@ -389,6 +392,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
 
   /// Validates and returns one STT provider configuration.
   void _submit() {
+    final l10n = AppLocalizations.of(context)!;
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
@@ -397,7 +401,7 @@ class _SttConfigDialogState extends State<_SttConfigDialog> {
         _modelController.text.trim().isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('请选择 STT 模型')));
+      ).showSnackBar(SnackBar(content: Text(l10n.speechChooseSttModel)));
       return;
     }
     late final List<core_proxy.SttHttpHeader> headers;

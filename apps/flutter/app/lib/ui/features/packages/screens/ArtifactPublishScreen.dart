@@ -14,6 +14,7 @@ import '../../../theme/OperitFormStyles.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/EmptyState.dart';
 import '../market/ArtifactMarketSupport.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 const String _forgeRepoName = 'OperitForge';
 const List<String> _artifactMarketTypes = <String>['script', 'package'];
@@ -720,9 +721,7 @@ class _ArtifactPublishScreenState extends State<ArtifactPublishScreen> {
                         child: Text(
                           marketCategoryText(
                             category,
-                            languageCode: Localizations.localeOf(
-                              context,
-                            ).languageCode,
+                            AppLocalizations.of(context)!,
                           ).name,
                         ),
                       ),

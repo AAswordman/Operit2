@@ -148,6 +148,7 @@ class _TtsProviderGroupTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final currentProvider = group.configs.any(
       (config) => config.id == currentConfigId,
@@ -219,10 +220,10 @@ class _TtsProviderGroupTile extends StatelessWidget {
                         onPressed: onAddVoice,
                         style: SettingsControlStyles.sectionTextButton(),
                         icon: const Icon(Icons.playlist_add, size: 18),
-                        label: const Text('添加'),
+                        label: Text(l10n.settingsModelAddModelShort),
                       ),
                       SettingsEntityIconButton(
-                        tooltip: '编辑供应商',
+                        tooltip: l10n.speechEditProvider,
                         icon: Icons.edit_outlined,
                         onPressed: onEditProvider,
                       ),
@@ -324,6 +325,7 @@ class _TtsVoiceTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     return Material(
       color: current
@@ -374,7 +376,7 @@ class _TtsVoiceTile extends StatelessWidget {
                 )
               else
                 SettingsEntityIconButton(
-                  tooltip: '试听',
+                  tooltip: l10n.speechPreview,
                   icon: Icons.volume_up_outlined,
                   onPressed: () {
                     onTest();
@@ -382,9 +384,9 @@ class _TtsVoiceTile extends StatelessWidget {
                 ),
               const SizedBox(width: 4),
               if (current)
-                const SettingsActivePill(label: '全局当前')
+                SettingsActivePill(label: l10n.speechGlobalActive)
               else
-                SettingsSetActiveButton(label: '设为全局', onPressed: onSetCurrent),
+                SettingsSetActiveButton(label: l10n.speechSetGlobal, onPressed: onSetCurrent),
             ],
           ),
         ),

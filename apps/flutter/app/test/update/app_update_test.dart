@@ -129,6 +129,11 @@ class Backend extends AppUpdateBackend {
 
 void main() {
   setUpAll(ClientLogger.initialize);
+  setUp(() {
+    final dispatcher = TestWidgetsFlutterBinding.instance.platformDispatcher;
+    dispatcher.localesTestValue = const [Locale('zh')];
+    addTearDown(dispatcher.clearLocalesTestValue);
+  });
   testWidgets(
     'local steps show measured progress and elapsed time across native waits',
     (tester) async {
@@ -702,6 +707,9 @@ void main() {
     bool collapsed = false,
     double textScale = 1,
   }) => MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
     builder: (context, child) => MediaQuery(
       data: MediaQuery.of(
         context,

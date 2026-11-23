@@ -77,6 +77,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel>
   }
 
   Future<void> _requestHostAuthorization(_HostRequirement requirement) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       final data = await _future!;
       await _HostAuthorizationBridge.request(data.host.id, requirement.id);
@@ -84,7 +85,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel>
       if (mounted) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text('授权失败：$error')));
+        ).showSnackBar(SnackBar(content: Text(l10n.settingsToolsAuthorizationFailed(error.toString()))));
       }
     } finally {
       if (mounted) {
@@ -147,7 +148,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel>
               title: l10n.settingsToolsPermissionMode,
               children: <Widget>[
                 Text(
-                  _modeFor(data.permissionMode).description,
+                  _modeFor(data.permissionMode, l10n).description,
                   style: TextStyle(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -160,7 +161,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel>
               ],
             ),
             _SectionCard(
-              title: '系统授权',
+              title: l10n.onboardingPermissions,
               children: <Widget>[
                 _HostAuthorizationList(
                   requirements: data.hostRequirements,
@@ -169,7 +170,7 @@ class _ToolSettingsPanelState extends State<ToolSettingsPanel>
               ],
             ),
             _SectionCard(
-              title: '高级设置',
+              title: l10n.settingsToolsAdvanced,
               initiallyExpanded: false,
               children: <Widget>[
                 _PermissionChain(data: data),
@@ -242,11 +243,11 @@ enum _PermissionMode {
 
   final core_proxy.AiPermissionMode permissionMode;
 
-  String get label {
+  String label(AppLocalizations l10n) {
     return switch (this) {
-      _PermissionMode.readOnly => '只读',
-      _PermissionMode.workspaceWrite => '读写',
-      _PermissionMode.full => '完整权限',
+      _PermissionMode.readOnly => l10n.settingsToolsReadOnly,
+      _PermissionMode.workspaceWrite => l10n.settingsToolsReadWrite,
+      _PermissionMode.full => l10n.settingsToolsFullAccess,
     };
   }
 }
@@ -262,13 +263,14 @@ class _PermissionModeSelector extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: <Widget>[
         for (final mode in _PermissionMode.values)
           _ModeChip(
-            label: mode.label,
+            label: mode.label(l10n),
             selected: selectedMode == mode.permissionMode,
             onTap: () => onSelected(mode),
           ),
@@ -309,8 +311,9 @@ class _HostAuthorizationList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     if (requirements.isEmpty) {
-      return const Text('当前设备没有需要用户处理的授权项。');
+      return Text(l10n.onboardingNoPermissions);
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -336,6 +339,7 @@ class _HostAuthorizationTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Padding(
@@ -364,7 +368,7 @@ class _HostAuthorizationTile extends StatelessWidget {
                     if (!requirement.isRequired) ...<Widget>[
                       const SizedBox(width: 8),
                       Text(
-                        '可选',
+                        l10n.onboardingOptional,
                         style: textTheme.labelMedium?.copyWith(
                           color: colorScheme.onSurfaceVariant,
                         ),
@@ -381,7 +385,7 @@ class _HostAuthorizationTile extends StatelessWidget {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  _statusLabel(requirement.status),
+                  _statusLabel(requirement.status, l10n),
                   style: textTheme.labelMedium?.copyWith(
                     color: _statusColor(requirement.status, colorScheme),
                   ),
@@ -392,7 +396,7 @@ class _HostAuthorizationTile extends StatelessWidget {
           const SizedBox(width: 12),
           FilledButton.tonal(
             onPressed: requirement.canRequest ? onRequest : null,
-            child: Text(_actionLabel(requirement)),
+            child: Text(_actionLabel(requirement, l10n)),
           ),
         ],
       ),
@@ -451,11 +455,11 @@ class _HostRequirement {
 }
 
 /// Uses the Host's actual process signature, independently of AI approval mode.
-String _hostIsolationDescription(core_proxy.RuntimeHostDescriptor host) {
+String _hostIsolationDescription(core_proxy.RuntimeHostDescriptor host, AppLocalizations l10n) {
   if (host.platform == core_proxy.HostPlatform.macos) {
     return switch (host.isolation) {
-      core_proxy.HostIsolation.osAppSandbox => 'sandbox（已启用 macOS App Sandbox）',
-      core_proxy.HostIsolation.none => 'unsandbox（未启用 macOS App Sandbox）',
+      core_proxy.HostIsolation.osAppSandbox => l10n.settingsToolsSandboxed,
+      core_proxy.HostIsolation.none => l10n.settingsToolsUnsandboxed,
       _ => host.isolation.value,
     };
   }
@@ -469,29 +473,30 @@ class _PermissionChain extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final mode = _modeFor(data.permissionMode);
+    final l10n = AppLocalizations.of(context)!;
+    final mode = _modeFor(data.permissionMode, l10n);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         _ChainStep(
           index: '0',
-          title: '应用运行隔离',
-          value: _hostIsolationDescription(data.host),
+          title: l10n.settingsToolsIsolation,
+          value: _hostIsolationDescription(data.host, l10n),
         ),
         _ChainStep(
           index: '1',
-          title: '系统授权',
+          title: l10n.onboardingPermissions,
           value: '${data.host.displayName} / ${data.host.platform}',
         ),
         _ChainStep(
           index: '2',
-          title: 'AI 能力限制',
+          title: l10n.settingsToolsRestrictions,
           value: '${mode.label}：${mode.description}',
         ),
-        const _ChainStep(
+        _ChainStep(
           index: '3',
-          title: '工具调用确认',
-          value: '按 AI 直接调用的工具执行审批。',
+          title: l10n.settingsToolsConfirmCalls,
+          value: l10n.settingsToolsConfirmDirectCalls,
         ),
       ],
     );
@@ -505,21 +510,22 @@ class _AdvancedHostSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
-        _InfoRow(label: '当前运行环境', value: host.displayName),
-        _InfoRow(label: '平台', value: '${host.platform}'),
-        _InfoRow(label: '外层隔离', value: _hostIsolationDescription(host)),
-        _InfoRow(label: '文件能力', value: host.fileSystemHost ? '已注册' : '未注册'),
-        _InfoRow(label: '终端能力', value: host.terminalHost ? '已注册' : '未注册'),
+        _InfoRow(label: l10n.settingsToolsRuntimeEnvironment, value: host.displayName),
+        _InfoRow(label: l10n.settingsToolsPlatform, value: '${host.platform}'),
+        _InfoRow(label: l10n.settingsToolsOuterIsolation, value: _hostIsolationDescription(host, l10n)),
+        _InfoRow(label: l10n.settingsToolsFileCapability, value: host.fileSystemHost ? l10n.settingsToolsRegistered : l10n.settingsToolsUnregistered),
+        _InfoRow(label: l10n.settingsToolsTerminalCapability, value: host.terminalHost ? l10n.settingsToolsRegistered : l10n.settingsToolsUnregistered),
         _InfoRow(
-          label: '授权项',
-          value: '${host.onboardingRequirements.length} 项',
+          label: l10n.settingsToolsAuthorizations,
+          value: l10n.settingsToolsItemCount(host.onboardingRequirements.length),
         ),
         _InfoRow(
-          label: '结构化能力',
-          value: '${host.structuredCapabilities.length} 项',
+          label: l10n.settingsToolsStructuredCapabilities,
+          value: l10n.settingsToolsItemCount(host.structuredCapabilities.length),
         ),
       ],
     );
@@ -649,11 +655,11 @@ class _HostAuthorizationBridge {
   }
 }
 
-String _statusLabel(String status) {
+String _statusLabel(String status, AppLocalizations l10n) {
   return switch (status) {
-    'Satisfied' => '已授予',
-    'Missing' => '未授予',
-    'Unavailable' => '需要由系统处理',
+    'Satisfied' => l10n.onboardingPermissionGranted,
+    'Missing' => l10n.settingsToolsNotGranted,
+    'Unavailable' => l10n.settingsToolsSystemRequired,
     _ => status,
   };
 }
@@ -676,16 +682,16 @@ Color _statusColor(String status, ColorScheme colorScheme) {
   };
 }
 
-String _actionLabel(_HostRequirement requirement) {
+String _actionLabel(_HostRequirement requirement, AppLocalizations l10n) {
   if (requirement.status == 'Satisfied') {
-    return '已授予';
+    return l10n.onboardingPermissionGranted;
   }
   return switch (requirement.action) {
-    'RuntimePermission' => '授予',
-    'OpenSystemSettings' => '打开设置',
-    'HostManaged' => '授予',
-    'None' => '不可操作',
-    _ => '处理',
+    'RuntimePermission' => l10n.onboardingGrantPermission,
+    'OpenSystemSettings' => l10n.settingsToolsOpenSettings,
+    'HostManaged' => l10n.onboardingGrantPermission,
+    'None' => l10n.settingsToolsUnavailable,
+    _ => l10n.settingsToolsHandle,
   };
 }
 
@@ -696,19 +702,19 @@ class _ModeSummary {
   final String description;
 }
 
-_ModeSummary _modeFor(core_proxy.AiPermissionMode mode) {
+_ModeSummary _modeFor(core_proxy.AiPermissionMode mode, AppLocalizations l10n) {
   return switch (mode) {
-    core_proxy.AiPermissionMode.readOnly => const _ModeSummary(
-      label: '只读',
-      description: 'AI 可以读取当前工作区，不能启动写入工具。',
+    core_proxy.AiPermissionMode.readOnly => _ModeSummary(
+      label: l10n.settingsToolsReadOnly,
+      description: l10n.settingsToolsReadOnlyDescription,
     ),
-    core_proxy.AiPermissionMode.workspaceWrite => const _ModeSummary(
-      label: '读写',
-      description: 'AI 可以读写当前工作区，应用内沙盒保持开启。',
+    core_proxy.AiPermissionMode.workspaceWrite => _ModeSummary(
+      label: l10n.settingsToolsReadWrite,
+      description: l10n.settingsToolsReadWriteDescription,
     ),
-    core_proxy.AiPermissionMode.full => const _ModeSummary(
-      label: '完整权限',
-      description: 'AI 可以读写当前工作区，并关闭应用内沙盒。',
+    core_proxy.AiPermissionMode.full => _ModeSummary(
+      label: l10n.settingsToolsFullAccess,
+      description: l10n.settingsToolsFullAccessDescription,
     ),
   };
 }

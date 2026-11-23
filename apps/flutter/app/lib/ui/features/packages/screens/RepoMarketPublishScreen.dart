@@ -11,6 +11,7 @@ import '../../../common/components/M3LoadingIndicator.dart';
 import '../../../theme/OperitFormStyles.dart';
 import '../components/EmptyState.dart';
 import '../market/ArtifactMarketSupport.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 class RepoMarketPublishContext {
   const RepoMarketPublishContext({
@@ -366,9 +367,7 @@ class _RepoMarketPublishScreenState extends State<RepoMarketPublishScreen> {
                         child: Text(
                           marketCategoryText(
                             category,
-                            languageCode: Localizations.localeOf(
-                              context,
-                            ).languageCode,
+                            AppLocalizations.of(context)!,
                           ).name,
                         ),
                       ),

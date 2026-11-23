@@ -63,10 +63,10 @@ class SettingsCategorySpec {
         description: l10n.settingsDataDetailedStatsDescription,
         icon: Icons.query_stats_outlined,
       ),
-      SettingsCategory.tts => const SettingsCategorySpec(
-        title: '语音与识别',
-        subtitle: 'TTS 与 STT 供应商',
-        description: '管理语音合成与语音识别供应商，并分别选择当前配置。',
+      SettingsCategory.tts => SettingsCategorySpec(
+        title: l10n.settingsCategorySpeechTitle,
+        subtitle: l10n.settingsCategorySpeechSubtitle,
+        description: l10n.settingsCategorySpeechDescription,
         icon: Icons.record_voice_over_outlined,
       ),
       SettingsCategory.tools => SettingsCategorySpec(
@@ -105,10 +105,10 @@ class SettingsCategorySpec {
         description: l10n.settingsCategoryAccessLinksDescription,
         icon: Icons.devices_outlined,
       ),
-      SettingsCategory.about => const SettingsCategorySpec(
-        title: '关于 Operit2',
-        subtitle: '版本、项目与许可',
-        description: '查看 Operit2 的版本信息、项目链接和开源许可证。',
+      SettingsCategory.about => SettingsCategorySpec(
+        title: l10n.settingsCategoryAboutTitle,
+        subtitle: l10n.settingsCategoryAboutSubtitle,
+        description: l10n.settingsCategoryAboutDescription,
         icon: Icons.info_outline,
       ),
     };

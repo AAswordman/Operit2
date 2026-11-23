@@ -2,6 +2,7 @@
 
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart';
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../../../core/host/FileSaveService.dart';
 import '../../../../../core/host/FileShareService.dart';
@@ -31,9 +32,10 @@ class _ChatShareImagePreviewDialogState
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     return OperitDialogScaffold(
-      title: '长图预览',
+      title: l10n.chatSharePreview,
       maxWidth: 560,
       maxHeight: 760,
       showCloseButton: true,
@@ -42,13 +44,13 @@ class _ChatShareImagePreviewDialogState
         OutlinedButton.icon(
           onPressed: _busy ? null : _saveImage,
           icon: const Icon(Icons.save_alt),
-          label: const Text('保存到文件'),
+          label: Text(l10n.chatShareSaveFile),
         ),
         Builder(
           builder: (buttonContext) => FilledButton.icon(
             onPressed: _busy ? null : () => _shareImage(buttonContext),
             icon: const Icon(Icons.share_outlined),
-            label: const Text('分享图片'),
+            label: Text(l10n.chatShareImage),
           ),
         ),
       ],
@@ -69,14 +71,16 @@ class _ChatShareImagePreviewDialogState
     );
   }
 
-  Future<void> _saveImage() => _runAction('保存失败', () async {
+  Future<void> _saveImage() {
+    final l10n = AppLocalizations.of(context)!;
+    return _runAction(l10n.chatShareSaveFailed, () async {
     final path = await FileSaveService.saveBytes(
       bytes: widget.image.bytes,
       name: _fileName,
       mimeType: 'image/png',
-      acceptedTypeGroups: const <XTypeGroup>[
+      acceptedTypeGroups: <XTypeGroup>[
         XTypeGroup(
-          label: 'PNG 图片',
+          label: l10n.chatSharePng,
           extensions: <String>['png'],
           mimeTypes: <String>['image/png'],
           uniformTypeIdentifiers: <String>['public.png'],
@@ -84,15 +88,17 @@ class _ChatShareImagePreviewDialogState
       ],
     );
     if (path != null && mounted) {
-      _showMessage('图片已保存');
+      _showMessage(l10n.chatShareSaved);
     }
-  });
+    });
+  }
 
   Future<void> _shareImage(BuildContext buttonContext) async {
+    final l10n = AppLocalizations.of(context)!;
     final box = buttonContext.findRenderObject()! as RenderBox;
     final origin = box.localToGlobal(Offset.zero) & box.size;
     await _runAction(
-      '分享失败',
+      l10n.chatShareFailed,
       () => FileShareService.shareBytes(
         bytes: widget.image.bytes,
         name: _fileName,

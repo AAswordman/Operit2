@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -67,6 +68,7 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
   /// Builds the format selector, scrollable preview, and copy command.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final mediaQuery = MediaQuery.of(context);
     final copyText = _format == MessageCopyFormat.markdownSource
@@ -79,17 +81,17 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: <Widget>[
-            Text('复制消息', style: theme.textTheme.titleMedium),
+            Text(l10n.chatCopyMessage, style: theme.textTheme.titleMedium),
             const SizedBox(height: 12),
             SegmentedButton<MessageCopyFormat>(
-              segments: const <ButtonSegment<MessageCopyFormat>>[
+              segments: <ButtonSegment<MessageCopyFormat>>[
                 ButtonSegment<MessageCopyFormat>(
                   value: MessageCopyFormat.plainText,
-                  label: Text('纯文本'),
+                  label: Text(l10n.chatPlainText),
                 ),
                 ButtonSegment<MessageCopyFormat>(
                   value: MessageCopyFormat.markdownSource,
-                  label: Text('Markdown 源码'),
+                  label: Text(l10n.chatMarkdownSource),
                 ),
               ],
               selected: <MessageCopyFormat>{_format},
@@ -118,7 +120,7 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
                         if (snapshot.hasError) {
                           return Center(
                             child: Text(
-                              '纯文本转换失败：${snapshot.error}',
+                              l10n.chatPlainTextConversionFailed(snapshot.error.toString()),
                               style: TextStyle(color: theme.colorScheme.error),
                             ),
                           );
@@ -138,8 +140,8 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
                 icon: const Icon(Icons.content_copy, size: 18),
                 label: Text(
                   _format == MessageCopyFormat.plainText
-                      ? '复制纯文本'
-                      : '复制 Markdown 源码',
+                      ? l10n.chatCopyPlainText
+                      : l10n.chatCopyMarkdown,
                 ),
               ),
             ),
@@ -151,6 +153,7 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
 
   /// Copies the selected representation and reports completion in the sheet.
   Future<void> _copyText(BuildContext context, String text) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       await Clipboard.setData(ClipboardData(text: text));
     } on PlatformException catch (error) {
@@ -158,7 +161,7 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
         return;
       }
       ScaffoldMessenger.maybeOf(context)?.showSnackBar(
-        SnackBar(content: Text('复制失败：${error.message ?? error.code}')),
+        SnackBar(content: Text(l10n.chatCopyFailed(error.message ?? error.code))),
       );
       return;
     }
@@ -167,7 +170,7 @@ class _MessageCopyPreviewSheetState extends State<MessageCopyPreviewSheet> {
     }
     ScaffoldMessenger.maybeOf(
       context,
-    )?.showSnackBar(const SnackBar(content: Text('消息已复制到剪贴板')));
+    )?.showSnackBar(SnackBar(content: Text(l10n.chatMessageCopied)));
   }
 }
 

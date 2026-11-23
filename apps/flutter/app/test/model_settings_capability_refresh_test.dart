@@ -12,6 +12,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/ui/common/ApiErrorText.dart';
 import 'package:operit2/ui/features/settings/model/ModelSettingsPanel.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentModelSelectorPopup.dart';
@@ -427,7 +428,10 @@ void main() {
         if (!success) {
           await tester.tap(status);
           await tester.pumpAndSettle();
-          expect(find.text('HTTP 503'), findsOneWidget);
+          expect(
+            find.text(apiErrorText(bridge.connectionTestError, l10n)),
+            findsOneWidget,
+          );
           // A tooltip inside the result bubble must be able to resolve its
           // anchor during layout, before the bubble is painted.
           await tester.longPress(find.byTooltip(l10n.settingsModelCopyError));
@@ -611,10 +615,7 @@ void main() {
         final l10n = AppLocalizations.of(panelKey.currentContext!)!;
         expect(
           find.text(
-            l10n.settingsModelFunctionMappingsMissing(
-              bridge.chatBinding.providerId,
-              bridge.chatBinding.modelId,
-            ),
+            '原始错误：\n${l10n.settingsModelFunctionMappingsMissing(bridge.chatBinding.providerId, bridge.chatBinding.modelId)}',
           ),
           findsWidgets,
         );

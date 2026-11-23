@@ -23,6 +23,7 @@ import '../market/MarketFilters.dart';
 import '../model/ExtensionCatalogController.dart';
 import '../model/GitHubAccountState.dart';
 import 'StoreBrowseScreen.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 /// Market section: featured entries, official offline extensions, community
 /// shelves, categories, search and the way into the creator center.
@@ -433,9 +434,7 @@ class _MarketPaneState extends State<MarketPane> {
                       onTap: (category) => openMarketBrowse(
                         heading: marketCategoryText(
                           category,
-                          languageCode: Localizations.localeOf(
-                            context,
-                          ).languageCode,
+                          AppLocalizations.of(context)!,
                         ).name,
                         categoryId: category.id,
                       ),
@@ -885,7 +884,7 @@ class _CategoryTile extends StatelessWidget {
     final ink = palette.onContainer;
     final text = marketCategoryText(
       category,
-      languageCode: Localizations.localeOf(context).languageCode,
+      AppLocalizations.of(context)!,
     );
     final description = text.description;
     return ConstrainedBox(

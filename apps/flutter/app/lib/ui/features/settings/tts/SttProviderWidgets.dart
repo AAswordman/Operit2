@@ -20,12 +20,13 @@ class _SttProviderManager extends StatelessWidget {
   /// Builds the ordered STT provider configuration list.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     if (configs.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
         child: Center(
           child: Text(
-            '尚未配置语音识别供应商',
+            l10n.speechNoSttProviders,
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
@@ -68,6 +69,7 @@ class _SttProviderTile extends StatelessWidget {
   /// Builds one editable STT provider row with current-selection controls.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final endpoint = config.endpoint.trim();
     final radius = BorderRadius.circular(12);
@@ -132,20 +134,20 @@ class _SttProviderTile extends StatelessWidget {
               ),
               const SizedBox(width: 8),
               if (current)
-                const SettingsActivePill(label: '全局当前')
+                SettingsActivePill(label: l10n.speechGlobalActive)
               else
                 SettingsSetActiveButton(
-                  label: '设为全局',
+                  label: l10n.speechSetGlobal,
                   onPressed: onSetCurrent,
                 ),
               const SizedBox(width: 4),
               SettingsEntityIconButton(
-                tooltip: '编辑',
+                tooltip: l10n.edit,
                 icon: Icons.edit_outlined,
                 onPressed: onEdit,
               ),
               SettingsEntityIconButton(
-                tooltip: current ? '当前配置不能删除' : '删除',
+                tooltip: current ? l10n.speechCurrentCannotDelete : l10n.delete,
                 icon: Icons.delete_outline,
                 onPressed: current ? null : onDelete,
               ),

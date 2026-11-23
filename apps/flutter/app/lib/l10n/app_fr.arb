@@ -1,0 +1,3500 @@
+{
+  "terminalProfileSelect": "Choisir un profil de terminal",
+  "terminalProfilesUnavailable": "Aucun terminal n'est disponible sur cet appareil.",
+  "terminalImplementationNative": "Terminal natif",
+  "terminalImplementationProot": "Terminal Linux PRoot",
+  "terminalImplementationAndroidSystem": "Terminal système Android",
+  "terminalImplementationChroot": "Chroot (Root)",
+  "terminalImplementationQemu": "Terminal Linux émulé QEMU",
+  "terminalImplementationArm64": "Terminal Linux ARM64 émulé",
+  "terminalImplementationSystem": "Terminal système",
+  "terminalImplementationBrowser": "VM Linux navigateur",
+  "terminalInterpreterShell": "Shell",
+  "terminalBuiltinMacNative": "Terminal {interpreter} natif macOS",
+  "@terminalBuiltinMacNative": {
+    "placeholders": {
+      "interpreter": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalBuiltinMacSandbox": "Terminal {interpreter} macOS en bac à sable",
+  "@terminalBuiltinMacSandbox": {
+    "placeholders": {
+      "interpreter": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalBuiltinAndroidLinux": "Terminal Bash Linux PRoot Android",
+  "terminalBuiltinAndroidSystem": "Terminal Shell système Android",
+  "terminalBuiltinLinux": "Terminal Bash natif Linux",
+  "terminalBuiltinPosix": "Terminal Bash natif POSIX",
+  "terminalBuiltinPrivileged": "Terminal sh système privilégié",
+  "terminalBuiltinPowerShellDownload": "Terminal PowerShell 7",
+  "terminalBuiltinPowerShell": "Terminal PowerShell 7 intégré à Windows",
+  "terminalBuiltinWindowsBash": "Terminal Bash intégré à Windows",
+  "terminalBuiltinArm64": "Terminal Linux ARM64 émulé",
+  "terminalBuiltinIosSystem": "Terminal sh système iOS",
+  "terminalBuiltinOhosLinux": "Terminal Linux émulé QEMU OpenHarmony",
+  "terminalBuiltinOhosSystem": "Terminal sh système OpenHarmony",
+  "terminalBuiltinBrowser": "Terminal VM Linux navigateur",
+  "terminalProfilesTitle": "Profils de terminal",
+  "terminalProfilesDescription": "Ajoutez des profils de terminal pour cet appareil et choisissez un profil par défaut. Les nouvelles sessions de terminal de l'espace de travail et de l'IA partagent ce paramètre ; les sessions existantes conservent leur environnement d'origine.",
+  "terminalProfileAdd": "Ajouter un profil de terminal",
+  "terminalProfileEdit": "Modifier le profil de terminal",
+  "terminalProfileDelete": "Supprimer le profil de terminal",
+  "terminalProfileDeleteDescription": "Ce profil ne sera plus disponible pour les nouveaux terminaux. Les sessions en cours restent ouvertes. Sélectionnez un autre profil par défaut avant de supprimer celui-ci.",
+  "terminalProfileName": "Nom du profil",
+  "terminalProfileNameRequired": "Saisissez un nom de profil",
+  "terminalProfileImplementation": "Implémentation du terminal et interpréteur",
+  "terminalProfileRootfs": "Répertoire du système de fichiers racine",
+  "terminalProfileChrootRootfsHelp": "Nécessite l'autorisation Root et le chemin absolu vers un système de fichiers racine Linux fiable contenant /bin/bash.",
+  "terminalProfileRootfsRequired": "Saisissez le chemin du système de fichiers racine.",
+  "terminalProfileMounts": "Montages de répertoires",
+  "terminalProfileAddMount": "Ajouter un montage",
+  "terminalProfileMountSource": "Répertoire hôte",
+  "terminalProfileMountTarget": "Répertoire invité",
+  "terminalProfileMountPathRequired": "Saisissez un chemin de répertoire.",
+  "terminalProfileRootfsHelp": "Saisissez un chemin absolu accessible vers un système de fichiers racine Linux extrait correspondant à l'architecture de cet appareil, comme Ubuntu. Android nécessite /bin/bash ; OpenHarmony nécessite /bin/sh. Laissez vide pour utiliser l'environnement intégré.",
+  "terminalProfileExecutable": "Chemin de l'exécutable de l'interpréteur",
+  "terminalProfileArguments": "Arguments de lancement (tableau JSON)",
+  "terminalProfileArgumentsHelp": "Par exemple [\"--login\"]. Les arguments précèdent ceux du shell interactif géré. Indiquez un chemin d'exécutable lorsque vous spécifiez des options de lancement. PowerShell 5 et 7 peuvent être ajoutés comme profils distincts.",
+  "terminalProfileArgumentsError": "Saisissez un tableau JSON de chaînes, par exemple [\"--login\"]",
+  "terminalProfileNoOptions": "Ce terminal est géré par la plateforme et peut être sélectionné par défaut. L'hôte n'expose aucune option de lancement supplémentaire.",
+  "@@locale": "fr",
+  "chatPromoteToRoot": "Promouvoir en conversation principale",
+  "workspaceUnsavedChangesTitle": "Modifications non enregistrées",
+  "workspaceUnsavedChangesMessage": "Enregistrer vos modifications avant de fermer ce fichier ?",
+  "workspaceDiscardChanges": "Ignorer les modifications",
+  "askOperitHint": "Demander à Operit",
+  "aiChat": "Chat IA",
+  "fullscreenInput": "Saisie plein écran",
+  "noticeExpand": "Développer",
+  "noticeCollapse": "Réduire",
+  "expandInput": "Agrandir la zone de saisie",
+  "collapseInput": "Réduire la zone de saisie",
+  "settings": "Paramètres",
+  "packageManager": "Gestionnaire de paquets",
+  "market": "Marché",
+  "addAttachment": "Ajouter une pièce jointe",
+  "attachmentPhoto": "Photo",
+  "attachmentCamera": "Appareil photo",
+  "attachmentFile": "Fichier",
+  "attachmentScreenContent": "Contenu de l'écran",
+  "attachmentNotifications": "Notifications actuelles",
+  "attachmentLocation": "Position actuelle",
+  "attachmentPackage": "Paquet",
+  "attachmentPackageSelectTitle": "Sélectionner un paquet",
+  "attachmentPackageEmpty": "Aucun paquet disponible",
+  "attachmentPackageSearchPlaceholder": "Rechercher un nom ou une description de paquet",
+  "attachmentPackageSearchEmpty": "Aucun paquet correspondant",
+  "attachmentPackageKindPackage": "Paquet",
+  "attachmentPackageKindSkill": "Skill",
+  "attachmentPackageKindMcp": "MCP",
+  "attachmentCameraUnavailable": "La capture photo n'est pas disponible dans le client Flutter",
+  "clearSearch": "Effacer la recherche",
+  "chatPendingQueueTitle": "Messages en file d'attente ({count})",
+  "@chatPendingQueueTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatQueueAddMessage": "Mettre en file d'attente",
+  "chatQueueAdded": "Ajouté à la file d'attente",
+  "chatSendOptions": "Choisir comment envoyer",
+  "chatQueueAddMessageDescription": "Envoyer après la fin de la réponse en cours (par défaut)",
+  "chatGuideCurrentTurn": "Orienter la conversation en cours",
+  "chatGuideCurrentTurnDescription": "Appliquer lors d'une requête ultérieure au modèle sans interrompre ce tour",
+  "chatInterruptAndSend": "Interrompre et envoyer",
+  "chatInterruptAndSendDescription": "Arrêter la réponse en cours et envoyer ce message maintenant",
+  "chatGuidanceAccepted": "Instruction ajoutée pour une requête ultérieure au modèle",
+  "chatGuidanceTextOnly": "Les instructions ne prennent en charge que le texte. Retirez d'abord les pièces jointes et la cible de réponse.",
+  "chatQueueWithdrawToEditor": "Renvoyer vers l'éditeur",
+  "chatPleaseCreateNewChat": "Veuillez créer une conversation",
+  "cancel": "Annuler",
+  "send": "Envoyer",
+  "model": "Modèle",
+  "processingInput": "Traitement de l'entrée...",
+  "processingMessage": "Traitement du message...",
+  "connectingAiService": "Connexion au service IA...",
+  "receivingAiResponse": "Réception de la réponse de l'IA...",
+  "receivingToolResultAiResponse": "Réception de la réponse de l'IA après l'exécution de l'outil...",
+  "summarizingMemories": "Synthèse des souvenirs...",
+  "summaryGenerating": "Génération du résumé...",
+  "summaryStageCore": "Résumé de la tâche principale...",
+  "summaryStageConstraints": "Résumé des demandes et contraintes de l'utilisateur...",
+  "summaryStageFiles": "Résumé des fichiers clés et du code...",
+  "summaryStageErrors": "Résumé des erreurs et correctifs...",
+  "summaryStageInteraction": "Résumé des échanges et du contexte...",
+  "summaryStageNext": "Résumé des prochaines étapes...",
+  "summaryStageFormatting": "Mise en forme du résumé...",
+  "chatCompressingHistory": "Compression de l'historique...",
+  "executingPlan": "Exécution du plan...",
+  "executingTool": "Exécution de l'outil : {toolName}",
+  "@executingTool": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "processingToolResult": "Traitement du résultat de l'outil : {toolName}",
+  "@processingToolResult": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "statusWarningAiErrorSummary": "L'IA a rencontré une erreur",
+  "statusWarningAiErrorDetailTitle": "Cause de l'erreur de l'IA",
+  "toolRunning": "Outil en cours d'exécution...",
+  "toolRunningWithName": "{toolName} : outil en cours d'exécution...",
+  "@toolRunningWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      }
+    }
+  },
+  "toolStatusWithName": "{toolName} : {message}",
+  "@toolStatusWithName": {
+    "placeholders": {
+      "toolName": {
+        "type": "String"
+      },
+      "message": {
+        "type": "String"
+      }
+    }
+  },
+  "close": "Fermer",
+  "workspaceCloseOtherTabs": "Fermer les autres",
+  "workspaceDockDropTarget": "Déposer dans l'espace de travail",
+  "workspaceOpenWith": "Ouvrir avec",
+  "workspaceBuiltInPreview": "Aperçu intégré",
+  "workspacePluginUnsavedChanges": "Enregistrez d'abord dans l'éditeur ou ignorez les modifications non enregistrées.",
+  "workspaceCloseTabsToRight": "Fermer à droite",
+  "workspaceCloseAllTabs": "Tout fermer",
+  "commonExpand": "Développer",
+  "commonCollapse": "Réduire",
+  "create": "Créer",
+  "save": "Enregistrer",
+  "delete": "Supprimer",
+  "search": "Rechercher",
+  "loading": "Chargement",
+  "toolApprovalTitle": "Demande d'autorisation d'outil",
+  "toolApprovalToolLabel": "Outil",
+  "toolApprovalActionLabel": "Action",
+  "toolApprovalDeny": "Refuser",
+  "toolApprovalAllowOnce": "Autoriser une fois",
+  "toolApprovalAlwaysAllow": "Toujours autoriser dans cette session",
+  "renameConversationTitle": "Modifier le titre",
+  "newTitleLabel": "Nouveau titre",
+  "deleteConversationTitle": "Supprimer la conversation ?",
+  "deleteConversationMessage": "Supprimer « {title} » ?",
+  "@deleteConversationMessage": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "chatHistory": "Historique des discussions",
+  "editTitle": "Modifier le titre",
+  "moveUp": "Monter",
+  "moveDown": "Descendre",
+  "pin": "Épingler",
+  "unpin": "Désépingler",
+  "lock": "Verrouiller",
+  "unlock": "Déverrouiller",
+  "chatLockedCannotDelete": "Cette discussion est verrouillée et ne peut pas être supprimée",
+  "messageLocatorTitle": "Localisateur de messages",
+  "messageLocatorCurrent": "Actuel {current} / {total}",
+  "@messageLocatorCurrent": {
+    "placeholders": {
+      "current": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "messageLocatorSearchHint": "Rechercher dans les messages",
+  "messageLocatorInstruction": "Faites défiler la liste ou recherchez pour accéder à un message",
+  "messageLocatorResultCount": "{count} résultats",
+  "@messageLocatorResultCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "messageLocatorSearchMessages": "Rechercher des messages",
+  "messageLocatorViewFavorites": "Voir les favoris",
+  "messageLocatorAll": "Tous",
+  "messageLocatorFavorites": "Favoris",
+  "messageLocatorNoFavorites": "Aucun message favori pour le moment",
+  "messageLocatorLoadFailed": "Impossible de charger les messages. Veuillez réessayer.",
+  "messageTransformFailed": "Échec du traitement de l'affichage du message : {error}",
+  "@messageTransformFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "messageLocatorFavoriteFailed": "Impossible de mettre à jour le favori. Veuillez réessayer.",
+  "messageLocatorAddFavorite": "Ajouter aux favoris",
+  "messageLocatorRemoveFavorite": "Retirer des favoris",
+  "messageLocatorNoMatches": "Aucun message correspondant",
+  "messageSenderUser": "Utilisateur",
+  "messageSenderSummary": "Résumé",
+  "historyDialogSummary": "Résumé de l'historique",
+  "confirmDeleteSummary": "Supprimer le résumé",
+  "confirmDeleteSummaryMessage": "Voulez-vous vraiment supprimer ce résumé ?",
+  "messageSenderSystem": "Système",
+  "messageSenderThinking": "Réflexion",
+  "thinkingProcess": "Processus de réflexion",
+  "thinkingToolsGroupTitleWithCount": "Réflexion et appels d'outils ({count})",
+  "@thinkingToolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "toolsGroupTitleWithCount": "Appels d'outils ({count})",
+  "@toolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "searchGroupTitle": "Recherche",
+  "searchSources": "Sources de recherche",
+  "thinkingSearchGroupTitle": "Réflexion et recherche",
+  "thinkingSearchToolsGroupTitleWithCount": "Réflexion, recherche et appels d'outils ({count})",
+  "@thinkingSearchToolsGroupTitleWithCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "messageSenderOther": "Autre",
+  "hiddenUserMessage": "Message utilisateur masqué",
+  "autoTriggeredUserMessage": "AUTO",
+  "workspaceSetupTitle": "Configurer l'espace de travail",
+  "workspaceSetupSubtitle": "Fournissez un environnement de fichiers dédié à vos projets IA",
+  "workspaceCreateTitle": "Créer un espace de travail",
+  "workspaceCreateDescription": "Créer un espace de travail nommé",
+  "workspaceNameLabel": "Nom de l'espace de travail",
+  "workspaceNameHint": "Saisissez un nom d'espace de travail",
+  "workspaceBindExistingTitle": "Choisir un espace de travail",
+  "workspacePickLocalFolder": "Choisir un dossier sur cet appareil",
+  "workspaceBindExistingDescription": "Associer un espace de travail existant",
+  "workspaceAddFolderTitle": "Ajouter un dossier",
+  "workspaceAddFolderDescription": "Monter un autre dossier dans l'espace de travail actuel",
+  "workspaceProjectTypeDialogTitle": "Choisir le type de projet",
+  "workspaceProjectTypeDialogDescription": "Choisissez le type d'espace de travail par défaut à créer",
+  "workspaceUnbindTitle": "Retirer le projet de cette discussion",
+  "workspaceUnbindDescription": "Détacher cette discussion sans supprimer les fichiers de l'espace de travail",
+  "workspaceUnbindConfirmation": "Dissocier l'espace de travail de cette discussion ? L'espace de travail et ses fichiers seront conservés, et les autres discussions ne seront pas affectées. Vous pourrez associer un espace de travail à nouveau plus tard.",
+  "workspaceUnbindFailed": "Échec de la dissociation de l'espace de travail. Veuillez réessayer.",
+  "workspaceUnbindChanged": "La discussion ou l'espace de travail actuel a changé. Annulez et réessayez.",
+  "workspaceBindDialogTitle": "Choisir un espace de travail existant",
+  "workspacePathLabel": "Espace de travail sélectionné",
+  "workspaceEnvLabel": "Environnement de l'espace de travail",
+  "optionalHint": "Facultatif",
+  "workspacePathRequired": "Sélectionnez un dossier d'espace de travail",
+  "bind": "Associer",
+  "workspaceProjectBlankTitle": "Espace de travail vide",
+  "workspaceProjectBlankDescription": "Créer un répertoire d'espace de travail vide sans fichiers modèles",
+  "workspaceProjectOfficeTitle": "Documents bureautiques",
+  "workspaceProjectOfficeDescription": "Pour l'édition de documents, le traitement de fichiers et les tâches bureautiques courantes",
+  "workspaceProjectWebTitle": "Projet Web",
+  "workspaceProjectWebDescription": "Pour le développement Web avec HTML/CSS/JavaScript et un serveur local automatique",
+  "workspaceProjectAndroidTitle": "Projet Android",
+  "workspaceProjectAndroidDescription": "Pour le développement Android avec des raccourcis de tâches Gradle courants",
+  "workspaceProjectFlutterTitle": "Projet Flutter",
+  "workspaceProjectFlutterDescription": "Pour le développement multiplateforme Flutter avec un modèle d'application stable et des commandes courantes",
+  "workspaceProjectNodeTitle": "Projet Node.js",
+  "workspaceProjectNodeDescription": "Pour le développement backend Node.js avec des raccourcis de commandes npm",
+  "workspaceProjectTypeScriptTitle": "Projet TypeScript",
+  "workspaceProjectTypeScriptDescription": "TypeScript + pnpm avec développement typé et surveillance tsc watch",
+  "workspaceProjectPythonTitle": "Projet Python",
+  "workspaceProjectPythonDescription": "Pour le développement Python avec pip et un serveur HTTP",
+  "workspaceProjectJavaTitle": "Projet Java",
+  "workspaceProjectJavaDescription": "Pour le développement Java avec builds Gradle et Maven",
+  "workspaceProjectGoTitle": "Projet Go",
+  "workspaceProjectGoDescription": "Pour le développement Go avec go mod et commandes de compilation",
+  "version": "Version",
+  "author": "Auteur",
+  "entry": "Entrée",
+  "source": "Source",
+  "category": "Catégorie",
+  "defaultStatus": "État par défaut",
+  "builtIn": "Intégré",
+  "external": "Externe",
+  "enabledByDefault": "Activé par défaut",
+  "disabledByDefault": "Désactivé par défaut",
+  "toolPkgResources": "Ressources ToolPkg",
+  "resourcesCount": "Ressources {count}",
+  "@resourcesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "uiModulesCount": "Modules UI {count}",
+  "@uiModulesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "navigationEntriesCount": "Entrées de navigation {count}",
+  "@navigationEntriesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "desktopWidgetsCount": "Widgets bureau {count}",
+  "@desktopWidgetsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workflowTemplatesCount": "Modèles de flux de travail {count}",
+  "@workflowTemplatesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workspaceTemplatesCount": "Modèles d'espace de travail {count}",
+  "@workspaceTemplatesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "pluginConfiguration": "Configuration du plugin",
+  "subpackages": "Sous-paquets",
+  "toolPkgNoSubpackages": "Ce ToolPkg ne déclare aucun sous-paquet",
+  "subpackageToolCount": "{packageName} · {count} outils",
+  "@subpackageToolCount": {
+    "placeholders": {
+      "packageName": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "workflowTemplates": "Modèles de flux de travail",
+  "workspaceTemplates": "Modèles d'espace de travail",
+  "disable": "Désactiver",
+  "enable": "Activer",
+  "environmentVariables": "Variables d'environnement",
+  "packageConfigureEnvironmentVariables": "Configurer les variables d'environnement",
+  "packageNoEnvironmentVariables": "Les paquets d'outils actuellement activés ne déclarent aucune variable d'environnement.",
+  "packageEnvironmentOptional": "Facultatif",
+  "packageEnvironmentInputRequired": "Valeur de saisie (obligatoire)",
+  "packageEnvironmentInputOptional": "Valeur de saisie (facultatif)",
+  "packageEnvironmentDefault": "Par défaut : {value}",
+  "@packageEnvironmentDefault": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
+  "required": "Obligatoire",
+  "states": "États",
+  "stateToolSummary": "{condition} · {toolCount} outils · exclut {excludeCount}",
+  "@stateToolSummary": {
+    "placeholders": {
+      "condition": {
+        "type": "String"
+      },
+      "toolCount": {
+        "type": "int"
+      },
+      "excludeCount": {
+        "type": "int"
+      }
+    }
+  },
+  "inherit": "Hériter",
+  "tools": "Outils",
+  "packageNoTools": "Ce paquet ne déclare aucun outil",
+  "permissionsTitle": "Autorisations",
+  "clear": "Effacer",
+  "noPermissionRecords": "Aucun enregistrement d'autorisation pour le moment",
+  "allow": "Autoriser",
+  "deny": "Refuser",
+  "camera": "Caméra",
+  "microphone": "Microphone",
+  "protectedMedia": "Média protégé",
+  "midiDevice": "Appareil MIDI",
+  "browserPermissionRequestTitle": "Demande d'autorisation du site",
+  "chatSpeechInputFailed": "Échec de la saisie vocale : {error}",
+  "@chatSpeechInputFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "chatSpeechInputConfigurationRequired": "Sélectionnez une configuration de reconnaissance vocale dans Paramètres > Modèles et IA avant d'utiliser la saisie vocale.",
+  "chatSpeechNoTextRecognized": "Aucune parole reconnue.",
+  "history": "Historique",
+  "bookmarks": "Favoris",
+  "downloads": "Téléchargements",
+  "browserDownloadsAll": "Tous",
+  "browserDownloadStorageHint": "Les fichiers sont conservés dans le dossier de téléchargement du navigateur sur l'appareil du navigateur. Ouvrir copie d'abord le fichier dans cet espace de travail. Vous pouvez aussi l'enregistrer directement dans l'espace de travail.",
+  "browserDownloadWorkspaceTarget": "Enregistrer dans cet espace de travail :",
+  "browserDownloadSaveToWorkspace": "Enregistrer dans l'espace de travail",
+  "browserDownloadInterrupted": "Interrompu · retélécharger",
+  "scripts": "Scripts",
+  "zoom": "Zoom",
+  "zoomIn": "Zoom avant",
+  "zoomOut": "Zoom arrière",
+  "desktopMode": "Version ordinateur",
+  "clearLocalStorage": "Effacer le stockage local",
+  "searchHistory": "Historique de recherche",
+  "noDownloadTasks": "Aucun téléchargement pour le moment",
+  "openFile": "Ouvrir le fichier",
+  "workspaceFileOpening": "Ouverture du fichier…",
+  "workspaceFileOpenTimedOut": "Délai d'ouverture du fichier dépassé. Veuillez réessayer.",
+  "openLocation": "Ouvrir l'emplacement",
+  "retry": "Réessayer",
+  "removeRecord": "Supprimer l'entrée",
+  "pending": "En attente",
+  "completed": "Terminé",
+  "failed": "Échec",
+  "back": "Retour",
+  "forward": "Suivant",
+  "stop": "Arrêter",
+  "refresh": "Actualiser",
+  "home": "Accueil",
+  "newTab": "Nouvel onglet",
+  "openExternalApplication": "Ouvrir une application externe",
+  "browserExternalNavigationFailed": "Impossible d'ouvrir le lien. Aucune application compatible n'est installée, le lien est invalide ou le système a rejeté la demande.",
+  "open": "Ouvrir",
+  "ok": "OK",
+  "webPage": "Page web",
+  "tabs": "Onglets",
+  "noBookmarks": "Aucun favori pour le moment",
+  "removeBookmark": "Supprimer le favori",
+  "addBookmark": "Ajouter aux favoris",
+  "menu": "Menu",
+  "siteData": "Données du site",
+  "clearAllWebViewCookies": "Effacer tous les cookies WebView",
+  "clearCookies": "Effacer les cookies",
+  "noData": "Aucune donnée",
+  "local": "Local",
+  "pageLoadFailed": "Échec du chargement de la page",
+  "pause": "Pause",
+  "resume": "Reprendre",
+  "paused": "En pause",
+  "cancelled": "Annulé",
+  "downloading": "Téléchargement en cours",
+  "savedTo": "Enregistré dans {path}",
+  "@savedTo": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "sslCertificateError": "Erreur de certificat SSL",
+  "edit": "Modifier",
+  "files": "Fichiers",
+  "terminal": "Terminal",
+  "browser": "Navigateur",
+  "filePreview": "Aperçu du fichier",
+  "workspaceBoundTitle": "Espace de travail lié",
+  "selectFile": "Sélectionner un fichier",
+  "selectFileDescription": "Sélectionnez un fichier de l'espace de travail pour le consulter, le modifier ou l'envoyer à l'IA",
+  "openTerminal": "Ouvrir le terminal",
+  "openTerminalDescription": "Accéder à la ligne de commande de l'espace de travail actuel",
+  "openBrowser": "Ouvrir le navigateur",
+  "openBrowserDescription": "Ouvrir une session de navigateur complète, l'aperçu du projet et l'automatisation web",
+  "noWorkspaceBound": "Cette conversation n'est liée à aucun espace de travail.",
+  "terminalSessionPlaceholder": "La session de terminal de l'espace de travail actuel apparaîtra ici.",
+  "emptyFolder": "Ce dossier est vide",
+  "imagePreview": "Aperçu d'image",
+  "audioPreview": "Aperçu audio",
+  "videoPreview": "Aperçu vidéo",
+  "pdfPreview": "Aperçu PDF",
+  "wordPreview": "Aperçu Word",
+  "spreadsheetPreview": "Aperçu de feuille de calcul",
+  "presentationPreview": "Aperçu de présentation",
+  "webPagePreview": "Aperçu de page web",
+  "markdownPreview": "Aperçu Markdown",
+  "textPreview": "Aperçu texte",
+  "file": "Fichier",
+  "unsupportedReadOnlyPreview": "Ce type de fichier ne dispose pas d'un aperçu intégré en lecture seule.",
+  "cannotPreview": "Aperçu impossible",
+  "openProjectInFullBrowser": "Ouvrir le projet dans le navigateur complet",
+  "openInBrowser": "Ouvrir dans le navigateur",
+  "emptySpreadsheet": "La feuille de calcul est vide",
+  "settingsCategoryModelTitle": "Modèles et IA",
+  "settingsCategoryModelSubtitle": "Modèles, clés, contexte",
+  "settingsCategoryModelDescription": "Configurez les connexions aux modèles, choisissez le modèle de chat et gérez la réflexion, le contexte et les capacités multimodales.",
+  "settingsCategoryLocalModelsTitle": "Modèles locaux",
+  "settingsCategoryLocalModelsSubtitle": "LLM, téléchargements, STT / TTS",
+  "settingsCategoryLocalModelsDescription": "Gérez les modèles locaux et les moteurs d'inférence installés à la demande.",
+  "settingsCategoryToolsTitle": "Outils et autorisations",
+  "settingsCategoryToolsSubtitle": "Capacités IA, autorisations système, extensions",
+  "settingsCategoryToolsDescription": "Définissez l'accès de l'IA en lecture seule, lecture-écriture ou complet, et consultez l'état des autorisations système de l'appareil.",
+  "settingsCategoryWorkspaceTitle": "Espace de travail et navigateur",
+  "settingsCategoryWorkspaceSubtitle": "Fichiers, terminal, navigateur",
+  "settingsCategoryWorkspaceDescription": "Gérez les espaces de travail par défaut, les sessions de terminal, le mode navigateur, les scripts et l'automatisation web.",
+  "settingsCategoryGlobalBehaviorTitle": "Comportement global",
+  "settingsCategoryGlobalBehaviorSubtitle": "Disposition du chat, saisie et interactions",
+  "settingsCategoryGlobalBehaviorDescription": "Configurez la disposition du chat, la saisie et les interactions pour toute l'application.",
+  "settingsCategoryAppearanceTitle": "Apparence et interactions",
+  "settingsCategoryAppearanceSubtitle": "Thème, bulles et interactions",
+  "settingsCategoryAppearanceDescription": "Personnalisez le thème global, le média d'arrière-plan, les bulles de message et les interactions du chat.",
+  "settingsCategoryDataTitle": "Données et sauvegarde",
+  "settingsCategoryDataSubtitle": "Sauvegarde, restauration, stockage",
+  "settingsCategoryDataDescription": "Sauvegardez et restaurez les chats, les données de plugins et les paramètres de modèles, et gérez le stockage.",
+  "settingsUsageReportTitle": "Rapport d'utilisation des Tokens",
+  "settingsUsageReportSubtitle": "Utilisation des modèles, cache et coût",
+  "settingsCategoryAccessLinksTitle": "Space de l'appareil",
+  "settingsCategoryAccessLinksSubtitle": "Connecter, synchroniser, collaborer",
+  "settingsCategoryAccessLinksDescription": "Gérez ce Space de l'appareil, connectez des appareils et partagez des données et des routes.",
+  "settingsCategoryGroupAssistant": "IA et création",
+  "settingsCategoryGroupWorkspace": "Espace de travail et automatisation",
+  "settingsCategoryGroupExperience": "Affichage et interactions",
+  "settingsCategoryGroupSystem": "Données et système",
+  "settingsGlobalBehaviorChatInputSection": "Saisie du chat",
+  "settingsGlobalBehaviorChatLayoutSection": "Disposition du chat",
+  "settingsGlobalBehaviorChatScrollNavigatorOnLeft": "Afficher le navigateur de messages à gauche",
+  "settingsGlobalBehaviorChatScrollNavigatorOnLeftDescription": "Afficher le navigateur en miroir à gauche du chat. Il apparaît à droite par défaut.",
+  "settingsGlobalBehaviorEnterSendsMessage": "Appuyer sur Entrée pour envoyer",
+  "settingsGlobalBehaviorEnterSendsMessageDescription": "Si désactivé, Entrée insère un saut de ligne. Ctrl+Entrée et Entrée dans l'éditeur étendu insèrent toujours un saut de ligne.",
+  "settingsGlobalBehaviorLongPastedTextAsAttachment": "Convertir un long texte collé en fichier",
+  "settingsGlobalBehaviorLongPastedTextThreshold": "Seuil de conversion",
+  "settingsGlobalBehaviorLongPastedTextThresholdValue": "{count} caractères",
+  "@settingsGlobalBehaviorLongPastedTextThresholdValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsComingSoon": "Cette section continuera d'intégrer les capacités existantes. Les paramètres de modèles et d'outils sont finalisés en priorité.",
+  "settingsAdvanced": "Paramètres avancés",
+  "settingsActive": "Actif",
+  "settingsActivate": "Activer",
+  "settingsModelCurrentSection": "Modèle de chat actuel",
+  "settingsModelCurrentChatModel": "Modèle utilisé",
+  "settingsModelCurrentActive": "Actif",
+  "settingsModelMultimodalBadge": "Multimodal",
+  "settingsModelNoModels": "Aucun modèle pour le moment",
+  "settingsModelProviderModelCount": "{count} modèles",
+  "@settingsModelProviderModelCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelSetCurrentActive": "Définir comme actif",
+  "settingsChatStreamOutput": "Réponse en streaming",
+  "settingsChatStreamOutputDescription": "Afficher les réponses générées progressivement.",
+  "settingsModelProfilesSection": "Profils de modèles",
+  "settingsModelFunctionFollowChat": "Suivre le chat",
+  "settingsModelFunctionFollowChatAll": "Tout suivre",
+  "settingsModelFunctionFollowChatHint": "Utilise automatiquement le modèle de chat actuel",
+  "settingsModelFunctionGroupBackground": "Assistants en arrière-plan",
+  "settingsModelFunctionGroupMain": "Modèle de chat principal",
+  "settingsModelFunctionGroupMultimodal": "Reconnaissance multimodale",
+  "settingsModelFunctionMappingsSection": "Attribution des modèles par fonction",
+  "settingsModelFunctionMappingsDescription": "Choisissez le profil de modèle et le modèle précis utilisés pour le chat, les résumés, la mémoire, la reconnaissance d'images et d'autres fonctions.",
+  "settingsModelFunctionMappingsReset": "Tout réinitialiser",
+  "settingsModelFunctionMappingsChange": "Changer",
+  "settingsModelFunctionMappingsSelect": "Sélectionner le modèle pour {name}",
+  "@settingsModelFunctionMappingsSelect": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelFunctionMappingsCurrent": "{configName} · {modelName}",
+  "@settingsModelFunctionMappingsCurrent": {
+    "placeholders": {
+      "configName": {
+        "type": "String"
+      },
+      "modelName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelFunctionMappingsMissing": "Le modèle lié n'existe pas : {providerId} · {modelId}",
+  "@settingsModelFunctionMappingsMissing": {
+    "placeholders": {
+      "providerId": {
+        "type": "String"
+      },
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteBlocked": "Ce modèle est utilisé par les fonctions suivantes. Modifiez d'abord leur attribution : {functions}",
+  "@settingsModelDeleteBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderBlocked": "Des modèles de ce fournisseur sont utilisés par les fonctions suivantes. Modifiez d'abord leur attribution : {functions}",
+  "@settingsModelDeleteProviderBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirm": "Supprimer le fournisseur « {name} » ? Ses {count} modèles seront également supprimés.",
+  "@settingsModelDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteProviderConfirmAction": "Supprimer le fournisseur",
+  "settingsTtsDeleteProvider": "Supprimer le fournisseur TTS",
+  "settingsTtsDeleteProviderConfirm": "Supprimer le fournisseur TTS « {name} » et ses {count} configurations vocales ?",
+  "@settingsTtsDeleteProviderConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsTtsDeleteProviderFailed": "Échec de la suppression du fournisseur TTS : {error}",
+  "@settingsTtsDeleteProviderFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsTtsCurrentConfigCannotDelete": "La configuration TTS actuellement utilisée ne peut pas être supprimée.",
+  "settingsModelChatAutoGlmWarning": "AutoGLM ne peut pas être utilisé comme modèle de chat principal. Le chat et le contrôle de l'interface utilisent des attributions distinctes ; choisissez un autre grand modèle.",
+  "settingsModelFunctionChat": "Chat",
+  "settingsModelFunctionChatDescription": "Modèle utilisé pour les réponses principales de la conversation.",
+  "settingsModelFunctionSummary": "Résumé",
+  "settingsModelFunctionSummaryDescription": "Modèle utilisé pour les résumés automatiques de longs contextes.",
+  "settingsModelFunctionTitleGeneration": "Titre de conversation",
+  "settingsModelFunctionTitleGenerationDescription": "Modèle utilisé pour résumer le premier message et les pièces jointes en titre de conversation.",
+  "settingsModelFunctionMemory": "Mémoire",
+  "settingsModelFunctionMemoryDescription": "Modèle utilisé pour extraire, organiser et mettre à jour les souvenirs.",
+  "settingsModelFunctionUiController": "Contrôle de l'interface",
+  "settingsModelFunctionUiControllerDescription": "Modèle utilisé pour le contrôle d'interface et la planification d'actions légères.",
+  "settingsModelFunctionTranslation": "Traduction",
+  "settingsModelFunctionTranslationDescription": "Modèle utilisé pour traduire du texte et du contenu localisé.",
+  "settingsModelFunctionGrep": "Recherche de texte",
+  "settingsModelFunctionGrepDescription": "Modèle utilisé pour filtrer les résultats de recherche et évaluer les correspondances textuelles.",
+  "settingsModelFunctionRoleResponsePlanner": "Planificateur de réponses en groupe",
+  "settingsModelFunctionRoleResponsePlannerDescription": "Modèle utilisé pour planifier les rôles et l'ordre de prise de parole dans les conversations de groupe.",
+  "settingsModelFunctionImageRecognition": "Reconnaissance d'images",
+  "settingsModelFunctionImageRecognitionDescription": "Modèle utilisé pour comprendre les images et en extraire le contenu.",
+  "settingsModelFunctionAudioRecognition": "Reconnaissance audio",
+  "settingsModelFunctionAudioRecognitionDescription": "Modèle utilisé pour comprendre l'audio et en extraire le contenu.",
+  "settingsModelFunctionVideoRecognition": "Reconnaissance vidéo",
+  "settingsModelFunctionVideoRecognitionDescription": "Modèle utilisé pour comprendre la vidéo et en extraire le contenu.",
+  "settingsModelFunctionImageUnsupported": "La saisie directe d'images est désactivée pour le profil de modèle sélectionné.",
+  "settingsModelFunctionAudioUnsupported": "La saisie directe d'audio est désactivée pour le profil de modèle sélectionné.",
+  "settingsModelFunctionVideoUnsupported": "La saisie directe de vidéo est désactivée pour le profil de modèle sélectionné.",
+  "settingsModelCreateProfile": "Nouveau profil de modèle",
+  "settingsModelEditProfile": "Modifier le profil de modèle",
+  "settingsModelProfileName": "Nom du profil",
+  "settingsModelApiEndpoint": "Point de terminaison API",
+  "settingsModelModelNames": "Noms des modèles",
+  "settingsModelApiKey": "Clé API",
+  "settingsModelShowApiKey": "Afficher la clé API",
+  "settingsModelHideApiKey": "Masquer la clé API",
+  "settingsModelCodexLogin": "Connexion ChatGPT",
+  "settingsModelCodexLoginTitle": "Se connecter à ChatGPT Codex",
+  "settingsModelCodexLoginDescription": "OpenAI Codex utilise une connexion par abonnement ChatGPT au lieu d'une clé API.",
+  "settingsModelCodexSignedIn": "Connecté en tant que {account}",
+  "@settingsModelCodexSignedIn": {
+    "placeholders": {
+      "account": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCodexSignedOut": "Non connecté à ChatGPT",
+  "settingsModelCodexBrowser": "Connexion via navigateur",
+  "settingsModelCodexDevice": "Code d'appareil",
+  "settingsModelCodexWaiting": "En attente d'autorisation ChatGPT…",
+  "settingsModelCodexDeviceInstructions": "Saisissez ce code sur la page ouverte, puis revenez dans Operit.",
+  "settingsModelCodexOpenPage": "Ouvrir la page de vérification",
+  "settingsModelCodexLogout": "Se déconnecter",
+  "settingsModelCodexLoginFailed": "Échec de la connexion à ChatGPT : {error}",
+  "@settingsModelCodexLoginFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelApiKeyPool": "Pool de clés API",
+  "settingsModelApiKeyPoolDescription": "Continue d'utiliser une clé valide. Bascule en cas d'erreur d'authentification, de quota, de limite de débit ou d'échec temporaire ; les clés en pause sont ignorées.",
+  "settingsModelApiKeyPoolCount": "{count} clés",
+  "@settingsModelApiKeyPoolCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelApiKeyPoolEmpty": "Aucune clé pour le moment. Ajoutez une clé avant d'activer ce pool.",
+  "settingsModelAddApiKey": "Ajouter une clé",
+  "settingsModelEditApiKey": "Modifier la clé",
+  "settingsModelApiKeyName": "Nom de la clé",
+  "settingsModelApiKeyEnabled": "Activer cette clé",
+  "settingsModelPoolAddSingle": "Ajouter la clé unique actuelle",
+  "settingsModelPoolPaste": "Collez une clé par ligne pour en ajouter plusieurs à la fois.",
+  "settingsModelPoolNoEligible": "Activez au moins une clé non vide qui n'est pas marquée comme indisponible.",
+  "settingsModelPoolUntested": "Non testée",
+  "settingsModelPoolAvailable": "Disponible",
+  "settingsModelPoolUnavailable": "Indisponible",
+  "settingsModelPoolClearMarks": "Réinitialiser l'état des clés",
+  "settingsModelPoolTest": "Tester les clés non testées",
+  "settingsModelPoolNeedsModel": "Enregistrez le fournisseur et ajoutez un modèle avant de tester les clés.",
+  "settingsModelProviderId": "ID du fournisseur",
+  "settingsModelProvidersSection": "Fournisseurs LLM",
+  "settingsModelProviderType": "Type de fournisseur",
+  "settingsModelProviderTypeOption": "{name} ({original})",
+  "@settingsModelProviderTypeOption": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "original": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelProviderTypeOpenai": "OpenAI",
+  "settingsModelProviderTypeXai": "xAI",
+  "settingsModelProviderTypeOpenaiResponses": "OpenAI Responses",
+  "settingsModelProviderTypeOpenaiCodex": "OpenAI Codex",
+  "settingsModelProviderTypeOpenaiResponsesGeneric": "Compatible OpenAI Responses",
+  "settingsModelProviderTypeOpenaiGeneric": "Compatible OpenAI",
+  "settingsModelProviderTypeAnthropic": "Anthropic",
+  "settingsModelProviderTypeAnthropicGeneric": "Compatible Anthropic",
+  "settingsModelProviderTypeGoogle": "Google Gemini",
+  "settingsModelProviderTypeGeminiGeneric": "Compatible Gemini",
+  "settingsModelProviderTypeBaidu": "Baidu",
+  "settingsModelProviderTypeAliyun": "Aliyun",
+  "settingsModelProviderTypeXunfei": "Xunfei",
+  "settingsModelProviderTypeZhipu": "Zhipu AI",
+  "settingsModelProviderTypeBaichuan": "Baichuan",
+  "settingsModelProviderTypeMoonshot": "Moonshot",
+  "settingsModelProviderTypeMimo": "MiMo",
+  "settingsModelProviderTypeDeepseek": "DeepSeek",
+  "settingsModelProviderTypeMistral": "Mistral",
+  "settingsModelProviderTypeSiliconflow": "SiliconFlow",
+  "settingsModelProviderTypeOpenrouter": "OpenRouter",
+  "settingsModelProviderTypeOpencode": "OpenCode",
+  "settingsModelProviderTypeFourRouter": "4Router",
+  "settingsModelProviderTypeNousPortal": "Nous Portal",
+  "settingsModelProviderTypeInfiniai": "InfiniAI",
+  "settingsModelProviderTypeAlipayBailing": "Alipay Bailing",
+  "settingsModelProviderTypeDoubao": "Doubao",
+  "settingsModelProviderTypeNvidia": "NVIDIA",
+  "settingsModelProviderTypeLmstudio": "LM Studio",
+  "settingsModelProviderTypeOllama": "Ollama",
+  "settingsModelProviderTypeOpenaiLocal": "OpenAI Local",
+  "settingsModelProviderTypeLocalModel": "Modèle local",
+  "localModelsLoadFailed": "Échec du chargement de l'état des modèles locaux : {error}",
+  "@localModelsLoadFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsOperationFailed": "Échec de l'opération sur le modèle local : {error}",
+  "@localModelsOperationFailed": {
+    "placeholders": {
+      "error": {}
+    }
+  },
+  "localModelsAddModel": "Parcourir en ligne",
+  "localModelsImportFromDevice": "Importer depuis l'appareil",
+  "localModelsImportGgufHint": "Choisissez un modèle de chat GGUF complet pour llama.cpp.",
+  "localModelsImportMnnHint": "Sélectionnez ensemble les fichiers extraits du modèle MNN, y compris config.json et les poids.",
+  "localModelsImportInvalidGguf": "Sélectionnez un seul fichier .gguf.",
+  "localModelsImportMissingConfig": "Le fichier config.json est manquant dans les fichiers sélectionnés.",
+  "localModelsImportFileSizeRequired": "Chaque fichier sélectionné doit être non vide et indiquer sa taille.",
+  "localModelsImportChangeFiles": "Choisir à nouveau",
+  "localModelsImportFileCount": "{count} fichiers sélectionnés",
+  "@localModelsImportFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "localModelsImportName": "Nom du modèle",
+  "localModelsImportCopyNotice": "Les fichiers sont copiés dans le stockage de l'application et restent sur cet appareil.",
+  "localModelsImportCopying": "Copie des fichiers du modèle…",
+  "localModelsImportFinishing": "Vérification et enregistrement du modèle…",
+  "localModelsImportComplete": "Modèle importé. Ouvrez Exécuter et configurer pour l'essayer.",
+  "localModelsImportedFile": "Import depuis l'appareil",
+  "localModelsFilterDownloads": "Téléchargements",
+  "localModelsAllTypes": "Tous les types",
+  "localModelsNoMatches": "Aucun modèle correspondant",
+  "localModelsResetFilters": "Réinitialiser les filtres",
+  "localModelsDetails": "Détails du modèle",
+  "localModelsMoreActions": "Plus d'actions",
+  "localModelsResultCount": "Affichage de {count} sur {total} modèles",
+  "@localModelsResultCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "localModelsHubRepositoryTab": "Dépôt",
+  "localModelsDownloadFailed": "Échec du téléchargement",
+  "localModelsDownloadPausedLabel": "En pause",
+  "localModelsCatalog": "Catalogue de modèles",
+  "localModelsCategorySpeechToText": "Modèles de reconnaissance vocale",
+  "localModelsCategoryTextToSpeech": "Modèles de synthèse vocale",
+  "localModelsCategoryChat": "Modèles LLM",
+  "localModelsCategoryEmbedding": "Modèles d'embedding",
+  "localModelsInstalledEngines": "Moteurs installés",
+  "localModelsNoInstalledEngines": "Aucun moteur d'inférence local n'est installé sur cette plateforme.",
+  "localModelsDeleteModelTitle": "Supprimer le modèle local",
+  "localModelsDeleteModelMessage": "Supprimer les fichiers du modèle {modelName} ?",
+  "@localModelsDeleteModelMessage": {
+    "placeholders": {
+      "modelName": {}
+    }
+  },
+  "localModelsDeleteEngineTitle": "Supprimer le moteur local",
+  "localModelsDeleteEngineMessage": "Supprimer {engineName} {version} ?",
+  "@localModelsDeleteEngineMessage": {
+    "placeholders": {
+      "engineName": {},
+      "version": {}
+    }
+  },
+  "localModelsCancelling": "Mise en pause",
+  "localModelsDownloadPaused": "En pause : {downloaded} / {total}",
+  "@localModelsDownloadPaused": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsDownloadInstalling": "Téléchargement terminé, installation en cours",
+  "localModelsDownloading": "Téléchargement : {downloaded} / {total}",
+  "@localModelsDownloading": {
+    "placeholders": {
+      "downloaded": {},
+      "total": {}
+    }
+  },
+  "localModelsLicense": "Licence : {license}",
+  "@localModelsLicense": {
+    "placeholders": {
+      "license": {}
+    }
+  },
+  "localModelsPlatformCompatible": "Compatible avec la plateforme",
+  "localModelsPlatformIncompatible": "Incompatible avec la plateforme",
+  "localModelsModelInstalled": "Modèle installé",
+  "localModelsModelNotInstalled": "Modèle non installé",
+  "localModelsEngineInstalled": "Moteur installé",
+  "localModelsEngineNotInstalled": "Moteur non installé",
+  "localModelsVerifyModelAndEngine": "Vérifier le modèle et le moteur",
+  "localModelsDeleteModel": "Supprimer le modèle",
+  "localModelsPauseDownload": "Mettre en pause",
+  "localModelsDeleteDownload": "Supprimer le téléchargement",
+  "localModelsResumeDownload": "Reprendre",
+  "localModelsInstalling": "Installation",
+  "localModelsInstall": "Installer",
+  "localModelsDeleteEngine": "Supprimer le moteur",
+  "localModelsDownloadSource": "Source de téléchargement",
+  "localModelsSourceHuggingFace": "Hugging Face",
+  "localModelsSourceModelScope": "ModelScope",
+  "localModelsSourceHfMirror": "HF-Mirror",
+  "localModelsSourceDirectHttp": "HTTP direct",
+  "localModelsExploreHub": "Explorer / Importer des modèles",
+  "localModelsHubSearchHint": "Rechercher des modèles ou saisir propriétaire/dépôt...",
+  "localModelsHubImport": "Importer",
+  "localModelsHubImporting": "Analyse et importation du modèle...",
+  "localModelsHubImportSuccess": "Modèle importé dans le catalogue avec succès",
+  "localModelsRemoveFromCatalog": "Retirer du catalogue",
+  "localModelsCustomBadge": "Personnalisé",
+  "localModelsHubSearching": "Recherche...",
+  "localModelsHubNoResults": "Aucun dépôt de modèle correspondant trouvé",
+  "localModelsHubDirectImportTitle": "Importer par dépôt",
+  "localModelsHubDirectImportPrompt": "Saisissez un dépôt Hugging Face ou ModelScope (propriétaire/dépôt) ou une URL :",
+  "localModelDescriptionSherpaOnnxStreamingStt": "Reconnaissance vocale bilingue chinois et anglais en streaming.",
+  "localModelDescriptionSherpaOnnxVitsAishell3": "Synthèse vocale chinoise locale multi-locuteurs.",
+  "localModelDescriptionSherpaOnnxVitsZhLl": "Synthèse vocale chinoise locale à cinq locuteurs.",
+  "localModelDescriptionSherpaOnnxMatchaBaker": "Synthèse vocale chinoise locale mono-locuteur Matcha.",
+  "localModelDescriptionSherpaOnnxKittenNano": "Synthèse vocale anglaise locale à huit locuteurs KittenTTS.",
+  "localModelDescriptionSherpaOnnxWebParaformer": "Reconnaissance vocale Paraformer chinois et anglais intégrée au navigateur.",
+  "localModelDescriptionSherpaOnnxWebVitsPiper": "Synthèse vocale VITS anglaise multi-locuteurs intégrée au navigateur.",
+  "settingsModelProviderTypeMnn": "MNN",
+  "settingsModelProviderTypeLlamaCpp": "llama.cpp",
+  "settingsModelProviderTypePpinfra": "PPInfra",
+  "settingsModelProviderTypeNovita": "Novita AI",
+  "settingsModelProviderTypeMinimax": "MiniMax",
+  "settingsModelProviderTypeOther": "Autre",
+  "settingsModelEditModelSettings": "Paramètres du modèle",
+  "settingsModelCreateProvider": "Créer un fournisseur",
+  "settingsModelEditProvider": "Modifier le fournisseur",
+  "settingsModelAddModel": "Ajouter un modèle",
+  "settingsModelAddModelShort": "Ajouter",
+  "settingsModelAvailableFetchedOnly": "Récupérés uniquement",
+  "settingsModelAvailableIncludeHistory": "Inclure l'historique",
+  "settingsModelAvailableSourceFetched": "Récupéré",
+  "settingsModelAvailableSourceHistory": "Historique",
+  "settingsModelAvailableEmptyFetched": "Aucun modèle récupéré. Choisissez Inclure l'historique pour voir les ID du catalogue.",
+  "settingsModelUnrecognized": "Non reconnu",
+  "settingsModelCatalogUpdatedAt": "Capacités et contexte issus de models.dev, mis à jour : {time}",
+  "@settingsModelCatalogUpdatedAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogUpdateFailed": "Impossible de télécharger les détails du modèle : {error}",
+  "@settingsModelCatalogUpdateFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogUpdateFailedUsing": "Impossible de mettre à jour les détails du modèle, utilisation de ceux de {time} : {error}",
+  "@settingsModelCatalogUpdateFailedUsing": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      },
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelCatalogBundled": "Utilisation des détails intégrés du modèle ; les mises à jour en ligne les remplacent automatiquement",
+  "settingsModelCatalogRetry": "Mettre à jour",
+  "settingsModelCustomModel": "Modèle personnalisé",
+  "settingsModelModelId": "ID du modèle",
+  "settingsModelDuplicateModelId": "Ce modèle a déjà été ajouté à ce fournisseur.",
+  "settingsModelDuplicateProviderName": "Un fournisseur portant ce nom existe déjà.",
+  "settingsModelMaxTokens": "Tokens max",
+  "settingsModelMaxTokensDescription": "Limite le nombre de Tokens qu'une réponse peut générer.",
+  "settingsModelTemperature": "Température",
+  "settingsModelTemperatureDescription": "Contrôle le caractère aléatoire. Plus bas = plus stable, plus haut = plus varié.",
+  "settingsModelTopP": "Top-p",
+  "settingsModelTopPDescription": "Échantillonne uniquement dans la plage de probabilité cumulée Top-p.",
+  "settingsModelTopK": "Top-k",
+  "settingsModelTopKDescription": "Échantillonne parmi les K Tokens candidats les plus probables. 0 désactive l'option.",
+  "settingsModelPresencePenalty": "Pénalité de présence",
+  "settingsModelPresencePenaltyDescription": "Encourage les nouveaux sujets et réduit la réutilisation du contenu existant.",
+  "settingsModelFrequencyPenalty": "Pénalité de fréquence",
+  "settingsModelFrequencyPenaltyDescription": "Pénalise les Tokens répétés selon leur fréquence.",
+  "settingsModelRepetitionPenalty": "Pénalité de répétition",
+  "settingsModelRepetitionPenaltyDescription": "Réduit davantage les répétitions. 1.0 signifie aucune pénalité.",
+  "settingsModelRequestLimit": "Requêtes par minute",
+  "settingsModelMaxConcurrent": "Requêtes simultanées max",
+  "settingsModelContextLength": "Longueur du contexte",
+  "settingsModelMaxContextLength": "Longueur max du contexte",
+  "settingsModelMaxContextLengthInvalid": "Saisissez une longueur max du contexte supérieure à 0",
+  "settingsModelSummaryThreshold": "Résumer à",
+  "settingsModelCustomHeaders": "En-têtes personnalisés",
+  "settingsModelCustomParameters": "Paramètres personnalisés JSON",
+  "settingsModelToolCall": "Appel d'outils",
+  "settingsModelToolCallDescription": "Autorise le modèle à utiliser des appels d'outils structurés.",
+  "settingsModelDirectImage": "Entrée image directe",
+  "settingsModelDirectImageDescription": "Envoie les images directement aux modèles prenant en charge l'entrée image.",
+  "settingsModelDirectAudio": "Entrée audio directe",
+  "settingsModelDirectAudioDescription": "Envoie l'audio directement aux modèles prenant en charge l'entrée audio.",
+  "settingsModelDirectVideo": "Entrée vidéo directe",
+  "settingsModelDirectVideoDescription": "Envoie la vidéo directement aux modèles prenant en charge l'entrée vidéo.",
+  "settingsModelGoogleSearch": "Google Search",
+  "settingsModelGoogleSearchDescription": "Active la fonction de recherche côté fournisseur.",
+  "settingsModelContext": "Contexte",
+  "settingsModelSummary": "Résumé automatique",
+  "settingsModelThinking": "Réflexion",
+  "thinkingLevelLabel": "Réflexion",
+  "thinkingAlwaysOn": "Réflexion toujours active",
+  "thinkingChip": "Réflexion",
+  "settingsModelThinkingSourceDeclared": "Niveaux issus de votre description",
+  "settingsModelThinkingSourceLocalRuntime": "Exécution locale : la réflexion s'active ou se désactive, et l'interrupteur est sans effet sur un modèle ne prenant pas en charge la réflexion",
+  "settingsModelThinkingUnknown": "Le catalogue ne contient aucune information de réflexion pour ce modèle",
+  "settingsModelThinkingNotAdjustable": "Cette API ne peut pas modifier le mode de réflexion de ce modèle",
+  "settingsModelThinkingNotSupported": "Ce modèle ne prend pas en charge la réflexion",
+  "settingsModelThinkingCarried": "Repris du dernier niveau défini",
+  "settingsModelThinkingDescribe": "Décrire",
+  "settingsModelThinkingUseCatalog": "Utiliser le catalogue",
+  "settingsModelThinkingDescribeTitle": "Fonctionnement de la réflexion du modèle",
+  "settingsModelThinkingKindNone": "Pas de réflexion",
+  "settingsModelThinkingKindAlways": "Toujours active, sans réglage",
+  "settingsModelThinkingKindSwitch": "Activée ou désactivée",
+  "settingsModelThinkingKindLevels": "Niveaux",
+  "settingsModelThinkingKindBudget": "Budget de Tokens",
+  "settingsModelThinkingCanTurnOff": "Peut être désactivée",
+  "settingsModelThinkingBudgetMin": "Tokens minimum",
+  "settingsModelThinkingBudgetMax": "Tokens maximum",
+  "settingsModelThinkingLevelsRequired": "Choisissez au moins un niveau",
+  "settingsModelMediaHistory": "Historique média",
+  "settingsModelCapabilities": "Capacités",
+  "settingsModelBuiltinTools": "Outils intégrés",
+  "settingsModelBuiltinToolExclusive": "Désactive l'appel d'outils externes lorsqu'activé",
+  "settingsModelRunConnectionTest": "Tester le modèle actuel",
+  "settingsModelTestModel": "Tester",
+  "settingsModelCapabilityToolCall": "Outils",
+  "settingsModelCapabilityImage": "Image",
+  "settingsModelCapabilityAudio": "Audio",
+  "settingsModelCapabilityVideo": "Vidéo",
+  "settingsModelClaudeCache": "Cache Claude 1 h",
+  "settingsModelClaudeCacheDescription": "Définit un TTL d'une heure sur les points de cache explicites ; désactivé, le TTL par défaut s'applique.",
+  "settingsModelSummaryThresholdDescription": "Résume lorsque le contexte atteint cette proportion. 0 désactive les résumés.",
+  "settingsModelMoreActions": "Plus d'actions",
+  "settingsModelRestoreDefaults": "Rétablir les valeurs par défaut",
+  "settingsModelDescribeThinking": "Décrire les niveaux de réflexion",
+  "settingsModelDeleteModel": "Supprimer le modèle",
+  "settingsModelSaveFailed": "Impossible d'enregistrer : {error}",
+  "@settingsModelSaveFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelTestAll": "Tout tester",
+  "settingsModelTestProgress": "Test en cours {done}/{total}",
+  "@settingsModelTestProgress": {
+    "placeholders": {
+      "done": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestSummary": "{passed} réussis, {failed} échoués",
+  "@settingsModelTestSummary": {
+    "placeholders": {
+      "passed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestSummaryWithRestricted": "{passed} réussis, {failed} échoués, {restricted} restreints",
+  "@settingsModelTestSummaryWithRestricted": {
+    "placeholders": {
+      "passed": {
+        "type": "int"
+      },
+      "failed": {
+        "type": "int"
+      },
+      "restricted": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestAllPassed": "Les {count} tests ont réussi",
+  "@settingsModelTestAllPassed": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestCouldNotRun": "Le test n'a pas pu s'exécuter",
+  "settingsModelCopyError": "Copier l'erreur",
+  "settingsModelSelect": "Sélectionner",
+  "settingsModelCheckAll": "Tout sélectionner",
+  "settingsModelCheckedCount": "{count} sélectionné(s)",
+  "@settingsModelCheckedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteModelsTitle": "Supprimer {count} modèles ?",
+  "@settingsModelDeleteModelsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelDeleteModelsMessage": "Leurs paramètres seront également supprimés.",
+  "settingsModelDeleteModelsKept": "{count} utilisé(s) par des fonctions seront conservés : {names}",
+  "@settingsModelDeleteModelsKept": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "names": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeleteModelsBlocked": "Les modèles sélectionnés sont utilisés par ces fonctions. Modifiez d'abord l'attribution des modèles : {functions}",
+  "@settingsModelDeleteModelsBlocked": {
+    "placeholders": {
+      "functions": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelDeletedCount": "{count} modèles supprimés",
+  "@settingsModelDeletedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsModelTestingConnection": "Test de connexion du modèle actuel…",
+  "settingsModelTestedModel": "Modèle testé",
+  "settingsModelConnectionTestPassed": "Toutes les vérifications ont réussi",
+  "settingsModelConnectionTestFailed": "Certaines vérifications ont échoué",
+  "settingsModelConnectionTestRestricted": "Test restreint",
+  "settingsModelTestCreditRestricted": "Limite de crédit ou de budget de sortie",
+  "settingsModelTestRateRestricted": "Limite de débit ou délai d'attente en amont",
+  "settingsModelCapabilitiesApplied": "Les options de capacités du modèle ont été mises à jour selon le résultat du test.",
+  "settingsModelCapabilitiesNeedChat": "Le test de discussion a échoué ; les options de capacités du modèle n'ont pas été mises à jour.",
+  "settingsModelConnectionTestError": "Échec du test de connexion : {error}",
+  "@settingsModelConnectionTestError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsModelTestItemChat": "Discussion",
+  "settingsModelTestItemToolCall": "Appel d'outil",
+  "settingsModelTestItemImage": "Image",
+  "settingsModelTestItemAudio": "Audio",
+  "settingsModelTestItemVideo": "Vidéo",
+  "settingsModelTestItemUnknown": "Élément inconnu",
+  "settingsToolsPermissionMode": "Mode de capacités IA",
+  "settingsToolsAsk": "Demander",
+  "settingsToolsExtensions": "Gestion des extensions",
+  "settingsToolsPlugins": "Plugins",
+  "settingsToolsPluginsDescription": "Gérer les conteneurs de plugins ToolPkg et les extensions d'interface.",
+  "settingsToolsPackages": "Paquets d'outils",
+  "settingsToolsPackagesDescription": "Activer, désactiver et inspecter les paquets d'outils intégrés ou externes.",
+  "settingsToolsSkills": "Skills",
+  "settingsToolsSkillsDescription": "Gérer la visibilité et l'importation des paquets de Skill.",
+  "settingsToolsMcp": "Serveurs MCP",
+  "settingsToolsMcpDescription": "Gérer la configuration MCP. Délai d'attente au démarrage : {seconds} secondes.",
+  "@settingsToolsMcpDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsOverrides": "Enregistrements d'outils",
+  "settingsToolsToolGroups": "Outils enregistrés",
+  "settingsToolsToolGroupsDescription": "Outils enregistrés par l'environnement d'exécution actuel pour l'IA.",
+  "settingsToolsAlwaysAllow": "Autorisés dans cette session",
+  "settingsToolsAlwaysAllowDescription": "Ces outils ont été approuvés pour la session en cours.",
+  "settingsToolsAlwaysForbid": "Toujours interdire",
+  "settingsToolsAlwaysForbidDescription": "L'IA n'appellera pas ces outils.",
+  "settingsToolsAddTool": "Ajouter un outil",
+  "settingsToolsAddAllowTool": "Ajouter un outil autorisé",
+  "settingsToolsAddForbidTool": "Ajouter un outil interdit",
+  "settingsToolsSearchTools": "Rechercher des outils",
+  "settingsToolsNoToolsInGroup": "Aucun outil dans ce groupe.",
+  "settingsToolsMcpStartupTimeout": "Délai d'expiration au démarrage MCP",
+  "settingsToolsMcpStartupTimeoutSeconds": "Délai en secondes",
+  "settingsToolsToolPkgPreHookTimeout": "Délai d'expiration pré-hook ToolPkg",
+  "settingsToolsToolPkgPreHookDescription": "Une chaîne pré-hook ToolPkg dispose de {seconds} secondes au total.",
+  "@settingsToolsToolPkgPreHookDescription": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsToolsToolPkgPreHookTimeoutSeconds": "Total en secondes",
+  "settingsWorkspaceCurrentDesign": "Structure actuelle de l'espace de travail",
+  "settingsWorkspaceCurrentDesignDescription": "Les espaces de travail sont liés aux discussions. Les sessions de terminal et de navigateur sont globales et affichées à plat dans l'espace de travail.",
+  "settingsWorkspaceOpenChat": "Revenir à l'espace de travail de discussion",
+  "settingsWorkspaceOpenChatDescription": "Ouvrir les fichiers, terminaux, navigateur et automatisations web à droite de la discussion.",
+  "settingsWorkspaceContains": "L'espace de travail contient",
+  "settingsWorkspacePerChat": "Lié par discussion",
+  "settingsWorkspaceGlobalSessions": "Sessions de terminal globales",
+  "settingsWorkspaceBrowserSessions": "Sessions de navigateur et WebVisit",
+  "settingsWorkspaceBoundOverview": "Aperçu des liaisons d'espaces de travail",
+  "settingsWorkspaceBoundOverviewDescription": "Les chemins d'espace de travail enregistrés dans l'historique des discussions servent de source de liaison.",
+  "settingsWorkspaceBoundChats": "Discussions liées",
+  "settingsWorkspaceInternalRoot": "Racine interne des espaces de travail",
+  "settingsWorkspaceExternalRoot": "Ancienne racine externe des espaces de travail",
+  "settingsWorkspaceUnboundTitle": "Espaces de travail non liés",
+  "settingsWorkspaceUnboundSubtitle": "Ces dossiers d'espace de travail ne sont utilisés par aucune discussion.",
+  "settingsWorkspaceNoUnbound": "Aucun espace de travail non lié.",
+  "settingsWorkspaceSelectedCount": "Sélectionnés : {selected} / {total}",
+  "@settingsWorkspaceSelectedCount": {
+    "placeholders": {
+      "selected": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceSelectAllCurrentList": "Tout sélectionner",
+  "settingsWorkspaceClearAll": "Effacer",
+  "settingsWorkspaceInternalStorage": "Stockage interne",
+  "settingsWorkspaceExternalStorage": "Stockage externe",
+  "settingsWorkspaceNotUsedByAnyChat": "Non utilisé par une discussion",
+  "settingsWorkspaceDeleteSelected": "Supprimer les espaces de travail sélectionnés ({count})",
+  "@settingsWorkspaceDeleteSelected": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceConfirmDeleteTitle": "Confirmer la suppression",
+  "settingsWorkspaceDeleteConfirmation": "Supprimer les {count} dossiers d'espace de travail sélectionnés ?",
+  "@settingsWorkspaceDeleteConfirmation": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleted": "{count} espaces de travail non liés supprimés.",
+  "@settingsWorkspaceDeleted": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsWorkspaceDeleteFailed": "Échec de la suppression : {error}",
+  "@settingsWorkspaceDeleteFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceLoadFailed": "Échec du chargement des espaces de travail : {error}",
+  "@settingsWorkspaceLoadFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWorkspaceRefresh": "Actualiser",
+  "runtimeIdentity": "Identité actuelle",
+  "runtimeIdentityManage": "Changer ou gérer les identités",
+  "runtimeIdentitySheetTitle": "Identités",
+  "runtimeIdentityCreate": "Nouvelle identité",
+  "runtimeIdentityCreateTitle": "Nouvelle identité",
+  "runtimeIdentityRename": "Renommer l'identité",
+  "runtimeIdentityRenameTitle": "Renommer l'identité",
+  "runtimeIdentityName": "Nom (facultatif)",
+  "runtimeIdentitySwitchTitle": "Passer à {identityName} ?",
+  "@runtimeIdentitySwitchTitle": {
+    "placeholders": {
+      "identityName": {
+        "type": "String"
+      }
+    }
+  },
+  "runtimeIdentitySwitchDescription": "Chaque identité dispose de ses propres discussions, paramètres, Space d'appareil, appareils associés et espaces de travail. Changer d'identité arrête l'exécution en cours ; l'identité sélectionnée sera utilisée au prochain démarrage de l'application.",
+  "runtimeIdentitySwitchConfirm": "Changer d'identité",
+  "runtimeIdentityActivate": "Basculer",
+  "runtimeIdentityActions": "Actions pour cette identité",
+  "runtimeIdentityDelete": "Supprimer l'identité",
+  "runtimeIdentityDeleteTitle": "Supprimer « {identityName} » ?",
+  "@runtimeIdentityDeleteTitle": {
+    "placeholders": {
+      "identityName": {
+        "type": "String"
+      }
+    }
+  },
+  "runtimeIdentityDeleteDescription": "Cette identité sera retirée de la liste des identités de cet appareil. Ses fichiers locaux seront conservés.",
+  "runtimeIdentityCurrent": "Actuelle",
+  "settingsUserProfileTitle": "Gestion des identités",
+  "settingsUserProfileSubtitle": "Avatar, nom, identités et GitHub",
+  "settingsUserProfileDescription": "Gérez ce profil et basculez entre des identités isolées.",
+  "settingsUserProfileUnnamed": "Sans nom",
+  "settingsUserProfileNotLoggedIn": "Non connecté",
+  "settingsUserProfileGitHubLoading": "Chargement du compte GitHub...",
+  "settingsUserProfileGitHubAccount": "GitHub : @{account}",
+  "@settingsUserProfileGitHubAccount": {
+    "placeholders": {
+      "account": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUserProfileGitHubStatusError": "Erreur de statut GitHub : {error}",
+  "@settingsUserProfileGitHubStatusError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsUserProfileOverview": "Profil",
+  "settingsUserProfileAvatar": "Avatar",
+  "settingsUserProfileName": "Nom",
+  "settingsUserProfileChooseAvatar": "Choisir un avatar",
+  "settingsUserProfileClearAvatar": "Effacer l'avatar",
+  "settingsUserProfileEditName": "Modifier le nom",
+  "settingsUserProfileIdentities": "Identités locales",
+  "settingsUserProfileGitHub": "Compte GitHub",
+  "settingsUserProfileGitHubDescription": "Non connecté",
+  "settingsUserProfileLogin": "Se connecter",
+  "settingsUserProfileLogout": "Se déconnecter",
+  "settingsAppearanceAvatarCustom": "Avatar personnalisé",
+  "settingsRuntimeConnection": "Space d'appareils actuel",
+  "settingsRuntimeConnectionDescription": "État de connexion de cet appareil et de son Space d'appareils.",
+  "settingsRuntimeCurrentSpace": "Space d'appareils actuel",
+  "settingsRuntimeOverviewDescription": "Les appareils d'un même Space peuvent se connecter et partager données et routes.",
+  "settingsRuntimeRenameSpace": "Renommer le Space d'appareils",
+  "settingsRuntimeResetTransactions": "Réinitialiser les transactions",
+  "settingsRuntimeResetTransactionsDone": "Transactions de synchronisation reconstruites à partir du contenu actuel de cet appareil",
+  "settingsRuntimeLeaveSpace": "Quitter le Space d'appareils",
+  "settingsRuntimeLeaveSpaceTitle": "Quitter le Space d'appareils actuel ?",
+  "settingsRuntimeLeaveSpaceDescription": "Cet appareil créera un nouveau Space individuel. Les données métier et les appareils associés sont conservés.",
+  "settingsRuntimeLeaveSpaceConfirm": "Quitter",
+  "settingsRuntimeSpaceName": "Nom du Space d'appareils",
+  "settingsRuntimeSpaceId": "ID du Space d'appareils : {spaceId}",
+  "@settingsRuntimeSpaceId": {
+    "placeholders": {
+      "spaceId": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceDeviceCount": "{count} appareils",
+  "@settingsRuntimeSpaceDeviceCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeViewSpaceTopology": "Voir la topologie des appareils",
+  "settingsRuntimeSpaceTopologyTitle": "Topologie des appareils de {spaceName}",
+  "@settingsRuntimeSpaceTopologyTitle": {
+    "placeholders": {
+      "spaceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeSpaceTopologySummary": "{deviceCount} appareils · {connectionCount} connexions directes",
+  "@settingsRuntimeSpaceTopologySummary": {
+    "placeholders": {
+      "deviceCount": {
+        "type": "int"
+      },
+      "connectionCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnection": "Déconnecter",
+  "settingsRuntimeDisconnectConnectionTitle": "Couper la connexion directe",
+  "settingsRuntimeDisconnectConnectionMessage": "Couper la connexion directe avec {deviceName} ? Les enregistrements d'association seront conservés.",
+  "@settingsRuntimeDisconnectConnectionMessage": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisconnectConnectionFailed": "Échec de la déconnexion",
+  "settingsRuntimeCurrentDevice": "Appareil actuel",
+  "settingsRuntimeRemoteTitle": "Appareils connectés",
+  "settingsRuntimeRemoteDescription": "Appareils associés directement. L'association établit une connexion ; rejoindre un Space d'appareils active le partage de données et le routage.",
+  "settingsRuntimePairRemote": "Connecter un autre appareil",
+  "settingsRuntimeDiscoveredEdges": "Appareils ESP32",
+  "settingsRuntimeEdgeEndpointRequired": "Le point de terminaison Edge est requis",
+  "settingsRuntimePairingCodeRequired": "Le code d'association est requis",
+  "settingsRuntimeNoPairedRemote": "Aucun appareil connecté pour le moment.",
+  "settingsRuntimeConnectionInitiatedByOtherDevice": "Connexion initiée par l'autre appareil",
+  "settingsRuntimePairCode": "Code d'association",
+  "settingsRuntimeStartPairing": "Démarrer la connexion",
+  "settingsRuntimeFinishPairing": "Terminer la connexion",
+  "settingsRuntimeBaseUrl": "Adresse de l'appareil",
+  "settingsRuntimeTcpAddressHint": "hôte:port, par exemple 192.168.1.10:37195",
+  "settingsRuntimeTransportAuto": "Auto (recommandé)",
+  "settingsRuntimeTransportAutoHint": "Saisissez hôte:port ; le protocole (HTTP/WebSocket/TCP) est détecté automatiquement",
+  "settingsRuntimeConnectionFailed": "Échec de connexion à l'appareil : {error}",
+  "@settingsRuntimeConnectionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimePairingRejected": "Une connexion d'appareil a été refusée",
+  "settingsRuntimePairedChecking": "Vérification",
+  "settingsRuntimePairedOnline": "En ligne",
+  "settingsRuntimePairedOffline": "Hors ligne",
+  "settingsRuntimePairedInvalid": "Association invalide",
+  "settingsRuntimePairedError": "Statut indisponible",
+  "settingsRuntimePairingRevokedTitle": "Association révoquée par l'autre appareil",
+  "settingsRuntimePairingRevokedMessage": "L'autre appareil a annulé son association avec cet appareil. L'enregistrement local n'est plus valide.",
+  "settingsRuntimePairingRevokedConfirm": "Compris",
+  "settingsRuntimePairedRemovedFromSpace": "Retiré du Space d'appareils",
+  "settingsRuntimeRemovedFromSpaceTitle": "Retiré du Space d'appareils",
+  "settingsRuntimeRemovedFromSpaceMessage": "L'appareil distant a retiré cet appareil du Space. Quittez le Space actuel et créez un Space autonome maintenant.",
+  "settingsRuntimeRemovedFromSpaceConfirm": "Quitter et créer un Space autonome",
+  "settingsRuntimeJoinSpace": "Rejoindre le Space d'appareils",
+  "settingsRuntimeJoinSpaceTitle": "Rejoindre le Space d'appareils de {deviceName} ?",
+  "@settingsRuntimeJoinSpaceTitle": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeJoinSpaceDescription": "Le Space d'appareils actuel fusionnera avec l'autre et reprendra son nom.",
+  "settingsRuntimePairingComplete": "Appareil associé",
+  "settingsRuntimeDeviceInCurrentSpace": "Dans le Space d'appareils actuel",
+  "settingsRuntimeDiscoverSpaces": "Découvrir des Spaces d'appareils",
+  "settingsRuntimeDiscoverSpacesDescription": "Les appareils à proximité sont regroupés par Space d'appareils. Développez un Space pour vous connecter directement à l'un de ses appareils.",
+  "settingsRuntimeWebPairDescription": "Saisissez l'adresse d'un autre appareil et confirmez le code d'association pour connecter ce navigateur en tant que client associé actif.",
+  "settingsRuntimeDiscoveredSpaceSummary": "{memberCount} appareils au total · {nearbyCount} à proximité",
+  "@settingsRuntimeDiscoveredSpaceSummary": {
+    "placeholders": {
+      "memberCount": {
+        "type": "int"
+      },
+      "nearbyCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeScan": "Rechercher",
+  "settingsRuntimeScanning": "Recherche…",
+  "settingsRuntimeEnterManually": "Saisir manuellement",
+  "settingsRuntimeConnect": "Connecter",
+  "settingsRuntimeEnableDiscovery": "Autoriser les appareils à proximité à découvrir ce Space d'appareils",
+  "settingsRuntimeEnableDiscoveryDescription": "Les appareils sur le même réseau peuvent trouver ce Space d'appareils et choisir cet appareil pour une connexion directe.",
+  "settingsRuntimeEnableDiscoveryFailed": "Impossible d'activer la découverte du Space d'appareils : {error}",
+  "@settingsRuntimeEnableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeDisableDiscoveryFailed": "Impossible de désactiver la découverte du Space d'appareils : {error}",
+  "@settingsRuntimeDisableDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeUsingLocal": "Actif : cet appareil",
+  "settingsRuntimeUsingRemote": "Actif : {device}",
+  "@settingsRuntimeUsingRemote": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeRemoteInUseDescription": "Les discussions et les outils s'exécutent sur cet appareil connecté.",
+  "settingsWebAccessService": "Autoriser l'accès",
+  "settingsWebAccessServiceDescription": "Une fois activé, les navigateurs peuvent accéder à cet appareil avec une adresse et un token.",
+  "settingsWebAccessEnable": "Autoriser l'accès externe",
+  "settingsWebAccessPortMode": "Mode de port",
+  "settingsWebAccessPortAutomatic": "Automatique",
+  "settingsWebAccessPortFixed": "Fixe",
+  "settingsWebAccessPortAutomaticDescription": "L'application choisit un port automatiquement. Aucune configuration manuelle n'est requise.",
+  "settingsWebAccessPortFixedDescription": "Seul le port de l'adresse d'écoute est utilisé.",
+  "settingsWebAccessBindAddress": "Adresse d'écoute",
+  "settingsWebAccessToken": "Token d'accès",
+  "settingsWebAccessRotateToken": "Changer le token",
+  "settingsWebAccessCopyToken": "Copier le token",
+  "settingsWebAccessAccessUrl": "Adresse d'accès",
+  "settingsWebAccessLocalUrl": "Cet appareil",
+  "settingsWebAccessPairingUrl": "Adresse d'association",
+  "settingsWebAccessPairingUrlLocalOnly": "Cet appareil uniquement",
+  "settingsWebAccessPairingUrlUnavailable": "Aucune adresse LAN trouvée",
+  "settingsWebAccessCopyUrl": "Copier l'URL",
+  "settingsWebAccessOpenUrl": "Ouvrir l'adresse",
+  "settingsWebAccessRunning": "Activé",
+  "settingsWebAccessStopped": "Désactivé",
+  "settingsWebAccessSaved": "Paramètres d'accès enregistrés.",
+  "settingsWebAccessTokenCopied": "Token d'accès copié.",
+  "settingsWebAccessUrlCopied": "URL d'accès copiée.",
+  "settingsWebAccessPairedClients": "Appareils autorisés",
+  "settingsWebAccessNoPairedClients": "Aucun appareil autorisé pour le moment.",
+  "settingsWebAccessPairedDeleted": "Appareil autorisé supprimé.",
+  "settingsWebAccessPairingRequest": "Demande d'association",
+  "settingsWebAccessPairingRequestMessage": "Code d'association : {code}\nAppareil : {client}",
+  "@settingsWebAccessPairingRequestMessage": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      },
+      "client": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessInvalidBindAddress": "L'adresse d'écoute doit être au format hôte:port.",
+  "settingsWebAccessStartFailed": "Impossible d'activer l'accès : {error}",
+  "@settingsWebAccessStartFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsWebAccessStopFailed": "Impossible de désactiver l'accès : {error}",
+  "@settingsWebAccessStopFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeSection": "Thème",
+  "settingsAppearanceThemeMode": "Mode actuel",
+  "settingsAppearanceThemeSystem": "Système",
+  "settingsAppearanceThemeLight": "Clair",
+  "settingsAppearanceThemeDark": "Sombre",
+  "settingsAppearanceInputSection": "Saisie",
+  "settingsAppearanceInputStyle": "Style de saisie",
+  "settingsAppearanceInputStyleClassic": "Classique",
+  "settingsAppearanceInputStyleAgent": "Agent",
+  "settingsAppearanceInputFloating": "Saisie flottante",
+  "settingsAppearanceColorSection": "Couleur du thème",
+  "settingsAppearanceColorDescription": "Choisissez un préréglage de couleur simple. Les barres système et l'interface de l'application suivent automatiquement le thème.",
+  "settingsAppearanceColorDefault": "Par défaut",
+  "settingsAppearanceColorSky": "Ciel",
+  "settingsAppearanceColorMatcha": "Matcha",
+  "settingsAppearanceColorEmber": "Braise",
+  "settingsAppearanceColorRose": "Rose",
+  "settingsAppearanceColorCustom": "Couleurs personnalisées",
+  "settingsAppearanceCustomColorsTitle": "Couleurs de thème personnalisées",
+  "settingsAppearancePrimaryColor": "Couleur principale",
+  "settingsAppearanceSecondaryColor": "Couleur secondaire",
+  "settingsAppearanceHexColorHint": "#RRGGBB",
+  "settingsAppearanceHexColorInvalid": "Saisissez une couleur au format #RRGGBB",
+  "settingsAppearanceBackgroundSection": "Arrière-plan",
+  "settingsAppearanceBackgroundDescription": "Choisissez une image ou une vidéo locale comme arrière-plan. Les surfaces de l'application et les barres système suivent automatiquement le thème.",
+  "settingsAppearanceBackgroundImage": "Média d'arrière-plan",
+  "settingsAppearanceBackgroundNone": "Aucun sélectionné",
+  "settingsAppearanceBackgroundChooseImage": "Choisir une image",
+  "settingsAppearanceBackgroundChooseVideo": "Choisir une vidéo",
+  "settingsAppearanceBackgroundDisable": "Désactiver l'arrière-plan",
+  "settingsAppearanceBackgroundEnabled": "Activer l'arrière-plan",
+  "settingsAppearanceBackgroundOpacity": "Opacité de l'arrière-plan",
+  "settingsAppearanceBackgroundBlur": "Flouter l'arrière-plan",
+  "settingsAppearanceBackgroundBlurRadius": "Intensité du flou",
+  "settingsAppearanceBackgroundVideoMuted": "Couper le son de la vidéo d'arrière-plan",
+  "settingsAppearanceBackgroundVideoLoop": "Lire la vidéo d'arrière-plan en boucle",
+  "settingsAppearanceTextSection": "Texte",
+  "settingsAppearanceFontFamily": "Police",
+  "settingsAppearanceFontDefault": "Par défaut",
+  "settingsAppearanceCustomFont": "Police personnalisée",
+  "settingsAppearanceFontCustom": "Personnalisée",
+  "settingsAppearanceChooseCustomFont": "Choisir une police personnalisée",
+  "settingsAppearanceClearCustomFont": "Effacer la police personnalisée",
+  "settingsAppearanceFontSerif": "Serif",
+  "settingsAppearanceFontMonospace": "Mono",
+  "settingsAppearanceInterfaceScale": "Échelle de l'interface",
+  "settingsAppearanceFontScale": "Taille de police",
+  "settingsAppearanceAvatarSection": "Avatars",
+  "settingsAppearanceUserAvatar": "Avatar utilisateur",
+  "settingsAppearanceAiAvatar": "Avatar IA",
+  "settingsAppearanceAvatarDefault": "Avatar par défaut",
+  "settingsAppearanceAvatarShape": "Forme des avatars",
+  "settingsAppearanceAvatarShapeCircle": "Cercle",
+  "settingsAppearanceAvatarShapeSquare": "Carré",
+  "settingsAppearanceChooseUserAvatar": "Choisir l'avatar utilisateur",
+  "settingsAppearanceChooseAiAvatar": "Choisir l'avatar IA",
+  "settingsAppearanceClearUserAvatar": "Effacer l'avatar utilisateur",
+  "settingsAppearanceClearAiAvatar": "Effacer l'avatar IA",
+  "settingsAppearanceChatDisplaySection": "Affichage du chat",
+  "settingsAppearanceUserMessageStyle": "Style des messages utilisateur",
+  "settingsAppearanceAiMessageStyle": "Style des messages IA",
+  "settingsAppearanceMessageStyleClean": "Commande",
+  "settingsAppearanceMessageStyleCard": "Bulle",
+  "settingsAppearanceMessageColors": "Couleurs des messages",
+  "settingsAppearanceMessageColorsTheme": "Suivre le thème",
+  "settingsAppearanceMessageColorsSky": "Bleu clair",
+  "settingsAppearanceMessageColorsMatcha": "Matcha",
+  "settingsAppearanceMessageColorsInk": "Sombre",
+  "settingsAppearanceMessageColorsCustom": "Couleurs de messages personnalisées",
+  "settingsAppearanceCustomMessageColorsTitle": "Couleurs de messages personnalisées",
+  "settingsAppearanceCursorUserBubbleColor": "Bulle utilisateur (Commande)",
+  "settingsAppearanceUserBubbleColor": "Bulle utilisateur",
+  "settingsAppearanceAiBubbleColor": "Bulle IA",
+  "settingsAppearanceUserTextColor": "Texte utilisateur",
+  "settingsAppearanceAiTextColor": "Texte IA",
+  "settingsAppearanceMessageSurface": "Texture globale",
+  "settingsAppearanceMessageSurfaceNormal": "Normale",
+  "settingsAppearanceMessageSurfaceTransparent": "Transparente",
+  "settingsAppearanceUserBubbleFont": "Police de bulle utilisateur",
+  "settingsAppearanceAiBubbleFont": "Police de bulle IA",
+  "settingsAppearanceAdjustUserBubbleFont": "Ajuster la police de bulle utilisateur",
+  "settingsAppearanceAdjustAiBubbleFont": "Ajuster la police de bulle IA",
+  "settingsAppearanceEnableBubbleFont": "Activer une police propre aux bulles",
+  "settingsAppearanceUserBubbleImage": "Image de bulle utilisateur",
+  "settingsAppearanceAiBubbleImage": "Image de bulle IA",
+  "settingsAppearanceChooseUserBubbleImage": "Choisir la bulle utilisateur",
+  "settingsAppearanceChooseAiBubbleImage": "Choisir la bulle IA",
+  "settingsAppearanceClearUserBubbleImage": "Effacer la bulle utilisateur",
+  "settingsAppearanceClearAiBubbleImage": "Effacer la bulle IA",
+  "settingsAppearanceBubbleImageRenderMode": "Mode d'image de bulle",
+  "settingsAppearanceBubbleImageTiledNineSlice": "Mosaïque 9-slice",
+  "settingsAppearanceBubbleImageNinePatch": "Étirement 9-patch",
+  "settingsAppearanceBubbleImageAdjustUser": "Ajuster l'image de bulle utilisateur",
+  "settingsAppearanceBubbleImageAdjustAi": "Ajuster l'image de bulle IA",
+  "settingsAppearanceBubbleImagePreview": "Aperçu en direct",
+  "settingsAppearanceBubbleImagePreviewText": "Ceci est un message d'aperçu de bulle.\nVérifiez les coins, les bords et le centre à leur taille réelle.",
+  "settingsAppearanceBubbleImageSource": "Original",
+  "settingsAppearanceBubbleImageSourceHint": "Original · Blanc : zone de recadrage. Bleu : grille 9-slice. Pincez pour zoomer et faites glisser pour inspecter.",
+  "settingsAppearanceBubbleImageFitSource": "Ajuster l'image d'origine",
+  "settingsAppearanceBubbleImageGrid": "9-slice",
+  "settingsAppearanceBubbleImageGridHint": "Deux coupes horizontales et deux verticales forment neuf zones. Les coins restent fixes ; les bords se répètent sur un axe et le centre sur les deux. Le mode étirement étire ces zones à la place. Les limites sont relatives à l'image recadrée.",
+  "settingsAppearanceBubbleImageImportFailed": "Image de bulle non appliquée : {error}",
+  "@settingsAppearanceBubbleImageImportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceBubbleImageCrop": "Recadrer",
+  "settingsAppearanceBubbleImageRepeat": "Zone de répétition",
+  "settingsAppearanceBubbleImageScale": "Échelle de l'image",
+  "settingsAppearanceBubbleImageCropLeft": "Recadrage gauche",
+  "settingsAppearanceBubbleImageCropTop": "Recadrage haut",
+  "settingsAppearanceBubbleImageCropRight": "Recadrage droite",
+  "settingsAppearanceBubbleImageCropBottom": "Recadrage bas",
+  "settingsAppearanceBubbleImageRepeatStart": "Début répétition X",
+  "settingsAppearanceBubbleImageRepeatEnd": "Fin répétition X",
+  "settingsAppearanceBubbleImageRepeatYStart": "Début répétition Y",
+  "settingsAppearanceBubbleImageRepeatYEnd": "Fin répétition Y",
+  "settingsAppearanceMessageDensity": "Espacement des messages",
+  "settingsAppearanceMessageDensityComfortable": "Confortable",
+  "settingsAppearanceMessageDensityCompact": "Compact",
+  "settingsAppearanceWideLayout": "Utiliser une mise en page de chat plus large",
+  "settingsAppearanceRoundedMessages": "Cartes de message arrondies",
+  "settingsAppearanceShowAvatars": "Afficher les avatars des messages",
+  "settingsAppearanceMessageDisplaySection": "Affichage des messages",
+  "settingsAppearanceShowThinkingProcess": "Afficher le processus de réflexion",
+  "settingsAppearanceShowRoleName": "Afficher les noms personnalisés des répondants",
+  "settingsAppearanceShowUserName": "Afficher le nom d'utilisateur",
+  "settingsAppearanceShowModelName": "Afficher le nom du modèle",
+  "settingsAppearanceShowModelProvider": "Afficher le fournisseur du modèle",
+  "settingsAppearanceShowMessageTokenStats": "Afficher les statistiques de tokens",
+  "settingsAppearanceShowMessageTimingStats": "Afficher les statistiques de durée",
+  "settingsAppearanceShowMessageTimestamp": "Afficher l'heure des messages",
+  "settingsAppearanceShowInputProcessingStatus": "Afficher l'état de traitement de la saisie",
+  "settingsAppearanceResetTheme": "Réinitialiser les paramètres du thème",
+  "settingsAppearanceLanguageSection": "Langue",
+  "settingsAppearanceLanguage": "Langue actuelle",
+  "settingsAppearanceLanguageDescription": "La langue suit la configuration de localisation chargée au démarrage de l'application.",
+  "settingsAppearanceBubblesTab": "Messages et bulles",
+  "settingsAppearanceInteractionTab": "Interaction et flux",
+  "settingsAppearanceBubbleStyleSection": "Mise en page et style",
+  "settingsAppearanceBubbleFontSection": "Polices des bulles",
+  "settingsAppearanceBubbleImageSection": "Images des bulles",
+  "settingsAppearanceInteractionStatusSection": "Processus et statut",
+  "settingsAppearanceBackgroundEffectsSection": "Effets visuels",
+  "settingsAppearanceBackgroundVideoSection": "Lecture vidéo",
+  "settingsAppearanceLivePreviewTitle": "Aperçu en direct",
+  "settingsAppearanceLivePreviewUserSample": "Aide-moi à organiser mon plan de travail d'aujourd'hui.",
+  "settingsAppearanceLivePreviewAiSample": "Bien sûr ! J'ai organisé votre liste de tâches principales et nous sommes prêts à commencer.",
+  "settingsAppearanceLivePreviewThinkingSample": "Analyse du contexte et des priorités du planning...",
+  "settingsDataLogsSection": "Journaux de diagnostic",
+  "settingsDataLogsDescription": "Exportez les journaux du Core sélectionné et de ce client dans un seul fichier .log trié chronologiquement, marqué [CORE] / [CLIENT]. Les journaux peuvent contenir des données sensibles ; vérifiez-les avant de les partager.",
+  "settingsDataExportLogs": "Exporter les journaux de diagnostic",
+  "settingsDataLogsExporting": "Exportation des journaux…",
+  "settingsDataLogsExportError": "Échec de l'exportation des journaux : {error}",
+  "@settingsDataLogsExportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataLogsExportPartial": "Enregistré dans {path}. Une source de journaux n'a pas pu être lue ; consultez les avertissements dans le fichier.",
+  "@settingsDataLogsExportPartial": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataOverviewLoadError": "Impossible de charger l'aperçu des données : {error}. Vous pouvez tout de même exporter les journaux de diagnostic.",
+  "@settingsDataOverviewLoadError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataRuntimeSection": "Aperçu des données",
+  "settingsDataCoreVersion": "Version actuelle",
+  "settingsDataStorageSection": "Emplacement de stockage",
+  "settingsDataStorageDescription": "Déplacez les données du runtime et de l'espace de travail dans des dossiers locaux sélectionnés séparément.",
+  "settingsDataRuntimeRoot": "Racine du runtime",
+  "settingsDataWorkspaceRoot": "Racine de l'espace de travail",
+  "settingsDataChooseStorageRoots": "Modifier les emplacements",
+  "settingsDataEditStorageRootsTitle": "Modifier les emplacements de stockage",
+  "settingsDataStorageRootsRequired": "La racine du runtime et la racine de l'espace de travail sont obligatoires.",
+  "storageDirectoryTermuxUnsupported": "Le fournisseur de documents de Termux n'est pas pris en charge pour les chemins de stockage local. Choisissez un dossier dans le stockage partagé (tel que Download ou Documents) plutôt que le dossier privé de Termux.",
+  "storageDirectoryProviderUnsupported": "Le dossier sélectionné ne correspond pas à un chemin de stockage local pris en charge. Choisissez un dossier dans le stockage partagé (tel que Download ou Documents) ou saisissez un chemin local accessible par cette application.",
+  "storageDirectorySelectionFailed": "Impossible de sélectionner un dossier : {error}",
+  "@storageDirectorySelectionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataStorageConfirmTitle": "Changer l'emplacement de stockage",
+  "settingsDataStorageConfirmMessage": "Les données du runtime et de l'espace de travail seront copiées dans les dossiers sélectionnés, et l'application les utilisera après redémarrage.",
+  "settingsDataStorageConfirmAction": "Changer l'emplacement",
+  "settingsDataStorageChanged": "Emplacement de stockage modifié. Redémarrez l'application pour l'utiliser.",
+  "settingsDataStorageChangeError": "Échec du changement d'emplacement de stockage : {error}",
+  "@settingsDataStorageChangeError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataInputTokens": "Entrée",
+  "settingsDataOutputTokens": "Sortie",
+  "settingsDataResetTokenStats": "Réinitialiser les statistiques",
+  "settingsUsageReportResetConfirmation": "Cela supprime définitivement tous les relevés d'utilisation des modèles enregistrés. Vos conversations sont conservées.",
+  "settingsDataDetailedStatsDescription": "Les statistiques sont calculées à partir des relevés dédiés aux requêtes de modèle.",
+  "settingsDataDetailedStatsEmpty": "Aucun relevé d'utilisation détaillé pour le moment",
+  "settingsDataDetailedStatsDateRange": "Du {start} au {end}",
+  "@settingsDataDetailedStatsDateRange": {
+    "placeholders": {
+      "start": {
+        "type": "String"
+      },
+      "end": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsSourceLabel": "Relevés de requêtes de modèle",
+  "settingsDataDetailedStatsHistoricalTotal": "Total historique",
+  "settingsDataDetailedStatsRangeAll": "Tout",
+  "settingsDataDetailedStatsRangeLast7Days": "7 jours",
+  "settingsDataDetailedStatsRangeLast30Days": "30 jours",
+  "settingsDataDetailedStatsRangeCustom": "Personnalisé",
+  "settingsDataDetailedStatsCustomRangePickerTitle": "Sélectionner la plage de dates des statistiques",
+  "settingsDataDetailedStatsNoDataInRange": "Aucune donnée sur cette période",
+  "settingsDataDetailedStatsNoRankRows": "Aucune donnée de classement sur cette période",
+  "settingsDataDetailedStatsFunctionModels": "Modèles de fonction",
+  "settingsDataDetailedStatsFunctionModelPieTitle": "Répartition des modèles de fonction",
+  "settingsDataDetailedStatsTopFunctionModelsTitle": "Classement des modèles de fonction",
+  "settingsDataDetailedStatsTopFunctionModelsSubtitle": "Plus forte consommation totale de tokens par modèle de fonction",
+  "settingsDataDetailedStatsSourceChat": "Réponse de discussion",
+  "settingsDataDetailedStatsSourceToolResult": "Réponse de résultat d'outil",
+  "settingsDataDetailedStatsSourceSummary": "Génération de résumé",
+  "settingsDataDetailedStatsSourceTitleGeneration": "Génération de titre",
+  "settingsDataDetailedStatsTotalRequests": "Total des requêtes",
+  "settingsDataDetailedStatsCachedInput": "Entrée en cache",
+  "settingsDataDetailedStatsActiveDays": "Jours actifs",
+  "settingsDataDetailedStatsChats": "Conversations",
+  "settingsDataDetailedStatsProviders": "Fournisseurs",
+  "settingsDataDetailedStatsModels": "Modèles",
+  "settingsDataDetailedStatsUnknownTokenRecords": "Relevés avec tokens inconnus",
+  "settingsDataDetailedStatsHeatmapTitle": "Carte thermique d'utilisation",
+  "settingsDataDetailedStatsHeatmapSubtitle": "Intensité quotidienne des tokens sur la période sélectionnée",
+  "settingsDataDetailedStatsHeatmapTapHint": "Touchez une cellule pour afficher les détails",
+  "settingsDataDetailedStatsHeatmapDayDetail": "{date} : {tokens} tokens utilisés · {requests} requêtes",
+  "@settingsDataDetailedStatsHeatmapDayDetail": {
+    "placeholders": {
+      "date": {
+        "type": "String"
+      },
+      "tokens": {
+        "type": "String"
+      },
+      "requests": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsHeatmapLow": "Moins",
+  "settingsDataDetailedStatsHeatmapHigh": "Plus",
+  "settingsDataDetailedStatsDailyUsageTitle": "Tendance d'utilisation quotidienne",
+  "settingsDataDetailedStatsDailyUsageSubtitle": "Nombre de requêtes par jour",
+  "settingsDataDetailedStatsRequestsSeries": "Requêtes",
+  "settingsDataDetailedStatsInputOutputTitle": "Tendance de consommation entrée / sortie",
+  "settingsDataDetailedStatsInputOutputSubtitle": "Évolution quotidienne des tokens en entrée et en sortie",
+  "settingsDataDetailedStatsProviderPieTitle": "Répartition par fournisseur",
+  "settingsDataDetailedStatsModelPieTitle": "Répartition par modèle",
+  "settingsDataDetailedStatsChatPieTitle": "Répartition par conversation",
+  "settingsDataDetailedStatsTotalTokens": "Total des tokens",
+  "settingsDataDetailedStatsTopRequestsTitle": "Pics par requête",
+  "settingsDataDetailedStatsTopRequestsSubtitle": "Plus forte consommation de tokens sur des appels individuels",
+  "settingsDataDetailedStatsTopChatsTitle": "Principales conversations",
+  "settingsDataDetailedStatsTopChatsSubtitle": "Plus forte consommation totale de tokens par conversation",
+  "settingsDataDetailedStatsOther": "Autres",
+  "settingsDataDetailedStatsInputOutputSummary": "Entrée {input} · Sortie {output} · {chatTitle} · {time}",
+  "@settingsDataDetailedStatsInputOutputSummary": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      },
+      "chatTitle": {
+        "type": "String"
+      },
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataDetailedStatsRequestModelSummary": "{requests} requêtes · {models} modèles",
+  "@settingsDataDetailedStatsRequestModelSummary": {
+    "placeholders": {
+      "requests": {
+        "type": "int"
+      },
+      "models": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataDetailedStatsRequestCountSummary": "{requests} requêtes",
+  "@settingsDataDetailedStatsRequestCountSummary": {
+    "placeholders": {
+      "requests": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataDetailedStatsUnlabeledProvider": "Fournisseur sans libellé",
+  "settingsDataDetailedStatsUnlabeledModel": "Modèle sans libellé",
+  "settingsDataDetailedStatsUntitledChat": "Conversation sans titre",
+  "settingsDataBackupSection": "Sauvegarde et restauration",
+  "settingsDataChatHistoriesBackup": "Données de discussion",
+  "settingsDataChatHistoriesBackupDescription": "Sauvegardez toutes les discussions et tous les messages. La restauration met à jour ou crée les discussions selon leur identifiant.",
+  "settingsDataModelConfigsBackup": "Paramètres des modèles",
+  "settingsDataModelConfigsBackupDescription": "Sauvegardez tous les paramètres des modèles, y compris leurs réglages et les groupes de clés API.",
+  "settingsDataBackupCount": "{count} éléments",
+  "@settingsDataBackupCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataExportBackupJson": "Exporter la sauvegarde",
+  "settingsDataImportBackupJson": "Restaurer les données",
+  "settingsDataBackupImportResult": "Restauration terminée : {newCount} nouveaux, {updatedCount} mis à jour, {skippedCount} ignorés.",
+  "@settingsDataBackupImportResult": {
+    "placeholders": {
+      "newCount": {
+        "type": "int"
+      },
+      "updatedCount": {
+        "type": "int"
+      },
+      "skippedCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataBackupImportError": "Échec de la restauration : {error}",
+  "@settingsDataBackupImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataBackupExportError": "Échec de l'exportation : {error}",
+  "@settingsDataBackupExportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotBackupTitle": "Instantané complet",
+  "settingsDataExportRawSnapshot": "Exporter l'instantané complet",
+  "settingsDataImportRawSnapshot": "Restaurer un instantané complet",
+  "settingsDataExportRawSnapshotDescription": "Empaquete les discussions, les données des plugins, les paramètres des modèles et les fichiers locaux dans un fichier .opsnapshot.",
+  "settingsDataDatabaseBackup": "Sauvegarde de la base de données",
+  "settingsDataDatabaseBackupDescription": "Enregistre chaque jour une copie de la base de données et conserve les 10 sauvegardes automatiques les plus récentes. Les pièces jointes et les fichiers de l'espace de travail sont stockés séparément.",
+  "settingsDataBackupScheduled": "Sauvegarde quotidienne activée",
+  "settingsDataBackupUnavailable": "Choisissez un dossier accessible pour activer les sauvegardes quotidiennes",
+  "settingsDataBackupNow": "Sauvegarder maintenant",
+  "settingsDataBackupSaved": "Sauvegarde de la base de données enregistrée.",
+  "settingsDataRecoverySection": "Restaurer les données",
+  "settingsDataRestoreDatabaseDescription": "Choisissez une sauvegarde datée de la base de données. Les données restaurées deviennent la source de référence pour la synchronisation avec les autres appareils.",
+  "settingsDataRestoreArchiveDescription": "Remplace les données actuelles du runtime par un instantané complet Operit2 et redémarre l'application.",
+  "settingsDataImportSection": "Importer des données",
+  "settingsDataImportOperit1Description": "Prévisualisez un instantané Operit1 avant de migrer les discussions, les paramètres des modèles et les fichiers.",
+  "settingsDataImportChatJson": "Importer le JSON des discussions",
+  "settingsDataImportChatJsonDescription": "Ajoute des discussions et met à jour les discussions existantes ayant un identifiant correspondant.",
+  "settingsDataImportModelJson": "Importer le JSON des paramètres des modèles",
+  "settingsDataImportModelJsonDescription": "Ajoute des paramètres de fournisseur de modèles et met à jour les fournisseurs existants ayant un identifiant correspondant.",
+  "settingsDataImportAction": "Importer",
+  "settingsDataReadingSnapshot": "Lecture de l'instantané",
+  "settingsDataPreparingPreview": "Préparation de l'aperçu",
+  "settingsDataOperit1ImportResult": "{chatCount} discussions et {messageCount} messages importés.",
+  "@settingsDataOperit1ImportResult": {
+    "placeholders": {
+      "chatCount": {
+        "type": "int"
+      },
+      "messageCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataExportSection": "Exporter des fichiers",
+  "settingsDataExportChatJson": "Exporter le JSON des discussions",
+  "settingsDataExportModelJson": "Exporter le JSON des paramètres des modèles",
+  "settingsDataSnapshotBytes": "Taille de l'instantané : {bytes} octets",
+  "@settingsDataSnapshotBytes": {
+    "placeholders": {
+      "bytes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataSnapshotImported": "Instantané restauré.",
+  "settingsDataSnapshotExportError": "Échec de l'exportation de l'instantané : {error}",
+  "@settingsDataSnapshotExportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotImportError": "Échec de la restauration de l'instantané : {error}",
+  "@settingsDataSnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmTitle": "Restaurer l'instantané complet",
+  "settingsDataSnapshotRestoreConfirmMessage": "La restauration remplacera les données actuelles du runtime.\nVersion du format : {formatVersion}\nFichiers : {fileCount}\nCréé le : {createdAt}\nTaille de l'instantané : {bytes} octets",
+  "@settingsDataSnapshotRestoreConfirmMessage": {
+    "placeholders": {
+      "formatVersion": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "createdAt": {
+        "type": "String"
+      },
+      "bytes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataSnapshotRestoreConfirmAction": "Restaurer",
+  "settingsDataImportOperit1Snapshot": "Importer depuis Operit1",
+  "settingsDataOperit1SnapshotImported": "Instantané Operit1 importé.",
+  "settingsDataOperit1SnapshotImportError": "Échec de l'importation de l'instantané Operit1 : {error}",
+  "@settingsDataOperit1SnapshotImportError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportConfirmMessage": "Importer cet instantané Operit1 dans le runtime actuel.\nFichier : {fileName}\nVersion du format : {formatVersion}\nModèle de discussion : {chatModelId}\nDiscussions : {chatCount} ; messages : {messageCount}\nFichiers de ressources : {fileCount}\nTaille de l'instantané : {byteCount} octets",
+  "@settingsDataOperit1SnapshotImportConfirmMessage": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      },
+      "formatVersion": {
+        "type": "int"
+      },
+      "chatModelId": {
+        "type": "String"
+      },
+      "chatCount": {
+        "type": "int"
+      },
+      "messageCount": {
+        "type": "int"
+      },
+      "fileCount": {
+        "type": "int"
+      },
+      "byteCount": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataOperit1SnapshotImportAction": "Importer",
+  "settingsDataAdvancedBackupOptions": "Options avancées",
+  "settingsDataAdvancedBackupOptionsDescription": "Exportation et restauration JSON par élément",
+  "settingsRuntimeNetworkControl": "Contrôle réseau",
+  "settingsRuntimeNetworkControlDescription": "Gérer les identités et autorisations des appareils, et consulter l'activité",
+  "settingsRuntimeIdentitiesAndPermissions": "Identités et autorisations",
+  "settingsRuntimeControlInitialize": "Initialiser le contrôle",
+  "settingsRuntimeControlRoles": "Rôles",
+  "settingsRuntimeControlIdentities": "Identités",
+  "settingsRuntimeControlAuditAccepted": "Appliqué",
+  "settingsRuntimeControlAuditRejected": "Rejeté",
+  "settingsRuntimeControlAuditIssuer": "Demandé par",
+  "settingsRuntimeControlAuditDetails": "Détails techniques",
+  "settingsRuntimeControlAuditBootstrap": "Initialiser les autorisations du Space",
+  "settingsRuntimeControlAuditAdmit": "Admettre l'appareil",
+  "settingsRuntimeControlAuditMerge": "Fusionner les Spaces des appareils",
+  "settingsRuntimeControlAuditPolicy": "Mettre à jour la politique d'autorisations",
+  "settingsRuntimeControlAudit": "Activité",
+  "settingsRuntimeControlAddRole": "Nouvelle identité",
+  "settingsRuntimeControlGrantRole": "Attribuer un rôle",
+  "settingsRuntimeControlAddIdentity": "Ajouter une identité",
+  "settingsRuntimeControlBindDevice": "Associer un appareil",
+  "settingsRuntimeControlRoleName": "Nom de l'identité",
+  "settingsRuntimeControlCapabilities": "Actions autorisées pour cette identité",
+  "settingsRuntimeControlManagedDevices": "Appareils gérés par ce rôle (vide = tous)",
+  "settingsRuntimeControlIdentityName": "Nom de l'identité",
+  "settingsRuntimeControlDeviceId": "ID de l'appareil",
+  "settingsRuntimeControlNoAudit": "Aucune activité pour le moment. Les changements d'identité et d'appareil apparaîtront ici.",
+  "settingsRuntimeControlAuditCount": "{count} entrées",
+  "@settingsRuntimeControlAuditCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeControlNoBindings": "Aucune association d'appareil",
+  "settingsRuntimeControlGranted": "Accordé",
+  "settingsRuntimeControlRevoked": "Révoqué",
+  "settingsRuntimeControlRemoveDevice": "Retirer l'appareil",
+  "settingsRuntimeControlDisconnectDevice": "Isoler l'appareil",
+  "settingsRuntimeControlRemoved": "Retiré",
+  "settingsRuntimeControlDisconnected": "Isolé",
+  "settingsRuntimeControlAdmitDevice": "Lever l'isolement",
+  "settingsRuntimeControlAllDevices": "Tous les appareils",
+  "settingsRuntimeControlManages": "Gère",
+  "settingsRuntimeControlLocalIdentity": "Cet appareil",
+  "settingsRuntimeControlCurrentIdentity": "Identité actuelle",
+  "settingsRuntimeControlCurrentCapabilities": "Autorisations",
+  "settingsRuntimeControlManageIdentities": "Gérer les identités",
+  "settingsRuntimeControlAssignIdentity": "Définir l'identité de l'appareil",
+  "settingsRuntimeControlClearIdentity": "Réinitialiser à l'identité par défaut",
+  "settingsRuntimeControlDeviceAdmitted": "Isolement levé ; en attente de reconnexion de l'appareil",
+  "settingsRuntimeControlIdentityResetDone": "Identité réinitialisée à l'utilisateur par défaut",
+  "settingsRuntimeControlIdentityDefinitions": "Autorisations d'identité",
+  "settingsRuntimeControlIdentityCount": "{count} identités",
+  "@settingsRuntimeControlIdentityCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsRuntimeControlIdentityAssignment": "Attribution d'identité",
+  "settingsRuntimeControlNoIdentity": "Aucune identité attribuée",
+  "settingsRuntimeControlOnline": "En ligne",
+  "settingsRuntimeControlOffline": "Hors ligne",
+  "settingsRuntimeControlCapabilityAll": "Tout",
+  "settingsRuntimeControlCapabilityAuditRead": "Consulter l'historique d'audit",
+  "settingsRuntimeControlCapabilityNetworkRelay": "Relayer le trafic réseau",
+  "settingsRuntimeControlCapabilityStorageProvide": "Stocker des répliques de données partagées",
+  "settingsRuntimeControlCapabilityRuntimeExecute": "Héberger l'exécution du Core",
+  "settingsRuntimeControlCapabilityViewDevices": "Voir les appareils et les identités actuelles",
+  "settingsRuntimeControlCapabilityApproval": "Approuver les autorisations",
+  "chatRoutePermissionDenied": "Autorisation refusée : l'appareil cible {targetNodeId} ne dispose pas de la capacité {capability}.",
+  "@chatRoutePermissionDenied": {
+    "placeholders": {
+      "targetNodeId": {},
+      "capability": {}
+    }
+  },
+  "settingsRuntimeControlRoleAdministrator": "Administrateur",
+  "settingsRuntimeControlRoleRelay": "Nœud relais",
+  "settingsRuntimeControlRoleEdge": "Nœud périphérique",
+  "settingsRuntimeControlRoleUser": "Utilisateur",
+  "pluginLoadingTitle": "Chargement",
+  "pluginLoadingSkip": "Ignorer",
+  "pluginLoadingCollapse": "Réduire",
+  "pluginLoadingStatus": "Démarrés : {started} / {total}",
+  "@pluginLoadingStatus": {
+    "placeholders": {
+      "started": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
+  "pluginLoadingCurrentTask": "Chargement de {task}",
+  "@pluginLoadingCurrentTask": {
+    "placeholders": {
+      "task": {
+        "type": "String"
+      }
+    }
+  },
+  "pluginLoadingSuccess": "Chargé",
+  "pluginLoadingFailed": "Échec",
+  "pluginLoadingWaiting": "En attente",
+  "pluginLoadingKindPackage": "Paquet",
+  "pluginLoadingKindPlugin": "Plugin",
+  "pluginLoadingKindMcp": "MCP",
+  "pluginLoadingCompleteSuccess": "Tous les paquets et plugins sont chargés",
+  "pluginLoadingCompleteWithFailures": "Échec du chargement de certains paquets ou plugins",
+  "pluginLoadingNoLogs": "Aucun journal",
+  "chatRouteLocal": "Local",
+  "chatRouteRemote": "{platform} distant",
+  "chatRouteRemoteOffline": "{platform} distant hors ligne",
+  "chatRouteLoading": "Chargement de l'appareil d'exécution",
+  "chatRouteUnknown": "État de l'appareil d'exécution inconnu",
+  "chatRouteClaimHostPrompt": "L'appareil hôte de cette discussion est introuvable. Basculer vers cet appareil ?",
+  "chatRouteClaimHostYes": "Oui",
+  "chatRouteClaimHostNo": "Non",
+  "@chatRouteRemote": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "@chatRouteRemoteOffline": {
+    "placeholders": {
+      "platform": {
+        "type": "String"
+      }
+    }
+  },
+  "edgePairingCodeTitle": "Saisissez le code d'appairage pour {deviceName}",
+  "@edgePairingCodeTitle": {
+    "placeholders": {
+      "deviceName": {
+        "type": "String"
+      }
+    }
+  },
+  "edgePairingCodeHint": "Lisez le code à six chiffres affiché par l'appareil.",
+  "chatMessageResponse": "Réponse",
+  "chatMessagePrompt": "Prompt",
+  "chatMessagePromptBy": "Prompt de {sender}",
+  "@chatMessagePromptBy": {
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensTooltip": "Tokens : ↑{input} · ↓{output}",
+  "@chatMessageTokensTooltip": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensCachedTooltip": "Tokens : ↑{input} (en cache : {cached}) · ↓{output}",
+  "@chatMessageTokensCachedTooltip": {
+    "placeholders": {
+      "input": {
+        "type": "String"
+      },
+      "cached": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTimingTooltip": "Durée : {wait} d'attente · {output} de sortie",
+  "@chatMessageTimingTooltip": {
+    "placeholders": {
+      "wait": {
+        "type": "String"
+      },
+      "output": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTimeTooltip": "Heure : {time}",
+  "@chatMessageTimeTooltip": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageInfoDialogTitle": "Détails du message",
+  "chatMessageDeleteConfirmTitle": "Confirmer la suppression",
+  "chatMessageDeleteConfirmMessage": "Supprimer ce message ?",
+  "chatMessageSender": "Expéditeur : {sender}",
+  "@chatMessageSender": {
+    "placeholders": {
+      "sender": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTimestamp": "Horodatage : {timestamp}",
+  "@chatMessageTimestamp": {
+    "placeholders": {
+      "timestamp": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageRole": "Répondeur : {roleName}",
+  "@chatMessageRole": {
+    "placeholders": {
+      "roleName": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageModel": "Modèle : {modelName}",
+  "@chatMessageModel": {
+    "placeholders": {
+      "modelName": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageProvider": "Fournisseur : {provider}",
+  "@chatMessageProvider": {
+    "placeholders": {
+      "provider": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensInput": "Tokens d'entrée : {count}",
+  "@chatMessageTokensInput": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensCached": "Tokens d'entrée en cache : {count}",
+  "@chatMessageTokensCached": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokensOutput": "Tokens de sortie : {count}",
+  "@chatMessageTokensOutput": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageWaitDuration": "Temps d'attente : {duration}",
+  "@chatMessageWaitDuration": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageOutputDuration": "Durée de sortie : {duration}",
+  "@chatMessageOutputDuration": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageTokenSpeed": "Vitesse des tokens : {speed}",
+  "@chatMessageTokenSpeed": {
+    "placeholders": {
+      "speed": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageCacheShort": "cache {count}",
+  "@chatMessageCacheShort": {
+    "placeholders": {
+      "count": {
+        "type": "String"
+      }
+    }
+  },
+  "chatMessageCacheHitRate": "Taux de succès du cache : {rate}",
+  "@chatMessageCacheHitRate": {
+    "placeholders": {
+      "rate": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsPeerPortModeHelp": "Par défaut, le système attribue un port disponible et la découverte LAN l'annonce. Le mode fixe utilise l'adresse et le port d'écoute saisis et signale une erreur si le port est occupé.",
+  "settingsPeerPortMode": "Attribution de port",
+  "settingsPeerPortModeFixed": "Adresse et port d'écoute fixes",
+  "settingsPeerPortModeAutomatic": "Port automatique",
+  "settingsPeerNetworkDiscoveryHelp": "Pour la découverte à travers des réseaux routés, configurez un annuaire partagé et une clé de groupe. Pour héberger l'annuaire, laissez l'adresse vide et définissez une clé de groupe.",
+  "settingsPeerDiscoveryDirectory": "Annuaire de découverte (facultatif)",
+  "settingsPeerDiscoveryGroup": "Clé de groupe de découverte",
+  "settingsPeerDiscoveryGenerateKey": "Générer une nouvelle clé de groupe",
+  "settingsPeerDiscoveryCopyKey": "Copier la clé de groupe",
+  "settingsPeerDiscoveryPort": "Port d'écoute de l'annuaire",
+  "settingsPeerDiscoveryPortHelp": "Utilisé uniquement sur l'hôte de l'annuaire. Les autres appareils utilisent le port indiqué dans l'URL de l'annuaire.",
+  "settingsPeerNetworkDiscoveryInvalid": "Vérifiez les paramètres de découverte : utilisez une origine HTTP(S) sans chemin, une clé partagée de 16 à 128 octets et un port non nul pour héberger l'annuaire.",
+  "settingsPeerAdvanced": "Options avancées",
+  "settingsPeerDiscoveryUnavailable": "Cet hôte ne peut pas annoncer d'écouteurs sur le réseau local. Les connexions directes restent disponibles pour les transports pris en charge.",
+  "settingsPeerTransportUnavailable": "L'écoute {transport} n'est pas prise en charge par cet hôte.",
+  "@settingsPeerTransportUnavailable": {
+    "placeholders": {
+      "transport": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsPeerTransportHelp": "Transports d'écoute (sélection multiple). HTTP, WebSocket et TCP partagent un même port d'écoute et peuvent être combinés librement. Bluetooth nécessite une prise en charge de la plateforme. Désélectionnez tout et désactivez la découverte pour arrêter l'écoute. La modification des paramètres interrompt les connexions existantes. Désactiver la découverte seule n'interrompt pas les connexions directes.",
+  "settingsPeerBindAddress": "Adresse IP d'écoute",
+  "settingsPeerBindAddressHelp": "Exemple : 0.0.0.0 pour un accès LAN ; les adresses IPv6 sont également prises en charge.",
+  "settingsPeerBindPort": "Port d'écoute",
+  "settingsPeerBindPortHelp": "Port utilisé en mode d'écoute fixe.",
+  "settingsPeerBindPortAutomaticHelp": "Le système attribue un port disponible. Le port réel s'affiche après le démarrage.",
+  "settingsPeerDiscoveryNeedsTransport": "Sélectionnez au moins un transport avant d'activer la découverte.",
+  "settingsPeerAddressRequired": "Saisissez une adresse IP d'écoute.",
+  "settingsPeerPortRequired": "Saisissez un port compris entre 1 et 65535.",
+  "settingsPeerApplied": "Paramètres d'écoute appliqués.",
+  "settingsPeerRestoreFailed": "Échec de la restauration des écouteurs précédents : {error}",
+  "@settingsPeerRestoreFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsPeerCodeInstructions": "Saisissez ce code sur l'autre appareil pour terminer l'appairage. Il expire dans cinq minutes. Ne le partagez pas avec des inconnus.",
+  "settingsPeerSixDigitCode": "Saisissez le code d'appairage à six chiffres affiché sur l'appareil récepteur.",
+  "spaceJoinRequests": "Demandes d'adhésion au Space",
+  "spaceJoinReviewer": "Réviseur : {name}",
+  "@spaceJoinReviewer": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "spaceJoinWaitingReviewer": "En attente de la connexion d'un réviseur autorisé",
+  "spaceJoinPending": "En attente d'approbation",
+  "spaceJoinApproving": "Décision en cours de traitement",
+  "spaceJoinApproved": "Approuvé · finalisation de l'adhésion",
+  "spaceJoinJoined": "Rejoint",
+  "spaceJoinRejected": "Refusée",
+  "spaceJoinCancelled": "Annulée",
+  "spaceJoinExpired": "Expirée",
+  "spaceJoinSubmit": "Envoyer la demande",
+  "spaceJoinApprovalTitle": "Demande d'accès au Space",
+  "spaceJoinApprovalDescription": "{name} souhaite rejoindre « {space} ». Aucune donnée du Space n'est partagée avant approbation.",
+  "@spaceJoinApprovalDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "space": {
+        "type": "String"
+      }
+    }
+  },
+  "spaceJoinApprove": "Approuver",
+  "spaceJoinReject": "Refuser",
+  "spaceJoinRetry": "Envoyer à nouveau",
+  "spaceJoinKeepWaiting": "Continuer d'attendre en arrière-plan",
+  "spaceJoinCancel": "Annuler la demande",
+  "spaceJoinCancelFailed": "Impossible de confirmer l'annulation. Vérifiez la connexion ou réessayez plus tard.",
+  "spaceJoinRefreshingFailed": "Impossible de joindre l'appareil pour le moment. La demande est enregistrée et sera réessayée.",
+  "spaceJoinAssignmentChanged": "Cette demande a été transférée ou déjà traitée.",
+  "spaceJoinProgressTitle": "Demande d'accès au Space",
+  "spaceJoinSending": "Envoi de la demande…",
+  "spaceJoinSubmitFailed": "Impossible d'envoyer la demande. Vérifiez la connexion et réessayez.",
+  "spaceJoinNoDataYet": "Votre Space actuel reste inchangé jusqu'à l'approbation. Vous pouvez fermer cette fenêtre et continuer d'attendre en arrière-plan.",
+  "deviceSpaceAddDevice": "Ajouter un appareil",
+  "deviceSpaceDevices": "Appareils",
+  "deviceSpaceMemberNotPaired": "Membre du Space · non appairé",
+  "deviceSpaceMemberPaired": "Membre du Space · appairé",
+  "deviceSpacePairedOnly": "Appairé",
+  "deviceSpaceDirectLink": "Direct",
+  "deviceSpaceRelayHops": "Relayé · {hops} sauts",
+  "@deviceSpaceRelayHops": {
+    "placeholders": {
+      "hops": {
+        "type": "int"
+      }
+    }
+  },
+  "deviceSpaceRelayPath": "Chemin",
+  "deviceSpaceLocalDevice": "Cet appareil",
+  "deviceSpaceManageDevice": "Gérer l'appareil",
+  "deviceSpaceConnectDirect": "Connexion directe",
+  "deviceSpaceConnectDirectHint": "Cet appareil est déjà membre du Space. L'appairage ajoute un lien direct sans rejoindre à nouveau ; un code à six chiffres s'affichera sur l'autre appareil pour que vous puissiez le saisir.",
+  "deviceSpaceUpdateEndpoint": "Mettre à jour l'adresse directe",
+  "deviceSpaceUpdateEndpointLabel": "Adresse directe",
+  "deviceSpaceUpdateEndpointHint": "ex. ws://host:port/link ou host:port — utilisez le port d'écoute actuel du pair",
+  "deviceSpaceUpdateEndpointSaved": "Adresse directe mise à jour",
+  "deviceSpaceDirectLinkEstablished": "Lien direct établi : {device}",
+  "@deviceSpaceDirectLinkEstablished": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceUnpair": "Dissocier l'appareil",
+  "deviceSpaceMore": "Plus d'actions sur l'appareil",
+  "deviceSpaceConnectionSettings": "Paramètres de connexion",
+  "deviceSpaceViewRequest": "Voir la demande",
+  "devicePickerNearby": "Appareils à proximité",
+  "devicePickerDiscoveryFailed": "Échec de la découverte d'appareils à proximité : {error}",
+  "@devicePickerDiscoveryFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "devicePickerEmpty": "Aucun appareil à proximité trouvé",
+  "devicePickerHint": "Connectez les deux appareils au même réseau et activez la découverte sur l'autre appareil.",
+  "devicePickerManual": "Se connecter via une adresse",
+  "deviceSpaceMyRequests": "Mes demandes",
+  "deviceSpaceMyReviews": "En attente de ma validation",
+  "deviceSpaceNoRequests": "Aucune demande",
+  "workspaceUndo": "Annuler",
+  "workspaceRedo": "Rétablir",
+  "workspaceInsertSymbol": "Insérer {symbol}",
+  "@workspaceInsertSymbol": {
+    "placeholders": {
+      "symbol": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfig": "Configuration du thème",
+  "settingsAppearanceThemeConfigCustom": "Apparence libre",
+  "settingsAppearanceThemeConfigCreate": "Nouvelle configuration de thème",
+  "settingsAppearanceThemeConfigRename": "Renommer la configuration de thème",
+  "settingsAppearanceThemeConfigDelete": "Supprimer une configuration de thème inactive",
+  "settingsAppearanceThemeConfigName": "Nom du thème",
+  "settingsAppearanceThemeConfigNameRequired": "Saisissez un nom de thème",
+  "settingsAppearanceThemeConfigCustomHint": "Créez un thème pour enregistrer votre apparence. Touchez une carte pour basculer ; choisissez Modifier pour personnaliser.",
+  "settingsAppearanceThemeConfigEditingHint": "Touchez une carte pour changer de thème. Les raccourcis de mode ne modifient que le thème actuel. Les modifications sont enregistrées automatiquement.",
+  "settingsAppearanceThemeConfigFailed": "Échec de l'opération sur le thème : {detail}",
+  "@settingsAppearanceThemeConfigFailed": {
+    "placeholders": {
+      "detail": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeControlEditRole": "Modifier le rôle",
+  "settingsRuntimeControlDeleteRole": "Supprimer le rôle",
+  "settingsRuntimeControlDeleteRoleTitle": "Supprimer le rôle {roleName} ?",
+  "@settingsRuntimeControlDeleteRoleTitle": {
+    "placeholders": {
+      "roleName": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsRuntimeControlDeleteRoleMessage": "Les appareils disposant de ce rôle reviennent à l'identité utilisateur par défaut.",
+  "settingsAppearanceThemeConfigSource": "Créer à partir de",
+  "settingsAppearanceThemeConfigFromDefaults": "Apparence par défaut",
+  "settingsAppearanceThemeConfigFromCurrent": "Apparence actuelle",
+  "settingsAppearanceThemeConfigInherit": "Hériter : {name}",
+  "@settingsAppearanceThemeConfigInherit": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigFromTemplate": "Modèle : {name}",
+  "@settingsAppearanceThemeConfigFromTemplate": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeConfigDefaultsHint": "Partir des valeurs par défaut de l'application",
+  "settingsAppearanceThemeConfigCurrentHint": "Copier votre apparence actuelle",
+  "settingsAppearanceThemeConfigSavedSources": "Hériter d'une configuration enregistrée",
+  "settingsAppearanceThemeConfigPluginSources": "Utiliser un modèle de plugin",
+  "settingsAppearanceThemeConfigSourceHint": "Les modèles proviennent des plugins installés. Les nouvelles configurations peuvent être modifiées indépendamment et utilisent la synchronisation d'apparence existante.",
+  "settingsAppearanceLoadFailed": "Impossible de charger l'apparence",
+  "settingsAppearanceRepairHint": "Votre apparence enregistrée n'a pas été remplacée. Réessayez après avoir réparé ses ressources ou réinitialisez l'apparence manuellement. La réinitialisation conserve votre avatar et vos configurations enregistrées, et sélectionne l'apparence personnalisée.",
+  "settingsAppearanceAssetBackgroundFailed": "Impossible de charger l'image d'arrière-plan. Utilisation de l'arrière-plan par défaut ({reference}).",
+  "@settingsAppearanceAssetBackgroundFailed": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetVideoFailed": "Impossible de lire la vidéo d'arrière-plan. Utilisation de l'arrière-plan par défaut ({reference}).",
+  "@settingsAppearanceAssetVideoFailed": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetBubbleFailed": "Impossible de charger l'image de bulle. Utilisation de la couleur de bulle par défaut ({reference}).",
+  "@settingsAppearanceAssetBubbleFailed": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetPreviousRetained": "Impossible de charger cette ressource de thème. Conservation de l'image ou du média précédent ({reference}) ; vos autres paramètres de thème restent appliqués.",
+  "@settingsAppearanceAssetPreviousRetained": {
+    "placeholders": {
+      "reference": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceAssetRetry": "Réessayer",
+  "settingsAppearanceAssetReimportHint": "Si réessayer ne suffit pas, sélectionnez et importez à nouveau une image lisible ou une vidéo compatible.",
+  "settingsAppearanceAssetImportFailed": "La ressource d'arrière-plan n'a pas été appliquée : {reason}. Veuillez choisir une image lisible ou une vidéo compatible.",
+  "@settingsAppearanceAssetImportFailed": {
+    "placeholders": {
+      "reason": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceRetry": "Réessayer",
+  "settingsAppearanceResetAfterError": "Réinitialiser l'apparence",
+  "backgroundWorkIdle": "Aucune tâche en cours",
+  "backgroundWorkRunningCount": "tâches en cours",
+  "backgroundWorkWaiting": "En attente de votre confirmation",
+  "backgroundWorkWaitingCount": "en attente de confirmation",
+  "backgroundWorkCompleted": "Terminée",
+  "backgroundWorkFailed": "Échec — ouvrir pour voir les détails",
+  "backgroundWorkCancelled": "Arrêtée",
+  "backgroundWorkProcessing": "Préparation",
+  "backgroundWorkConnecting": "Connexion",
+  "backgroundWorkReceiving": "Rédaction d'une réponse",
+  "backgroundWorkTool": "Exécution d'un outil",
+  "backgroundWorkToolResult": "Traitement des résultats de l'outil",
+  "backgroundWorkSummarizing": "Organisation du contexte",
+  "backgroundWorkPlan": "Exécution d'un plan",
+  "backgroundWorkOpen": "Voir la conversation",
+  "backgroundWorkReview": "Examiner",
+  "backgroundWorkStop": "Arrêter",
+  "localModelsDeviceOnly": "Stocké sur cet appareil",
+  "localModelsDeviceOnlyDescription": "Les poids, la progression des téléchargements et l'historique d'installation restent sur cet appareil et sont exclus de la synchronisation Space. Les discussions peuvent rediriger l'inférence vers l'appareil hébergeant le modèle.",
+  "localModelsRunChat": "Exécuter et configurer",
+  "localModelsUseForChat": "Utiliser pour le chat",
+  "localModelsChatActivated": "Sélectionné comme modèle de chat",
+  "localModelsPrompt": "Saisissez un prompt",
+  "localModelsGenerate": "Générer",
+  "localModelsGenerating": "Génération…",
+  "localModelsThreads": "Threads CPU",
+  "localModelsContextSize": "Taille du contexte (tokens)",
+  "localModelsBatchSize": "Taille du lot",
+  "localModelsUnload": "Décharger le modèle",
+  "localModelsCpuBackend": "Inférence CPU sur l'appareil",
+  "localModelsLlmDescription": "Téléchargez un modèle GGUF pour llama.cpp ou un pack de modèle MNN. Après l'installation, testez-le ici ou sélectionnez-le pour le chat.",
+  "localModelsInvalidSettings": "Vérifiez le nombre de threads, la taille du contexte et la taille du lot.",
+  "localModelsFilterAll": "Tous les modèles",
+  "localModelsFilterInstalled": "Installés uniquement",
+  "localModelsSearchCatalog": "Rechercher des modèles, tags ou moteurs",
+  "deviceSpaceSyncPeer": "un appareil Space",
+  "deviceSpaceSyncActive": "Synchronisation avec {device}",
+  "@deviceSpaceSyncActive": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncCompleted": "Synchronisé avec {device}",
+  "@deviceSpaceSyncCompleted": {
+    "placeholders": {
+      "device": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncChecking": "Recherche de modifications",
+  "deviceSpaceSyncRecords": "Échange d'enregistrements",
+  "deviceSpaceSyncRecordProgress": "{completed} / {total} enregistrements · {percent}%",
+  "@deviceSpaceSyncRecordProgress": {
+    "placeholders": {
+      "completed": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      },
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "deviceSpaceSyncPendingCount": "{count} enregistrements en attente d'application",
+  "@deviceSpaceSyncPendingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "deviceSpaceSyncCounting": "Calcul du total · {count} enregistrements traités",
+  "@deviceSpaceSyncCounting": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "deviceSpaceSyncFiles": "Transfert et vérification des fichiers",
+  "deviceSpaceSyncRetrying": "Synchronisation interrompue. Nouvelle tentative automatique.",
+  "deviceSpaceSyncPending": "Certaines données sont encore en attente.",
+  "deviceSpaceSyncCurrentFile": "Fichier actuel : {done} / {total}",
+  "@deviceSpaceSyncCurrentFile": {
+    "placeholders": {
+      "done": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncTransferred": "{count} enregistrements échangés · {bytes} transférés",
+  "@deviceSpaceSyncTransferred": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "bytes": {
+        "type": "String"
+      }
+    }
+  },
+  "deviceSpaceSyncBackground": "Vous pouvez continuer à utiliser l'application pendant la synchronisation.",
+  "runtimeActivityTitle": "Tâches en arrière-plan",
+  "runtimeActivitySyncing": "Synchronisation",
+  "runtimeActivitySyncCompleted": "Synchronisation terminée",
+  "runtimeActivityWaiting": "En attente de nouvelle tentative",
+  "runtimeActivityExpand": "Afficher les tâches en arrière-plan",
+  "runtimeActivityLoadingPackages": "Chargement des extensions",
+  "peerQrTitle": "Connexion par QR",
+  "peerQrScan": "Scanner un code",
+  "peerQrShow": "Mon code",
+  "peerQrShowHint": "Scannez ce code sur un autre appareil pour vous connecter à celui-ci.",
+  "peerQrScanHint": "Scannez le code de connexion Operit sur l'autre appareil.",
+  "peerQrTrustHint": "Ce code QR est valide pendant 5 minutes. Ne le partagez qu'avec des appareils de confiance. La confirmation permet de rejoindre directement ; cet appareil approuve automatiquement s'il dispose des droits d'approbation administrateur.",
+  "peerQrConfirmJoin": "Confirmer l'adhésion",
+  "peerQrConfirmJoinHint": "Rejoindre le Space de cet appareil ? Confirmez pour vous connecter et envoyer la demande d'adhésion sans saisir de code d'appairage.",
+  "peerQrListenerRequired": "Activez la réception des connexions dans les paramètres de connexion et connectez-vous d'abord à un réseau.",
+  "peerQrCopy": "Copier les infos de connexion",
+  "peerQrCopied": "Copié",
+  "peerQrImport": "Importer une image QR",
+  "peerQrPaste": "Ou coller les infos de connexion",
+  "peerQrRead": "Lire les infos de connexion",
+  "peerQrWrongDevice": "Ce code appartient à un autre appareil. Scannez le code de l'appareil sélectionné.",
+  "peerPairTimeoutHint": "Délai de connexion dépassé : impossible de joindre l'autre appareil. Une cause fréquente est le pare-feu de l'autre appareil qui bloque les connexions entrantes. Essayez d'initier la connexion depuis l'autre appareil ou autorisez Operit dans son pare-feu (en particulier sur les réseaux publics).",
+  "peerQrImageInvalid": "Aucun code QR n'a pu être lu. Choisissez une image QR nette de moins de 16 Mo.",
+  "peerQrCameraUnavailable": "Le scan par caméra est indisponible. Importez une image QR ou collez les infos de connexion à la place.",
+  "peerQrCameraPermission": "L'accès à la caméra est requis. Autorisez-le dans les paramètres système ou importez une image QR.",
+  "peerQrDevice": "Connecter l'appareil",
+  "peerQrScanAgain": "Scanner un autre code",
+  "peerQrMethodsHint": "Appareil introuvable ? Connectez-vous avec un code QR.",
+  "toolParametersLabel": "Paramètres",
+  "toolResultLabel": "Résultat",
+  "toolGroupThinkingCount": "{count} réflexion",
+  "toolGroupCallCount": "{count, plural, one{{count} appel} other{{count} appels}}",
+  "toolGroupSearchCount": "{count} recherche",
+  "toolEditedFileCount": "{count, plural, one{{count} fichier modifié} other{{count} fichiers modifiés}}",
+  "toolViewChanges": "Voir les modifications",
+  "toolViewFileDiff": "Voir le diff de {fileName}",
+  "@toolEditedFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolViewFileDiff": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "toolGroupCompleted": "Terminé",
+  "toolGroupExecuting": "En cours d'exécution",
+  "@toolGroupThinkingCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolGroupCallCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "@toolGroupSearchCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineTitle": "Utilisation des modèles dans le temps",
+  "settingsDataTimelineHint": "Une courbe par modèle. Pincez ou faites défiler pour zoomer, glissez pour déplacer et touchez pour inspecter une tranche horaire.",
+  "settingsDataTimelineHours": "{hours} h",
+  "@settingsDataTimelineHours": {
+    "placeholders": {
+      "hours": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineBucket": "Tranches de {minutes} min",
+  "@settingsDataTimelineBucket": {
+    "placeholders": {
+      "minutes": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineSecondsBucket": "Tranches de {seconds} s",
+  "@settingsDataTimelineSecondsBucket": {
+    "placeholders": {
+      "seconds": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineEarlier": "Plus tôt",
+  "settingsDataTimelineLater": "Plus tard",
+  "settingsDataTimelineRecent": "3 dernières h",
+  "settingsDataTimelineRange": "Plage horaire visible",
+  "settingsDataTimelineSelectModel": "Sélectionnez un modèle ci-dessous pour afficher son utilisation",
+  "settingsDataTimelineSpend": "Dépenses (estimées)",
+  "settingsDataTimelineCacheRate": "Taux de succès du cache",
+  "settingsDataTimelineSpendHint": "Estimé selon les tarifs actuels des modèles. Partage la plage horaire ci-dessus.",
+  "settingsDataTimelineCacheRateHint": "Entrées en cache / total des entrées par tranche horaire. Les périodes d'inactivité n'ont pas de taux.",
+  "settingsDataTimelineNoPrices": "Aucun tarif de modèle correspondant",
+  "settingsDataTimelinePricesFailed": "Impossible de charger les tarifs des modèles. Actualisez pour réessayer.",
+  "settingsDataTimelineUnpriced": "{count} requêtes au coût inconnu",
+  "@settingsDataTimelineUnpriced": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "settingsDataTimelineKnownSpend": "Dépenses connues (estimées)",
+  "settingsDataDetailedStatsRangeLastDay": "Dernières 24 heures",
+  "settingsDataTimelineAverageInput": "Entrée moyenne par requête",
+  "settingsDataTimelineAverageInputHint": "Tokens d'entrée / requêtes par tranche, pour repérer l'augmentation de la taille du contexte. Les périodes d'inactivité apparaissent comme des vides.",
+  "settingsDataTimelineCacheSavings": "Économies de cache (estimées)",
+  "settingsDataTimelineCacheSavingsHint": "Aux tarifs actuels, coût des entrées en cache comparé aux entrées standard. La facturation à la requête économise 0 ; les valeurs négatives indiquent un surcoût de cache.",
+  "settingsDataTimelineTokensPerRequest": "{tokens} tokens / requête",
+  "@settingsDataTimelineTokensPerRequest": {
+    "placeholders": {
+      "tokens": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsDataTimelineUnknownSavings": "Économies inconnues pour {count} requêtes",
+  "@settingsDataTimelineUnknownSavings": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "contextStatsSummaryLoadFailed": "Impossible de charger les statistiques de contexte",
+  "contextStatsDevicesLoadFailed": "Impossible de charger les informations de l'appareil",
+  "settingsAppearanceThemeLibrary": "Vos thèmes",
+  "settingsAppearanceThemeLibraryHint": "Choisissez un style. Faites-le vôtre.",
+  "settingsAppearanceThemeActive": "Actif",
+  "settingsAppearanceThemeApply": "Utiliser ce thème",
+  "settingsAppearanceThemeMore": "Plus d'actions sur le thème",
+  "settingsAppearanceThemeDuplicate": "Créer une copie",
+  "settingsAppearanceThemeUnboundHint": "Conservez l'apparence actuelle et modifiez-la sans la lier à un thème enregistré.",
+  "settingsAppearanceThemeDeleteTitle": "Supprimer le thème",
+  "settingsAppearanceThemeDeleteConfirm": "Supprimer « {name} » ? Cette action est irréversible.",
+  "settingsAppearancePreviewCollapse": "Réduire",
+  "settingsAppearancePreviewExpand": "Développer",
+  "@settingsAppearanceThemeDeleteConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsAppearanceThemeNew": "Nouveau thème",
+  "settingsAppearanceDeviceFonts": "Polices de l'appareil",
+  "settingsAppearanceChooseDeviceFont": "Choisir une police de l'appareil",
+  "settingsAppearanceNoDeviceFonts": "Aucune police d'appareil correspondante",
+  "settingsAppearanceDeviceFontPreview": "Voix ambiguë d'un cœur · 0123456789\n字体预览：你好，世界",
+  "workspaceFileRename": "Renommer",
+  "workspaceFileCopy": "Copier",
+  "workspaceFileCut": "Couper",
+  "workspaceFilePaste": "Coller",
+  "workspaceFileName": "Nom",
+  "workspaceFileInvalidName": "Saisissez un nom valide sans séparateurs de chemin.",
+  "workspaceDeleteFolderTitle": "Supprimer le dossier ?",
+  "workspaceDeleteFolderMessage": "Supprimer « {name} » et tout son contenu ? Cette action est irréversible.",
+  "@workspaceDeleteFolderMessage": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceFileOperationFailed": "Échec de l'opération sur le fichier : {error}",
+  "@workspaceFileOperationFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "workspaceFileCopyName": "{name} (copie {index})",
+  "@workspaceFileCopyName": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      },
+      "index": {
+        "type": "int"
+      }
+    }
+  },
+  "workspaceFileSaving": "Ce fichier est en cours d'enregistrement. Veuillez réessayer une fois l'enregistrement terminé.",
+  "chatBackupChooseTitle": "Choisissez votre dossier de sauvegarde",
+  "chatBackupTitle": "Sauvegarde quotidienne du chat",
+  "chatBackupDescription": "Copie chaque jour la base de données SQLite complète lorsque l'application est en cours d'exécution et conserve les 10 dernières sauvegardes automatiques. Inclut toutes les données stockées dans cette base. Les pièces jointes externes, les espaces de travail et les fichiers de configuration séparés ne sont pas copiés.",
+  "chatRestoreTitle": "Restaurer depuis une sauvegarde de base de données",
+  "chatRestoreDescription": "Ouvrez le dossier contenant vos sauvegardes et choisissez la date à restaurer.",
+  "chatRestoreChooseFolder": "Choisir la source de sauvegarde",
+  "chatRestoreRefresh": "Actualiser la liste",
+  "chatRestoreSelected": "Restaurer la sauvegarde sélectionnée",
+  "chatRestoreAction": "Restaurer",
+  "chatRestoreCancel": "Annuler",
+  "chatRestoreEmpty": "Ce dossier ne contient aucune sauvegarde de base de données.",
+  "chatRestoreConfirmTitle": "Restaurer cette sauvegarde de base de données ?",
+  "chatRestoreConfirmDescription": "Remplacer le fichier de base de données actuel par {name}. Cela remplace toutes les données stockées dans cette base. Arrêtez d'abord les conversations en cours. La restauration établit une nouvelle référence de synchronisation qui remplace les données plus anciennes sur les autres appareils.",
+  "@chatRestoreConfirmDescription": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "chatRestoreSuccess": "Base de données restaurée. La prochaine synchronisation utilisera cette copie comme source de référence.",
+  "chatRestoreOnboardingTitle": "Restaurer depuis une sauvegarde précédente",
+  "chatRestoreOnboardingDescription": "Récupérez les discussions enregistrées dans un dossier externe avant une réinstallation ou désinstallation",
+  "chatBackupExternalDescription": "Choisissez un dossier hors de l'application afin que les sauvegardes soient conservées après désinstallation. Sur iPhone et iPad, choisissez iCloud Drive ou un autre fournisseur de fichiers externe.",
+  "chatBackupChoose": "Choisir le dossier de sauvegarde",
+  "chatBackupLater": "Configurer plus tard",
+  "chatBackupChange": "Changer le dossier de sauvegarde",
+  "chatBackupMissing": "Le dossier de sauvegarde n'est pas configuré, n'existe plus ou est inaccessible. Sélectionnez un dossier pour activer les sauvegardes quotidiennes du chat.",
+  "chatBackupDirectoryUnavailable": "Le dossier sélectionné ne peut pas être utilisé. Créez un nouveau dossier dans un emplacement accessible, comme Documents ou Téléchargements, puis sélectionnez-le.",
+  "chatBackupReady": "Le dossier de sauvegarde est prêt. Les sauvegardes quotidiennes sont vérifiées au démarrage, à la reprise et pendant l'exécution de l'application.",
+  "chatBackupNow": "Sauvegarder les chats maintenant",
+  "chatBackupNever": "Aucune sauvegarde réussie pour le moment",
+  "chatBackupLastSuccess": "Dernière sauvegarde réussie : {time}",
+  "@chatBackupLastSuccess": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "terminalDistributionsTitle": "Télécharger des distributions Linux",
+  "terminalDistributionDownload": "Télécharger et installer",
+  "terminalDistributionInstallAnother": "En installer une autre",
+  "terminalInstallQueued": "En attente d'installation",
+  "terminalInstallConnecting": "Test des miroirs de téléchargement…",
+  "terminalInstallCancelling": "Annulation…",
+  "terminalInstallErrorDetails": "Détails de l'erreur",
+  "terminalInstallDownloading": "Téléchargement du système de fichiers racine",
+  "terminalInstallVerifying": "Vérification SHA-256",
+  "terminalInstallExtracting": "Installation du système de fichiers racine",
+  "terminalInstallCompleted": "Installée · disponible dans les profils de terminal",
+  "terminalInstallCancelled": "Installation annulée",
+  "terminalInstallFailed": "Échec de l'installation",
+  "terminalProfileWslDistribution": "Distribution WSL",
+  "terminalProfileWslDistributionRequired": "Sélectionnez une distribution WSL.",
+  "terminalProfileWslHelp": "Installez une distribution WSL sur l'appareil Windows exécutant Core, puis rouvrez cette boîte de dialogue.",
+  "appUpdateUnavailableTitle": "Mise à jour temporairement indisponible",
+  "appUpdatePlanning": "Recherche de mises à jour et sélection de la source de téléchargement…",
+  "appUpdateSelectingSource": "Sélection de la source de téléchargement…",
+  "appUpdateAwaitingBase": "Le programme d’installation d’origine est nécessaire",
+  "appUpdateValidatingBase": "Vérification du programme d’installation sélectionné…",
+  "appUpdateDownloadingPatch": "Téléchargement du correctif incrémentiel…",
+  "appUpdateDownloadingFull": "Téléchargement du programme d’installation complet…",
+  "appUpdateVerifyingBase": "Vérification du programme d’installation d’origine…",
+  "appUpdateVerifyingPatch": "Vérification du correctif incrémentiel…",
+  "appUpdateExpandingBase": "Préparation du programme d’installation d’origine…",
+  "appUpdateVerifyingExpandedBase": "Vérification des fichiers de mise à jour…",
+  "appUpdateApplyingPatch": "Application du correctif…",
+  "appUpdateRestoringPackage": "Création du nouveau programme d’installation…",
+  "appUpdateVerifyingPackage": "Vérification du nouveau programme d’installation…",
+  "appUpdateSavingPackage": "Enregistrement du programme d’installation…",
+  "appUpdatePreparingFiles": "Préparation des fichiers de mise à jour…",
+  "appUpdateReady": "Mise à jour téléchargée et vérifiée. Confirmez pour l’installer.",
+  "appUpdatePreparingInstall": "Préparation de l’installation…",
+  "appUpdateInstalling": "Démarrage de l’installation. L’application va bientôt redémarrer…",
+  "appUpdateRestartRequired": "Téléchargement terminé. Redémarrez pour installer la nouvelle version.",
+  "appUpdateInstallSubmitted": "Installation demandée. Confirmez dans la fenêtre système.",
+  "appUpdatePermissionRequired": "Autorisation d’installer des applications requise",
+  "appUpdateUpdateIncomplete": "Mise à jour incomplète",
+  "appUpdateInstallIncomplete": "Installation incomplète",
+  "appUpdatePreparingDownload": "Préparation du téléchargement de la mise à jour…",
+  "appUpdateTitle": "Mettre à jour Operit",
+  "appUpdateNoOriginalInstaller": "Je n’ai plus le programme d’installation",
+  "appUpdateChooseInstaller": "Sélectionner",
+  "appUpdateBackground": "Mettre à jour en arrière-plan",
+  "appUpdateCancel": "Annuler la mise à jour",
+  "appUpdateOpenRelease": "Ouvrir la page de la version",
+  "appUpdateContinueInstall": "Poursuivre l’installation",
+  "appUpdateRetry": "Réessayer la mise à jour",
+  "appUpdateReinstall": "Réinstaller",
+  "appUpdateRestartInstall": "Redémarrer et installer",
+  "appUpdateReopenInstaller": "Rouvrir le programme d’installation",
+  "appUpdateRestartUpdate": "Redémarrer et mettre à jour",
+  "appUpdateSelectOriginalInstaller": "Sélectionnez le programme d’installation utilisé à l’origine. Une fois celui-ci vérifié, le correctif incrémentiel sera téléchargé et appliqué pour créer le nouveau programme d’installation.",
+  "appUpdateProcessingHelp": "Les fichiers sont traités sur cet appareil. La création du programme d’installation peut prendre du temps. Vous pouvez poursuivre en arrière-plan et sélectionner le logo Operit pour suivre la progression.",
+  "appUpdateDownloadHelp": "Après le téléchargement, le programme d’installation est vérifié et conservé jusqu’à votre confirmation. Vous pouvez fermer cette fenêtre et sélectionner le logo Operit pour suivre la progression.",
+  "appUpdatePermissionHelp": "Accordez l’autorisation système, puis sélectionnez « Poursuivre l’installation ». Le programme d’installation a été conservé.",
+  "appUpdateReadyHelp": "Sélectionnez « Redémarrer et mettre à jour » pour lancer l’installation. Le système peut demander une autorisation.",
+  "appUpdateRestartHelp": "Sélectionnez « Redémarrer et installer » pour fermer l’application, installer la nouvelle version et la rouvrir.",
+  "appUpdateSystemInstallHelp": "Confirmez dans le programme d’installation système, puis rouvrez Operit. Vous pouvez rouvrir le programme d’installation si vous l’avez fermé.",
+  "appUpdateInstallerKept": "Le programme d’installation a été conservé. Vous pouvez réessayer sans le télécharger à nouveau.",
+  "appUpdateReleaseNotes": "Nouveautés",
+  "appUpdateAvailableTitle": "Mise à jour disponible",
+  "appUpdateNow": "Mettre à jour maintenant",
+  "appUpdateAvailable": "Une nouvelle version d’Operit est disponible",
+  "appUpdatePromptReady": "La mise à jour est prête. Confirmez pour redémarrer et l’installer.",
+  "appUpdatePromptAvailable": "Mettez à jour pour profiter des dernières fonctionnalités et améliorations.",
+  "appUpdateCurrentVersion": "Version actuelle",
+  "appUpdateLatestVersion": "Dernière version",
+  "appUpdatePromptLater": "Vous pouvez reprendre la mise à jour plus tard en sélectionnant le logo Operit dans la barre latérale.",
+  "appUpdateOpenReleaseFailed": "Impossible d’ouvrir la page de la version",
+  "appUpdateViewProgress": "Suivre la mise à jour",
+  "appUpdateFailedRetry": "Échec de la mise à jour. Sélectionnez pour réessayer.",
+  "appUpdateUnavailableHelp": "Le programme d’installation requis est introuvable et aucun programme complet n’est disponible. Téléchargez celui de la version {version} ou retrouvez le programme d’origine de la version {baseVersion}, puis réessayez.",
+  "appUpdateAvailableVersion": "La version {version} est disponible",
+  "appUpdateInstalledVersion": "Version actuelle : {version}",
+  "appUpdateOriginalVersionPrompt": "Avez-vous encore le programme d’installation d’origine de la version {version} ?",
+  "appUpdatePatchSize": "Téléchargement incrémentiel : environ {size}",
+  "appUpdateStepProgress": "Étape en cours : {percent} %",
+  "appUpdateElapsed": "Temps écoulé : {duration}",
+  "appUpdateDownloadSizePending": "{size} · Calcul de la taille du fichier",
+  "appUpdateBadgeAvailable": "La version {version} est disponible. Sélectionnez pour mettre à jour.",
+  "apiErrorInvalidParametersTitle": "Paramètres de requête invalides",
+  "apiErrorInvalidParametersMessage": "L’API n’a pas pu traiter les paramètres. Vérifiez le nom du modèle, ses capacités et ses paramètres, puis consultez l’erreur d’origine.",
+  "apiErrorInvalidKeyTitle": "Clé API invalide",
+  "apiErrorInvalidKeyMessage": "Le serveur a refusé la clé API. Vérifiez qu’elle est correcte, complète et active.",
+  "apiErrorBillingTitle": "Solde API insuffisant",
+  "apiErrorBillingMessage": "Votre solde est insuffisant ou votre quota est épuisé. Vérifiez votre solde et la facturation auprès du fournisseur.",
+  "apiErrorBlockedTitle": "Requête bloquée par le serveur",
+  "apiErrorBlockedMessage": "Le serveur API a refusé la requête. Contactez le fournisseur pour vérifier les restrictions de sécurité ou d’accès.",
+  "apiErrorNotFoundTitle": "Point d’accès ou modèle introuvable",
+  "apiErrorNotFoundMessage": "Le serveur API n’a pas trouvé la ressource. Vérifiez l’adresse du serveur, le chemin du point d’accès et le nom du modèle.",
+  "apiErrorUnsupportedMethodTitle": "Méthode de requête non prise en charge",
+  "apiErrorUnsupportedMethodMessage": "Le serveur ne prend pas en charge cette méthode ou opération. Vérifiez le type de fournisseur et le protocole API.",
+  "apiErrorUnsupportedContentTitle": "Contenu de requête non pris en charge",
+  "apiErrorUnsupportedContentMessage": "Le serveur n’accepte pas ce type de contenu. Vérifiez le protocole du fournisseur, le format des médias et les en-têtes personnalisés.",
+  "apiErrorProxyAuthTitle": "Échec de l’authentification du proxy",
+  "apiErrorProxyAuthMessage": "Le proxy réseau exige une authentification. Vérifiez les identifiants du proxy et les paramètres d’authentification.",
+  "apiErrorTimeoutTitle": "Délai de la requête API dépassé",
+  "apiErrorTimeoutMessage": "La requête ou une connexion entre serveurs a expiré. Vérifiez le réseau et l’état du fournisseur, puis réessayez.",
+  "apiErrorConflictTitle": "Conflit avec l’état de la ressource",
+  "apiErrorConflictMessage": "Le serveur API a signalé un conflit. Consultez l’erreur d’origine pour plus de détails.",
+  "apiErrorLengthRequiredTitle": "Longueur du contenu requise",
+  "apiErrorLengthRequiredMessage": "L’API exige que la longueur du contenu soit déclarée. Contactez le fournisseur pour confirmer les exigences.",
+  "apiErrorTooLargeTitle": "Requête trop volumineuse",
+  "apiErrorTooLargeMessage": "Le message, les pièces jointes, l’adresse ou les en-têtes dépassent la limite du serveur. Consultez l’erreur d’origine pour savoir quoi réduire.",
+  "apiErrorLockedTitle": "Ressource verrouillée",
+  "apiErrorLockedMessage": "Le serveur API a temporairement verrouillé la ressource. Réessayez plus tard ou contactez le fournisseur.",
+  "apiErrorTooEarlyTitle": "Le serveur ne peut pas encore accepter la requête",
+  "apiErrorTooEarlyMessage": "Le serveur a considéré la requête comme prématurée. Réessayez plus tard.",
+  "apiErrorUpgradeRequiredTitle": "Mise à niveau du protocole API requise",
+  "apiErrorUpgradeRequiredMessage": "Le serveur exige une autre version du protocole. Vérifiez l’adresse du serveur et le protocole configuré pour le fournisseur.",
+  "apiErrorRateLimitedTitle": "Requête limitée ou bloquée",
+  "apiErrorRateLimitedMessage": "L’API a limité ou bloqué la requête. Réessayez plus tard ou contactez le fournisseur.",
+  "apiErrorLegalRestrictionTitle": "Service indisponible pour des raisons régionales ou juridiques",
+  "apiErrorLegalRestrictionMessage": "Le serveur a refusé l’accès pour des raisons régionales ou juridiques. Demandez au fournisseur où le service est disponible.",
+  "apiErrorInterruptedTitle": "Requête interrompue ou bloquée",
+  "apiErrorInterruptedMessage": "La requête a été interrompue. Transmettez l’erreur d’origine au fournisseur pour vérifier un blocage, un problème de passerelle ou une connexion fermée.",
+  "apiErrorInternalTitle": "Erreur interne du serveur API",
+  "apiErrorInternalMessage": "Le serveur API a rencontré une erreur interne. Réessayez plus tard ou transmettez l’erreur d’origine au fournisseur.",
+  "apiErrorGatewayTitle": "Réponse de passerelle API invalide",
+  "apiErrorGatewayMessage": "La passerelle n’a pas reçu de réponse valide du serveur en amont. Réessayez plus tard ou contactez le fournisseur.",
+  "apiErrorUnavailableTitle": "Service API temporairement indisponible",
+  "apiErrorUnavailableMessage": "Le service peut être en maintenance, surchargé ou à court de capacité. Réessayez plus tard ou contactez le fournisseur.",
+  "apiErrorOriginTitle": "Serveur d’origine de l’API inaccessible",
+  "apiErrorOriginMessage": "La passerelle n’a pas pu joindre le serveur d’origine. Contactez le fournisseur pour vérifier une panne ou un problème de routage.",
+  "apiErrorTlsTitle": "Erreur TLS ou de certificat du serveur API",
+  "apiErrorTlsMessage": "La négociation TLS ou la validation du certificat a échoué entre la passerelle et le serveur d’origine. Contactez le fournisseur.",
+  "apiErrorStorageTitle": "Stockage du serveur API insuffisant",
+  "apiErrorStorageMessage": "Le serveur API manque d’espace pour traiter la requête. Contactez le fournisseur.",
+  "apiErrorClientTitle": "Le serveur API a refusé la requête",
+  "apiErrorClientMessage": "Le serveur API a renvoyé une erreur de requête. Consultez l’erreur d’origine et vérifiez la configuration de l’API.",
+  "apiErrorServerTitle": "Erreur du serveur API",
+  "apiErrorServerMessage": "Le serveur n’a pas pu traiter la requête. Transmettez le code HTTP et l’erreur d’origine au fournisseur.",
+  "apiErrorHttpTitle": "HTTP {status} : {title}",
+  "apiErrorOriginal": "Erreur d’origine :\n{error}",
+  "apiErrorModelExistsTitle": "Le modèle existe déjà",
+  "apiErrorModelListTitle": "Impossible de récupérer les modèles",
+  "apiErrorModelListMessage": "Aucune liste de modèles n’a été reçue. Vérifiez l’adresse du fournisseur, la clé d’accès et la connexion réseau.",
+  "apiErrorNetworkTitle": "Échec de la connexion réseau",
+  "apiErrorNetworkMessage": "Impossible de joindre le fournisseur du modèle. Vérifiez la connexion réseau et l’adresse du serveur.",
+  "apiErrorModelConfigTitle": "Échec de la configuration du modèle",
+  "apiErrorModelConfigMessage": "La configuration du modèle a échoué. Consultez l’erreur d’origine pour plus de détails.",
+  "apiErrorModelExistsMessage": "Le modèle « {modelId} » a déjà été ajouté au fournisseur « {providerName} ».",
+  "chatCopyMessage": "Copier le message",
+  "chatEditResend": "Modifier et renvoyer",
+  "chatRollbackHere": "Revenir à cet état",
+  "chatRegenerate": "Régénérer",
+  "chatEditMemory": "Modifier le souvenir",
+  "chatPlaySpeech": "Générer ou lire l’audio",
+  "chatDeleteVariant": "Supprimer la variante actuelle",
+  "chatReply": "Répondre",
+  "chatInsertSummary": "Insérer un résumé",
+  "chatCreateBranch": "Créer une branche",
+  "chatMultiSelect": "Sélectionner des messages",
+  "chatMultiSelectExit": "Quitter la sélection",
+  "chatSelectionClear": "Effacer la sélection",
+  "chatSelectionAll": "Tout sélectionner",
+  "chatSelectionCopy": "Copier les messages sélectionnés",
+  "chatGenerateShareImage": "Créer une image de partage",
+  "chatSelectionDelete": "Supprimer les messages sélectionnés",
+  "chatEditMessage": "Modifier le message",
+  "chatEditorVisual": "Visuel",
+  "chatPlainText": "Texte brut",
+  "chatMarkdownSource": "Source Markdown",
+  "chatCopyPlainText": "Copier le texte brut",
+  "chatCopyMarkdown": "Copier la source Markdown",
+  "chatMessageCopied": "Message copié dans le presse-papiers",
+  "chatSaveResend": "Enregistrer et renvoyer",
+  "chatUpdateMemory": "Mettre à jour le souvenir",
+  "chatEditorPlainTextContent": "Contenu en texte brut",
+  "chatEditorParts": "Blocs de contenu",
+  "chatEditorAddText": "Ajouter du texte",
+  "chatEditorAddTag": "Ajouter une balise",
+  "chatEditorText": "Texte",
+  "chatEditorTextHint": "Saisir du texte",
+  "chatEditorEditTag": "Modifier la balise",
+  "chatEditorTagName": "Nom de la balise",
+  "chatEditorTagHint": "Par exemple, custom_tag",
+  "chatEditorAttributes": "Attributs (facultatif)",
+  "chatEditorAttributesHint": "Par exemple, type=\"note\"",
+  "chatEditorContent": "Contenu",
+  "chatRollbackConfirmTitle": "Restaurer l’état de l’espace de travail ?",
+  "chatResendConfirmTitle": "Modifier et renvoyer le message ?",
+  "chatRollbackConfirmMessage": "Cette action rétablit l’état de l’espace de travail avant ce message et supprime ce message ainsi que les suivants.",
+  "chatResendConfirmMessage": "Cette action rétablit l’état de l’espace de travail avant ce message, puis renvoie le message modifié.",
+  "chatRollbackConfirm": "Rétablir l’état précédent",
+  "chatNoWorkspaceChanges": "Aucune modification des fichiers de l’espace de travail détectée.",
+  "chatShareImageGenerating": "Création de l’image de partage…",
+  "chatSelectionCount": "{count, plural, one{{count} message sélectionné} other{{count} messages sélectionnés}}",
+  "chatSelectionDeleteConfirm": "{count, plural, one{Supprimer le message sélectionné ?} other{Supprimer les {count} messages sélectionnés ?}}",
+  "chatCopyFailed": "Échec de la copie : {error}",
+  "chatPlainTextConversionFailed": "Impossible de convertir en texte brut : {error}",
+  "chatPlaySpeechFailed": "Impossible de générer ou de lire l’audio : {error}",
+  "chatShareImageFailed": "Impossible de créer l’image de partage : {error}",
+  "chatWorkspaceChangeLines": "{change} · {count, plural, one{{count} ligne} other{{count} lignes}}",
+  "speechTitle": "Lecture à voix haute",
+  "speechIdle": "En attente",
+  "speechPreparing": "Génération de l’audio",
+  "speechPlaying": "Lecture en cours",
+  "speechStopped": "Arrêtée",
+  "speechError": "Erreur",
+  "speechQueue": "File d’attente : {count}",
+  "speechTestText": "Bonjour ! Voici un aperçu de la voix d’Operit.",
+  "speechTtsMissingId": "Impossible de lancer l’aperçu sans identifiant de configuration TTS",
+  "speechTtsPreviewPlaying": "L’aperçu TTS a démarré",
+  "speechTtsProviders": "Fournisseurs TTS",
+  "speechAddTtsProvider": "Ajouter un fournisseur TTS",
+  "speechSttCurrentCannotDelete": "La configuration STT active ne peut pas être supprimée",
+  "speechDeleteSttProvider": "Supprimer le fournisseur STT",
+  "speechSttProviders": "Fournisseurs STT",
+  "speechAddSttProvider": "Ajouter un fournisseur STT",
+  "speechEditProvider": "Modifier le fournisseur",
+  "speechPreview": "Écouter un aperçu",
+  "speechGlobalActive": "Valeur globale par défaut",
+  "speechSetGlobal": "Définir comme valeur globale par défaut",
+  "speechNoSttProviders": "Aucun fournisseur de reconnaissance vocale configuré",
+  "speechCurrentCannotDelete": "La configuration active ne peut pas être supprimée",
+  "speechEditTtsProvider": "Modifier le fournisseur TTS",
+  "speechProviderType": "Type de fournisseur",
+  "speechProviderName": "Nom du fournisseur",
+  "speechHttpMethod": "Méthode HTTP",
+  "speechBodyTemplate": "Modèle du corps de requête",
+  "speechPipelineJson": "JSON du pipeline de réponse",
+  "speechAddTtsVoice": "Ajouter une voix TTS",
+  "speechCustomVoice": "Voix personnalisée",
+  "speechEnterVoice": "Saisir le modèle et la voix manuellement",
+  "speechModelVoiceRequired": "Saisissez un modèle ou une voix",
+  "speechCustomTtsVoice": "Voix TTS personnalisée",
+  "speechModelRequired": "Le modèle est obligatoire",
+  "speechVoice": "Voix",
+  "speechVoiceRequired": "La voix est obligatoire",
+  "speechLanguageTag": "Balise de langue (facultatif, par ex. fr-FR)",
+  "speechModelLocale": "Modèle / paramètres régionaux",
+  "speechSystemVoiceName": "Nom de la voix système (facultatif)",
+  "speechEditTtsVoice": "Modifier la voix TTS",
+  "speechTestVoice": "Tester la voix",
+  "speechAudioFormat": "Format audio",
+  "speechSpeed": "Vitesse",
+  "speechNewTtsProvider": "Nouveau fournisseur TTS",
+  "speechModelVersion": "ID du modèle@version",
+  "speechNewSttProvider": "Nouveau fournisseur STT",
+  "speechEditSttProvider": "Modifier le fournisseur STT",
+  "speechMultipart": "Paramètres de la requête multipart",
+  "speechAudioField": "Nom du champ audio",
+  "speechModelField": "Nom du champ du modèle",
+  "speechModelFieldHelp": "Laissez vide si le point d’accès n’accepte pas de paramètre de modèle",
+  "speechLanguageField": "Nom du champ de langue",
+  "speechTranscriptJsonPath": "JSONPath du texte transcrit",
+  "speechModelNotNeeded": "Ce point d’accès ne nécessite pas de modèle",
+  "speechReloadModels": "Recharger les modèles",
+  "speechModelIdHelp": "Saisissez un ID de modèle pris en charge ou sélectionnez un préréglage",
+  "speechPresetModel": "Choisir un modèle prédéfini",
+  "speechNoLocalSttModels": "Aucun modèle STT local installé",
+  "speechChooseModel": "Choisissez un modèle",
+  "speechChooseSttModel": "Choisissez un modèle STT",
+  "speechPreviewTitle": "Aperçu · {voice}",
+  "speechPreviewFailed": "Échec de l’aperçu TTS : {error}",
+  "speechDeleteTtsConfigFailed": "Impossible de supprimer la configuration TTS : {error}",
+  "speechLoadConfigFailed": "Impossible de charger les paramètres vocaux : {error}",
+  "speechDeleteSttConfirm": "Supprimer « {name} » et ses paramètres de reconnaissance ?",
+  "speechSttFailed": "Échec de l’opération STT : {error}",
+  "speechModelsFailed": "Impossible de charger les modèles : {error}",
+  "speechFieldRequired": "Champ obligatoire : {label}",
+  "speechFieldPositive": "La valeur doit être positive : {label}",
+  "onboardingStorageRequired": "Les répertoires du moteur et de l’espace de travail sont obligatoires",
+  "onboardingFetchModelsFirst": "Récupérez les modèles disponibles avant de continuer",
+  "onboardingChooseDefaultModel": "Choisissez un modèle par défaut",
+  "onboardingPickSnapshot": "Choisir un instantané",
+  "onboardingPickSnapshotHelp": "Sélectionnez un instantané Operit1 dans le sélecteur de fichiers.",
+  "onboardingUploadSnapshot": "Téléverser l’instantané",
+  "onboardingInspectSnapshot": "Examiner l’instantané",
+  "onboardingInspectSnapshotHelp": "Examen du contenu de l’instantané Operit1…",
+  "onboardingSnapshotRequired": "Sélectionnez un fichier d’instantané Operit1",
+  "onboardingPrepareImport": "Préparer l’importation",
+  "onboardingPrepareMigration": "Préparation de la migration du contenu de l’instantané Operit1…",
+  "onboardingWait": "Veuillez patienter",
+  "onboardingAgree": "J’accepte",
+  "onboardingSaving": "Enregistrement…",
+  "onboardingConfirm": "Confirmer",
+  "onboardingPreparing": "Préparation…",
+  "onboardingContinue": "Continuer",
+  "onboardingFetching": "Récupération…",
+  "onboardingReading": "Lecture…",
+  "onboardingImporting": "Importation…",
+  "onboardingWorking": "Traitement…",
+  "onboardingDone": "Terminer",
+  "onboardingAgreement": "Conditions d’utilisation",
+  "onboardingStorage": "Emplacements de stockage",
+  "onboardingMode": "Mode de configuration",
+  "onboardingModelSetup": "Configuration du modèle",
+  "onboardingImportSetup": "Importer la configuration",
+  "onboardingDeviceSpace": "Espace d’appareils",
+  "onboardingPermissions": "Autorisations système",
+  "onboardingWelcome": "Bienvenue",
+  "onboardingPreparingRuntime": "Préparation du moteur local",
+  "onboardingSkip": "Passer",
+  "onboardingPreviousPage": "Page précédente",
+  "onboardingStart": "Commencer",
+  "onboardingTagline": "Simplifiez vos tâches quotidiennes",
+  "onboardingChooseMode": "Choisissez comment commencer",
+  "onboardingChooseModeHelp": "Configurez un nouvel environnement, importez des données d’Operit1, rejoignez un espace d’appareils ou restaurez vos discussions depuis une sauvegarde.",
+  "onboardingQuickStart": "Démarrage rapide",
+  "onboardingQuickStartHelp": "Configurez un fournisseur de modèles pour terminer la configuration de base",
+  "onboardingImportLegacyHelp": "Importez les paramètres et les données de la version précédente",
+  "onboardingJoinExisting": "Rejoindre un espace d’appareils existant",
+  "onboardingJoinExistingHelp": "Trouvez un espace d’appareils à proximité et synchronisez les modèles et les données après l’avoir rejoint",
+  "onboardingJoinSpace": "Rejoindre un espace d’appareils",
+  "onboardingJoinSpaceHelp": "Sélectionnez « Ajouter un appareil », choisissez un appareil à proximité et associez-le. Les paramètres et les données sont synchronisés après l’approbation d’un administrateur.",
+  "onboardingConfirmStorage": "Confirmer les emplacements de stockage locaux",
+  "onboardingConfirmStorageHelp": "Les données du moteur et celles de l’espace de travail sont stockées séparément. Saisissez les chemins ou choisissez chaque répertoire.",
+  "onboardingRuntimeDirectory": "Répertoire du moteur",
+  "onboardingWorkspaceDirectory": "Répertoire de l’espace de travail",
+  "onboardingReadingPaths": "Lecture des chemins de stockage",
+  "onboardingStorageMountHelp": "Ces répertoires stockent séparément l’état du moteur et les espaces de travail. L’hôte local les monte après votre confirmation.",
+  "onboardingPrepareSnapshotHelp": "Préparation de l’instantané Operit1…",
+  "onboardingImportSnapshotHelp": "Utilisez un instantané exporté par la dernière version d’Operit1 pour migrer les paramètres, les discussions, les fiches de personnage et les ressources vers Operit2.",
+  "onboardingReadingSnapshot": "Lecture de l’instantané",
+  "onboardingPickSnapshotFile": "Choisir le fichier d’instantané",
+  "onboardingMigrationContents": "Données à migrer",
+  "onboardingChats": "Discussions",
+  "onboardingMessages": "Messages",
+  "onboardingPreferenceFiles": "Fichiers de préférences",
+  "onboardingResourceFiles": "Fichiers de ressources",
+  "onboardingExternalResources": "Ressources externes",
+  "onboardingImportInProgress": "Importation de l’instantané…",
+  "onboardingImportContinueHelp": "Sélectionnez « Continuer » pour migrer l’intégralité de l’instantané.",
+  "onboardingEndpoint": "Adresse du serveur",
+  "onboardingCompleteModel": "Terminer la configuration du modèle",
+  "onboardingCompleteModelHelp": "Choisissez un fournisseur, saisissez votre clé API, puis récupérez et sélectionnez un modèle par défaut.",
+  "onboardingModelProvider": "Fournisseur de modèles",
+  "onboardingModelProviderRequired": "Choisissez un fournisseur de modèles",
+  "onboardingContinueModel": "Poursuivre la configuration",
+  "onboardingFetchingModels": "Récupération des modèles",
+  "onboardingFetchModels": "Récupérer les modèles disponibles",
+  "onboardingDefaultModel": "Modèle par défaut",
+  "onboardingGrantPermissions": "Accorder les autorisations nécessaires",
+  "onboardingGrantPermissionsHelp": "Accordez les autorisations des fonctionnalités que vous souhaitez utiliser. Vous pouvez continuer sans rien accorder. Les fonctionnalités qui nécessitent ces autorisations seront indisponibles.",
+  "onboardingNoPermissions": "Aucune autorisation à vérifier sur cet appareil",
+  "onboardingNoPermissionsHelp": "Aucune autorisation système ne doit être configurée dans cet environnement.",
+  "onboardingRefreshPermissions": "Actualiser les autorisations",
+  "onboardingOptional": "Facultatif",
+  "onboardingRequired": "Champ obligatoire",
+  "onboardingPermissionGranted": "Accordée",
+  "onboardingGrantPermission": "Accorder l’autorisation",
+  "onboardingNoAction": "Aucune action nécessaire",
+  "onboardingUploadProgress": "Lecture et téléversement de l’instantané ({percent} %).",
+  "onboardingChooseDirectory": "Choisir : {label}",
+  "onboardingDefaultChatModel": "Modèle de discussion par défaut : {model}",
+  "onboardingImportFailed": "Échec de l’importation de l’instantané\n{error}",
+  "onboardingAgreementTitle": "Conditions d’utilisation et politique de confidentialité",
+  "onboardingAgreementHelp": "Lisez et acceptez ces conditions pour poursuivre la configuration.",
+  "onboardingAgreementVersion": "Version : {version}",
+  "onboardingAgreementWait": "{count, plural, one{Vous pourrez accepter dans {count} seconde.} other{Vous pourrez accepter dans {count} secondes.}}",
+  "extensionsView": "Afficher",
+  "extensionsCloseSearch": "Fermer la recherche",
+  "extensionsSearchShortcut": "Rechercher (Ctrl+F)",
+  "extensionsAdd": "Ajouter une extension",
+  "extensionsMore": "Plus",
+  "extensionsCheckUpdates": "Rechercher des mises à jour",
+  "extensionsEnvironment": "Variables d’environnement",
+  "extensionsReload": "Recharger le catalogue",
+  "extensionsSearchInstalled": "Rechercher parmi les extensions installées",
+  "extensionsSearchMarket": "Rechercher dans le marché et les extensions officielles",
+  "extensionsTab": "Extensions",
+  "extensionsDrop": "Déposez pour importer des extensions",
+  "extensionsDropTypes": "Formats pris en charge : .toolpkg, .js, .ts et .hjson",
+  "extensionsImportPlugin": "Importer un plugin",
+  "extensionsSelectToolPkg": "Choisir un fichier .toolpkg",
+  "extensionsImportScript": "Importer un paquet de scripts",
+  "extensionsScriptTypes": ".js, .ts, .hjson ou .toolpkg",
+  "extensionsAddSkill": "Ajouter une compétence",
+  "extensionsSkillSources": "Dépôt GitHub, ZIP ou saisie manuelle",
+  "extensionsAddMcp": "Ajouter un serveur MCP",
+  "extensionsMcpSources": "GitHub, ZIP, configuration ou formulaire",
+  "extensionsAddA2a": "Ajouter un agent A2A",
+  "extensionsA2aSources": "Adresse du serveur, Agent Card ou fichier de configuration",
+  "extensionsAiCreate": "Créer un plugin avec l’IA",
+  "extensionsAiCreateHelp": "Décrivez votre besoin, puis générez et installez le plugin depuis la discussion",
+  "extensionsAddHelp": "Les nouvelles extensions sont installées sur cet appareil par défaut. Un ToolPkg peut déclarer un périmètre d’installation fixe. La mise à jour d’un ToolPkg local portant le même ID conserve son emplacement et sa configuration. Sur ordinateur, vous pouvez aussi glisser-déposer les fichiers.",
+  "extensionsSyncChanged": "{count, plural, one{Espace d’appareils synchronisé. Une extension a changé.} other{Espace d’appareils synchronisé. {count} extensions ont changé.}}",
+  "extensionsDropRejected": "Importation directe impossible : {files}. Utilisez « Ajouter une extension » pour importer des compétences ou des serveurs MCP.",
+  "marketRangeWeek": "Dernière semaine",
+  "marketRangeMonth": "Dernier mois",
+  "marketRangeAll": "Depuis toujours",
+  "marketSortUpdated": "Mis à jour récemment",
+  "marketSortDownloads": "Les plus téléchargés",
+  "marketSortLikes": "Les plus populaires",
+  "marketFilterSummary": "Filtres : {sort}, {range}",
+  "marketFilterTitle": "Filtrer le marché",
+  "marketFilterSort": "Trier par",
+  "marketFilterPeriod": "Période",
+  "marketFilterUpdatedHelp": "Filtrez selon la date de dernière mise à jour.",
+  "marketFilterCategory": "Catégorie",
+  "marketFilterAllCategories": "Toutes les catégories",
+  "marketFilterCategoryRetry": "Impossible de charger les catégories. Réessayer.",
+  "marketFilterReset": "Réinitialiser",
+  "marketFilterApply": "Appliquer les filtres",
+  "marketFilterRankingHelp": "Par défaut, le classement porte sur les contenus publiés pour la première fois au cours des 30 derniers jours, selon leur nombre total de {metric}. Les mises à jour ne modifient pas la date de publication.",
+  "marketFilterLikes": "mentions J’aime",
+  "marketFilterDownloads": "téléchargements",
+  "attachmentContext": "Contexte supplémentaire",
+  "attachmentExtraInfo": "Informations supplémentaires",
+  "attachmentPastedText": "Texte collé",
+  "attachmentResetZoom": "Réinitialiser le zoom",
+  "attachmentCloseShortcut": "Fermer (Échap)",
+  "attachmentCopyContent": "Copier le contenu",
+  "attachmentCopied": "Copié dans le presse-papiers",
+  "attachmentCopyLocation": "Copier l’emplacement du fichier",
+  "attachmentClipboardImage": "Image du presse-papiers",
+  "chatSharePreview": "Aperçu de l’image à partager",
+  "chatShareSaveFile": "Enregistrer dans un fichier",
+  "chatShareImage": "Partager l’image",
+  "chatShareSaveFailed": "Impossible d’enregistrer",
+  "chatSharePng": "Image PNG",
+  "chatShareSaved": "Image enregistrée",
+  "chatShareFailed": "Impossible de partager",
+  "attachmentExpandCount": "{count, plural, one{Afficher la pièce jointe} other{Afficher les {count} pièces jointes}}",
+  "attachmentCollapseCount": "Réduire ({count})",
+  "attachmentContextCount": "Contexte supplémentaire · {count}",
+  "attachmentCopyLocationPath": "Copier l’emplacement du fichier\n{path}",
+  "attachmentLocationPath": "Enregistré dans : {path}",
+  "marketCategorySearch": "Recherche et études",
+  "marketCategorySearchDescription": "Moteurs de recherche, outils d’étude et recherche de connaissances",
+  "marketCategoryDevelopment": "Outils de développement",
+  "marketCategoryDevelopmentDescription": "Outils d’édition de code, de débogage et de développement",
+  "marketCategoryAutomation": "Automatisation",
+  "marketCategoryAutomationDescription": "Automatisation des tâches et flux de travail",
+  "marketCategoryDocuments": "Documents et connaissances",
+  "marketCategoryDocumentsDescription": "Traitement de documents et gestion des connaissances",
+  "marketCategoryMedia": "Médias et contenu",
+  "marketCategoryMediaDescription": "Traitement des images, vidéos et sons, et création de contenu",
+  "marketCategoryCommunication": "Discussion et communication",
+  "marketCategoryCommunicationDescription": "Outils de discussion, messagerie et intégrations de communication",
+  "marketCategoryIntegration": "Services et API",
+  "marketCategoryIntegrationDescription": "Intégrations de services tiers et outils API",
+  "marketCategorySystem": "Système et données",
+  "marketCategorySystemDescription": "Systèmes de fichiers, gestion des données et outils système",
+  "marketCategoryProductivity": "Activité professionnelle et productivité",
+  "marketCategoryProductivityDescription": "Flux de travail professionnels et outils de productivité",
+  "marketCategoryEntertainment": "Vie quotidienne et loisirs",
+  "marketCategoryEntertainmentDescription": "Utilitaires du quotidien et applications de divertissement",
+  "marketCategoryOther": "Autres",
+  "marketCategoryOtherDescription": "Extensions non classées ou d’autres types",
+  "settingsCategorySpeechTitle": "Voix et reconnaissance",
+  "settingsCategorySpeechSubtitle": "Fournisseurs TTS et STT",
+  "settingsCategorySpeechDescription": "Gérez les fournisseurs de synthèse et de reconnaissance vocales, puis choisissez la configuration active pour chacun.",
+  "settingsCategoryAboutTitle": "À propos d’Operit2",
+  "settingsCategoryAboutSubtitle": "Version, projet et licence",
+  "settingsCategoryAboutDescription": "Consultez la version d’Operit2, les liens du projet et les licences libres.",
+  "aboutUpdateSection": "Mises à jour",
+  "aboutAppDescription": "Un espace de travail IA pour le terminal et le bureau, avec des discussions, espaces de travail, outils, plugins, MCP, connexions distantes et accès Web.",
+  "aboutReadingVersion": "Lecture des informations de version…",
+  "aboutUpToDate": "Vous utilisez la dernière version",
+  "aboutCheckingUpdates": "Recherche de mises à jour…",
+  "aboutRetryCheck": "Échec de la recherche de mises à jour. Sélectionnez pour réessayer.",
+  "aboutCheckHint": "Sélectionnez pour rechercher une mise à jour",
+  "aboutProject": "Projet",
+  "aboutSource": "Code source du projet",
+  "aboutDocs": "Documentation",
+  "aboutDocsSubtitle": "README et guide de la ligne de commande",
+  "aboutLicenses": "Licences libres",
+  "aboutLicenseSubtitle": "Operit2 est distribué sous licence AGPL-3.0",
+  "aboutContact": "Contact",
+  "aboutDeveloper": "Développeur AAswordman",
+  "aboutCopyright": "© 2025–2026 Operit. Tous droits réservés.",
+  "aboutReadVersionFailed": "Impossible de lire les informations de version : {error}",
+  "aboutVersion": "Version {version}",
+  "aboutUpdatingTo": "Mise à jour vers {version}. Sélectionnez pour suivre la progression.",
+  "aboutLinkCopied": "Aucune application ne peut ouvrir ce lien. Copié dans le presse-papiers : {url}",
+  "settingsToolsAdvanced": "Paramètres avancés",
+  "settingsToolsReadOnly": "Lecture seule",
+  "settingsToolsReadWrite": "Lecture et écriture",
+  "settingsToolsFullAccess": "Accès complet",
+  "settingsToolsSandboxed": "Isolé (bac à sable macOS activé)",
+  "settingsToolsUnsandboxed": "Non isolé (bac à sable macOS désactivé)",
+  "settingsToolsIsolation": "Isolation de l’application",
+  "settingsToolsRestrictions": "Restrictions des capacités de l’IA",
+  "settingsToolsConfirmCalls": "Confirmation des appels d’outils",
+  "settingsToolsConfirmDirectCalls": "L’approbation s’applique aux outils que l’IA appelle directement.",
+  "settingsToolsRuntimeEnvironment": "Environnement d’exécution actuel",
+  "settingsToolsPlatform": "Plateforme",
+  "settingsToolsOuterIsolation": "Isolation de l’hôte",
+  "settingsToolsFileCapability": "Accès aux fichiers",
+  "settingsToolsTerminalCapability": "Accès au terminal",
+  "settingsToolsRegistered": "Enregistré",
+  "settingsToolsUnregistered": "Non enregistré",
+  "settingsToolsAuthorizations": "Autorisations",
+  "settingsToolsStructuredCapabilities": "Capacités structurées",
+  "settingsToolsNotGranted": "Non accordée",
+  "settingsToolsSystemRequired": "Action système requise",
+  "settingsToolsOpenSettings": "Ouvrir les paramètres",
+  "settingsToolsUnavailable": "Indisponible",
+  "settingsToolsHandle": "Vérifier",
+  "settingsToolsReadOnlyDescription": "L’IA peut lire l’espace de travail actuel et ne peut pas exécuter d’outils qui y écrivent.",
+  "settingsToolsReadWriteDescription": "L’IA peut lire et modifier l’espace de travail actuel. Le bac à sable de l’application reste activé.",
+  "settingsToolsFullAccessDescription": "L’IA peut lire et modifier l’espace de travail actuel. Ce mode désactive le bac à sable de l’application.",
+  "settingsToolsAuthorizationFailed": "Échec de l’autorisation : {error}",
+  "settingsToolsItemCount": "{count, plural, one{{count} élément} other{{count} éléments}}"
+}

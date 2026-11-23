@@ -21,7 +21,6 @@ part 'TtsSettingsModels.dart';
 part 'SttProviderWidgets.dart';
 part 'SttProviderDialogs.dart';
 
-const String _ttsTestText = '你好，我是 Operit 的语音试听。';
 
 /// Section widget that manages TTS providers and voices.
 class TtsProviderSection extends StatefulWidget {
@@ -88,11 +87,12 @@ class _TtsProviderSectionState extends State<TtsProviderSection> {
   }
 
   Future<void> _testTtsConfig(core_proxy.CoreOperitModelTtsConfigTtsConfig config) async {
+    final l10n = AppLocalizations.of(context)!;
     final configId = config.id.trim();
     if (configId.isEmpty) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('TTS 配置 ID 为空，不能试听')));
+      ).showSnackBar(SnackBar(content: Text(l10n.speechTtsMissingId)));
       return;
     }
     setState(() {
@@ -102,8 +102,8 @@ class _TtsProviderSectionState extends State<TtsProviderSection> {
       await TtsPlaybackController.instance.speakWithConfig(
         bridge: widget.clients.bridge,
         ttsConfigId: configId,
-        text: _ttsTestText,
-        title: '试听 · ${_ttsConfigModelVoiceText(config)}',
+        text: l10n.speechTestText,
+        title: l10n.speechPreviewTitle(_ttsConfigModelVoiceText(config)),
         interrupt: true,
       );
       if (!mounted) {
@@ -111,14 +111,14 @@ class _TtsProviderSectionState extends State<TtsProviderSection> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('已开始播放 TTS 试听')));
+      ).showSnackBar(SnackBar(content: Text(l10n.speechTtsPreviewPlaying)));
     } catch (error) {
       if (!mounted) {
         return;
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('TTS 试听失败：$error')));
+      ).showSnackBar(SnackBar(content: Text(l10n.speechPreviewFailed(error.toString()))));
     } finally {
       if (mounted && _testingTtsConfigId == configId) {
         setState(() {
@@ -165,7 +165,7 @@ class _TtsProviderSectionState extends State<TtsProviderSection> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('删除 TTS 配置失败：$error')));
+      ).showSnackBar(SnackBar(content: Text(l10n.speechDeleteTtsConfigFailed(error.toString()))));
     }
   }
 
@@ -438,6 +438,7 @@ class _TtsProviderSectionState extends State<TtsProviderSection> {
   /// Builds the provider tree while keeping selection changes out of loading state.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return FutureBuilder<_TtsSectionData>(
       future: _future,
       builder: (context, snapshot) {
@@ -445,18 +446,18 @@ class _TtsProviderSectionState extends State<TtsProviderSection> {
           return const Center(child: M3LoadingIndicator());
         }
         if (snapshot.hasError) {
-          return Center(child: Text('语音配置加载失败：${snapshot.error}'));
+          return Center(child: Text(l10n.speechLoadConfigFailed(snapshot.error.toString())));
         }
         final data = snapshot.data!;
         final currentConfigId = _currentTtsConfigId;
         final groups = _ttsProviderGroups(data.configs);
         _initializeProviderExpansion(groups, currentConfigId);
         return _SectionCard(
-          title: 'TTS 供应商',
+          title: l10n.speechTtsProviders,
           icon: Icons.record_voice_over_outlined,
           initiallyExpanded: widget.initiallyExpanded,
           action: SettingsSectionAddButton(
-            tooltip: '添加 TTS 供应商',
+            tooltip: l10n.speechAddTtsProvider,
             onPressed: () => _createProviderConfig(data.providerCatalogEntries),
           ),
           children: <Widget>[
@@ -594,26 +595,27 @@ class _SttProviderSectionState extends State<SttProviderSection> {
     core_proxy.SttConfig config,
     String? currentConfigId,
   ) async {
+    final l10n = AppLocalizations.of(context)!;
     if (config.id == currentConfigId) {
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(const SnackBar(content: Text('当前正在使用的 STT 配置不能删除')));
+      ).showSnackBar(SnackBar(content: Text(l10n.speechSttCurrentCannotDelete)));
       return;
     }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('删除 STT 供应商'),
-        content: Text('删除“${config.name}”及其识别配置？'),
+        title: Text(l10n.speechDeleteSttProvider),
+        content: Text(l10n.speechDeleteSttConfirm(config.name)),
         actions: <Widget>[
           TextButton(
             onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('取消'),
+            child: Text(l10n.cancel),
           ),
           FilledButton.tonalIcon(
             onPressed: () => Navigator.of(context).pop(true),
             icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+            label: Text(l10n.delete),
           ),
         ],
       ),
@@ -631,6 +633,7 @@ class _SttProviderSectionState extends State<SttProviderSection> {
 
   /// Runs one STT mutation and reports its exact runtime error.
   Future<void> _runSttOperation(Future<void> Function() operation) async {
+    final l10n = AppLocalizations.of(context)!;
     try {
       await operation();
     } catch (error) {
@@ -639,12 +642,13 @@ class _SttProviderSectionState extends State<SttProviderSection> {
       }
       ScaffoldMessenger.of(
         context,
-      ).showSnackBar(SnackBar(content: Text('STT 操作失败：$error')));
+      ).showSnackBar(SnackBar(content: Text(l10n.speechSttFailed(error.toString()))));
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return FutureBuilder<_SttSectionData>(
       future: _future,
       builder: (context, snapshot) {
@@ -652,15 +656,15 @@ class _SttProviderSectionState extends State<SttProviderSection> {
           return const Center(child: M3LoadingIndicator());
         }
         if (snapshot.hasError) {
-          return Center(child: Text('语音配置加载失败：${snapshot.error}'));
+          return Center(child: Text(l10n.speechLoadConfigFailed(snapshot.error.toString())));
         }
         final data = snapshot.data!;
         return _SectionCard(
-          title: 'STT 供应商',
+          title: l10n.speechSttProviders,
           icon: Icons.mic_outlined,
           initiallyExpanded: widget.initiallyExpanded,
           action: SettingsSectionAddButton(
-            tooltip: '添加 STT 供应商',
+            tooltip: l10n.speechAddSttProvider,
             onPressed: () =>
                 _createSttProviderConfig(data.sttProviderCatalogEntries),
           ),

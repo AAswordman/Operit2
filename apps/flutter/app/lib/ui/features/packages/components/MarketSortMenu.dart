@@ -3,6 +3,7 @@
 import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import '../market/ArtifactMarketSupport.dart';
 import '../market/MarketFilters.dart';
@@ -26,6 +27,7 @@ class MarketSortMenu extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     Future<void> open() async {
       final selected = await showModalBottomSheet<MarketFilters>(
         context: context,
@@ -42,9 +44,7 @@ class MarketSortMenu extends StatelessWidget {
       if (context.mounted && selected != null) onChanged(selected);
     }
 
-    final label =
-        '筛选：${marketSortLabel(filters.sort)}，'
-        '${marketTimeRangeLabel(filters.timeRange)}';
+    final label = l10n.marketFilterSummary(marketSortLabel(filters.sort, l10n), marketTimeRangeLabel(filters.timeRange, l10n));
     return compact
         ? IconButton(
             tooltip: label,
@@ -65,7 +65,7 @@ class MarketSortMenu extends StatelessWidget {
                   children: [
                     const Icon(Icons.sort_rounded, size: 20),
                     const SizedBox(width: 6),
-                    Text(marketSortLabel(filters.sort)),
+                    Text(marketSortLabel(filters.sort, l10n)),
                   ],
                 ),
               ),
@@ -129,6 +129,7 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final categories = _categories;
@@ -174,14 +175,14 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
-                      '筛选市场',
+                      l10n.marketFilterTitle,
                       style: theme.textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
                     ),
                   ),
                   IconButton(
-                    tooltip: '关闭',
+                    tooltip: l10n.close,
                     onPressed: () => Navigator.pop(context),
                     icon: const Icon(Icons.close_rounded),
                   ),
@@ -194,18 +195,18 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    section('排序方式', [
+                    section(l10n.marketFilterSort, [
                       for (final sort in MarketSortOption.values)
                         choice(
-                          marketSortLabel(sort),
+                          marketSortLabel(sort, l10n),
                           _draft.sort == sort,
                           () => setState(() => _draft = _draft.withSort(sort)),
                         ),
                     ]),
-                    section('时间范围', [
+                    section(l10n.marketFilterPeriod, [
                       for (final range in MarketTimeRange.values)
                         choice(
-                          marketTimeRangeLabel(range),
+                          marketTimeRangeLabel(range, l10n),
                           _draft.timeRange == range,
                           () => _set(timeRange: range),
                         ),
@@ -232,8 +233,8 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                             Expanded(
                               child: Text(
                                 _draft.sort == MarketSortOption.updated
-                                    ? '按最近更新时间筛选内容。'
-                                    : '热门榜默认最近 30 天首次发布的内容，按累计${_draft.sort == MarketSortOption.likes ? '点赞' : '下载'}排序。更新不会重置发布时间。',
+                                    ? l10n.marketFilterUpdatedHelp
+                                    : l10n.marketFilterRankingHelp(_draft.sort == MarketSortOption.likes ? l10n.marketFilterLikes : l10n.marketFilterDownloads),
                                 style: theme.textTheme.bodySmall?.copyWith(
                                   color: colors.onSurfaceVariant,
                                   height: 1.5,
@@ -244,9 +245,9 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                         ),
                       ),
                     ),
-                    section('内容分类', [
+                    section(l10n.marketFilterCategory, [
                       choice(
-                        '全部分类',
+                        l10n.marketFilterAllCategories,
                         _draft.categoryId == null,
                         () => _set(category: true),
                       ),
@@ -255,9 +256,7 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                           choice(
                             marketCategoryText(
                               item,
-                              languageCode: Localizations.localeOf(
-                                context,
-                              ).languageCode,
+                              AppLocalizations.of(context)!,
                             ).name,
                             _draft.categoryId == item.id,
                             () => _set(category: true, categoryId: item.id),
@@ -272,7 +271,7 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                         TextButton.icon(
                           onPressed: _loadCategories,
                           icon: const Icon(Icons.refresh_rounded, size: 18),
-                          label: const Text('分类加载失败，重试'),
+                          label: Text(l10n.marketFilterCategoryRetry),
                         )
                       else if (categories == null)
                         const Padding(
@@ -299,7 +298,7 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                         widget.initialFilters.sort,
                       ),
                     ),
-                    child: const Text('重置'),
+                    child: Text(l10n.marketFilterReset),
                   ),
                   const SizedBox(width: 20),
                   Expanded(
@@ -308,7 +307,7 @@ class _MarketFilterPanelState extends State<MarketFilterPanel> {
                       style: FilledButton.styleFrom(
                         minimumSize: const Size(0, 48),
                       ),
-                      child: const Text('应用筛选'),
+                      child: Text(l10n.marketFilterApply),
                     ),
                   ),
                 ],

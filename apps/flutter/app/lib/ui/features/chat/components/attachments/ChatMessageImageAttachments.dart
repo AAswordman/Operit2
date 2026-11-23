@@ -2,6 +2,7 @@
 
 import 'dart:math' as math;
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:flutter/services.dart';
 
 import '../../../../../util/ChatMarkupRegex.dart';
@@ -246,13 +247,14 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
 
   /// Poker card stack: layers cards with rotation and offset.
   Widget _buildPokerCardStack() {
+    final l10n = AppLocalizations.of(context)!;
     final count = _visualAttachments.length;
     final visibleCount = math.min(count, 3);
     const stackWidth = _cardSize + 16.0;
     const stackHeight = _cardSize + 8.0;
 
     return Tooltip(
-      message: '点击展开共 $count 个附件',
+      message: l10n.attachmentExpandCount(count),
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
         onTap: () => setState(() => _isExpanded = true),
@@ -369,6 +371,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
 
   /// Expanded grid: displays all thumbnails with a collapse toggle.
   Widget _buildExpandedGrid() {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final count = _visualAttachments.length;
 
@@ -404,7 +407,7 @@ class _ChatMessageAttachmentsState extends State<ChatMessageAttachments> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    '收起 ($count)',
+                    l10n.attachmentCollapseCount(count),
                     style: theme.textTheme.labelSmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                       fontWeight: FontWeight.w500,
@@ -607,6 +610,7 @@ class ChatMessageContextMetadata extends StatelessWidget {
         .where((attachment) => attachment.isInlineContext)
         .toList();
     if (contexts.isEmpty) return const SizedBox.shrink();
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     return Material(
       color: Colors.transparent,
@@ -616,7 +620,7 @@ class ChatMessageContextMetadata extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 2, vertical: 1),
           child: Text(
-            contexts.length == 1 ? '补充信息' : '补充信息 · ${contexts.length}',
+            contexts.length == 1 ? l10n.attachmentContext : l10n.attachmentContextCount(contexts.length),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.labelSmall?.copyWith(
@@ -632,15 +636,16 @@ class ChatMessageContextMetadata extends StatelessWidget {
   }
 
   void _showDetails(BuildContext context, List<AttachmentData> contexts) {
+    final l10n = AppLocalizations.of(context)!;
     final content = contexts.length == 1
         ? contexts.single.content
         : contexts
-              .map((entry) => '${_contextLabel(entry)}\n${entry.content}')
+              .map((entry) => '${_contextLabel(entry, l10n)}\n${entry.content}')
               .join('\n\n');
     showDialog<void>(
       context: context,
       builder: (dialogContext) => OperitDialogScaffold(
-        title: '补充信息',
+        title: l10n.attachmentContext,
         maxWidth: 520,
         maxHeight: 360,
         expandContent: false,
@@ -669,7 +674,7 @@ class ChatMessageContextMetadata extends StatelessWidget {
                       ExpansionTile(
                         tilePadding: EdgeInsets.zero,
                         title: Text(
-                          _contextLabel(entry),
+                          _contextLabel(entry, l10n),
                           style: Theme.of(dialogContext).textTheme.bodySmall,
                         ),
                         children: <Widget>[
@@ -692,17 +697,17 @@ class ChatMessageContextMetadata extends StatelessWidget {
   }
 }
 
-String _contextLabel(AttachmentData attachment) {
-  if (attachment.id.startsWith('message_insert_extra_bundle_')) return '附加信息';
+String _contextLabel(AttachmentData attachment, AppLocalizations l10n) {
+  if (attachment.id.startsWith('message_insert_extra_bundle_')) return l10n.attachmentExtraInfo;
   if (attachment.id.startsWith('workspace_mention:')) {
     return '@${attachment.filename}';
   }
-  if (attachment.id.startsWith('pasted_text')) return '粘贴文本';
+  if (attachment.id.startsWith('pasted_text')) return l10n.attachmentPastedText;
   if (attachment.id.startsWith('screen_ocr_') ||
       attachment.filename == 'screen_content.json') {
-    return '屏幕内容';
+    return l10n.attachmentScreenContent;
   }
-  if (attachment.id.startsWith('notifications_')) return '当前通知';
-  if (attachment.id.startsWith('location_')) return '当前位置';
+  if (attachment.id.startsWith('notifications_')) return l10n.attachmentNotifications;
+  if (attachment.id.startsWith('location_')) return l10n.attachmentLocation;
   return attachment.filename;
 }

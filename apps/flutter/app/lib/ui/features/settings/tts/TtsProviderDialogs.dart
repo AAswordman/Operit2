@@ -123,7 +123,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
     final isSystemTts = _isSystemProviderType(_providerType);
     final isLocalModelTts = _isLocalModelProviderType(_providerType);
     return AlertDialog(
-      title: const Text('编辑 TTS 供应商'),
+      title: Text(l10n.speechEditTtsProvider),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -135,7 +135,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
                 OperitFormStyles.dropdownButtonFormField<String>(
                   context,
                   initialValue: _providerType,
-                  decoration: const InputDecoration(labelText: '供应商类型'),
+                  decoration: InputDecoration(labelText: l10n.speechProviderType),
                   items: _providerCatalogItems(widget.providerCatalogEntries),
                   onChanged: (value) {
                     if (value == null) {
@@ -162,7 +162,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
                   },
                 ),
                 const SizedBox(height: 10),
-                _field(_nameController, '供应商名称', requiredField: true),
+                _field(_nameController, l10n.speechProviderName, requiredField: true),
                 if (!isSystemTts && !isLocalModelTts) ...[
                   _field(_endpointController, 'Endpoint', requiredField: true),
                   Padding(
@@ -174,11 +174,11 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
                   ),
                 ],
                 if (isHttpTts) ...[
-                  _field(_httpMethodController, 'HTTP 方法', requiredField: true),
+                  _field(_httpMethodController, l10n.speechHttpMethod, requiredField: true),
                   _field(_contentTypeController, 'Content-Type'),
                   _field(
                     _requestBodyController,
-                    '请求体模板',
+                    l10n.speechBodyTemplate,
                     requiredField:
                         isHttpTts &&
                         _httpMethodController.text.trim().toUpperCase() ==
@@ -186,7 +186,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
                     minLines: 4,
                   ),
                   _field(_headersController, 'Headers JSON', minLines: 3),
-                  _field(_responsePipelineController, '响应管道 JSON', minLines: 4),
+                  _field(_responsePipelineController, l10n.speechPipelineJson, minLines: 4),
                 ],
                 if (widget.deleteBlockedReason case final reason?) ...<Widget>[
                   const SizedBox(height: 2),
@@ -216,9 +216,9 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
         ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('保存')),
+        FilledButton(onPressed: _submit, child: Text(l10n.save)),
       ],
     );
   }
@@ -229,6 +229,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
     bool requiredField = false,
     int minLines = 1,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
@@ -239,7 +240,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
         validator: (value) {
           final text = value?.trim() ?? '';
           if (requiredField && text.isEmpty) {
-            return '$label不能为空';
+            return l10n.speechFieldRequired(label);
           }
           return null;
         },
@@ -254,6 +255,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
 
   /// Validates provider fields and returns the saved provider values.
   void _submit() {
+    final l10n = AppLocalizations.of(context)!;
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
@@ -266,7 +268,7 @@ class _TtsProviderDialogState extends State<_TtsProviderDialog> {
       responsePipeline = _isHttpProviderType(_providerType)
           ? _decodePipeline(
               _responsePipelineController.text.trim(),
-              '响应管道 JSON',
+              l10n.speechPipelineJson,
             )
           : const <core_proxy.TtsHttpResponsePipelineStep>[];
     } catch (error) {
@@ -353,9 +355,10 @@ class _AvailableTtsVoiceDialogState extends State<_AvailableTtsVoiceDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final filteredVoices = _filteredVoices();
     return AlertDialog(
-      title: const Text('添加 TTS 音色'),
+      title: Text(l10n.speechAddTtsVoice),
       content: SizedBox(
         width: 520,
         height: 500,
@@ -363,9 +366,9 @@ class _AvailableTtsVoiceDialogState extends State<_AvailableTtsVoiceDialog> {
           children: <Widget>[
             TextField(
               controller: _searchController,
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                labelText: '搜索',
+              decoration: InputDecoration(
+                prefixIcon: const Icon(Icons.search),
+                labelText: l10n.search,
               ),
               onChanged: (_) => setState(() {}),
             ),
@@ -394,8 +397,8 @@ class _AvailableTtsVoiceDialogState extends State<_AvailableTtsVoiceDialog> {
                       visualDensity: VisualDensity.compact,
                       contentPadding: EdgeInsets.zero,
                       leading: const Icon(Icons.add),
-                      title: const Text('自定义音色'),
-                      subtitle: const Text('手动填写模型和音色'),
+                      title: Text(l10n.speechCustomVoice),
+                      subtitle: Text(l10n.speechEnterVoice),
                       onTap: () => Navigator.of(
                         context,
                       ).pop(const _AvailableTtsVoiceCustom()),
@@ -410,7 +413,7 @@ class _AvailableTtsVoiceDialogState extends State<_AvailableTtsVoiceDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
       ],
     );
@@ -465,6 +468,7 @@ class _CustomTtsVoiceDialogState extends State<_CustomTtsVoiceDialog> {
   }
 
   void _save() {
+    final l10n = AppLocalizations.of(context)!;
     setState(() {
       _pairError = null;
     });
@@ -475,7 +479,7 @@ class _CustomTtsVoiceDialogState extends State<_CustomTtsVoiceDialog> {
     final voice = _voiceController.text.trim();
     if (model.isEmpty && voice.isEmpty) {
       setState(() {
-        _pairError = '模型和音色至少填写一项';
+        _pairError = l10n.speechModelVoiceRequired;
       });
       return;
     }
@@ -486,8 +490,9 @@ class _CustomTtsVoiceDialogState extends State<_CustomTtsVoiceDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('自定义 TTS 音色'),
+      title: Text(l10n.speechCustomTtsVoice),
       content: SizedBox(
         width: 420,
         child: Form(
@@ -498,11 +503,11 @@ class _CustomTtsVoiceDialogState extends State<_CustomTtsVoiceDialog> {
             children: <Widget>[
               TextFormField(
                 controller: _modelController,
-                decoration: const InputDecoration(labelText: '模型'),
+                decoration: InputDecoration(labelText: l10n.model),
                 validator: (value) {
                   final text = value?.trim() ?? '';
                   if (widget.requireModel && text.isEmpty) {
-                    return '模型不能为空';
+                    return l10n.speechModelRequired;
                   }
                   return null;
                 },
@@ -511,13 +516,13 @@ class _CustomTtsVoiceDialogState extends State<_CustomTtsVoiceDialog> {
               TextFormField(
                 controller: _voiceController,
                 decoration: InputDecoration(
-                  labelText: '音色',
+                  labelText: l10n.speechVoice,
                   errorText: _pairError,
                 ),
                 validator: (value) {
                   final text = value?.trim() ?? '';
                   if (widget.requireVoice && text.isEmpty) {
-                    return '音色不能为空';
+                    return l10n.speechVoiceRequired;
                   }
                   return null;
                 },
@@ -529,9 +534,9 @@ class _CustomTtsVoiceDialogState extends State<_CustomTtsVoiceDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
-        FilledButton(onPressed: _save, child: const Text('保存')),
+        FilledButton(onPressed: _save, child: Text(l10n.save)),
       ],
     );
   }
@@ -614,17 +619,19 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
   bool get _requiresVoice => _ttsConfigUsesPlaceholder(widget.config, 'voice');
 
   String get _modelLabel {
+    final l10n = AppLocalizations.of(context)!;
     return switch (widget.config.providerType) {
-      _TtsProviderTypes.system => '语言标签（可选，例如 zh-CN）',
-      _TtsProviderTypes.http => '模型 / Locale',
-      _ => '模型',
+      _TtsProviderTypes.system => l10n.speechLanguageTag,
+      _TtsProviderTypes.http => l10n.speechModelLocale,
+      _ => l10n.model,
     };
   }
 
   String get _voiceLabel {
+    final l10n = AppLocalizations.of(context)!;
     return switch (widget.config.providerType) {
-      _TtsProviderTypes.system => '系统声音名称（可选）',
-      _ => '音色',
+      _TtsProviderTypes.system => l10n.speechSystemVoiceName,
+      _ => l10n.speechVoice,
     };
   }
 
@@ -645,8 +652,9 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('编辑 TTS 音色'),
+      title: Text(l10n.speechEditTtsVoice),
       content: SizedBox(
         width: 420,
         child: Form(
@@ -664,7 +672,7 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
                           child: Center(child: M3LoadingIndicator(size: 18)),
                         )
                       : const Icon(Icons.volume_up_outlined, size: 18),
-                  label: const Text('测试音色'),
+                  label: Text(l10n.speechTestVoice),
                 ),
               ),
               const SizedBox(height: 12),
@@ -678,10 +686,10 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
                 _voiceLabel,
                 requiredField: _requiresVoice,
               ),
-              _field(_formatController, '音频格式', requiredField: true),
+              _field(_formatController, l10n.speechAudioFormat, requiredField: true),
               _field(
                 _speedController,
-                '速度',
+                l10n.speechSpeed,
                 requiredField: true,
                 numberField: true,
               ),
@@ -707,13 +715,13 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
             onPressed: () =>
                 Navigator.of(context).pop(const _TtsVoiceEditDeleted()),
             icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+            label: Text(l10n.delete),
           ),
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('保存')),
+        FilledButton(onPressed: _submit, child: Text(l10n.save)),
       ],
     );
   }
@@ -724,6 +732,7 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
     bool requiredField = false,
     bool numberField = false,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
@@ -732,12 +741,12 @@ class _TtsVoiceConfigDialogState extends State<_TtsVoiceConfigDialog> {
         validator: (value) {
           final text = value?.trim() ?? '';
           if (requiredField && text.isEmpty) {
-            return '$label不能为空';
+            return l10n.speechFieldRequired(label);
           }
           if (numberField) {
             final parsed = double.tryParse(text);
             if (parsed == null || parsed <= 0) {
-              return '$label必须为正数';
+              return l10n.speechFieldPositive(label);
             }
           }
           return null;
@@ -865,6 +874,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final catalog = _requiredTtsProviderCatalog(
       widget.providerCatalogEntries,
       _providerType,
@@ -879,7 +889,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
         isLocalModelTts ||
         (!isSystemTts && _ttsProviderCatalogUsesPlaceholder(catalog, 'voice'));
     return AlertDialog(
-      title: const Text('新建 TTS 供应商'),
+      title: Text(l10n.speechNewTtsProvider),
       content: SizedBox(
         width: 560,
         child: SingleChildScrollView(
@@ -891,7 +901,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
                 OperitFormStyles.dropdownButtonFormField<String>(
                   context,
                   initialValue: _providerType,
-                  decoration: const InputDecoration(labelText: '供应商类型'),
+                  decoration: InputDecoration(labelText: l10n.speechProviderType),
                   items: _providerCatalogItems(widget.providerCatalogEntries),
                   onChanged: (value) {
                     if (value == null) {
@@ -921,9 +931,9 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
                   },
                 ),
                 const SizedBox(height: 10),
-                _field(_nameController, '供应商名称', requiredField: true),
+                _field(_nameController, l10n.speechProviderName, requiredField: true),
                 if (isLocalModelTts) ...[
-                  _field(_modelController, '模型 ID@版本', requiredField: true),
+                  _field(_modelController, l10n.speechModelVersion, requiredField: true),
                   _field(_voiceController, 'Speaker ID', requiredField: true),
                 ] else if (!isSystemTts) ...[
                   _field(_endpointController, 'Endpoint', requiredField: true),
@@ -936,25 +946,25 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
                   ),
                   _field(
                     _modelController,
-                    '模型 / Locale',
+                    l10n.speechModelLocale,
                     requiredField: requireModel,
                   ),
-                  _field(_voiceController, '音色', requiredField: requireVoice),
+                  _field(_voiceController, l10n.speechVoice, requiredField: requireVoice),
                 ] else ...[
-                  _field(_modelController, '语言标签（可选，例如 zh-CN）'),
-                  _field(_voiceController, '系统声音名称（可选）'),
+                  _field(_modelController, l10n.speechLanguageTag),
+                  _field(_voiceController, l10n.speechSystemVoiceName),
                 ],
                 if (isHttpTts) ...[
                   _field(
                     _httpMethodController,
-                    'HTTP 方法',
+                    l10n.speechHttpMethod,
                     requiredField: true,
                     onChanged: (_) => setState(() {}),
                   ),
                   _field(_contentTypeController, 'Content-Type'),
                   _field(
                     _requestBodyController,
-                    '请求体模板',
+                    l10n.speechBodyTemplate,
                     requiredField:
                         isHttpTts &&
                         _httpMethodController.text.trim().toUpperCase() ==
@@ -962,12 +972,12 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
                     minLines: 4,
                   ),
                   _field(_headersController, 'Headers JSON', minLines: 3),
-                  _field(_responsePipelineController, '响应管道 JSON', minLines: 4),
+                  _field(_responsePipelineController, l10n.speechPipelineJson, minLines: 4),
                 ],
-                _field(_formatController, '音频格式', requiredField: true),
+                _field(_formatController, l10n.speechAudioFormat, requiredField: true),
                 _field(
                   _speedController,
-                  '速度',
+                  l10n.speechSpeed,
                   requiredField: true,
                   numberField: true,
                 ),
@@ -979,9 +989,9 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
-        FilledButton(onPressed: _submit, child: const Text('保存')),
+        FilledButton(onPressed: _submit, child: Text(l10n.save)),
       ],
     );
   }
@@ -994,6 +1004,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
     int minLines = 1,
     ValueChanged<String>? onChanged,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
       child: TextFormField(
@@ -1005,12 +1016,12 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
         validator: (value) {
           final text = value?.trim() ?? '';
           if (requiredField && text.isEmpty) {
-            return '$label不能为空';
+            return l10n.speechFieldRequired(label);
           }
           if (numberField) {
             final parsed = double.tryParse(text);
             if (parsed == null || parsed <= 0) {
-              return '$label必须为正数';
+              return l10n.speechFieldPositive(label);
             }
           }
           return null;
@@ -1020,6 +1031,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
   }
 
   void _submit() {
+    final l10n = AppLocalizations.of(context)!;
     if (!(_formKey.currentState?.validate() ?? false)) {
       return;
     }
@@ -1033,7 +1045,7 @@ class _TtsConfigDialogState extends State<_TtsConfigDialog> {
       responsePipeline = isHttpTts
           ? _decodePipeline(
               _responsePipelineController.text.trim(),
-              '响应管道 JSON',
+              l10n.speechPipelineJson,
             )
           : const <core_proxy.TtsHttpResponsePipelineStep>[];
     } catch (error) {

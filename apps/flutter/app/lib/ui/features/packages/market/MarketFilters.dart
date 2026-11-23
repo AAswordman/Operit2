@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../../l10n/generated/app_localizations.dart';
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart';
 import 'MarketStatsSupport.dart';
 
@@ -8,16 +9,18 @@ export 'MarketStatsSupport.dart';
 
 enum MarketTimeRange { week, month, all }
 
-String marketTimeRangeLabel(MarketTimeRange range) => switch (range) {
-  MarketTimeRange.week => '最近一周',
-  MarketTimeRange.month => '最近一个月',
-  MarketTimeRange.all => '全部时间',
+/// Returns the localized publication period.
+String marketTimeRangeLabel(MarketTimeRange range, AppLocalizations l10n) => switch (range) {
+  MarketTimeRange.week => l10n.marketRangeWeek,
+  MarketTimeRange.month => l10n.marketRangeMonth,
+  MarketTimeRange.all => l10n.marketRangeAll,
 };
 
-String marketSortLabel(MarketSortOption sort) => switch (sort) {
-  MarketSortOption.updated => '最近更新',
-  MarketSortOption.downloads => '下载最多',
-  MarketSortOption.likes => '最受欢迎',
+/// Returns the localized ranking label.
+String marketSortLabel(MarketSortOption sort, AppLocalizations l10n) => switch (sort) {
+  MarketSortOption.updated => l10n.marketSortUpdated,
+  MarketSortOption.downloads => l10n.marketSortDownloads,
+  MarketSortOption.likes => l10n.marketSortLikes,
 };
 
 String marketSortId(MarketSortOption sort) => switch (sort) {

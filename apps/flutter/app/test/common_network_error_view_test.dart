@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
+import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/l10n/generated/app_localizations_zh.dart';
 import 'package:operit2/ui/common/components/CommonNetworkErrorView.dart';
 
 /// Verifies summaries used by model configuration error surfaces.
 void main() {
+  final l10n = AppLocalizationsZh();
   test('structured HTTP status controls the explanation and retains raw text', () {
     const original =
         'list_models request failed: 403 {"message":"blocked","trace":"abc"}';
@@ -16,6 +19,7 @@ void main() {
         remoteMessage: 'blocked',
       ),
       null,
+      l10n,
     );
     expect(summary.title, 'HTTP 403：请求被服务器风控拒绝');
     expect(summary.detail, original);
@@ -28,6 +32,9 @@ void main() {
           'list_models request failed: 402 {"message":"insufficient balance"}';
       await tester.pumpWidget(
         const MaterialApp(
+          locale: Locale('zh'),
+          supportedLocales: AppLocalizations.supportedLocales,
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
           home: Scaffold(body: CommonNetworkErrorView(errorText: original)),
         ),
       );
@@ -47,6 +54,7 @@ void main() {
         httpStatus: 403,
       ),
       null,
+      l10n,
     );
     expect(summary.title, 'HTTP 403：请求被服务器风控拒绝');
     expect(summary.detail, 'request failed: 401: original detail');
@@ -65,6 +73,7 @@ void main() {
         },
       ),
       null,
+      l10n,
     );
 
     expect(summary.title, '模型已存在');

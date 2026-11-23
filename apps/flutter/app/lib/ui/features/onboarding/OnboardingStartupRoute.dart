@@ -782,11 +782,12 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
 
   /// Persists the selected storage location and enters runtime-backed setup.
   Future<void> _confirmStorageLocation() async {
+    final l10n = AppLocalizations.of(context)!;
     final runtimeRoot = _runtimeRootController.text.trim();
     final workspaceRoot = _workspaceRootController.text.trim();
     if (runtimeRoot.isEmpty || workspaceRoot.isEmpty) {
       setState(() {
-        _setupError = '运行时目录和工作区目录都不能为空';
+        _setupError = l10n.onboardingStorageRequired;
       });
       return;
     }
@@ -972,6 +973,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _saveModelSetup() async {
+    final l10n = AppLocalizations.of(context)!;
     final formState = _modelFormKey.currentState;
     if (formState == null) {
       throw StateError('model setup form state is not ready');
@@ -983,13 +985,13 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
     final modelId = _selectedModelId;
     if (providerId == null || providerId.isEmpty) {
       setState(() {
-        _setupError = '请先拉取可用模型';
+        _setupError = l10n.onboardingFetchModelsFirst;
       });
       return;
     }
     if (modelId == null || modelId.isEmpty) {
       setState(() {
-        _setupError = '请选择默认模型';
+        _setupError = l10n.onboardingChooseDefaultModel;
       });
       return;
     }
@@ -1045,6 +1047,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _pickOperit1Snapshot() async {
+    final l10n = AppLocalizations.of(context)!;
     final previousSession = _operit1SnapshotSession;
     SnapshotImportSession? stagedSession;
     ClientLogger.v(
@@ -1056,10 +1059,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _readingOperit1Snapshot = true;
       _setupError = null;
       _operit1Snapshot = null;
-      _operit1ImportProgress = const core_proxy.Operit1SnapshotImportProgress(
+      _operit1ImportProgress = core_proxy.Operit1SnapshotImportProgress(
         stage: 'select',
-        title: '选择快照',
-        detail: '请在文件选择器中选择 Operit1 快照。',
+        title: l10n.onboardingPickSnapshot,
+        detail: l10n.onboardingPickSnapshotHelp,
         progress: 0,
         active: true,
       );
@@ -1100,8 +1103,8 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
           setState(() {
             _operit1ImportProgress = core_proxy.Operit1SnapshotImportProgress(
               stage: 'upload',
-              title: '上传快照',
-              detail: '正在读取并上传快照文件（$uploadPercent%）。',
+              title: l10n.onboardingUploadSnapshot,
+              detail: l10n.onboardingUploadProgress(uploadPercent),
               progress: uploadPercent / 100,
               active: true,
             );
@@ -1112,10 +1115,10 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       if (mounted) {
         setState(() {
           _operit1ImportProgress =
-              const core_proxy.Operit1SnapshotImportProgress(
+              core_proxy.Operit1SnapshotImportProgress(
                 stage: 'inspect',
-                title: '检查快照',
-                detail: '正在检查 Operit1 快照内容，请稍候。',
+                title: l10n.onboardingInspectSnapshot,
+                detail: l10n.onboardingInspectSnapshotHelp,
                 progress: 0,
                 active: true,
               );
@@ -1168,20 +1171,21 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   Future<void> _saveOperit1Import() async {
+    final l10n = AppLocalizations.of(context)!;
     final session = _operit1SnapshotSession;
     if (session == null) {
       setState(() {
-        _setupError = '请选择 Operit1 快照文件';
+        _setupError = l10n.onboardingSnapshotRequired;
       });
       return;
     }
 
     setState(() {
       _importingOperit1Snapshot = true;
-      _operit1ImportProgress = const core_proxy.Operit1SnapshotImportProgress(
+      _operit1ImportProgress = core_proxy.Operit1SnapshotImportProgress(
         stage: 'prepare',
-        title: '准备导入',
-        detail: '正在准备迁移 Operit1 快照内容，请稍候。',
+        title: l10n.onboardingPrepareImport,
+        detail: l10n.onboardingPrepareMigration,
         progress: 0,
         active: true,
       );
@@ -1520,70 +1524,72 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   }
 
   String get _primaryActionLabel {
+    final l10n = AppLocalizations.of(context)!;
     if (_isAgreementPage) {
       if (_agreementWaitSeconds > 0) {
-        return '请稍候';
+        return l10n.onboardingWait;
       }
-      return '同意';
+      return l10n.onboardingAgree;
     }
     if (_isStoragePage) {
       if (_savingStorage) {
-        return '保存中';
+        return l10n.onboardingSaving;
       }
-      return '确认';
+      return l10n.onboardingConfirm;
     }
     if (_isModePage) {
       if (_preparingLocalSetup) {
-        return '准备中';
+        return l10n.onboardingPreparing;
       }
-      return '继续';
+      return l10n.onboardingContinue;
     }
     if (_isModelPage) {
       if (_loadingModels) {
-        return '拉取中';
+        return l10n.onboardingFetching;
       }
-      return _savingModel ? '保存中' : '继续';
+      return _savingModel ? l10n.onboardingSaving : l10n.onboardingContinue;
     }
     if (_isImportPage) {
       if (_readingOperit1Snapshot) {
-        return '读取中';
+        return l10n.onboardingReading;
       }
-      return _importingOperit1Snapshot ? '导入中' : '继续';
+      return _importingOperit1Snapshot ? l10n.onboardingImporting : l10n.onboardingContinue;
     }
     if (_isDeviceSpacePage) {
-      return _deviceSpaceDiscoveryBusy ? '处理中' : '完成';
+      return _deviceSpaceDiscoveryBusy ? l10n.onboardingWorking : l10n.onboardingDone;
     }
     if (_isPermissionPage) {
-      return '继续';
+      return l10n.onboardingContinue;
     }
-    return '继续';
+    return l10n.onboardingContinue;
   }
 
   String get _progressLabel {
+    final l10n = AppLocalizations.of(context)!;
     if (_isRestorePage) return AppLocalizations.of(context)!.chatRestoreTitle;
     if (_isBackupPage) return AppLocalizations.of(context)!.chatBackupTitle;
     if (_isAgreementPage) {
-      return '用户协议';
+      return l10n.onboardingAgreement;
     }
     if (_isStoragePage) {
-      return '存储位置';
+      return l10n.onboardingStorage;
     }
     if (_isModePage) {
-      return '启动方式';
+      return l10n.onboardingMode;
     }
     if (_isModelPage) {
-      return '模型配置';
+      return l10n.onboardingModelSetup;
     }
     if (_isImportPage) {
-      return '导入配置';
+      return l10n.onboardingImportSetup;
     }
     if (_isDeviceSpacePage) {
-      return '设备空间';
+      return l10n.onboardingDeviceSpace;
     }
     if (_isPermissionPage) {
-      return '系统授权';
+      return l10n.onboardingPermissions;
     }
-    return '欢迎';
+    return l10n.onboardingWelcome;
   }
 
   VoidCallback get _primaryAction {
@@ -1730,6 +1736,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return AnimatedBuilder(
@@ -1875,7 +1882,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                         ),
                         const SizedBox(height: 10),
                         Text(
-                          '正在准备本地运行时',
+                          l10n.onboardingPreparingRuntime,
                           style: textTheme.labelMedium?.copyWith(
                             color: colorScheme.onSurfaceVariant,
                             fontWeight: FontWeight.w700,
@@ -1904,7 +1911,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         tapTargetSize: MaterialTapTargetSize.shrinkWrap,
                       ),
-                      child: const Text('跳过'),
+                      child: Text(l10n.onboardingSkip),
                     ),
                   ),
                 ),
@@ -1922,7 +1929,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                     icon: const Icon(Icons.arrow_back_rounded),
                     color: colorScheme.primary,
                     disabledColor: colorScheme.onSurface.withValues(alpha: 0.3),
-                    tooltip: '上一页',
+                    tooltip: l10n.onboardingPreviousPage,
                   ),
                 ),
               ),
@@ -1975,7 +1982,7 @@ class _AiSetupSharedChrome extends StatelessWidget {
                         Flexible(
                           child: Text(
                             introActive && chromeProgress < 0.5
-                                ? '开始'
+                                ? l10n.onboardingStart
                                 : primaryActionLabel,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -2012,6 +2019,7 @@ class _AiSetupIntroPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final bodyColor = colorScheme.onSurfaceVariant;
@@ -2061,7 +2069,7 @@ class _AiSetupIntroPage extends StatelessWidget {
                                       maxWidth: 420,
                                     ),
                                     child: Text(
-                                      '让日常任务，从这里变得简单',
+                                      l10n.onboardingTagline,
                                       textAlign: TextAlign.center,
                                       maxLines: 1,
                                       style: textTheme.titleSmall?.copyWith(
@@ -2173,6 +2181,7 @@ class _AiSetupModePage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Align(
       alignment: Alignment.topCenter,
       child: SingleChildScrollView(
@@ -2182,33 +2191,33 @@ class _AiSetupModePage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const _SetupSectionHeader(
+              _SetupSectionHeader(
                 icon: Icons.route_rounded,
-                eyebrow: '启动方式',
-                title: '选择上手方式',
-                description: '可以配置新环境、导入 Operit1 数据、加入已有设备空间，或从以前的备份恢复聊天记录。',
+                eyebrow: l10n.onboardingMode,
+                title: l10n.onboardingChooseMode,
+                description: l10n.onboardingChooseModeHelp,
               ),
               const SizedBox(height: 22),
               _SetupModeTile(
                 icon: Icons.flash_on_rounded,
-                title: '快速开始',
-                subtitle: '配置模型供应商，直接完成基础设置',
+                title: l10n.onboardingQuickStart,
+                subtitle: l10n.onboardingQuickStartHelp,
                 selected: selectedMode == _AiSetupStartMode.quickStart,
                 onTap: () => onModeChanged(_AiSetupStartMode.quickStart),
               ),
               const SizedBox(height: 10),
               _SetupModeTile(
                 icon: Icons.move_to_inbox_rounded,
-                title: '从 Operit1 导入',
-                subtitle: '导入旧版配置和数据',
+                title: l10n.settingsDataImportOperit1Snapshot,
+                subtitle: l10n.onboardingImportLegacyHelp,
                 selected: selectedMode == _AiSetupStartMode.operit1Import,
                 onTap: () => onModeChanged(_AiSetupStartMode.operit1Import),
               ),
               const SizedBox(height: 10),
               _SetupModeTile(
                 icon: Icons.cloud_sync_rounded,
-                title: '加入已有设备空间',
-                subtitle: '扫描附近设备空间，加入后直接同步模型和数据',
+                title: l10n.onboardingJoinExisting,
+                subtitle: l10n.onboardingJoinExistingHelp,
                 selected: selectedMode == _AiSetupStartMode.deviceSpace,
                 onTap: () => onModeChanged(_AiSetupStartMode.deviceSpace),
               ),
@@ -2246,6 +2255,7 @@ class _AiSetupDeviceSpacePage extends StatelessWidget {
   /// Builds nearby device-space discovery inside the onboarding flow.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Align(
       alignment: Alignment.topCenter,
       child: SingleChildScrollView(
@@ -2255,11 +2265,11 @@ class _AiSetupDeviceSpacePage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const _SetupSectionHeader(
+              _SetupSectionHeader(
                 icon: Icons.cloud_sync_rounded,
-                eyebrow: '设备空间',
-                title: '加入设备空间',
-                description: '点击添加设备，选择附近的设备并完成配对。管理员批准加入后，才会同步配置和数据。',
+                eyebrow: l10n.onboardingDeviceSpace,
+                title: l10n.onboardingJoinSpace,
+                description: l10n.onboardingJoinSpaceHelp,
               ),
               const SizedBox(height: 22),
               DeviceSpaceDiscoveryPanel(
@@ -2312,19 +2322,13 @@ class _AiSetupAgreementPage extends StatelessWidget {
               children: <Widget>[
                 _SetupSectionHeader(
                   icon: Icons.description_outlined,
-                  eyebrow: isEnglish ? 'User Agreement' : '用户协议',
-                  title: isEnglish
-                      ? 'User Agreement and Privacy Policy'
-                      : '用户协议与隐私政策',
-                  description: isEnglish
-                      ? 'Please read this agreement. Confirming agreement is required to continue device setup.'
-                      : '请阅读本协议。确认同意后，才能继续完成设备设置。',
+                  eyebrow: l10n.onboardingAgreement,
+                  title: l10n.onboardingAgreementTitle,
+                  description: l10n.onboardingAgreementHelp,
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  isEnglish
-                      ? 'Version: ${OnboardingStartupRouteStrategy._currentAgreementVersion}'
-                      : '版本：${OnboardingStartupRouteStrategy._currentAgreementVersion}',
+                  l10n.onboardingAgreementVersion(OnboardingStartupRouteStrategy._currentAgreementVersion),
                   style: textTheme.labelMedium?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     letterSpacing: 0,
@@ -2333,9 +2337,7 @@ class _AiSetupAgreementPage extends StatelessWidget {
                 if (waitSeconds > 0) ...<Widget>[
                   const SizedBox(height: 8),
                   Text(
-                    isEnglish
-                        ? 'Confirmation will be available in $waitSeconds seconds.'
-                        : '阅读确认将在 $waitSeconds 秒后开放。',
+                    l10n.onboardingAgreementWait(waitSeconds),
                     style: textTheme.labelMedium?.copyWith(
                       color: colorScheme.primary,
                       letterSpacing: 0,
@@ -2547,6 +2549,7 @@ class _AiSetupStoragePage extends StatelessWidget {
   /// Builds the storage-location confirmation page.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Align(
@@ -2558,16 +2561,16 @@ class _AiSetupStoragePage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const _SetupSectionHeader(
+              _SetupSectionHeader(
                 icon: Icons.folder_copy_rounded,
-                eyebrow: '存储位置',
-                title: '确认本地存储位置',
-                description: '运行时数据和工作区数据相互独立，可以直接输入路径或分别选择目录。',
+                eyebrow: l10n.onboardingStorage,
+                title: l10n.onboardingConfirmStorage,
+                description: l10n.onboardingConfirmStorageHelp,
               ),
               const SizedBox(height: 22),
               _StoragePathField(
                 controller: runtimeRootController,
-                label: '运行时目录',
+                label: l10n.onboardingRuntimeDirectory,
                 icon: Icons.memory_rounded,
                 enabled: !loading && !saving,
                 onChanged: onPathChanged,
@@ -2576,7 +2579,7 @@ class _AiSetupStoragePage extends StatelessWidget {
               const SizedBox(height: 14),
               _StoragePathField(
                 controller: workspaceRootController,
-                label: '工作区目录',
+                label: l10n.onboardingWorkspaceDirectory,
                 icon: Icons.workspaces_outline,
                 enabled: !loading && !saving,
                 onChanged: onPathChanged,
@@ -2592,7 +2595,7 @@ class _AiSetupStoragePage extends StatelessWidget {
                     ),
                     const SizedBox(width: 12),
                     Text(
-                      '正在读取存储路径',
+                      l10n.onboardingReadingPaths,
                       style: textTheme.bodyMedium?.copyWith(
                         color: colorScheme.onSurfaceVariant,
                       ),
@@ -2603,7 +2606,7 @@ class _AiSetupStoragePage extends StatelessWidget {
               if (!loading) ...<Widget>[
                 const SizedBox(height: 18),
                 Text(
-                  '这两个目录会分别保存运行时状态和用户工作区，确认后由本机 Host 直接挂载。',
+                  l10n.onboardingStorageMountHelp,
                   style: textTheme.bodySmall?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     height: 1.4,
@@ -2650,6 +2653,7 @@ class _StoragePathField extends StatelessWidget {
   /// Builds one editable storage path field with a directory picker.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return TextField(
       controller: controller,
       enabled: enabled,
@@ -2659,7 +2663,7 @@ class _StoragePathField extends StatelessWidget {
         prefixIcon: Icon(icon),
         suffixIcon: IconButton(
           onPressed: enabled ? onBrowse : null,
-          tooltip: '选择$label',
+          tooltip: l10n.onboardingChooseDirectory(label),
           icon: const Icon(Icons.folder_open_rounded),
         ),
         border: const OutlineInputBorder(),
@@ -2701,15 +2705,16 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
   @override
   /// Builds the current-format snapshot preview and import error details.
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     final preview = snapshot;
     final importProgress = reading || importing
         ? progress ??
-              const core_proxy.Operit1SnapshotImportProgress(
+              core_proxy.Operit1SnapshotImportProgress(
                 stage: 'prepare',
-                title: '准备导入',
-                detail: '正在准备 Operit1 快照，请稍候。',
+                title: l10n.onboardingPrepareImport,
+                detail: l10n.onboardingPrepareSnapshotHelp,
                 progress: 0,
                 active: true,
               )
@@ -2723,12 +2728,12 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
-              const _SetupSectionHeader(
+              _SetupSectionHeader(
                 icon: Icons.move_to_inbox_rounded,
-                eyebrow: '导入配置',
-                title: '从 Operit1 导入',
+                eyebrow: l10n.onboardingImportSetup,
+                title: l10n.settingsDataImportOperit1Snapshot,
                 description:
-                    '请使用最新版 Operit1 导出的快照，将配置、聊天、角色卡、资源等数据迁移到 Operit2。',
+                    l10n.onboardingImportSnapshotHelp,
               ),
               const SizedBox(height: 22),
               Align(
@@ -2741,7 +2746,7 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.folder_open_rounded, size: 18),
-                  label: Text(reading ? '正在读取快照' : '选择快照文件'),
+                  label: Text(reading ? l10n.onboardingReadingSnapshot : l10n.onboardingPickSnapshotFile),
                 ),
               ),
               if (fileName != null) ...<Widget>[
@@ -2765,7 +2770,7 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
               if (preview != null) ...<Widget>[
                 const SizedBox(height: 18),
                 Text(
-                  '检测到可迁移内容',
+                  l10n.onboardingMigrationContents,
                   style: textTheme.titleSmall?.copyWith(
                     color: colorScheme.onSurface,
                     fontWeight: FontWeight.w800,
@@ -2778,27 +2783,27 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
                   runSpacing: 10,
                   children: <Widget>[
                     _SnapshotMetricChip(
-                      label: '模型配置',
+                      label: l10n.onboardingModelSetup,
                       value: '${preview.modelConfig.configs.length}',
                     ),
                     _SnapshotMetricChip(
-                      label: '聊天',
+                      label: l10n.onboardingChats,
                       value: '${preview.chatCount}',
                     ),
                     _SnapshotMetricChip(
-                      label: '消息',
+                      label: l10n.onboardingMessages,
                       value: '${preview.messageCount}',
                     ),
                     _SnapshotMetricChip(
-                      label: '偏好文件',
+                      label: l10n.onboardingPreferenceFiles,
                       value: '${preview.datastoreFiles.length}',
                     ),
                     _SnapshotMetricChip(
-                      label: '资源文件',
+                      label: l10n.onboardingResourceFiles,
                       value: '${preview.importedFileCount}',
                     ),
                     _SnapshotMetricChip(
-                      label: '外部资源',
+                      label: l10n.onboardingExternalResources,
                       value: '${preview.importedExternalFileCount}',
                     ),
                   ],
@@ -2818,7 +2823,7 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
                 if (preview.modelConfig.chatModelId != null) ...<Widget>[
                   const SizedBox(height: 12),
                   Text(
-                    '默认聊天模型：${preview.modelConfig.chatModelId}',
+                    l10n.onboardingDefaultChatModel(preview.modelConfig.chatModelId!),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.bodySmall?.copyWith(
@@ -2828,7 +2833,7 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
                 ],
                 const SizedBox(height: 14),
                 Text(
-                  importing ? '正在导入快照内容，请稍候。' : '点击继续后会开始迁移整份快照。',
+                  importing ? l10n.onboardingImportInProgress : l10n.onboardingImportContinueHelp,
                   style: textTheme.bodyMedium?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     height: 1.36,
@@ -2847,7 +2852,7 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
                     child: Padding(
                       padding: const EdgeInsets.all(14),
                       child: Text(
-                        '快照导入失败\n$errorText',
+                        l10n.onboardingImportFailed(errorText!),
                         style: textTheme.bodyMedium?.copyWith(
                           color: colorScheme.onErrorContainer,
                         ),
@@ -3118,11 +3123,12 @@ class _AiSetupModelPage extends StatelessWidget {
       return;
     }
     final selectedEndpoint = endpointController.text.trim();
+    final l10n = AppLocalizations.of(context)!;
     await showDialog<void>(
       context: context,
       builder: (dialogContext) {
         return AlertDialog(
-          title: const Text('服务地址'),
+          title: Text(l10n.onboardingEndpoint),
           content: ConstrainedBox(
             constraints: const BoxConstraints(maxWidth: 520),
             child: ListView.separated(
@@ -3152,7 +3158,7 @@ class _AiSetupModelPage extends StatelessWidget {
           actions: <Widget>[
             TextButton(
               onPressed: () => Navigator.of(dialogContext).pop(),
-              child: const Text('取消'),
+              child: Text(l10n.cancel),
             ),
           ],
         );
@@ -3162,6 +3168,7 @@ class _AiSetupModelPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final endpointOptions = _endpointOptionsForSelection();
     return Align(
       alignment: Alignment.topCenter,
@@ -3176,16 +3183,16 @@ class _AiSetupModelPage extends StatelessWidget {
               children: <Widget>[
                 _SetupSectionHeader(
                   icon: Icons.auto_awesome_rounded,
-                  eyebrow: '模型配置',
-                  title: '完成模型配置',
-                  description: '选择模型供应商，填写 API Key，拉取并设置默认模型。',
+                  eyebrow: l10n.onboardingModelSetup,
+                  title: l10n.onboardingCompleteModel,
+                  description: l10n.onboardingCompleteModelHelp,
                 ),
                 const SizedBox(height: 22),
                 OperitFormStyles.dropdownButtonFormField<String>(
                   context,
                   initialValue: selectedProviderTypeId,
                   isExpanded: true,
-                  decoration: const InputDecoration(labelText: '模型供应商'),
+                  decoration: InputDecoration(labelText: l10n.onboardingModelProvider),
                   items: catalogEntries
                       .map(
                         (entry) => DropdownMenuItem<String>(
@@ -3197,7 +3204,7 @@ class _AiSetupModelPage extends StatelessWidget {
                   onChanged: onProviderChanged,
                   validator: (value) {
                     if (value == null || value.isEmpty) {
-                      return '请选择模型供应商';
+                      return l10n.onboardingModelProviderRequired;
                     }
                     return null;
                   },
@@ -3220,7 +3227,7 @@ class _AiSetupModelPage extends StatelessWidget {
                               Icons.arrow_forward_rounded,
                               size: 18,
                             ),
-                            label: const Text('继续配置'),
+                            label: Text(l10n.onboardingContinueModel),
                           ),
                         ),
                 ),
@@ -3237,11 +3244,11 @@ class _AiSetupModelPage extends StatelessWidget {
                             TextFormField(
                               controller: endpointController,
                               decoration: InputDecoration(
-                                labelText: '服务地址',
+                                labelText: l10n.onboardingEndpoint,
                                 suffixIcon: endpointOptions.isEmpty
                                     ? null
                                     : IconButton(
-                                        tooltip: '服务地址',
+                                        tooltip: l10n.onboardingEndpoint,
                                         icon: const Icon(
                                           Icons.arrow_drop_down_rounded,
                                         ),
@@ -3256,7 +3263,7 @@ class _AiSetupModelPage extends StatelessWidget {
                               inputFormatters: <TextInputFormatter>[
                                 FilteringTextInputFormatter.deny(RegExp(r'\s')),
                               ],
-                              validator: _requiredField,
+                              validator: (value) => _requiredField(value, l10n),
                             ),
                             const SizedBox(height: 12),
                             TextFormField(
@@ -3264,7 +3271,7 @@ class _AiSetupModelPage extends StatelessWidget {
                               decoration: const InputDecoration(
                                 labelText: 'API Key',
                               ),
-                              validator: _requiredField,
+                              validator: (value) => _requiredField(value, l10n),
                             ),
                             const SizedBox(height: 16),
                             Align(
@@ -3280,7 +3287,7 @@ class _AiSetupModelPage extends StatelessWidget {
                                       )
                                     : const Icon(Icons.sync_rounded, size: 18),
                                 label: Text(
-                                  loadingModels ? '正在拉取模型' : '拉取可用模型',
+                                  loadingModels ? l10n.onboardingFetchingModels : l10n.onboardingFetchModels,
                                 ),
                               ),
                             ),
@@ -3385,7 +3392,7 @@ class _OnboardingAvailableModelPickerState
               context,
               initialValue: selectedIsVisible ? widget.selectedModelId : null,
               isExpanded: true,
-              decoration: const InputDecoration(labelText: '默认模型'),
+              decoration: InputDecoration(labelText: l10n.onboardingDefaultModel),
               items: visibleModels
                   .map(
                     (model) => DropdownMenuItem<String>(
@@ -3428,6 +3435,7 @@ class _AiSetupPermissionPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
     return Align(
@@ -3441,19 +3449,19 @@ class _AiSetupPermissionPage extends StatelessWidget {
             children: <Widget>[
               _SetupSectionHeader(
                 icon: Icons.admin_panel_settings_rounded,
-                eyebrow: '系统授权',
-                title: '按需授予系统权限',
-                description: '权限可按您要使用的功能选择授予。您可以不授予任何一项并继续；未授予权限对应的功能将无法使用。',
+                eyebrow: l10n.onboardingPermissions,
+                title: l10n.onboardingGrantPermissions,
+                description: l10n.onboardingGrantPermissionsHelp,
               ),
               const SizedBox(height: 22),
               if (requirements.isEmpty)
                 Card(
                   elevation: 0,
                   color: colorScheme.surfaceContainerHighest,
-                  child: const ListTile(
-                    leading: Icon(Icons.check_circle_rounded),
-                    title: Text('当前设备没有需要处理的授权项'),
-                    subtitle: Text('当前运行环境没有需要在欢迎页处理的系统授权。'),
+                  child: ListTile(
+                    leading: const Icon(Icons.check_circle_rounded),
+                    title: Text(l10n.onboardingNoPermissions),
+                    subtitle: Text(l10n.onboardingNoPermissionsHelp),
                   ),
                 ),
               for (final requirement in requirements)
@@ -3465,7 +3473,7 @@ class _AiSetupPermissionPage extends StatelessWidget {
               TextButton.icon(
                 onPressed: requesting ? null : onRefresh,
                 icon: const Icon(Icons.refresh_rounded),
-                label: const Text('刷新授权状态'),
+                label: Text(l10n.onboardingRefreshPermissions),
               ),
               if (errorText != null)
                 Text(
@@ -3495,6 +3503,7 @@ class _PermissionTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final granted = requirement.status == 'Satisfied';
     final canRequest =
@@ -3519,7 +3528,7 @@ class _PermissionTile extends StatelessWidget {
             if (!requirement.isRequired) ...<Widget>[
               const SizedBox(width: 8),
               Text(
-                '可选',
+                l10n.onboardingOptional,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
@@ -3530,16 +3539,16 @@ class _PermissionTile extends StatelessWidget {
         subtitle: Text(requirement.description),
         trailing: TextButton(
           onPressed: granted || requesting || !canRequest ? null : onTap,
-          child: Text(_requirementButtonLabel(requirement)),
+          child: Text(_requirementButtonLabel(requirement, l10n)),
         ),
       ),
     );
   }
 }
 
-String? _requiredField(String? value) {
+String? _requiredField(String? value, AppLocalizations l10n) {
   if (value == null || value.trim().isEmpty) {
-    return '必填';
+    return l10n.onboardingRequired;
   }
   return null;
 }
@@ -3637,15 +3646,15 @@ class _OnboardingPermissionBridge {
   }
 }
 
-String _requirementButtonLabel(_OnboardingRequirement requirement) {
+String _requirementButtonLabel(_OnboardingRequirement requirement, AppLocalizations l10n) {
   if (requirement.status == 'Satisfied') {
-    return '已授权';
+    return l10n.onboardingPermissionGranted;
   }
   if (requirement.action == 'HostManaged') {
-    return '去授权';
+    return l10n.onboardingGrantPermission;
   }
   if (requirement.action == 'None') {
-    return '无需操作';
+    return l10n.onboardingNoAction;
   }
-  return '去授权';
+  return l10n.onboardingGrantPermission;
 }

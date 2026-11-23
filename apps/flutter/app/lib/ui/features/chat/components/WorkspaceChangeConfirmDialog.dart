@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../viewmodel/ChatViewModel.dart';
 
@@ -21,20 +22,21 @@ class WorkspaceChangeConfirmDialog extends StatelessWidget {
   /// Builds a bounded confirmation dialog with a scrollable file change list.
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final title = switch (mode) {
-      WorkspaceChangeConfirmMode.rollback => '确认回滚工作区',
-      WorkspaceChangeConfirmMode.editAndResend => '确认编辑并重发',
+      WorkspaceChangeConfirmMode.rollback => l10n.chatRollbackConfirmTitle,
+      WorkspaceChangeConfirmMode.editAndResend => l10n.chatResendConfirmTitle,
     };
     final message = switch (mode) {
-      WorkspaceChangeConfirmMode.rollback => '这会把工作区恢复到该消息之前的状态，并删除该消息及之后的对话。',
+      WorkspaceChangeConfirmMode.rollback => l10n.chatRollbackConfirmMessage,
       WorkspaceChangeConfirmMode.editAndResend =>
-        '这会把工作区恢复到该消息之前的状态，并用编辑后的内容重新发送。',
+        l10n.chatResendConfirmMessage,
     };
     final confirmText = switch (mode) {
-      WorkspaceChangeConfirmMode.rollback => '确认回滚',
-      WorkspaceChangeConfirmMode.editAndResend => '保存并重发',
+      WorkspaceChangeConfirmMode.rollback => l10n.chatRollbackConfirm,
+      WorkspaceChangeConfirmMode.editAndResend => l10n.chatSaveResend,
     };
 
     return AlertDialog(
@@ -54,7 +56,7 @@ class WorkspaceChangeConfirmDialog extends StatelessWidget {
             const SizedBox(height: 12),
             if (changes.isEmpty)
               Text(
-                '没有检测到工作区文件变化。',
+                l10n.chatNoWorkspaceChanges,
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: colorScheme.onSurfaceVariant,
                 ),
@@ -82,7 +84,10 @@ class WorkspaceChangeConfirmDialog extends StatelessWidget {
                         overflow: TextOverflow.ellipsis,
                       ),
                       subtitle: Text(
-                        '${change.changeType} · ${change.changedLines} 行',
+                        l10n.chatWorkspaceChangeLines(
+                          change.changeType.toString(),
+                          change.changedLines,
+                        ),
                       ),
                     );
                   },
@@ -94,7 +99,7 @@ class WorkspaceChangeConfirmDialog extends StatelessWidget {
       actions: <Widget>[
         TextButton(
           onPressed: () => Navigator.of(context).pop(),
-          child: const Text('取消'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: () async {

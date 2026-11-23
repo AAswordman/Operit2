@@ -4,6 +4,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../../core/update/AppUpdateController.dart';
+import '../../../l10n/generated/app_localizations.dart';
 import '../../../core/update/AppUpdateModels.dart';
 import 'AppUpdateDialog.dart';
 
@@ -118,6 +119,7 @@ class _AppUpdateBadgeState extends State<AppUpdateBadge> {
         child: child,
       );
       if (!widget.showIndicator) return updateEntry;
+      final l10n = AppLocalizations.of(context)!;
       final colors = Theme.of(context).colorScheme;
       final busy = _controller.busy;
       final failed = _controller.phase == AppUpdatePhase.failed;
@@ -137,10 +139,10 @@ class _AppUpdateBadgeState extends State<AppUpdateBadge> {
               child: IconButton(
                 key: const ValueKey('app-update-badge'),
                 tooltip: busy
-                    ? '查看更新进度'
+                    ? l10n.appUpdateViewProgress
                     : failed
-                    ? '更新失败，点击重试'
-                    : '发现新版本 ${_controller.release!.version}，点击更新',
+                    ? l10n.appUpdateFailedRetry
+                    : l10n.appUpdateBadgeAvailable(_controller.release!.version),
                 padding: const EdgeInsets.all(4),
                 style: IconButton.styleFrom(
                   foregroundColor: failed ? colors.error : colors.primary,

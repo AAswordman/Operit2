@@ -5668,4 +5668,1693 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get terminalProfileWslHelp =>
       'Install a WSL distribution on the Windows device running Core, then reopen this dialog.';
+
+  @override
+  String get appUpdateUnavailableTitle => 'Update temporarily unavailable';
+
+  @override
+  String get appUpdatePlanning =>
+      'Checking for updates and selecting a download source…';
+
+  @override
+  String get appUpdateSelectingSource => 'Selecting a download source…';
+
+  @override
+  String get appUpdateAwaitingBase => 'The original installer is required';
+
+  @override
+  String get appUpdateValidatingBase => 'Verifying the selected installer…';
+
+  @override
+  String get appUpdateDownloadingPatch => 'Downloading the incremental patch…';
+
+  @override
+  String get appUpdateDownloadingFull => 'Downloading the full installer…';
+
+  @override
+  String get appUpdateVerifyingBase => 'Verifying the original installer…';
+
+  @override
+  String get appUpdateVerifyingPatch => 'Verifying the incremental patch…';
+
+  @override
+  String get appUpdateExpandingBase => 'Preparing the original installer…';
+
+  @override
+  String get appUpdateVerifyingExpandedBase => 'Verifying update files…';
+
+  @override
+  String get appUpdateApplyingPatch => 'Applying the patch…';
+
+  @override
+  String get appUpdateRestoringPackage => 'Creating the new installer…';
+
+  @override
+  String get appUpdateVerifyingPackage => 'Verifying the new installer…';
+
+  @override
+  String get appUpdateSavingPackage => 'Saving the installer…';
+
+  @override
+  String get appUpdatePreparingFiles => 'Preparing update files…';
+
+  @override
+  String get appUpdateReady =>
+      'Update downloaded and verified. Confirm to install.';
+
+  @override
+  String get appUpdatePreparingInstall => 'Preparing to install…';
+
+  @override
+  String get appUpdateInstalling =>
+      'Starting installation. The app will restart shortly…';
+
+  @override
+  String get appUpdateRestartRequired =>
+      'Download complete. Restart to install the new version.';
+
+  @override
+  String get appUpdateInstallSubmitted =>
+      'Installation requested. Confirm in the system dialog.';
+
+  @override
+  String get appUpdatePermissionRequired =>
+      'App installation permission required';
+
+  @override
+  String get appUpdateUpdateIncomplete => 'Update incomplete';
+
+  @override
+  String get appUpdateInstallIncomplete => 'Installation incomplete';
+
+  @override
+  String get appUpdatePreparingDownload => 'Preparing to download the update…';
+
+  @override
+  String get appUpdateTitle => 'Update Operit';
+
+  @override
+  String get appUpdateNoOriginalInstaller => 'I no longer have the installer';
+
+  @override
+  String get appUpdateChooseInstaller => 'Select';
+
+  @override
+  String get appUpdateBackground => 'Update in background';
+
+  @override
+  String get appUpdateCancel => 'Cancel update';
+
+  @override
+  String get appUpdateOpenRelease => 'Open release page';
+
+  @override
+  String get appUpdateContinueInstall => 'Continue installation';
+
+  @override
+  String get appUpdateRetry => 'Retry update';
+
+  @override
+  String get appUpdateReinstall => 'Reinstall';
+
+  @override
+  String get appUpdateRestartInstall => 'Restart and install';
+
+  @override
+  String get appUpdateReopenInstaller => 'Reopen installer';
+
+  @override
+  String get appUpdateRestartUpdate => 'Restart and update';
+
+  @override
+  String get appUpdateSelectOriginalInstaller =>
+      'Select the original installer used to install this app. Once verified, the incremental patch will be downloaded and applied to create the new installer.';
+
+  @override
+  String get appUpdateProcessingHelp =>
+      'Update files are being processed on this device. Creating the installer may take a while. You can continue in the background and select the Operit logo later to check progress.';
+
+  @override
+  String get appUpdateDownloadHelp =>
+      'After downloading, the installer is verified and kept until you confirm the update. You can close this window and select the Operit logo later to check progress.';
+
+  @override
+  String get appUpdatePermissionHelp =>
+      'Grant the system permission, then select Continue installation. The installer has been kept.';
+
+  @override
+  String get appUpdateReadyHelp =>
+      'Select “Restart and update” to begin installation. Your system may ask for permission to install.';
+
+  @override
+  String get appUpdateRestartHelp =>
+      'Select “Restart and install” to close the app, install the new version, and reopen it.';
+
+  @override
+  String get appUpdateSystemInstallHelp =>
+      'Confirm in the system installer and reopen Operit when installation finishes. You can reopen the installer if you closed it.';
+
+  @override
+  String get appUpdateInstallerKept =>
+      'The installer has been kept. You can retry without downloading it again.';
+
+  @override
+  String get appUpdateReleaseNotes => 'What’s new';
+
+  @override
+  String get appUpdateAvailableTitle => 'Update available';
+
+  @override
+  String get appUpdateNow => 'Update now';
+
+  @override
+  String get appUpdateAvailable => 'A new version of Operit is available';
+
+  @override
+  String get appUpdatePromptReady =>
+      'The update is ready. Confirm to restart and install it.';
+
+  @override
+  String get appUpdatePromptAvailable =>
+      'Update to get the latest features and improvements.';
+
+  @override
+  String get appUpdateCurrentVersion => 'Current version';
+
+  @override
+  String get appUpdateLatestVersion => 'Latest version';
+
+  @override
+  String get appUpdatePromptLater =>
+      'You can continue the update later by selecting the Operit logo in the sidebar.';
+
+  @override
+  String get appUpdateOpenReleaseFailed => 'Could not open the release page';
+
+  @override
+  String get appUpdateViewProgress => 'View update progress';
+
+  @override
+  String get appUpdateFailedRetry => 'Update failed. Select to retry.';
+
+  @override
+  String appUpdateUnavailableHelp(String version, String baseVersion) {
+    return 'The installer required for this update could not be retrieved, and no full installer is available. Download the installer for $version, or find the original installer for $baseVersion and retry.';
+  }
+
+  @override
+  String appUpdateAvailableVersion(String version) {
+    return 'Version $version is available';
+  }
+
+  @override
+  String appUpdateInstalledVersion(String version) {
+    return 'Current version: $version';
+  }
+
+  @override
+  String appUpdateOriginalVersionPrompt(String version) {
+    return 'Do you still have the original installer for version $version?';
+  }
+
+  @override
+  String appUpdatePatchSize(String size) {
+    return 'Incremental download: about $size';
+  }
+
+  @override
+  String appUpdateStepProgress(int percent) {
+    return 'Current step: $percent%';
+  }
+
+  @override
+  String appUpdateElapsed(String duration) {
+    return 'Elapsed: $duration';
+  }
+
+  @override
+  String appUpdateDownloadSizePending(String size) {
+    return '$size · Checking file size';
+  }
+
+  @override
+  String appUpdateBadgeAvailable(String version) {
+    return 'Version $version is available. Select to update.';
+  }
+
+  @override
+  String get apiErrorInvalidParametersTitle => 'Invalid request parameters';
+
+  @override
+  String get apiErrorInvalidParametersMessage =>
+      'The API could not process the request parameters. Check the model name, capabilities, and parameters, and review the original error.';
+
+  @override
+  String get apiErrorInvalidKeyTitle => 'Invalid API key';
+
+  @override
+  String get apiErrorInvalidKeyMessage =>
+      'The server rejected the API key. Check that it is correct, complete, and active.';
+
+  @override
+  String get apiErrorBillingTitle => 'Insufficient API balance';
+
+  @override
+  String get apiErrorBillingMessage =>
+      'Your API balance is too low or your quota is exhausted. Check your balance and billing with the API provider.';
+
+  @override
+  String get apiErrorBlockedTitle => 'Request blocked by server';
+
+  @override
+  String get apiErrorBlockedMessage =>
+      'The API server refused the request. Contact the provider to check for security or access restrictions.';
+
+  @override
+  String get apiErrorNotFoundTitle => 'Endpoint or model not found';
+
+  @override
+  String get apiErrorNotFoundMessage =>
+      'The API server could not find the resource. Check the server address, endpoint path, and model name.';
+
+  @override
+  String get apiErrorUnsupportedMethodTitle => 'Request method not supported';
+
+  @override
+  String get apiErrorUnsupportedMethodMessage =>
+      'The server does not support this request method or operation. Check the provider type and API protocol.';
+
+  @override
+  String get apiErrorUnsupportedContentTitle => 'Unsupported request content';
+
+  @override
+  String get apiErrorUnsupportedContentMessage =>
+      'The server does not accept this content type. Check the provider protocol, media format, and custom headers.';
+
+  @override
+  String get apiErrorProxyAuthTitle => 'Proxy authentication failed';
+
+  @override
+  String get apiErrorProxyAuthMessage =>
+      'The network proxy requires authentication. Check the proxy credentials and authentication settings.';
+
+  @override
+  String get apiErrorTimeoutTitle => 'API request timed out';
+
+  @override
+  String get apiErrorTimeoutMessage =>
+      'The request or a server connection timed out. Check your network connection and the provider status, then retry.';
+
+  @override
+  String get apiErrorConflictTitle => 'Request conflicts with resource state';
+
+  @override
+  String get apiErrorConflictMessage =>
+      'The API server reported a conflict. Review the original error for details.';
+
+  @override
+  String get apiErrorLengthRequiredTitle => 'Request content length required';
+
+  @override
+  String get apiErrorLengthRequiredMessage =>
+      'The API requires a declared content length. Contact the provider to confirm its requirements.';
+
+  @override
+  String get apiErrorTooLargeTitle => 'Request too large';
+
+  @override
+  String get apiErrorTooLargeMessage =>
+      'The message, attachments, address, or headers exceed the server limit. See the original error to find what to reduce.';
+
+  @override
+  String get apiErrorLockedTitle => 'Resource locked';
+
+  @override
+  String get apiErrorLockedMessage =>
+      'The API server temporarily locked the resource. Retry later or contact the provider.';
+
+  @override
+  String get apiErrorTooEarlyTitle => 'Server is not ready for this request';
+
+  @override
+  String get apiErrorTooEarlyMessage =>
+      'The server considered the request premature. Retry later.';
+
+  @override
+  String get apiErrorUpgradeRequiredTitle => 'API protocol upgrade required';
+
+  @override
+  String get apiErrorUpgradeRequiredMessage =>
+      'The server requires a different protocol version. Check the server address and provider protocol settings.';
+
+  @override
+  String get apiErrorRateLimitedTitle => 'Request rate limited or blocked';
+
+  @override
+  String get apiErrorRateLimitedMessage =>
+      'The API throttled or blocked the request. Retry later or contact the provider.';
+
+  @override
+  String get apiErrorLegalRestrictionTitle =>
+      'Service unavailable due to regional or legal restrictions';
+
+  @override
+  String get apiErrorLegalRestrictionMessage =>
+      'The server refused access because of regional or legal restrictions. Ask the provider where the service is available.';
+
+  @override
+  String get apiErrorInterruptedTitle => 'Request interrupted or blocked';
+
+  @override
+  String get apiErrorInterruptedMessage =>
+      'The request was interrupted. Share the original error with the provider to check for a security block, gateway issue, or closed connection.';
+
+  @override
+  String get apiErrorInternalTitle => 'Internal API server error';
+
+  @override
+  String get apiErrorInternalMessage =>
+      'The API server encountered an internal error. Retry later or share the original error with the provider.';
+
+  @override
+  String get apiErrorGatewayTitle => 'Invalid API gateway response';
+
+  @override
+  String get apiErrorGatewayMessage =>
+      'The gateway did not receive a valid upstream response. Retry later or contact the provider.';
+
+  @override
+  String get apiErrorUnavailableTitle => 'API service temporarily unavailable';
+
+  @override
+  String get apiErrorUnavailableMessage =>
+      'The service may be under maintenance, overloaded, or out of capacity. Retry later or contact the provider.';
+
+  @override
+  String get apiErrorOriginTitle => 'API origin server unreachable';
+
+  @override
+  String get apiErrorOriginMessage =>
+      'The gateway could not connect to the origin server. Contact the API provider to check for outages or routing problems.';
+
+  @override
+  String get apiErrorTlsTitle => 'API server TLS or certificate error';
+
+  @override
+  String get apiErrorTlsMessage =>
+      'TLS negotiation or certificate validation failed between the gateway and the origin server. Contact the API provider.';
+
+  @override
+  String get apiErrorStorageTitle => 'API server storage exhausted';
+
+  @override
+  String get apiErrorStorageMessage =>
+      'The API server has insufficient storage to complete the request. Contact the provider.';
+
+  @override
+  String get apiErrorClientTitle => 'API server refused the request';
+
+  @override
+  String get apiErrorClientMessage =>
+      'The API server returned a request error. Review the original error and check your API configuration.';
+
+  @override
+  String get apiErrorServerTitle => 'API server error';
+
+  @override
+  String get apiErrorServerMessage =>
+      'The server could not complete the request. Send the status code and original error to the provider.';
+
+  @override
+  String apiErrorHttpTitle(int status, String title) {
+    return 'HTTP $status: $title';
+  }
+
+  @override
+  String apiErrorOriginal(String error) {
+    return 'Original error:\n$error';
+  }
+
+  @override
+  String get apiErrorModelExistsTitle => 'Model already exists';
+
+  @override
+  String get apiErrorModelListTitle => 'Could not fetch models';
+
+  @override
+  String get apiErrorModelListMessage =>
+      'No model list was received. Check the provider address, access key, and network connection.';
+
+  @override
+  String get apiErrorNetworkTitle => 'Network connection failed';
+
+  @override
+  String get apiErrorNetworkMessage =>
+      'Could not reach the model provider. Check the network connection and server address.';
+
+  @override
+  String get apiErrorModelConfigTitle => 'Model configuration failed';
+
+  @override
+  String get apiErrorModelConfigMessage =>
+      'The model configuration operation failed. Review the original error for details.';
+
+  @override
+  String apiErrorModelExistsMessage(String modelId, String providerName) {
+    return 'Model “$modelId” has already been added to provider “$providerName”.';
+  }
+
+  @override
+  String get chatCopyMessage => 'Copy message';
+
+  @override
+  String get chatEditResend => 'Edit and resend';
+
+  @override
+  String get chatRollbackHere => 'Roll back to here';
+
+  @override
+  String get chatRegenerate => 'Regenerate';
+
+  @override
+  String get chatEditMemory => 'Edit memory';
+
+  @override
+  String get chatPlaySpeech => 'Generate or play speech';
+
+  @override
+  String get chatDeleteVariant => 'Delete current variant';
+
+  @override
+  String get chatReply => 'Reply';
+
+  @override
+  String get chatInsertSummary => 'Insert summary';
+
+  @override
+  String get chatCreateBranch => 'Create branch';
+
+  @override
+  String get chatMultiSelect => 'Select messages';
+
+  @override
+  String get chatMultiSelectExit => 'Exit selection';
+
+  @override
+  String get chatSelectionClear => 'Clear selection';
+
+  @override
+  String get chatSelectionAll => 'Select all';
+
+  @override
+  String get chatSelectionCopy => 'Copy selected messages';
+
+  @override
+  String get chatGenerateShareImage => 'Create share image';
+
+  @override
+  String get chatSelectionDelete => 'Delete selected messages';
+
+  @override
+  String get chatEditMessage => 'Edit message';
+
+  @override
+  String get chatEditorVisual => 'Visual';
+
+  @override
+  String get chatPlainText => 'Plain text';
+
+  @override
+  String get chatMarkdownSource => 'Markdown source';
+
+  @override
+  String get chatCopyPlainText => 'Copy plain text';
+
+  @override
+  String get chatCopyMarkdown => 'Copy Markdown source';
+
+  @override
+  String get chatMessageCopied => 'Message copied to clipboard';
+
+  @override
+  String get chatSaveResend => 'Save and resend';
+
+  @override
+  String get chatUpdateMemory => 'Update memory';
+
+  @override
+  String get chatEditorPlainTextContent => 'Plain text content';
+
+  @override
+  String get chatEditorParts => 'Content blocks';
+
+  @override
+  String get chatEditorAddText => 'Add text';
+
+  @override
+  String get chatEditorAddTag => 'Add tag';
+
+  @override
+  String get chatEditorText => 'Text';
+
+  @override
+  String get chatEditorTextHint => 'Enter text';
+
+  @override
+  String get chatEditorEditTag => 'Edit tag';
+
+  @override
+  String get chatEditorTagName => 'Tag name';
+
+  @override
+  String get chatEditorTagHint => 'For example, custom_tag';
+
+  @override
+  String get chatEditorAttributes => 'Attributes (optional)';
+
+  @override
+  String get chatEditorAttributesHint => 'For example, type=\"note\"';
+
+  @override
+  String get chatEditorContent => 'Content';
+
+  @override
+  String get chatRollbackConfirmTitle => 'Roll back the workspace?';
+
+  @override
+  String get chatResendConfirmTitle => 'Edit and resend the message?';
+
+  @override
+  String get chatRollbackConfirmMessage =>
+      'This restores the workspace to its state before this message and deletes this and all later messages.';
+
+  @override
+  String get chatResendConfirmMessage =>
+      'This restores the workspace to its state before this message and sends the edited message again.';
+
+  @override
+  String get chatRollbackConfirm => 'Roll back';
+
+  @override
+  String get chatNoWorkspaceChanges => 'No workspace file changes detected.';
+
+  @override
+  String get chatShareImageGenerating => 'Creating share image…';
+
+  @override
+  String chatSelectionCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count messages selected',
+      one: '$count message selected',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String chatSelectionDeleteConfirm(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Delete the $count selected messages?',
+      one: 'Delete the selected message?',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String chatCopyFailed(String error) {
+    return 'Copy failed: $error';
+  }
+
+  @override
+  String chatPlainTextConversionFailed(String error) {
+    return 'Could not convert to plain text: $error';
+  }
+
+  @override
+  String chatPlaySpeechFailed(String error) {
+    return 'Could not generate or play speech: $error';
+  }
+
+  @override
+  String chatShareImageFailed(String error) {
+    return 'Could not create the share image: $error';
+  }
+
+  @override
+  String chatWorkspaceChangeLines(String change, int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count lines',
+      one: '$count line',
+    );
+    return '$change · $_temp0';
+  }
+
+  @override
+  String get speechTitle => 'Read aloud';
+
+  @override
+  String get speechIdle => 'Idle';
+
+  @override
+  String get speechPreparing => 'Generating speech';
+
+  @override
+  String get speechPlaying => 'Playing';
+
+  @override
+  String get speechStopped => 'Stopped';
+
+  @override
+  String get speechError => 'Error';
+
+  @override
+  String speechQueue(int count) {
+    return 'Queue: $count';
+  }
+
+  @override
+  String get speechTestText => 'Hello! This is the Operit voice preview.';
+
+  @override
+  String get speechTtsMissingId =>
+      'Cannot preview without a TTS configuration ID';
+
+  @override
+  String get speechTtsPreviewPlaying => 'TTS preview started';
+
+  @override
+  String get speechTtsProviders => 'TTS providers';
+
+  @override
+  String get speechAddTtsProvider => 'Add TTS provider';
+
+  @override
+  String get speechSttCurrentCannotDelete =>
+      'The active STT configuration cannot be deleted';
+
+  @override
+  String get speechDeleteSttProvider => 'Delete STT provider';
+
+  @override
+  String get speechSttProviders => 'STT providers';
+
+  @override
+  String get speechAddSttProvider => 'Add STT provider';
+
+  @override
+  String get speechEditProvider => 'Edit provider';
+
+  @override
+  String get speechPreview => 'Preview';
+
+  @override
+  String get speechGlobalActive => 'Global default';
+
+  @override
+  String get speechSetGlobal => 'Set as global default';
+
+  @override
+  String get speechNoSttProviders =>
+      'No speech recognition providers configured';
+
+  @override
+  String get speechCurrentCannotDelete =>
+      'The active configuration cannot be deleted';
+
+  @override
+  String get speechEditTtsProvider => 'Edit TTS provider';
+
+  @override
+  String get speechProviderType => 'Provider type';
+
+  @override
+  String get speechProviderName => 'Provider name';
+
+  @override
+  String get speechHttpMethod => 'HTTP method';
+
+  @override
+  String get speechBodyTemplate => 'Request body template';
+
+  @override
+  String get speechPipelineJson => 'Response pipeline JSON';
+
+  @override
+  String get speechAddTtsVoice => 'Add TTS voice';
+
+  @override
+  String get speechCustomVoice => 'Custom voice';
+
+  @override
+  String get speechEnterVoice => 'Enter the model and voice manually';
+
+  @override
+  String get speechModelVoiceRequired => 'Enter a model or a voice';
+
+  @override
+  String get speechCustomTtsVoice => 'Custom TTS voice';
+
+  @override
+  String get speechModelRequired => 'Model is required';
+
+  @override
+  String get speechVoice => 'Voice';
+
+  @override
+  String get speechVoiceRequired => 'Voice is required';
+
+  @override
+  String get speechLanguageTag => 'Language tag (optional, e.g. en-US)';
+
+  @override
+  String get speechModelLocale => 'Model / locale';
+
+  @override
+  String get speechSystemVoiceName => 'System voice name (optional)';
+
+  @override
+  String get speechEditTtsVoice => 'Edit TTS voice';
+
+  @override
+  String get speechTestVoice => 'Test voice';
+
+  @override
+  String get speechAudioFormat => 'Audio format';
+
+  @override
+  String get speechSpeed => 'Speed';
+
+  @override
+  String get speechNewTtsProvider => 'New TTS provider';
+
+  @override
+  String get speechModelVersion => 'Model ID@version';
+
+  @override
+  String get speechNewSttProvider => 'New STT provider';
+
+  @override
+  String get speechEditSttProvider => 'Edit STT provider';
+
+  @override
+  String get speechMultipart => 'Multipart request settings';
+
+  @override
+  String get speechAudioField => 'Audio field name';
+
+  @override
+  String get speechModelField => 'Model field name';
+
+  @override
+  String get speechModelFieldHelp =>
+      'Leave blank if the endpoint does not accept a model parameter';
+
+  @override
+  String get speechLanguageField => 'Language field name';
+
+  @override
+  String get speechTranscriptJsonPath => 'Transcript JSONPath';
+
+  @override
+  String get speechModelNotNeeded => 'This endpoint does not require a model';
+
+  @override
+  String get speechReloadModels => 'Reload models';
+
+  @override
+  String get speechModelIdHelp =>
+      'Enter a supported model ID or select a preset';
+
+  @override
+  String get speechPresetModel => 'Select preset model';
+
+  @override
+  String get speechNoLocalSttModels => 'No local STT models installed';
+
+  @override
+  String get speechChooseModel => 'Select a model';
+
+  @override
+  String get speechChooseSttModel => 'Select an STT model';
+
+  @override
+  String speechPreviewTitle(String voice) {
+    return 'Preview · $voice';
+  }
+
+  @override
+  String speechPreviewFailed(String error) {
+    return 'TTS preview failed: $error';
+  }
+
+  @override
+  String speechDeleteTtsConfigFailed(String error) {
+    return 'Could not delete TTS configuration: $error';
+  }
+
+  @override
+  String speechLoadConfigFailed(String error) {
+    return 'Could not load speech settings: $error';
+  }
+
+  @override
+  String speechDeleteSttConfirm(String name) {
+    return 'Delete “$name” and its recognition settings?';
+  }
+
+  @override
+  String speechSttFailed(String error) {
+    return 'STT operation failed: $error';
+  }
+
+  @override
+  String speechModelsFailed(String error) {
+    return 'Could not load models: $error';
+  }
+
+  @override
+  String speechFieldRequired(String label) {
+    return '$label is required';
+  }
+
+  @override
+  String speechFieldPositive(String label) {
+    return '$label must be positive';
+  }
+
+  @override
+  String get onboardingStorageRequired =>
+      'Both the runtime and workspace directories are required';
+
+  @override
+  String get onboardingFetchModelsFirst => 'Fetch available models first';
+
+  @override
+  String get onboardingChooseDefaultModel => 'Select a default model';
+
+  @override
+  String get onboardingPickSnapshot => 'Choose snapshot';
+
+  @override
+  String get onboardingPickSnapshotHelp =>
+      'Select an Operit1 snapshot in the file picker.';
+
+  @override
+  String get onboardingUploadSnapshot => 'Upload snapshot';
+
+  @override
+  String get onboardingInspectSnapshot => 'Inspect snapshot';
+
+  @override
+  String get onboardingInspectSnapshotHelp =>
+      'Inspecting the contents of the Operit1 snapshot…';
+
+  @override
+  String get onboardingSnapshotRequired => 'Select an Operit1 snapshot file';
+
+  @override
+  String get onboardingPrepareImport => 'Prepare import';
+
+  @override
+  String get onboardingPrepareMigration =>
+      'Preparing to migrate the contents of the Operit1 snapshot…';
+
+  @override
+  String get onboardingWait => 'Please wait';
+
+  @override
+  String get onboardingAgree => 'Agree';
+
+  @override
+  String get onboardingSaving => 'Saving…';
+
+  @override
+  String get onboardingConfirm => 'Confirm';
+
+  @override
+  String get onboardingPreparing => 'Preparing…';
+
+  @override
+  String get onboardingContinue => 'Continue';
+
+  @override
+  String get onboardingFetching => 'Fetching…';
+
+  @override
+  String get onboardingReading => 'Reading…';
+
+  @override
+  String get onboardingImporting => 'Importing…';
+
+  @override
+  String get onboardingWorking => 'Working…';
+
+  @override
+  String get onboardingDone => 'Done';
+
+  @override
+  String get onboardingAgreement => 'User agreement';
+
+  @override
+  String get onboardingStorage => 'Storage locations';
+
+  @override
+  String get onboardingMode => 'Setup method';
+
+  @override
+  String get onboardingModelSetup => 'Model setup';
+
+  @override
+  String get onboardingImportSetup => 'Import settings';
+
+  @override
+  String get onboardingDeviceSpace => 'Device space';
+
+  @override
+  String get onboardingPermissions => 'System permissions';
+
+  @override
+  String get onboardingWelcome => 'Welcome';
+
+  @override
+  String get onboardingPreparingRuntime => 'Preparing the local runtime';
+
+  @override
+  String get onboardingSkip => 'Skip';
+
+  @override
+  String get onboardingPreviousPage => 'Previous page';
+
+  @override
+  String get onboardingStart => 'Start';
+
+  @override
+  String get onboardingTagline => 'Make everyday tasks easier';
+
+  @override
+  String get onboardingChooseMode => 'Choose how to get started';
+
+  @override
+  String get onboardingChooseModeHelp =>
+      'Set up a new environment, import Operit1 data, join an existing device space, or restore chats from a backup.';
+
+  @override
+  String get onboardingQuickStart => 'Quick start';
+
+  @override
+  String get onboardingQuickStartHelp =>
+      'Configure a model provider to complete basic setup';
+
+  @override
+  String get onboardingImportLegacyHelp =>
+      'Import settings and data from the previous version';
+
+  @override
+  String get onboardingJoinExisting => 'Join an existing device space';
+
+  @override
+  String get onboardingJoinExistingHelp =>
+      'Find a nearby device space and sync models and data after joining';
+
+  @override
+  String get onboardingJoinSpace => 'Join a device space';
+
+  @override
+  String get onboardingJoinSpaceHelp =>
+      'Select Add device, choose a nearby device, and pair with it. Settings and data sync after an administrator approves the request.';
+
+  @override
+  String get onboardingConfirmStorage => 'Confirm local storage locations';
+
+  @override
+  String get onboardingConfirmStorageHelp =>
+      'Runtime data and workspace data are stored separately. Enter paths or choose each directory.';
+
+  @override
+  String get onboardingRuntimeDirectory => 'Runtime directory';
+
+  @override
+  String get onboardingWorkspaceDirectory => 'Workspace directory';
+
+  @override
+  String get onboardingReadingPaths => 'Reading storage paths';
+
+  @override
+  String get onboardingStorageMountHelp =>
+      'These directories store runtime state and user workspaces separately. The local host mounts them after you confirm.';
+
+  @override
+  String get onboardingPrepareSnapshotHelp => 'Preparing the Operit1 snapshot…';
+
+  @override
+  String get onboardingImportSnapshotHelp =>
+      'Use a snapshot exported by the latest version of Operit1 to migrate settings, chats, character cards, and resources to Operit2.';
+
+  @override
+  String get onboardingReadingSnapshot => 'Reading snapshot';
+
+  @override
+  String get onboardingPickSnapshotFile => 'Choose snapshot file';
+
+  @override
+  String get onboardingMigrationContents => 'Data available to migrate';
+
+  @override
+  String get onboardingChats => 'Chats';
+
+  @override
+  String get onboardingMessages => 'Messages';
+
+  @override
+  String get onboardingPreferenceFiles => 'Preference files';
+
+  @override
+  String get onboardingResourceFiles => 'Resource files';
+
+  @override
+  String get onboardingExternalResources => 'External resources';
+
+  @override
+  String get onboardingImportInProgress => 'Importing the snapshot…';
+
+  @override
+  String get onboardingImportContinueHelp =>
+      'Select Continue to migrate the entire snapshot.';
+
+  @override
+  String get onboardingEndpoint => 'Server address';
+
+  @override
+  String get onboardingCompleteModel => 'Complete model setup';
+
+  @override
+  String get onboardingCompleteModelHelp =>
+      'Select a model provider, enter your API key, and fetch and select a default model.';
+
+  @override
+  String get onboardingModelProvider => 'Model provider';
+
+  @override
+  String get onboardingModelProviderRequired => 'Select a model provider';
+
+  @override
+  String get onboardingContinueModel => 'Continue setup';
+
+  @override
+  String get onboardingFetchingModels => 'Fetching models';
+
+  @override
+  String get onboardingFetchModels => 'Fetch available models';
+
+  @override
+  String get onboardingDefaultModel => 'Default model';
+
+  @override
+  String get onboardingGrantPermissions => 'Grant system permissions as needed';
+
+  @override
+  String get onboardingGrantPermissionsHelp =>
+      'Grant permissions for the features you want to use. You can continue without granting any permissions. Features that require them will be unavailable.';
+
+  @override
+  String get onboardingNoPermissions =>
+      'No permissions to review on this device';
+
+  @override
+  String get onboardingNoPermissionsHelp =>
+      'This environment has no system permissions to configure during setup.';
+
+  @override
+  String get onboardingRefreshPermissions => 'Refresh permissions';
+
+  @override
+  String get onboardingOptional => 'Optional';
+
+  @override
+  String get onboardingRequired => 'Required';
+
+  @override
+  String get onboardingPermissionGranted => 'Granted';
+
+  @override
+  String get onboardingGrantPermission => 'Grant permission';
+
+  @override
+  String get onboardingNoAction => 'No action needed';
+
+  @override
+  String onboardingUploadProgress(int percent) {
+    return 'Reading and uploading the snapshot ($percent%).';
+  }
+
+  @override
+  String onboardingChooseDirectory(String label) {
+    return 'Choose $label';
+  }
+
+  @override
+  String onboardingDefaultChatModel(String model) {
+    return 'Default chat model: $model';
+  }
+
+  @override
+  String onboardingImportFailed(String error) {
+    return 'Snapshot import failed\n$error';
+  }
+
+  @override
+  String get onboardingAgreementTitle => 'User Agreement and Privacy Policy';
+
+  @override
+  String get onboardingAgreementHelp =>
+      'Read and accept this agreement to continue setup.';
+
+  @override
+  String onboardingAgreementVersion(String version) {
+    return 'Version: $version';
+  }
+
+  @override
+  String onboardingAgreementWait(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'You can accept in $count seconds.',
+      one: 'You can accept in $count second.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String get extensionsView => 'View';
+
+  @override
+  String get extensionsCloseSearch => 'Close search';
+
+  @override
+  String get extensionsSearchShortcut => 'Search (Ctrl+F)';
+
+  @override
+  String get extensionsAdd => 'Add extension';
+
+  @override
+  String get extensionsMore => 'More';
+
+  @override
+  String get extensionsCheckUpdates => 'Check for updates';
+
+  @override
+  String get extensionsEnvironment => 'Environment variables';
+
+  @override
+  String get extensionsReload => 'Reload catalog';
+
+  @override
+  String get extensionsSearchInstalled => 'Search installed extensions';
+
+  @override
+  String get extensionsSearchMarket =>
+      'Search the market and official extensions';
+
+  @override
+  String get extensionsTab => 'Extensions';
+
+  @override
+  String get extensionsDrop => 'Drop to import extensions';
+
+  @override
+  String get extensionsDropTypes => 'Supports .toolpkg, .js, .ts, and .hjson';
+
+  @override
+  String get extensionsImportPlugin => 'Import plugin';
+
+  @override
+  String get extensionsSelectToolPkg => 'Choose a .toolpkg file';
+
+  @override
+  String get extensionsImportScript => 'Import script package';
+
+  @override
+  String get extensionsScriptTypes => '.js, .ts, .hjson, or .toolpkg';
+
+  @override
+  String get extensionsAddSkill => 'Add skill';
+
+  @override
+  String get extensionsSkillSources =>
+      'GitHub repository, ZIP, or manual entry';
+
+  @override
+  String get extensionsAddMcp => 'Add MCP server';
+
+  @override
+  String get extensionsMcpSources => 'GitHub, ZIP, configuration, or form';
+
+  @override
+  String get extensionsAddA2a => 'Add A2A';
+
+  @override
+  String get extensionsA2aSources =>
+      'Server address, Agent Card, or configuration file';
+
+  @override
+  String get extensionsAiCreate => 'Create a plugin with AI';
+
+  @override
+  String get extensionsAiCreateHelp =>
+      'Describe what you need, then generate and install it in chat';
+
+  @override
+  String get extensionsAddHelp =>
+      'New extensions are installed on this device by default. A ToolPkg may declare a fixed install scope. Updating a local ToolPkg with the same ID keeps its current location and configuration. You can also drag and drop files on desktop.';
+
+  @override
+  String extensionsSyncChanged(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Device space synced. $count extensions changed.',
+      one: 'Device space synced. One extension changed.',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String extensionsDropRejected(String files) {
+    return 'Cannot import these files directly: $files. Use Add extension to import skills or MCP servers.';
+  }
+
+  @override
+  String get marketRangeWeek => 'Past week';
+
+  @override
+  String get marketRangeMonth => 'Past month';
+
+  @override
+  String get marketRangeAll => 'All time';
+
+  @override
+  String get marketSortUpdated => 'Recently updated';
+
+  @override
+  String get marketSortDownloads => 'Most downloaded';
+
+  @override
+  String get marketSortLikes => 'Most popular';
+
+  @override
+  String marketFilterSummary(String sort, String range) {
+    return 'Filter: $sort, $range';
+  }
+
+  @override
+  String get marketFilterTitle => 'Filter market';
+
+  @override
+  String get marketFilterSort => 'Sort by';
+
+  @override
+  String get marketFilterPeriod => 'Time range';
+
+  @override
+  String get marketFilterUpdatedHelp =>
+      'Filter by the date content was last updated.';
+
+  @override
+  String get marketFilterCategory => 'Category';
+
+  @override
+  String get marketFilterAllCategories => 'All categories';
+
+  @override
+  String get marketFilterCategoryRetry => 'Could not load categories. Retry.';
+
+  @override
+  String get marketFilterReset => 'Reset';
+
+  @override
+  String get marketFilterApply => 'Apply filters';
+
+  @override
+  String marketFilterRankingHelp(String metric) {
+    return 'Rankings default to items first published in the last 30 days, ordered by total $metric. Updates do not reset the publication date.';
+  }
+
+  @override
+  String get marketFilterLikes => 'likes';
+
+  @override
+  String get marketFilterDownloads => 'downloads';
+
+  @override
+  String get attachmentContext => 'Additional context';
+
+  @override
+  String get attachmentExtraInfo => 'Additional information';
+
+  @override
+  String get attachmentPastedText => 'Pasted text';
+
+  @override
+  String get attachmentResetZoom => 'Reset zoom';
+
+  @override
+  String get attachmentCloseShortcut => 'Close (Esc)';
+
+  @override
+  String get attachmentCopyContent => 'Copy content';
+
+  @override
+  String get attachmentCopied => 'Copied to clipboard';
+
+  @override
+  String get attachmentCopyLocation => 'Copy file location';
+
+  @override
+  String get attachmentClipboardImage => 'Clipboard image';
+
+  @override
+  String get chatSharePreview => 'Share image preview';
+
+  @override
+  String get chatShareSaveFile => 'Save to file';
+
+  @override
+  String get chatShareImage => 'Share image';
+
+  @override
+  String get chatShareSaveFailed => 'Could not save';
+
+  @override
+  String get chatSharePng => 'PNG image';
+
+  @override
+  String get chatShareSaved => 'Image saved';
+
+  @override
+  String get chatShareFailed => 'Could not share';
+
+  @override
+  String attachmentExpandCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: 'Show $count attachments',
+      one: 'Show attachment',
+    );
+    return '$_temp0';
+  }
+
+  @override
+  String attachmentCollapseCount(int count) {
+    return 'Collapse ($count)';
+  }
+
+  @override
+  String attachmentContextCount(int count) {
+    return 'Additional context · $count';
+  }
+
+  @override
+  String attachmentCopyLocationPath(String path) {
+    return 'Copy file location\n$path';
+  }
+
+  @override
+  String attachmentLocationPath(String path) {
+    return 'Saved at: $path';
+  }
+
+  @override
+  String get marketCategorySearch => 'Search & research';
+
+  @override
+  String get marketCategorySearchDescription =>
+      'Search engines, research tools, and knowledge retrieval';
+
+  @override
+  String get marketCategoryDevelopment => 'Development tools';
+
+  @override
+  String get marketCategoryDevelopmentDescription =>
+      'Code editing, debugging, and development tools';
+
+  @override
+  String get marketCategoryAutomation => 'Automation';
+
+  @override
+  String get marketCategoryAutomationDescription =>
+      'Task automation and workflows';
+
+  @override
+  String get marketCategoryDocuments => 'Documents & knowledge';
+
+  @override
+  String get marketCategoryDocumentsDescription =>
+      'Document processing and knowledge management';
+
+  @override
+  String get marketCategoryMedia => 'Media & content';
+
+  @override
+  String get marketCategoryMediaDescription =>
+      'Image, video, and audio processing and content creation';
+
+  @override
+  String get marketCategoryCommunication => 'Chat & communication';
+
+  @override
+  String get marketCategoryCommunicationDescription =>
+      'Chat tools, messaging, and communication integrations';
+
+  @override
+  String get marketCategoryIntegration => 'Services & APIs';
+
+  @override
+  String get marketCategoryIntegrationDescription =>
+      'Third-party service integrations and API tools';
+
+  @override
+  String get marketCategorySystem => 'System & data';
+
+  @override
+  String get marketCategorySystemDescription =>
+      'File systems, data management, and system tools';
+
+  @override
+  String get marketCategoryProductivity => 'Business & productivity';
+
+  @override
+  String get marketCategoryProductivityDescription =>
+      'Business workflows and productivity tools';
+
+  @override
+  String get marketCategoryEntertainment => 'Lifestyle & entertainment';
+
+  @override
+  String get marketCategoryEntertainmentDescription =>
+      'Everyday utilities and entertainment apps';
+
+  @override
+  String get marketCategoryOther => 'Other';
+
+  @override
+  String get marketCategoryOtherDescription =>
+      'Uncategorized extensions and other types';
+
+  @override
+  String get settingsCategorySpeechTitle => 'Speech & recognition';
+
+  @override
+  String get settingsCategorySpeechSubtitle => 'TTS and STT providers';
+
+  @override
+  String get settingsCategorySpeechDescription =>
+      'Manage speech synthesis and recognition providers, and choose the active configuration for each.';
+
+  @override
+  String get settingsCategoryAboutTitle => 'About Operit2';
+
+  @override
+  String get settingsCategoryAboutSubtitle => 'Version, project, and license';
+
+  @override
+  String get settingsCategoryAboutDescription =>
+      'View the Operit2 version, project links, and open source licenses.';
+
+  @override
+  String get aboutUpdateSection => 'Updates';
+
+  @override
+  String get aboutAppDescription =>
+      'An AI workbench for terminal and desktop, with conversations, workspaces, tools, plugins, MCP, remote connections, and web access.';
+
+  @override
+  String get aboutReadingVersion => 'Reading version information…';
+
+  @override
+  String get aboutUpToDate => 'You’re on the latest version';
+
+  @override
+  String get aboutCheckingUpdates => 'Checking for updates…';
+
+  @override
+  String get aboutRetryCheck => 'Update check failed. Select to retry.';
+
+  @override
+  String get aboutCheckHint => 'Select to check for updates';
+
+  @override
+  String get aboutProject => 'Project';
+
+  @override
+  String get aboutSource => 'Project source code';
+
+  @override
+  String get aboutDocs => 'Documentation';
+
+  @override
+  String get aboutDocsSubtitle => 'README and command-line guide';
+
+  @override
+  String get aboutLicenses => 'Open source licenses';
+
+  @override
+  String get aboutLicenseSubtitle => 'Operit2 is licensed under AGPL-3.0';
+
+  @override
+  String get aboutContact => 'Contact';
+
+  @override
+  String get aboutDeveloper => 'Developer AAswordman';
+
+  @override
+  String get aboutCopyright => '© 2025–2026 Operit. All rights reserved.';
+
+  @override
+  String aboutReadVersionFailed(String error) {
+    return 'Could not read version information: $error';
+  }
+
+  @override
+  String aboutVersion(String version) {
+    return 'Version $version';
+  }
+
+  @override
+  String aboutUpdatingTo(String version) {
+    return 'Updating to $version. Select to view progress.';
+  }
+
+  @override
+  String aboutLinkCopied(String url) {
+    return 'No app can open this link. Copied to clipboard: $url';
+  }
+
+  @override
+  String get settingsToolsAdvanced => 'Advanced settings';
+
+  @override
+  String get settingsToolsReadOnly => 'Read only';
+
+  @override
+  String get settingsToolsReadWrite => 'Read and write';
+
+  @override
+  String get settingsToolsFullAccess => 'Full access';
+
+  @override
+  String get settingsToolsSandboxed => 'Sandboxed (macOS App Sandbox enabled)';
+
+  @override
+  String get settingsToolsUnsandboxed =>
+      'Not sandboxed (macOS App Sandbox disabled)';
+
+  @override
+  String get settingsToolsIsolation => 'Application isolation';
+
+  @override
+  String get settingsToolsRestrictions => 'AI capability restrictions';
+
+  @override
+  String get settingsToolsConfirmCalls => 'Tool call confirmation';
+
+  @override
+  String get settingsToolsConfirmDirectCalls =>
+      'Approval applies to tools the AI calls directly.';
+
+  @override
+  String get settingsToolsRuntimeEnvironment => 'Current runtime environment';
+
+  @override
+  String get settingsToolsPlatform => 'Platform';
+
+  @override
+  String get settingsToolsOuterIsolation => 'Host isolation';
+
+  @override
+  String get settingsToolsFileCapability => 'File capability';
+
+  @override
+  String get settingsToolsTerminalCapability => 'Terminal capability';
+
+  @override
+  String get settingsToolsRegistered => 'Registered';
+
+  @override
+  String get settingsToolsUnregistered => 'Unregistered';
+
+  @override
+  String get settingsToolsAuthorizations => 'Authorizations';
+
+  @override
+  String get settingsToolsStructuredCapabilities => 'Structured capabilities';
+
+  @override
+  String get settingsToolsNotGranted => 'Not granted';
+
+  @override
+  String get settingsToolsSystemRequired => 'Requires system action';
+
+  @override
+  String get settingsToolsOpenSettings => 'Open settings';
+
+  @override
+  String get settingsToolsUnavailable => 'Unavailable';
+
+  @override
+  String get settingsToolsHandle => 'Review';
+
+  @override
+  String get settingsToolsReadOnlyDescription =>
+      'The AI can read the current workspace and cannot run tools that write to it.';
+
+  @override
+  String get settingsToolsReadWriteDescription =>
+      'The AI can read and write to the current workspace. The in-app sandbox stays enabled.';
+
+  @override
+  String get settingsToolsFullAccessDescription =>
+      'The AI can read and write to the current workspace. This mode disables the in-app sandbox.';
+
+  @override
+  String settingsToolsAuthorizationFailed(String error) {
+    return 'Authorization failed: $error';
+  }
+
+  @override
+  String settingsToolsItemCount(int count) {
+    String _temp0 = intl.Intl.pluralLogic(
+      count,
+      locale: localeName,
+      other: '$count items',
+      one: '$count item',
+    );
+    return '$_temp0';
+  }
 }

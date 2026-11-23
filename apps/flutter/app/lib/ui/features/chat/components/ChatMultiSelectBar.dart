@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 class ChatMultiSelectBar extends StatelessWidget {
   const ChatMultiSelectBar({
@@ -24,6 +25,7 @@ class ChatMultiSelectBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     return SafeArea(
@@ -45,12 +47,12 @@ class ChatMultiSelectBar extends StatelessWidget {
                   IconButton(
                     onPressed: onClose,
                     icon: const Icon(Icons.close),
-                    tooltip: '退出多选',
+                    tooltip: l10n.chatMultiSelectExit,
                     visualDensity: VisualDensity.compact,
                   ),
                   Expanded(
                     child: Text(
-                      selectedCount == 0 ? '多选' : '已选 $selectedCount 条',
+                      selectedCount == 0 ? l10n.chatMultiSelect : l10n.chatSelectionCount(selectedCount),
                       style: theme.textTheme.bodyMedium?.copyWith(
                         fontWeight: FontWeight.w600,
                       ),
@@ -59,25 +61,25 @@ class ChatMultiSelectBar extends StatelessWidget {
                   IconButton(
                     onPressed: onToggleSelectAll,
                     icon: Icon(allSelected ? Icons.deselect : Icons.select_all),
-                    tooltip: allSelected ? '清空选择' : '全选',
+                    tooltip: allSelected ? l10n.chatSelectionClear : l10n.chatSelectionAll,
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton(
                     onPressed: onCopy,
                     icon: const Icon(Icons.content_copy),
-                    tooltip: '复制所选',
+                    tooltip: l10n.chatSelectionCopy,
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton.filledTonal(
                     onPressed: onShareImage,
                     icon: const Icon(Icons.ios_share),
-                    tooltip: '生成长图',
+                    tooltip: l10n.chatGenerateShareImage,
                     visualDensity: VisualDensity.compact,
                   ),
                   IconButton.filledTonal(
                     onPressed: onDelete,
                     icon: const Icon(Icons.delete_outline),
-                    tooltip: '删除所选',
+                    tooltip: l10n.chatSelectionDelete,
                     color: colorScheme.onErrorContainer,
                     style: IconButton.styleFrom(
                       backgroundColor: colorScheme.errorContainer,

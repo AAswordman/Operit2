@@ -1,8 +1,10 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/l10n/generated/app_localizations_zh.dart';
 import 'package:operit2/ui/common/ApiErrorText.dart';
 
 /// Verifies status recognition boundaries and lossless error presentation.
 void main() {
+  final l10n = AppLocalizationsZh();
   for (final (status, title) in [
     (400, '请求参数有误'),
     (401, 'API Key 有误'),
@@ -30,7 +32,7 @@ void main() {
     test('explains HTTP $status and retains the original response verbatim', () {
       final original =
           'request failed: $status: {"error":"upstream detail"}\n trace-id: abc  ';
-      final formatted = apiErrorText(original);
+      final formatted = apiErrorText(original, l10n);
       expect(formatted, startsWith('HTTP $status：$title\n'));
       expect(formatted, endsWith('原始错误：\n$original'));
     });
@@ -60,7 +62,7 @@ void main() {
     '',
   ]) {
     test('does not invent an explanation for $original', () {
-      expect(apiErrorText(original), original);
+      expect(apiErrorText(original, l10n), original);
     });
   }
 
@@ -68,11 +70,11 @@ void main() {
     for (var status = 400; status < 600; status++) {
       final original = 'request failed: $status: body contains HTTP 401';
       expect(apiErrorHttpStatus(original), status);
-      expect(apiErrorExplanation(status), isNotNull, reason: 'HTTP $status');
-      expect(apiErrorText(original), endsWith(original));
+      expect(apiErrorExplanation(status, l10n), isNotNull, reason: 'HTTP $status');
+      expect(apiErrorText(original, l10n), endsWith(original));
     }
     for (final status in [null, 0, 200, 301, 399, 600]) {
-      expect(apiErrorExplanation(status), isNull);
+      expect(apiErrorExplanation(status, l10n), isNull);
     }
   });
 }

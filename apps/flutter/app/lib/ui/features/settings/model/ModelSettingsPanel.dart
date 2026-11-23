@@ -4580,11 +4580,11 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
         ? _testRestrictedColor(isDark)
         : colorScheme.error;
     final failures = <String>[
-      if (result.error != null) apiErrorText(result.error!),
+      if (result.error != null) apiErrorText(result.error!, l10n),
       if (report != null)
         for (final item in report.items)
           if (!item.success && item.error != null)
-            '${_connectionTestTypeLabel(l10n, item.type)}: ${apiErrorText(item.error!)}',
+            '${_connectionTestTypeLabel(l10n, item.type)}: ${apiErrorText(item.error!, l10n)}',
     ];
     final title = passed
         ? l10n.settingsModelConnectionTestPassed
@@ -4718,7 +4718,7 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
                                 ),
                                 if (!item.success && item.error != null)
                                   SelectableText(
-                                    apiErrorText(item.error!),
+                                    apiErrorText(item.error!, l10n),
                                     style: detailStyle,
                                   ),
                               ],
@@ -4731,7 +4731,7 @@ class _TestResultBubbleState extends State<_TestResultBubble> {
                   Padding(
                     padding: const EdgeInsetsDirectional.only(top: 6, end: 6),
                     child: SelectableText(
-                      apiErrorText(result.error!),
+                      apiErrorText(result.error!, l10n),
                       style: detailStyle,
                     ),
                   ),

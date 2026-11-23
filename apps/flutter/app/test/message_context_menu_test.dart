@@ -121,7 +121,7 @@ void main() {
     expect(find.text('Opaque plugin action'), findsNothing);
     expect(bridge.menuRequests, 0);
     expect(find.byType(AlertDialog), findsNothing);
-    for (final action in ['收藏消息', '回滚到此处', '删除', '信息', '多选']) {
+    for (final action in ['收藏消息', '回滚到此处', '删除', '消息信息', '多选']) {
       expect(find.text(action), findsOneWidget);
     }
     expect(tester.takeException(), isNull);

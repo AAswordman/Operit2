@@ -5423,4 +5423,1579 @@ class AppLocalizationsZh extends AppLocalizations {
   @override
   String get terminalProfileWslHelp =>
       '请在运行 Core 的 Windows 设备上安装 WSL 发行版，然后重新打开此对话框。';
+
+  @override
+  String get appUpdateUnavailableTitle => '暂时无法完成更新';
+
+  @override
+  String get appUpdatePlanning => '正在检查更新并自动选择下载源…';
+
+  @override
+  String get appUpdateSelectingSource => '正在自动选择下载源…';
+
+  @override
+  String get appUpdateAwaitingBase => '需要上一次安装的原始安装包';
+
+  @override
+  String get appUpdateValidatingBase => '正在校验所选安装包…';
+
+  @override
+  String get appUpdateDownloadingPatch => '正在下载增量补丁…';
+
+  @override
+  String get appUpdateDownloadingFull => '正在下载完整安装包…';
+
+  @override
+  String get appUpdateVerifyingBase => '正在校验原安装包…';
+
+  @override
+  String get appUpdateVerifyingPatch => '正在校验增量补丁…';
+
+  @override
+  String get appUpdateExpandingBase => '正在准备原安装包…';
+
+  @override
+  String get appUpdateVerifyingExpandedBase => '正在校验更新文件…';
+
+  @override
+  String get appUpdateApplyingPatch => '正在合并补丁…';
+
+  @override
+  String get appUpdateRestoringPackage => '正在生成新安装包…';
+
+  @override
+  String get appUpdateVerifyingPackage => '正在校验新安装包…';
+
+  @override
+  String get appUpdateSavingPackage => '正在保存安装包…';
+
+  @override
+  String get appUpdatePreparingFiles => '正在准备更新文件…';
+
+  @override
+  String get appUpdateReady => '更新已下载并校验完成，等待你确认安装';
+
+  @override
+  String get appUpdatePreparingInstall => '正在准备安装，请稍候…';
+
+  @override
+  String get appUpdateInstalling => '正在启动更新安装，应用即将重启…';
+
+  @override
+  String get appUpdateRestartRequired => '下载完成，重启即可安装新版本';
+
+  @override
+  String get appUpdateInstallSubmitted => '安装请求已提交，请完成系统确认';
+
+  @override
+  String get appUpdatePermissionRequired => '需要允许安装应用';
+
+  @override
+  String get appUpdateUpdateIncomplete => '更新未完成';
+
+  @override
+  String get appUpdateInstallIncomplete => '安装未完成';
+
+  @override
+  String get appUpdatePreparingDownload => '准备下载更新…';
+
+  @override
+  String get appUpdateTitle => '更新 Operit';
+
+  @override
+  String get appUpdateNoOriginalInstaller => '我没安装包了';
+
+  @override
+  String get appUpdateChooseInstaller => '选择';
+
+  @override
+  String get appUpdateBackground => '后台更新';
+
+  @override
+  String get appUpdateCancel => '取消更新';
+
+  @override
+  String get appUpdateOpenRelease => '前往发布页';
+
+  @override
+  String get appUpdateContinueInstall => '继续安装';
+
+  @override
+  String get appUpdateRetry => '重试更新';
+
+  @override
+  String get appUpdateReinstall => '重新安装';
+
+  @override
+  String get appUpdateRestartInstall => '重启并安装';
+
+  @override
+  String get appUpdateReopenInstaller => '重新打开安装器';
+
+  @override
+  String get appUpdateRestartUpdate => '重启并更新';
+
+  @override
+  String get appUpdateSelectOriginalInstaller =>
+      '请选择当时安装此应用的原始安装包。校验通过后，将下载增量补丁并合并为新版本安装包。';
+
+  @override
+  String get appUpdateProcessingHelp =>
+      '正在本机处理更新文件，生成安装包可能需要一些时间。你可以后台更新，稍后点击 Operit 标志查看进度。';
+
+  @override
+  String get appUpdateDownloadHelp =>
+      '下载完成后会校验并保留安装包，等待你确认更新。你可以关闭此窗口，稍后点击 Operit 标志查看进度。';
+
+  @override
+  String get appUpdatePermissionHelp => '请完成系统授权，再点击继续安装。安装包已保留。';
+
+  @override
+  String get appUpdateReadyHelp => '点击“重启并更新”后才会开始安装。系统可能要求安装授权。';
+
+  @override
+  String get appUpdateRestartHelp => '点击“重启并安装”后，应用会退出、替换为新版本并重新打开。';
+
+  @override
+  String get appUpdateSystemInstallHelp =>
+      '请在系统安装窗口中完成确认。安装完成后重新打开 Operit；若已关闭安装窗口，可以再次打开。';
+
+  @override
+  String get appUpdateInstallerKept => '安装包已保留，重试无需重新下载。';
+
+  @override
+  String get appUpdateReleaseNotes => '本次更新内容';
+
+  @override
+  String get appUpdateAvailableTitle => '发现新版本';
+
+  @override
+  String get appUpdateNow => '立即更新';
+
+  @override
+  String get appUpdateAvailable => 'Operit 有新版本可用了';
+
+  @override
+  String get appUpdatePromptReady => '更新已准备就绪，确认后将重启应用并安装。';
+
+  @override
+  String get appUpdatePromptAvailable => '更新到最新版本，体验最新功能与改进。';
+
+  @override
+  String get appUpdateCurrentVersion => '当前版本';
+
+  @override
+  String get appUpdateLatestVersion => '最新版本';
+
+  @override
+  String get appUpdatePromptLater => '也可以稍后点击侧栏的 Operit 标志继续更新。';
+
+  @override
+  String get appUpdateOpenReleaseFailed => '无法打开发布页';
+
+  @override
+  String get appUpdateViewProgress => '查看更新进度';
+
+  @override
+  String get appUpdateFailedRetry => '更新失败，点击重试';
+
+  @override
+  String appUpdateUnavailableHelp(String version, String baseVersion) {
+    return '当前无法取得更新所需的安装包，且没有可用的完整包。请自行下载 $version 的安装包进行安装，或找到上一次安装（版本 $baseVersion）的原始安装包后再试。';
+  }
+
+  @override
+  String appUpdateAvailableVersion(String version) {
+    return '发现新版本 $version';
+  }
+
+  @override
+  String appUpdateInstalledVersion(String version) {
+    return '当前版本 $version';
+  }
+
+  @override
+  String appUpdateOriginalVersionPrompt(String version) {
+    return '你还有上一次安装（版本 $version）的安装包吗？';
+  }
+
+  @override
+  String appUpdatePatchSize(String size) {
+    return '增量下载约 $size';
+  }
+
+  @override
+  String appUpdateStepProgress(int percent) {
+    return '当前步骤 $percent%';
+  }
+
+  @override
+  String appUpdateElapsed(String duration) {
+    return '已用时 $duration';
+  }
+
+  @override
+  String appUpdateDownloadSizePending(String size) {
+    return '$size · 正在获取文件大小';
+  }
+
+  @override
+  String appUpdateBadgeAvailable(String version) {
+    return '发现新版本 $version，点击更新';
+  }
+
+  @override
+  String get apiErrorInvalidParametersTitle => '请求参数有误';
+
+  @override
+  String get apiErrorInvalidParametersMessage =>
+      'API 服务器无法处理请求参数，请检查模型名称、模型能力与参数配置，并查看原始错误中的具体原因。';
+
+  @override
+  String get apiErrorInvalidKeyTitle => 'API Key 有误';
+
+  @override
+  String get apiErrorInvalidKeyMessage =>
+      '你的 API Key 未通过服务器验证，请检查密钥是否正确、完整且有效。';
+
+  @override
+  String get apiErrorBillingTitle => 'API 欠费';
+
+  @override
+  String get apiErrorBillingMessage => 'API 账户余额不足或额度已用完，请到 API 服务商处检查余额并充值。';
+
+  @override
+  String get apiErrorBlockedTitle => '请求被服务器风控拒绝';
+
+  @override
+  String get apiErrorBlockedMessage =>
+      'API 服务器拒绝了请求，可能触发风控或访问限制，请联系 API 服务商确认。';
+
+  @override
+  String get apiErrorNotFoundTitle => '接口或模型不存在';
+
+  @override
+  String get apiErrorNotFoundMessage =>
+      'API 服务器未找到请求的接口或模型，或该资源已下线，请检查服务地址、接口路径和模型名称。';
+
+  @override
+  String get apiErrorUnsupportedMethodTitle => '接口不支持此请求方式';
+
+  @override
+  String get apiErrorUnsupportedMethodMessage =>
+      'API 服务器不支持当前请求方法或功能，请检查供应商类型与接口协议是否匹配。';
+
+  @override
+  String get apiErrorUnsupportedContentTitle => '请求内容格式不受支持';
+
+  @override
+  String get apiErrorUnsupportedContentMessage =>
+      'API 服务器不接受当前内容类型，请检查供应商协议、媒体格式和自定义请求头。';
+
+  @override
+  String get apiErrorProxyAuthTitle => '代理验证失败';
+
+  @override
+  String get apiErrorProxyAuthMessage => '网络代理要求身份验证，请检查代理账号和认证配置。';
+
+  @override
+  String get apiErrorTimeoutTitle => 'API 请求超时';
+
+  @override
+  String get apiErrorTimeoutMessage =>
+      'API 请求或服务器之间的连接等待超时，请检查网络和 API 服务商状态后重试。';
+
+  @override
+  String get apiErrorConflictTitle => '请求状态冲突';
+
+  @override
+  String get apiErrorConflictMessage => 'API 服务器报告请求与当前资源状态冲突，请查看原始错误中的冲突原因。';
+
+  @override
+  String get apiErrorLengthRequiredTitle => '请求缺少内容长度';
+
+  @override
+  String get apiErrorLengthRequiredMessage =>
+      'API 服务器要求声明请求内容长度，请联系 API 服务商确认接口要求。';
+
+  @override
+  String get apiErrorTooLargeTitle => '请求内容过大';
+
+  @override
+  String get apiErrorTooLargeMessage =>
+      '消息、附件、请求地址或请求头超过了服务器限制，请按原始错误提示减少对应内容。';
+
+  @override
+  String get apiErrorLockedTitle => '资源已锁定';
+
+  @override
+  String get apiErrorLockedMessage => 'API 服务器暂时锁定了请求的资源，请稍后重试或联系 API 服务商。';
+
+  @override
+  String get apiErrorTooEarlyTitle => '服务器暂不接受此请求';
+
+  @override
+  String get apiErrorTooEarlyMessage => 'API 服务器认为请求发送过早，请稍后重试。';
+
+  @override
+  String get apiErrorUpgradeRequiredTitle => '接口协议需要升级';
+
+  @override
+  String get apiErrorUpgradeRequiredMessage =>
+      'API 服务器要求使用其他协议版本，请检查服务地址与供应商协议配置。';
+
+  @override
+  String get apiErrorRateLimitedTitle => '服务器限流 / 风控';
+
+  @override
+  String get apiErrorRateLimitedMessage =>
+      'API 服务器限制了请求频率或触发了风控，请稍后再试或联系 API 服务商。';
+
+  @override
+  String get apiErrorLegalRestrictionTitle => '服务因地区或法规限制不可用';
+
+  @override
+  String get apiErrorLegalRestrictionMessage =>
+      'API 服务器因地区或法律政策拒绝提供资源，请联系 API 服务商确认可用范围。';
+
+  @override
+  String get apiErrorInterruptedTitle => '服务器风控 / 请求中断';
+
+  @override
+  String get apiErrorInterruptedMessage =>
+      'API 请求被中断，可能与服务器风控、网关或连接关闭有关，请结合原始错误联系 API 服务商确认。';
+
+  @override
+  String get apiErrorInternalTitle => 'API 服务器内部错误';
+
+  @override
+  String get apiErrorInternalMessage =>
+      'API 服务器处理请求时发生内部错误，请稍后重试或向 API 服务商提供原始错误。';
+
+  @override
+  String get apiErrorGatewayTitle => 'API 网关响应异常';
+
+  @override
+  String get apiErrorGatewayMessage => 'API 网关未能从上游服务取得有效响应，请稍后重试或联系 API 服务商。';
+
+  @override
+  String get apiErrorUnavailableTitle => 'API 服务暂时不可用';
+
+  @override
+  String get apiErrorUnavailableMessage =>
+      'API 服务可能正在维护、过载或暂无可用资源，请稍后重试或联系 API 服务商。';
+
+  @override
+  String get apiErrorOriginTitle => 'API 源站无法连接';
+
+  @override
+  String get apiErrorOriginMessage => 'API 网关无法连接源站，可能是源站离线或路由异常，请联系 API 服务商。';
+
+  @override
+  String get apiErrorTlsTitle => 'API 服务器 TLS 或证书异常';
+
+  @override
+  String get apiErrorTlsMessage => 'API 网关与源站之间的 TLS 握手或证书验证失败，请联系 API 服务商修复。';
+
+  @override
+  String get apiErrorStorageTitle => 'API 服务器资源不足';
+
+  @override
+  String get apiErrorStorageMessage => 'API 服务器没有足够的存储资源完成请求，请联系 API 服务商。';
+
+  @override
+  String get apiErrorClientTitle => 'API 服务器拒绝请求';
+
+  @override
+  String get apiErrorClientMessage => 'API 服务器返回请求错误，请查看原始错误中的具体原因并检查接口配置。';
+
+  @override
+  String get apiErrorServerTitle => 'API 服务器异常';
+
+  @override
+  String get apiErrorServerMessage => 'API 服务器未能完成请求，请向 API 服务商提供状态码和原始错误。';
+
+  @override
+  String apiErrorHttpTitle(int status, String title) {
+    return 'HTTP $status：$title';
+  }
+
+  @override
+  String apiErrorOriginal(String error) {
+    return '原始错误：\n$error';
+  }
+
+  @override
+  String get apiErrorModelExistsTitle => '模型已存在';
+
+  @override
+  String get apiErrorModelListTitle => '模型列表拉取失败';
+
+  @override
+  String get apiErrorModelListMessage => '没有拿到供应商返回的模型列表，请检查服务地址、访问密钥和网络连接。';
+
+  @override
+  String get apiErrorNetworkTitle => '网络连接失败';
+
+  @override
+  String get apiErrorNetworkMessage => '无法连接到模型供应商，请检查网络连接和服务地址。';
+
+  @override
+  String get apiErrorModelConfigTitle => '模型配置失败';
+
+  @override
+  String get apiErrorModelConfigMessage => '模型配置操作出现异常，请查看原始错误中的具体原因。';
+
+  @override
+  String apiErrorModelExistsMessage(String modelId, String providerName) {
+    return '模型“$modelId”已添加到供应商“$providerName”。';
+  }
+
+  @override
+  String get chatCopyMessage => '复制消息';
+
+  @override
+  String get chatEditResend => '编辑并重发';
+
+  @override
+  String get chatRollbackHere => '回滚到此处';
+
+  @override
+  String get chatRegenerate => '重新生成';
+
+  @override
+  String get chatEditMemory => '修改记忆';
+
+  @override
+  String get chatPlaySpeech => '生成/播放语音';
+
+  @override
+  String get chatDeleteVariant => '删除当前变体';
+
+  @override
+  String get chatReply => '回复';
+
+  @override
+  String get chatInsertSummary => '插入总结';
+
+  @override
+  String get chatCreateBranch => '创建分支';
+
+  @override
+  String get chatMultiSelect => '多选';
+
+  @override
+  String get chatMultiSelectExit => '退出多选';
+
+  @override
+  String get chatSelectionClear => '清空选择';
+
+  @override
+  String get chatSelectionAll => '全选';
+
+  @override
+  String get chatSelectionCopy => '复制所选';
+
+  @override
+  String get chatGenerateShareImage => '生成长图';
+
+  @override
+  String get chatSelectionDelete => '删除所选';
+
+  @override
+  String get chatEditMessage => '编辑消息';
+
+  @override
+  String get chatEditorVisual => '可视';
+
+  @override
+  String get chatPlainText => '纯文本';
+
+  @override
+  String get chatMarkdownSource => 'Markdown 源码';
+
+  @override
+  String get chatCopyPlainText => '复制纯文本';
+
+  @override
+  String get chatCopyMarkdown => '复制 Markdown 源码';
+
+  @override
+  String get chatMessageCopied => '消息已复制到剪贴板';
+
+  @override
+  String get chatSaveResend => '保存并重发';
+
+  @override
+  String get chatUpdateMemory => '更新记忆';
+
+  @override
+  String get chatEditorPlainTextContent => '纯文本内容';
+
+  @override
+  String get chatEditorParts => '内容片段';
+
+  @override
+  String get chatEditorAddText => '添加文本';
+
+  @override
+  String get chatEditorAddTag => '添加标签';
+
+  @override
+  String get chatEditorText => '文本';
+
+  @override
+  String get chatEditorTextHint => '输入文本内容';
+
+  @override
+  String get chatEditorEditTag => '编辑标签';
+
+  @override
+  String get chatEditorTagName => '标签名';
+
+  @override
+  String get chatEditorTagHint => '例如 custom_tag';
+
+  @override
+  String get chatEditorAttributes => '属性（可选）';
+
+  @override
+  String get chatEditorAttributesHint => '例如 type=\"note\"';
+
+  @override
+  String get chatEditorContent => '内容';
+
+  @override
+  String get chatRollbackConfirmTitle => '确认回滚工作区';
+
+  @override
+  String get chatResendConfirmTitle => '确认编辑并重发';
+
+  @override
+  String get chatRollbackConfirmMessage => '这会把工作区恢复到该消息之前的状态，并删除该消息及之后的对话。';
+
+  @override
+  String get chatResendConfirmMessage => '这会把工作区恢复到该消息之前的状态，并用编辑后的内容重新发送。';
+
+  @override
+  String get chatRollbackConfirm => '确认回滚';
+
+  @override
+  String get chatNoWorkspaceChanges => '没有检测到工作区文件变化。';
+
+  @override
+  String get chatShareImageGenerating => '正在生成长图...';
+
+  @override
+  String chatSelectionCount(int count) {
+    return '已选 $count 条';
+  }
+
+  @override
+  String chatSelectionDeleteConfirm(int count) {
+    return '确定删除已选的 $count 条消息？';
+  }
+
+  @override
+  String chatCopyFailed(String error) {
+    return '复制失败：$error';
+  }
+
+  @override
+  String chatPlainTextConversionFailed(String error) {
+    return '纯文本转换失败：$error';
+  }
+
+  @override
+  String chatPlaySpeechFailed(String error) {
+    return '生成/播放语音失败：$error';
+  }
+
+  @override
+  String chatShareImageFailed(String error) {
+    return '生成长图失败：$error';
+  }
+
+  @override
+  String chatWorkspaceChangeLines(String change, int count) {
+    return '$change · $count 行';
+  }
+
+  @override
+  String get speechTitle => '语音朗读';
+
+  @override
+  String get speechIdle => '空闲';
+
+  @override
+  String get speechPreparing => '生成中';
+
+  @override
+  String get speechPlaying => '播放中';
+
+  @override
+  String get speechStopped => '已停止';
+
+  @override
+  String get speechError => '出错';
+
+  @override
+  String speechQueue(int count) {
+    return '队列 $count';
+  }
+
+  @override
+  String get speechTestText => '你好，我是 Operit 的语音试听。';
+
+  @override
+  String get speechTtsMissingId => 'TTS 配置 ID 为空，不能试听';
+
+  @override
+  String get speechTtsPreviewPlaying => '已开始播放 TTS 试听';
+
+  @override
+  String get speechTtsProviders => 'TTS 供应商';
+
+  @override
+  String get speechAddTtsProvider => '添加 TTS 供应商';
+
+  @override
+  String get speechSttCurrentCannotDelete => '当前正在使用的 STT 配置不能删除';
+
+  @override
+  String get speechDeleteSttProvider => '删除 STT 供应商';
+
+  @override
+  String get speechSttProviders => 'STT 供应商';
+
+  @override
+  String get speechAddSttProvider => '添加 STT 供应商';
+
+  @override
+  String get speechEditProvider => '编辑供应商';
+
+  @override
+  String get speechPreview => '试听';
+
+  @override
+  String get speechGlobalActive => '全局当前';
+
+  @override
+  String get speechSetGlobal => '设为全局';
+
+  @override
+  String get speechNoSttProviders => '尚未配置语音识别供应商';
+
+  @override
+  String get speechCurrentCannotDelete => '当前配置不能删除';
+
+  @override
+  String get speechEditTtsProvider => '编辑 TTS 供应商';
+
+  @override
+  String get speechProviderType => '供应商类型';
+
+  @override
+  String get speechProviderName => '供应商名称';
+
+  @override
+  String get speechHttpMethod => 'HTTP 方法';
+
+  @override
+  String get speechBodyTemplate => '请求体模板';
+
+  @override
+  String get speechPipelineJson => '响应管道 JSON';
+
+  @override
+  String get speechAddTtsVoice => '添加 TTS 音色';
+
+  @override
+  String get speechCustomVoice => '自定义音色';
+
+  @override
+  String get speechEnterVoice => '手动填写模型和音色';
+
+  @override
+  String get speechModelVoiceRequired => '模型和音色至少填写一项';
+
+  @override
+  String get speechCustomTtsVoice => '自定义 TTS 音色';
+
+  @override
+  String get speechModelRequired => '模型不能为空';
+
+  @override
+  String get speechVoice => '音色';
+
+  @override
+  String get speechVoiceRequired => '音色不能为空';
+
+  @override
+  String get speechLanguageTag => '语言标签（可选，例如 zh-CN）';
+
+  @override
+  String get speechModelLocale => '模型 / Locale';
+
+  @override
+  String get speechSystemVoiceName => '系统声音名称（可选）';
+
+  @override
+  String get speechEditTtsVoice => '编辑 TTS 音色';
+
+  @override
+  String get speechTestVoice => '测试音色';
+
+  @override
+  String get speechAudioFormat => '音频格式';
+
+  @override
+  String get speechSpeed => '速度';
+
+  @override
+  String get speechNewTtsProvider => '新建 TTS 供应商';
+
+  @override
+  String get speechModelVersion => '模型 ID@版本';
+
+  @override
+  String get speechNewSttProvider => '新建 STT 供应商';
+
+  @override
+  String get speechEditSttProvider => '编辑 STT 供应商';
+
+  @override
+  String get speechMultipart => 'Multipart 请求配置';
+
+  @override
+  String get speechAudioField => '音频字段名';
+
+  @override
+  String get speechModelField => '模型字段名';
+
+  @override
+  String get speechModelFieldHelp => '留空表示接口不接收模型参数';
+
+  @override
+  String get speechLanguageField => '语言字段名';
+
+  @override
+  String get speechTranscriptJsonPath => '识别文本 JSONPath';
+
+  @override
+  String get speechModelNotNeeded => '此接口无需指定模型';
+
+  @override
+  String get speechReloadModels => '重新加载模型';
+
+  @override
+  String get speechModelIdHelp => '填写供应商支持的模型 ID，也可从预设中选择';
+
+  @override
+  String get speechPresetModel => '选择预设模型';
+
+  @override
+  String get speechNoLocalSttModels => '没有已安装的 STT 本地模型';
+
+  @override
+  String get speechChooseModel => '请选择模型';
+
+  @override
+  String get speechChooseSttModel => '请选择 STT 模型';
+
+  @override
+  String speechPreviewTitle(String voice) {
+    return '试听 · $voice';
+  }
+
+  @override
+  String speechPreviewFailed(String error) {
+    return 'TTS 试听失败：$error';
+  }
+
+  @override
+  String speechDeleteTtsConfigFailed(String error) {
+    return '删除 TTS 配置失败：$error';
+  }
+
+  @override
+  String speechLoadConfigFailed(String error) {
+    return '语音配置加载失败：$error';
+  }
+
+  @override
+  String speechDeleteSttConfirm(String name) {
+    return '删除“$name”及其识别配置？';
+  }
+
+  @override
+  String speechSttFailed(String error) {
+    return 'STT 操作失败：$error';
+  }
+
+  @override
+  String speechModelsFailed(String error) {
+    return '模型列表加载失败：$error';
+  }
+
+  @override
+  String speechFieldRequired(String label) {
+    return '$label不能为空';
+  }
+
+  @override
+  String speechFieldPositive(String label) {
+    return '$label必须为正数';
+  }
+
+  @override
+  String get onboardingStorageRequired => '运行时目录和工作区目录都不能为空';
+
+  @override
+  String get onboardingFetchModelsFirst => '请先拉取可用模型';
+
+  @override
+  String get onboardingChooseDefaultModel => '请选择默认模型';
+
+  @override
+  String get onboardingPickSnapshot => '选择快照';
+
+  @override
+  String get onboardingPickSnapshotHelp => '请在文件选择器中选择 Operit1 快照。';
+
+  @override
+  String get onboardingUploadSnapshot => '上传快照';
+
+  @override
+  String get onboardingInspectSnapshot => '检查快照';
+
+  @override
+  String get onboardingInspectSnapshotHelp => '正在检查 Operit1 快照内容，请稍候。';
+
+  @override
+  String get onboardingSnapshotRequired => '请选择 Operit1 快照文件';
+
+  @override
+  String get onboardingPrepareImport => '准备导入';
+
+  @override
+  String get onboardingPrepareMigration => '正在准备迁移 Operit1 快照内容，请稍候。';
+
+  @override
+  String get onboardingWait => '请稍候';
+
+  @override
+  String get onboardingAgree => '同意';
+
+  @override
+  String get onboardingSaving => '保存中';
+
+  @override
+  String get onboardingConfirm => '确认';
+
+  @override
+  String get onboardingPreparing => '准备中';
+
+  @override
+  String get onboardingContinue => '继续';
+
+  @override
+  String get onboardingFetching => '拉取中';
+
+  @override
+  String get onboardingReading => '读取中';
+
+  @override
+  String get onboardingImporting => '导入中';
+
+  @override
+  String get onboardingWorking => '处理中';
+
+  @override
+  String get onboardingDone => '完成';
+
+  @override
+  String get onboardingAgreement => '用户协议';
+
+  @override
+  String get onboardingStorage => '存储位置';
+
+  @override
+  String get onboardingMode => '启动方式';
+
+  @override
+  String get onboardingModelSetup => '模型配置';
+
+  @override
+  String get onboardingImportSetup => '导入配置';
+
+  @override
+  String get onboardingDeviceSpace => '设备空间';
+
+  @override
+  String get onboardingPermissions => '系统授权';
+
+  @override
+  String get onboardingWelcome => '欢迎';
+
+  @override
+  String get onboardingPreparingRuntime => '正在准备本地运行时';
+
+  @override
+  String get onboardingSkip => '跳过';
+
+  @override
+  String get onboardingPreviousPage => '上一页';
+
+  @override
+  String get onboardingStart => '开始';
+
+  @override
+  String get onboardingTagline => '让日常任务，从这里变得简单';
+
+  @override
+  String get onboardingChooseMode => '选择上手方式';
+
+  @override
+  String get onboardingChooseModeHelp =>
+      '可以配置新环境、导入 Operit1 数据、加入已有设备空间，或从以前的备份恢复聊天记录。';
+
+  @override
+  String get onboardingQuickStart => '快速开始';
+
+  @override
+  String get onboardingQuickStartHelp => '配置模型供应商，直接完成基础设置';
+
+  @override
+  String get onboardingImportLegacyHelp => '导入旧版配置和数据';
+
+  @override
+  String get onboardingJoinExisting => '加入已有设备空间';
+
+  @override
+  String get onboardingJoinExistingHelp => '扫描附近设备空间，加入后直接同步模型和数据';
+
+  @override
+  String get onboardingJoinSpace => '加入设备空间';
+
+  @override
+  String get onboardingJoinSpaceHelp =>
+      '点击添加设备，选择附近的设备并完成配对。管理员批准加入后，才会同步配置和数据。';
+
+  @override
+  String get onboardingConfirmStorage => '确认本地存储位置';
+
+  @override
+  String get onboardingConfirmStorageHelp => '运行时数据和工作区数据相互独立，可以直接输入路径或分别选择目录。';
+
+  @override
+  String get onboardingRuntimeDirectory => '运行时目录';
+
+  @override
+  String get onboardingWorkspaceDirectory => '工作区目录';
+
+  @override
+  String get onboardingReadingPaths => '正在读取存储路径';
+
+  @override
+  String get onboardingStorageMountHelp =>
+      '这两个目录会分别保存运行时状态和用户工作区，确认后由本机 Host 直接挂载。';
+
+  @override
+  String get onboardingPrepareSnapshotHelp => '正在准备 Operit1 快照，请稍候。';
+
+  @override
+  String get onboardingImportSnapshotHelp =>
+      '请使用最新版 Operit1 导出的快照，将配置、聊天、角色卡、资源等数据迁移到 Operit2。';
+
+  @override
+  String get onboardingReadingSnapshot => '正在读取快照';
+
+  @override
+  String get onboardingPickSnapshotFile => '选择快照文件';
+
+  @override
+  String get onboardingMigrationContents => '检测到可迁移内容';
+
+  @override
+  String get onboardingChats => '聊天';
+
+  @override
+  String get onboardingMessages => '消息';
+
+  @override
+  String get onboardingPreferenceFiles => '偏好文件';
+
+  @override
+  String get onboardingResourceFiles => '资源文件';
+
+  @override
+  String get onboardingExternalResources => '外部资源';
+
+  @override
+  String get onboardingImportInProgress => '正在导入快照内容，请稍候。';
+
+  @override
+  String get onboardingImportContinueHelp => '点击继续后会开始迁移整份快照。';
+
+  @override
+  String get onboardingEndpoint => '服务地址';
+
+  @override
+  String get onboardingCompleteModel => '完成模型配置';
+
+  @override
+  String get onboardingCompleteModelHelp => '选择模型供应商，填写 API Key，拉取并设置默认模型。';
+
+  @override
+  String get onboardingModelProvider => '模型供应商';
+
+  @override
+  String get onboardingModelProviderRequired => '请选择模型供应商';
+
+  @override
+  String get onboardingContinueModel => '继续配置';
+
+  @override
+  String get onboardingFetchingModels => '正在拉取模型';
+
+  @override
+  String get onboardingFetchModels => '拉取可用模型';
+
+  @override
+  String get onboardingDefaultModel => '默认模型';
+
+  @override
+  String get onboardingGrantPermissions => '按需授予系统权限';
+
+  @override
+  String get onboardingGrantPermissionsHelp =>
+      '权限可按您要使用的功能选择授予。您可以不授予任何一项并继续；未授予权限对应的功能将无法使用。';
+
+  @override
+  String get onboardingNoPermissions => '当前设备没有需要处理的授权项';
+
+  @override
+  String get onboardingNoPermissionsHelp => '当前运行环境没有需要在欢迎页处理的系统授权。';
+
+  @override
+  String get onboardingRefreshPermissions => '刷新授权状态';
+
+  @override
+  String get onboardingOptional => '可选';
+
+  @override
+  String get onboardingRequired => '必填';
+
+  @override
+  String get onboardingPermissionGranted => '已授权';
+
+  @override
+  String get onboardingGrantPermission => '去授权';
+
+  @override
+  String get onboardingNoAction => '无需操作';
+
+  @override
+  String onboardingUploadProgress(int percent) {
+    return '正在读取并上传快照文件（$percent%）。';
+  }
+
+  @override
+  String onboardingChooseDirectory(String label) {
+    return '选择$label';
+  }
+
+  @override
+  String onboardingDefaultChatModel(String model) {
+    return '默认聊天模型：$model';
+  }
+
+  @override
+  String onboardingImportFailed(String error) {
+    return '快照导入失败\n$error';
+  }
+
+  @override
+  String get onboardingAgreementTitle => '用户协议与隐私政策';
+
+  @override
+  String get onboardingAgreementHelp => '请阅读本协议。确认同意后，才能继续完成设备设置。';
+
+  @override
+  String onboardingAgreementVersion(String version) {
+    return '版本：$version';
+  }
+
+  @override
+  String onboardingAgreementWait(int count) {
+    return '阅读确认将在 $count 秒后开放。';
+  }
+
+  @override
+  String get extensionsView => '查看';
+
+  @override
+  String get extensionsCloseSearch => '关闭搜索';
+
+  @override
+  String get extensionsSearchShortcut => '搜索（Ctrl+F）';
+
+  @override
+  String get extensionsAdd => '添加扩展';
+
+  @override
+  String get extensionsMore => '更多';
+
+  @override
+  String get extensionsCheckUpdates => '检查更新';
+
+  @override
+  String get extensionsEnvironment => '环境变量';
+
+  @override
+  String get extensionsReload => '重新加载目录';
+
+  @override
+  String get extensionsSearchInstalled => '搜索已安装的扩展';
+
+  @override
+  String get extensionsSearchMarket => '搜索市场和官方扩展';
+
+  @override
+  String get extensionsTab => '扩展';
+
+  @override
+  String get extensionsDrop => '松手导入扩展';
+
+  @override
+  String get extensionsDropTypes => '支持 .toolpkg、.js、.ts、.hjson';
+
+  @override
+  String get extensionsImportPlugin => '导入插件';
+
+  @override
+  String get extensionsSelectToolPkg => '选择 .toolpkg 文件';
+
+  @override
+  String get extensionsImportScript => '导入脚本包';
+
+  @override
+  String get extensionsScriptTypes => '.js、.ts、.hjson 或 .toolpkg';
+
+  @override
+  String get extensionsAddSkill => '添加技能';
+
+  @override
+  String get extensionsSkillSources => 'GitHub 仓库、ZIP 或手写';
+
+  @override
+  String get extensionsAddMcp => '添加 MCP 服务';
+
+  @override
+  String get extensionsMcpSources => 'GitHub、ZIP、配置或表单';
+
+  @override
+  String get extensionsAddA2a => '添加 A2A';
+
+  @override
+  String get extensionsA2aSources => '服务地址、Agent Card 或配置文件';
+
+  @override
+  String get extensionsAiCreate => '用 AI 创作插件';
+
+  @override
+  String get extensionsAiCreateHelp => '描述你想要的功能，在对话里生成并安装';
+
+  @override
+  String get extensionsAddHelp =>
+      '新扩展默认装在本机，ToolPkg 的固定安装范围遵从插件声明。同 ID 的本地 ToolPkg 更新保留现有安装位置和配置。桌面端也可以直接把文件拖进来。';
+
+  @override
+  String extensionsSyncChanged(int count) {
+    return '设备空间同步完成，$count 个扩展有变化';
+  }
+
+  @override
+  String extensionsDropRejected(String files) {
+    return '不能直接导入：$files。技能和 MCP 请通过「添加扩展」导入。';
+  }
+
+  @override
+  String get marketRangeWeek => '最近一周';
+
+  @override
+  String get marketRangeMonth => '最近一个月';
+
+  @override
+  String get marketRangeAll => '全部时间';
+
+  @override
+  String get marketSortUpdated => '最近更新';
+
+  @override
+  String get marketSortDownloads => '下载最多';
+
+  @override
+  String get marketSortLikes => '最受欢迎';
+
+  @override
+  String marketFilterSummary(String sort, String range) {
+    return '筛选：$sort，$range';
+  }
+
+  @override
+  String get marketFilterTitle => '筛选市场';
+
+  @override
+  String get marketFilterSort => '排序方式';
+
+  @override
+  String get marketFilterPeriod => '时间范围';
+
+  @override
+  String get marketFilterUpdatedHelp => '按最近更新时间筛选内容。';
+
+  @override
+  String get marketFilterCategory => '内容分类';
+
+  @override
+  String get marketFilterAllCategories => '全部分类';
+
+  @override
+  String get marketFilterCategoryRetry => '分类加载失败，重试';
+
+  @override
+  String get marketFilterReset => '重置';
+
+  @override
+  String get marketFilterApply => '应用筛选';
+
+  @override
+  String marketFilterRankingHelp(String metric) {
+    return '热门榜默认最近 30 天首次发布的内容，按累计$metric排序。更新不会重置发布时间。';
+  }
+
+  @override
+  String get marketFilterLikes => '点赞';
+
+  @override
+  String get marketFilterDownloads => '下载';
+
+  @override
+  String get attachmentContext => '补充信息';
+
+  @override
+  String get attachmentExtraInfo => '附加信息';
+
+  @override
+  String get attachmentPastedText => '粘贴文本';
+
+  @override
+  String get attachmentResetZoom => '重置缩放';
+
+  @override
+  String get attachmentCloseShortcut => '关闭 (Esc)';
+
+  @override
+  String get attachmentCopyContent => '复制内容';
+
+  @override
+  String get attachmentCopied => '已复制到剪贴板';
+
+  @override
+  String get attachmentCopyLocation => '复制文件位置';
+
+  @override
+  String get attachmentClipboardImage => '剪贴板图片';
+
+  @override
+  String get chatSharePreview => '长图预览';
+
+  @override
+  String get chatShareSaveFile => '保存到文件';
+
+  @override
+  String get chatShareImage => '分享图片';
+
+  @override
+  String get chatShareSaveFailed => '保存失败';
+
+  @override
+  String get chatSharePng => 'PNG 图片';
+
+  @override
+  String get chatShareSaved => '图片已保存';
+
+  @override
+  String get chatShareFailed => '分享失败';
+
+  @override
+  String attachmentExpandCount(int count) {
+    return '点击展开共 $count 个附件';
+  }
+
+  @override
+  String attachmentCollapseCount(int count) {
+    return '收起 ($count)';
+  }
+
+  @override
+  String attachmentContextCount(int count) {
+    return '补充信息 · $count';
+  }
+
+  @override
+  String attachmentCopyLocationPath(String path) {
+    return '复制文件位置\n$path';
+  }
+
+  @override
+  String attachmentLocationPath(String path) {
+    return '保存位置：$path';
+  }
+
+  @override
+  String get marketCategorySearch => '搜索与研究';
+
+  @override
+  String get marketCategorySearchDescription => '搜索引擎、研究工具与知识检索';
+
+  @override
+  String get marketCategoryDevelopment => '开发工具';
+
+  @override
+  String get marketCategoryDevelopmentDescription => '代码编辑、调试与开发工具';
+
+  @override
+  String get marketCategoryAutomation => '自动化';
+
+  @override
+  String get marketCategoryAutomationDescription => '任务自动化与工作流处理';
+
+  @override
+  String get marketCategoryDocuments => '文档与知识';
+
+  @override
+  String get marketCategoryDocumentsDescription => '文档处理与知识管理';
+
+  @override
+  String get marketCategoryMedia => '媒体与内容';
+
+  @override
+  String get marketCategoryMediaDescription => '图像、视频、音频处理与内容创作';
+
+  @override
+  String get marketCategoryCommunication => '聊天与通信';
+
+  @override
+  String get marketCategoryCommunicationDescription => '聊天工具、消息收发与通信集成';
+
+  @override
+  String get marketCategoryIntegration => '服务与接口';
+
+  @override
+  String get marketCategoryIntegrationDescription => '第三方服务集成与 API 工具';
+
+  @override
+  String get marketCategorySystem => '系统与数据';
+
+  @override
+  String get marketCategorySystemDescription => '文件系统、数据管理与系统工具';
+
+  @override
+  String get marketCategoryProductivity => '商务与效率';
+
+  @override
+  String get marketCategoryProductivityDescription => '业务工作流与效率工具';
+
+  @override
+  String get marketCategoryEntertainment => '生活与娱乐';
+
+  @override
+  String get marketCategoryEntertainmentDescription => '日常生活工具、娱乐与趣味应用';
+
+  @override
+  String get marketCategoryOther => '其他';
+
+  @override
+  String get marketCategoryOtherDescription => '未分类或其他类型的扩展';
+
+  @override
+  String get settingsCategorySpeechTitle => '语音与识别';
+
+  @override
+  String get settingsCategorySpeechSubtitle => 'TTS 与 STT 供应商';
+
+  @override
+  String get settingsCategorySpeechDescription => '管理语音合成与语音识别供应商，并分别选择当前配置。';
+
+  @override
+  String get settingsCategoryAboutTitle => '关于 Operit2';
+
+  @override
+  String get settingsCategoryAboutSubtitle => '版本、项目与许可';
+
+  @override
+  String get settingsCategoryAboutDescription => '查看 Operit2 的版本信息、项目链接和开源许可证。';
+
+  @override
+  String get aboutUpdateSection => '版本更新';
+
+  @override
+  String get aboutAppDescription =>
+      '面向终端与桌面的 AI 工作台，提供聊天会话、工作区、工具、插件、MCP、远程连接和 Web 访问。';
+
+  @override
+  String get aboutReadingVersion => '正在读取版本信息…';
+
+  @override
+  String get aboutUpToDate => '当前已是最新版本';
+
+  @override
+  String get aboutCheckingUpdates => '正在检查更新…';
+
+  @override
+  String get aboutRetryCheck => '检查更新失败，点击重试';
+
+  @override
+  String get aboutCheckHint => '点击检查最新版本';
+
+  @override
+  String get aboutProject => '项目';
+
+  @override
+  String get aboutSource => '项目源码';
+
+  @override
+  String get aboutDocs => '使用文档';
+
+  @override
+  String get aboutDocsSubtitle => 'README 与命令行说明';
+
+  @override
+  String get aboutLicenses => '开源许可证';
+
+  @override
+  String get aboutLicenseSubtitle => 'Operit2 使用 AGPL-3.0';
+
+  @override
+  String get aboutContact => '联系';
+
+  @override
+  String get aboutDeveloper => '开发者 AAswordman';
+
+  @override
+  String get aboutCopyright => '© 2025 - 2026 Operit. 保留所有权利。';
+
+  @override
+  String aboutReadVersionFailed(String error) {
+    return '版本信息读取失败：$error';
+  }
+
+  @override
+  String aboutVersion(String version) {
+    return '版本 $version';
+  }
+
+  @override
+  String aboutUpdatingTo(String version) {
+    return '正在更新至 $version，点击查看进度';
+  }
+
+  @override
+  String aboutLinkCopied(String url) {
+    return '没有应用能打开此链接，已复制到剪贴板：$url';
+  }
+
+  @override
+  String get settingsToolsAdvanced => '高级设置';
+
+  @override
+  String get settingsToolsReadOnly => '只读';
+
+  @override
+  String get settingsToolsReadWrite => '读写';
+
+  @override
+  String get settingsToolsFullAccess => '完整权限';
+
+  @override
+  String get settingsToolsSandboxed => 'sandbox（已启用 macOS App Sandbox）';
+
+  @override
+  String get settingsToolsUnsandboxed => 'unsandbox（未启用 macOS App Sandbox）';
+
+  @override
+  String get settingsToolsIsolation => '应用运行隔离';
+
+  @override
+  String get settingsToolsRestrictions => 'AI 能力限制';
+
+  @override
+  String get settingsToolsConfirmCalls => '工具调用确认';
+
+  @override
+  String get settingsToolsConfirmDirectCalls => '按 AI 直接调用的工具执行审批。';
+
+  @override
+  String get settingsToolsRuntimeEnvironment => '当前运行环境';
+
+  @override
+  String get settingsToolsPlatform => '平台';
+
+  @override
+  String get settingsToolsOuterIsolation => '外层隔离';
+
+  @override
+  String get settingsToolsFileCapability => '文件能力';
+
+  @override
+  String get settingsToolsTerminalCapability => '终端能力';
+
+  @override
+  String get settingsToolsRegistered => '已注册';
+
+  @override
+  String get settingsToolsUnregistered => '未注册';
+
+  @override
+  String get settingsToolsAuthorizations => '授权项';
+
+  @override
+  String get settingsToolsStructuredCapabilities => '结构化能力';
+
+  @override
+  String get settingsToolsNotGranted => '未授予';
+
+  @override
+  String get settingsToolsSystemRequired => '需要由系统处理';
+
+  @override
+  String get settingsToolsOpenSettings => '打开设置';
+
+  @override
+  String get settingsToolsUnavailable => '不可操作';
+
+  @override
+  String get settingsToolsHandle => '处理';
+
+  @override
+  String get settingsToolsReadOnlyDescription => 'AI 可以读取当前工作区，不能启动写入工具。';
+
+  @override
+  String get settingsToolsReadWriteDescription => 'AI 可以读写当前工作区，应用内沙盒保持开启。';
+
+  @override
+  String get settingsToolsFullAccessDescription => 'AI 可以读写当前工作区，并关闭应用内沙盒。';
+
+  @override
+  String settingsToolsAuthorizationFailed(String error) {
+    return '授权失败：$error';
+  }
+
+  @override
+  String settingsToolsItemCount(int count) {
+    return '$count 项';
+  }
 }

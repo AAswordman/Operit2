@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import 'TtsPlaybackController.dart';
 
@@ -85,6 +86,7 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
     double panelWidth,
     double maxPanelHeight,
   ) {
+    final l10n = AppLocalizations.of(context)!;
     return Material(
       elevation: 10,
       borderRadius: BorderRadius.circular(8),
@@ -115,14 +117,14 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        state.title.isEmpty ? '语音朗读' : state.title,
+                        state.title.isEmpty ? l10n.speechTitle : state.title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: Theme.of(context).textTheme.titleSmall,
                       ),
                     ),
                     IconButton(
-                      tooltip: '关闭',
+                      tooltip: l10n.close,
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(Icons.close, size: 18),
                       onPressed: () {
@@ -139,7 +141,7 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
                 ),
                 const SizedBox(height: 6),
                 Text(
-                  _statusText(state),
+                  _statusText(state, l10n),
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
@@ -170,8 +172,8 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
                   children: <Widget>[
                     IconButton.filledTonal(
                       tooltip: state.phase == TtsPlaybackPhase.paused
-                          ? '继续'
-                          : '暂停',
+                          ? l10n.resume
+                          : l10n.pause,
                       icon: Icon(
                         state.phase == TtsPlaybackPhase.paused
                             ? Icons.play_arrow
@@ -186,7 +188,7 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
                     ),
                     const SizedBox(width: 8),
                     IconButton.filledTonal(
-                      tooltip: '停止',
+                      tooltip: l10n.stop,
                       icon: const Icon(Icons.stop, size: 18),
                       onPressed:
                           state.phase == TtsPlaybackPhase.playing ||
@@ -207,22 +209,22 @@ class _TtsFloatingPanelState extends State<TtsFloatingPanel> {
 }
 
 /// Builds the localized playback status summary.
-String _statusText(TtsPlaybackState state) {
+String _statusText(TtsPlaybackState state, AppLocalizations l10n) {
   final segment = state.audioCount > 0
       ? ' · ${state.audioIndex}/${state.audioCount}'
       : '';
-  final queued = state.queueLength > 0 ? ' · 队列 ${state.queueLength}' : '';
-  return '${_phaseText(state.phase)}$segment$queued';
+  final queued = state.queueLength > 0 ? ' · ${l10n.speechQueue(state.queueLength)}' : '';
+  return '${_phaseText(state.phase, l10n)}$segment$queued';
 }
 
 /// Maps a playback phase to its localized label.
-String _phaseText(TtsPlaybackPhase phase) {
+String _phaseText(TtsPlaybackPhase phase, AppLocalizations l10n) {
   return switch (phase) {
-    TtsPlaybackPhase.idle => '空闲',
-    TtsPlaybackPhase.preparing => '生成中',
-    TtsPlaybackPhase.playing => '播放中',
-    TtsPlaybackPhase.paused => '已暂停',
-    TtsPlaybackPhase.stopped => '已停止',
-    TtsPlaybackPhase.error => '出错',
+    TtsPlaybackPhase.idle => l10n.speechIdle,
+    TtsPlaybackPhase.preparing => l10n.speechPreparing,
+    TtsPlaybackPhase.playing => l10n.speechPlaying,
+    TtsPlaybackPhase.paused => l10n.paused,
+    TtsPlaybackPhase.stopped => l10n.speechStopped,
+    TtsPlaybackPhase.error => l10n.speechError,
   };
 }

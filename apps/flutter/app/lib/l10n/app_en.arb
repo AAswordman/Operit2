@@ -3011,5 +3011,853 @@
   "terminalInstallFailed": "Installation failed",
   "terminalProfileWslDistribution": "WSL distribution",
   "terminalProfileWslDistributionRequired": "Select a WSL distribution.",
-  "terminalProfileWslHelp": "Install a WSL distribution on the Windows device running Core, then reopen this dialog."
+  "terminalProfileWslHelp": "Install a WSL distribution on the Windows device running Core, then reopen this dialog.",
+  "appUpdateUnavailableTitle": "Update temporarily unavailable",
+  "appUpdatePlanning": "Checking for updates and selecting a download source…",
+  "appUpdateSelectingSource": "Selecting a download source…",
+  "appUpdateAwaitingBase": "The original installer is required",
+  "appUpdateValidatingBase": "Verifying the selected installer…",
+  "appUpdateDownloadingPatch": "Downloading the incremental patch…",
+  "appUpdateDownloadingFull": "Downloading the full installer…",
+  "appUpdateVerifyingBase": "Verifying the original installer…",
+  "appUpdateVerifyingPatch": "Verifying the incremental patch…",
+  "appUpdateExpandingBase": "Preparing the original installer…",
+  "appUpdateVerifyingExpandedBase": "Verifying update files…",
+  "appUpdateApplyingPatch": "Applying the patch…",
+  "appUpdateRestoringPackage": "Creating the new installer…",
+  "appUpdateVerifyingPackage": "Verifying the new installer…",
+  "appUpdateSavingPackage": "Saving the installer…",
+  "appUpdatePreparingFiles": "Preparing update files…",
+  "appUpdateReady": "Update downloaded and verified. Confirm to install.",
+  "appUpdatePreparingInstall": "Preparing to install…",
+  "appUpdateInstalling": "Starting installation. The app will restart shortly…",
+  "appUpdateRestartRequired": "Download complete. Restart to install the new version.",
+  "appUpdateInstallSubmitted": "Installation requested. Confirm in the system dialog.",
+  "appUpdatePermissionRequired": "App installation permission required",
+  "appUpdateUpdateIncomplete": "Update incomplete",
+  "appUpdateInstallIncomplete": "Installation incomplete",
+  "appUpdatePreparingDownload": "Preparing to download the update…",
+  "appUpdateTitle": "Update Operit",
+  "appUpdateNoOriginalInstaller": "I no longer have the installer",
+  "appUpdateChooseInstaller": "Select",
+  "appUpdateBackground": "Update in background",
+  "appUpdateCancel": "Cancel update",
+  "appUpdateOpenRelease": "Open release page",
+  "appUpdateContinueInstall": "Continue installation",
+  "appUpdateRetry": "Retry update",
+  "appUpdateReinstall": "Reinstall",
+  "appUpdateRestartInstall": "Restart and install",
+  "appUpdateReopenInstaller": "Reopen installer",
+  "appUpdateRestartUpdate": "Restart and update",
+  "appUpdateSelectOriginalInstaller": "Select the original installer used to install this app. Once verified, the incremental patch will be downloaded and applied to create the new installer.",
+  "appUpdateProcessingHelp": "Update files are being processed on this device. Creating the installer may take a while. You can continue in the background and select the Operit logo later to check progress.",
+  "appUpdateDownloadHelp": "After downloading, the installer is verified and kept until you confirm the update. You can close this window and select the Operit logo later to check progress.",
+  "appUpdatePermissionHelp": "Grant the system permission, then select Continue installation. The installer has been kept.",
+  "appUpdateReadyHelp": "Select “Restart and update” to begin installation. Your system may ask for permission to install.",
+  "appUpdateRestartHelp": "Select “Restart and install” to close the app, install the new version, and reopen it.",
+  "appUpdateSystemInstallHelp": "Confirm in the system installer and reopen Operit when installation finishes. You can reopen the installer if you closed it.",
+  "appUpdateInstallerKept": "The installer has been kept. You can retry without downloading it again.",
+  "appUpdateReleaseNotes": "What’s new",
+  "appUpdateAvailableTitle": "Update available",
+  "appUpdateNow": "Update now",
+  "appUpdateAvailable": "A new version of Operit is available",
+  "appUpdatePromptReady": "The update is ready. Confirm to restart and install it.",
+  "appUpdatePromptAvailable": "Update to get the latest features and improvements.",
+  "appUpdateCurrentVersion": "Current version",
+  "appUpdateLatestVersion": "Latest version",
+  "appUpdatePromptLater": "You can continue the update later by selecting the Operit logo in the sidebar.",
+  "appUpdateOpenReleaseFailed": "Could not open the release page",
+  "appUpdateViewProgress": "View update progress",
+  "appUpdateFailedRetry": "Update failed. Select to retry.",
+  "appUpdateUnavailableHelp": "The installer required for this update could not be retrieved, and no full installer is available. Download the installer for {version}, or find the original installer for {baseVersion} and retry.",
+  "@appUpdateUnavailableHelp": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "baseVersion": {
+        "type": "String"
+      }
+    }
+  },
+  "appUpdateAvailableVersion": "Version {version} is available",
+  "@appUpdateAvailableVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "appUpdateInstalledVersion": "Current version: {version}",
+  "@appUpdateInstalledVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "appUpdateOriginalVersionPrompt": "Do you still have the original installer for version {version}?",
+  "@appUpdateOriginalVersionPrompt": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "appUpdatePatchSize": "Incremental download: about {size}",
+  "@appUpdatePatchSize": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "appUpdateStepProgress": "Current step: {percent}%",
+  "@appUpdateStepProgress": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "appUpdateElapsed": "Elapsed: {duration}",
+  "@appUpdateElapsed": {
+    "placeholders": {
+      "duration": {
+        "type": "String"
+      }
+    }
+  },
+  "appUpdateDownloadSizePending": "{size} · Checking file size",
+  "@appUpdateDownloadSizePending": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
+  "appUpdateBadgeAvailable": "Version {version} is available. Select to update.",
+  "@appUpdateBadgeAvailable": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "apiErrorInvalidParametersTitle": "Invalid request parameters",
+  "apiErrorInvalidParametersMessage": "The API could not process the request parameters. Check the model name, capabilities, and parameters, and review the original error.",
+  "apiErrorInvalidKeyTitle": "Invalid API key",
+  "apiErrorInvalidKeyMessage": "The server rejected the API key. Check that it is correct, complete, and active.",
+  "apiErrorBillingTitle": "Insufficient API balance",
+  "apiErrorBillingMessage": "Your API balance is too low or your quota is exhausted. Check your balance and billing with the API provider.",
+  "apiErrorBlockedTitle": "Request blocked by server",
+  "apiErrorBlockedMessage": "The API server refused the request. Contact the provider to check for security or access restrictions.",
+  "apiErrorNotFoundTitle": "Endpoint or model not found",
+  "apiErrorNotFoundMessage": "The API server could not find the resource. Check the server address, endpoint path, and model name.",
+  "apiErrorUnsupportedMethodTitle": "Request method not supported",
+  "apiErrorUnsupportedMethodMessage": "The server does not support this request method or operation. Check the provider type and API protocol.",
+  "apiErrorUnsupportedContentTitle": "Unsupported request content",
+  "apiErrorUnsupportedContentMessage": "The server does not accept this content type. Check the provider protocol, media format, and custom headers.",
+  "apiErrorProxyAuthTitle": "Proxy authentication failed",
+  "apiErrorProxyAuthMessage": "The network proxy requires authentication. Check the proxy credentials and authentication settings.",
+  "apiErrorTimeoutTitle": "API request timed out",
+  "apiErrorTimeoutMessage": "The request or a server connection timed out. Check your network connection and the provider status, then retry.",
+  "apiErrorConflictTitle": "Request conflicts with resource state",
+  "apiErrorConflictMessage": "The API server reported a conflict. Review the original error for details.",
+  "apiErrorLengthRequiredTitle": "Request content length required",
+  "apiErrorLengthRequiredMessage": "The API requires a declared content length. Contact the provider to confirm its requirements.",
+  "apiErrorTooLargeTitle": "Request too large",
+  "apiErrorTooLargeMessage": "The message, attachments, address, or headers exceed the server limit. See the original error to find what to reduce.",
+  "apiErrorLockedTitle": "Resource locked",
+  "apiErrorLockedMessage": "The API server temporarily locked the resource. Retry later or contact the provider.",
+  "apiErrorTooEarlyTitle": "Server is not ready for this request",
+  "apiErrorTooEarlyMessage": "The server considered the request premature. Retry later.",
+  "apiErrorUpgradeRequiredTitle": "API protocol upgrade required",
+  "apiErrorUpgradeRequiredMessage": "The server requires a different protocol version. Check the server address and provider protocol settings.",
+  "apiErrorRateLimitedTitle": "Request rate limited or blocked",
+  "apiErrorRateLimitedMessage": "The API throttled or blocked the request. Retry later or contact the provider.",
+  "apiErrorLegalRestrictionTitle": "Service unavailable due to regional or legal restrictions",
+  "apiErrorLegalRestrictionMessage": "The server refused access because of regional or legal restrictions. Ask the provider where the service is available.",
+  "apiErrorInterruptedTitle": "Request interrupted or blocked",
+  "apiErrorInterruptedMessage": "The request was interrupted. Share the original error with the provider to check for a security block, gateway issue, or closed connection.",
+  "apiErrorInternalTitle": "Internal API server error",
+  "apiErrorInternalMessage": "The API server encountered an internal error. Retry later or share the original error with the provider.",
+  "apiErrorGatewayTitle": "Invalid API gateway response",
+  "apiErrorGatewayMessage": "The gateway did not receive a valid upstream response. Retry later or contact the provider.",
+  "apiErrorUnavailableTitle": "API service temporarily unavailable",
+  "apiErrorUnavailableMessage": "The service may be under maintenance, overloaded, or out of capacity. Retry later or contact the provider.",
+  "apiErrorOriginTitle": "API origin server unreachable",
+  "apiErrorOriginMessage": "The gateway could not connect to the origin server. Contact the API provider to check for outages or routing problems.",
+  "apiErrorTlsTitle": "API server TLS or certificate error",
+  "apiErrorTlsMessage": "TLS negotiation or certificate validation failed between the gateway and the origin server. Contact the API provider.",
+  "apiErrorStorageTitle": "API server storage exhausted",
+  "apiErrorStorageMessage": "The API server has insufficient storage to complete the request. Contact the provider.",
+  "apiErrorClientTitle": "API server refused the request",
+  "apiErrorClientMessage": "The API server returned a request error. Review the original error and check your API configuration.",
+  "apiErrorServerTitle": "API server error",
+  "apiErrorServerMessage": "The server could not complete the request. Send the status code and original error to the provider.",
+  "apiErrorHttpTitle": "HTTP {status}: {title}",
+  "@apiErrorHttpTitle": {
+    "placeholders": {
+      "status": {
+        "type": "int"
+      },
+      "title": {
+        "type": "String"
+      }
+    }
+  },
+  "apiErrorOriginal": "Original error:\n{error}",
+  "@apiErrorOriginal": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "apiErrorModelExistsTitle": "Model already exists",
+  "apiErrorModelListTitle": "Could not fetch models",
+  "apiErrorModelListMessage": "No model list was received. Check the provider address, access key, and network connection.",
+  "apiErrorNetworkTitle": "Network connection failed",
+  "apiErrorNetworkMessage": "Could not reach the model provider. Check the network connection and server address.",
+  "apiErrorModelConfigTitle": "Model configuration failed",
+  "apiErrorModelConfigMessage": "The model configuration operation failed. Review the original error for details.",
+  "apiErrorModelExistsMessage": "Model “{modelId}” has already been added to provider “{providerName}”.",
+  "@apiErrorModelExistsMessage": {
+    "placeholders": {
+      "modelId": {
+        "type": "String"
+      },
+      "providerName": {
+        "type": "String"
+      }
+    }
+  },
+  "chatCopyMessage": "Copy message",
+  "chatEditResend": "Edit and resend",
+  "chatRollbackHere": "Roll back to here",
+  "chatRegenerate": "Regenerate",
+  "chatEditMemory": "Edit memory",
+  "chatPlaySpeech": "Generate or play speech",
+  "chatDeleteVariant": "Delete current variant",
+  "chatReply": "Reply",
+  "chatInsertSummary": "Insert summary",
+  "chatCreateBranch": "Create branch",
+  "chatMultiSelect": "Select messages",
+  "chatMultiSelectExit": "Exit selection",
+  "chatSelectionClear": "Clear selection",
+  "chatSelectionAll": "Select all",
+  "chatSelectionCopy": "Copy selected messages",
+  "chatGenerateShareImage": "Create share image",
+  "chatSelectionDelete": "Delete selected messages",
+  "chatEditMessage": "Edit message",
+  "chatEditorVisual": "Visual",
+  "chatPlainText": "Plain text",
+  "chatMarkdownSource": "Markdown source",
+  "chatCopyPlainText": "Copy plain text",
+  "chatCopyMarkdown": "Copy Markdown source",
+  "chatMessageCopied": "Message copied to clipboard",
+  "chatSaveResend": "Save and resend",
+  "chatUpdateMemory": "Update memory",
+  "chatEditorPlainTextContent": "Plain text content",
+  "chatEditorParts": "Content blocks",
+  "chatEditorAddText": "Add text",
+  "chatEditorAddTag": "Add tag",
+  "chatEditorText": "Text",
+  "chatEditorTextHint": "Enter text",
+  "chatEditorEditTag": "Edit tag",
+  "chatEditorTagName": "Tag name",
+  "chatEditorTagHint": "For example, custom_tag",
+  "chatEditorAttributes": "Attributes (optional)",
+  "chatEditorAttributesHint": "For example, type=\"note\"",
+  "chatEditorContent": "Content",
+  "chatRollbackConfirmTitle": "Roll back the workspace?",
+  "chatResendConfirmTitle": "Edit and resend the message?",
+  "chatRollbackConfirmMessage": "This restores the workspace to its state before this message and deletes this and all later messages.",
+  "chatResendConfirmMessage": "This restores the workspace to its state before this message and sends the edited message again.",
+  "chatRollbackConfirm": "Roll back",
+  "chatNoWorkspaceChanges": "No workspace file changes detected.",
+  "chatShareImageGenerating": "Creating share image…",
+  "chatSelectionCount": "{count, plural, one{{count} message selected} other{{count} messages selected}}",
+  "@chatSelectionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatSelectionDeleteConfirm": "{count, plural, one{Delete the selected message?} other{Delete the {count} selected messages?}}",
+  "@chatSelectionDeleteConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatCopyFailed": "Copy failed: {error}",
+  "@chatCopyFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "chatPlainTextConversionFailed": "Could not convert to plain text: {error}",
+  "@chatPlainTextConversionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "chatPlaySpeechFailed": "Could not generate or play speech: {error}",
+  "@chatPlaySpeechFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "chatShareImageFailed": "Could not create the share image: {error}",
+  "@chatShareImageFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "chatWorkspaceChangeLines": "{change} · {count, plural, one{{count} line} other{{count} lines}}",
+  "@chatWorkspaceChangeLines": {
+    "placeholders": {
+      "change": {
+        "type": "String"
+      },
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "speechTitle": "Read aloud",
+  "speechIdle": "Idle",
+  "speechPreparing": "Generating speech",
+  "speechPlaying": "Playing",
+  "speechStopped": "Stopped",
+  "speechError": "Error",
+  "speechQueue": "Queue: {count}",
+  "@speechQueue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "speechTestText": "Hello! This is the Operit voice preview.",
+  "speechTtsMissingId": "Cannot preview without a TTS configuration ID",
+  "speechTtsPreviewPlaying": "TTS preview started",
+  "speechTtsProviders": "TTS providers",
+  "speechAddTtsProvider": "Add TTS provider",
+  "speechSttCurrentCannotDelete": "The active STT configuration cannot be deleted",
+  "speechDeleteSttProvider": "Delete STT provider",
+  "speechSttProviders": "STT providers",
+  "speechAddSttProvider": "Add STT provider",
+  "speechEditProvider": "Edit provider",
+  "speechPreview": "Preview",
+  "speechGlobalActive": "Global default",
+  "speechSetGlobal": "Set as global default",
+  "speechNoSttProviders": "No speech recognition providers configured",
+  "speechCurrentCannotDelete": "The active configuration cannot be deleted",
+  "speechEditTtsProvider": "Edit TTS provider",
+  "speechProviderType": "Provider type",
+  "speechProviderName": "Provider name",
+  "speechHttpMethod": "HTTP method",
+  "speechBodyTemplate": "Request body template",
+  "speechPipelineJson": "Response pipeline JSON",
+  "speechAddTtsVoice": "Add TTS voice",
+  "speechCustomVoice": "Custom voice",
+  "speechEnterVoice": "Enter the model and voice manually",
+  "speechModelVoiceRequired": "Enter a model or a voice",
+  "speechCustomTtsVoice": "Custom TTS voice",
+  "speechModelRequired": "Model is required",
+  "speechVoice": "Voice",
+  "speechVoiceRequired": "Voice is required",
+  "speechLanguageTag": "Language tag (optional, e.g. en-US)",
+  "speechModelLocale": "Model / locale",
+  "speechSystemVoiceName": "System voice name (optional)",
+  "speechEditTtsVoice": "Edit TTS voice",
+  "speechTestVoice": "Test voice",
+  "speechAudioFormat": "Audio format",
+  "speechSpeed": "Speed",
+  "speechNewTtsProvider": "New TTS provider",
+  "speechModelVersion": "Model ID@version",
+  "speechNewSttProvider": "New STT provider",
+  "speechEditSttProvider": "Edit STT provider",
+  "speechMultipart": "Multipart request settings",
+  "speechAudioField": "Audio field name",
+  "speechModelField": "Model field name",
+  "speechModelFieldHelp": "Leave blank if the endpoint does not accept a model parameter",
+  "speechLanguageField": "Language field name",
+  "speechTranscriptJsonPath": "Transcript JSONPath",
+  "speechModelNotNeeded": "This endpoint does not require a model",
+  "speechReloadModels": "Reload models",
+  "speechModelIdHelp": "Enter a supported model ID or select a preset",
+  "speechPresetModel": "Select preset model",
+  "speechNoLocalSttModels": "No local STT models installed",
+  "speechChooseModel": "Select a model",
+  "speechChooseSttModel": "Select an STT model",
+  "speechPreviewTitle": "Preview · {voice}",
+  "@speechPreviewTitle": {
+    "placeholders": {
+      "voice": {
+        "type": "String"
+      }
+    }
+  },
+  "speechPreviewFailed": "TTS preview failed: {error}",
+  "@speechPreviewFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "speechDeleteTtsConfigFailed": "Could not delete TTS configuration: {error}",
+  "@speechDeleteTtsConfigFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "speechLoadConfigFailed": "Could not load speech settings: {error}",
+  "@speechLoadConfigFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "speechDeleteSttConfirm": "Delete “{name}” and its recognition settings?",
+  "@speechDeleteSttConfirm": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
+  "speechSttFailed": "STT operation failed: {error}",
+  "@speechSttFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "speechModelsFailed": "Could not load models: {error}",
+  "@speechModelsFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "speechFieldRequired": "{label} is required",
+  "@speechFieldRequired": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "speechFieldPositive": "{label} must be positive",
+  "@speechFieldPositive": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingStorageRequired": "Both the runtime and workspace directories are required",
+  "onboardingFetchModelsFirst": "Fetch available models first",
+  "onboardingChooseDefaultModel": "Select a default model",
+  "onboardingPickSnapshot": "Choose snapshot",
+  "onboardingPickSnapshotHelp": "Select an Operit1 snapshot in the file picker.",
+  "onboardingUploadSnapshot": "Upload snapshot",
+  "onboardingInspectSnapshot": "Inspect snapshot",
+  "onboardingInspectSnapshotHelp": "Inspecting the contents of the Operit1 snapshot…",
+  "onboardingSnapshotRequired": "Select an Operit1 snapshot file",
+  "onboardingPrepareImport": "Prepare import",
+  "onboardingPrepareMigration": "Preparing to migrate the contents of the Operit1 snapshot…",
+  "onboardingWait": "Please wait",
+  "onboardingAgree": "Agree",
+  "onboardingSaving": "Saving…",
+  "onboardingConfirm": "Confirm",
+  "onboardingPreparing": "Preparing…",
+  "onboardingContinue": "Continue",
+  "onboardingFetching": "Fetching…",
+  "onboardingReading": "Reading…",
+  "onboardingImporting": "Importing…",
+  "onboardingWorking": "Working…",
+  "onboardingDone": "Done",
+  "onboardingAgreement": "User agreement",
+  "onboardingStorage": "Storage locations",
+  "onboardingMode": "Setup method",
+  "onboardingModelSetup": "Model setup",
+  "onboardingImportSetup": "Import settings",
+  "onboardingDeviceSpace": "Device space",
+  "onboardingPermissions": "System permissions",
+  "onboardingWelcome": "Welcome",
+  "onboardingPreparingRuntime": "Preparing the local runtime",
+  "onboardingSkip": "Skip",
+  "onboardingPreviousPage": "Previous page",
+  "onboardingStart": "Start",
+  "onboardingTagline": "Make everyday tasks easier",
+  "onboardingChooseMode": "Choose how to get started",
+  "onboardingChooseModeHelp": "Set up a new environment, import Operit1 data, join an existing device space, or restore chats from a backup.",
+  "onboardingQuickStart": "Quick start",
+  "onboardingQuickStartHelp": "Configure a model provider to complete basic setup",
+  "onboardingImportLegacyHelp": "Import settings and data from the previous version",
+  "onboardingJoinExisting": "Join an existing device space",
+  "onboardingJoinExistingHelp": "Find a nearby device space and sync models and data after joining",
+  "onboardingJoinSpace": "Join a device space",
+  "onboardingJoinSpaceHelp": "Select Add device, choose a nearby device, and pair with it. Settings and data sync after an administrator approves the request.",
+  "onboardingConfirmStorage": "Confirm local storage locations",
+  "onboardingConfirmStorageHelp": "Runtime data and workspace data are stored separately. Enter paths or choose each directory.",
+  "onboardingRuntimeDirectory": "Runtime directory",
+  "onboardingWorkspaceDirectory": "Workspace directory",
+  "onboardingReadingPaths": "Reading storage paths",
+  "onboardingStorageMountHelp": "These directories store runtime state and user workspaces separately. The local host mounts them after you confirm.",
+  "onboardingPrepareSnapshotHelp": "Preparing the Operit1 snapshot…",
+  "onboardingImportSnapshotHelp": "Use a snapshot exported by the latest version of Operit1 to migrate settings, chats, character cards, and resources to Operit2.",
+  "onboardingReadingSnapshot": "Reading snapshot",
+  "onboardingPickSnapshotFile": "Choose snapshot file",
+  "onboardingMigrationContents": "Data available to migrate",
+  "onboardingChats": "Chats",
+  "onboardingMessages": "Messages",
+  "onboardingPreferenceFiles": "Preference files",
+  "onboardingResourceFiles": "Resource files",
+  "onboardingExternalResources": "External resources",
+  "onboardingImportInProgress": "Importing the snapshot…",
+  "onboardingImportContinueHelp": "Select Continue to migrate the entire snapshot.",
+  "onboardingEndpoint": "Server address",
+  "onboardingCompleteModel": "Complete model setup",
+  "onboardingCompleteModelHelp": "Select a model provider, enter your API key, and fetch and select a default model.",
+  "onboardingModelProvider": "Model provider",
+  "onboardingModelProviderRequired": "Select a model provider",
+  "onboardingContinueModel": "Continue setup",
+  "onboardingFetchingModels": "Fetching models",
+  "onboardingFetchModels": "Fetch available models",
+  "onboardingDefaultModel": "Default model",
+  "onboardingGrantPermissions": "Grant system permissions as needed",
+  "onboardingGrantPermissionsHelp": "Grant permissions for the features you want to use. You can continue without granting any permissions. Features that require them will be unavailable.",
+  "onboardingNoPermissions": "No permissions to review on this device",
+  "onboardingNoPermissionsHelp": "This environment has no system permissions to configure during setup.",
+  "onboardingRefreshPermissions": "Refresh permissions",
+  "onboardingOptional": "Optional",
+  "onboardingRequired": "Required",
+  "onboardingPermissionGranted": "Granted",
+  "onboardingGrantPermission": "Grant permission",
+  "onboardingNoAction": "No action needed",
+  "onboardingUploadProgress": "Reading and uploading the snapshot ({percent}%).",
+  "@onboardingUploadProgress": {
+    "placeholders": {
+      "percent": {
+        "type": "int"
+      }
+    }
+  },
+  "onboardingChooseDirectory": "Choose {label}",
+  "@onboardingChooseDirectory": {
+    "placeholders": {
+      "label": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingDefaultChatModel": "Default chat model: {model}",
+  "@onboardingDefaultChatModel": {
+    "placeholders": {
+      "model": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingImportFailed": "Snapshot import failed\n{error}",
+  "@onboardingImportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingAgreementTitle": "User Agreement and Privacy Policy",
+  "onboardingAgreementHelp": "Read and accept this agreement to continue setup.",
+  "onboardingAgreementVersion": "Version: {version}",
+  "@onboardingAgreementVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "onboardingAgreementWait": "{count, plural, one{You can accept in {count} second.} other{You can accept in {count} seconds.}}",
+  "@onboardingAgreementWait": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "extensionsView": "View",
+  "extensionsCloseSearch": "Close search",
+  "extensionsSearchShortcut": "Search (Ctrl+F)",
+  "extensionsAdd": "Add extension",
+  "extensionsMore": "More",
+  "extensionsCheckUpdates": "Check for updates",
+  "extensionsEnvironment": "Environment variables",
+  "extensionsReload": "Reload catalog",
+  "extensionsSearchInstalled": "Search installed extensions",
+  "extensionsSearchMarket": "Search the market and official extensions",
+  "extensionsTab": "Extensions",
+  "extensionsDrop": "Drop to import extensions",
+  "extensionsDropTypes": "Supports .toolpkg, .js, .ts, and .hjson",
+  "extensionsImportPlugin": "Import plugin",
+  "extensionsSelectToolPkg": "Choose a .toolpkg file",
+  "extensionsImportScript": "Import script package",
+  "extensionsScriptTypes": ".js, .ts, .hjson, or .toolpkg",
+  "extensionsAddSkill": "Add skill",
+  "extensionsSkillSources": "GitHub repository, ZIP, or manual entry",
+  "extensionsAddMcp": "Add MCP server",
+  "extensionsMcpSources": "GitHub, ZIP, configuration, or form",
+  "extensionsAddA2a": "Add A2A",
+  "extensionsA2aSources": "Server address, Agent Card, or configuration file",
+  "extensionsAiCreate": "Create a plugin with AI",
+  "extensionsAiCreateHelp": "Describe what you need, then generate and install it in chat",
+  "extensionsAddHelp": "New extensions are installed on this device by default. A ToolPkg may declare a fixed install scope. Updating a local ToolPkg with the same ID keeps its current location and configuration. You can also drag and drop files on desktop.",
+  "extensionsSyncChanged": "{count, plural, one{Device space synced. One extension changed.} other{Device space synced. {count} extensions changed.}}",
+  "@extensionsSyncChanged": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "extensionsDropRejected": "Cannot import these files directly: {files}. Use Add extension to import skills or MCP servers.",
+  "@extensionsDropRejected": {
+    "placeholders": {
+      "files": {
+        "type": "String"
+      }
+    }
+  },
+  "marketRangeWeek": "Past week",
+  "marketRangeMonth": "Past month",
+  "marketRangeAll": "All time",
+  "marketSortUpdated": "Recently updated",
+  "marketSortDownloads": "Most downloaded",
+  "marketSortLikes": "Most popular",
+  "marketFilterSummary": "Filter: {sort}, {range}",
+  "@marketFilterSummary": {
+    "placeholders": {
+      "sort": {
+        "type": "String"
+      },
+      "range": {
+        "type": "String"
+      }
+    }
+  },
+  "marketFilterTitle": "Filter market",
+  "marketFilterSort": "Sort by",
+  "marketFilterPeriod": "Time range",
+  "marketFilterUpdatedHelp": "Filter by the date content was last updated.",
+  "marketFilterCategory": "Category",
+  "marketFilterAllCategories": "All categories",
+  "marketFilterCategoryRetry": "Could not load categories. Retry.",
+  "marketFilterReset": "Reset",
+  "marketFilterApply": "Apply filters",
+  "marketFilterRankingHelp": "Rankings default to items first published in the last 30 days, ordered by total {metric}. Updates do not reset the publication date.",
+  "@marketFilterRankingHelp": {
+    "placeholders": {
+      "metric": {
+        "type": "String"
+      }
+    }
+  },
+  "marketFilterLikes": "likes",
+  "marketFilterDownloads": "downloads",
+  "attachmentContext": "Additional context",
+  "attachmentExtraInfo": "Additional information",
+  "attachmentPastedText": "Pasted text",
+  "attachmentResetZoom": "Reset zoom",
+  "attachmentCloseShortcut": "Close (Esc)",
+  "attachmentCopyContent": "Copy content",
+  "attachmentCopied": "Copied to clipboard",
+  "attachmentCopyLocation": "Copy file location",
+  "attachmentClipboardImage": "Clipboard image",
+  "chatSharePreview": "Share image preview",
+  "chatShareSaveFile": "Save to file",
+  "chatShareImage": "Share image",
+  "chatShareSaveFailed": "Could not save",
+  "chatSharePng": "PNG image",
+  "chatShareSaved": "Image saved",
+  "chatShareFailed": "Could not share",
+  "attachmentExpandCount": "{count, plural, one{Show attachment} other{Show {count} attachments}}",
+  "@attachmentExpandCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "attachmentCollapseCount": "Collapse ({count})",
+  "@attachmentCollapseCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "attachmentContextCount": "Additional context · {count}",
+  "@attachmentContextCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "attachmentCopyLocationPath": "Copy file location\n{path}",
+  "@attachmentCopyLocationPath": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "attachmentLocationPath": "Saved at: {path}",
+  "@attachmentLocationPath": {
+    "placeholders": {
+      "path": {
+        "type": "String"
+      }
+    }
+  },
+  "marketCategorySearch": "Search & research",
+  "marketCategorySearchDescription": "Search engines, research tools, and knowledge retrieval",
+  "marketCategoryDevelopment": "Development tools",
+  "marketCategoryDevelopmentDescription": "Code editing, debugging, and development tools",
+  "marketCategoryAutomation": "Automation",
+  "marketCategoryAutomationDescription": "Task automation and workflows",
+  "marketCategoryDocuments": "Documents & knowledge",
+  "marketCategoryDocumentsDescription": "Document processing and knowledge management",
+  "marketCategoryMedia": "Media & content",
+  "marketCategoryMediaDescription": "Image, video, and audio processing and content creation",
+  "marketCategoryCommunication": "Chat & communication",
+  "marketCategoryCommunicationDescription": "Chat tools, messaging, and communication integrations",
+  "marketCategoryIntegration": "Services & APIs",
+  "marketCategoryIntegrationDescription": "Third-party service integrations and API tools",
+  "marketCategorySystem": "System & data",
+  "marketCategorySystemDescription": "File systems, data management, and system tools",
+  "marketCategoryProductivity": "Business & productivity",
+  "marketCategoryProductivityDescription": "Business workflows and productivity tools",
+  "marketCategoryEntertainment": "Lifestyle & entertainment",
+  "marketCategoryEntertainmentDescription": "Everyday utilities and entertainment apps",
+  "marketCategoryOther": "Other",
+  "marketCategoryOtherDescription": "Uncategorized extensions and other types",
+  "settingsCategorySpeechTitle": "Speech & recognition",
+  "settingsCategorySpeechSubtitle": "TTS and STT providers",
+  "settingsCategorySpeechDescription": "Manage speech synthesis and recognition providers, and choose the active configuration for each.",
+  "settingsCategoryAboutTitle": "About Operit2",
+  "settingsCategoryAboutSubtitle": "Version, project, and license",
+  "settingsCategoryAboutDescription": "View the Operit2 version, project links, and open source licenses.",
+  "aboutUpdateSection": "Updates",
+  "aboutAppDescription": "An AI workbench for terminal and desktop, with conversations, workspaces, tools, plugins, MCP, remote connections, and web access.",
+  "aboutReadingVersion": "Reading version information…",
+  "aboutUpToDate": "You’re on the latest version",
+  "aboutCheckingUpdates": "Checking for updates…",
+  "aboutRetryCheck": "Update check failed. Select to retry.",
+  "aboutCheckHint": "Select to check for updates",
+  "aboutProject": "Project",
+  "aboutSource": "Project source code",
+  "aboutDocs": "Documentation",
+  "aboutDocsSubtitle": "README and command-line guide",
+  "aboutLicenses": "Open source licenses",
+  "aboutLicenseSubtitle": "Operit2 is licensed under AGPL-3.0",
+  "aboutContact": "Contact",
+  "aboutDeveloper": "Developer AAswordman",
+  "aboutCopyright": "© 2025–2026 Operit. All rights reserved.",
+  "aboutReadVersionFailed": "Could not read version information: {error}",
+  "@aboutReadVersionFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "aboutVersion": "Version {version}",
+  "@aboutVersion": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "aboutUpdatingTo": "Updating to {version}. Select to view progress.",
+  "@aboutUpdatingTo": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
+  "aboutLinkCopied": "No app can open this link. Copied to clipboard: {url}",
+  "@aboutLinkCopied": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsToolsAdvanced": "Advanced settings",
+  "settingsToolsReadOnly": "Read only",
+  "settingsToolsReadWrite": "Read and write",
+  "settingsToolsFullAccess": "Full access",
+  "settingsToolsSandboxed": "Sandboxed (macOS App Sandbox enabled)",
+  "settingsToolsUnsandboxed": "Not sandboxed (macOS App Sandbox disabled)",
+  "settingsToolsIsolation": "Application isolation",
+  "settingsToolsRestrictions": "AI capability restrictions",
+  "settingsToolsConfirmCalls": "Tool call confirmation",
+  "settingsToolsConfirmDirectCalls": "Approval applies to tools the AI calls directly.",
+  "settingsToolsRuntimeEnvironment": "Current runtime environment",
+  "settingsToolsPlatform": "Platform",
+  "settingsToolsOuterIsolation": "Host isolation",
+  "settingsToolsFileCapability": "File capability",
+  "settingsToolsTerminalCapability": "Terminal capability",
+  "settingsToolsRegistered": "Registered",
+  "settingsToolsUnregistered": "Unregistered",
+  "settingsToolsAuthorizations": "Authorizations",
+  "settingsToolsStructuredCapabilities": "Structured capabilities",
+  "settingsToolsNotGranted": "Not granted",
+  "settingsToolsSystemRequired": "Requires system action",
+  "settingsToolsOpenSettings": "Open settings",
+  "settingsToolsUnavailable": "Unavailable",
+  "settingsToolsHandle": "Review",
+  "settingsToolsReadOnlyDescription": "The AI can read the current workspace and cannot run tools that write to it.",
+  "settingsToolsReadWriteDescription": "The AI can read and write to the current workspace. The in-app sandbox stays enabled.",
+  "settingsToolsFullAccessDescription": "The AI can read and write to the current workspace. This mode disables the in-app sandbox.",
+  "settingsToolsAuthorizationFailed": "Authorization failed: {error}",
+  "@settingsToolsAuthorizationFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
+  "settingsToolsItemCount": "{count, plural, one{{count} item} other{{count} items}}",
+  "@settingsToolsItemCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  }
 }

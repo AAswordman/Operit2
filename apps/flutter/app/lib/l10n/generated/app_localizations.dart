@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart' as intl;
 
 import 'app_localizations_en.dart';
+import 'app_localizations_fr.dart';
 import 'app_localizations_zh.dart';
 
 // ignore_for_file: type=lint
@@ -95,6 +96,7 @@ abstract class AppLocalizations {
   /// A list of this localizations delegate's supported locales.
   static const List<Locale> supportedLocales = <Locale>[
     Locale('en'),
+    Locale('fr'),
     Locale('zh'),
   ];
 
@@ -9959,6 +9961,2904 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Install a WSL distribution on the Windows device running Core, then reopen this dialog.'**
   String get terminalProfileWslHelp;
+
+  /// No description provided for @appUpdateUnavailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update temporarily unavailable'**
+  String get appUpdateUnavailableTitle;
+
+  /// No description provided for @appUpdatePlanning.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking for updates and selecting a download source…'**
+  String get appUpdatePlanning;
+
+  /// No description provided for @appUpdateSelectingSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Selecting a download source…'**
+  String get appUpdateSelectingSource;
+
+  /// No description provided for @appUpdateAwaitingBase.
+  ///
+  /// In en, this message translates to:
+  /// **'The original installer is required'**
+  String get appUpdateAwaitingBase;
+
+  /// No description provided for @appUpdateValidatingBase.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying the selected installer…'**
+  String get appUpdateValidatingBase;
+
+  /// No description provided for @appUpdateDownloadingPatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading the incremental patch…'**
+  String get appUpdateDownloadingPatch;
+
+  /// No description provided for @appUpdateDownloadingFull.
+  ///
+  /// In en, this message translates to:
+  /// **'Downloading the full installer…'**
+  String get appUpdateDownloadingFull;
+
+  /// No description provided for @appUpdateVerifyingBase.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying the original installer…'**
+  String get appUpdateVerifyingBase;
+
+  /// No description provided for @appUpdateVerifyingPatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying the incremental patch…'**
+  String get appUpdateVerifyingPatch;
+
+  /// No description provided for @appUpdateExpandingBase.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing the original installer…'**
+  String get appUpdateExpandingBase;
+
+  /// No description provided for @appUpdateVerifyingExpandedBase.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying update files…'**
+  String get appUpdateVerifyingExpandedBase;
+
+  /// No description provided for @appUpdateApplyingPatch.
+  ///
+  /// In en, this message translates to:
+  /// **'Applying the patch…'**
+  String get appUpdateApplyingPatch;
+
+  /// No description provided for @appUpdateRestoringPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Creating the new installer…'**
+  String get appUpdateRestoringPackage;
+
+  /// No description provided for @appUpdateVerifyingPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying the new installer…'**
+  String get appUpdateVerifyingPackage;
+
+  /// No description provided for @appUpdateSavingPackage.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving the installer…'**
+  String get appUpdateSavingPackage;
+
+  /// No description provided for @appUpdatePreparingFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing update files…'**
+  String get appUpdatePreparingFiles;
+
+  /// No description provided for @appUpdateReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Update downloaded and verified. Confirm to install.'**
+  String get appUpdateReady;
+
+  /// No description provided for @appUpdatePreparingInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing to install…'**
+  String get appUpdatePreparingInstall;
+
+  /// No description provided for @appUpdateInstalling.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting installation. The app will restart shortly…'**
+  String get appUpdateInstalling;
+
+  /// No description provided for @appUpdateRestartRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Download complete. Restart to install the new version.'**
+  String get appUpdateRestartRequired;
+
+  /// No description provided for @appUpdateInstallSubmitted.
+  ///
+  /// In en, this message translates to:
+  /// **'Installation requested. Confirm in the system dialog.'**
+  String get appUpdateInstallSubmitted;
+
+  /// No description provided for @appUpdatePermissionRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'App installation permission required'**
+  String get appUpdatePermissionRequired;
+
+  /// No description provided for @appUpdateUpdateIncomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Update incomplete'**
+  String get appUpdateUpdateIncomplete;
+
+  /// No description provided for @appUpdateInstallIncomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'Installation incomplete'**
+  String get appUpdateInstallIncomplete;
+
+  /// No description provided for @appUpdatePreparingDownload.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing to download the update…'**
+  String get appUpdatePreparingDownload;
+
+  /// No description provided for @appUpdateTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update Operit'**
+  String get appUpdateTitle;
+
+  /// No description provided for @appUpdateNoOriginalInstaller.
+  ///
+  /// In en, this message translates to:
+  /// **'I no longer have the installer'**
+  String get appUpdateNoOriginalInstaller;
+
+  /// No description provided for @appUpdateChooseInstaller.
+  ///
+  /// In en, this message translates to:
+  /// **'Select'**
+  String get appUpdateChooseInstaller;
+
+  /// No description provided for @appUpdateBackground.
+  ///
+  /// In en, this message translates to:
+  /// **'Update in background'**
+  String get appUpdateBackground;
+
+  /// No description provided for @appUpdateCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel update'**
+  String get appUpdateCancel;
+
+  /// No description provided for @appUpdateOpenRelease.
+  ///
+  /// In en, this message translates to:
+  /// **'Open release page'**
+  String get appUpdateOpenRelease;
+
+  /// No description provided for @appUpdateContinueInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue installation'**
+  String get appUpdateContinueInstall;
+
+  /// No description provided for @appUpdateRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry update'**
+  String get appUpdateRetry;
+
+  /// No description provided for @appUpdateReinstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Reinstall'**
+  String get appUpdateReinstall;
+
+  /// No description provided for @appUpdateRestartInstall.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart and install'**
+  String get appUpdateRestartInstall;
+
+  /// No description provided for @appUpdateReopenInstaller.
+  ///
+  /// In en, this message translates to:
+  /// **'Reopen installer'**
+  String get appUpdateReopenInstaller;
+
+  /// No description provided for @appUpdateRestartUpdate.
+  ///
+  /// In en, this message translates to:
+  /// **'Restart and update'**
+  String get appUpdateRestartUpdate;
+
+  /// No description provided for @appUpdateSelectOriginalInstaller.
+  ///
+  /// In en, this message translates to:
+  /// **'Select the original installer used to install this app. Once verified, the incremental patch will be downloaded and applied to create the new installer.'**
+  String get appUpdateSelectOriginalInstaller;
+
+  /// No description provided for @appUpdateProcessingHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Update files are being processed on this device. Creating the installer may take a while. You can continue in the background and select the Operit logo later to check progress.'**
+  String get appUpdateProcessingHelp;
+
+  /// No description provided for @appUpdateDownloadHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'After downloading, the installer is verified and kept until you confirm the update. You can close this window and select the Operit logo later to check progress.'**
+  String get appUpdateDownloadHelp;
+
+  /// No description provided for @appUpdatePermissionHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant the system permission, then select Continue installation. The installer has been kept.'**
+  String get appUpdatePermissionHelp;
+
+  /// No description provided for @appUpdateReadyHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Select “Restart and update” to begin installation. Your system may ask for permission to install.'**
+  String get appUpdateReadyHelp;
+
+  /// No description provided for @appUpdateRestartHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Select “Restart and install” to close the app, install the new version, and reopen it.'**
+  String get appUpdateRestartHelp;
+
+  /// No description provided for @appUpdateSystemInstallHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm in the system installer and reopen Operit when installation finishes. You can reopen the installer if you closed it.'**
+  String get appUpdateSystemInstallHelp;
+
+  /// No description provided for @appUpdateInstallerKept.
+  ///
+  /// In en, this message translates to:
+  /// **'The installer has been kept. You can retry without downloading it again.'**
+  String get appUpdateInstallerKept;
+
+  /// No description provided for @appUpdateReleaseNotes.
+  ///
+  /// In en, this message translates to:
+  /// **'What’s new'**
+  String get appUpdateReleaseNotes;
+
+  /// No description provided for @appUpdateAvailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Update available'**
+  String get appUpdateAvailableTitle;
+
+  /// No description provided for @appUpdateNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Update now'**
+  String get appUpdateNow;
+
+  /// No description provided for @appUpdateAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'A new version of Operit is available'**
+  String get appUpdateAvailable;
+
+  /// No description provided for @appUpdatePromptReady.
+  ///
+  /// In en, this message translates to:
+  /// **'The update is ready. Confirm to restart and install it.'**
+  String get appUpdatePromptReady;
+
+  /// No description provided for @appUpdatePromptAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Update to get the latest features and improvements.'**
+  String get appUpdatePromptAvailable;
+
+  /// No description provided for @appUpdateCurrentVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Current version'**
+  String get appUpdateCurrentVersion;
+
+  /// No description provided for @appUpdateLatestVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Latest version'**
+  String get appUpdateLatestVersion;
+
+  /// No description provided for @appUpdatePromptLater.
+  ///
+  /// In en, this message translates to:
+  /// **'You can continue the update later by selecting the Operit logo in the sidebar.'**
+  String get appUpdatePromptLater;
+
+  /// No description provided for @appUpdateOpenReleaseFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not open the release page'**
+  String get appUpdateOpenReleaseFailed;
+
+  /// No description provided for @appUpdateViewProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'View update progress'**
+  String get appUpdateViewProgress;
+
+  /// No description provided for @appUpdateFailedRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Update failed. Select to retry.'**
+  String get appUpdateFailedRetry;
+
+  /// No description provided for @appUpdateUnavailableHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'The installer required for this update could not be retrieved, and no full installer is available. Download the installer for {version}, or find the original installer for {baseVersion} and retry.'**
+  String appUpdateUnavailableHelp(String version, String baseVersion);
+
+  /// No description provided for @appUpdateAvailableVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} is available'**
+  String appUpdateAvailableVersion(String version);
+
+  /// No description provided for @appUpdateInstalledVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Current version: {version}'**
+  String appUpdateInstalledVersion(String version);
+
+  /// No description provided for @appUpdateOriginalVersionPrompt.
+  ///
+  /// In en, this message translates to:
+  /// **'Do you still have the original installer for version {version}?'**
+  String appUpdateOriginalVersionPrompt(String version);
+
+  /// No description provided for @appUpdatePatchSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Incremental download: about {size}'**
+  String appUpdatePatchSize(String size);
+
+  /// No description provided for @appUpdateStepProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Current step: {percent}%'**
+  String appUpdateStepProgress(int percent);
+
+  /// No description provided for @appUpdateElapsed.
+  ///
+  /// In en, this message translates to:
+  /// **'Elapsed: {duration}'**
+  String appUpdateElapsed(String duration);
+
+  /// No description provided for @appUpdateDownloadSizePending.
+  ///
+  /// In en, this message translates to:
+  /// **'{size} · Checking file size'**
+  String appUpdateDownloadSizePending(String size);
+
+  /// No description provided for @appUpdateBadgeAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version} is available. Select to update.'**
+  String appUpdateBadgeAvailable(String version);
+
+  /// No description provided for @apiErrorInvalidParametersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid request parameters'**
+  String get apiErrorInvalidParametersTitle;
+
+  /// No description provided for @apiErrorInvalidParametersMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API could not process the request parameters. Check the model name, capabilities, and parameters, and review the original error.'**
+  String get apiErrorInvalidParametersMessage;
+
+  /// No description provided for @apiErrorInvalidKeyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid API key'**
+  String get apiErrorInvalidKeyTitle;
+
+  /// No description provided for @apiErrorInvalidKeyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The server rejected the API key. Check that it is correct, complete, and active.'**
+  String get apiErrorInvalidKeyMessage;
+
+  /// No description provided for @apiErrorBillingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Insufficient API balance'**
+  String get apiErrorBillingTitle;
+
+  /// No description provided for @apiErrorBillingMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Your API balance is too low or your quota is exhausted. Check your balance and billing with the API provider.'**
+  String get apiErrorBillingMessage;
+
+  /// No description provided for @apiErrorBlockedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request blocked by server'**
+  String get apiErrorBlockedTitle;
+
+  /// No description provided for @apiErrorBlockedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API server refused the request. Contact the provider to check for security or access restrictions.'**
+  String get apiErrorBlockedMessage;
+
+  /// No description provided for @apiErrorNotFoundTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Endpoint or model not found'**
+  String get apiErrorNotFoundTitle;
+
+  /// No description provided for @apiErrorNotFoundMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API server could not find the resource. Check the server address, endpoint path, and model name.'**
+  String get apiErrorNotFoundMessage;
+
+  /// No description provided for @apiErrorUnsupportedMethodTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request method not supported'**
+  String get apiErrorUnsupportedMethodTitle;
+
+  /// No description provided for @apiErrorUnsupportedMethodMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The server does not support this request method or operation. Check the provider type and API protocol.'**
+  String get apiErrorUnsupportedMethodMessage;
+
+  /// No description provided for @apiErrorUnsupportedContentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unsupported request content'**
+  String get apiErrorUnsupportedContentTitle;
+
+  /// No description provided for @apiErrorUnsupportedContentMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The server does not accept this content type. Check the provider protocol, media format, and custom headers.'**
+  String get apiErrorUnsupportedContentMessage;
+
+  /// No description provided for @apiErrorProxyAuthTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Proxy authentication failed'**
+  String get apiErrorProxyAuthTitle;
+
+  /// No description provided for @apiErrorProxyAuthMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The network proxy requires authentication. Check the proxy credentials and authentication settings.'**
+  String get apiErrorProxyAuthMessage;
+
+  /// No description provided for @apiErrorTimeoutTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API request timed out'**
+  String get apiErrorTimeoutTitle;
+
+  /// No description provided for @apiErrorTimeoutMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The request or a server connection timed out. Check your network connection and the provider status, then retry.'**
+  String get apiErrorTimeoutMessage;
+
+  /// No description provided for @apiErrorConflictTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request conflicts with resource state'**
+  String get apiErrorConflictTitle;
+
+  /// No description provided for @apiErrorConflictMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API server reported a conflict. Review the original error for details.'**
+  String get apiErrorConflictMessage;
+
+  /// No description provided for @apiErrorLengthRequiredTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request content length required'**
+  String get apiErrorLengthRequiredTitle;
+
+  /// No description provided for @apiErrorLengthRequiredMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API requires a declared content length. Contact the provider to confirm its requirements.'**
+  String get apiErrorLengthRequiredMessage;
+
+  /// No description provided for @apiErrorTooLargeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request too large'**
+  String get apiErrorTooLargeTitle;
+
+  /// No description provided for @apiErrorTooLargeMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The message, attachments, address, or headers exceed the server limit. See the original error to find what to reduce.'**
+  String get apiErrorTooLargeMessage;
+
+  /// No description provided for @apiErrorLockedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Resource locked'**
+  String get apiErrorLockedTitle;
+
+  /// No description provided for @apiErrorLockedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API server temporarily locked the resource. Retry later or contact the provider.'**
+  String get apiErrorLockedMessage;
+
+  /// No description provided for @apiErrorTooEarlyTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Server is not ready for this request'**
+  String get apiErrorTooEarlyTitle;
+
+  /// No description provided for @apiErrorTooEarlyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The server considered the request premature. Retry later.'**
+  String get apiErrorTooEarlyMessage;
+
+  /// No description provided for @apiErrorUpgradeRequiredTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API protocol upgrade required'**
+  String get apiErrorUpgradeRequiredTitle;
+
+  /// No description provided for @apiErrorUpgradeRequiredMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The server requires a different protocol version. Check the server address and provider protocol settings.'**
+  String get apiErrorUpgradeRequiredMessage;
+
+  /// No description provided for @apiErrorRateLimitedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request rate limited or blocked'**
+  String get apiErrorRateLimitedTitle;
+
+  /// No description provided for @apiErrorRateLimitedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API throttled or blocked the request. Retry later or contact the provider.'**
+  String get apiErrorRateLimitedMessage;
+
+  /// No description provided for @apiErrorLegalRestrictionTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Service unavailable due to regional or legal restrictions'**
+  String get apiErrorLegalRestrictionTitle;
+
+  /// No description provided for @apiErrorLegalRestrictionMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The server refused access because of regional or legal restrictions. Ask the provider where the service is available.'**
+  String get apiErrorLegalRestrictionMessage;
+
+  /// No description provided for @apiErrorInterruptedTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Request interrupted or blocked'**
+  String get apiErrorInterruptedTitle;
+
+  /// No description provided for @apiErrorInterruptedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The request was interrupted. Share the original error with the provider to check for a security block, gateway issue, or closed connection.'**
+  String get apiErrorInterruptedMessage;
+
+  /// No description provided for @apiErrorInternalTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Internal API server error'**
+  String get apiErrorInternalTitle;
+
+  /// No description provided for @apiErrorInternalMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API server encountered an internal error. Retry later or share the original error with the provider.'**
+  String get apiErrorInternalMessage;
+
+  /// No description provided for @apiErrorGatewayTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Invalid API gateway response'**
+  String get apiErrorGatewayTitle;
+
+  /// No description provided for @apiErrorGatewayMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The gateway did not receive a valid upstream response. Retry later or contact the provider.'**
+  String get apiErrorGatewayMessage;
+
+  /// No description provided for @apiErrorUnavailableTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API service temporarily unavailable'**
+  String get apiErrorUnavailableTitle;
+
+  /// No description provided for @apiErrorUnavailableMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The service may be under maintenance, overloaded, or out of capacity. Retry later or contact the provider.'**
+  String get apiErrorUnavailableMessage;
+
+  /// No description provided for @apiErrorOriginTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API origin server unreachable'**
+  String get apiErrorOriginTitle;
+
+  /// No description provided for @apiErrorOriginMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The gateway could not connect to the origin server. Contact the API provider to check for outages or routing problems.'**
+  String get apiErrorOriginMessage;
+
+  /// No description provided for @apiErrorTlsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API server TLS or certificate error'**
+  String get apiErrorTlsTitle;
+
+  /// No description provided for @apiErrorTlsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'TLS negotiation or certificate validation failed between the gateway and the origin server. Contact the API provider.'**
+  String get apiErrorTlsMessage;
+
+  /// No description provided for @apiErrorStorageTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API server storage exhausted'**
+  String get apiErrorStorageTitle;
+
+  /// No description provided for @apiErrorStorageMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API server has insufficient storage to complete the request. Contact the provider.'**
+  String get apiErrorStorageMessage;
+
+  /// No description provided for @apiErrorClientTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API server refused the request'**
+  String get apiErrorClientTitle;
+
+  /// No description provided for @apiErrorClientMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The API server returned a request error. Review the original error and check your API configuration.'**
+  String get apiErrorClientMessage;
+
+  /// No description provided for @apiErrorServerTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'API server error'**
+  String get apiErrorServerTitle;
+
+  /// No description provided for @apiErrorServerMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The server could not complete the request. Send the status code and original error to the provider.'**
+  String get apiErrorServerMessage;
+
+  /// No description provided for @apiErrorHttpTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'HTTP {status}: {title}'**
+  String apiErrorHttpTitle(int status, String title);
+
+  /// No description provided for @apiErrorOriginal.
+  ///
+  /// In en, this message translates to:
+  /// **'Original error:\n{error}'**
+  String apiErrorOriginal(String error);
+
+  /// No description provided for @apiErrorModelExistsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model already exists'**
+  String get apiErrorModelExistsTitle;
+
+  /// No description provided for @apiErrorModelListTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not fetch models'**
+  String get apiErrorModelListTitle;
+
+  /// No description provided for @apiErrorModelListMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'No model list was received. Check the provider address, access key, and network connection.'**
+  String get apiErrorModelListMessage;
+
+  /// No description provided for @apiErrorNetworkTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Network connection failed'**
+  String get apiErrorNetworkTitle;
+
+  /// No description provided for @apiErrorNetworkMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not reach the model provider. Check the network connection and server address.'**
+  String get apiErrorNetworkMessage;
+
+  /// No description provided for @apiErrorModelConfigTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Model configuration failed'**
+  String get apiErrorModelConfigTitle;
+
+  /// No description provided for @apiErrorModelConfigMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The model configuration operation failed. Review the original error for details.'**
+  String get apiErrorModelConfigMessage;
+
+  /// No description provided for @apiErrorModelExistsMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Model “{modelId}” has already been added to provider “{providerName}”.'**
+  String apiErrorModelExistsMessage(String modelId, String providerName);
+
+  /// No description provided for @chatCopyMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy message'**
+  String get chatCopyMessage;
+
+  /// No description provided for @chatEditResend.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit and resend'**
+  String get chatEditResend;
+
+  /// No description provided for @chatRollbackHere.
+  ///
+  /// In en, this message translates to:
+  /// **'Roll back to here'**
+  String get chatRollbackHere;
+
+  /// No description provided for @chatRegenerate.
+  ///
+  /// In en, this message translates to:
+  /// **'Regenerate'**
+  String get chatRegenerate;
+
+  /// No description provided for @chatEditMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit memory'**
+  String get chatEditMemory;
+
+  /// No description provided for @chatPlaySpeech.
+  ///
+  /// In en, this message translates to:
+  /// **'Generate or play speech'**
+  String get chatPlaySpeech;
+
+  /// No description provided for @chatDeleteVariant.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete current variant'**
+  String get chatDeleteVariant;
+
+  /// No description provided for @chatReply.
+  ///
+  /// In en, this message translates to:
+  /// **'Reply'**
+  String get chatReply;
+
+  /// No description provided for @chatInsertSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Insert summary'**
+  String get chatInsertSummary;
+
+  /// No description provided for @chatCreateBranch.
+  ///
+  /// In en, this message translates to:
+  /// **'Create branch'**
+  String get chatCreateBranch;
+
+  /// No description provided for @chatMultiSelect.
+  ///
+  /// In en, this message translates to:
+  /// **'Select messages'**
+  String get chatMultiSelect;
+
+  /// No description provided for @chatMultiSelectExit.
+  ///
+  /// In en, this message translates to:
+  /// **'Exit selection'**
+  String get chatMultiSelectExit;
+
+  /// No description provided for @chatSelectionClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear selection'**
+  String get chatSelectionClear;
+
+  /// No description provided for @chatSelectionAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Select all'**
+  String get chatSelectionAll;
+
+  /// No description provided for @chatSelectionCopy.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy selected messages'**
+  String get chatSelectionCopy;
+
+  /// No description provided for @chatGenerateShareImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Create share image'**
+  String get chatGenerateShareImage;
+
+  /// No description provided for @chatSelectionDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete selected messages'**
+  String get chatSelectionDelete;
+
+  /// No description provided for @chatEditMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit message'**
+  String get chatEditMessage;
+
+  /// No description provided for @chatEditorVisual.
+  ///
+  /// In en, this message translates to:
+  /// **'Visual'**
+  String get chatEditorVisual;
+
+  /// No description provided for @chatPlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text'**
+  String get chatPlainText;
+
+  /// No description provided for @chatMarkdownSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Markdown source'**
+  String get chatMarkdownSource;
+
+  /// No description provided for @chatCopyPlainText.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy plain text'**
+  String get chatCopyPlainText;
+
+  /// No description provided for @chatCopyMarkdown.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy Markdown source'**
+  String get chatCopyMarkdown;
+
+  /// No description provided for @chatMessageCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Message copied to clipboard'**
+  String get chatMessageCopied;
+
+  /// No description provided for @chatSaveResend.
+  ///
+  /// In en, this message translates to:
+  /// **'Save and resend'**
+  String get chatSaveResend;
+
+  /// No description provided for @chatUpdateMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Update memory'**
+  String get chatUpdateMemory;
+
+  /// No description provided for @chatEditorPlainTextContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Plain text content'**
+  String get chatEditorPlainTextContent;
+
+  /// No description provided for @chatEditorParts.
+  ///
+  /// In en, this message translates to:
+  /// **'Content blocks'**
+  String get chatEditorParts;
+
+  /// No description provided for @chatEditorAddText.
+  ///
+  /// In en, this message translates to:
+  /// **'Add text'**
+  String get chatEditorAddText;
+
+  /// No description provided for @chatEditorAddTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Add tag'**
+  String get chatEditorAddTag;
+
+  /// No description provided for @chatEditorText.
+  ///
+  /// In en, this message translates to:
+  /// **'Text'**
+  String get chatEditorText;
+
+  /// No description provided for @chatEditorTextHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter text'**
+  String get chatEditorTextHint;
+
+  /// No description provided for @chatEditorEditTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit tag'**
+  String get chatEditorEditTag;
+
+  /// No description provided for @chatEditorTagName.
+  ///
+  /// In en, this message translates to:
+  /// **'Tag name'**
+  String get chatEditorTagName;
+
+  /// No description provided for @chatEditorTagHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For example, custom_tag'**
+  String get chatEditorTagHint;
+
+  /// No description provided for @chatEditorAttributes.
+  ///
+  /// In en, this message translates to:
+  /// **'Attributes (optional)'**
+  String get chatEditorAttributes;
+
+  /// No description provided for @chatEditorAttributesHint.
+  ///
+  /// In en, this message translates to:
+  /// **'For example, type=\"note\"'**
+  String get chatEditorAttributesHint;
+
+  /// No description provided for @chatEditorContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Content'**
+  String get chatEditorContent;
+
+  /// No description provided for @chatRollbackConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Roll back the workspace?'**
+  String get chatRollbackConfirmTitle;
+
+  /// No description provided for @chatResendConfirmTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit and resend the message?'**
+  String get chatResendConfirmTitle;
+
+  /// No description provided for @chatRollbackConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This restores the workspace to its state before this message and deletes this and all later messages.'**
+  String get chatRollbackConfirmMessage;
+
+  /// No description provided for @chatResendConfirmMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This restores the workspace to its state before this message and sends the edited message again.'**
+  String get chatResendConfirmMessage;
+
+  /// No description provided for @chatRollbackConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Roll back'**
+  String get chatRollbackConfirm;
+
+  /// No description provided for @chatNoWorkspaceChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'No workspace file changes detected.'**
+  String get chatNoWorkspaceChanges;
+
+  /// No description provided for @chatShareImageGenerating.
+  ///
+  /// In en, this message translates to:
+  /// **'Creating share image…'**
+  String get chatShareImageGenerating;
+
+  /// No description provided for @chatSelectionCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} message selected} other{{count} messages selected}}'**
+  String chatSelectionCount(int count);
+
+  /// No description provided for @chatSelectionDeleteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{Delete the selected message?} other{Delete the {count} selected messages?}}'**
+  String chatSelectionDeleteConfirm(int count);
+
+  /// No description provided for @chatCopyFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy failed: {error}'**
+  String chatCopyFailed(String error);
+
+  /// No description provided for @chatPlainTextConversionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not convert to plain text: {error}'**
+  String chatPlainTextConversionFailed(String error);
+
+  /// No description provided for @chatPlaySpeechFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not generate or play speech: {error}'**
+  String chatPlaySpeechFailed(String error);
+
+  /// No description provided for @chatShareImageFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not create the share image: {error}'**
+  String chatShareImageFailed(String error);
+
+  /// No description provided for @chatWorkspaceChangeLines.
+  ///
+  /// In en, this message translates to:
+  /// **'{change} · {count, plural, one{{count} line} other{{count} lines}}'**
+  String chatWorkspaceChangeLines(String change, int count);
+
+  /// No description provided for @speechTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Read aloud'**
+  String get speechTitle;
+
+  /// No description provided for @speechIdle.
+  ///
+  /// In en, this message translates to:
+  /// **'Idle'**
+  String get speechIdle;
+
+  /// No description provided for @speechPreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating speech'**
+  String get speechPreparing;
+
+  /// No description provided for @speechPlaying.
+  ///
+  /// In en, this message translates to:
+  /// **'Playing'**
+  String get speechPlaying;
+
+  /// No description provided for @speechStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped'**
+  String get speechStopped;
+
+  /// No description provided for @speechError.
+  ///
+  /// In en, this message translates to:
+  /// **'Error'**
+  String get speechError;
+
+  /// No description provided for @speechQueue.
+  ///
+  /// In en, this message translates to:
+  /// **'Queue: {count}'**
+  String speechQueue(int count);
+
+  /// No description provided for @speechTestText.
+  ///
+  /// In en, this message translates to:
+  /// **'Hello! This is the Operit voice preview.'**
+  String get speechTestText;
+
+  /// No description provided for @speechTtsMissingId.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot preview without a TTS configuration ID'**
+  String get speechTtsMissingId;
+
+  /// No description provided for @speechTtsPreviewPlaying.
+  ///
+  /// In en, this message translates to:
+  /// **'TTS preview started'**
+  String get speechTtsPreviewPlaying;
+
+  /// No description provided for @speechTtsProviders.
+  ///
+  /// In en, this message translates to:
+  /// **'TTS providers'**
+  String get speechTtsProviders;
+
+  /// No description provided for @speechAddTtsProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Add TTS provider'**
+  String get speechAddTtsProvider;
+
+  /// No description provided for @speechSttCurrentCannotDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'The active STT configuration cannot be deleted'**
+  String get speechSttCurrentCannotDelete;
+
+  /// No description provided for @speechDeleteSttProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete STT provider'**
+  String get speechDeleteSttProvider;
+
+  /// No description provided for @speechSttProviders.
+  ///
+  /// In en, this message translates to:
+  /// **'STT providers'**
+  String get speechSttProviders;
+
+  /// No description provided for @speechAddSttProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Add STT provider'**
+  String get speechAddSttProvider;
+
+  /// No description provided for @speechEditProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit provider'**
+  String get speechEditProvider;
+
+  /// No description provided for @speechPreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview'**
+  String get speechPreview;
+
+  /// No description provided for @speechGlobalActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Global default'**
+  String get speechGlobalActive;
+
+  /// No description provided for @speechSetGlobal.
+  ///
+  /// In en, this message translates to:
+  /// **'Set as global default'**
+  String get speechSetGlobal;
+
+  /// No description provided for @speechNoSttProviders.
+  ///
+  /// In en, this message translates to:
+  /// **'No speech recognition providers configured'**
+  String get speechNoSttProviders;
+
+  /// No description provided for @speechCurrentCannotDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'The active configuration cannot be deleted'**
+  String get speechCurrentCannotDelete;
+
+  /// No description provided for @speechEditTtsProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit TTS provider'**
+  String get speechEditTtsProvider;
+
+  /// No description provided for @speechProviderType.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider type'**
+  String get speechProviderType;
+
+  /// No description provided for @speechProviderName.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider name'**
+  String get speechProviderName;
+
+  /// No description provided for @speechHttpMethod.
+  ///
+  /// In en, this message translates to:
+  /// **'HTTP method'**
+  String get speechHttpMethod;
+
+  /// No description provided for @speechBodyTemplate.
+  ///
+  /// In en, this message translates to:
+  /// **'Request body template'**
+  String get speechBodyTemplate;
+
+  /// No description provided for @speechPipelineJson.
+  ///
+  /// In en, this message translates to:
+  /// **'Response pipeline JSON'**
+  String get speechPipelineJson;
+
+  /// No description provided for @speechAddTtsVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Add TTS voice'**
+  String get speechAddTtsVoice;
+
+  /// No description provided for @speechCustomVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom voice'**
+  String get speechCustomVoice;
+
+  /// No description provided for @speechEnterVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter the model and voice manually'**
+  String get speechEnterVoice;
+
+  /// No description provided for @speechModelVoiceRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a model or a voice'**
+  String get speechModelVoiceRequired;
+
+  /// No description provided for @speechCustomTtsVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Custom TTS voice'**
+  String get speechCustomTtsVoice;
+
+  /// No description provided for @speechModelRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Model is required'**
+  String get speechModelRequired;
+
+  /// No description provided for @speechVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice'**
+  String get speechVoice;
+
+  /// No description provided for @speechVoiceRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice is required'**
+  String get speechVoiceRequired;
+
+  /// No description provided for @speechLanguageTag.
+  ///
+  /// In en, this message translates to:
+  /// **'Language tag (optional, e.g. en-US)'**
+  String get speechLanguageTag;
+
+  /// No description provided for @speechModelLocale.
+  ///
+  /// In en, this message translates to:
+  /// **'Model / locale'**
+  String get speechModelLocale;
+
+  /// No description provided for @speechSystemVoiceName.
+  ///
+  /// In en, this message translates to:
+  /// **'System voice name (optional)'**
+  String get speechSystemVoiceName;
+
+  /// No description provided for @speechEditTtsVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit TTS voice'**
+  String get speechEditTtsVoice;
+
+  /// No description provided for @speechTestVoice.
+  ///
+  /// In en, this message translates to:
+  /// **'Test voice'**
+  String get speechTestVoice;
+
+  /// No description provided for @speechAudioFormat.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio format'**
+  String get speechAudioFormat;
+
+  /// No description provided for @speechSpeed.
+  ///
+  /// In en, this message translates to:
+  /// **'Speed'**
+  String get speechSpeed;
+
+  /// No description provided for @speechNewTtsProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'New TTS provider'**
+  String get speechNewTtsProvider;
+
+  /// No description provided for @speechModelVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Model ID@version'**
+  String get speechModelVersion;
+
+  /// No description provided for @speechNewSttProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'New STT provider'**
+  String get speechNewSttProvider;
+
+  /// No description provided for @speechEditSttProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Edit STT provider'**
+  String get speechEditSttProvider;
+
+  /// No description provided for @speechMultipart.
+  ///
+  /// In en, this message translates to:
+  /// **'Multipart request settings'**
+  String get speechMultipart;
+
+  /// No description provided for @speechAudioField.
+  ///
+  /// In en, this message translates to:
+  /// **'Audio field name'**
+  String get speechAudioField;
+
+  /// No description provided for @speechModelField.
+  ///
+  /// In en, this message translates to:
+  /// **'Model field name'**
+  String get speechModelField;
+
+  /// No description provided for @speechModelFieldHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Leave blank if the endpoint does not accept a model parameter'**
+  String get speechModelFieldHelp;
+
+  /// No description provided for @speechLanguageField.
+  ///
+  /// In en, this message translates to:
+  /// **'Language field name'**
+  String get speechLanguageField;
+
+  /// No description provided for @speechTranscriptJsonPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Transcript JSONPath'**
+  String get speechTranscriptJsonPath;
+
+  /// No description provided for @speechModelNotNeeded.
+  ///
+  /// In en, this message translates to:
+  /// **'This endpoint does not require a model'**
+  String get speechModelNotNeeded;
+
+  /// No description provided for @speechReloadModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload models'**
+  String get speechReloadModels;
+
+  /// No description provided for @speechModelIdHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Enter a supported model ID or select a preset'**
+  String get speechModelIdHelp;
+
+  /// No description provided for @speechPresetModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Select preset model'**
+  String get speechPresetModel;
+
+  /// No description provided for @speechNoLocalSttModels.
+  ///
+  /// In en, this message translates to:
+  /// **'No local STT models installed'**
+  String get speechNoLocalSttModels;
+
+  /// No description provided for @speechChooseModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a model'**
+  String get speechChooseModel;
+
+  /// No description provided for @speechChooseSttModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Select an STT model'**
+  String get speechChooseSttModel;
+
+  /// No description provided for @speechPreviewTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Preview · {voice}'**
+  String speechPreviewTitle(String voice);
+
+  /// No description provided for @speechPreviewFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'TTS preview failed: {error}'**
+  String speechPreviewFailed(String error);
+
+  /// No description provided for @speechDeleteTtsConfigFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not delete TTS configuration: {error}'**
+  String speechDeleteTtsConfigFailed(String error);
+
+  /// No description provided for @speechLoadConfigFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load speech settings: {error}'**
+  String speechLoadConfigFailed(String error);
+
+  /// No description provided for @speechDeleteSttConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete “{name}” and its recognition settings?'**
+  String speechDeleteSttConfirm(String name);
+
+  /// No description provided for @speechSttFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'STT operation failed: {error}'**
+  String speechSttFailed(String error);
+
+  /// No description provided for @speechModelsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load models: {error}'**
+  String speechModelsFailed(String error);
+
+  /// No description provided for @speechFieldRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'{label} is required'**
+  String speechFieldRequired(String label);
+
+  /// No description provided for @speechFieldPositive.
+  ///
+  /// In en, this message translates to:
+  /// **'{label} must be positive'**
+  String speechFieldPositive(String label);
+
+  /// No description provided for @onboardingStorageRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Both the runtime and workspace directories are required'**
+  String get onboardingStorageRequired;
+
+  /// No description provided for @onboardingFetchModelsFirst.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetch available models first'**
+  String get onboardingFetchModelsFirst;
+
+  /// No description provided for @onboardingChooseDefaultModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a default model'**
+  String get onboardingChooseDefaultModel;
+
+  /// No description provided for @onboardingPickSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose snapshot'**
+  String get onboardingPickSnapshot;
+
+  /// No description provided for @onboardingPickSnapshotHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Select an Operit1 snapshot in the file picker.'**
+  String get onboardingPickSnapshotHelp;
+
+  /// No description provided for @onboardingUploadSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Upload snapshot'**
+  String get onboardingUploadSnapshot;
+
+  /// No description provided for @onboardingInspectSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Inspect snapshot'**
+  String get onboardingInspectSnapshot;
+
+  /// No description provided for @onboardingInspectSnapshotHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Inspecting the contents of the Operit1 snapshot…'**
+  String get onboardingInspectSnapshotHelp;
+
+  /// No description provided for @onboardingSnapshotRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Select an Operit1 snapshot file'**
+  String get onboardingSnapshotRequired;
+
+  /// No description provided for @onboardingPrepareImport.
+  ///
+  /// In en, this message translates to:
+  /// **'Prepare import'**
+  String get onboardingPrepareImport;
+
+  /// No description provided for @onboardingPrepareMigration.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing to migrate the contents of the Operit1 snapshot…'**
+  String get onboardingPrepareMigration;
+
+  /// No description provided for @onboardingWait.
+  ///
+  /// In en, this message translates to:
+  /// **'Please wait'**
+  String get onboardingWait;
+
+  /// No description provided for @onboardingAgree.
+  ///
+  /// In en, this message translates to:
+  /// **'Agree'**
+  String get onboardingAgree;
+
+  /// No description provided for @onboardingSaving.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving…'**
+  String get onboardingSaving;
+
+  /// No description provided for @onboardingConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm'**
+  String get onboardingConfirm;
+
+  /// No description provided for @onboardingPreparing.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing…'**
+  String get onboardingPreparing;
+
+  /// No description provided for @onboardingContinue.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue'**
+  String get onboardingContinue;
+
+  /// No description provided for @onboardingFetching.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetching…'**
+  String get onboardingFetching;
+
+  /// No description provided for @onboardingReading.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading…'**
+  String get onboardingReading;
+
+  /// No description provided for @onboardingImporting.
+  ///
+  /// In en, this message translates to:
+  /// **'Importing…'**
+  String get onboardingImporting;
+
+  /// No description provided for @onboardingWorking.
+  ///
+  /// In en, this message translates to:
+  /// **'Working…'**
+  String get onboardingWorking;
+
+  /// No description provided for @onboardingDone.
+  ///
+  /// In en, this message translates to:
+  /// **'Done'**
+  String get onboardingDone;
+
+  /// No description provided for @onboardingAgreement.
+  ///
+  /// In en, this message translates to:
+  /// **'User agreement'**
+  String get onboardingAgreement;
+
+  /// No description provided for @onboardingStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'Storage locations'**
+  String get onboardingStorage;
+
+  /// No description provided for @onboardingMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Setup method'**
+  String get onboardingMode;
+
+  /// No description provided for @onboardingModelSetup.
+  ///
+  /// In en, this message translates to:
+  /// **'Model setup'**
+  String get onboardingModelSetup;
+
+  /// No description provided for @onboardingImportSetup.
+  ///
+  /// In en, this message translates to:
+  /// **'Import settings'**
+  String get onboardingImportSetup;
+
+  /// No description provided for @onboardingDeviceSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Device space'**
+  String get onboardingDeviceSpace;
+
+  /// No description provided for @onboardingPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'System permissions'**
+  String get onboardingPermissions;
+
+  /// No description provided for @onboardingWelcome.
+  ///
+  /// In en, this message translates to:
+  /// **'Welcome'**
+  String get onboardingWelcome;
+
+  /// No description provided for @onboardingPreparingRuntime.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing the local runtime'**
+  String get onboardingPreparingRuntime;
+
+  /// No description provided for @onboardingSkip.
+  ///
+  /// In en, this message translates to:
+  /// **'Skip'**
+  String get onboardingSkip;
+
+  /// No description provided for @onboardingPreviousPage.
+  ///
+  /// In en, this message translates to:
+  /// **'Previous page'**
+  String get onboardingPreviousPage;
+
+  /// No description provided for @onboardingStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start'**
+  String get onboardingStart;
+
+  /// No description provided for @onboardingTagline.
+  ///
+  /// In en, this message translates to:
+  /// **'Make everyday tasks easier'**
+  String get onboardingTagline;
+
+  /// No description provided for @onboardingChooseMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how to get started'**
+  String get onboardingChooseMode;
+
+  /// No description provided for @onboardingChooseModeHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Set up a new environment, import Operit1 data, join an existing device space, or restore chats from a backup.'**
+  String get onboardingChooseModeHelp;
+
+  /// No description provided for @onboardingQuickStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick start'**
+  String get onboardingQuickStart;
+
+  /// No description provided for @onboardingQuickStartHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Configure a model provider to complete basic setup'**
+  String get onboardingQuickStartHelp;
+
+  /// No description provided for @onboardingImportLegacyHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Import settings and data from the previous version'**
+  String get onboardingImportLegacyHelp;
+
+  /// No description provided for @onboardingJoinExisting.
+  ///
+  /// In en, this message translates to:
+  /// **'Join an existing device space'**
+  String get onboardingJoinExisting;
+
+  /// No description provided for @onboardingJoinExistingHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Find a nearby device space and sync models and data after joining'**
+  String get onboardingJoinExistingHelp;
+
+  /// No description provided for @onboardingJoinSpace.
+  ///
+  /// In en, this message translates to:
+  /// **'Join a device space'**
+  String get onboardingJoinSpace;
+
+  /// No description provided for @onboardingJoinSpaceHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Add device, choose a nearby device, and pair with it. Settings and data sync after an administrator approves the request.'**
+  String get onboardingJoinSpaceHelp;
+
+  /// No description provided for @onboardingConfirmStorage.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm local storage locations'**
+  String get onboardingConfirmStorage;
+
+  /// No description provided for @onboardingConfirmStorageHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime data and workspace data are stored separately. Enter paths or choose each directory.'**
+  String get onboardingConfirmStorageHelp;
+
+  /// No description provided for @onboardingRuntimeDirectory.
+  ///
+  /// In en, this message translates to:
+  /// **'Runtime directory'**
+  String get onboardingRuntimeDirectory;
+
+  /// No description provided for @onboardingWorkspaceDirectory.
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace directory'**
+  String get onboardingWorkspaceDirectory;
+
+  /// No description provided for @onboardingReadingPaths.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading storage paths'**
+  String get onboardingReadingPaths;
+
+  /// No description provided for @onboardingStorageMountHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'These directories store runtime state and user workspaces separately. The local host mounts them after you confirm.'**
+  String get onboardingStorageMountHelp;
+
+  /// No description provided for @onboardingPrepareSnapshotHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Preparing the Operit1 snapshot…'**
+  String get onboardingPrepareSnapshotHelp;
+
+  /// No description provided for @onboardingImportSnapshotHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a snapshot exported by the latest version of Operit1 to migrate settings, chats, character cards, and resources to Operit2.'**
+  String get onboardingImportSnapshotHelp;
+
+  /// No description provided for @onboardingReadingSnapshot.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading snapshot'**
+  String get onboardingReadingSnapshot;
+
+  /// No description provided for @onboardingPickSnapshotFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose snapshot file'**
+  String get onboardingPickSnapshotFile;
+
+  /// No description provided for @onboardingMigrationContents.
+  ///
+  /// In en, this message translates to:
+  /// **'Data available to migrate'**
+  String get onboardingMigrationContents;
+
+  /// No description provided for @onboardingChats.
+  ///
+  /// In en, this message translates to:
+  /// **'Chats'**
+  String get onboardingChats;
+
+  /// No description provided for @onboardingMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Messages'**
+  String get onboardingMessages;
+
+  /// No description provided for @onboardingPreferenceFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Preference files'**
+  String get onboardingPreferenceFiles;
+
+  /// No description provided for @onboardingResourceFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'Resource files'**
+  String get onboardingResourceFiles;
+
+  /// No description provided for @onboardingExternalResources.
+  ///
+  /// In en, this message translates to:
+  /// **'External resources'**
+  String get onboardingExternalResources;
+
+  /// No description provided for @onboardingImportInProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Importing the snapshot…'**
+  String get onboardingImportInProgress;
+
+  /// No description provided for @onboardingImportContinueHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Select Continue to migrate the entire snapshot.'**
+  String get onboardingImportContinueHelp;
+
+  /// No description provided for @onboardingEndpoint.
+  ///
+  /// In en, this message translates to:
+  /// **'Server address'**
+  String get onboardingEndpoint;
+
+  /// No description provided for @onboardingCompleteModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Complete model setup'**
+  String get onboardingCompleteModel;
+
+  /// No description provided for @onboardingCompleteModelHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a model provider, enter your API key, and fetch and select a default model.'**
+  String get onboardingCompleteModelHelp;
+
+  /// No description provided for @onboardingModelProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Model provider'**
+  String get onboardingModelProvider;
+
+  /// No description provided for @onboardingModelProviderRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Select a model provider'**
+  String get onboardingModelProviderRequired;
+
+  /// No description provided for @onboardingContinueModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue setup'**
+  String get onboardingContinueModel;
+
+  /// No description provided for @onboardingFetchingModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetching models'**
+  String get onboardingFetchingModels;
+
+  /// No description provided for @onboardingFetchModels.
+  ///
+  /// In en, this message translates to:
+  /// **'Fetch available models'**
+  String get onboardingFetchModels;
+
+  /// No description provided for @onboardingDefaultModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Default model'**
+  String get onboardingDefaultModel;
+
+  /// No description provided for @onboardingGrantPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant system permissions as needed'**
+  String get onboardingGrantPermissions;
+
+  /// No description provided for @onboardingGrantPermissionsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant permissions for the features you want to use. You can continue without granting any permissions. Features that require them will be unavailable.'**
+  String get onboardingGrantPermissionsHelp;
+
+  /// No description provided for @onboardingNoPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'No permissions to review on this device'**
+  String get onboardingNoPermissions;
+
+  /// No description provided for @onboardingNoPermissionsHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'This environment has no system permissions to configure during setup.'**
+  String get onboardingNoPermissionsHelp;
+
+  /// No description provided for @onboardingRefreshPermissions.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh permissions'**
+  String get onboardingRefreshPermissions;
+
+  /// No description provided for @onboardingOptional.
+  ///
+  /// In en, this message translates to:
+  /// **'Optional'**
+  String get onboardingOptional;
+
+  /// No description provided for @onboardingRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Required'**
+  String get onboardingRequired;
+
+  /// No description provided for @onboardingPermissionGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Granted'**
+  String get onboardingPermissionGranted;
+
+  /// No description provided for @onboardingGrantPermission.
+  ///
+  /// In en, this message translates to:
+  /// **'Grant permission'**
+  String get onboardingGrantPermission;
+
+  /// No description provided for @onboardingNoAction.
+  ///
+  /// In en, this message translates to:
+  /// **'No action needed'**
+  String get onboardingNoAction;
+
+  /// No description provided for @onboardingUploadProgress.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading and uploading the snapshot ({percent}%).'**
+  String onboardingUploadProgress(int percent);
+
+  /// No description provided for @onboardingChooseDirectory.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose {label}'**
+  String onboardingChooseDirectory(String label);
+
+  /// No description provided for @onboardingDefaultChatModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Default chat model: {model}'**
+  String onboardingDefaultChatModel(String model);
+
+  /// No description provided for @onboardingImportFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Snapshot import failed\n{error}'**
+  String onboardingImportFailed(String error);
+
+  /// No description provided for @onboardingAgreementTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'User Agreement and Privacy Policy'**
+  String get onboardingAgreementTitle;
+
+  /// No description provided for @onboardingAgreementHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Read and accept this agreement to continue setup.'**
+  String get onboardingAgreementHelp;
+
+  /// No description provided for @onboardingAgreementVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version: {version}'**
+  String onboardingAgreementVersion(String version);
+
+  /// No description provided for @onboardingAgreementWait.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{You can accept in {count} second.} other{You can accept in {count} seconds.}}'**
+  String onboardingAgreementWait(int count);
+
+  /// No description provided for @extensionsView.
+  ///
+  /// In en, this message translates to:
+  /// **'View'**
+  String get extensionsView;
+
+  /// No description provided for @extensionsCloseSearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Close search'**
+  String get extensionsCloseSearch;
+
+  /// No description provided for @extensionsSearchShortcut.
+  ///
+  /// In en, this message translates to:
+  /// **'Search (Ctrl+F)'**
+  String get extensionsSearchShortcut;
+
+  /// No description provided for @extensionsAdd.
+  ///
+  /// In en, this message translates to:
+  /// **'Add extension'**
+  String get extensionsAdd;
+
+  /// No description provided for @extensionsMore.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get extensionsMore;
+
+  /// No description provided for @extensionsCheckUpdates.
+  ///
+  /// In en, this message translates to:
+  /// **'Check for updates'**
+  String get extensionsCheckUpdates;
+
+  /// No description provided for @extensionsEnvironment.
+  ///
+  /// In en, this message translates to:
+  /// **'Environment variables'**
+  String get extensionsEnvironment;
+
+  /// No description provided for @extensionsReload.
+  ///
+  /// In en, this message translates to:
+  /// **'Reload catalog'**
+  String get extensionsReload;
+
+  /// No description provided for @extensionsSearchInstalled.
+  ///
+  /// In en, this message translates to:
+  /// **'Search installed extensions'**
+  String get extensionsSearchInstalled;
+
+  /// No description provided for @extensionsSearchMarket.
+  ///
+  /// In en, this message translates to:
+  /// **'Search the market and official extensions'**
+  String get extensionsSearchMarket;
+
+  /// No description provided for @extensionsTab.
+  ///
+  /// In en, this message translates to:
+  /// **'Extensions'**
+  String get extensionsTab;
+
+  /// No description provided for @extensionsDrop.
+  ///
+  /// In en, this message translates to:
+  /// **'Drop to import extensions'**
+  String get extensionsDrop;
+
+  /// No description provided for @extensionsDropTypes.
+  ///
+  /// In en, this message translates to:
+  /// **'Supports .toolpkg, .js, .ts, and .hjson'**
+  String get extensionsDropTypes;
+
+  /// No description provided for @extensionsImportPlugin.
+  ///
+  /// In en, this message translates to:
+  /// **'Import plugin'**
+  String get extensionsImportPlugin;
+
+  /// No description provided for @extensionsSelectToolPkg.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose a .toolpkg file'**
+  String get extensionsSelectToolPkg;
+
+  /// No description provided for @extensionsImportScript.
+  ///
+  /// In en, this message translates to:
+  /// **'Import script package'**
+  String get extensionsImportScript;
+
+  /// No description provided for @extensionsScriptTypes.
+  ///
+  /// In en, this message translates to:
+  /// **'.js, .ts, .hjson, or .toolpkg'**
+  String get extensionsScriptTypes;
+
+  /// No description provided for @extensionsAddSkill.
+  ///
+  /// In en, this message translates to:
+  /// **'Add skill'**
+  String get extensionsAddSkill;
+
+  /// No description provided for @extensionsSkillSources.
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub repository, ZIP, or manual entry'**
+  String get extensionsSkillSources;
+
+  /// No description provided for @extensionsAddMcp.
+  ///
+  /// In en, this message translates to:
+  /// **'Add MCP server'**
+  String get extensionsAddMcp;
+
+  /// No description provided for @extensionsMcpSources.
+  ///
+  /// In en, this message translates to:
+  /// **'GitHub, ZIP, configuration, or form'**
+  String get extensionsMcpSources;
+
+  /// No description provided for @extensionsAddA2a.
+  ///
+  /// In en, this message translates to:
+  /// **'Add A2A'**
+  String get extensionsAddA2a;
+
+  /// No description provided for @extensionsA2aSources.
+  ///
+  /// In en, this message translates to:
+  /// **'Server address, Agent Card, or configuration file'**
+  String get extensionsA2aSources;
+
+  /// No description provided for @extensionsAiCreate.
+  ///
+  /// In en, this message translates to:
+  /// **'Create a plugin with AI'**
+  String get extensionsAiCreate;
+
+  /// No description provided for @extensionsAiCreateHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Describe what you need, then generate and install it in chat'**
+  String get extensionsAiCreateHelp;
+
+  /// No description provided for @extensionsAddHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'New extensions are installed on this device by default. A ToolPkg may declare a fixed install scope. Updating a local ToolPkg with the same ID keeps its current location and configuration. You can also drag and drop files on desktop.'**
+  String get extensionsAddHelp;
+
+  /// No description provided for @extensionsSyncChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{Device space synced. One extension changed.} other{Device space synced. {count} extensions changed.}}'**
+  String extensionsSyncChanged(int count);
+
+  /// No description provided for @extensionsDropRejected.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot import these files directly: {files}. Use Add extension to import skills or MCP servers.'**
+  String extensionsDropRejected(String files);
+
+  /// No description provided for @marketRangeWeek.
+  ///
+  /// In en, this message translates to:
+  /// **'Past week'**
+  String get marketRangeWeek;
+
+  /// No description provided for @marketRangeMonth.
+  ///
+  /// In en, this message translates to:
+  /// **'Past month'**
+  String get marketRangeMonth;
+
+  /// No description provided for @marketRangeAll.
+  ///
+  /// In en, this message translates to:
+  /// **'All time'**
+  String get marketRangeAll;
+
+  /// No description provided for @marketSortUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Recently updated'**
+  String get marketSortUpdated;
+
+  /// No description provided for @marketSortDownloads.
+  ///
+  /// In en, this message translates to:
+  /// **'Most downloaded'**
+  String get marketSortDownloads;
+
+  /// No description provided for @marketSortLikes.
+  ///
+  /// In en, this message translates to:
+  /// **'Most popular'**
+  String get marketSortLikes;
+
+  /// No description provided for @marketFilterSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Filter: {sort}, {range}'**
+  String marketFilterSummary(String sort, String range);
+
+  /// No description provided for @marketFilterTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Filter market'**
+  String get marketFilterTitle;
+
+  /// No description provided for @marketFilterSort.
+  ///
+  /// In en, this message translates to:
+  /// **'Sort by'**
+  String get marketFilterSort;
+
+  /// No description provided for @marketFilterPeriod.
+  ///
+  /// In en, this message translates to:
+  /// **'Time range'**
+  String get marketFilterPeriod;
+
+  /// No description provided for @marketFilterUpdatedHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Filter by the date content was last updated.'**
+  String get marketFilterUpdatedHelp;
+
+  /// No description provided for @marketFilterCategory.
+  ///
+  /// In en, this message translates to:
+  /// **'Category'**
+  String get marketFilterCategory;
+
+  /// No description provided for @marketFilterAllCategories.
+  ///
+  /// In en, this message translates to:
+  /// **'All categories'**
+  String get marketFilterAllCategories;
+
+  /// No description provided for @marketFilterCategoryRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not load categories. Retry.'**
+  String get marketFilterCategoryRetry;
+
+  /// No description provided for @marketFilterReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset'**
+  String get marketFilterReset;
+
+  /// No description provided for @marketFilterApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply filters'**
+  String get marketFilterApply;
+
+  /// No description provided for @marketFilterRankingHelp.
+  ///
+  /// In en, this message translates to:
+  /// **'Rankings default to items first published in the last 30 days, ordered by total {metric}. Updates do not reset the publication date.'**
+  String marketFilterRankingHelp(String metric);
+
+  /// No description provided for @marketFilterLikes.
+  ///
+  /// In en, this message translates to:
+  /// **'likes'**
+  String get marketFilterLikes;
+
+  /// No description provided for @marketFilterDownloads.
+  ///
+  /// In en, this message translates to:
+  /// **'downloads'**
+  String get marketFilterDownloads;
+
+  /// No description provided for @attachmentContext.
+  ///
+  /// In en, this message translates to:
+  /// **'Additional context'**
+  String get attachmentContext;
+
+  /// No description provided for @attachmentExtraInfo.
+  ///
+  /// In en, this message translates to:
+  /// **'Additional information'**
+  String get attachmentExtraInfo;
+
+  /// No description provided for @attachmentPastedText.
+  ///
+  /// In en, this message translates to:
+  /// **'Pasted text'**
+  String get attachmentPastedText;
+
+  /// No description provided for @attachmentResetZoom.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset zoom'**
+  String get attachmentResetZoom;
+
+  /// No description provided for @attachmentCloseShortcut.
+  ///
+  /// In en, this message translates to:
+  /// **'Close (Esc)'**
+  String get attachmentCloseShortcut;
+
+  /// No description provided for @attachmentCopyContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy content'**
+  String get attachmentCopyContent;
+
+  /// No description provided for @attachmentCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'Copied to clipboard'**
+  String get attachmentCopied;
+
+  /// No description provided for @attachmentCopyLocation.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy file location'**
+  String get attachmentCopyLocation;
+
+  /// No description provided for @attachmentClipboardImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Clipboard image'**
+  String get attachmentClipboardImage;
+
+  /// No description provided for @chatSharePreview.
+  ///
+  /// In en, this message translates to:
+  /// **'Share image preview'**
+  String get chatSharePreview;
+
+  /// No description provided for @chatShareSaveFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Save to file'**
+  String get chatShareSaveFile;
+
+  /// No description provided for @chatShareImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Share image'**
+  String get chatShareImage;
+
+  /// No description provided for @chatShareSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save'**
+  String get chatShareSaveFailed;
+
+  /// No description provided for @chatSharePng.
+  ///
+  /// In en, this message translates to:
+  /// **'PNG image'**
+  String get chatSharePng;
+
+  /// No description provided for @chatShareSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Image saved'**
+  String get chatShareSaved;
+
+  /// No description provided for @chatShareFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not share'**
+  String get chatShareFailed;
+
+  /// No description provided for @attachmentExpandCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{Show attachment} other{Show {count} attachments}}'**
+  String attachmentExpandCount(int count);
+
+  /// No description provided for @attachmentCollapseCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse ({count})'**
+  String attachmentCollapseCount(int count);
+
+  /// No description provided for @attachmentContextCount.
+  ///
+  /// In en, this message translates to:
+  /// **'Additional context · {count}'**
+  String attachmentContextCount(int count);
+
+  /// No description provided for @attachmentCopyLocationPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Copy file location\n{path}'**
+  String attachmentCopyLocationPath(String path);
+
+  /// No description provided for @attachmentLocationPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved at: {path}'**
+  String attachmentLocationPath(String path);
+
+  /// No description provided for @marketCategorySearch.
+  ///
+  /// In en, this message translates to:
+  /// **'Search & research'**
+  String get marketCategorySearch;
+
+  /// No description provided for @marketCategorySearchDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Search engines, research tools, and knowledge retrieval'**
+  String get marketCategorySearchDescription;
+
+  /// No description provided for @marketCategoryDevelopment.
+  ///
+  /// In en, this message translates to:
+  /// **'Development tools'**
+  String get marketCategoryDevelopment;
+
+  /// No description provided for @marketCategoryDevelopmentDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Code editing, debugging, and development tools'**
+  String get marketCategoryDevelopmentDescription;
+
+  /// No description provided for @marketCategoryAutomation.
+  ///
+  /// In en, this message translates to:
+  /// **'Automation'**
+  String get marketCategoryAutomation;
+
+  /// No description provided for @marketCategoryAutomationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Task automation and workflows'**
+  String get marketCategoryAutomationDescription;
+
+  /// No description provided for @marketCategoryDocuments.
+  ///
+  /// In en, this message translates to:
+  /// **'Documents & knowledge'**
+  String get marketCategoryDocuments;
+
+  /// No description provided for @marketCategoryDocumentsDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Document processing and knowledge management'**
+  String get marketCategoryDocumentsDescription;
+
+  /// No description provided for @marketCategoryMedia.
+  ///
+  /// In en, this message translates to:
+  /// **'Media & content'**
+  String get marketCategoryMedia;
+
+  /// No description provided for @marketCategoryMediaDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Image, video, and audio processing and content creation'**
+  String get marketCategoryMediaDescription;
+
+  /// No description provided for @marketCategoryCommunication.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat & communication'**
+  String get marketCategoryCommunication;
+
+  /// No description provided for @marketCategoryCommunicationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat tools, messaging, and communication integrations'**
+  String get marketCategoryCommunicationDescription;
+
+  /// No description provided for @marketCategoryIntegration.
+  ///
+  /// In en, this message translates to:
+  /// **'Services & APIs'**
+  String get marketCategoryIntegration;
+
+  /// No description provided for @marketCategoryIntegrationDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Third-party service integrations and API tools'**
+  String get marketCategoryIntegrationDescription;
+
+  /// No description provided for @marketCategorySystem.
+  ///
+  /// In en, this message translates to:
+  /// **'System & data'**
+  String get marketCategorySystem;
+
+  /// No description provided for @marketCategorySystemDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'File systems, data management, and system tools'**
+  String get marketCategorySystemDescription;
+
+  /// No description provided for @marketCategoryProductivity.
+  ///
+  /// In en, this message translates to:
+  /// **'Business & productivity'**
+  String get marketCategoryProductivity;
+
+  /// No description provided for @marketCategoryProductivityDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Business workflows and productivity tools'**
+  String get marketCategoryProductivityDescription;
+
+  /// No description provided for @marketCategoryEntertainment.
+  ///
+  /// In en, this message translates to:
+  /// **'Lifestyle & entertainment'**
+  String get marketCategoryEntertainment;
+
+  /// No description provided for @marketCategoryEntertainmentDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Everyday utilities and entertainment apps'**
+  String get marketCategoryEntertainmentDescription;
+
+  /// No description provided for @marketCategoryOther.
+  ///
+  /// In en, this message translates to:
+  /// **'Other'**
+  String get marketCategoryOther;
+
+  /// No description provided for @marketCategoryOtherDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Uncategorized extensions and other types'**
+  String get marketCategoryOtherDescription;
+
+  /// No description provided for @settingsCategorySpeechTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Speech & recognition'**
+  String get settingsCategorySpeechTitle;
+
+  /// No description provided for @settingsCategorySpeechSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'TTS and STT providers'**
+  String get settingsCategorySpeechSubtitle;
+
+  /// No description provided for @settingsCategorySpeechDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Manage speech synthesis and recognition providers, and choose the active configuration for each.'**
+  String get settingsCategorySpeechDescription;
+
+  /// No description provided for @settingsCategoryAboutTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'About Operit2'**
+  String get settingsCategoryAboutTitle;
+
+  /// No description provided for @settingsCategoryAboutSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Version, project, and license'**
+  String get settingsCategoryAboutSubtitle;
+
+  /// No description provided for @settingsCategoryAboutDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'View the Operit2 version, project links, and open source licenses.'**
+  String get settingsCategoryAboutDescription;
+
+  /// No description provided for @aboutUpdateSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Updates'**
+  String get aboutUpdateSection;
+
+  /// No description provided for @aboutAppDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'An AI workbench for terminal and desktop, with conversations, workspaces, tools, plugins, MCP, remote connections, and web access.'**
+  String get aboutAppDescription;
+
+  /// No description provided for @aboutReadingVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Reading version information…'**
+  String get aboutReadingVersion;
+
+  /// No description provided for @aboutUpToDate.
+  ///
+  /// In en, this message translates to:
+  /// **'You’re on the latest version'**
+  String get aboutUpToDate;
+
+  /// No description provided for @aboutCheckingUpdates.
+  ///
+  /// In en, this message translates to:
+  /// **'Checking for updates…'**
+  String get aboutCheckingUpdates;
+
+  /// No description provided for @aboutRetryCheck.
+  ///
+  /// In en, this message translates to:
+  /// **'Update check failed. Select to retry.'**
+  String get aboutRetryCheck;
+
+  /// No description provided for @aboutCheckHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Select to check for updates'**
+  String get aboutCheckHint;
+
+  /// No description provided for @aboutProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Project'**
+  String get aboutProject;
+
+  /// No description provided for @aboutSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Project source code'**
+  String get aboutSource;
+
+  /// No description provided for @aboutDocs.
+  ///
+  /// In en, this message translates to:
+  /// **'Documentation'**
+  String get aboutDocs;
+
+  /// No description provided for @aboutDocsSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'README and command-line guide'**
+  String get aboutDocsSubtitle;
+
+  /// No description provided for @aboutLicenses.
+  ///
+  /// In en, this message translates to:
+  /// **'Open source licenses'**
+  String get aboutLicenses;
+
+  /// No description provided for @aboutLicenseSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Operit2 is licensed under AGPL-3.0'**
+  String get aboutLicenseSubtitle;
+
+  /// No description provided for @aboutContact.
+  ///
+  /// In en, this message translates to:
+  /// **'Contact'**
+  String get aboutContact;
+
+  /// No description provided for @aboutDeveloper.
+  ///
+  /// In en, this message translates to:
+  /// **'Developer AAswordman'**
+  String get aboutDeveloper;
+
+  /// No description provided for @aboutCopyright.
+  ///
+  /// In en, this message translates to:
+  /// **'© 2025–2026 Operit. All rights reserved.'**
+  String get aboutCopyright;
+
+  /// No description provided for @aboutReadVersionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not read version information: {error}'**
+  String aboutReadVersionFailed(String error);
+
+  /// No description provided for @aboutVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version {version}'**
+  String aboutVersion(String version);
+
+  /// No description provided for @aboutUpdatingTo.
+  ///
+  /// In en, this message translates to:
+  /// **'Updating to {version}. Select to view progress.'**
+  String aboutUpdatingTo(String version);
+
+  /// No description provided for @aboutLinkCopied.
+  ///
+  /// In en, this message translates to:
+  /// **'No app can open this link. Copied to clipboard: {url}'**
+  String aboutLinkCopied(String url);
+
+  /// No description provided for @settingsToolsAdvanced.
+  ///
+  /// In en, this message translates to:
+  /// **'Advanced settings'**
+  String get settingsToolsAdvanced;
+
+  /// No description provided for @settingsToolsReadOnly.
+  ///
+  /// In en, this message translates to:
+  /// **'Read only'**
+  String get settingsToolsReadOnly;
+
+  /// No description provided for @settingsToolsReadWrite.
+  ///
+  /// In en, this message translates to:
+  /// **'Read and write'**
+  String get settingsToolsReadWrite;
+
+  /// No description provided for @settingsToolsFullAccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Full access'**
+  String get settingsToolsFullAccess;
+
+  /// No description provided for @settingsToolsSandboxed.
+  ///
+  /// In en, this message translates to:
+  /// **'Sandboxed (macOS App Sandbox enabled)'**
+  String get settingsToolsSandboxed;
+
+  /// No description provided for @settingsToolsUnsandboxed.
+  ///
+  /// In en, this message translates to:
+  /// **'Not sandboxed (macOS App Sandbox disabled)'**
+  String get settingsToolsUnsandboxed;
+
+  /// No description provided for @settingsToolsIsolation.
+  ///
+  /// In en, this message translates to:
+  /// **'Application isolation'**
+  String get settingsToolsIsolation;
+
+  /// No description provided for @settingsToolsRestrictions.
+  ///
+  /// In en, this message translates to:
+  /// **'AI capability restrictions'**
+  String get settingsToolsRestrictions;
+
+  /// No description provided for @settingsToolsConfirmCalls.
+  ///
+  /// In en, this message translates to:
+  /// **'Tool call confirmation'**
+  String get settingsToolsConfirmCalls;
+
+  /// No description provided for @settingsToolsConfirmDirectCalls.
+  ///
+  /// In en, this message translates to:
+  /// **'Approval applies to tools the AI calls directly.'**
+  String get settingsToolsConfirmDirectCalls;
+
+  /// No description provided for @settingsToolsRuntimeEnvironment.
+  ///
+  /// In en, this message translates to:
+  /// **'Current runtime environment'**
+  String get settingsToolsRuntimeEnvironment;
+
+  /// No description provided for @settingsToolsPlatform.
+  ///
+  /// In en, this message translates to:
+  /// **'Platform'**
+  String get settingsToolsPlatform;
+
+  /// No description provided for @settingsToolsOuterIsolation.
+  ///
+  /// In en, this message translates to:
+  /// **'Host isolation'**
+  String get settingsToolsOuterIsolation;
+
+  /// No description provided for @settingsToolsFileCapability.
+  ///
+  /// In en, this message translates to:
+  /// **'File capability'**
+  String get settingsToolsFileCapability;
+
+  /// No description provided for @settingsToolsTerminalCapability.
+  ///
+  /// In en, this message translates to:
+  /// **'Terminal capability'**
+  String get settingsToolsTerminalCapability;
+
+  /// No description provided for @settingsToolsRegistered.
+  ///
+  /// In en, this message translates to:
+  /// **'Registered'**
+  String get settingsToolsRegistered;
+
+  /// No description provided for @settingsToolsUnregistered.
+  ///
+  /// In en, this message translates to:
+  /// **'Unregistered'**
+  String get settingsToolsUnregistered;
+
+  /// No description provided for @settingsToolsAuthorizations.
+  ///
+  /// In en, this message translates to:
+  /// **'Authorizations'**
+  String get settingsToolsAuthorizations;
+
+  /// No description provided for @settingsToolsStructuredCapabilities.
+  ///
+  /// In en, this message translates to:
+  /// **'Structured capabilities'**
+  String get settingsToolsStructuredCapabilities;
+
+  /// No description provided for @settingsToolsNotGranted.
+  ///
+  /// In en, this message translates to:
+  /// **'Not granted'**
+  String get settingsToolsNotGranted;
+
+  /// No description provided for @settingsToolsSystemRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Requires system action'**
+  String get settingsToolsSystemRequired;
+
+  /// No description provided for @settingsToolsOpenSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Open settings'**
+  String get settingsToolsOpenSettings;
+
+  /// No description provided for @settingsToolsUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Unavailable'**
+  String get settingsToolsUnavailable;
+
+  /// No description provided for @settingsToolsHandle.
+  ///
+  /// In en, this message translates to:
+  /// **'Review'**
+  String get settingsToolsHandle;
+
+  /// No description provided for @settingsToolsReadOnlyDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The AI can read the current workspace and cannot run tools that write to it.'**
+  String get settingsToolsReadOnlyDescription;
+
+  /// No description provided for @settingsToolsReadWriteDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The AI can read and write to the current workspace. The in-app sandbox stays enabled.'**
+  String get settingsToolsReadWriteDescription;
+
+  /// No description provided for @settingsToolsFullAccessDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'The AI can read and write to the current workspace. This mode disables the in-app sandbox.'**
+  String get settingsToolsFullAccessDescription;
+
+  /// No description provided for @settingsToolsAuthorizationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Authorization failed: {error}'**
+  String settingsToolsAuthorizationFailed(String error);
+
+  /// No description provided for @settingsToolsItemCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count, plural, one{{count} item} other{{count} items}}'**
+  String settingsToolsItemCount(int count);
 }
 
 class _AppLocalizationsDelegate
@@ -9972,7 +12872,7 @@ class _AppLocalizationsDelegate
 
   @override
   bool isSupported(Locale locale) =>
-      <String>['en', 'zh'].contains(locale.languageCode);
+      <String>['en', 'fr', 'zh'].contains(locale.languageCode);
 
   @override
   bool shouldReload(_AppLocalizationsDelegate old) => false;
@@ -9983,6 +12883,8 @@ AppLocalizations lookupAppLocalizations(Locale locale) {
   switch (locale.languageCode) {
     case 'en':
       return AppLocalizationsEn();
+    case 'fr':
+      return AppLocalizationsFr();
     case 'zh':
       return AppLocalizationsZh();
   }

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/ui/features/chat/components/WorkspaceChangeConfirmDialog.dart';
 
@@ -12,6 +13,9 @@ Future<void> _openDialog(
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: Builder(
           builder: (context) => TextButton(
@@ -41,7 +45,6 @@ void main() {
         await tester.binding.setSurfaceSize(size);
         addTearDown(() => tester.binding.setSurfaceSize(null));
         final semantics = tester.ensureSemantics();
-        addTearDown(semantics.dispose);
         final changes = List<WorkspaceFileChange>.generate(
           50,
           (index) => WorkspaceFileChange(
@@ -80,6 +83,7 @@ void main() {
         await tester.tap(find.byType(FilledButton));
         await tester.pumpAndSettle();
         expect(confirmations, 1);
+        semantics.dispose();
         expect(find.byType(WorkspaceChangeConfirmDialog), findsNothing);
         expect(tester.takeException(), isNull);
       });

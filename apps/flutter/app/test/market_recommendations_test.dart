@@ -1,4 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/l10n/generated/app_localizations_en.dart';
+import 'package:operit2/l10n/generated/app_localizations_fr.dart';
+import 'package:operit2/l10n/generated/app_localizations_zh.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/ui/features/packages/market/ArtifactMarketSupport.dart';
 import 'package:operit2/ui/features/packages/market/MarketRecommendations.dart';
@@ -187,13 +190,11 @@ void main() {
         name: 'English',
         description: 'Description',
       );
-      final text = marketCategoryText(category, languageCode: 'zh');
+      final text = marketCategoryText(category, AppLocalizationsZh());
       expect(text.name, isNot('English'));
       expect(text.description, isNot('Description'));
-      expect(marketCategoryText(category, languageCode: 'en'), (
-        name: 'English',
-        description: 'Description',
-      ));
+      expect(marketCategoryText(category, AppLocalizationsEn()).name, isNot('English'));
+      expect(marketCategoryText(category, AppLocalizationsFr()).name, isNot(text.name));
     }
   });
 
@@ -203,7 +204,7 @@ void main() {
       name: 'Future',
       description: null,
     );
-    expect(marketCategoryText(category, languageCode: 'zh'), (
+    expect(marketCategoryText(category, AppLocalizationsZh()), (
       name: 'Future',
       description: '',
     ));

@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'package:operit2/l10n/generated/app_localizations.dart';
+
 import 'dart:async';
 import 'dart:math' as math;
 
@@ -1604,7 +1606,7 @@ class _StatusMessage extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: SelectableText(
-        isError ? apiErrorText(text) : text,
+        isError ? apiErrorText(text, AppLocalizations.of(context)!) : text,
         style: theme.textTheme.bodySmall?.copyWith(
           color: isError
               ? theme.colorScheme.error
