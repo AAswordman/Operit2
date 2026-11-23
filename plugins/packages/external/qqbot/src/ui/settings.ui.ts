@@ -1,9 +1,14 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../../types/compose-dsl";
 import { call } from "../rpc.js";
-import type { AutoReplyParams, ConfigureParams, InboundEvent, ReplyRole, Status } from "../model.js";
+import type { AutoReplyParams, ConfigureParams, GroupReplyMode, InboundEvent, ReplyRole, Status } from "../model.js";
 import { errorText } from "../model.js";
 
 type Section = "status" | "connection" | "reply" | "diagnostics";
+const groupReplyOptions: { mode: GroupReplyMode; label: string }[] = [
+  { mode: "mentioned", label: "仅被 @ 时回复" },
+  { mode: "all", label: "回复所有收到的群消息" },
+  { mode: "ai", label: "AI 判断是否接话" },
+];
 
 /** Guides setup around connecting QQ, choosing a role and starting the bot. */
 export default function settings(ctx: ComposeDslContext): ComposeNode {
@@ -29,7 +34,7 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
   const [c2c, setC2c] = ctx.useState("c2c", true);
   const [group, setGroup] = ctx.useState("group", true);
   const [groupContext, setGroupContext] = ctx.useState<"shared" | "member">("groupContext", "shared");
-  const [groupReplyMode, setGroupReplyMode] = ctx.useState<"mentioned" | "all">("groupReplyMode", "mentioned");
+  const [groupReplyMode, setGroupReplyMode] = ctx.useState<GroupReplyMode>("groupReplyMode", "mentioned");
   const [listenGroupMessages, setListenGroupMessages] = ctx.useState("listenGroupMessages", true);
   const [selection, setSelection] = ctx.useState("selection", "");
   const [instruction, setInstruction] = ctx.useState("instruction", "");
@@ -196,9 +201,12 @@ export default function settings(ctx: ComposeDslContext): ComposeNode {
     description("记录实际收到的最近 80 条群消息，供 AI 按需读取；普通消息不会默认触发回复。能否收到未 @ 消息取决于 QQ 开放平台授予的事件权限。"),
     toggle("isolateMembers", "按成员隔离群上下文", groupContext === "member", enabled => setGroupContext(enabled ? "member" : "shared")),
     description(groupContext === "shared" ? "同群共享一个会话。触发自动回复的新消息会打断正在生成的回复。不同群和私聊互相独立。" : "每位成员使用独立 AI 会话。触发自动回复的新消息只会打断同一成员的回复，读取前文也只返回该成员的消息。"),
-    ctx.UI.DropdownMenu({ key: "groupReplyMode", label: "群消息回复条件", text: groupReplyMode === "mentioned" ? "仅被 @ 时回复" : "回复所有收到的群消息",
-      enabled: busy === "" && status !== null, fillMaxWidth: true, onClick: index => setGroupReplyMode(index === 0 ? "mentioned" : "all") },
-      [ctx.UI.Text({ text: "仅被 @ 时回复", paddingVertical: 8 }), ctx.UI.Text({ text: "回复所有收到的群消息", paddingVertical: 8 })]),
+    ctx.UI.DropdownMenu({ key: "groupReplyMode", label: "群消息回复条件",
+      text: groupReplyOptions.find(option => option.mode === groupReplyMode)?.label ?? groupReplyOptions[0].label,
+      enabled: busy === "" && status !== null, fillMaxWidth: true,
+      onClick: index => { const option = groupReplyOptions[index]; if (option) setGroupReplyMode(option.mode); } },
+      groupReplyOptions.map(option => ctx.UI.Text({ text: option.label, paddingVertical: 8 }))),
+    ...(groupReplyMode === "ai" ? [description("被 @ 时直接回复。普通群消息会先由模型结合近期文本判断。评估通过后才生成回复。")] : []),
     button("advanced", advanced ? "收起高级设置" : "高级设置", () => setAdvanced(!advanced)),
   ];
   if (advanced) replyFields.push(

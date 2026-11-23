@@ -97,7 +97,7 @@ export interface ChannelStatus extends ChannelConfiguration {
     failed: number;
     running: boolean;
     directEnabled: boolean;
-    groupMode: "off" | "mentioned" | "all";
+    groupMode: "off" | "mentioned" | "all" | "ai";
   };
   channel: "qq" | "wechat";
   service: "ready" | "connecting" | "stopped" | "error";

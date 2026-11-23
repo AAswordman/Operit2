@@ -10,7 +10,7 @@ function fixture(options = {}) {
   const values = Object.assign(load("model").defaultConfig(), options.initialConfig??{}); values.appId = "app"; values.appSecret = "private-secret";
   let dirty=false;const snapshots=[];
   const config = new Proxy(values,{set(target,key,value){target[key]=value;dirty=true;return true;}});
-  const http = [], created = [], submitted = [], cancelled = [], errors = [];
+  const http = [], created = [], submitted = [], cancelled = [], decisions = [], errors = [];
   let flushes = 0; const pendingReplies = new Map();
   const waifu = provider({ ...time });
   const initialized = waifu.call("settings.get", { profile: "default" }).then(settings => waifu.call("settings.set", { profile: "default", settings: { ...settings, charDelayMs: 0, enableEmoticons: true } }));
@@ -40,6 +40,10 @@ function fixture(options = {}) {
       },
     },
     Chat: {
+      async call(request) {
+        decisions.push(request);
+        return { text: options.decide ? await options.decide(request) : "SKIP" };
+      },
       async createNew(request) { created.push(request); return { chatId: `chat-${created.length}`, createdAt: time.Date.now() }; },
       async updateTitle() {}, async updateGroup() {},
       async *sendMessageStreaming(request) {
@@ -67,7 +71,7 @@ function fixture(options = {}) {
     if (failure !== undefined) throw failure;
     return result;
   }
-  return { config, time, socket, http, created, submitted, cancelled, errors, service, storage, complete, snapshots, resolveReply(chatId) { const resolve = pendingReplies.get(chatId); if (resolve) { pendingReplies.delete(chatId); resolve({ chatId, outcome: { type: "committed", status: "completed" } }); } }, flushes: () => flushes };
+  return { config, time, socket, http, created, submitted, cancelled, decisions, errors, service, storage, complete, snapshots, resolveReply(chatId, aiResponse) { const resolve = pendingReplies.get(chatId); if (resolve) { pendingReplies.delete(chatId); resolve({ chatId, aiResponse, outcome: { type: "committed", status: "completed" } }); } }, flushes: () => flushes };
 }
 
 test("configuration and status never return the persisted application secret", async () => {
@@ -666,5 +670,78 @@ test("an oversized QQ attachment does not abort automatic reply", async () => {
   assert.match(input.text, /20 MiB/);
   assert.ok(input.text.includes('large.zip'));
   assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("AI group mode retains skipped messages and only generates on REPLY or a mention", async () => {
+  const f = fixture({ decide(request) {
+    const input = JSON.parse(request.turns[1].content);
+    return { idle: "SKIP", ask: "REPLY", invalid: "REPLY with explanation" }[input.message.text];
+  } });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, group_reply_mode: "ai" } }));
+  f.socket.frame(groupMessage("quiet", "alice", "group-a", false, "idle"));
+  await f.time.advance(700);
+  assert.equal(f.submitted.length, 0);
+  assert.equal(f.created.length, 0);
+  assert.equal(f.config.deliveries.length, 0);
+  f.socket.frame(groupMessage("ask", "alice", "group-a", false, "ask"));
+  await f.time.advance(700);
+  assert.equal(f.decisions.length, 2);
+  assert.equal(f.decisions[1].functionType, "CHAT");
+  assert.equal(JSON.parse(f.decisions[1].turns[1].content).history.at(-1).text, "idle");
+  f.socket.frame(groupMessage("invalid", "alice", "group-a", false, "invalid"));
+  await f.time.advance(700);
+  f.socket.frame(groupMessage("mention", "alice", "group-a", true, "mention"));
+  f.socket.frame(groupMessage("after-mention", "bob", "group-a", false, "idle"));
+  await f.time.advance(900);
+  assert.equal(f.decisions.length, 3);
+  assert.deepEqual(f.http.filter(request => request.url.endsWith("/messages")).map(request => request.body.msg_id), ["ask", "mention"]);
+  assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("ordinary group messages do not interrupt a reply and a timed-out decision cannot send", async () => {
+  let resolveDecision;
+  const f = fixture({ deferReply: true, decide: () => new Promise(resolve => { resolveDecision = resolve; }) });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, group_reply_mode: "ai", ai_timeout_ms: 3_000, waifu_profile: "native" } }));
+  f.socket.frame(groupMessage("first", "alice", "group-a", true, "first"));
+  await f.time.advance(700);
+  f.socket.frame(groupMessage("later", "bob", "group-a", false, "later"));
+  await f.time.advance(700);
+  assert.equal(f.submitted.length, 1);
+  assert.deepEqual(f.cancelled, []);
+  assert.equal(f.decisions.length, 0);
+  f.resolveReply(f.submitted[0].chatId, "first answer");
+  await f.time.advance(800);
+  assert.equal(f.decisions.length, 1);
+  await f.time.advance(3_200);
+  resolveDecision("REPLY");
+  await f.time.advance(600);
+  assert.equal(f.submitted.length, 1);
+  assert.equal(f.config.deliveries.length, 0);
+  assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("a mention supersedes an in-flight group decision that uses the QQ voice transcript", async () => {
+  let resolveDecision;
+  const f = fixture({ decide: () => new Promise(resolve => { resolveDecision = resolve; }) });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, group_reply_mode: "ai" } }));
+  const voice = groupMessage("voice", "alice", "group-a", false, "");
+  voice.d.attachments = [{ content_type: "voice", url: "https://cdn.example/voice", asr_refer_text: "can you help" }];
+  f.socket.frame(voice);
+  await f.time.advance(700);
+  assert.match(JSON.parse(f.decisions[0].turns[1].content).message.text, /can you help/);
+  assert.equal(f.submitted.length, 0);
+  f.socket.frame(groupMessage("mention", "alice", "group-a", true, "direct request"));
+  await f.time.advance(900);
+  resolveDecision("REPLY");
+  await f.time.advance(500);
+  assert.equal(f.decisions.length, 1);
+  assert.equal(f.submitted.length, 1);
+  assert.deepEqual(f.http.filter(request => request.url.endsWith("/messages")).map(request => request.body.msg_id), ["mention"]);
   await f.complete(f.service.receive({ action: "stop" }));
 });

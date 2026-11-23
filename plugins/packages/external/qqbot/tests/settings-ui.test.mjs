@@ -207,4 +207,7 @@ test("group context, listening and reply trigger controls persist without starti
  assert.equal(request.params.group_context,"member");assert.equal(request.params.group_reply_mode,"all");assert.equal(request.params.listen_group_messages,false);
  assert.equal(f.config.autoReply.groupContext,"member");assert.equal(f.config.listenerEnabled,false);
  assert.match(f.text(),/平台.*权限/);
+ await f.find("groupReplyMode").props.onClick(2);await f.click("saveReplies");
+ assert.equal(f.config.autoReply.groupReplyMode,"ai");
+ assert.match(f.text(),/AI 判断是否接话/);
 });

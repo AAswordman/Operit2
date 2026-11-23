@@ -21,7 +21,7 @@ export type ManagementStatus = ChannelStatus & {
     failed: number;
     running: boolean;
     directEnabled: boolean;
-    groupMode: "off" | "mentioned" | "all";
+    groupMode: "off" | "mentioned" | "all" | "ai";
   };
   login?: { state: string; qrContent: string; expiresAt: number; error: string };
 };

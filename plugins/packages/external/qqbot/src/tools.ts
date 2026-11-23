@@ -540,8 +540,8 @@
           "type": "string",
           "required": false,
           "description": {
-            "zh": "mentioned 默认仅被 @ 回复；all 回复所有实际收到的群消息",
-            "en": "mentioned 默认仅被 @ 回复；all 回复所有实际收到的群消息"
+            "zh": "mentioned 仅被 @ 时回复（默认）。all 回复所有收到的群消息。ai 让 AI 判断普通群消息是否需要接话。",
+            "en": "mentioned replies to mentions only (default). all replies to every received group message. ai lets the model decide on unmentioned messages."
           }
         },
         {
