@@ -2,10 +2,94 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:camera_platform_interface/camera_platform_interface.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/host/VoiceCallCamera.dart';
+import 'package:operit2/ui/window/VoiceCallStage.dart';
 
 void main() {
+  for (final size in [
+    const Size(340, 460),
+    const Size(260, 360),
+    const Size(620, 380),
+  ]) {
+    testWidgets('swaps one live preview and restores voice layout at $size', (
+      tester,
+    ) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = size;
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final platform = _CameraPlatform();
+      addTearDown(platform.events.close);
+      final camera = VoiceCallCamera(platform: platform);
+      addTearDown(camera.dispose);
+      const window = ValueKey('call-window');
+      final preview = find.byKey(const ValueKey('call-camera-view'));
+      final avatar = find.byKey(const ValueKey('call-avatar-view'));
+      final swap = find.byKey(const ValueKey('call-swap-views'));
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: VoiceCallStage(
+            key: window,
+            camera: camera,
+            controls: const Center(child: Text('Hang up')),
+          ),
+        ),
+      );
+      final full = tester.getRect(find.byKey(window));
+      final portrait = find.byIcon(Icons.smart_toy_outlined);
+      expect(tester.getCenter(portrait), full.center);
+      expect(swap, findsNothing);
+      expect(preview, findsNothing);
+      expect(find.text('Hang up').hitTestable(), findsOneWidget);
+
+      await tester.runAsync(camera.start);
+      expect(camera.error, isNull);
+      expect(camera.preview, isNotNull);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(preview), full);
+      final inset = tester.getRect(avatar);
+      expect(inset.center.dx, greaterThan(full.center.dx));
+      expect(inset.center.dy, lessThan(full.center.dy));
+      expect(tester.getRect(swap), inset);
+      expect(find.text('Hang up').hitTestable(), findsOneWidget);
+      final texture = find.byKey(const ValueKey('test-camera-texture'));
+      expect(platform.previewBuilds, 1);
+      expect(texture, findsOneWidget);
+      final mountedTexture = tester.element(texture);
+
+      await tester.tap(swap);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(preview), inset);
+      expect(tester.getCenter(portrait), full.center);
+      expect(tester.element(texture), same(mountedTexture));
+      expect(platform.previewBuilds, 1);
+      expect(platform.releases, isEmpty);
+
+      await tester.tap(swap);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(preview), full);
+      await tester.tap(swap);
+      await tester.pumpAndSettle();
+      await tester.runAsync(camera.stop);
+      await tester.pumpAndSettle();
+      expect(preview, findsNothing);
+      expect(swap, findsNothing);
+      expect(tester.getCenter(portrait), full.center);
+      expect(platform.releases, [1]);
+
+      await tester.runAsync(camera.start);
+      expect(camera.error, isNull);
+      expect(camera.preview, isNotNull);
+      await tester.pumpAndSettle();
+      expect(tester.getRect(preview), full);
+      await tester.runAsync(camera.stop);
+      await tester.pumpAndSettle();
+    });
+  }
+
   test('turning off the camera discards an in-flight frame', () async {
     final directory = await Directory.systemTemp.createTemp('call-camera-');
     addTearDown(() => directory.delete(recursive: true));
@@ -37,6 +121,16 @@ class _CameraPlatform extends CameraPlatform {
   final captureStarted = Completer<void>();
   final picture = Completer<XFile>();
   final releases = <int>[];
+  int previewBuilds = 0;
+
+  @override
+  Widget buildPreview(int cameraId) {
+    previewBuilds++;
+    return const ColoredBox(
+      key: ValueKey('test-camera-texture'),
+      color: Colors.red,
+    );
+  }
 
   @override
   Future<List<CameraDescription>> availableCameras() async => const [

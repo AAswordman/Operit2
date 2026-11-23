@@ -257,6 +257,10 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
               modifierScope: modifierScope,
             );
       _dispatchOnLoad();
+      final rootLayout = widget.onLoadHandledByHost
+          ? ToolPkgUiRootLayout.maybeOf(context)
+          : null;
+      final presented = rootLayout?.builder(context, props, content) ?? content;
       return operitDesignBridgeEnabled
           ? OperitDesignSource(source: {
               'kind': 'plugin-compose',
@@ -265,8 +269,8 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
               'composeNode': node.type,
               'composeId': node.id,
               'composeMount': nodePath,
-            }, child: content)
-          : content;
+            }, child: presented)
+          : presented;
     });
   }
 

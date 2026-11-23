@@ -74,6 +74,25 @@ test("call renders the bound custom role and rejects a late active-role preview"
   assert.ok(rendered.some(node => node.type === "Text" && node.props.text === "Bound caller"));
 });
 
+test("native call layout uses the bound portrait and keeps the call controls", async () => {
+  const screen = callScreen(({ chatId }) => chatId === null
+    ? { title: "Active role", avatarUri: "vfs://shared/avatars/active.png" }
+    : { title: "Bound role", avatarUri: "vfs://shared/avatars/bound.png" });
+  screen.states.set("voiceCallNativeLayout", true);
+  screen.render();
+  screen.effects.get("call-avatar")();
+  await new Promise(resolve => setImmediate(resolve));
+  const ready = screen.render();
+  assert.equal(ready.props.key, "voice-call-stage");
+  assert.equal(ready.props.avatarTitle, "Active role");
+  await nodes(ready).find(node => node.type === "FilledTonalButton").props.onClick();
+  const call = screen.render();
+  assert.equal(call.props.avatarUri, "vfs://shared/avatars/bound.png");
+  assert.equal(call.props.avatarTitle, "Bound role");
+  assert.ok(nodes(call).some(node => node.type === "Button"));
+  assert.ok(!nodes(call).some(node => node.type === "Image"));
+});
+
 /** A failed identity read must pause before recording and preserve its actual error. */
 test("call pauses on identity failure and rereads the same chat when resumed", async () => {
   let rejectRead = true;

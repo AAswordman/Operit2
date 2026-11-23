@@ -13,6 +13,7 @@ import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../theme/OperitTheme.dart' show operitColorScheme;
 import 'VoiceCallCameraPanel.dart';
+import 'VoiceCallStage.dart';
 
 /// Hosts an ordinary live plugin UI session on a transparent, undecorated root.
 class FloatingWindowApp extends StatefulWidget {
@@ -38,6 +39,41 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
   ).windowPreferencesFlow();
 
   VoiceCallCamera? _camera;
+
+  bool get _isVoiceCall =>
+      (widget.launch.payload['plugin'] as Map)['packageName'] ==
+          voiceCallPackage &&
+      const {
+        voiceCallRoute,
+        voiceCallOverlayRoute,
+      }.contains(widget.launch.payload['route']);
+
+  Widget _layoutCall(
+    ThemePreferenceSnapshot appearance,
+    BuildContext context,
+    Map<String, Object?> props,
+    Widget controls,
+  ) {
+    final camera = _camera;
+    if (props['key'] == 'voice-call-stage') {
+      return VoiceCallStage(
+        appearance: appearance,
+        camera: camera,
+        avatarUri: props['avatarUri'] as String?,
+        avatarTitle: props['avatarTitle'] as String?,
+        controls: controls,
+      );
+    }
+    // An installed plugin may predate the native layout.
+    return camera == null
+        ? controls
+        : Column(
+            children: [
+              Expanded(child: controls),
+              VoiceCallCameraPanel(camera: camera),
+            ],
+          );
+  }
 
   Future<Object?> _cameraCommand(String name) async {
     switch (name) {
@@ -137,7 +173,10 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
       showLauncherChrome: false,
       showLoadingIndicator: false,
       sessionController: _session,
-      initialState: (payload['state'] as Map).cast<String, Object?>(),
+      initialState: {
+        ...(payload['state'] as Map).cast<String, Object?>(),
+        if (_isVoiceCall) 'voiceCallNativeLayout': true,
+      },
     );
 
     return MaterialApp(
@@ -153,14 +192,13 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
       home: UnhandledErrorHost(
         child: Material(
           type: MaterialType.transparency,
-          child: _camera == null
-              ? launcher
-              : Column(
-                  children: [
-                    Expanded(child: launcher),
-                    VoiceCallCameraPanel(camera: _camera!),
-                  ],
-                ),
+          child: _isVoiceCall
+              ? ToolPkgUiRootLayout(
+                  builder: (context, props, controls) =>
+                      _layoutCall(appearance, context, props, controls),
+                  child: launcher,
+                )
+              : launcher,
         ),
       ),
     );

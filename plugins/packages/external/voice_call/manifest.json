@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.voice_call",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": { "zh": "语音通话", "en": "Voice Call" },

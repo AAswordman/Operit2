@@ -163,6 +163,7 @@ function avatarWave(ctx: ComposeDslContext, identity: ChatDisplayIdentity | null
 /** Runs a call in the floating window. */
 export function call(ctx: ComposeDslContext): ComposeNode {
   const windowApi = ToolPkg.ui.floatingWindows;
+  const [nativeLayout] = ctx.useState("voiceCallNativeLayout", false);
   const [phase, setPhase] = ctx.useState<Phase>("phase", "idle");
   const [heard, setHeard] = ctx.useState("heard", "");
   const [reply, setReply] = ctx.useState("reply", "");
@@ -216,7 +217,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   }, []);
 
   ctx.useEffect("call-wave", () => {
-    if ((phase !== "listening" && phase !== "recognizing" && phase !== "waiting" && phase !== "speaking")) {
+    if (nativeLayout || (phase !== "listening" && phase !== "recognizing" && phase !== "waiting" && phase !== "speaking")) {
       return () => {};
     }
     const start = Date.now();
@@ -246,7 +247,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       disposed = true;
       clearInterval(timer);
     };
-  }, [phase]);
+  }, [phase, nativeLayout]);
 
   async function record(echoCancellation = false): Promise<ToolPkg.FloatingWindowRecording | null> {
     session.recording = true;
@@ -453,6 +454,17 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       ui.Text({ text: text("hangup"), style: "labelLarge", color: colors.onError }),
     ])]),
   ]);
+  if (nativeLayout) {
+    const portrait = { avatarUri: identity?.avatarUri, avatarTitle: identity?.title };
+    return ui.Column({ key: "voice-call-stage", ...portrait,
+      fillMaxWidth: true, horizontalAlignment: "center", spacing: 6,
+    }, [
+      ui.ScrollArea({ weight: 1, fillMaxWidth: true }, [
+        ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 4 }, status),
+      ]),
+      actions,
+    ]);
+  }
   return ui.Surface({ fillMaxSize: true, containerColor: colors.surface, shape: { type: "rounded", radius: 28 } }, [
     ui.Column({ fillMaxSize: true, horizontalAlignment: "center", paddingHorizontal: 20, paddingVertical: 16, spacing: 6,
       backgroundShape: { type: "rounded", radius: 28 },

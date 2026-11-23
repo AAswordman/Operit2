@@ -44,6 +44,24 @@ class ToolPkgUiContent {
   final Widget sliver;
 }
 
+/// Lets an embedding place a Compose root using its declared properties.
+class ToolPkgUiRootLayout extends InheritedWidget {
+  const ToolPkgUiRootLayout({
+    super.key,
+    required this.builder,
+    required super.child,
+  });
+
+  final Widget Function(BuildContext, Map<String, Object?>, Widget) builder;
+
+  static ToolPkgUiRootLayout? maybeOf(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ToolPkgUiRootLayout>();
+
+  @override
+  bool updateShouldNotify(ToolPkgUiRootLayout oldWidget) =>
+      builder != oldWidget.builder;
+}
+
 /// Uses ordinary box layout for standalone screens and existing embeddings.
 Widget _buildToolPkgUiBody(BuildContext context, ToolPkgUiContent content) =>
     content.body;
