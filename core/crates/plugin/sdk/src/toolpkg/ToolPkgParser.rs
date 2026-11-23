@@ -1979,7 +1979,7 @@ impl ToolPkgArchiveParser {
     /// Extracts normalized ToolPkg entries from embedded archive bytes.
     #[allow(non_snake_case)]
     pub fn extractZipEntriesFromAssetBytes(
-        bytes: &'static [u8],
+        bytes: &[u8],
         filesystem: &VisualFileSystem,
         destinationDir: &str,
     ) -> bool {

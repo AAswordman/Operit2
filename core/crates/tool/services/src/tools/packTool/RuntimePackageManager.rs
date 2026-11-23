@@ -170,18 +170,6 @@ impl ToolPkgExecutionEngineFactory for RuntimeToolPkgExecutionEngineFactory {
     }
 }
 
-/// Destroys one temporary ToolPkg registration engine when its load scope ends.
-struct ToolPkgRegistrationEngineGuard {
-    engine: Arc<dyn JsExecutionEngine>,
-}
-
-impl Drop for ToolPkgRegistrationEngineGuard {
-    /// Interrupts and destroys the temporary registration engine.
-    fn drop(&mut self) {
-        self.engine.destroy();
-    }
-}
-
 /// Exposes runtime-owned embedded plugin assets to the SDK package manager.
 #[derive(Clone)]
 struct RuntimeToolPkgAssetSource {
@@ -333,6 +321,13 @@ struct PackageScanActivation {
 }
 
 impl PackageScanActivation {
+    /// Selects an installed built-in from the scan snapshot; absent owners still honor tombstones.
+    fn acceptsBuiltin(&self, id: &str) -> Result<bool, String> {
+        match self.selection.records.iter().find(|record| record.id == id) {
+            Some(record) => Ok(record.sourceName.is_empty() && record.settings["builtin"] == true),
+            None => ExtensionStore::default().acceptsBuiltinPackage(id),
+        }
+    }
     /// Reads activation flags once for an entire scan, including the initial cold start.
     fn read() -> Result<Self, String> {
         let mut states = BTreeMap::new();
@@ -919,16 +914,30 @@ impl RuntimePackageManager {
         self.pluginPackageManager.availablePackagesMut()
     }
 
-    /// Returns the stable local identifier that binds installed market ToolPkg seals to this client.
-    #[allow(non_snake_case)]
-    fn marketToolPkgInstallationId(&self) -> Result<[u8; ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE], String> {
-        self.registryScanner().marketToolPkgInstallationId()
-    }
-
-    /// Verifies an archive using the seal identity of its exact installation owner.
-    #[allow(non_snake_case)]
+    /// Verifies installation seals at package mutation boundaries.
     fn isInstalledMarketToolPkg(&self, file: &Path) -> Result<bool, String> {
-        self.registryScanner().isInstalledMarketToolPkg(file)
+        let root = self.storePaths.runtime_storage_key(file)?;
+        let records = ExtensionStore::default().activeRecords("package")?;
+        let record = records.iter().find(|record| {
+            ExtensionStore::root("package", &record.scope)
+                .is_ok_and(|directory| format!("{directory}/{}", record.sourceName) == root)
+        });
+        let installationId = match record {
+            Some(record) => decodeMarketToolPkgInstallationId(
+                record.settings["installationId"]
+                    .as_str()
+                    .ok_or("Registered installation seal is missing")?,
+            )?,
+            None => marketToolPkgInstallationId(&self.dataStore)?,
+        };
+        let bytes = self
+            .filesystem
+            .readFileBytes(&vfsPathString(file))
+            .map_err(|e| e.to_string())?;
+        Ok(matches!(
+            ToolPkgProtection::verifyMarketInstallSeal(&bytes, &installationId),
+            Ok(true)
+        ))
     }
 
     /// Captures only the capabilities and shared caches needed for resource I/O.
@@ -2688,9 +2697,14 @@ impl RuntimePackageManager {
     fn registryScanner(&self) -> PackageRegistryScanner {
         PackageRegistryScanner {
             runtimeSupport: self.toolHandler.runtimeSupport(),
-            toolPkgExecutionEngineFactory: self.toolPkgExecutionEngineFactory.clone(),
-            filesystem: self.filesystem.clone(), storePaths: self.storePaths.clone(),
+            registrationExecutor: self.toolHandler.runtimeDependencies().js_execution_provider().create_package_executor(
+                Arc::new(crate::tools::ToolJsRuntime::PackageManagerJsRuntime::new(
+                    self.toolHandler.getOrCreatePackageManager(), self.toolHandler.clone(),
+                )), Arc::new(self.toolHandler.clone()),
+            ),
+            resources: self.resourceReader(),
             dataStore: self.dataStore.clone(),
+            filesystem: self.filesystem.clone(), storePaths: self.storePaths.clone(),
             externalPackageScanCache: self.externalPackageScanCache.clone(),
             builtInPackageScanCache: self.builtInPackageScanCache.clone(),
             runtimes: self.toolPkgManager().clone(),
@@ -5103,7 +5117,7 @@ impl RuntimePackageManager {
             let bytes = if market {
                 let raw = ToolPkgProtection::unwrapMarketArchive(&downloaded)?;
                 ToolPkgProtection::validateMarketToolPkgArchive(&raw)?;
-                ToolPkgProtection::attachMarketInstallSeal(&raw, &self.marketToolPkgInstallationId()?)?
+                ToolPkgProtection::attachMarketInstallSeal(&raw, &marketToolPkgInstallationId(&self.dataStore)?)?
             } else { downloaded };
             if expectedSha256.is_none() {
                 self.localToolPkgUpdateTarget(&Self::readToolPkgImportManifest(&bytes)?)?;
@@ -5117,11 +5131,12 @@ impl RuntimePackageManager {
         })();
         async move {
             let Some((scanner, sourcePath, bytes, scope, market)) = input? else { return Ok(None); };
-            let engine = scanner.registrationEngine()?;
             let issues = RefCell::new(Vec::new());
             let sourceType = if market { ToolPkgSourceType::MARKET } else { ToolPkgSourceType::EXTERNAL };
+            let catalog = ToolPkgArchiveParser::readToolPkgCatalog(&bytes, sourceType.clone(), &sourcePath, false)?;
+            let resources = scanner.resources.registrationResources(&catalog.containerRuntime, &bytes)?;
             let loaded = ToolPkgLoader::loadToolPkgFromArchiveBytes(
-                &bytes, sourceType, &sourcePath, false, scope, engine.engine.as_ref(),
+                &bytes, sourceType, &sourcePath, false, scope, scanner.registrationExecutor.as_ref(), resources,
                 |packageName, error| issues.borrow_mut().push(newToolPkgLoadIssue(
                     sourcePath.clone(), nonEmptyString(packageName), packageName.into(),
                     "toolpkg_registration", error.into(), packageLoadIssueKind(&sourcePath, true, market),
@@ -6210,4 +6225,22 @@ mod core_command_info_args_tests {
             serde_json::from_str(r#"{ "name": "dryRun", "required": false }"#).unwrap();
         assert!(!arg.required);
     }
+}
+
+/// Returns the stable client identity used when authenticating installed market packages.
+fn marketToolPkgInstallationId(
+    dataStore: &CoreNodeStateStore,
+) -> Result<[u8; ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE], String> {
+    let key = stringPreferencesKey(MARKET_TOOLPKG_INSTALLATION_ID_KEY);
+    dataStore.try_edit_result(|preferences| {
+        match preferences.getTyped::<String>(&key)? {
+            Some(encoded) => decodeMarketToolPkgInstallationId(&encoded)
+                .map_err(PreferencesDataStoreError::Message),
+            None => {
+                let installationId = ToolPkgProtection::createMarketInstallationId();
+                preferences.set(&key, encodeMarketToolPkgInstallationId(&installationId));
+                Ok(installationId)
+            }
+        }
+    }).map_err(|error| error.to_string())
 }

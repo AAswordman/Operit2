@@ -4,7 +4,7 @@ use std::sync::Arc;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::javascript::{JsExecutionEngine, ToolPkgConfigScope, ToolPkgMainRegistrationCapture};
+use crate::javascript::{JsExecutionEngine, ToolPkgConfigScope, ToolPkgMainRegistrationCapture, ToolPkgRegistrationExecutor, ToolPkgTextResourceHost};
 use crate::package::LocalizedText;
 use crate::toolpkg::ToolPkgCommonPluginConstants::*;
 use crate::toolpkg::ToolPkgParser::{
@@ -42,15 +42,15 @@ impl ToolPkgMainRegistrationScriptParser {
 
     /// Parses ToolPkg main-script registrations with archive text resources available to JavaScript.
     #[allow(non_snake_case)]
-    pub(crate) async fn parseWithTextResources(
+    pub(crate) async fn parseWithTextResources<E: ToolPkgRegistrationExecutor + ?Sized>(
         script: &str,
         toolPkgId: &str,
         mainScriptPath: &str,
         apiVersion: &str,
         environmentNames: &[String],
         configScope: ToolPkgConfigScope,
-        jsEngine: &dyn JsExecutionEngine,
-        textResources: Option<Arc<BTreeMap<String, String>>>,
+        jsEngine: &E,
+        textResources: Option<Arc<dyn ToolPkgTextResourceHost>>,
     ) -> ToolPkgMainRegistrationParseResult {
         let mut params = BTreeMap::new();
         params.insert(
@@ -83,7 +83,7 @@ impl ToolPkgMainRegistrationScriptParser {
         );
 
         let capturedResult = jsEngine
-            .execute_toolpkg_main_registration_function_with_text_resources(
+            .register_toolpkg(
                 script,
                 "registerToolPkg",
                 &params,

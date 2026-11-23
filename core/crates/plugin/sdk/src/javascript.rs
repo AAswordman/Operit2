@@ -431,7 +431,7 @@ pub trait JsExecutionHost: Send + Sync {
 }
 
 /// Executes package JavaScript through one bound package and host context.
-pub trait JsPackageExecutor: Send + Sync {
+pub trait JsPackageExecutor: ToolPkgRegistrationExecutor {
     /// Executes one package tool through the bound execution context.
     fn execute_package_tool(
         &self,
@@ -655,6 +655,32 @@ pub trait ToolPkgTextResourceHost: Send + Sync {
     ) -> Result<Option<String>, String>;
 }
 
+impl ToolPkgTextResourceHost for BTreeMap<String, String> {
+    /// Reads a normalized resource from an explicitly supplied immutable snapshot.
+    fn read_toolpkg_text_resource(&self, _package: &str, path: &str) -> Result<Option<String>, String> {
+        Ok(self.get(&path.to_ascii_lowercase()).cloned())
+    }
+}
+
+/// Executes registration through either an engine or the bounded package executor.
+pub trait ToolPkgRegistrationExecutor: Send + Sync {
+    /// Captures declarations using the resource owner selected before publication.
+    fn register_toolpkg(
+        &self, script: &str, function: &str, params: &BTreeMap<String, Value>,
+        resources: Option<Arc<dyn ToolPkgTextResourceHost>>,
+    ) -> JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>>;
+}
+
+impl<T: JsExecutionEngine + ?Sized> ToolPkgRegistrationExecutor for T {
+    /// Adapts directly owned engines to the common registration contract.
+    fn register_toolpkg(
+        &self, script: &str, function: &str, params: &BTreeMap<String, Value>,
+        resources: Option<Arc<dyn ToolPkgTextResourceHost>>,
+    ) -> JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>> {
+        self.execute_toolpkg_main_registration_function_with_text_resources(script, function, params, resources)
+    }
+}
+
 /// Immutable package environment owned by one ToolPkg JavaScript execution context.
 #[derive(Clone)]
 pub struct ToolPkgExecutionContext {
@@ -734,7 +760,7 @@ pub trait JsExecutionEngine: Send + Sync {
         script: &str,
         function_name: &str,
         params: &BTreeMap<String, Value>,
-        text_resources: Option<Arc<BTreeMap<String, String>>>,
+        text_resources: Option<Arc<dyn ToolPkgTextResourceHost>>,
     ) -> JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>>;
 
     /// Executes a streamed render with a synchronous sink for every generated retained commit.

@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::io::{Cursor, Read, Seek};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
@@ -26,7 +25,40 @@ pub(super) struct ToolPkgResourceReader {
     pub(super) toolPkgTextResourceCache: Arc<ToolPkgTextResourceCache>,
 }
 
+/// Reads only requested entries from the existing extracted revision cache.
+struct RegistrationResources {
+    filesystem: Arc<VisualFileSystem>,
+    root: PathBuf,
+    index: operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgEntryIndex,
+    package: String,
+}
+
+impl operit_plugin_sdk::javascript::ToolPkgTextResourceHost for RegistrationResources {
+    /// Resolves archive spelling before reading and decrypting one cached text entry.
+    fn read_toolpkg_text_resource(&self, package: &str, path: &str) -> Result<Option<String>, String> {
+        if package != self.package { return Err("Registration resource owner mismatch".into()); }
+        let Some(entry) = self.index.resolveEntryName(path) else { return Ok(None); };
+        let bytes = self.filesystem.readFileBytes(&vfsPathString(&self.root.join(entry)))?;
+        operit_plugin_sdk::toolpkg::ToolPkgProtection::decodeUtf8(&bytes).map(Some)
+    }
+}
+
 impl ToolPkgResourceReader {
+    /// Reuses the normal extracted cache instead of building a registration-only text snapshot.
+    pub(super) fn registrationResources(
+        &self, runtime: &ToolPkgContainerRuntime, bytes: &[u8],
+    ) -> Result<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>, String> {
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|error| error.to_string())?;
+        let index = ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+        let signature = self.buildToolPkgCacheSignatureForRuntime(runtime)
+            .ok_or("Registration source is unavailable")?;
+        let _guard = self.toolPkgCacheLock.lock().map_err(|error| error.to_string())?;
+        let root = self.ensureToolPkgCacheDirLocked(
+            &runtime.packageName, &signature, &runtime.mainEntry,
+            |destination| ToolPkgArchiveParser::extractZipEntriesFromAssetBytes(bytes, self.filesystem.as_ref(), &vfsPathString(destination)),
+        ).ok_or("Cannot prepare package resource cache")?;
+        Ok(Arc::new(RegistrationResources { filesystem: self.filesystem.clone(), root, index, package: runtime.packageName.clone() }))
+    }
     /// Returns the virtual cache root for package resources.
     #[allow(non_snake_case)]
     fn toolPkgCacheRootDir(&self) -> PathBuf {
@@ -120,7 +152,7 @@ impl ToolPkgResourceReader {
             false
         };
         let mainScriptFile = cacheDir.join(mainEntry);
-        let mainScriptExists = self
+        let mainScriptExists = mainEntry.is_empty() || self
             .filesystem
             .fileExists(&vfsPathString(&mainScriptFile))
             .map(|info| info.exists && !info.isDirectory)
@@ -325,7 +357,7 @@ impl ToolPkgResourceReader {
         self.textResource(runtime, &runtime.mainEntry)
     }
 
-    /// Caches one requested resource without extracting or scanning the rest of the package.
+    /// Caches one requested text resource from the shared extracted revision.
     #[allow(non_snake_case)]
     fn textResource(
         &self,
@@ -357,72 +389,17 @@ impl ToolPkgResourceReader {
         Ok(text)
     }
 
-    /// Reads an exact source entry through host capabilities, borrowing immutable archive bytes.
+    /// Reads runtime text through the same extracted revision cache used by registration.
     #[allow(non_snake_case)]
-    fn readSourceText(
-        &self,
-        runtime: &ToolPkgContainerRuntime,
-        path: &str,
-    ) -> Result<String, String> {
-        match runtime.sourceType {
-            ToolPkgSourceType::ASSET => {
-                let asset =
-                    bundledPluginAssetByName(self.runtimeSupport.as_ref(), &runtime.sourcePath)
-                        .ok_or_else(|| {
-                            format!("ToolPkg asset is unavailable: {}", runtime.sourcePath)
-                        })?;
-                Self::readArchiveText(Cursor::new(asset.bytes), path)
-            }
-            ToolPkgSourceType::EXTERNAL | ToolPkgSourceType::MARKET => {
-                let source = self
-                    .filesystem
-                    .fileExists(&runtime.sourcePath)
-                    .map_err(|error| error.to_string())?;
-                if !source.exists {
-                    return Err(format!(
-                        "ToolPkg package source is unavailable: {}",
-                        runtime.sourcePath,
-                    ));
-                }
-                if source.isDirectory {
-                    let resource = PathBuf::from(&runtime.sourcePath).join(path);
-                    let bytes = self
-                        .filesystem
-                        .readFileBytes(&vfsPathString(&resource))
-                        .map_err(|error| format!("Cannot read ToolPkg resource {path}: {error}"))?;
-                    return operit_plugin_sdk::toolpkg::ToolPkgProtection::decodeUtf8(&bytes)
-                        .map_err(|error| {
-                            format!("Cannot decode ToolPkg resource {path}: {error}")
-                        });
-                }
-                let bytes = self
-                    .filesystem
-                    .readFileBytes(&runtime.sourcePath)
-                    .map_err(|error| {
-                        format!(
-                            "Cannot read ToolPkg archive {}: {error}",
-                            runtime.sourcePath
-                        )
-                    })?;
-                Self::readArchiveText(Cursor::new(bytes), path)
-            }
-        }
-    }
-
-    /// Decompresses and decodes exactly one archive entry without creating an extracted directory.
-    #[allow(non_snake_case)]
-    fn readArchiveText<R: Read + Seek>(reader: R, path: &str) -> Result<String, String> {
-        let mut archive = zip::ZipArchive::new(reader)
-            .map_err(|error| format!("Cannot open ToolPkg archive: {error}"))?;
-        let mut entry = archive
-            .by_name(path)
-            .map_err(|error| format!("Cannot open ToolPkg resource {path}: {error}"))?;
-        let mut bytes = Vec::new();
-        entry
-            .read_to_end(&mut bytes)
-            .map_err(|error| format!("Cannot read ToolPkg resource {path}: {error}"))?;
+    fn readSourceText(&self, runtime: &ToolPkgContainerRuntime, path: &str) -> Result<String, String> {
+        let directory = if runtime.sourceType != ToolPkgSourceType::ASSET
+            && self.filesystem.fileExists(&runtime.sourcePath)?.isDirectory {
+            PathBuf::from(&runtime.sourcePath)
+        } else {
+            self.ensureToolPkgCacheLocked(runtime).ok_or("ToolPkg resource cache is unavailable")?
+        };
+        let bytes = self.filesystem.readFileBytes(&vfsPathString(&directory.join(path)))?;
         operit_plugin_sdk::toolpkg::ToolPkgProtection::decodeUtf8(&bytes)
-            .map_err(|error| format!("Cannot decode ToolPkg resource {path}: {error}"))
     }
 
     /// Resolves a normalized resource path inside the validated cache.

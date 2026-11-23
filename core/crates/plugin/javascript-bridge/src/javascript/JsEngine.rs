@@ -587,7 +587,7 @@ impl JsEngineWorker {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
+        textResources: Option<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>>,
     ) -> JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>> {
         let worker = self.clone();
         let script = script.to_owned();
@@ -1013,7 +1013,7 @@ impl JsEngine {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
+        textResources: Option<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>>,
     ) -> JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>> {
         self.worker.execute_toolpkg_main_registration_function(
             script,
@@ -1492,7 +1492,7 @@ impl JsEngineState {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
-        textResources: Option<Arc<ToolPkgTextResources>>,
+        textResources: Option<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>>,
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
         let apiRuntime = buildToolPkgApiRuntimeScript();
         self.runtime.executeHostJavaScriptCommand(HostJavaScriptCommand::Evaluate("operit-api.js", &apiRuntime)).await
@@ -1501,7 +1501,7 @@ impl JsEngineState {
         self.runtime.executeHostJavaScriptCommand(HostJavaScriptCommand::Evaluate("operit-registration.js", &bridge)).await
             .map_err(|error| JsExecutionError::runtime(error.to_string()))?;
         let source = match textResources {
-            Some(resources) => JsTextResourceSource::Snapshot(resources),
+            Some(resources) => JsTextResourceSource::Package(resources),
             None => packageTextResourceSource(self.toolPkgContext.as_ref()),
         };
         // Bind trusted scope/owner parameters before any top-level module code can query paths.
@@ -2886,7 +2886,7 @@ impl JsExecutionEngine for JsEngine {
         script: &str,
         functionName: &str,
         params: &BTreeMap<String, Value>,
-        textResources: Option<Arc<BTreeMap<String, String>>>,
+        textResources: Option<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>>,
     ) -> JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>> {
         JsEngine::execute_toolpkg_main_registration_function_with_text_resources(
             self,

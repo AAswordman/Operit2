@@ -2,8 +2,8 @@
 function __operitInstallToolPkgRouteApi() {
     var api = globalThis.ToolPkg;
     if (!api || typeof api !== "object") throw new Error("ToolPkg registry is unavailable");
-    if (globalThis.__operitToolPkgRoutes) return;
-    var state = { methods: new Map(), streams: new Map(), sequence: 0 };
+    if (globalThis.__operitToolPkgRoutes && globalThis.__operitToolPkgRoutes.api === api) return;
+    var state = { api: api, methods: new Map(), streams: new Map(), sequence: 0 };
     globalThis.__operitToolPkgRoutes = state;
     /** Uses the existing scoped host Promise bridge. */
     function invoke(binding, args) { return __operitInvokeHostAsync(binding, args); }

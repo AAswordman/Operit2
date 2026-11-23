@@ -1675,6 +1675,64 @@ fn toolpkg_ipc_local_call_returns_handler_result() {
     );
 }
 
+/// Original callback source remains attached to its function across later selective compilations.
+#[test]
+fn async_callback_source_preserves_unicode_nested_callbacks_and_ownership() {
+    let mut state = newTestJsEngineState(None);
+    let script = r#"
+        const heading = '角色卡 😀';
+        async function outer(value) {
+            const inner = async () => { await Promise.resolve(); return '嵌套 🧭'; };
+            return await inner();
+        }
+        exports.inspect = function() {
+            globalThis.retainedAsyncSource = outer;
+            return outer.toString();
+        };
+    "#;
+    let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost, script, "inspect", &testParams(),
+        &BTreeMap::new(), None, true, 60, None,
+    );
+    let original: String = serde_json::from_str(&expect_js_output(output, "original async source")).unwrap();
+    let start = script.find("async function outer").unwrap();
+    let end = script.find("\n        exports.inspect").unwrap();
+    assert_eq!(original, script[start..end].trim_end());
+    let other = r#"exports.inspect = function() { return globalThis.retainedAsyncSource.toString(); };"#;
+    let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost, other, "inspect", &testParams(),
+        &BTreeMap::new(), None, true, 60, None,
+    );
+    assert_eq!(serde_json::from_str::<String>(&expect_js_output(output, "retained source")).unwrap(), original);
+}
+
+/// Selective lowering retains synchronous bindings for helper names and preserves execution order and strictness.
+#[test]
+fn selective_async_compilation_preserves_shared_scope_and_statement_order() {
+    let mut state = newTestJsEngineState(None);
+    let script = r#"
+        const _run = 41;
+        const events = [];
+        function plain( value ) { /* exact_sync */ return value; }
+        events.push('before');
+        async function run() { await Promise.resolve(); return _run + 1; }
+        // A synchronous statement after a lowered declaration must still run at its original position.
+        events.push('after');
+        exports.inspect = async function() {
+            return {result: await run(), events, source: plain.toString(), strict: (function() { 'use strict'; return this === undefined; })()};
+        };
+    "#;
+    let output = state.execute_script_function_on_current_thread(
+        super::JsTextResourceSource::ExecutionHost, script, "inspect", &testParams(),
+        &BTreeMap::new(), None, true, 60, None,
+    );
+    let value: Value = serde_json::from_str(&expect_js_output(output, "selective async execution")).unwrap();
+    assert_eq!(value["result"], 42);
+    assert_eq!(value["events"], serde_json::json!(["before", "after"]));
+    assert_eq!(value["source"], "function plain( value ) { /* exact_sync */ return value; }");
+    assert_eq!(value["strict"], true);
+}
+
 /// Serialized native async runners compile in the destination with registered context bindings.
 #[test]
 fn runtime_context_with_context_runs_local_main_runner() {

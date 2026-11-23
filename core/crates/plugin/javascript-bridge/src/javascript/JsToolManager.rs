@@ -405,6 +405,22 @@ impl JsToolManager {
     }
 }
 
+impl operit_plugin_sdk::javascript::ToolPkgRegistrationExecutor for JsToolManager {
+    /// Shares the existing four-slot engine pool with package registration.
+    fn register_toolpkg(
+        &self, script: &str, function: &str, params: &BTreeMap<String, Value>,
+        resources: Option<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>>,
+    ) -> JsExecutionCompletion<JsExecutionResult<operit_plugin_sdk::javascript::ToolPkgMainRegistrationCapture>> {
+        let manager = self.clone();
+        let (script, function, params) = (script.to_owned(), function.to_owned(), params.clone());
+        Box::pin(async move {
+            manager.withEngine(move |engine| engine.execute_toolpkg_main_registration_function_with_text_resources(
+                &script, &function, &params, resources,
+            )).await
+        })
+    }
+}
+
 impl JsPackageExecutor for JsToolManager {
     /// Executes one package tool through this manager's bound runtime context.
     fn execute_package_tool_streaming(
@@ -1212,11 +1228,20 @@ mod tests {
         let filesystem = test_filesystem(Arc::new(host));
         let registration_engine = JsEngine::new(Arc::new(TestJsExecutionHost)).expect("registration fixture must initialize");
         let load_errors = Mutex::new(Vec::<String>::new());
-        let load_result = ToolPkgLoader::loadToolPkgFromExternalFile(
-            &filesystem,
+        let bytes = filesystem.readFileBytes("/operitapp/data/marketplace/downloaded/market_flow_toolpkg.toolpkg").unwrap();
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let index = operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgArchiveParser::buildZipEntryIndex(&mut archive);
+        let resources = index.entryNames.iter().filter_map(|name| {
+            operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgArchiveParser::readZipEntryText(&mut archive, &index, name)
+                .map(|text| (name.to_ascii_lowercase(), text))
+        }).collect::<BTreeMap<_, _>>();
+        let load_result = ToolPkgLoader::loadToolPkgFromArchiveBytes(
+            &bytes, operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgSourceType::EXTERNAL,
             "/operitapp/data/marketplace/downloaded/market_flow_toolpkg.toolpkg",
+            false,
             ToolPkgConfigScope::Device,
             &registration_engine,
+            Arc::new(resources),
             |package_name, error| {
                 load_errors
                     .lock()
@@ -1375,6 +1400,33 @@ mod tests {
             Arc::new(TestExecutionEngineFactory),
         );
         (manager, package_runtime)
+    }
+
+    /// Registers many owners through one pooled engine and clears captures after failure.
+    #[tokio::test(flavor = "current_thread")]
+    async fn registration_reuses_bounded_pool_without_cross_package_capture() {
+        use operit_plugin_sdk::javascript::ToolPkgRegistrationExecutor;
+        use operit_host_api::HostManager::{setDefaultHostJavaScriptRuntimeHost, setDefaultHostRuntimeTaskSchedulerHost};
+        setDefaultHostJavaScriptRuntimeHost(Arc::new(operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new()));
+        setDefaultHostRuntimeTaskSchedulerHost(Arc::new(operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new()));
+        register_test_runtime_storage("registration-pool");
+        let (manager, _) = toolpkg_manager("exports.run = () => true;");
+        let first = manager.withEngine(|engine| Box::pin(async move { Ok(engine) })).await.unwrap();
+        for index in 0..24 {
+            let params = BTreeMap::from([
+                ("toolPkgId".into(), serde_json::json!(format!("test.owner{index}"))),
+                ("__operit_registration_config_scope".into(), serde_json::json!("device")),
+            ]);
+            let script = if index == 12 { "exports.registerToolPkg = () => { throw Error('expected'); };" }
+                else { "if (typeof ToolPkg.route !== 'function') throw Error('Missing route API'); exports.probe = () => true; exports.registerToolPkg = () => { ToolPkg.registerApi({name:'probe', function:exports.probe}); };" };
+            let result = manager.register_toolpkg(script, "registerToolPkg", &params, None).await;
+            if index == 12 { assert!(result.is_err()); }
+            else { assert_eq!(result.unwrap().publicApis.len(), 1); }
+            let pool = manager.enginePool.lock().unwrap();
+            assert_eq!(pool.len(), 1);
+            assert!(Arc::ptr_eq(&first, &pool[0]));
+        }
+        manager.destroy();
     }
 
     /// Idle and in-flight engines must both leave the pool when its manager closes.

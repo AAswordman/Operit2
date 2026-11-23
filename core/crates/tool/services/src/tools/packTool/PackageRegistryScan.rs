@@ -4,10 +4,11 @@ use super::*;
 /// Owns scan capabilities and parse caches, never a second runtime registry or execution owner.
 pub(super) struct PackageRegistryScanner {
     pub(super) runtimeSupport: Arc<dyn ToolRuntimeSupport>,
-    pub(super) toolPkgExecutionEngineFactory: Arc<dyn ToolPkgExecutionEngineFactory>,
+    pub(super) registrationExecutor: Arc<dyn operit_plugin_sdk::javascript::JsPackageExecutor>,
+    pub(super) resources: resource_reader::ToolPkgResourceReader,
+    pub(super) dataStore: CoreNodeStateStore,
     pub(super) filesystem: Arc<VisualFileSystem>,
     pub(super) storePaths: RuntimeStorePaths,
-    pub(super) dataStore: CoreNodeStateStore,
     pub(super) externalPackageScanCache: Arc<BTreeMap<String, ExternalPackageScanCacheEntry>>,
     pub(super) builtInPackageScanCache: Arc<BTreeMap<String, ExternalPackageScanCacheEntry>>,
     pub(super) runtimes: ToolPkgManager,
@@ -25,14 +26,27 @@ pub(super) struct PreparedPackageRegistry {
 impl PackageRegistryScanner {
     /// Runs filesystem reads and package-owned registration code outside the registry mutex.
     pub(super) async fn scan(mut self) -> Result<PreparedPackageRegistry, String> {
+        let clock = operit_host_api::HostManager::defaultHostRuntimeTaskSchedulerHost();
+        let mut last = clock.monotonicTimeMillis().expect("Registry scanning requires the Host clock");
+        // Keep only scan boundaries; detailed investigation logging is not part of each package call.
+        let mut phase = |stage: &str| {
+            let now = clock.monotonicTimeMillis().expect("Registry scanning requires the Host clock");
+            AppLogger::trace("PackageLoadTiming", &format!("source=registry stage={stage} elapsedMs={}", now.saturating_sub(last)));
+            last = clock.monotonicTimeMillis().expect("Registry scanning requires the Host clock");
+        };
         let activation = PackageScanActivation::read()?;
+        phase("activation_read");
         let assets = self.scanBuiltInPackageAssets(&activation).await;
-        let snapshot = self.scanExternalPackages(assets, &activation).await;
-        let (mut snapshot, scopes) = self.prepareOwnership(snapshot);
+        phase("builtin_scan");
+        let snapshot = self.scanExternalPackages(assets, &activation).await?;
+        phase("external_scan");
+        let (mut snapshot, scopes) = self.prepareOwnership(snapshot, &activation);
+        phase("ownership_prepare");
         let runtimes = self.runtimes.prepareRuntimeMaps(
             std::mem::take(&mut snapshot.toolPkgContainers),
             std::mem::take(&mut snapshot.toolPkgSubpackages),
         );
+        phase("revision_prepare");
         Ok(PreparedPackageRegistry {
             snapshot, scopes, externalCache: self.externalPackageScanCache,
             builtinCache: self.builtInPackageScanCache, runtimes,
@@ -54,7 +68,7 @@ impl PackageRegistryScanner {
             };
             let packageName = RuntimePackageManager::packageNameFromScanResult(&result);
             let selected = match packageName.as_deref() {
-                Some(name) => ExtensionStore::default().acceptsBuiltinPackage(name),
+                Some(name) => activation.acceptsBuiltin(name),
                 None => Ok(true),
             };
             match selected {
@@ -80,47 +94,11 @@ impl PackageRegistryScanner {
     }
 
     /// Prepares package declarations without holding the live registry owner.
-    async fn scanExternalPackages(&mut self, mut baseSnapshot: PackageScanSnapshot, activation: &PackageScanActivation) -> PackageScanSnapshot {
-        let mut files = Vec::new();
-        for scope in operit_store::ExtensionStore::EXTENSION_LOAD_SCOPES {
-            let root =
-                ExtensionStore::root("package", scope).expect("Package scope constants are valid");
-            let directory = self.storePaths.runtime_storage_path(&root);
-            let scan = (|| -> Result<(), String> {
-                self.filesystem
-                    .makeDirectory(&vfsPathString(&directory), true)
-                    .map_err(|e| e.to_string())?;
-                // Upgrade old bundles before scanning; a file arriving before its descriptor
-                // is staged data, not an unregistered device-local installation.
-                let acceptsSource = activation.selection.sourceFilter(scope);
-                let mut entries = self
-                    .filesystem
-                    .listFiles(&vfsPathString(&directory))
-                    .map_err(|e| e.to_string())?;
-                entries.sort_by(|left, right| left.name.cmp(&right.name));
-                files.extend(
-                    entries
-                        .into_iter()
-                        .filter(|entry| {
-                            !entry.isDirectory
-                                && acceptsSource(&entry.name)
-                        })
-                        .map(|entry| (scope, directory.join(entry.name))),
-                );
-                Ok(())
-            })();
-            if let Err(error) = scan {
-                baseSnapshot.toolPkgLoadIssues.push(newToolPkgLoadIssue(
-                    vfsPathString(&directory),
-                    None,
-                    scope.to_string(),
-                    "scan_failed",
-                    error,
-                    "external",
-                ));
-                return baseSnapshot;
-            }
-        }
+    async fn scanExternalPackages(&mut self, baseSnapshot: PackageScanSnapshot, activation: &PackageScanActivation) -> Result<PackageScanSnapshot, String> {
+        let files = activation.selection.records.iter().filter(|record| !record.sourceName.is_empty())
+            .map(|record| Ok((record.scope.as_str(), self.storePaths.runtime_storage_path(&format!("{}/{}",
+                ExtensionStore::root("package", &record.scope)?, record.sourceName)))))
+            .collect::<Result<Vec<_>, String>>()?;
 
         let previousCache = self.externalPackageScanCache.clone();
         let mut nextCache = BTreeMap::new();
@@ -130,49 +108,25 @@ impl PackageRegistryScanner {
                 continue;
             }
             let cacheKey = file.to_string_lossy().replace('\\', "/");
-            let marketClassification = if file.extension().and_then(|extension| extension.to_str())
-                .is_some_and(|extension| extension.eq_ignore_ascii_case("toolpkg")) {
-                self.isInstalledMarketToolPkg(&file)
-            } else {
-                Ok(false)
-            };
-            let isMarketToolPkg = match marketClassification {
-                Ok(value) => value,
-                Err(error) => {
-                    let mut result = PackageScanCandidateResult::default();
-                    result.sourcePath = cacheKey.clone();
-                    result.phase = "external".to_string();
-                    result.issues.push(newToolPkgLoadIssue(
-                        cacheKey.clone(),
-                        None,
-                        vfsPathString(&file),
-                        "scope_failed",
-                        error,
-                        packageLoadIssueKind(&cacheKey, false, false),
-                    ));
-                    results.push(result);
-                    continue;
-                }
-            };
-            let signature = format!(
-                "{}|{}",
-                self.buildExternalPackageScanSignature(&file),
-                if isMarketToolPkg {
-                    "market"
-                } else {
-                    "external"
-                }
-            );
+            let signature = self.buildExternalPackageScanSignature(&file);
             let mut result = match previousCache.get(&cacheKey)
                 .filter(|entry| entry.signature == signature && activation.matches(&entry.result)) {
                 Some(entry) => entry.result.clone(),
                 None => {
-                    let sourceType = if isMarketToolPkg {
-                        ToolPkgSourceType::MARKET
-                    } else {
-                        ToolPkgSourceType::EXTERNAL
-                    };
                     let bytes = self.filesystem.readFileBytes(&cacheKey);
+                    // Installed archives passed authentication at import/update; startup reads identity only.
+                    let sourceType = if file.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("toolpkg")) {
+                        bytes.as_ref().map_err(Clone::clone).and_then(|bytes| {
+                            let archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).map_err(|error| error.to_string())?;
+                            Ok(if archive.file_names().any(|name| name.eq_ignore_ascii_case(ToolPkgProtection::MARKET_INSTALL_SEAL_ENTRY_NAME)) {
+                                ToolPkgSourceType::MARKET
+                            } else { ToolPkgSourceType::EXTERNAL })
+                        })
+                    } else { Ok(ToolPkgSourceType::EXTERNAL) };
+                    let (bytes, sourceType) = match sourceType {
+                        Ok(sourceType) => (bytes, sourceType),
+                        Err(error) => (Err(error), ToolPkgSourceType::EXTERNAL),
+                    };
                     self.parseCandidate(
                         &cacheKey, bytes.as_deref().map_err(Clone::clone), sourceType,
                         self.installedPackageConfigScope(&file), Some(activation),
@@ -195,7 +149,7 @@ impl PackageRegistryScanner {
             results.push(result);
         }
         self.externalPackageScanCache = Arc::new(nextCache);
-        self.mergePackageScanCandidateResults(results, Some(baseSnapshot))
+        Ok(self.mergePackageScanCandidateResults(results, Some(baseSnapshot)))
     }
 
     /// Parses all source kinds through one path; catalog previews never execute registration code.
@@ -307,7 +261,7 @@ impl PackageRegistryScanner {
                 return Err("ToolPkg installation scope differs from its manifest".into());
             }
             result.registrationEnabled = activation.isEnabled(&package)
-                && (!isBuiltIn || ExtensionStore::default().acceptsBuiltinPackage(&package.name)?);
+                && (!isBuiltIn || activation.acceptsBuiltin(&package.name)?);
             if !result.registrationEnabled {
                 return ToolPkgArchiveParser::readToolPkgCatalog(
                     bytes, sourceType.clone(), sourcePath, isBuiltIn,
@@ -315,11 +269,12 @@ impl PackageRegistryScanner {
             }
             beginPackageLoadProgress(sourcePath);
             let issues = RefCell::new(Vec::new());
-            let registrationEngine = self.registrationEngine()?;
+            let catalog = ToolPkgArchiveParser::readToolPkgCatalog(bytes, sourceType.clone(), sourcePath, isBuiltIn)?;
+            let resources = self.resources.registrationResources(&catalog.containerRuntime, bytes)?;
             let loaded = {
                 ToolPkgLoader::loadToolPkgFromArchiveBytes(
                     bytes, sourceType.clone(), sourcePath, isBuiltIn,
-                    configScope, registrationEngine.engine.as_ref(), |packageName, error| {
+                    configScope, self.registrationExecutor.as_ref(), resources, |packageName, error| {
                         issues.borrow_mut().push(newToolPkgLoadIssue(
                             sourcePath.into(), nonEmptyString(packageName), packageName.into(),
                             "toolpkg_registration", error.into(),
@@ -443,53 +398,6 @@ impl PackageRegistryScanner {
     }
 
     /// Prepares package declarations without holding the live registry owner.
-    pub(super) fn isInstalledMarketToolPkg(&self, file: &Path) -> Result<bool, String> {
-        let root = self.storePaths.runtime_storage_key(file)?;
-        let records = ExtensionStore::default().activeRecords("package")?;
-        let record = records.iter().find(|record| {
-            ExtensionStore::root("package", &record.scope)
-                .is_ok_and(|directory| format!("{directory}/{}", record.sourceName) == root)
-        });
-        let installationId = match record {
-            Some(record) => decodeMarketToolPkgInstallationId(
-                record.settings["installationId"]
-                    .as_str()
-                    .ok_or("Registered installation seal is missing")?,
-            )?,
-            None => self.marketToolPkgInstallationId()?,
-        };
-        let bytes = self
-            .filesystem
-            .readFileBytes(&vfsPathString(file))
-            .map_err(|e| e.to_string())?;
-        Ok(matches!(
-            ToolPkgProtection::verifyMarketInstallSeal(&bytes, &installationId),
-            Ok(true)
-        ))
-    }
-
-    /// Prepares package declarations without holding the live registry owner.
-    pub(super) fn marketToolPkgInstallationId(
-        &self,
-    ) -> Result<[u8; ToolPkgProtection::MARKET_INSTALLATION_ID_SIZE], String> {
-        let key = stringPreferencesKey(MARKET_TOOLPKG_INSTALLATION_ID_KEY);
-        self.dataStore
-            .try_edit_result(|preferences| {
-                let existing = preferences.getTyped::<String>(&key)?;
-                match existing {
-                    Some(encoded) => decodeMarketToolPkgInstallationId(&encoded)
-                        .map_err(PreferencesDataStoreError::Message),
-                    None => {
-                        let installationId = ToolPkgProtection::createMarketInstallationId();
-                        preferences.set(&key, encodeMarketToolPkgInstallationId(&installationId));
-                        Ok(installationId)
-                    }
-                }
-            })
-            .map_err(|error| error.to_string())
-    }
-
-    /// Prepares package declarations without holding the live registry owner.
     pub(super) fn installedPackageConfigScope(&self, path: &Path) -> Result<ToolPkgConfigScope, String> {
         for scope in [ToolPkgConfigScope::Device, ToolPkgConfigScope::Space] {
             let root = ExtensionStore::root("package", scope.as_str())?;
@@ -502,15 +410,6 @@ impl PackageRegistryScanner {
             "Package source is outside installed scope directories: {}",
             vfsPathString(path)
         ))
-    }
-
-    /// Prepares package declarations without holding the live registry owner.
-    pub(super) fn registrationEngine(&self) -> Result<ToolPkgRegistrationEngineGuard, String> {
-        // Registration runs package-owned code; per-load ownership prevents one timed-out
-        // package from retaining state or blocking registration of the next package.
-        Ok(ToolPkgRegistrationEngineGuard {
-            engine: self.toolPkgExecutionEngineFactory.createExecutionEngine()?,
-        })
     }
 
     /// Registers an installation using the same settings schema as catalog discovery.
@@ -528,7 +427,7 @@ impl PackageRegistryScanner {
         let mut settings = serde_json::json!({
             "builtin": builtin, "members": members, "enabledNames": [], "disabledNames": [],
             "subpackageStates": {}, "order": 0,
-            "installationId": encodeMarketToolPkgInstallationId(&self.marketToolPkgInstallationId()?)
+            "installationId": encodeMarketToolPkgInstallationId(&marketToolPkgInstallationId(&self.dataStore)?)
         });
         if let Some(required) = requiredScope {
             settings["installationScope"] =
@@ -539,9 +438,10 @@ impl PackageRegistryScanner {
     }
 
     /// Validates and persists source ownership before publishing any live declarations.
-    pub(super) fn prepareOwnership(&self, mut snapshot: PackageScanSnapshot) -> (PackageScanSnapshot, BTreeMap<String, ExtensionRecord>) {
+    pub(super) fn prepareOwnership(&self, mut snapshot: PackageScanSnapshot, activation: &PackageScanActivation) -> (PackageScanSnapshot, BTreeMap<String, ExtensionRecord>) {
         let mut scopes = BTreeMap::new();
         let mut rejected = Vec::new();
+        let mut records = activation.selection.records.iter().map(|record| (record.id.clone(), record.clone())).collect::<BTreeMap<_, _>>();
         for (name, package) in &snapshot.availablePackages {
             if snapshot.toolPkgSubpackages.contains_key(name) {
                 continue;
@@ -574,23 +474,16 @@ impl PackageRegistryScanner {
                     .map(RuntimePackageManager::requiredInstallationScope)
                     .transpose()?
                     .flatten();
-                let existing = store
-                    .activeRecords("package")?
-                    .into_iter()
-                    .any(|record| record.id == *name);
-                if !existing {
-                    let scope = match snapshot.toolPkgContainers.get(name) {
-                        Some(container) if !builtin => {
-                            self.installedPackageConfigScope(Path::new(&container.sourcePath))?
-                        }
-                        _ => match requiredScope {
-                            Some(scope) => scope,
-                            None => ToolPkgConfigScope::Device,
-                        },
-                    };
-                    self.registerScope(name, &sourceName, builtin, members.clone(), scope, requiredScope)?;
-                }
-                let mut record = store.record("package", name)?;
+                let mut record = match records.remove(name) {
+                    Some(record) => record,
+                    None => {
+                        let scope = match container {
+                            Some(container) if !builtin => self.installedPackageConfigScope(Path::new(&container.sourcePath))?,
+                            _ => requiredScope.unwrap_or(ToolPkgConfigScope::Device),
+                        };
+                        self.registerScope(name, &sourceName, builtin, members.clone(), scope, requiredScope)?
+                    }
+                };
                 if requiredScope.is_some_and(|required| required.as_str() != record.scope) {
                     return Err(format!(
                         "Package {name} is installed outside its required scope"
@@ -616,7 +509,7 @@ impl PackageRegistryScanner {
                     .filter_map(|member| snapshot.availablePackages.get(member))
                     .flat_map(|package| package.env.iter().map(|variable| variable.name.clone()))
                     .collect::<Vec<_>>();
-                store.initializePackageEnvironment(name, &declaredEnvironment)?;
+                store.initializePackageEnvironmentForScope(&record.id, &record.scope, &declaredEnvironment)?;
                 let mut settings = record.settings.clone();
                 settings["members"] =
                     serde_json::to_value(members).map_err(|error| error.to_string())?;

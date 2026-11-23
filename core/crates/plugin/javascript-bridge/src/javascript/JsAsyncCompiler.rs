@@ -1,4 +1,7 @@
-use std::{collections::BTreeMap, path::Path};
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    path::Path,
+};
 
 use oxc_allocator::{Allocator, ArenaVec, TakeIn};
 use oxc_ast::{
@@ -9,9 +12,9 @@ use oxc_ast::{
     builder::AstBuilder,
 };
 use oxc_ast_visit::{walk_mut, VisitMut};
-use oxc_codegen::Codegen;
+use oxc_codegen::{Codegen, Context, Gen};
 use oxc_parser::{ParseOptions, Parser};
-use oxc_semantic::{ScopeFlags, SemanticBuilder};
+use oxc_semantic::{ScopeFlags, SemanticBuilder, Stats};
 use oxc_span::{GetSpan, SourceType, Span, SPAN};
 use oxc_transformer::{HelperLoaderMode, TransformOptions, Transformer};
 
@@ -26,6 +29,9 @@ struct AsyncSources<'a> {
     source: &'a str,
     allocator: &'a Allocator,
     kinds: BTreeMap<(u32, u32), &'static str>,
+    unchanged: BTreeSet<(u32, u32)>,
+    program_body: bool,
+    has_async: bool,
 }
 
 impl<'a> AsyncSources<'a> {
@@ -39,9 +45,7 @@ impl<'a> AsyncSources<'a> {
             false,
             &builder,
         );
-        let source = self
-            .allocator
-            .alloc_str(&self.source[span.start as usize..span.end as usize]);
+        let source = &self.source[span.start as usize..span.end as usize];
         Expression::new_call_expression(
             SPAN,
             helper,
@@ -63,6 +67,7 @@ impl<'a> VisitMut<'a> for AsyncSources<'a> {
     /// Records explicit function kinds before lowering removes the native async prototypes.
     fn visit_function(&mut self, function: &mut Function<'a>, flags: ScopeFlags) {
         if function.r#async {
+            self.has_async = true;
             self.kinds.insert(
                 (function.span.start, function.span.end),
                 if function.generator {
@@ -85,12 +90,14 @@ impl<'a> VisitMut<'a> for AsyncSources<'a> {
         let span = expression.span();
         walk_mut::walk_expression(self, expression);
         if is_async {
+            self.has_async = true;
             *expression = self.remember(expression.take_in(&self.allocator), span);
         }
     }
 
-    /// Records hoisted declarations before any statement can serialize their function references.
+    /// Records hoisted declarations and identifies top-level statements that require no rewriting.
     fn visit_statements(&mut self, statements: &mut ArenaVec<'a, Statement<'a>>) {
+        let program_body = std::mem::replace(&mut self.program_body, false);
         let builder = AstBuilder::new(self.allocator);
         let registrations = statements
             .iter()
@@ -112,7 +119,20 @@ impl<'a> VisitMut<'a> for AsyncSources<'a> {
                 ))
             })
             .collect::<Vec<_>>();
-        walk_mut::walk_statements(self, statements);
+        if program_body {
+            for statement in statements.iter_mut() {
+                let previous = self.has_async;
+                self.has_async = false;
+                self.visit_statement(statement);
+                if !self.has_async {
+                    let span = statement.span();
+                    self.unchanged.insert((span.start, span.end));
+                }
+                self.has_async |= previous;
+            }
+        } else {
+            walk_mut::walk_statements(self, statements);
+        }
         statements.splice(0..0, registrations);
     }
 }
@@ -148,6 +168,7 @@ pub(crate) fn compile(source: &str) -> Result<String, String> {
     let parsed = Parser::new(&allocator, source, SourceType::cjs())
         .with_options(ParseOptions {
             allow_return_outside_function: true,
+            preserve_parens: false,
             ..ParseOptions::default()
         })
         .parse();
@@ -162,21 +183,42 @@ pub(crate) fn compile(source: &str) -> Result<String, String> {
         source,
         allocator: &allocator,
         kinds: BTreeMap::new(),
+        unchanged: BTreeSet::new(),
+        program_body: true,
+        has_async: false,
     };
     sources.visit_program(&mut program);
-    let semantic = SemanticBuilder::new().build(&program);
+    if !sources.has_async {
+        return Ok(source.to_owned());
+    }
+    let semantic = SemanticBuilder::new()
+        .with_stats(Stats::default())
+        .build(&program);
     if !semantic.diagnostics.is_empty() {
         return Err(format!(
             "JavaScript scope analysis failed: {:?}",
             semantic.diagnostics
         ));
     }
+    let scoping = semantic.semantic.into_scoping();
+    let body_start = program
+        .body
+        .iter()
+        .map(GetSpan::span)
+        .find(|span| !span.is_empty())
+        .ok_or("Async compilation requires a source statement")?
+        .start as usize;
+    // Keep the complete lexical scope graph, but only visit statements that actually need async lowering.
+    program.body.retain(|statement| {
+        let span = statement.span();
+        !sources.unchanged.contains(&(span.start, span.end))
+    });
     let mut options = TransformOptions::default();
     options.env.es2017.async_to_generator = true;
     options.env.es2018.async_generator_functions = true;
     options.helper_loader.mode = HelperLoaderMode::External;
     let transformed = Transformer::new(&allocator, Path::new("operit.js"), &options)
-        .build_with_scoping(semantic.semantic.into_scoping(), &mut program);
+        .build_with_scoping(scoping, &mut program);
     if !transformed.diagnostics.is_empty() {
         return Err(format!(
             "JavaScript async compilation failed: {:?}",
@@ -188,7 +230,28 @@ pub(crate) fn compile(source: &str) -> Result<String, String> {
         kinds: sources.kinds,
     }
     .visit_program(&mut program);
-    Ok(Codegen::new().build(&program).code)
+    let mut output = String::with_capacity(source.len());
+    output.push_str(&source[..body_start]);
+    output.push_str("\n;");
+    let mut cursor = body_start;
+    for statement in &program.body {
+        let span = statement.span();
+        if !span.is_empty() {
+            if (span.start as usize) < cursor || span.end as usize > source.len() {
+                return Err(format!(
+                    "Invalid async statement span: {span:?}, cursor={cursor}"
+                ));
+            }
+            output.push_str(&source[cursor..span.start as usize]);
+            cursor = span.end as usize;
+        }
+        let mut codegen = Codegen::new().with_source_text(source);
+        statement.print(&mut codegen, Context::default());
+        output.push_str(&codegen.into_source_text());
+        output.push_str("\n;");
+    }
+    output.push_str(&source[cursor..]);
+    Ok(output)
 }
 
 /// Reads the compiler's explicit method kind without relying on lowered function prototypes.
@@ -216,4 +279,34 @@ pub(crate) fn method_kind(source: &str) -> Result<&'static str, String> {
         }
     }
     Err("Routes require an async method or async generator".into())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Synchronous code keeps its exact source while invalid syntax still fails explicitly.
+    #[test]
+    fn synchronous_source_preserves_exact_input() {
+        let source = "/* async is text */ exports.run = value => /async/.test(value);";
+        assert_eq!(compile(source).unwrap(), source);
+        assert!(compile("function {").is_err());
+    }
+
+    /// Selective emission keeps untouched source, directives and comments between rewritten statements.
+    #[test]
+    fn selective_emission_preserves_sync_statements_and_directives() {
+        let stable = "function stable( value ) { /* keep_sync_source */ return value + 1; }";
+        let source = format!("'use strict';\n{stable}\n/* before_async */\nasync function run() {{ return await stable(2); }}\n// after_async\nexports.run = run;");
+        let output = compile(&source).unwrap();
+        assert!(output.starts_with("'use strict';"));
+        assert!(output.contains(stable));
+        assert!(output.contains("/* before_async */"));
+        assert!(output.contains("// after_async"));
+        let allocator = Allocator::default();
+        assert!(Parser::new(&allocator, &output, SourceType::cjs())
+            .parse()
+            .diagnostics
+            .is_empty());
+    }
 }

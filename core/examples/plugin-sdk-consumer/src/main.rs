@@ -72,7 +72,7 @@ impl JsExecutionEngine for ExampleExecutionEngine {
         _script: &str,
         _function_name: &str,
         _params: &BTreeMap<String, Value>,
-        _text_resources: Option<Arc<BTreeMap<String, String>>>,
+        _text_resources: Option<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>>,
     ) -> JsExecutionResult<ToolPkgMainRegistrationCapture> {
         Ok(ToolPkgMainRegistrationCapture::default())
     }

@@ -1526,7 +1526,7 @@ mod tests {
             _script: &str,
             _function_name: &str,
             _params: &BTreeMap<String, Value>,
-            _text_resources: Option<Arc<BTreeMap<String, String>>>,
+            _text_resources: Option<Arc<dyn crate::javascript::ToolPkgTextResourceHost>>,
         ) -> crate::javascript::JsExecutionCompletion<JsExecutionResult<ToolPkgMainRegistrationCapture>> {
             Box::pin(std::future::ready(Ok(ToolPkgMainRegistrationCapture::default())))
         }

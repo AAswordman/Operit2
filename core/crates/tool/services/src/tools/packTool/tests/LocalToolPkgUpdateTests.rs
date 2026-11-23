@@ -204,8 +204,8 @@ impl RuntimeSqliteHost for FaultStorage {
 
 struct TestPackageProvider {
     inner: HostJsExecutionProvider,
-    registrations: AtomicUsize,
-    failAt: AtomicUsize,
+    registrations: Arc<AtomicUsize>,
+    failAt: Arc<AtomicUsize>,
 }
 
 impl TestPackageProvider {
@@ -218,10 +218,6 @@ impl TestPackageProvider {
 impl operit_plugin_sdk::javascript::JsExecutionProvider for TestPackageProvider {
     fn create_execution_engine(&self, host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>)
         -> Result<Arc<dyn operit_plugin_sdk::javascript::JsExecutionEngine>, String> {
-        let call = self.registrations.fetch_add(1, Ordering::SeqCst) + 1;
-        if self.failAt.compare_exchange(call, 0, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
-            return Err("injected registration failure".into());
-        }
         self.inner.create_execution_engine(host)
     }
     fn create_toolpkg_execution_engine(&self, host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>,
@@ -236,7 +232,41 @@ impl operit_plugin_sdk::javascript::JsExecutionProvider for TestPackageProvider 
     fn create_package_executor(&self, runtime: Arc<dyn operit_plugin_sdk::javascript::JsPackageRuntime>,
         host: Arc<dyn operit_plugin_sdk::javascript::JsExecutionHost>)
         -> Arc<dyn operit_plugin_sdk::javascript::JsPackageExecutor> {
-        self.inner.create_package_executor(runtime, host)
+        Arc::new(TestRegistrationExecutor {
+            inner: self.inner.create_package_executor(runtime, host),
+            registrations: self.registrations.clone(), failAt: self.failAt.clone(),
+        })
+    }
+}
+
+/// Injects faults at registration rather than assuming every call creates an engine.
+struct TestRegistrationExecutor {
+    inner: Arc<dyn operit_plugin_sdk::javascript::JsPackageExecutor>,
+    registrations: Arc<AtomicUsize>,
+    failAt: Arc<AtomicUsize>,
+}
+
+impl operit_plugin_sdk::javascript::ToolPkgRegistrationExecutor for TestRegistrationExecutor {
+    /// Counts actual registrations even when the underlying engine is reused.
+    fn register_toolpkg(
+        &self, script: &str, function: &str, params: &BTreeMap<String, Value>,
+        resources: Option<Arc<dyn operit_plugin_sdk::javascript::ToolPkgTextResourceHost>>,
+    ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<operit_plugin_sdk::execution_result::JsExecutionResult<operit_plugin_sdk::javascript::ToolPkgMainRegistrationCapture>> {
+        let call = self.registrations.fetch_add(1, Ordering::SeqCst) + 1;
+        if self.failAt.compare_exchange(call, 0, Ordering::SeqCst, Ordering::SeqCst).is_ok() {
+            return Box::pin(async { Err(operit_plugin_sdk::execution_result::JsExecutionError::initialization("injected registration failure")) });
+        }
+        self.inner.register_toolpkg(script, function, params, resources)
+    }
+}
+
+impl operit_plugin_sdk::javascript::JsPackageExecutor for TestRegistrationExecutor {
+    /// Preserves ordinary package execution through the real executor.
+    fn execute_package_tool_streaming(
+        &self, request: &operit_plugin_sdk::javascript::JsPackageToolCallRequest,
+        output: Option<Arc<dyn Fn(String) + Send + Sync>>,
+    ) -> operit_plugin_sdk::javascript::JsExecutionCompletion<operit_plugin_sdk::javascript::JsPackageToolCallResult> {
+        self.inner.execute_package_tool_streaming(request, output)
     }
 }
 
@@ -321,7 +351,7 @@ impl LocalUpdateFixture {
             failAfterPublication: Default::default(),
         });
         let provider = Arc::new(TestPackageProvider {
-            inner: HostJsExecutionProvider::new(), registrations: AtomicUsize::new(0), failAt: AtomicUsize::new(0),
+            inner: HostJsExecutionProvider::new(), registrations: Default::default(), failAt: Default::default(),
         });
         let handler = AIToolHandler::new(HostManager {
             runtimeStorageHost: Some(storage.clone()), runtimeSqliteHost: Some(storage.clone()),
