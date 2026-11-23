@@ -26,6 +26,43 @@ import 'package:operit_ui/operit_ui.dart' show buildOperitThemeData;
 /// Verifies the real named-theme selector and generated proxy calls without a platform runtime.
 void main() {
   setUp(ClientLogger.initialize);
+  testWidgets('custom color swatch shows saved black and white seeds', (
+    tester,
+  ) async {
+    final bridge = _ThemeBridge();
+    final snapshot = ThemePreferenceSnapshot.fromJson(
+      UserPreferencesManager.defaultThemePreferenceSnapshot.toJson()
+        ..['useCustomColors'] = true
+        ..['customPrimaryColor'] = 0xFF000000
+        ..['customSecondaryColor'] = 0xFFFFFFFF,
+    );
+    await _pumpEditor(
+      tester,
+      bridge,
+      size: const Size(1000, 800),
+      initialSnapshot: snapshot,
+    );
+    final label = find.text('Custom colors').first;
+    await tester.ensureVisible(label);
+    await tester.pumpAndSettle();
+    final tile = find.ancestor(of: label, matching: find.byType(InkWell)).first;
+    final gradients = tester
+        .widgetList<DecoratedBox>(
+          find.descendant(of: tile, matching: find.byType(DecoratedBox)),
+        )
+        .map((box) => box.decoration)
+        .whereType<BoxDecoration>()
+        .map((decoration) => decoration.gradient)
+        .whereType<LinearGradient>();
+    expect(gradients.single.colors, <Color>[
+      Colors.black,
+      Colors.black,
+      Colors.white,
+      Colors.white,
+    ]);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
   for (final size in [const Size(390, 844), const Size(1000, 600)]) {
     testWidgets('initial loading stays a thin top bar at $size', (
       tester,
@@ -850,6 +887,50 @@ void main() {
   );
 
   if (const bool.fromEnvironment('THEME_DESIGN_CAPTURE')) {
+    testWidgets('capture the actual monochrome theme editor', (tester) async {
+      final font = FontLoader('Aptos')
+        ..addFont(
+          rootBundle.load('packages/operit_ui/assets/fonts/noto-sans-sc.ttf'),
+        );
+      await font.load();
+      final icons = FontLoader('MaterialIcons')
+        ..addFont(rootBundle.load('fonts/MaterialIcons-Regular.otf'));
+      await icons.load();
+      tester.binding.platformDispatcher.localesTestValue = const [Locale('zh')];
+      addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
+      for (final mode in [ThemeMode.light, ThemeMode.dark]) {
+        final snapshot = ThemePreferenceSnapshot.fromJson(
+          UserPreferencesManager.defaultThemePreferenceSnapshot.toJson()
+            ..['themeMode'] = mode.name
+            ..['useCustomColors'] = true
+            ..['customPrimaryColor'] = 0xFF000000
+            ..['customSecondaryColor'] = 0xFFFFFFFF
+            ..['userChatStyle'] = 'bubble'
+            ..['aiChatStyle'] = 'bubble',
+        );
+        final boundary = GlobalKey();
+        await _pumpEditor(
+          tester,
+          _ThemeBridge(),
+          size: const Size(1200, 980),
+          initialSnapshot: snapshot,
+          captureKey: boundary,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.runAsync(() async {
+          final image = await (boundary.currentContext!.findRenderObject()!
+                  as RenderRepaintBoundary)
+              .toImage(pixelRatio: 2);
+          final bytes = await image.toByteData(format: ui.ImageByteFormat.png);
+          final folder = Platform.environment['OPERIT_THEME_RENDER_DIR']!;
+          await Directory(folder).create(recursive: true);
+          await File('$folder/monochrome-${mode.name}.png')
+              .writeAsBytes(bytes!.buffer.asUint8List());
+          image.dispose();
+        });
+        await tester.pumpWidget(const SizedBox.shrink());
+      }
+    });
     testWidgets('render the theme library, creation and editor screens', (
       tester,
     ) async {
@@ -1100,6 +1181,8 @@ Future<void> _pumpEditor(
   _ThemeBridge bridge, {
   Size size = const Size(390, 844),
   double textScale = 1,
+  ThemePreferenceSnapshot? initialSnapshot,
+  GlobalKey? captureKey,
 }) async {
   tester.view.devicePixelRatio = 1;
   tester.view.physicalSize = size;
@@ -1107,24 +1190,25 @@ Future<void> _pumpEditor(
   addTearDown(tester.view.resetPhysicalSize);
   await tester.binding.setSurfaceSize(size);
   addTearDown(() => tester.binding.setSurfaceSize(null));
-  await tester.pumpWidget(
-    OperitTheme(
-      initialThemePreferenceSnapshot:
-          UserPreferencesManager.defaultThemePreferenceSnapshot,
-      initialThemeIsReady: false,
-      unconfiguredChildEnabled: true,
-      hostInteractionHostsEnabled: false,
-      child: MediaQuery(
-        data: MediaQueryData.fromView(tester.view).copyWith(
-          textScaler: TextScaler.linear(textScale),
-        ),
-        child: Scaffold(
-          body: AppearanceSettingsPanel(
-            clients: GeneratedCoreProxyClients(bridge),
-          ),
+  final app = OperitTheme(
+    initialThemePreferenceSnapshot:
+        initialSnapshot ?? UserPreferencesManager.defaultThemePreferenceSnapshot,
+    initialThemeIsReady: false,
+    unconfiguredChildEnabled: true,
+    hostInteractionHostsEnabled: false,
+    child: MediaQuery(
+      data: MediaQueryData.fromView(tester.view).copyWith(
+        textScaler: TextScaler.linear(textScale),
+      ),
+      child: Scaffold(
+        body: AppearanceSettingsPanel(
+          clients: GeneratedCoreProxyClients(bridge),
         ),
       ),
     ),
+  );
+  await tester.pumpWidget(
+    captureKey == null ? app : RepaintBoundary(key: captureKey, child: app),
   );
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(const ValueKey('theme-edit:day')));

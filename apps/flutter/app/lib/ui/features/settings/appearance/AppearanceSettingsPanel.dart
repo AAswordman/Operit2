@@ -2723,27 +2723,30 @@ class _ThemeColorPresetSelector extends StatelessWidget {
   final ValueChanged<_ThemeColorPreset> onChanged;
   final VoidCallback onCustomTap;
 
+  /// Shows preset colors and the actual saved custom seed colors.
   @override
   Widget build(BuildContext context) {
+    final presets = <_ThemeColorPreset>[
+      ..._themeColorPresets,
+      _ThemeColorPreset(
+        id: 'custom',
+        primaryColor: snapshot.customPrimaryColor,
+        secondaryColor: snapshot.customSecondaryColor,
+        useCustomColors: true,
+      ),
+    ];
     return Wrap(
       spacing: 10,
       runSpacing: 10,
       children: <Widget>[
-        for (final preset in _themeColorPresets)
+        for (final preset in presets)
           _ColorPresetTile(
             selected: selectedId == preset.id,
             label: Text(_themeColorPresetLabel(context, preset.id)),
             primaryColor: _themePresetPrimaryColor(context, preset),
             secondaryColor: _themePresetSecondaryColor(context, preset),
-            onTap: () => onChanged(preset),
+            onTap: preset.id == 'custom' ? onCustomTap : () => onChanged(preset),
           ),
-        _ColorPresetTile(
-          selected: selectedId == 'custom',
-          label: Text(_themeColorPresetLabel(context, 'custom')),
-          primaryColor: _customPresetPrimaryPreviewColor,
-          secondaryColor: _customPresetSecondaryPreviewColor,
-          onTap: onCustomTap,
-        ),
       ],
     );
   }

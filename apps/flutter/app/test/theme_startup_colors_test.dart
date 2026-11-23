@@ -15,20 +15,21 @@ void main() {
     final mode = brightness == Brightness.light
         ? ThemeMode.light
         : ThemeMode.dark;
-    for (final custom in <bool>[false, true]) {
+    for (final seed in <int?>[null, 0xFFAC2855, 0xFFFF00FF]) {
+      final custom = seed != null;
       testWidgets(
-        'startup retains ${custom ? 'custom' : 'brand'} colors in $brightness',
+        'startup retains ${custom ? 'custom $seed' : 'brand'} colors in $brightness',
         (tester) async {
           final values = UserPreferencesManager.defaultThemePreferenceSnapshot
               .toJson();
           if (custom) {
             values['useCustomColors'] = true;
-            values['customPrimaryColor'] = 0xFFAC2855;
+            values['customPrimaryColor'] = seed;
             values['customSecondaryColor'] = 0xFF15985D;
           }
           final snapshot = ThemePreferenceSnapshot.fromJson(values);
           final expected = ColorScheme.fromSeed(
-            seedColor: Color(custom ? 0xFFAC2855 : 0xFF3B82F6),
+            seedColor: Color(seed ?? 0xFF3B82F6),
             brightness: brightness,
             dynamicSchemeVariant: DynamicSchemeVariant.tonalSpot,
           );
@@ -38,6 +39,17 @@ void main() {
           ).colorScheme;
           expect(scheme.brightness, brightness);
           expect(scheme.primary, expected.primary);
+          if (custom) {
+            expect(
+              scheme.primary,
+              isNot(
+                operitColorScheme(
+                  brightness,
+                  UserPreferencesManager.defaultThemePreferenceSnapshot,
+                ).primary,
+              ),
+            );
+          }
           expect(
             scheme.secondary,
             custom ? const Color(0xFF15985D) : expected.secondary,
