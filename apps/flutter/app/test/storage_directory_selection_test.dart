@@ -183,7 +183,7 @@ void main() {
     await tester.tap(find.text('开始'));
     await tester.pumpAndSettle();
 
-    expect(find.text('2/4'), findsOneWidget);
+    expect(find.text('2/3'), findsOneWidget);
     expect(find.text('确认本地存储位置'), findsNothing);
     expect(find.text('用户协议与隐私政策'), findsOneWidget);
   });

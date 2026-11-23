@@ -157,6 +157,20 @@ void main() {
       );
     },
   );
+
+  test(
+    'local selection on macOS preserves its security-scoped picker',
+    () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        expect(call.method, 'pickDirectory');
+        return '/Users/test/Backups';
+      });
+      OperitFolderAccessMacOS.registerWith();
+      final source = await OperitFolderAccess.pickLocalDirectory();
+      expect(source!.backend, 'native');
+      expect(source.root, '/Users/test/Backups');
+    },
+  );
 }
 
 class _NativePathPicker extends FileSelectorPlatform {

@@ -1,8 +1,12 @@
 # Daily database file backups and recovery
 
-Clients select an external backup folder with the existing workspace picker and
-register it through `FileSelectionService.mountDirectory`. All backup I/O uses
-that VFS mount and the existing filesystem Host on every platform.
+Clients select an external backup folder through the platform's local-directory
+selector and register it through `FileSelectionService.mountDirectory`. All backup
+I/O uses that VFS mount and the existing filesystem Host on every platform.
+
+Onboarding presents startup mode, permissions, and then the backup directory,
+before model setup, import, recovery, or device-space setup. Deferring the backup
+directory continues the chosen branch; back navigation follows that same order.
 
 ## File copying
 
@@ -95,9 +99,38 @@ Directory selection and access failures show guidance in onboarding and data
 settings to create and select a new directory inside an accessible folder, such
 as Documents or Downloads. Failed selection keeps the previous backup destination.
 
-Directory selection uses the shared external workspace mount capability. In this
-checkout Web's generic picker returns no selection and OpenHarmony's picker is
-unimplemented; those shared capabilities still need implementation.
+## Directory selection and existing mounts
+
+`OperitFolderAccess.pickLocalDirectory` is a generic platform selection capability,
+not a separate backup filesystem. Android uses the in-application Material 3
+browser in `operit_folder_access`, presented by `LocalDirectoryPickerHost`.
+`AndroidPlatformChannel` reuses `AndroidStorageAccess` to obtain shared-storage
+authorization and dispatches volume listing, directory enumeration and folder
+creation to `AndroidLocalDirectoryAccess` on a Host worker. Every filesystem
+operation checks the actual grant and resolves the path inside an available
+shared-storage volume, including canonical-path validation. Android 10 uses the
+legacy shared-storage model with read/write permissions; Android 11 and later
+use all-files access.
+
+The Android local selector never launches `ACTION_OPEN_DOCUMENT_TREE`, DocumentsUI,
+or a vendor's safe file picker. It returns a `native` mount source. It supports
+volume selection, breadcrumbs, parent navigation, filtering current folders,
+folder creation, read-only state and cancellation. The final backup probe still
+verifies actual creation, readback and deletion before saving the destination.
+Other platforms keep their registered native/security-scoped directory selector.
+Android's workspace document-provider picker remains available as its own capability.
+
+Existing `chatBackupDirectory` records and mount catalog entries are not rewritten.
+In particular, existing `android_documents` mounts continue to use their persisted
+SAF grants. Merely opening onboarding or installing an update does not replace a
+mount or require a new selection. A deliberate successful selection saves the new
+mount path; cancellation, authorization denial and failed validation preserve the
+old destination. Old mounts are not removed, since other features may reference
+them. Backup files already present in the selected physical directory are recognized
+by the existing filename rules without copying or migrating them.
+
+In this checkout Web's generic picker returns no selection and OpenHarmony's
+picker is unimplemented; those shared capabilities still need implementation.
 
 ## Checks
 
@@ -107,3 +140,8 @@ failed copy, filename-only daily checks and listings, restoration without an ext
 backup, retention ownership, missing-directory handling, restored baseline priority
 over larger peers, retirement of old history, and new edits after baseline adoption.
 Device I/O throughput and external provider behavior require device verification.
+Flutter widget coverage exercises Android's local adapter without invoking the
+document-tree selector, navigation, filtering, creation and traversal rejection,
+read-only targets, authorization denial, failed enumeration and retry, cancellation,
+multiple volumes, large text, and light/dark Material 3 layouts. Native Android
+permission behavior and OEM firmware still require device verification.

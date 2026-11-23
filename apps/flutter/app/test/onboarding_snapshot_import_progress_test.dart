@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/ui/features/onboarding/OnboardingStartupRoute.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 
 void main() {
   testWidgets('upload progress is visible before the preview is available', (
@@ -124,6 +125,9 @@ Future<void> _pumpImportPage(
 }) async {
   await tester.pumpWidget(
     MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(
         body: OnboardingSnapshotImportPage(
           snapshot: snapshot,

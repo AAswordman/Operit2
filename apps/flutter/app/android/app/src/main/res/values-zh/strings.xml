@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="operit_shared_storage">内部存储空间</string>
     <string name="operit_documents_private">Operit2 应用数据</string>
     <string name="operit_documents_runtime">Operit2 运行数据</string>
     <string name="operit_documents_workspaces">Operit2 工作区</string>

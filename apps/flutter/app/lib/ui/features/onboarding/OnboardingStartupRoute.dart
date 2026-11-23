@@ -280,7 +280,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _AiSetupPage.intro,
       if (widget.agreementRequired) _AiSetupPage.agreement,
       if (_storageSelectionRequired) _AiSetupPage.storage,
-      _AiSetupPage.backup,
       _AiSetupPage.mode,
     ];
     return switch (_selectedStartMode) {
@@ -288,21 +287,26 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       _AiSetupStartMode.quickStart => <_AiSetupPage>[
         ...commonPages,
         _AiSetupPage.permission,
+        _AiSetupPage.backup,
         _AiSetupPage.model,
       ],
       _AiSetupStartMode.operit1Import => <_AiSetupPage>[
         ...commonPages,
         _AiSetupPage.permission,
+        _AiSetupPage.backup,
         _AiSetupPage.import,
       ],
       _AiSetupStartMode.deviceSpace => <_AiSetupPage>[
         ...commonPages,
+        _AiSetupPage.permission,
+        _AiSetupPage.backup,
         _AiSetupPage.deviceSpace,
       ],
       _AiSetupStartMode.chatRestore => <_AiSetupPage>[
         ...commonPages,
-        _AiSetupPage.restore,
         _AiSetupPage.permission,
+        _AiSetupPage.backup,
+        _AiSetupPage.restore,
         _AiSetupPage.model,
       ],
     };
@@ -652,26 +656,6 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       await _animateToPage(previousIndex);
       return;
     }
-    if (_currentPage == _permissionPageIndex) {
-      await _animateToPage(
-        _selectedStartMode == _AiSetupStartMode.chatRestore
-            ? _pages.indexOf(_AiSetupPage.restore)
-            : _modePageIndex,
-      );
-      return;
-    }
-    if (_currentPage == _modelPageIndex) {
-      await _animateToPage(_permissionPageIndex);
-      return;
-    }
-    if (_currentPage == _importPageIndex) {
-      await _animateToPage(_permissionPageIndex);
-      return;
-    }
-    if (_currentPage == _deviceSpacePageIndex) {
-      await _animateToPage(_modePageIndex);
-      return;
-    }
     await _pageController.previousPage(
       duration: const Duration(milliseconds: 420),
       curve: Curves.easeOutQuart,
@@ -681,7 +665,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
   Future<void> _goToNextPage() async {
     if (_chatRestoreBusy) return;
     if (_isRestorePage) {
-      if (_chatBackupRestored) await _openPermissionSetup();
+      if (_chatBackupRestored) await _animateToPage(_modelPageIndex);
       return;
     }
     if (_currentPage == _introPageIndex) {
@@ -693,12 +677,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       return;
     }
     if (_isPermissionPage) {
-      if (_selectedStartMode == _AiSetupStartMode.quickStart ||
-          _selectedStartMode == _AiSetupStartMode.chatRestore) {
-        await _animateToPage(_modelPageIndex);
-      } else if (_selectedStartMode == _AiSetupStartMode.operit1Import) {
-        await _animateToPage(_importPageIndex);
-      }
+      await _animateToPage(_pages.indexOf(_AiSetupPage.backup));
       return;
     }
     if (_isStoragePage) {
@@ -710,15 +689,11 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
           ChatBackupService.instance.needsDirectory) {
         return;
       }
-      await _animateToPage(_modePageIndex);
+      await _advanceAfterBackup();
       return;
     }
     if (_isModePage) {
-      if (_selectedStartMode == _AiSetupStartMode.deviceSpace) {
-        await _animateToPage(_deviceSpacePageIndex);
-      } else if (_selectedStartMode == _AiSetupStartMode.chatRestore) {
-        await _animateToPage(_pages.indexOf(_AiSetupPage.restore));
-      } else if (_selectedStartMode != null) {
+      if (_selectedStartMode != null) {
         await _openPermissionSetup();
       }
       return;
@@ -740,6 +715,15 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
       curve: Curves.easeOutQuart,
     );
   }
+
+  /// Continues the chosen setup branch after selecting or deferring backups.
+  Future<void> _advanceAfterBackup() =>
+      _animateToPage(switch (_selectedStartMode!) {
+        _AiSetupStartMode.quickStart => _modelPageIndex,
+        _AiSetupStartMode.operit1Import => _importPageIndex,
+        _AiSetupStartMode.deviceSpace => _deviceSpacePageIndex,
+        _AiSetupStartMode.chatRestore => _pages.indexOf(_AiSetupPage.restore),
+      });
 
   /// Selects a new runtime root directory.
   Future<void> _selectRuntimeRoot() =>
@@ -820,7 +804,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
         await widget.onComplete();
         return;
       }
-      await _animateToPage(_pages.indexOf(_AiSetupPage.backup));
+      await _animateToPage(_modePageIndex);
     } catch (error) {
       if (!mounted) {
         return;
@@ -1398,8 +1382,7 @@ class _AiSetupGuidePageState extends State<_AiSetupGuidePage>
                                     child: SingleChildScrollView(
                                       padding: const EdgeInsets.all(16),
                                       child: ChatBackupDirectoryPanel(
-                                        onDeferred: () =>
-                                            _animateToPage(_modePageIndex),
+                                        onDeferred: _advanceAfterBackup,
                                         onSelected: () {
                                           if (mounted) setState(() {});
                                         },
@@ -2328,7 +2311,9 @@ class _AiSetupAgreementPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 12),
                 Text(
-                  l10n.onboardingAgreementVersion(OnboardingStartupRouteStrategy._currentAgreementVersion),
+                  l10n.onboardingAgreementVersion(
+                    OnboardingStartupRouteStrategy._currentAgreementVersion,
+                  ),
                   style: textTheme.labelMedium?.copyWith(
                     color: colorScheme.onSurfaceVariant,
                     letterSpacing: 0,
@@ -2746,7 +2731,11 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
                       : const Icon(Icons.folder_open_rounded, size: 18),
-                  label: Text(reading ? l10n.onboardingReadingSnapshot : l10n.onboardingPickSnapshotFile),
+                  label: Text(
+                    reading
+                        ? l10n.onboardingReadingSnapshot
+                        : l10n.onboardingPickSnapshotFile,
+                  ),
                 ),
               ),
               if (fileName != null) ...<Widget>[
@@ -2823,7 +2812,9 @@ class OnboardingSnapshotImportPage extends StatelessWidget {
                 if (preview.modelConfig.chatModelId != null) ...<Widget>[
                   const SizedBox(height: 12),
                   Text(
-                    l10n.onboardingDefaultChatModel(preview.modelConfig.chatModelId!),
+                    l10n.onboardingDefaultChatModel(
+                      preview.modelConfig.chatModelId!,
+                    ),
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.bodySmall?.copyWith(
@@ -3192,7 +3183,9 @@ class _AiSetupModelPage extends StatelessWidget {
                   context,
                   initialValue: selectedProviderTypeId,
                   isExpanded: true,
-                  decoration: InputDecoration(labelText: l10n.onboardingModelProvider),
+                  decoration: InputDecoration(
+                    labelText: l10n.onboardingModelProvider,
+                  ),
                   items: catalogEntries
                       .map(
                         (entry) => DropdownMenuItem<String>(
@@ -3392,7 +3385,9 @@ class _OnboardingAvailableModelPickerState
               context,
               initialValue: selectedIsVisible ? widget.selectedModelId : null,
               isExpanded: true,
-              decoration: InputDecoration(labelText: l10n.onboardingDefaultModel),
+              decoration: InputDecoration(
+                labelText: l10n.onboardingDefaultModel,
+              ),
               items: visibleModels
                   .map(
                     (model) => DropdownMenuItem<String>(
@@ -3646,7 +3641,10 @@ class _OnboardingPermissionBridge {
   }
 }
 
-String _requirementButtonLabel(_OnboardingRequirement requirement, AppLocalizations l10n) {
+String _requirementButtonLabel(
+  _OnboardingRequirement requirement,
+  AppLocalizations l10n,
+) {
   if (requirement.status == 'Satisfied') {
     return l10n.onboardingPermissionGranted;
   }

@@ -3,6 +3,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:operit_folder_access/operit_folder_access.dart';
 
 import '../../core/application/CoreApplicationService.dart';
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -90,9 +91,11 @@ class _OperitAppState extends State<OperitApp> {
       initialThemeMode: _runtimeManager.startupThemeMode,
       initialThemeIsReady: false,
       unconfiguredChildEnabled: true,
-      child: _AppDialogHost(
-        startupWebAccessError: _startupWebAccessError,
-        child: AppStartupRouteHost(key: ValueKey<int>(_startupRouteEpoch)),
+      child: LocalDirectoryPickerHost(
+        child: _AppDialogHost(
+          startupWebAccessError: _startupWebAccessError,
+          child: AppStartupRouteHost(key: ValueKey<int>(_startupRouteEpoch)),
+        ),
       ),
     );
   }

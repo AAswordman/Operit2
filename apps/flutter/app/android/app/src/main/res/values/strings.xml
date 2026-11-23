@@ -1,4 +1,5 @@
 <resources>
+    <string name="operit_shared_storage">Internal storage</string>
     <string name="operit_documents_private">Operit2 App Data</string>
     <string name="operit_documents_runtime">Operit2 Runtime Data</string>
     <string name="operit_documents_workspaces">Operit2 Workspaces</string>

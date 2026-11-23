@@ -6,16 +6,16 @@ import '../proxy/generated/CoreProxyClients.g.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import '../backup/ChatBackupDirectoryStorage.dart';
 
-/// Uses generic folder selection and the project's VFS without extending third-party APIs.
+/// Uses platform directory selection and the project's persistent VFS mounts.
 class MountedChatBackupDirectoryStorage implements PersistentDirectoryStorage {
   /// Binds backup I/O to the local runtime's existing external mount facilities.
   const MountedChatBackupDirectoryStorage(this.clients);
   final GeneratedCoreProxyClients clients;
 
-  /// Uses the same picker and mount registration as external workspace folders.
+  /// Selects local storage through the Host and registers its authorized source.
   @override
   Future<PersistentDirectory?> select() async {
-    final source = await OperitFolderAccess.pickWorkspaceDirectory();
+    final source = await OperitFolderAccess.pickLocalDirectory();
     if (source == null) return null;
     final path = await clients.servicesFileSelectionService.mountDirectory(
       sourceJson: jsonEncode({

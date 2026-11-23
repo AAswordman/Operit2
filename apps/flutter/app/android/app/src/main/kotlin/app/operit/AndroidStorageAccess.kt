@@ -72,11 +72,8 @@ class AndroidStorageAccess(private val activity: MainActivity) {
     }
 
     /** Returns permissions supported by the device's shared-storage model and manifest. */
-    private fun legacyPermissions(): Array<String> = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-        arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE)
-    } else {
+    private fun legacyPermissions(): Array<String> =
         arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-    }
 
     companion object {
         private const val REQUEST_CODE = 2409

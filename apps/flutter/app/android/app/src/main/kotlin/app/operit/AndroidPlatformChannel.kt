@@ -26,11 +26,14 @@ class AndroidPlatformChannel(
     private val runtimeHost: AndroidRuntimeHost,
 ) {
     private val storageAccess = AndroidStorageAccess(activity)
+    private val localDirectories = AndroidLocalDirectoryAccess(activity, storageAccess::isGranted)
     private val accessibilitySetup = AndroidAccessibilitySetup(activity)
     private var pendingPermissionResult: MethodChannel.Result? = null
 
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
+            "localDirectoryRoots" -> localDirectoryRoots(result)
+            "localDirectoryList", "localDirectoryCreate" -> localDirectoryOperation(call, result)
             "androidRuntimePaths" -> androidRuntimePaths(result)
             "hostEventScheduleFailures" -> runtimeHost.runRuntime(result) {
                 AndroidHostEventScheduler.readUndelivered(activity).map { it.toMap() }
@@ -77,6 +80,34 @@ class AndroidPlatformChannel(
             else -> return false
         }
         return true
+    }
+
+    /** Obtains shared-storage authorization before opening the in-application folder browser. */
+    private fun localDirectoryRoots(result: MethodChannel.Result) {
+        try {
+            storageAccess.request { granted ->
+                if (granted) {
+                    runtimeHost.runRuntime(result) { localDirectories.roots() }
+                } else {
+                    result.error("STORAGE_PERMISSION_REQUIRED", "Shared storage permission was not granted", null)
+                }
+            }
+        } catch (error: Exception) {
+            result.error("DIRECTORY_ACCESS_ERROR", error.message, null)
+        }
+    }
+
+    /** Runs local folder enumeration and creation on a Host worker rather than Flutter's UI thread. */
+    private fun localDirectoryOperation(call: MethodCall, result: MethodChannel.Result) {
+        runtimeHost.runRuntime(result) {
+            val path = requireNotNull(call.argument<String>("path")) { "Directory path is required" }
+            when (call.method) {
+                "localDirectoryList" -> localDirectories.list(path)
+                "localDirectoryCreate" -> localDirectories.create(path,
+                    requireNotNull(call.argument<String>("name")) { "Folder name is required" })
+                else -> error("Unknown local directory operation")
+            }
+        }
     }
 
     /** Reads image byte payloads from the Android clipboard. */

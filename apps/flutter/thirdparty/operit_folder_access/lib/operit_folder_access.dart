@@ -7,6 +7,14 @@ import 'package:file_selector/file_selector.dart' as selector;
 import 'package:flutter/services.dart';
 import 'package:file_selector_platform_interface/file_selector_platform_interface.dart'
     show FileSelectorPlatform;
+import 'src/local_directory_picker.dart';
+
+export 'src/local_directory_picker.dart'
+    show
+        LocalDirectoryPickerHost,
+        LocalDirectoryAccess,
+        DirectoryLocation,
+        DirectoryListing;
 
 part 'src/selected_file_input.dart';
 part 'src/incoming_file_input.dart';
@@ -58,6 +66,10 @@ class FolderMountSource {
 /// the implementation. Storage-root selection returns native paths; workspace
 /// selection may return a persistently authorized document-tree URI.
 abstract final class OperitFolderAccess {
+  /// Selects a local directory through the platform's filesystem access adapter.
+  static Future<FolderMountSource?> pickLocalDirectory() =>
+      OperitFolderAccessPlatform.instance.pickLocalDirectory();
+
   /// Returns an empty list when the user cancels. Platform limitations and
   /// permission errors are propagated to the caller.
   static Future<List<String>> pickDirectories({String? initialDirectory}) =>
@@ -89,6 +101,9 @@ abstract final class OperitFolderAccess {
 /// Defaults to file_selector and its registered native/web platform delegates.
 abstract class OperitFolderAccessPlatform {
   static OperitFolderAccessPlatform instance = _FileSelectorFolderAccess();
+
+  /// Uses the registered platform's authorized directory selection.
+  Future<FolderMountSource?> pickLocalDirectory() => pickWorkspaceDirectory();
 
   /// Registers external file delivery; platforms without an inbox have no events.
   Future<void> receiveIncomingFiles({
@@ -283,6 +298,13 @@ class OperitFolderAccessAndroid extends _FileSelectorFolderAccess
 
   static void registerWith() {
     OperitFolderAccessPlatform.instance = OperitFolderAccessAndroid();
+  }
+
+  /// Browses shared storage in the application instead of launching DocumentsUI.
+  @override
+  Future<FolderMountSource?> pickLocalDirectory() async {
+    final path = await LocalDirectoryPickerHost.select();
+    return path == null ? null : FolderMountSource.native(path);
   }
 
   @override

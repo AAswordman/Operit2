@@ -38,7 +38,7 @@ class _ChatBackupDirectoryPanelState extends State<ChatBackupDirectoryPanel> {
     });
   }
 
-  /// Opens the system picker under the user's gesture and checks the selected capability.
+  /// Opens the platform directory selector and checks its selected capability.
   Future<void> _select() async {
     setState(() => _busy = true);
     try {

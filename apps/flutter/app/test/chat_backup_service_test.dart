@@ -167,6 +167,30 @@ void main() {
   );
 
   test(
+    'existing SAF backup binding remains usable without opening a new selector',
+    () async {
+      const legacyPath = '/virtual/android/documents/existing-grant';
+      final record = jsonEncode({
+        'path': legacyPath,
+        'label': 'Existing SAF backups',
+      });
+      await manager.saveChatBackupDirectory(record);
+      final storage = _DirectoryStorage()
+        ..selectFailure = StateError(
+          'Existing bindings must not reopen a selector',
+        );
+      final service = ChatBackupService(storage: storage);
+      await service.checkAndBackup();
+      expect(service.directory!.path, legacyPath);
+      expect(service.needsDirectory, isFalse);
+      expect(storage.creates, 1);
+      expect(storage.lists, [legacyPath]);
+      expect(manager.config.chatBackupDirectory, record);
+      service.dispose();
+    },
+  );
+
+  test(
     'valid selection survives root edits and checks revoked access even after daily success',
     () async {
       final storage = _DirectoryStorage();
@@ -678,15 +702,13 @@ class _ChatBridge extends OperitRuntimeBridge {
       throw UnimplementedError();
 }
 
-/// Supplies the same platform-neutral resource descriptor used by workspace folder selection.
+/// Supplies an authorized local source without invoking a workspace document picker.
 class _ExternalFolderPicker extends OperitFolderAccessPlatform {
   int selections = 0;
 
   /// Returns an authorized resource without exposing a native filesystem path.
   @override
-  Future<FolderMountSource?> pickWorkspaceDirectory({
-    String? initialDirectory,
-  }) async {
+  Future<FolderMountSource?> pickLocalDirectory() async {
     selections++;
     return const FolderMountSource(
       backend: 'test_documents',
@@ -695,6 +717,12 @@ class _ExternalFolderPicker extends OperitFolderAccessPlatform {
       name: 'External backups',
     );
   }
+
+  /// Rejects accidental reuse of the system document-tree selector for backups.
+  @override
+  Future<FolderMountSource?> pickWorkspaceDirectory({
+    String? initialDirectory,
+  }) => throw StateError('Backups must use local directory selection');
 
   /// Rejects physical-path selection because backups must use resource mounts.
   @override
