@@ -132,6 +132,15 @@ by the existing filename rules without copying or migrating them.
 In this checkout Web's generic picker returns no selection and OpenHarmony's
 picker is unimplemented; those shared capabilities still need implementation.
 
+## Data settings layout
+
+The data and backup page fills the settings detail pane, with the same 16-pixel
+horizontal padding as other settings pages. It has no separate maximum width.
+Section headings use `SettingsControlStyles.sectionTitleTextStyle`; action and
+status labels use `bodyMedium`, while descriptions, directory labels, timestamps,
+and runtime values use `bodySmall`. Action buttons use the shared settings section
+button sizing. These theme text roles follow the application's text scaling.
+
 ## Checks
 
 Coverage includes direct-file capture of committed WAL rows, preservation of all

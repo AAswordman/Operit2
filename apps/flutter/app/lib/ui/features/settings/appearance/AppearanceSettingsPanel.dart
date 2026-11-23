@@ -14,6 +14,7 @@ import 'package:operit_ui/operit_ui.dart'
         ThemeAssetPurpose,
         ThemeAssetStage,
         ThemeGlassSurfaceGroup,
+        ThemePreferenceDefaults,
         themeImageFittedSize,
         themeImageMaxDimension,
         themeImageMaxPixels;
@@ -29,6 +30,7 @@ import '../../../common/components/OperitDialog.dart';
 import '../../../common/layout/ApplicationZoom.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
+import '../../../theme/ThemeColorPresets.dart';
 import '../../../theme/OperitThemeAssets.dart';
 import '../../../theme/ThemeVideoAssetLoader.dart';
 import '../components/SettingsAssetTile.dart';
@@ -2580,69 +2582,12 @@ Future<void> _showBubbleImageAdjustDialog(
   }
 }
 
-class _ThemeColorPreset {
-  const _ThemeColorPreset({
-    required this.id,
-    required this.primaryColor,
-    required this.secondaryColor,
-    required this.useCustomColors,
-  });
-
-  final String id;
-  final int? primaryColor;
-  final int? secondaryColor;
-  final bool useCustomColors;
-}
-
-const List<_ThemeColorPreset> _themeColorPresets = <_ThemeColorPreset>[
-  _ThemeColorPreset(
-    id: 'default',
-    primaryColor: null,
-    secondaryColor: null,
-    useCustomColors: false,
-  ),
-  _ThemeColorPreset(
-    id: 'sky',
-    primaryColor: 0xFF4C9EEB,
-    secondaryColor: 0xFF32B8C6,
-    useCustomColors: true,
-  ),
-  _ThemeColorPreset(
-    id: 'matcha',
-    primaryColor: 0xFF5C8D48,
-    secondaryColor: 0xFFB08B42,
-    useCustomColors: true,
-  ),
-  _ThemeColorPreset(
-    id: 'ember',
-    primaryColor: 0xFFE46F3D,
-    secondaryColor: 0xFF9C6A2F,
-    useCustomColors: true,
-  ),
-  _ThemeColorPreset(
-    id: 'rose',
-    primaryColor: 0xFFD85C7F,
-    secondaryColor: 0xFF8E6AD8,
-    useCustomColors: true,
-  ),
-];
-
 const Color _customPresetPrimaryPreviewColor = Color(0xFF2F80ED);
 const Color _customPresetSecondaryPreviewColor = Color(0xFFFFB020);
 
-String _selectedColorPresetId(ThemePreferenceSnapshot snapshot) {
-  if (!snapshot.useCustomColors) {
-    return 'default';
-  }
-  for (final preset in _themeColorPresets) {
-    if (preset.useCustomColors &&
-        preset.primaryColor == snapshot.customPrimaryColor &&
-        preset.secondaryColor == snapshot.customSecondaryColor) {
-      return preset.id;
-    }
-  }
-  return 'custom';
-}
+/// Resolves built-in presets using their existing persisted identity.
+String _selectedColorPresetId(ThemePreferenceSnapshot snapshot) =>
+    themeColorPresetForSnapshot(snapshot)?.id ?? 'custom';
 
 String _backgroundImageLabel(AppLocalizations l10n, String? imagePath) {
   if (imagePath == null || imagePath.isEmpty) {
@@ -2717,15 +2662,15 @@ class _ThemeColorPresetSelector extends StatelessWidget {
 
   final String selectedId;
   final ThemePreferenceSnapshot snapshot;
-  final ValueChanged<_ThemeColorPreset> onChanged;
+  final ValueChanged<ThemeColorPreset> onChanged;
   final VoidCallback onCustomTap;
 
-  /// Shows preset colors and the actual saved custom seed colors.
+  /// Shows generated M3 preset colors and the exact saved custom colors.
   @override
   Widget build(BuildContext context) {
-    final presets = <_ThemeColorPreset>[
-      ..._themeColorPresets,
-      _ThemeColorPreset(
+    final presets = <ThemeColorPreset>[
+      ...themeColorPresets,
+      ThemeColorPreset(
         id: 'custom',
         primaryColor: snapshot.customPrimaryColor,
         secondaryColor: snapshot.customSecondaryColor,
@@ -2749,22 +2694,42 @@ class _ThemeColorPresetSelector extends StatelessWidget {
   }
 }
 
-Color _themePresetPrimaryColor(BuildContext context, _ThemeColorPreset preset) {
+/// Previews the generated primary role instead of the preset's raw seed.
+Color _themePresetPrimaryColor(BuildContext context, ThemeColorPreset preset) {
+  if (preset.id != 'custom') {
+    return _themePresetScheme(context, preset).primary;
+  }
   final colorScheme = Theme.of(context).colorScheme;
   return preset.primaryColor == null
       ? colorScheme.primary
       : Color(preset.primaryColor!);
 }
 
+/// Previews the coordinated secondary role rather than the legacy accent value.
 Color _themePresetSecondaryColor(
   BuildContext context,
-  _ThemeColorPreset preset,
+  ThemeColorPreset preset,
 ) {
+  if (preset.id != 'custom') {
+    return _themePresetScheme(context, preset).secondary;
+  }
   final colorScheme = Theme.of(context).colorScheme;
   return preset.secondaryColor == null
       ? colorScheme.secondary
       : Color(preset.secondaryColor!);
 }
+
+/// Resolves swatches through the same palette path as the application.
+ColorScheme _themePresetScheme(BuildContext context, ThemeColorPreset preset) =>
+    operitColorScheme(
+      Theme.of(context).brightness,
+      ThemePreferenceSnapshot.fromJson({
+        ...ThemePreferenceDefaults.snapshot.toJson(),
+        'useCustomColors': preset.useCustomColors,
+        'customPrimaryColor': preset.primaryColor,
+        'customSecondaryColor': preset.secondaryColor,
+      }),
+    );
 
 class _ColorPresetTile extends StatelessWidget {
   const _ColorPresetTile({

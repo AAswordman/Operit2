@@ -14,13 +14,62 @@ import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/settings/data/DataSettingsPanel.dart';
+import 'package:operit2/ui/features/settings/components/SettingsControlStyles.dart';
+import 'package:operit2/ui/theme/OperitGlassSurface.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
+/// Verifies data settings layout, typography, and explicit transfer actions.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   final originalFileSelector = FileSelectorPlatform.instance;
 
   tearDown(() => FileSelectorPlatform.instance = originalFileSelector);
+
+  for (final width in <double>[340, 1000, 1600]) {
+    testWidgets('data settings fill the available width: $width', (
+      tester,
+    ) async {
+      tester.view.physicalSize = Size(width, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      final l10n = await _pumpPanel(tester, _LogBridge(), showLogs: false);
+      final heading = find.text(l10n.settingsDataDatabaseBackup);
+      final card = find.ancestor(
+        of: heading,
+        matching: find.byType(OperitGlassSurface),
+      );
+      final bounds = tester.getRect(card);
+      expect(bounds.left, 16);
+      expect(bounds.right, width - 16);
+
+      final context = tester.element(heading);
+      final textTheme = Theme.of(context).textTheme;
+      expect(
+        _renderedTextStyle(tester, heading).fontSize,
+        SettingsControlStyles.sectionTitleTextStyle(context).fontSize,
+      );
+      expect(
+        _renderedTextStyle(
+          tester,
+          find.text(l10n.settingsDataDatabaseBackupDescription),
+        ).fontSize,
+        textTheme.bodySmall!.fontSize,
+      );
+      expect(
+        _renderedTextStyle(tester, find.text(l10n.chatRestoreTitle)).fontSize,
+        textTheme.bodyMedium!.fontSize,
+      );
+      expect(
+        _renderedTextStyle(
+          tester,
+          find.text(l10n.settingsDataRestoreDatabaseDescription),
+        ).fontSize,
+        textTheme.bodySmall!.fontSize,
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
 
   testWidgets('JSON import writes only after the selected file is confirmed', (
     tester,
@@ -169,6 +218,7 @@ void main() {
   });
 }
 
+/// Renders the data panel with an isolated diagnostic transport.
 Future<AppLocalizations> _pumpPanel(
   WidgetTester tester,
   _LogBridge bridge, {
@@ -201,6 +251,14 @@ Future<AppLocalizations> _pumpPanel(
   }
   return l10n;
 }
+
+/// Reads the effective typography after inherited and list tile styles merge.
+TextStyle _renderedTextStyle(WidgetTester tester, Finder text) => tester
+    .widget<RichText>(
+      find.descendant(of: text, matching: find.byType(RichText)),
+    )
+    .text
+    .style!;
 
 /// Reveals an action inside the settings list before tapping it.
 Future<void> _reveal(WidgetTester tester, Finder action) async {

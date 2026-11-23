@@ -611,9 +611,10 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
         const SizedBox(height: 12),
         FilledButton.tonalIcon(
           onPressed: _busy ? null : _exportDiagnosticLogs,
+          style: SettingsControlStyles.sectionFilledButton(),
           icon: _exportingLogs
               ? const M3LoadingIndicator(size: 20)
-              : const Icon(Icons.download_outlined),
+              : const Icon(Icons.download_outlined, size: 18),
           label: Text(
             _exportingLogs
                 ? l10n.settingsDataLogsExporting
@@ -658,7 +659,10 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
             ready
                 ? l10n.settingsDataBackupScheduled
                 : l10n.settingsDataBackupUnavailable,
-            style: theme.textTheme.titleSmall,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           if (directory != null) SelectableText(directory.label),
           if (lastSuccess != null)
@@ -684,6 +688,7 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
             children: [
               if (ready)
                 FilledButton.icon(
+                  style: SettingsControlStyles.sectionFilledButton(),
                   onPressed: _busy || service.backingUp
                       ? null
                       : () => _runBackupAction(() async {
@@ -692,16 +697,17 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
                             _showMessage(l10n.settingsDataBackupSaved);
                           }
                         }),
-                  icon: const Icon(Icons.backup_outlined),
+                  icon: const Icon(Icons.backup_outlined, size: 18),
                   label: Text(l10n.settingsDataBackupNow),
                 ),
               OutlinedButton.icon(
+                style: SettingsControlStyles.sectionFilledButton(),
                 onPressed: _busy || service.backingUp
                     ? null
                     : () => _runBackupAction(() async {
                         await service.selectDirectory();
                       }),
-                icon: const Icon(Icons.folder_open_outlined),
+                icon: const Icon(Icons.folder_open_outlined, size: 18),
                 label: Text(
                   ready ? l10n.chatBackupChange : l10n.chatBackupChoose,
                 ),
@@ -733,12 +739,21 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     Widget? progress,
   }) {
     final working = _activeTransfer == title;
+    final theme = Theme.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
+          visualDensity: VisualDensity.compact,
+          leading: Icon(icon, size: 20, color: theme.colorScheme.primary),
+          titleTextStyle: theme.textTheme.bodyMedium?.copyWith(
+            color: theme.colorScheme.onSurface,
+            fontWeight: FontWeight.w600,
+          ),
+          subtitleTextStyle: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
           title: Text(title),
           subtitle: description == null ? null : Text(description),
           trailing: working
@@ -769,101 +784,95 @@ class _DataSettingsPanelState extends State<DataSettingsPanel> {
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
     final operit1Progress = _operit1ImportProgress;
-    return Center(
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 760),
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+      children: [
+        _buildBackupCard(l10n),
+        _SectionCard(
+          title: l10n.settingsDataRecoverySection,
           children: [
-            _buildBackupCard(l10n),
-            _SectionCard(
-              title: l10n.settingsDataRecoverySection,
-              children: [
-                _action(
-                  icon: Icons.restore_outlined,
-                  title: l10n.chatRestoreTitle,
-                  description: l10n.settingsDataRestoreDatabaseDescription,
-                  onTap: () => _runBackupAction(() async {
-                    await ChatBackupRestorePanel.show(context, _backupService);
-                  }),
-                ),
-                const Divider(height: 1),
-                _action(
-                  icon: Icons.folder_zip_outlined,
-                  title: l10n.settingsDataImportRawSnapshot,
-                  description: l10n.settingsDataRestoreArchiveDescription,
-                  onTap: _importRawSnapshot,
-                ),
-              ],
+            _action(
+              icon: Icons.restore_outlined,
+              title: l10n.chatRestoreTitle,
+              description: l10n.settingsDataRestoreDatabaseDescription,
+              onTap: () => _runBackupAction(() async {
+                await ChatBackupRestorePanel.show(context, _backupService);
+              }),
             ),
-            _SectionCard(
-              title: l10n.settingsDataImportSection,
-              children: [
-                _action(
-                  icon: Icons.move_to_inbox_outlined,
-                  title: l10n.settingsDataImportOperit1Snapshot,
-                  description: l10n.settingsDataImportOperit1Description,
-                  onTap: _importOperit1Snapshot,
-                  progress: operit1Progress == null
-                      ? null
-                      : _Operit1SnapshotImportProgressPanel(
-                          progress: operit1Progress,
-                        ),
-                ),
-                const Divider(height: 1),
-                _action(
-                  icon: Icons.chat_bubble_outline,
-                  title: l10n.settingsDataImportChatJson,
-                  description: l10n.settingsDataImportChatJsonDescription,
-                  onTap: () => _importJson(chat: true),
-                ),
-                const Divider(height: 1),
-                _action(
-                  icon: Icons.tune_outlined,
-                  title: l10n.settingsDataImportModelJson,
-                  description: l10n.settingsDataImportModelJsonDescription,
-                  onTap: () => _importJson(chat: false),
-                ),
-              ],
+            const Divider(height: 1),
+            _action(
+              icon: Icons.folder_zip_outlined,
+              title: l10n.settingsDataImportRawSnapshot,
+              description: l10n.settingsDataRestoreArchiveDescription,
+              onTap: _importRawSnapshot,
             ),
-            _SectionCard(
-              children: [
-                ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  shape: const Border(),
-                  collapsedShape: const Border(),
-                  title: Text(
-                    l10n.settingsDataExportSection,
-                    style: SettingsControlStyles.sectionTitleTextStyle(context),
-                  ),
-                  expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _action(
-                      icon: Icons.folder_zip_outlined,
-                      title: l10n.settingsDataExportRawSnapshot,
-                      description:
-                          l10n.settingsDataExportRawSnapshotDescription,
-                      onTap: _exportRawSnapshot,
-                    ),
-                    _action(
-                      icon: Icons.chat_bubble_outline,
-                      title: l10n.settingsDataExportChatJson,
-                      onTap: () => _exportJson(chat: true),
-                    ),
-                    _action(
-                      icon: Icons.tune_outlined,
-                      title: l10n.settingsDataExportModelJson,
-                      onTap: () => _exportJson(chat: false),
-                    ),
-                  ],
-                ),
-              ],
-            ),
-            _buildRuntimeCard(l10n, runtime),
-            _buildDiagnosticLogsCard(l10n, colorScheme),
           ],
         ),
-      ),
+        _SectionCard(
+          title: l10n.settingsDataImportSection,
+          children: [
+            _action(
+              icon: Icons.move_to_inbox_outlined,
+              title: l10n.settingsDataImportOperit1Snapshot,
+              description: l10n.settingsDataImportOperit1Description,
+              onTap: _importOperit1Snapshot,
+              progress: operit1Progress == null
+                  ? null
+                  : _Operit1SnapshotImportProgressPanel(
+                      progress: operit1Progress,
+                    ),
+            ),
+            const Divider(height: 1),
+            _action(
+              icon: Icons.chat_bubble_outline,
+              title: l10n.settingsDataImportChatJson,
+              description: l10n.settingsDataImportChatJsonDescription,
+              onTap: () => _importJson(chat: true),
+            ),
+            const Divider(height: 1),
+            _action(
+              icon: Icons.tune_outlined,
+              title: l10n.settingsDataImportModelJson,
+              description: l10n.settingsDataImportModelJsonDescription,
+              onTap: () => _importJson(chat: false),
+            ),
+          ],
+        ),
+        _SectionCard(
+          children: [
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              shape: const Border(),
+              collapsedShape: const Border(),
+              title: Text(
+                l10n.settingsDataExportSection,
+                style: SettingsControlStyles.sectionTitleTextStyle(context),
+              ),
+              expandedCrossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _action(
+                  icon: Icons.folder_zip_outlined,
+                  title: l10n.settingsDataExportRawSnapshot,
+                  description: l10n.settingsDataExportRawSnapshotDescription,
+                  onTap: _exportRawSnapshot,
+                ),
+                _action(
+                  icon: Icons.chat_bubble_outline,
+                  title: l10n.settingsDataExportChatJson,
+                  onTap: () => _exportJson(chat: true),
+                ),
+                _action(
+                  icon: Icons.tune_outlined,
+                  title: l10n.settingsDataExportModelJson,
+                  onTap: () => _exportJson(chat: false),
+                ),
+              ],
+            ),
+          ],
+        ),
+        _buildRuntimeCard(l10n, runtime),
+        _buildDiagnosticLogsCard(l10n, colorScheme),
+      ],
     );
   }
 
@@ -912,27 +921,39 @@ class _StorageLocationLine extends StatelessWidget {
   final RuntimeStoragePaths paths;
   final VoidCallback? onChange;
 
+  /// Uses the same compact text hierarchy as other settings rows.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: <Widget>[
         ListTile(
           contentPadding: EdgeInsets.zero,
-          leading: Icon(Icons.folder_copy_outlined, color: colorScheme.primary),
-          title: Text(
-            l10n.settingsDataStorageSection,
-            style: const TextStyle(fontWeight: FontWeight.w700),
+          visualDensity: VisualDensity.compact,
+          leading: Icon(
+            Icons.folder_copy_outlined,
+            size: 20,
+            color: colorScheme.primary,
           ),
+          titleTextStyle: theme.textTheme.bodyMedium?.copyWith(
+            color: colorScheme.onSurface,
+            fontWeight: FontWeight.w600,
+          ),
+          subtitleTextStyle: theme.textTheme.bodySmall?.copyWith(
+            color: colorScheme.onSurfaceVariant,
+          ),
+          title: Text(l10n.settingsDataStorageSection),
           subtitle: Padding(
             padding: const EdgeInsets.only(top: 6),
             child: Text(l10n.settingsDataStorageDescription),
           ),
           trailing: FilledButton.tonalIcon(
             onPressed: onChange,
-            icon: const Icon(Icons.drive_folder_upload_outlined),
+            style: SettingsControlStyles.sectionFilledButton(),
+            icon: const Icon(Icons.drive_folder_upload_outlined, size: 18),
             label: Text(l10n.settingsDataChooseStorageRoots),
           ),
         ),
@@ -955,9 +976,11 @@ class _SectionCard extends StatelessWidget {
   final String? title;
   final List<Widget> children;
 
+  /// Applies the shared settings heading and supporting text hierarchy.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     final radius = BorderRadius.circular(12);
     return Padding(
       padding: const EdgeInsets.only(bottom: 10),
@@ -970,18 +993,23 @@ class _SectionCard extends StatelessWidget {
         material: true,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              if (title != null) ...[
-                Text(
-                  title!,
-                  style: SettingsControlStyles.sectionTitleTextStyle(context),
-                ),
-                const SizedBox(height: 8),
+          child: DefaultTextStyle.merge(
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                if (title != null) ...[
+                  Text(
+                    title!,
+                    style: SettingsControlStyles.sectionTitleTextStyle(context),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+                ...children,
               ],
-              ...children,
-            ],
+            ),
           ),
         ),
       ),
@@ -995,20 +1023,31 @@ class _InfoLine extends StatelessWidget {
   final String label;
   final String value;
 
+  /// Separates setting labels from supporting runtime values.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colorScheme = theme.colorScheme;
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 9),
       child: Row(
         children: <Widget>[
-          Expanded(child: Text(label)),
+          Expanded(
+            child: Text(
+              label,
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurface,
+              ),
+            ),
+          ),
           const SizedBox(width: 12),
           Flexible(
             child: Text(
               value,
               textAlign: TextAlign.end,
-              style: TextStyle(color: colorScheme.onSurfaceVariant),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         ],

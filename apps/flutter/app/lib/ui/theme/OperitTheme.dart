@@ -28,6 +28,7 @@ import '../window/DesktopWindowChrome.dart';
 import 'OperitThemeAssets.dart';
 import 'ThemeAppearanceErrorScreen.dart';
 import 'ThemeCircularRevealHost.dart';
+import 'ThemeColorPresets.dart';
 import 'ThemeVideoAssetLoader.dart';
 
 class OperitTheme extends StatefulWidget {
@@ -1922,6 +1923,7 @@ ColorScheme operitColorScheme(
       brightness,
     );
   }
+  final preset = themeColorPresetForSnapshot(themePreferenceSnapshot);
   final customPrimary =
       themePreferenceSnapshot.useCustomColors &&
           themePreferenceSnapshot.customPrimaryColor != null
@@ -1941,12 +1943,14 @@ ColorScheme operitColorScheme(
     brightness: brightness,
     dynamicSchemeVariant: _isGrayscaleThemeColor(seedColor)
         ? DynamicSchemeVariant.monochrome
-        : customPrimary == null
+        : preset != null || customPrimary == null
         ? DynamicSchemeVariant.tonalSpot
         : DynamicSchemeVariant.fidelity,
   );
 
-  if (customPrimary != null) {
+  // Built-in presets use the same complete M3 palette as the default theme.
+  // Their saved color pair identifies the preset; only its primary is a seed.
+  if (preset == null && customPrimary != null) {
     final foreground = _themeAccentForeground(customPrimary);
     scheme = scheme.copyWith(
       primary: customPrimary,
@@ -1956,7 +1960,7 @@ ColorScheme operitColorScheme(
       surfaceTint: customPrimary,
     );
   }
-  if (customSecondary != null) {
+  if (preset == null && customSecondary != null) {
     final secondaryScheme = ColorScheme.fromSeed(
       seedColor: customSecondary,
       brightness: brightness,

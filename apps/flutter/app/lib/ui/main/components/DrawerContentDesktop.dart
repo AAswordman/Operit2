@@ -84,7 +84,7 @@ extension _DesktopWorkspaceContent on _DrawerContentState {
         RepaintBoundary(
           key: const ValueKey('workspace-create-toolbar'),
           child: Padding(
-            padding: const EdgeInsetsDirectional.fromSTEB(14, 8, 12, 8),
+            padding: const EdgeInsetsDirectional.fromSTEB(14, 12, 12, 8),
             child: Row(
               children: <Widget>[
                 Expanded(
