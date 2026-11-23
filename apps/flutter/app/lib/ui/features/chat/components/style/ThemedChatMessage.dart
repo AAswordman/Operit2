@@ -137,13 +137,12 @@ ChatMessageThemeColors resolveChatMessageThemeColors(
         colorScheme.primaryContainer,
     aiMessageColor:
         _optionalColor(snapshot.bubbleAiBubbleColor) ??
-        colorScheme.secondaryContainer,
+        colorScheme.surfaceContainerHighest,
     userTextColor:
         _optionalColor(snapshot.bubbleUserTextColor) ??
         colorScheme.onPrimaryContainer,
     aiTextColor:
-        _optionalColor(snapshot.bubbleAiTextColor) ??
-        colorScheme.onSecondaryContainer,
+        _optionalColor(snapshot.bubbleAiTextColor) ?? colorScheme.onSurface,
     systemMessageColor: colorScheme.surfaceContainerHighest,
     systemTextColor: colorScheme.onSurfaceVariant,
   );

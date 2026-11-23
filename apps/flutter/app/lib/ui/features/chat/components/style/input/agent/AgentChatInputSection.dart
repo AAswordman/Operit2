@@ -1743,7 +1743,7 @@ Color _actionBackground(
     return colorScheme.error;
   }
   if (showQueueAction) {
-    return colorScheme.secondary;
+    return colorScheme.tertiary;
   }
   if (canSend) {
     return colorScheme.primary;
@@ -1761,7 +1761,7 @@ Color _actionForeground(
     return colorScheme.onError;
   }
   if (showQueueAction) {
-    return colorScheme.onSecondary;
+    return colorScheme.onTertiary;
   }
   return colorScheme.onPrimary;
 }

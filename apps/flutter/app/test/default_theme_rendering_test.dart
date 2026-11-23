@@ -105,11 +105,11 @@ void main() {
           );
           expect(
             palette.selectedContainerColor,
-            scheme.primaryContainer.withValues(
+            scheme.secondaryContainer.withValues(
               alpha: transparent ? 0.34 : 0.78,
             ),
           );
-          expect(palette.selectedContentColor, scheme.onPrimaryContainer);
+          expect(palette.selectedContentColor, scheme.onSecondaryContainer);
           expect(
             palette.dividerColor,
             scheme.outlineVariant.withValues(alpha: transparent ? 0.34 : 0.62),

@@ -546,16 +546,14 @@ class _PreviewBubble extends StatelessWidget {
           )
         : Color(
             snapshot.bubbleAiBubbleColor ??
-                scheme.secondaryContainer.toARGB32(),
+                scheme.surfaceContainerHighest.toARGB32(),
           );
     final textColor = user
         ? Color(
             snapshot.bubbleUserTextColor ??
                 scheme.onPrimaryContainer.toARGB32(),
           )
-        : Color(
-            snapshot.bubbleAiTextColor ?? scheme.onSecondaryContainer.toARGB32(),
-          );
+        : Color(snapshot.bubbleAiTextColor ?? scheme.onSurface.toARGB32());
     final imagePath = user
         ? snapshot.bubbleUserImageUri
         : snapshot.bubbleAiImageUri;
@@ -658,14 +656,14 @@ class _PreviewBubble extends StatelessWidget {
           ? const BorderRadius.all(Radius.circular(16))
           : BorderRadius.circular(snapshot.avatarCornerRadius),
       child: ColoredBox(
-        color: user ? scheme.primary : scheme.secondaryContainer,
+        color: user ? scheme.primary : scheme.tertiaryContainer,
         child: SizedBox.square(
           dimension: themeBubbleAvatarSize,
           child: Center(
             child: Icon(
               user ? Icons.person : Icons.assistant,
               size: 22,
-              color: user ? scheme.onPrimary : scheme.onSecondaryContainer,
+              color: user ? scheme.onPrimary : scheme.onTertiaryContainer,
             ),
           ),
         ),

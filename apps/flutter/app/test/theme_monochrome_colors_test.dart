@@ -6,14 +6,17 @@ import 'package:operit2/ui/theme/OperitTheme.dart';
 /// Verifies exact custom accents, independent secondary tones and neutral palettes.
 void main() {
   for (final brightness in Brightness.values) {
-    for (final (primary, secondary) in <(int, int)>[
-      (0xFFFF00FF, 0xFF00FFFF),
-      (0xFF123456, 0xFFFFB020),
-      (0xFFFFFF00, 0xFF000080),
-      (0xFF000000, 0xFFFFFFFF),
-      (0xFFFFFFFF, 0xFF000000),
-      (0xFF808080, 0xFF333333),
-    ]) {
+    for (final (primary, secondary, primaryText, secondaryText)
+        in <(int, int, Color, Color)>[
+          (0xFFFF00FF, 0xFF00FFFF, Colors.white, Colors.black),
+          (0xFF123456, 0xFFFFB020, Colors.white, Colors.white),
+          (0xFFFFFF00, 0xFF000080, Colors.black, Colors.white),
+          (0xFF000000, 0xFFFFFFFF, Colors.white, Colors.black),
+          (0xFFFFFFFF, 0xFF000000, Colors.black, Colors.white),
+          (0xFF808080, 0xFF333333, Colors.white, Colors.white),
+          (0xFF5B8C41, 0xFFB88D35, Colors.white, Colors.white),
+          (0xFFE8E8E8, 0xFFFFF5CC, Colors.black, Colors.black),
+        ]) {
       test('custom pair $primary / $secondary stays exact in $brightness', () {
         final snapshot = ThemePreferenceSnapshot.fromJson(
           UserPreferencesManager.defaultThemePreferenceSnapshot.toJson()
@@ -26,14 +29,10 @@ void main() {
         expect(scheme.primaryContainer.toARGB32(), primary);
         expect(scheme.secondary.toARGB32(), secondary);
         expect(scheme.secondaryContainer.toARGB32(), secondary);
-        for (final (background, foreground) in <(Color, Color)>[
-          (scheme.primary, scheme.onPrimary),
-          (scheme.primaryContainer, scheme.onPrimaryContainer),
-          (scheme.secondary, scheme.onSecondary),
-          (scheme.secondaryContainer, scheme.onSecondaryContainer),
-        ]) {
-          expect(_contrast(background, foreground), greaterThanOrEqualTo(4.5));
-        }
+        expect(scheme.onPrimary, primaryText);
+        expect(scheme.onPrimaryContainer, primaryText);
+        expect(scheme.onSecondary, secondaryText);
+        expect(scheme.onSecondaryContainer, secondaryText);
       });
     }
 
@@ -146,7 +145,7 @@ void main() {
             reason: '$color must have no green/blue tint',
           );
         }
-        expect(_contrast(scheme.primary, scheme.onPrimary), greaterThan(4.5));
+        expect(_contrast(scheme.primary, scheme.onPrimary), greaterThan(3));
         expect(_contrast(scheme.surface, scheme.onSurface), greaterThan(4.5));
       });
     }

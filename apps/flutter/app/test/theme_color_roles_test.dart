@@ -9,7 +9,7 @@ import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatI
 import 'package:operit2/ui/features/chat/components/style/input/classic/ClassicChatInputSection.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
-/// Exercises selection and auxiliary surfaces using deliberately distinct accents.
+/// Preserves existing component roles while custom palette values stay distinct.
 void main() {
   setUp(ClientLogger.initialize);
   for (final brightness in Brightness.values) {
@@ -39,7 +39,7 @@ void main() {
           addTearDown(focus.dispose);
           for (final (loading, text, background, foreground) in [
             (false, 'draft', scheme.primary, scheme.onPrimary),
-            (true, 'draft', scheme.secondary, scheme.onSecondary),
+            (true, 'draft', scheme.tertiary, scheme.onTertiary),
             (true, '', scheme.error, scheme.onError),
           ]) {
             controller.text = text;
@@ -94,126 +94,118 @@ void main() {
       );
     }
 
-    testWidgets(
-      'selection is primary and auxiliary buttons secondary in $brightness',
-      (tester) async {
-        await tester.pumpWidget(
-          MaterialApp(
-            theme: theme,
-            home: Scaffold(
-              body: Column(
-                children: [
-                  ChoiceChip(
-                    label: const Text('Choice'),
-                    selected: true,
-                    onSelected: (_) {},
-                  ),
-                  FilterChip(
-                    label: const Text('Filter'),
-                    selected: true,
-                    onSelected: (_) {},
-                  ),
-                  SegmentedButton<int>(
-                    segments: const [
-                      ButtonSegment(value: 1, label: Text('Segment')),
-                    ],
-                    selected: const {1},
-                    onSelectionChanged: (_) {},
-                  ),
-                  FilledButton(onPressed: () {}, child: const Text('Send')),
-                  FilledButton.tonal(
-                    onPressed: () {},
-                    child: const Text('Auxiliary'),
-                  ),
-                ],
-              ),
+    testWidgets('selection keeps original Material roles in $brightness', (
+      tester,
+    ) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: theme,
+          home: Scaffold(
+            body: Column(
+              children: [
+                ChoiceChip(
+                  label: const Text('Choice'),
+                  selected: true,
+                  onSelected: (_) {},
+                ),
+                FilterChip(
+                  label: const Text('Filter'),
+                  selected: true,
+                  onSelected: (_) {},
+                ),
+                SegmentedButton<int>(
+                  segments: const [
+                    ButtonSegment(value: 1, label: Text('Segment')),
+                  ],
+                  selected: const {1},
+                  onSelectionChanged: (_) {},
+                ),
+                FilledButton(onPressed: () {}, child: const Text('Send')),
+                FilledButton.tonal(
+                  onPressed: () {},
+                  child: const Text('Auxiliary'),
+                ),
+              ],
             ),
           ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      for (final type in [ChoiceChip, FilterChip]) {
+        final rawFinder = find.descendant(
+          of: find.byType(type),
+          matching: find.byType(RawChip),
         );
-        await tester.pumpAndSettle();
-        for (final type in [ChoiceChip, FilterChip]) {
-          final rawFinder = find.descendant(
+        final chip = tester.widget<RawChip>(rawFinder);
+        final chipTheme = ChipTheme.of(tester.element(rawFinder));
+        expect(chip.selected, isTrue);
+        expect(chip.selectedColor, isNull);
+        expect(chipTheme.selectedColor, isNull);
+        expect(
+          chip.defaultProperties!.color!.resolve({WidgetState.selected}),
+          scheme.secondaryContainer,
+        );
+      }
+      for (final type in [SegmentedButton<int>]) {
+        final materials = tester.widgetList<Material>(
+          find.descendant(
             of: find.byType(type),
-            matching: find.byType(RawChip),
-          );
-          final chip = tester.widget<RawChip>(rawFinder);
-          final chipTheme = ChipTheme.of(tester.element(rawFinder));
-          expect(chip.selected, isTrue);
-          expect(
-            chip.selectedColor ?? chipTheme.selectedColor,
-            scheme.primaryContainer,
-          );
-        }
-        for (final type in [SegmentedButton<int>]) {
-          final materials = tester.widgetList<Material>(
-            find.descendant(
-              of: find.byType(type),
-              matching: find.byType(Material),
-            ),
-          );
-          expect(
-            materials.any(
-              (material) => material.color == scheme.primaryContainer,
-            ),
-            isTrue,
-          );
-        }
-        for (final label in ['Choice', 'Filter', 'Segment']) {
-          expect(
-            DefaultTextStyle.of(tester.element(find.text(label))).style.color,
-            scheme.onPrimaryContainer,
-          );
-        }
-        for (final (label, background, foreground) in [
-          ('Send', scheme.primary, scheme.onPrimary),
-          ('Auxiliary', scheme.secondaryContainer, scheme.onSecondaryContainer),
-        ]) {
-          final button = find.ancestor(
-            of: find.text(label),
-            matching: find.byType(FilledButton),
-          );
-          final material = tester.widget<Material>(
-            find.descendant(of: button, matching: find.byType(Material)),
-          );
-          expect(material.color, background);
-          expect(
-            DefaultTextStyle.of(tester.element(find.text(label))).style.color,
-            foreground,
-          );
-        }
-        final drawer = ThemeDrawerPalette.fromScheme(
-          scheme,
-          transparentSurface: false,
+            matching: find.byType(Material),
+          ),
         );
         expect(
-          drawer.selectedContainerColor,
-          scheme.primaryContainer.withValues(alpha: 0.78),
+          materials.any(
+            (material) => material.color == scheme.secondaryContainer,
+          ),
+          isTrue,
         );
-        expect(drawer.selectedContentColor, scheme.onPrimaryContainer);
+      }
+      for (final label in ['Choice', 'Filter', 'Segment']) {
         expect(
-          theme.navigationBarTheme.indicatorColor,
-          scheme.primaryContainer,
+          DefaultTextStyle.of(tester.element(find.text(label))).style.color,
+          scheme.onSecondaryContainer,
         );
+      }
+      for (final (label, background, foreground) in [
+        ('Send', scheme.primary, scheme.onPrimary),
+        ('Auxiliary', scheme.secondaryContainer, scheme.onSecondaryContainer),
+      ]) {
+        final button = find.ancestor(
+          of: find.text(label),
+          matching: find.byType(FilledButton),
+        );
+        final material = tester.widget<Material>(
+          find.descendant(of: button, matching: find.byType(Material)),
+        );
+        expect(material.color, background);
         expect(
-          theme.navigationRailTheme.indicatorColor,
-          scheme.primaryContainer,
+          DefaultTextStyle.of(tester.element(find.text(label))).style.color,
+          foreground,
         );
-        expect(
-          theme.navigationDrawerTheme.indicatorColor,
-          scheme.primaryContainer,
-        );
-        expect(tester.takeException(), isNull);
-      },
-    );
+      }
+      final drawer = ThemeDrawerPalette.fromScheme(
+        scheme,
+        transparentSurface: false,
+      );
+      expect(
+        drawer.selectedContainerColor,
+        scheme.secondaryContainer.withValues(alpha: 0.78),
+      );
+      expect(drawer.selectedContentColor, scheme.onSecondaryContainer);
+      expect(theme.navigationBarTheme, const NavigationBarThemeData());
+      expect(theme.navigationRailTheme, const NavigationRailThemeData());
+      expect(theme.navigationDrawerTheme, const NavigationDrawerThemeData());
+      expect(tester.takeException(), isNull);
+    });
 
     test(
-      'chat bubbles use distinct primary and secondary roles in $brightness',
+      'chat bubbles keep original primary and neutral roles in $brightness',
       () {
         final colors = resolveChatMessageThemeColors(snapshot, scheme);
         expect(colors.userMessageColor, scheme.primaryContainer);
         expect(colors.userTextColor, scheme.onPrimaryContainer);
-        expect(colors.aiMessageColor, scheme.secondaryContainer);
-        expect(colors.aiTextColor, scheme.onSecondaryContainer);
+        expect(colors.aiMessageColor, scheme.surfaceContainerHighest);
+        expect(colors.aiTextColor, scheme.onSurface);
         expect(colors.systemMessageColor, scheme.surfaceContainerHighest);
         final custom = ThemePreferenceSnapshot.fromJson(
           snapshot.toJson()

@@ -120,10 +120,10 @@ class SettingsCategoryTile extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final background = selected
-        ? colorScheme.primaryContainer
+        ? colorScheme.secondaryContainer
         : colorScheme.surfaceContainerHighest.withValues(alpha: 0.34);
     final foreground = selected
-        ? colorScheme.onPrimaryContainer
+        ? colorScheme.onSecondaryContainer
         : colorScheme.onSurface;
     return Padding(
       padding: const EdgeInsets.only(bottom: 6),
@@ -133,7 +133,7 @@ class SettingsCategoryTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
           color: selected
-              ? colorScheme.primary.withValues(alpha: 0.24)
+              ? colorScheme.secondary.withValues(alpha: 0.24)
               : colorScheme.outlineVariant.withValues(alpha: 0.18),
         ),
         material: true,
@@ -152,7 +152,7 @@ class SettingsCategoryTile extends StatelessWidget {
                 CircleAvatar(
                   radius: prominent ? 20 : 16,
                   backgroundColor: selected
-                      ? colorScheme.primary.withValues(alpha: 0.16)
+                      ? colorScheme.secondary.withValues(alpha: 0.16)
                       : colorScheme.surface,
                   child: Icon(
                     spec.icon,

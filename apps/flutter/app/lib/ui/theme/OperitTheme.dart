@@ -2021,10 +2021,6 @@ ColorScheme operitColorScheme(
 bool _isGrayscaleThemeColor(Color color) =>
     color.r == color.g && color.g == color.b;
 
-/// Chooses the black or white foreground with the higher WCAG contrast ratio.
-Color _themeAccentForeground(Color background) {
-  final luminance = background.computeLuminance();
-  final blackContrast = (luminance + 0.05) / 0.05;
-  final whiteContrast = 1.05 / (luminance + 0.05);
-  return blackContrast >= whiteContrast ? Colors.black : Colors.white;
-}
+/// Prefers white accent content and reserves black for very light backgrounds.
+Color _themeAccentForeground(Color background) =>
+    background.computeLuminance() >= 0.6 ? Colors.black : Colors.white;
