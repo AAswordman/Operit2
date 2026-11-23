@@ -7,6 +7,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
 import '../../l10n/generated/app_localizations.dart';
+import '../../data/preferences/UserPreferencesManager.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
@@ -105,11 +106,7 @@ class AppNotificationService with WidgetsBindingObserver {
       final title = payload.notificationType == 'ai_message_completed'
           ? '${payload.title} · ${_localizations().completed}'
           : payload.title;
-      await _sendWhenBackground(
-        title,
-        payload.message,
-        chatId: payload.chatId,
-      );
+      await _sendWhenBackground(title, payload.message, chatId: payload.chatId);
     } catch (error, stackTrace) {
       ClientLogger.e(
         'application notification delivery failed requestId=${request.requestId}',
@@ -129,13 +126,9 @@ class AppNotificationService with WidgetsBindingObserver {
     _subscription = null;
   }
 
-  /// Resolves notification wording against the current device locales.
-  AppLocalizations _localizations() => lookupAppLocalizations(
-    basicLocaleListResolution(
-      WidgetsBinding.instance.platformDispatcher.locales,
-      AppLocalizations.supportedLocales,
-    ),
-  );
+  /// Resolves notification wording against the selected application language.
+  AppLocalizations _localizations() =>
+      lookupAppLocalizations(UserPreferencesManager.resolvedAppLocale);
 
   /// Sends one system notification only while this application is not foregrounded.
   Future<void> _sendWhenBackground(

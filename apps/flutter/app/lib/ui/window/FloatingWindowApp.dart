@@ -28,9 +28,9 @@ class FloatingWindowApp extends StatefulWidget {
 
 class _FloatingWindowAppState extends State<FloatingWindowApp> {
   final _session = ToolPkgUiSessionController();
-  late final _appearance = UserPreferencesManager(
+  late final _preferences = UserPreferencesManager(
     clients: widget.clients,
-  ).themePreferenceSnapshotFlow();
+  ).windowPreferencesFlow();
 
   /// Registers the session drain with the floating window host.
   @override
@@ -49,21 +49,29 @@ class _FloatingWindowAppState extends State<FloatingWindowApp> {
   /// Waits for the committed palette before mounting the plugin's first frame.
   @override
   Widget build(BuildContext context) {
-    return StreamBuilder<ThemePreferenceSnapshot>(
-      stream: _appearance,
-      builder: (context, appearance) {
-        if (appearance.hasError) {
-          Error.throwWithStackTrace(appearance.error!, appearance.stackTrace!);
+    return StreamBuilder<
+      ({ThemePreferenceSnapshot appearance, AppLanguage language})
+    >(
+      stream: _preferences,
+      builder: (context, preferences) {
+        if (preferences.hasError) {
+          Error.throwWithStackTrace(
+            preferences.error!,
+            preferences.stackTrace!,
+          );
         }
-        final snapshot = appearance.data;
+        final snapshot = preferences.data;
         if (snapshot == null) return const SizedBox.shrink();
-        return _buildWindow(snapshot);
+        return _buildWindow(snapshot.appearance, snapshot.language);
       },
     );
   }
 
   /// Applies the selected app palette while keeping the window surface clear.
-  Widget _buildWindow(ThemePreferenceSnapshot appearance) {
+  Widget _buildWindow(
+    ThemePreferenceSnapshot appearance,
+    AppLanguage language,
+  ) {
     final payload = widget.launch.payload;
     final plugin = core_proxy.ToolPkgContainerRuntime.fromJson(
       (payload['plugin'] as Map).cast<String, Object?>(),
@@ -80,7 +88,7 @@ class _FloatingWindowAppState extends State<FloatingWindowApp> {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       color: Colors.transparent,
-      locale: Locale(payload['locale'] as String),
+      locale: language.locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       theme: transparentTheme(Brightness.light),

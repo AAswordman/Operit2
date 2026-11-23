@@ -6,8 +6,10 @@ import 'package:operit_ui/operit_ui.dart';
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
+import 'AppLanguage.dart';
 
 export 'package:operit_ui/operit_ui.dart' show ThemePreferenceSnapshot;
+export 'AppLanguage.dart';
 
 class LongPastedTextInputSettings {
   /// Creates the global settings for converting long pasted text to attachments.
@@ -60,6 +62,15 @@ class UserPreferencesManager {
   static const int longPastedTextInputThresholdStep = 500;
   static const int defaultLongPastedTextInputThreshold = 3000;
 
+  /// Shares the committed language with all application and system surfaces.
+  static final ValueNotifier<AppLanguage> appLanguage =
+      ValueNotifier<AppLanguage>(AppLanguage.system);
+
+  /// Resolves the application's language for surfaces outside the widget tree.
+  static Locale get resolvedAppLocale => appLanguage.value.resolveLocale(
+    WidgetsBinding.instance.platformDispatcher.locales,
+  );
+
   /// An unset preference keeps the application's desktop/mobile layout default.
   static final ValueNotifier<bool?> enterSendsMessage = ValueNotifier<bool?>(
     null,
@@ -79,6 +90,26 @@ class UserPreferencesManager {
 
   static const String _fileName = 'user_preferences.preferences.json';
   static const String _KEY_CHAT_SIDEBAR_TAB = 'chat_sidebar_tab_v1';
+  static const String _KEY_APP_LANGUAGE = 'app_language';
+
+  /// Loads the language before mounting the configured application.
+  Future<AppLanguage> loadAppLanguage() async {
+    final values = await _getValues(<String>[_KEY_APP_LANGUAGE]);
+    return AppLanguage.fromPreference(values[_KEY_APP_LANGUAGE]);
+  }
+
+  /// Observes committed language changes through the shared preference store.
+  Stream<AppLanguage> appLanguageFlow() => preferencesFlow()
+      .map((values) => AppLanguage.fromPreference(values[_KEY_APP_LANGUAGE]))
+      .distinct();
+
+  /// Persists a language choice before refreshing the running application.
+  Future<void> saveAppLanguage(AppLanguage language) async {
+    await _setValues(<String, Object?>{
+      _KEY_APP_LANGUAGE: language.code ?? 'system',
+    });
+    appLanguage.value = language;
+  }
 
   /// Maps the shared snapshot onto the existing Space preference keys.
   static const Map<String, String> _appearancePreferenceKeys = <String, String>{
@@ -390,6 +421,23 @@ class UserPreferencesManager {
           .map(_appearancePreferences)
           .distinct(mapEquals)
           .map(_themeSnapshotFromPreferences);
+
+  /// Supplies standalone windows with appearance and language from one commit.
+  Stream<({ThemePreferenceSnapshot appearance, AppLanguage language})>
+  windowPreferencesFlow() => preferencesFlow()
+      .map(
+        (values) => <String, Object?>{
+          ..._appearancePreferences(values),
+          _KEY_APP_LANGUAGE: values[_KEY_APP_LANGUAGE],
+        },
+      )
+      .distinct(mapEquals)
+      .map(
+        (values) => (
+          appearance: _themeSnapshotFromPreferences(values),
+          language: AppLanguage.fromPreference(values[_KEY_APP_LANGUAGE]),
+        ),
+      );
 
   /// Filters unrelated settings before appearance validation and change detection.
   static Map<String, Object?> _appearancePreferences(

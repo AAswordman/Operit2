@@ -9,17 +9,22 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../main/layout/NavigationLayoutMetrics.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../components/SettingsControlStyles.dart';
+import 'AppLanguageControl.dart';
 
 class GlobalBehaviorSettingsPanel extends StatelessWidget {
   const GlobalBehaviorSettingsPanel({super.key});
 
-  /// Builds global chat input behavior settings.
+  /// Builds application language and global chat behavior settings.
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
       children: <Widget>[
+        _GlobalBehaviorSectionCard(
+          title: l10n.settingsAppLanguageTitle,
+          children: const <Widget>[AppLanguageControl()],
+        ),
         _GlobalBehaviorSectionCard(
           title: l10n.settingsGlobalBehaviorChatLayoutSection,
           children: const <Widget>[_ChatScrollNavigatorSideControl()],

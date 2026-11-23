@@ -75,6 +75,7 @@ class _OperitThemeState extends State<OperitTheme> {
   Future<void> _zoomSave = Future<void>.value();
   StreamSubscription<LongPastedTextInputSettings>? _longPasteSubscription;
   StreamSubscription<bool?>? _enterSendsMessageSubscription;
+  StreamSubscription<AppLanguage>? _appLanguageSubscription;
   StreamSubscription<bool>? _chatScrollNavigatorOnLeftSubscription;
   late final OperitThemeController _controller = OperitThemeController(
     onChanged: () {
@@ -99,6 +100,7 @@ class _OperitThemeState extends State<OperitTheme> {
   @override
   void initState() {
     super.initState();
+    UserPreferencesManager.appLanguage.addListener(_handleAppLanguageChanged);
     _runtimeManager.addListener(_handleRuntimeBootstrapChanged);
     _preserveUnconfiguredChild =
         widget.unconfiguredChildEnabled && !_runtimeManager.runtimeConfigured;
@@ -118,10 +120,16 @@ class _OperitThemeState extends State<OperitTheme> {
   void dispose() {
     _stopRuntimeStartupStatusPolling();
     _runtimeManager.removeListener(_handleRuntimeBootstrapChanged);
+    UserPreferencesManager.appLanguage.removeListener(_handleAppLanguageChanged);
     _controller.dispose();
     _assetDiagnostics.dispose();
     _cancelPreferenceSubscriptions();
     super.dispose();
+  }
+
+  /// Refreshes retained application roots without replacing navigation state.
+  void _handleAppLanguageChanged() {
+    if (mounted) setState(() {});
   }
 
   void _syncAssetContext() {
@@ -169,6 +177,7 @@ class _OperitThemeState extends State<OperitTheme> {
     try {
       await startFuture;
       final zoom = await _zoomPreferences.load();
+      final appLanguage = await const UserPreferencesManager().loadAppLanguage();
       final enterSendsMessage = await const UserPreferencesManager()
           .loadEnterSendsMessage();
       final chatScrollNavigatorOnLeft = await const UserPreferencesManager()
@@ -179,6 +188,13 @@ class _OperitThemeState extends State<OperitTheme> {
         return;
       }
       UserPreferencesManager.enterSendsMessage.value = enterSendsMessage;
+      UserPreferencesManager.appLanguage.value = appLanguage;
+      _appLanguageSubscription = const UserPreferencesManager()
+          .appLanguageFlow()
+          .listen((language) {
+            if (!mounted || generation != _runtimeGeneration) return;
+            UserPreferencesManager.appLanguage.value = language;
+          });
       UserPreferencesManager.chatScrollNavigatorOnLeft.value =
           chatScrollNavigatorOnLeft;
       _chatScrollNavigatorOnLeftSubscription = const UserPreferencesManager()
@@ -237,6 +253,8 @@ class _OperitThemeState extends State<OperitTheme> {
 
   /// Detaches application-level preference caches from the active runtime.
   void _cancelPreferenceSubscriptions() {
+    unawaited(_appLanguageSubscription?.cancel());
+    _appLanguageSubscription = null;
     unawaited(_longPasteSubscription?.cancel());
     _longPasteSubscription = null;
     unawaited(_enterSendsMessageSubscription?.cancel());
@@ -374,6 +392,7 @@ class _OperitThemeState extends State<OperitTheme> {
                 fontFamilyFallback: _defaultFontFamilyFallback,
                 themeMode: themeMode,
                 localizationsDelegates: AppLocalizations.localizationsDelegates,
+                locale: UserPreferencesManager.appLanguage.value.locale,
                 supportedLocales: AppLocalizations.supportedLocales,
                 builder: (context, child) =>
                     AnnotatedRegion<SystemUiOverlayStyle>(
@@ -449,6 +468,7 @@ class _OperitMaterialApp extends StatelessWidget {
       fontFamily: _fontFamily(themePreferenceSnapshot),
       fontFamilyFallback: _fontFamilyFallback(themePreferenceSnapshot),
       localizationsDelegates: AppLocalizations.localizationsDelegates,
+      locale: UserPreferencesManager.appLanguage.value.locale,
       supportedLocales: AppLocalizations.supportedLocales,
       themeMode: themeMode,
       themeAnimationDuration: OperitTheme.of(context).suppressThemeAnimation

@@ -2407,13 +2407,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryGlobalBehaviorSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Chat layout, input processing and interaction'**
+  /// **'App language, chat layout and input'**
   String get settingsCategoryGlobalBehaviorSubtitle;
 
   /// No description provided for @settingsCategoryGlobalBehaviorDescription.
   ///
   /// In en, this message translates to:
-  /// **'Configure application-wide chat layout, input and interaction behavior.'**
+  /// **'Choose the app language and configure application-wide chat layout, input and interaction behavior.'**
   String get settingsCategoryGlobalBehaviorDescription;
 
   /// No description provided for @settingsCategoryAppearanceTitle.
@@ -6608,23 +6608,29 @@ abstract class AppLocalizations {
   /// **'Reset theme settings'**
   String get settingsAppearanceResetTheme;
 
-  /// No description provided for @settingsAppearanceLanguageSection.
+  /// No description provided for @settingsAppLanguageTitle.
   ///
   /// In en, this message translates to:
-  /// **'Language'**
-  String get settingsAppearanceLanguageSection;
+  /// **'App language'**
+  String get settingsAppLanguageTitle;
 
-  /// No description provided for @settingsAppearanceLanguage.
+  /// No description provided for @settingsAppLanguageSystem.
   ///
   /// In en, this message translates to:
-  /// **'Current language'**
-  String get settingsAppearanceLanguage;
+  /// **'Follow system'**
+  String get settingsAppLanguageSystem;
 
-  /// No description provided for @settingsAppearanceLanguageDescription.
+  /// No description provided for @settingsAppLanguageDescription.
   ///
   /// In en, this message translates to:
-  /// **'Language follows the localization configuration loaded at app startup.'**
-  String get settingsAppearanceLanguageDescription;
+  /// **'Changes apply immediately. No restart required.'**
+  String get settingsAppLanguageDescription;
+
+  /// No description provided for @settingsAppLanguageSaveError.
+  ///
+  /// In en, this message translates to:
+  /// **'Could not save app language: {error}'**
+  String settingsAppLanguageSaveError(String error);
 
   /// No description provided for @settingsAppearanceBubblesTab.
   ///

@@ -1232,11 +1232,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryGlobalBehaviorTitle => '全局行为设置';
 
   @override
-  String get settingsCategoryGlobalBehaviorSubtitle => '聊天布局、输入处理与交互';
+  String get settingsCategoryGlobalBehaviorSubtitle => '应用语言、聊天布局与输入交互';
 
   @override
   String get settingsCategoryGlobalBehaviorDescription =>
-      '设置应用全局的聊天布局、输入与交互行为。';
+      '选择应用语言，设置应用全局的聊天布局、输入与交互行为。';
 
   @override
   String get settingsCategoryAppearanceTitle => '外观与交互';
@@ -3512,13 +3512,18 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceResetTheme => '重置主题设置';
 
   @override
-  String get settingsAppearanceLanguageSection => '语言';
+  String get settingsAppLanguageTitle => '应用语言';
 
   @override
-  String get settingsAppearanceLanguage => '当前语言';
+  String get settingsAppLanguageSystem => '跟随系统';
 
   @override
-  String get settingsAppearanceLanguageDescription => '语言跟随应用启动时的本地化配置。';
+  String get settingsAppLanguageDescription => '选择后立即生效，无需重启应用。';
+
+  @override
+  String settingsAppLanguageSaveError(String error) {
+    return '无法保存应用语言：$error';
+  }
 
   @override
   String get settingsAppearanceBubblesTab => '消息与气泡';

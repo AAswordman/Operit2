@@ -40,6 +40,7 @@ class ThemeRenderRoot extends StatelessWidget {
     this.title = 'Operit2',
     this.themeAnimationDuration = kThemeAnimationDuration,
     this.localizationsDelegates,
+    this.locale,
     this.supportedLocales = const <Locale>[Locale('en', 'US')],
   });
 
@@ -55,6 +56,7 @@ class ThemeRenderRoot extends StatelessWidget {
   final Duration themeAnimationDuration;
   final Iterable<LocalizationsDelegate<dynamic>>? localizationsDelegates;
   final Iterable<Locale> supportedLocales;
+  final Locale? locale;
 
   /// Sets ambient text typography as well as Material component typography.
   @override
@@ -77,6 +79,7 @@ class ThemeRenderRoot extends StatelessWidget {
       themeMode: themeMode,
       themeAnimationDuration: themeAnimationDuration,
       localizationsDelegates: localizationsDelegates,
+      locale: locale,
       supportedLocales: supportedLocales,
       builder: (context, child) => DefaultTextStyle(
         style: Theme.of(context).textTheme.bodyMedium!,

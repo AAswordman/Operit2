@@ -322,12 +322,9 @@ class _AppearanceThemeEditor extends StatelessWidget {
           ],
         ),
         _SectionCard(
-          title: l10n.settingsAppearanceLanguageSection,
-          icon: Icons.language_outlined,
-          action: SettingsInfoBadge(label: l10n.localeName),
+          title: l10n.settingsAppearanceResetTheme,
+          icon: Icons.restart_alt,
           children: <Widget>[
-            _BodyText(l10n.settingsAppearanceLanguageDescription),
-            const SizedBox(height: 8),
             Align(
               alignment: Alignment.centerRight,
               child: OutlinedButton.icon(

@@ -4,6 +4,7 @@ import 'dart:async';
 
 import 'package:flutter/widgets.dart';
 import '../../l10n/generated/app_localizations.dart';
+import '../../data/preferences/UserPreferencesManager.dart';
 import 'package:operit_keep_alive/operit_keep_alive.dart';
 
 import '../bridge/ProxyCoreRuntimeBridge.dart';
@@ -22,12 +23,7 @@ class WorkActivityPresentationService with WidgetsBindingObserver {
     ProxyCoreRuntimeBridge(),
   );
   static WorkPresentationLabels labels = _labelsFor(
-    lookupAppLocalizations(
-      basicLocaleListResolution(
-        WidgetsBinding.instance.platformDispatcher.locales,
-        AppLocalizations.supportedLocales,
-      ),
-    ),
+    lookupAppLocalizations(UserPreferencesManager.resolvedAppLocale),
   );
   String? _localeName;
 
@@ -58,10 +54,13 @@ class WorkActivityPresentationService with WidgetsBindingObserver {
   /// Updates system wording when Flutter reports a change in the device locales.
   @override
   void didChangeLocales(List<Locale>? locales) {
+    _refreshLanguage();
+  }
+
+  /// Uses the same explicit or system language as the application root.
+  void _refreshLanguage() {
     _configureLocalizations(
-      lookupAppLocalizations(
-        basicLocaleListResolution(locales, AppLocalizations.supportedLocales),
-      ),
+      lookupAppLocalizations(UserPreferencesManager.resolvedAppLocale),
     );
   }
 
@@ -102,6 +101,8 @@ class WorkActivityPresentationService with WidgetsBindingObserver {
   /// Connects common Core state to the presentation owner declared by the host.
   Future<void> _initialize() async {
     WidgetsBinding.instance.addObserver(this);
+    UserPreferencesManager.appLanguage.addListener(_refreshLanguage);
+    _refreshLanguage();
     capabilities.value = await OperitKeepAlive.instance
         .workPresentationCapabilities();
     _presentationErrors = OperitKeepAlive.instance.workErrors.listen((message) {
@@ -181,6 +182,7 @@ class WorkActivityPresentationService with WidgetsBindingObserver {
   /// Releases main-engine subscriptions when the process coordinator is explicitly disposed.
   Future<void> dispose() async {
     WidgetsBinding.instance.removeObserver(this);
+    UserPreferencesManager.appLanguage.removeListener(_refreshLanguage);
     await _updates?.cancel();
     await _actions?.cancel();
     await _presentationErrors?.cancel();

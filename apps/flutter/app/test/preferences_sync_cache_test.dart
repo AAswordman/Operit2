@@ -25,6 +25,59 @@ void main() {
   setUp(ClientLogger.initialize);
 
   test(
+    'app language persists, restores system mode and observes peer choices',
+    () async {
+      final bridge = _PreferenceBridge();
+      final preferences = UserPreferencesManager(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      addTearDown(
+        () => UserPreferencesManager.appLanguage.value = AppLanguage.system,
+      );
+      expect(await preferences.loadAppLanguage(), AppLanguage.system);
+      expect(bridge.preferenceWrites, 0);
+      for (final language in AppLanguage.values) {
+        await preferences.saveAppLanguage(language);
+        expect(await preferences.loadAppLanguage(), language);
+        expect(UserPreferencesManager.appLanguage.value, language);
+      }
+      expect(bridge._values[_userFile]!['app_language'], 'fr');
+      await preferences.saveAppLanguage(AppLanguage.system);
+      expect(bridge._values[_userFile]!['app_language'], 'system');
+      expect(await preferences.loadAppLanguage(), AppLanguage.system);
+
+      final values = <AppLanguage>[];
+      final errors = <Object>[];
+      final subscription = preferences.appLanguageFlow().listen(
+        values.add,
+        onError: errors.add,
+      );
+      await _drainEvents();
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'app_language': 'en',
+      });
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'app_language': 'en',
+        'theme_mode': 'dark',
+      });
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{});
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'app_language': 'invalid',
+      });
+      await _drainEvents();
+      expect(values, <AppLanguage>[
+        AppLanguage.system,
+        AppLanguage.english,
+        AppLanguage.system,
+      ]);
+      expect(errors.single, isA<FormatException>());
+      await expectLater(preferences.loadAppLanguage(), throwsFormatException);
+      await subscription.cancel();
+      expect(bridge.activeWatches, 0);
+    },
+  );
+
+  test(
     'navigator placement defaults right and persists and observes changes',
     () async {
       final bridge = _PreferenceBridge();
@@ -370,6 +423,7 @@ void main() {
       final bridge = _PreferenceBridge();
       bridge.applyPeerPreferences(_userFile, <String, Object?>{
         'custom_user_avatar_uri': 'host:///avatars/user.png',
+        'app_language': 'fr',
         'character_theme_retired_theme_mode': 'dark',
       });
       final preferences = UserPreferencesManager(
@@ -400,6 +454,7 @@ void main() {
       expect(snapshot.customUserAvatarUri, 'host:///avatars/user.png');
       expect(bridge._values[_userFile], <String, Object?>{
         'custom_user_avatar_uri': 'host:///avatars/user.png',
+        'app_language': 'fr',
         'character_theme_retired_theme_mode': 'dark',
       });
       expect(bridge.preferenceWrites, 2);

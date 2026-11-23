@@ -7,6 +7,7 @@ import '../../core/errors/UnhandledErrorReporter.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../l10n/generated/app_localizations.dart';
+import '../../data/preferences/UserPreferencesManager.dart';
 import '../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 
 /// Renders only plugin content on a transparent desktop surface.
@@ -28,7 +29,7 @@ class _DesktopWidgetWindowAppState extends State<DesktopWidgetWindowApp> {
   late final _definition = core_proxy.ToolPkgDesktopWidget.fromJson(
     (widget.launch.payload['definition'] as Map).cast<String, Object?>(),
   );
-  String get _locale => widget.launch.payload['locale'] as String;
+  late final _language = const UserPreferencesManager().appLanguageFlow();
 
   /// Opens plugin application UI in the owning window, preserving this content surface.
   Future<void> _openRoute(String package, String route) async {
@@ -40,26 +41,17 @@ class _DesktopWidgetWindowAppState extends State<DesktopWidgetWindowApp> {
 
   /// Presents controls only in response to an explicit secondary click.
   Future<void> _menu(BuildContext context, Offset position) async {
-    final english = _locale == 'en';
+    final l10n = AppLocalizations.of(context)!;
     final overlay =
         Overlay.of(context).context.findRenderObject()! as RenderBox;
     final choice = await showMenu<String>(
       context: context,
       position: RelativeRect.fromSize(position & Size.zero, overlay.size),
       items: [
-        PopupMenuItem(
-          value: 'refresh',
-          child: Text(english ? 'Refresh' : '刷新'),
-        ),
-        PopupMenuItem(value: 'larger', child: Text(english ? 'Larger' : '放大')),
-        PopupMenuItem(
-          value: 'smaller',
-          child: Text(english ? 'Smaller' : '缩小'),
-        ),
-        PopupMenuItem(
-          value: 'close',
-          child: Text(english ? 'Close widget' : '关闭小部件'),
-        ),
+        PopupMenuItem(value: 'refresh', child: Text(l10n.refresh)),
+        PopupMenuItem(value: 'larger', child: Text(l10n.zoomIn)),
+        PopupMenuItem(value: 'smaller', child: Text(l10n.zoomOut)),
+        PopupMenuItem(value: 'close', child: Text(l10n.close)),
       ],
     );
     if (!mounted || choice == null) return;
@@ -94,10 +86,25 @@ class _DesktopWidgetWindowAppState extends State<DesktopWidgetWindowApp> {
   /// Builds a transparent application root with no title, padding, frame, or shadow.
   @override
   Widget build(BuildContext context) {
+    return StreamBuilder<AppLanguage>(
+      stream: _language,
+      builder: (context, language) {
+        if (language.hasError) {
+          Error.throwWithStackTrace(language.error!, language.stackTrace!);
+        }
+        final selected = language.data;
+        if (selected == null) return const SizedBox.shrink();
+        return _buildWindow(selected);
+      },
+    );
+  }
+
+  /// Applies committed language changes without replacing the plugin session.
+  Widget _buildWindow(AppLanguage language) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       color: Colors.transparent,
-      locale: Locale(_locale),
+      locale: language.locale,
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       theme: ThemeData(

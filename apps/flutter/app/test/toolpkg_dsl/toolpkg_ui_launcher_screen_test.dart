@@ -668,7 +668,7 @@ void main() {
     },
   );
 
-  testWidgets('floating plugin UI follows committed app and system themes', (
+  testWidgets('floating plugin UI follows committed app themes and language', (
     tester,
   ) async {
     final preferences = StreamController<Map<String, Object?>>();
@@ -676,6 +676,8 @@ void main() {
     final bridge = _ToolPkgDslTestBridge(preferences: preferences.stream);
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
+    tester.platformDispatcher.localesTestValue = const [Locale('en')];
+    addTearDown(tester.platformDispatcher.clearLocalesTestValue);
 
     await tester.pumpWidget(
       FloatingWindowApp(
@@ -731,6 +733,33 @@ void main() {
     expect(
       bridge.calls.where((call) => call.methodName == 'render'),
       hasLength(1),
+    );
+    preferences.add({'theme_mode': 'system', 'app_language': 'fr'});
+    await tester.pumpAndSettle();
+    expect(
+      Localizations.localeOf(tester.element(launcherFinder)),
+      const Locale('fr'),
+    );
+    expect(tester.state(launcherFinder), same(launcher));
+    final languageRender = bridge.calls.lastWhere(
+      (call) => call.methodName == 'render',
+    );
+    expect(
+      ((languageRender.args as Map)['runtimeOptions']
+          as Map)['__operit_package_lang'],
+      'fr',
+    );
+    tester.platformDispatcher.localesTestValue = const [Locale('zh')];
+    await tester.pumpAndSettle();
+    expect(
+      Localizations.localeOf(tester.element(launcherFinder)),
+      const Locale('fr'),
+    );
+    preferences.add({'theme_mode': 'system', 'app_language': 'system'});
+    await tester.pumpAndSettle();
+    expect(
+      Localizations.localeOf(tester.element(launcherFinder)),
+      const Locale('zh'),
     );
     await tester.pumpWidget(const SizedBox.shrink());
   });

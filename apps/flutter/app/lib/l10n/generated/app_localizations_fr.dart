@@ -1291,11 +1291,11 @@ class AppLocalizationsFr extends AppLocalizations {
 
   @override
   String get settingsCategoryGlobalBehaviorSubtitle =>
-      'Disposition du chat, saisie et interactions';
+      'Langue, disposition du chat et saisie';
 
   @override
   String get settingsCategoryGlobalBehaviorDescription =>
-      'Configurez la disposition du chat, la saisie et les interactions pour toute l\'application.';
+      'Choisissez la langue et configurez la disposition du chat, la saisie et les interactions pour toute l\'application.';
 
   @override
   String get settingsCategoryAppearanceTitle => 'Apparence et interactions';
@@ -3738,14 +3738,19 @@ class AppLocalizationsFr extends AppLocalizations {
       'Réinitialiser les paramètres du thème';
 
   @override
-  String get settingsAppearanceLanguageSection => 'Langue';
+  String get settingsAppLanguageTitle => 'Langue de l’application';
 
   @override
-  String get settingsAppearanceLanguage => 'Langue actuelle';
+  String get settingsAppLanguageSystem => 'Suivre le système';
 
   @override
-  String get settingsAppearanceLanguageDescription =>
-      'La langue suit la configuration de localisation chargée au démarrage de l\'application.';
+  String get settingsAppLanguageDescription =>
+      'Les modifications s’appliquent immédiatement, sans redémarrage.';
+
+  @override
+  String settingsAppLanguageSaveError(String error) {
+    return 'Impossible d’enregistrer la langue : $error';
+  }
 
   @override
   String get settingsAppearanceBubblesTab => 'Messages et bulles';

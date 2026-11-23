@@ -2,7 +2,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:floating_windows/floating_windows.dart';
-import 'package:flutter/widgets.dart';
+import 'package:flutter/foundation.dart';
+import '../../data/preferences/UserPreferencesManager.dart';
 import '../bridge/ProxyCoreRuntimeBridge.dart';
 import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
@@ -289,8 +290,7 @@ class RuntimeFloatingWindowController {
         'route': route,
         'state': request['state'] ?? {},
         'windowId': id,
-        'locale':
-            WidgetsBinding.instance.platformDispatcher.locale.languageCode,
+        'locale': UserPreferencesManager.resolvedAppLocale.languageCode,
       },
       options: options,
       fill: fill,
