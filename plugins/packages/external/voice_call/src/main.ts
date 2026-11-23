@@ -313,27 +313,27 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       backgroundBrush: { type: "VerticalGradient", colors: [colors.primaryContainer, colors.surface, colors.surface] },
     }, [
       ui.Text({ text: title[getLang().startsWith("zh") ? "zh" : "en"], style: "labelMedium", color: colors.onSurfaceVariant }),
-      avatarWave(ctx, avatar, phase, frame),
-      ui.Column({ horizontalAlignment: "center", spacing: 6 }, [
-        ui.Text({ text: AVATAR, style: "headlineSmall", color: colors.onSurface }),
-        ui.Row({ verticalAlignment: "center", spacing: 5, paddingHorizontal: 11, paddingVertical: 5,
-          background: statusColor, backgroundAlpha: 0.1, backgroundShape: { type: "rounded", radius: 20 },
-        }, [
-          ui.Icon({ name: statusIcon, size: 14, tint: statusColor }),
-          ui.Text({ text: text(phase), style: "labelMedium", color: statusColor }),
+      ui.ScrollArea({ weight: 1, fillMaxWidth: true }, [
+        ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 6, paddingBottom: 8 }, [
+          avatarWave(ctx, avatar, phase, frame),
+          ui.Text({ text: AVATAR, style: "headlineSmall", color: colors.onSurface }),
+          ui.Row({ verticalAlignment: "center", spacing: 5, paddingHorizontal: 11, paddingVertical: 5,
+            background: statusColor.copy({ alpha: 0.1 }), backgroundShape: { type: "rounded", radius: 20 },
+          }, [
+            ui.Icon({ name: statusIcon, size: 14, tint: statusColor }),
+            ui.Text({ text: text(phase), style: "labelMedium", color: statusColor }),
+          ]),
+          ...(detail ? [ui.Text({ text: detail, fillMaxWidth: true, textAlign: "center", style: "bodySmall",
+            color: failure ? colors.error : colors.onSurfaceVariant })] : []),
         ]),
       ]),
-      ui.Box({ weight: 1, fillMaxWidth: true, contentAlignment: "center" }, detail ? [
-        ui.Text({ text: detail, textAlign: "center", style: "bodySmall", color: failure ? colors.error : colors.onSurfaceVariant,
-          maxLines: 2, overflow: "ellipsis" }),
-      ] : []),
       ui.Row({ spacing: 10, verticalAlignment: "center", fillMaxWidth: true, horizontalArrangement: "center" }, [
         ...(canStart || listening ? [ui.FilledTonalButton({
-          width: 144,
+          weight: 1,
           text: text(listening ? "submit" : session.chatId ? "retry" : "start"),
           onClick: listening ? finishRecording : run,
         })] : []),
-        ui.Button({ width: 118, enabled: phase !== "closing", onClick: hangup,
+        ui.Button({ weight: 1, enabled: phase !== "closing", onClick: hangup,
           containerColor: colors.error, contentColor: colors.onError,
         }, [ui.Row({ spacing: 6, verticalAlignment: "center" }, [
           ui.Icon({ name: "call_end", size: 16, tint: colors.onError }),
