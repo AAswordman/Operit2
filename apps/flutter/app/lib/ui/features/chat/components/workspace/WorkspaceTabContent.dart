@@ -18,7 +18,6 @@ import 'WorkspaceTabModels.dart';
 import 'browser/WorkspaceBrowserViewStore.dart';
 import 'terminal/WorkspaceTerminalContent.dart';
 import 'terminal/WorkspaceTerminalSessions.dart';
-import '../WorkspaceShell.dart';
 import '../../../../main/screens/OperitScreens.dart';
 import '../../../../common/contributions/PluginWorkspacePageHost.dart';
 
@@ -26,6 +25,7 @@ class WorkspaceTabContent extends StatelessWidget {
   const WorkspaceTabContent({
     super.key,
     required this.tab,
+    this.pluginHostState = const {},
     required this.workspacePath,
     this.fileDirectory,
     required this.workspaceUsage,
@@ -66,6 +66,7 @@ class WorkspaceTabContent extends StatelessWidget {
   });
 
   final WorkspaceTab tab;
+  final Map<String, Object?> pluginHostState;
   final String? workspacePath;
   final String? fileDirectory;
   final WorkspaceOverviewUsage workspaceUsage;
@@ -272,7 +273,7 @@ class WorkspaceTabContent extends StatelessWidget {
             key: ValueKey(presentation.identity),
             presentation: presentation,
             workspacePath: workspacePath,
-            hostState: WorkspaceShell.session.pluginHostState,
+            hostState: pluginHostState,
           );
         }
         final packageName = tab.pluginPackageName;

@@ -17,16 +17,18 @@ import '../viewmodel/WorkspaceFileModels.dart';
 import 'workspace/WorkspaceLayoutMetrics.dart';
 import 'workspace/WorkspacePanel.dart';
 import 'workspace/WorkspaceSession.dart';
+import 'workspace/WorkspaceSessionStore.dart';
 
 class WorkspaceShell extends StatelessWidget {
-  static final WorkspaceSession _session = WorkspaceSession();
+  static final WorkspaceSessionStore sessions = WorkspaceSessionStore();
   static final _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
 
   /// Returns the workspace session shared by phone and desktop shells.
-  static WorkspaceSession get session => _session;
+  static WorkspaceSession get session => sessions.current;
 
   const WorkspaceShell({
     super.key,
+    required this.workspaceSession,
     required this.workspaceOpen,
     required this.onWorkspaceOpenChanged,
     required this.currentChatId,
@@ -48,6 +50,7 @@ class WorkspaceShell extends StatelessWidget {
     required this.child,
   });
 
+  final WorkspaceSession workspaceSession;
   final bool workspaceOpen;
   final ValueChanged<bool> onWorkspaceOpenChanged;
   final String? currentChatId;
@@ -78,7 +81,7 @@ class WorkspaceShell extends StatelessWidget {
       fileDirectory,
       decodePath: false,
     );
-    await _session.openFile(
+    await workspaceSession.openFile(
       path: resolved,
       relativePath: resolved,
       readText: onReadWorkspaceTextFile,
@@ -92,7 +95,10 @@ class WorkspaceShell extends StatelessWidget {
             )).firstOrNull
           : null,
     );
-    onWorkspaceOpenChanged(true);
+    workspaceSession.isOpen = true;
+    if (identical(session, workspaceSession)) {
+      onWorkspaceOpenChanged(true);
+    }
   }
 
   /// Builds the workspace panel with plugins rendered as peer tabs.
@@ -107,7 +113,8 @@ class WorkspaceShell extends StatelessWidget {
       left: false,
       right: false,
       child: WorkspacePanel(
-        session: _session,
+        key: ObjectKey(workspaceSession),
+        session: workspaceSession,
         sidebarDockController: dockController,
         currentChatId: currentChatId,
         hasBoundWorkspace: hasBoundWorkspace,

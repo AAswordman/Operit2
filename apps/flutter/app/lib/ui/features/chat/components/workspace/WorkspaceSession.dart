@@ -18,6 +18,9 @@ class WorkspaceSession extends ChangeNotifier {
   /// Opens the side workspace when a turn review is requested.
   VoidCallback? onOpenRequested;
 
+  /// Remembers visibility for this workspace without writing preferences.
+  bool isOpen = false;
+
   final List<WorkspaceTab> tabs = <WorkspaceTab>[
     const WorkspaceTab(
       kind: WorkspaceTabKind.home,
@@ -134,6 +137,7 @@ class WorkspaceSession extends ChangeNotifier {
         selectedIndex = tabs.length - 1;
       }
     }
+    isOpen = true;
     notifyListeners();
     onOpenRequested?.call();
   }

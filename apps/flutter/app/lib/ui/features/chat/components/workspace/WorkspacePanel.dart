@@ -279,7 +279,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     setState(_syncDockedPluginTabs);
   }
 
-  /// Reconciles docked plugin entries with the shared workspace tab list.
+  /// Projects globally docked plugins into every workspace's local tab list.
   void _syncDockedPluginTabs() {
     final controller = widget.sidebarDockController;
     if (controller == null) {
@@ -1192,6 +1192,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
   Widget _buildTabContent(WorkspaceTab tab, {int paneIndex = 0}) {
     return WorkspaceTabContent(
       tab: tab,
+      pluginHostState: _session.pluginHostState,
       workspacePath: widget.workspacePath,
       fileDirectory: widget.fileDirectory,
       workspaceUsage: _workspaceOverviewUsage(),

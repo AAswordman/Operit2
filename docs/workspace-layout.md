@@ -25,3 +25,25 @@ sidebar widths do not switch the workspace to an overlay.
 
 The shared `AdaptiveSidePanel` retains its adaptive mode and `breakpoint` API for
 plugin callers. The workspace always supplies an explicit split or overlay mode.
+
+Workspace visibility and open tabs belong to the conversation's bound workspace.
+`WorkspaceSessionStore` keeps a separate `WorkspaceSession` for each workspace
+locator in frontend process memory. Switching between conversations bound to the
+same workspace preserves the open panel, tabs, selected pages, split layout, and
+text drafts. Switching to another workspace restores that workspace's session;
+a first visit starts with the panel closed and the home tab. Conversations
+without a bound workspace have separate sessions keyed by conversation ID.
+
+These presentation sessions survive chat screen remounts within the running
+frontend. They are never written to preferences, a database, or synchronized
+Core state, so restarting the frontend resets them and other devices keep their
+own workspace presentation. The panel remounts when its session changes, keeping
+file navigation and asynchronous panel callbacks within their owning workspace.
+Embedded chat surfaces do not change the main workspace or its plugin context.
+
+Plugins moved from the application navigation sidebar into the workspace remain
+global. `SidebarDockController.secondaryViews` owns their placement, and every
+workspace panel reconciles its docked plugin tabs with that shared catalog.
+Workspace switching does not remove these plugins or make their placement local
+to one workspace. Their existing dock preferences remain independent of the
+in-memory workspace navigation sessions.
