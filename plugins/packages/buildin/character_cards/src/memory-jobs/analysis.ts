@@ -274,12 +274,11 @@ export async function updateChatMemory(ownerKey: string, chatId: string, reposit
 
 /** Classifies uncategorized full records in real ten-record functional MEMORY calls. */
 export async function autoCategorizeMemory(ownerKey: string, repository: CharacterRepository): Promise<number> {
-  const memories = (await repository.listMemories(ownerKey)).filter(
-    /** Selects only records genuinely stored in the root folder. */
-    memory => memory.folderPath === null || memory.folderPath === "",
-  ), folders = await repository.listMemoryFolders(ownerKey); let changed = 0;
-  for (let index = 0; index < memories.length; index += 10) {
-    const batch = memories.slice(index, index + 10), digest = batch.map(
+  const folders = await repository.listMemoryFolders(ownerKey); let changed = 0, after: string | undefined;
+  for (;;) {
+    const { items: batch } = await repository.readMemoryPage(ownerKey, { folderPath: "", after, limit: 10 });
+    if (batch.length === 0) break;
+    const digest = batch.map(
       /** Supplies real titles and a bounded full-record content preview. */
       memory => "- title: " + memory.title + ", content: " + [...memory.content].slice(0, 100).join(""),
     ).join("\n");
@@ -291,6 +290,7 @@ export async function autoCategorizeMemory(ownerKey: string, repository: Charact
       if (seen.has(title)) throw new Error("Duplicate category title: " + title); seen.add(title);
       const memory = memoryByTitle(batch, title); await repository.moveMemories(ownerKey, [memory.id], row.folder); changed += 1;
     }
+    after = batch[batch.length - 1].id;
   }
   return changed;
 }

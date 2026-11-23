@@ -398,9 +398,8 @@ placeholder controls:
 - Retrieval debugging reuses the production database search and real provider embeddings.
   Draft weights are not saved. Each candidate reports actual lexical/tag/vector/edge
   contributions and its threshold decision; normal retrieval filters the same results.
-- Graph export/import invokes the full owner backup codec, including records, document
-  chunks, relationships, settings and USER.md. Relationship tools read one owner-scoped
-  graph snapshot containing the actual record and link identities and descriptions.
+- Backup export/import includes full records, chunks, relationships, settings and USER.md.
+  Relationship tools query exact IDs or endpoint titles directly in SQLite.
 - Character imports select Operit or Tavern JSON; exports invoke the corresponding
   production serializer. Preview avatars use the existing host-loaded image resources.
   Export dialogs only report success after the real host file operation acknowledges it.
@@ -414,15 +413,33 @@ scheduler orders candidates by source timestamp before applying its twenty-recor
 Kotlin remains the behavior reference, with explicit implementation differences:
 lexical expansion uses bounded Unicode terms and Han unigrams/bigrams rather than
 Jieba; imported document chunks also participate in node recall; vectors use the
-configured HTTP provider and exact database-side dot products over normalized source
-vectors. Source text and its vector occupy one synchronized, versioned row; query
-vectors are ephemeral. SQL applies owner/folder/time scope, scoring, graph expansion,
-snapshot exclusions and result limits before returning records. There is no retained
-TypeScript corpus or query-time construction of historical vectors. HTTP batches
+configured HTTP provider and a derived USearch vector index. Source text and its vector
+occupy one synchronized, versioned row; query vectors are ephemeral. SQLite matches
+text and tags and returns only matching identities and term bitsets. Ranking retains
+metadata and vectors, hydrates only the selected results, and reads relationships only
+for its ten seeds. Full bodies and character postings are never retained in the search
+index. HTTP batches
 use the owner's saved input batch size (20 by default) and at most four concurrent workers.
 The history rebuild window size is also saved per owner (32 by default, range 8–48). Failed jobs stay
 terminal without automatic retry. Merge removes source
 chunks and internal links that would become self-links under this domain's invariant.
+
+Ordinary reads have explicit bounds: `memory.list` and `memory.graph` default to at most
+200 memories, accept `offset`, `after`, `limit`, exact `folderPath`, `ids` and `titles`,
+and return `total`. Graphs include at most 1000 relationships within that page. The CLI
+accepts `item list [offset]` and `graph [offset]`; native browsing filters before reading
+and loads each page from SQLite. Memory attachments attach the displayed page (up to
+200 records). Mutation responses acknowledge the write without returning a full graph.
+The old `listMemories`, `listMemoryLinks` and `readMemoryGraph` repository methods are
+removed. Full owner snapshots are reserved for backup/import operations; classification
+and folder moves advance by record key through bounded batches. Document selectors
+read the requested chunk offset and at most five displayed chunks; wildcard counts
+do not initialize search indexes or hydrate the document corpus.
+
+`node --test --test-name-pattern="50000" tests/management-native.test.mjs` exercises
+real SQLite, production IPC, native paging/filtering, cold/warm search and canvas
+serialization with 50,000 memories and 49,999 relationships. It reports elapsed time
+and process heap use. This desktop fixture does not establish device performance.
 
 The browser/main-IPC suite covers these flows, failed writes, runtime reopening,
 owner isolation and a real local HTTP vector provider. `cargo check -p operit-runtime

@@ -3,9 +3,9 @@ import type { Storage } from "../../../../../types/storage";
 import type { Memory, DocumentChunk, MemoryLink, MemorySearchOptions } from "../model";
 import type { SourceEmbedding } from "../memory-jobs/embeddings";
 import { VectorIndex } from "./usearch";
-import { TextIndex, TitleIndex } from "./text-index";
+import { TitleIndex } from "./text-index";
 
-interface Envelope<T> { ownerKey: string; record: T; embedding?: SourceEmbedding | null }
+interface Envelope<T> { ownerKey: string; record: T; embedding?: SourceEmbedding | null; embeddingTextValid?: boolean }
 interface Source { identity: string; parent: string; label: bigint; group: string | null; collection: "memories" | "chunks"; version: string; id: string }
 interface Group { index: VectorIndex; sources: Map<bigint, Source>; parents: Map<string, number> }
 export interface Scope { ids: Set<string>; restricted: boolean }
@@ -26,12 +26,8 @@ function folders(memory: Memory): string[] {
 export class MemoryIndex {
   readonly memories = new Map<string, Memory>();
   readonly chunks = new Map<string, DocumentChunk>();
-  readonly links = new Map<string, MemoryLink>();
-  readonly adjacency = new Map<string, Set<string>>();
   readonly parents = new Map<string, string>();
   readonly all = new Set<string>();
-  readonly text = new TextIndex();
-  readonly tags = new TextIndex();
   readonly titles = new TitleIndex();
   readonly sources = new Map<string, Source>();
   readonly units = new Map<string, Set<string>>();
@@ -51,16 +47,17 @@ export class MemoryIndex {
   async refresh(): Promise<boolean> {
     if (!this.initialized) {
       this.cursor = (await this.database.changes(null)).cursor;
-      for (const collection of ["memories", "chunks", "links"]) {
+      for (const collection of ["memories", "chunks"]) {
         let after = "";
         for (;;) {
-          const rows = await this.database.select<Envelope<Memory | DocumentChunk | MemoryLink>>(collection, this.ownerKey, "1", [], 100, after);
+          const raw = await this.database.query("SELECT key,version,json_remove(value,'$.record.content','$.record.tags','$.record.properties','$.embedding.text') AS value,json_extract(value,'$.embedding.text')=CASE WHEN json_extract(value,'$.record.isDocumentNode') THEN json_extract(value,'$.record.title') ELSE json_extract(value,'$.record.content') END AS valid FROM plugin_objects WHERE collection=? AND key>=? AND key<? AND key>? ORDER BY key LIMIT 1000", [collection, this.ownerKey + "/", this.ownerKey + "0", after]);
+          const rows = raw.map(row => ({ key: String(row.key), version: String(row.version), value: { ...JSON.parse(String(row.value)), embeddingTextValid: row.valid === 1 } }));
           for (const row of rows) await this.apply(collection, row.key, row);
-          if (rows.length < 100) break;
+          if (rows.length < 1000) break;
           after = rows[rows.length - 1].key;
         }
       }
-      this.initialized = true;
+      this.dates.sort((a, b) => a.time - b.time || compare(a.id, b.id)); this.initialized = true;
     }
     for (;;) {
       const page = await this.database.changes(this.cursor);
@@ -82,7 +79,7 @@ export class MemoryIndex {
   }
   private removeSource(identity: string): void {
     const old = this.sources.get(identity); if (!old) return;
-    this.text.remove(identity); removeFrom(this.units, old.parent, identity);
+    removeFrom(this.units, old.parent, identity);
     if (old.group !== null) {
       const group = this.groups.get(old.group)!; group.index.remove(old.label); group.sources.delete(old.label);
       const count = group.parents.get(old.parent)! - 1;
@@ -94,19 +91,13 @@ export class MemoryIndex {
     this.sources.delete(identity);
   }
   async apply(collection: string, key: string, entry: Storage.Entry<Envelope<Memory | DocumentChunk | MemoryLink>> | null): Promise<void> {
-    if (collection !== "memories" && collection !== "chunks" && collection !== "links") return;
+    if (collection !== "memories" && collection !== "chunks") return;
     const id = key.slice(this.ownerKey.length + 1), identity = collection + "/" + id;
-    if (collection === "links") {
-      const old = this.links.get(id);
-      if (old) { removeFrom(this.adjacency, old.sourceMemoryId, id); removeFrom(this.adjacency, old.targetMemoryId, id); this.links.delete(id); }
-      if (entry) { const link = entry.value.record as MemoryLink; this.links.set(id, link); addTo(this.adjacency, link.sourceMemoryId, id); addTo(this.adjacency, link.targetMemoryId, id); }
-      return;
-    }
     this.removeSource(identity);
     if (collection === "memories") {
       const old = this.memories.get(id);
       if (old) {
-        this.tags.remove(id); this.titles.remove(id, old.title); this.parents.delete(old.uuid); this.memories.delete(id); this.all.delete(id);
+        this.titles.remove(id, old.title); this.parents.delete(old.uuid); this.memories.delete(id); this.all.delete(id);
         for (const folder of folders(old)) removeFrom(this.folderIds, folder, id);
         const offset = this.datePosition(old.createdAt, id);
         if (this.dates[offset]?.id === id) this.dates.splice(offset, 1);
@@ -119,18 +110,18 @@ export class MemoryIndex {
     const parent = collection === "memories" ? (record as Memory).uuid : (record as DocumentChunk).memoryUuid;
     if (collection === "memories") {
       const memory = record as Memory;
-      this.memories.set(id, memory); this.parents.set(parent, id);
+      this.memories.set(id, { ...memory, content: "", tags: [], properties: [] }); this.parents.set(parent, id);
       if (memory.title === ".folder_placeholder") return;
       this.all.add(id); for (const folder of folders(memory)) addTo(this.folderIds, folder, id);
-      this.dates.splice(this.datePosition(memory.createdAt, id), 0, { time: memory.createdAt, id });
-      this.tags.put(id, memory.tags.map(tag => tag.name).join("\0")); this.titles.put(id, memory.title);
-      this.text.put(identity, memory.title + "\0" + memory.content);
+      const date = { time: memory.createdAt, id };
+      if (this.initialized) this.dates.splice(this.datePosition(memory.createdAt, id), 0, date); else this.dates.push(date);
+      this.titles.put(id, memory.title);
     } else {
-      this.chunks.set(id, record as DocumentChunk); addTo(this.chunkIds, parent, id); this.text.put(identity, record.content);
+      this.chunks.set(id, { ...record as DocumentChunk, content: "" }); addTo(this.chunkIds, parent, id);
     }
     const expected = collection === "memories" && (record as Memory).isDocumentNode ? (record as Memory).title : record.content;
     const embedding = entry.value.embedding;
-    const valid = embedding != null && embedding.text === expected && embedding.vector.length > 0 && embedding.vector.every(Number.isFinite);
+    const valid = embedding != null && (entry.value.embeddingTextValid ?? embedding.text === expected) && embedding.vector.length > 0 && embedding.vector.every(Number.isFinite);
     const source: Source = { identity, parent, label: this.nextLabel++, group: valid ? groupKey(embedding) : null, collection, id, version: entry.version };
     if (valid) {
       let group = this.groups.get(source.group!);
@@ -150,17 +141,44 @@ export class MemoryIndex {
     return { ids, restricted };
   }
   parentId(source: Source): string | undefined { return this.parents.get(source.parent); }
-  matching(terms: readonly string[], scope: Scope, keywordsEnabled = true, tagsEnabled = true): { keywords: Map<string, number>; tags: Map<string, number> } {
-    const keywords = new Map<string, number>(), tags = new Map<string, number>();
-    for (const term of terms) {
-      const parents = new Set<string>();
-      if (keywordsEnabled) for (const identity of this.text.search(term)) {
-        const source = this.sources.get(identity); if (!source) continue;
-        const id = this.parentId(source); if (id !== undefined && scope.ids.has(id)) parents.add(id);
-      }
-      for (const id of parents) keywords.set(id, (keywords.get(id) ?? 0) + 1);
-      if (tagsEnabled) for (const id of this.tags.search(term)) if (scope.ids.has(id)) tags.set(id, (tags.get(id) ?? 0) + 1);
+  /** Streams only relationships touching the selected retrieval seeds. */
+  async *seedLinks(ids: string[]): AsyncGenerator<MemoryLink> {
+    if (ids.length === 0) return;
+    let after = "";
+    for (;;) {
+      const rows = await this.database.select<Envelope<MemoryLink>>("links", this.ownerKey, "(json_extract(value,'$.record.sourceMemoryId') IN (SELECT value FROM json_each(?)) OR json_extract(value,'$.record.targetMemoryId') IN (SELECT value FROM json_each(?)))", [JSON.stringify(ids), JSON.stringify(ids)], 1000, after);
+      for (const row of rows) yield row.value.record;
+      if (rows.length < 1000) return;
+      after = rows[rows.length - 1].key;
     }
+  }
+  /** Streams only matching identities and term bitsets; source bodies remain in SQLite. */
+  async textMatches(terms: readonly string[], collection: string, tags = false, parent?: string): Promise<Map<string, number>> {
+    const result = new Map<string, number>();
+    if (terms.length === 0) return result;
+    const patterns = JSON.stringify(terms.map(term => "*" + [...term].map(char => { const upper = char.toUpperCase(); return upper !== char && [...upper].length === 1 ? "[" + char + upper + "]" : char; }).join("") + "*"));
+    const fields = tags ? ["json_extract(tag.value,'$.name')"] : collection === "memories" ? ["json_extract(o.value,'$.record.title')", "json_extract(o.value,'$.record.content')"] : ["json_extract(o.value,'$.record.content')"];
+    const match = fields.map(field => field + " GLOB term.value").join(" OR ");
+    let after = "";
+    for (;;) {
+      const rows = await this.database.query("SELECT o.key,SUM(DISTINCT (1 << CAST(term.key AS INTEGER))) AS bits FROM plugin_objects o JOIN json_each(?) term" + (tags ? " JOIN json_each(json_extract(o.value,'$.record.tags')) tag" : "") + " WHERE o.collection=? AND o.key>=? AND o.key<? AND o.key>?" + (parent === undefined ? "" : " AND json_extract(o.value,'$.record.memoryUuid')=?") + " AND (" + match + ") GROUP BY o.key ORDER BY o.key LIMIT 1000", [patterns, collection, this.ownerKey + "/", this.ownerKey + "0", after, ...(parent === undefined ? [] : [parent])]);
+      for (const row of rows) result.set(String(row.key).slice(this.ownerKey.length + 1), Number(row.bits) >>> 0);
+      if (rows.length < 1000) return result;
+      after = String(rows[rows.length - 1].key);
+    }
+  }
+  /** Combines each term once per parent while preserving the existing keyword and tag ranks. */
+  async matching(terms: readonly string[], scope: Scope, keywordsEnabled = true, tagsEnabled = true): Promise<{ keywords: Map<string, number>; tags: Map<string, number> }> {
+    const keywords = new Map<string, number>(), tags = new Map<string, number>();
+    for (const [collection, enabled, tagged] of [["memories", keywordsEnabled, false], ["chunks", keywordsEnabled, false], ["memories", tagsEnabled, true]] as const) {
+      if (!enabled) continue;
+      const target = tagged ? tags : keywords;
+      for (const [sourceId, bits] of await this.textMatches(terms, collection, tagged)) {
+        const id = collection === "chunks" ? this.parents.get(this.chunks.get(sourceId)!.memoryUuid) : sourceId;
+        if (id !== undefined && scope.ids.has(id)) target.set(id, ((target.get(id) ?? 0) | bits) >>> 0);
+      }
+    }
+    for (const counts of [keywords, tags]) for (const [id, bits] of counts) { let value = bits, count = 0; while (value) { value = (value & (value - 1)) >>> 0; count++; } counts.set(id, count); }
     return { keywords, tags };
   }
   validate(query: SourceEmbedding, scope: Scope, parent?: string): void {

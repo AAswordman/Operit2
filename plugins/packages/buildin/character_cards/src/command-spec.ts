@@ -47,7 +47,7 @@ export const MEMORY_USAGE = [
 export const CHARACTER_MEMORY_USAGE = [
   "operit2 memory character <character-id> user <show|write|path>",
   "operit2 memory character <character-id> item <list|search|show|create|update|delete|move>",
-  "operit2 memory character <character-id> graph",
+  "operit2 memory character <character-id> graph [offset]",
   "operit2 memory character <character-id> link <create|update|delete>",
   "operit2 memory character <character-id> settings <show|write>",
   "operit2 memory character <character-id> search-config <show|write>",
@@ -59,7 +59,7 @@ export const SHARED_MEMORY_USAGE = [
   "operit2 memory shared <list|create|rename|delete>",
   "operit2 memory shared <shared-id> user <show|write|path>",
   "operit2 memory shared <shared-id> item <list|search|show|create|update|delete|move>",
-  "operit2 memory shared <shared-id> graph",
+  "operit2 memory shared <shared-id> graph [offset]",
   "operit2 memory shared <shared-id> link <create|update|delete>",
   "operit2 memory shared <shared-id> settings <show|write>",
   "operit2 memory shared <shared-id> search-config <show|write>",
@@ -72,7 +72,7 @@ export const USER_USAGE = [
 ];
 /** Documents string item IDs, title lookup, CSV movement, and complete records with quoted JSON identities. */
 export const ITEM_USAGE = [
-  "operit2 memory <owner> item list", "operit2 memory <owner> item search <query>", "operit2 memory <owner> item show <title>",
+  "operit2 memory <owner> item list [offset]", "operit2 memory <owner> item search <query>", "operit2 memory <owner> item show <title>",
   "operit2 memory <owner> item create <title> <content> [folder] [tags-csv]", "operit2 memory <owner> item create --record <memory-json>",
   "operit2 memory <owner> item update <title> <field> <value>", "operit2 memory <owner> item update <title> --patch <changes-json>", "operit2 memory <owner> item update <title> --record <memory-json>",
   "operit2 memory <owner> item delete <id>", "operit2 memory <owner> item move <ids-csv> <folder>",

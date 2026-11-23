@@ -10,9 +10,7 @@ export function searchDocumentChunks(database: CharacterMemoryDatabase, ownerKey
     const wildcard = query.trim() === "*";
     if (wildcard) for (const id of ids) scores.set(id, 1);
     else {
-      if (config.keywordWeight > 0) for (const term of lexicalTerms(query)) for (const identity of index.text.search(term)) {
-        if (identity.startsWith("chunks/") && ids.has(identity.slice(7))) scores.set(identity.slice(7), config.keywordWeight);
-      }
+      if (config.keywordWeight > 0) for (const id of (await index.textMatches(lexicalTerms(query), "chunks", false, memory.uuid)).keys()) scores.set(id, config.keywordWeight);
       if (embedding !== null) {
         const scope = { ids: new Set([memory.id]), restricted: true };
         index.validate(embedding, scope, memory.uuid);

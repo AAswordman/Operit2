@@ -155,7 +155,7 @@ export function parseMemoryQueryRequest(payload: unknown): MemoryQueryRequest {
 }
 
 const validators: Record<DomainOperation, Validator> = {
-  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger) }),
+  "memory.chunks": shape({ ownerKey: required(owner), memoryId: required(nonblank), query: required(nonblank), count: required(nonnegativeInteger), start: optional(nonnegativeInteger) }),
   "memory.searchWithOptions": shape({ limit: optional(integer), excludeIds: optional(strings), ownerKey: required(owner), query: required(nonblank), folderPath: required(nullable(text)), relevanceThreshold: required(nonnegative), createdAtStartMs: required(nullable(integer)), createdAtEndMs: required(nullable(integer)) }),
   "memory.chat.list": ownerOnly,
   "memory.chat.pruneMissing": ownerOnly,
@@ -221,8 +221,9 @@ const validators: Record<DomainOperation, Validator> = {
   "memory.settings.write": shape({ ownerKey: required(owner), settings: required(settings) }),
   "memory.searchConfig.read": ownerOnly,
   "memory.searchConfig.write": shape({ ownerKey: required(owner), config: required(searchConfig) }),
-  "memory.graph": ownerOnly,
-  "memory.list": ownerOnly,
+  "memory.graph": shape({ ownerKey: required(owner), after: optional(memoryIdentifier), offset: optional(number), limit: optional(number), folderPath: optional(nullable(text)), ids: optional(array(memoryIdentifier)), titles: optional(array(nonblank)) }),
+  "memory.list": shape({ ownerKey: required(owner), after: optional(memoryIdentifier), offset: optional(number), limit: optional(number), folderPath: optional(nullable(text)), ids: optional(array(memoryIdentifier)), titles: optional(array(nonblank)) }),
+  "memory.links": shape({ ownerKey: required(owner), linkId: optional(memoryIdentifier), sourceTitle: optional(nonblank), targetTitle: optional(nonblank), linkType: optional(nonblank), limit: required(number) }),
   "memory.search": shape({ ownerKey: required(owner), query: required(nonblank) }),
   "memory.get": shape({ ownerKey: required(owner), title: required(nonblank) }),
   "memory.create": shape({ ownerKey: required(owner), values: required(shape({ ...memoryFields, id: optional(memoryIdentifier), title: required(nonblank), content: required(text) })) }),

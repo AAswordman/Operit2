@@ -1,5 +1,5 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
-import type { Memory, MemoryGraphResult, MemoryLink, MemorySearchDebug } from "./model";
+import type { Memory, MemoryGraphPage, MemoryLink, MemorySearchDebug } from "./model";
 import { nativeUi, readUiJson, uiNumber, uiRequest, uiState } from "./ui-controls";
 import { renderMemoryGraph } from "./ui-memory-graph";
 import { renderMemorySettings } from "./ui-memory-settings";
@@ -12,31 +12,15 @@ type MemoryPanel = { type: "memory"; draft: MemoryDraft } | { type: "link"; draf
   | { type: "import"; strategy: "SKIP" | "UPDATE" | "CREATE_NEW"; content: string }
   | { type: "export"; content: string; name: string }
   | { type: "delete-memory"; title: string } | { type: "delete-link"; id: string }  | { type: "settings" };
-interface WorkspaceState { data: MemoryGraphResult | null; panel: MemoryPanel | null; busy: boolean; error: string; notice: string; query: string; appliedQuery: string; searchIds: string[] | null; folder: string; page: number; searchResult: MemorySearchDebug | null; selected: string | null; selectedEdge: string | null; linkSource: string | null; linking: boolean; panelSequence: number }
+interface WorkspaceState { data: MemoryGraphPage | null; panel: MemoryPanel | null; busy: boolean; error: string; notice: string; query: string; appliedQuery: string; folders: string[]; folder: string; page: number; searchResult: MemorySearchDebug | null; selected: string | null; selectedEdge: string | null; linkSource: string | null; linking: boolean; panelSequence: number }
 
 export const MEMORY_GRAPH_PAGE_SIZE = 200;
 export const MEMORY_GRAPH_EDGE_LIMIT = 1000;
 
-/** Preserves retrieval rank and shows exactly the nodes admitted by both filters. */
-export function filteredMemoryGraph(data: MemoryGraphResult, folder: string, searchIds: readonly string[] | null): MemoryGraphResult {
-  const byId = new Map(data.items.map(item => [item.uuid, item]));
-  const ordered = searchIds === null ? data.items : searchIds.flatMap(id => { const item = byId.get(id); return item ? [item] : []; });
-  const items = ordered.filter(item => folder === "*" || (item.folderPath ?? "") === folder);
-  const ids = new Set(items.map(item => item.uuid));
-  return { items, graph: { nodes: data.graph.nodes.filter(node => ids.has(node.id)), edges: data.graph.edges.filter(edge => ids.has(edge.sourceId) && ids.has(edge.targetId)) } };
-}
-
-/** Bounds native serialization, label measurement and SVG size for large libraries. */
-export function memoryGraphPage(data: MemoryGraphResult, page: number): MemoryGraphResult {
-  const items = data.items.slice(page * MEMORY_GRAPH_PAGE_SIZE, (page + 1) * MEMORY_GRAPH_PAGE_SIZE);
-  const ids = new Set(items.map(item => item.uuid));
-  return { items, graph: { nodes: data.graph.nodes.filter(node => ids.has(node.id)), edges: data.graph.edges.filter(edge => ids.has(edge.sourceId) && ids.has(edge.targetId)).slice(0, MEMORY_GRAPH_EDGE_LIMIT) } };
-}
-
 /** Provides native memory browsing, editing and tools with an optional read-only web canvas. */
 export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarget, close: () => void, instance: string): ComposeNode {
   const key = instance + ":" + target.ownerKey;
-  const { state, live, update } = uiState<WorkspaceState>(ctx, key, { data: null, panel: target.initial === "settings" ? { type: "settings" } : target.initial === "profile" ? { type: "profile", content: "", loaded: false } : null, busy: false, error: "", notice: "", query: "", appliedQuery: "", searchIds: null, folder: "*", page: 0, searchResult: null, selected: null, selectedEdge: null, linkSource: null, linking: false, panelSequence: 0 });
+  const { state, live, update } = uiState<WorkspaceState>(ctx, key, { data: null, panel: target.initial === "settings" ? { type: "settings" } : target.initial === "profile" ? { type: "profile", content: "", loaded: false } : null, busy: false, error: "", notice: "", query: "", appliedQuery: "", folders: [], folder: "*", page: 0, searchResult: null, selected: null, selectedEdge: null, linkSource: null, linking: false, panelSequence: 0 });
   const ui = nativeUi(ctx, !state.busy), ownerKey = target.ownerKey;
   const alive = ctx.useRef(key + ":alive", true);
   ctx.useEffect(key + ":lifetime", () => { alive.current = true; return () => { alive.current = false; }; }, []);
@@ -51,10 +35,13 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
   function open(panel: MemoryPanel): void { update({ panel, panelSequence: live.current.panelSequence + 1, error: "" }); }
   /** Returns to the existing browse filters without reconstructing service state. */
   function back(): void { if (live.current.busy) return; if (target.initial !== undefined && target.initial !== "browse" && live.current.data === null) close(); else update({ panel: null, error: "" }); }
-  /** Refreshes the complete graph, clearing any obsolete selection or search projection. */
-  async function refresh(): Promise<void> {
-    const data = await uiRequest({ action: "graph", ownerKey });
-    if (alive.current) update({ data, page: 0, searchResult: null, searchIds: null, query: "", appliedQuery: "", selected: null, selectedEdge: null, linkSource: null });
+  /** Loads one filtered database page, retaining production search rank. */
+  async function refresh(page = live.current.page): Promise<void> {
+    const current = live.current, query = current.query.trim();
+    const result = query === "" ? null : await uiRequest({ action: "previewMemorySearch", ownerKey, query, folderPath: current.folder === "*" ? null : current.folder });
+    const data = await uiRequest({ action: "graph", ownerKey, offset: page * MEMORY_GRAPH_PAGE_SIZE, limit: MEMORY_GRAPH_PAGE_SIZE, folderPath: current.folder === "*" ? null : current.folder, ids: result?.candidates.map(hit => hit.memory.id) });
+    const folders = await uiRequest({ action: "listMemoryFolders", ownerKey });
+    if (alive.current) update({ data, folders, page, searchResult: result, appliedQuery: query, selected: null, selectedEdge: null, linkSource: null });
   }
   /** Loads profile content before it can be written, never saving an unread empty draft. */
   async function profile(): Promise<void> {
@@ -62,7 +49,7 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
     await act(async () => { const result = await uiRequest({ action: "readUser", ownerKey }); if (alive.current) update({ panel: { type: "profile", content: result.content, loaded: true } }); });
   }
   /** Loads the canonical owner once when entering this workspace. */
-  async function load(): Promise<void> { if (target.initial === "profile") { await profile(); return; } if (target.initial === "settings" || live.current.data !== null) return; await act(refresh); }
+  async function load(): Promise<void> { if (target.initial === "profile") { await profile(); return; } if (target.initial === "settings" || live.current.data !== null) return; await act(() => refresh(0)); }
   /** Builds a memory draft without changing the original record until explicit save. */
   function editMemory(item: Memory | null): void {
     open({ type: "memory", draft: item === null ? { originalTitle: null, title: "", content: "", contentType: "text/plain", source: "manual", credibility: "0.5", importance: "0.5", folderPath: live.current.folder === "*" ? "" : live.current.folder, tags: "" } : { originalTitle: item.title, title: item.title, content: item.content, contentType: item.contentType, source: item.source, credibility: String(item.credibility), importance: String(item.importance), folderPath: item.folderPath ?? "", tags: item.tags.map(tag => tag.name).join(",") } });
@@ -98,16 +85,16 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
   /** Commits one native draft through the same validated service used by tools. */
   async function saveMemory(): Promise<void> {
     await act(async () => { const panel = live.current.panel; if (panel?.type !== "memory") return; const draft = panel.draft;
-      const data = await uiRequest({ action: "saveMemory", ownerKey, ...draft, credibility: uiNumber(draft.credibility, "可信度", 0, 1), importance: uiNumber(draft.importance, "重要性", 0, 1) });
-      if (alive.current) update({ data, panel: null, page: 0, searchResult: null, searchIds: null, query: "", appliedQuery: "", selected: null, notice: "记忆已保存" });
+      await uiRequest({ action: "saveMemory", ownerKey, ...draft, credibility: uiNumber(draft.credibility, "可信度", 0, 1), importance: uiNumber(draft.importance, "重要性", 0, 1) });
+      await refresh(0); if (alive.current) update({ panel: null, notice: "记忆已保存" });
     });
   }
   /** Commits a complete relationship and preserves service-assigned identities. */
   async function saveLink(): Promise<void> {
     await act(async () => { const panel = live.current.panel; if (panel?.type !== "link") return; const draft = panel.draft, weight = uiNumber(draft.weight, "关系强度", 0, 1);
       if (draft.linkType.trim() === "" || draft.sourceTitle === "" || draft.targetTitle === "" || draft.sourceTitle === draft.targetTitle) throw new Error("请选择两条不同记忆并填写关系类型");
-      const data = await uiRequest(draft.id === null ? { action: "createLink", ownerKey, sourceTitle: draft.sourceTitle, targetTitle: draft.targetTitle, linkType: draft.linkType, weight, description: draft.description } : { action: "updateLink", ownerKey, linkId: draft.id, linkType: draft.linkType, weight, description: draft.description });
-      if (alive.current) update({ data, panel: null, selectedEdge: null, linkSource: null, linking: false, notice: "关系已保存" });
+      await uiRequest(draft.id === null ? { action: "createLink", ownerKey, sourceTitle: draft.sourceTitle, targetTitle: draft.targetTitle, linkType: draft.linkType, weight, description: draft.description } : { action: "updateLink", ownerKey, linkId: draft.id, linkType: draft.linkType, weight, description: draft.description });
+      await refresh(); if (alive.current) update({ panel: null, linking: false, notice: "关系已保存" });
     });
   }
   /** Renders all mutation and transfer forms using native fields. */
@@ -125,15 +112,13 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
       case "profile": return [ui.text("用户资料 · USER.md", true), ...(panel.loaded ? [ui.primary("memory-profile-save", "保存", () => act(async () => { const current = live.current.panel; if (current?.type !== "profile" || !current.loaded) throw new Error("用户资料尚未读取成功"); await uiRequest({ action: "writeUser", ownerKey, content: current.content }); if (alive.current) { if (live.current.data === null) close(); else update({ panel: null, notice: "用户资料已保存" }); } }))] : [ui.text(state.busy ? "正在读取用户资料…" : "用户资料读取失败"), ui.button("memory-profile-retry", "重试", profile)])];
       case "import": return [ui.text("导入记忆 JSON", true), ui.choose("memory-import-strategy", "相同 UUID 记忆处理", panel.strategy, [{ id: "SKIP", label: "跳过" }, { id: "UPDATE", label: "更新" }, { id: "CREATE_NEW", label: "创建新记忆" }], strategy => update({ panel: { ...panel, strategy: strategy as "SKIP" | "UPDATE" | "CREATE_NEW" } })), ui.text("选择记忆库导出的 JSON 备份文件，导入完整记忆、关系、文档分块及 USER.md。导入前建议先导出备份；只修改当前记忆库。"), ui.primary("memory-import-submit", "选择 JSON 文件并导入", () => act(async () => { const current = live.current.panel; if (current?.type !== "import") return; const content = await readUiJson(ctx); if (content === null) return; const result = await uiRequest({ action: "importMemory", ownerKey, content, strategy: current.strategy }); await refresh(); if (alive.current) update({ panel: null, notice: `新增 ${result.result.newMemories} · 更新 ${result.result.updatedMemories} · 跳过 ${result.result.skippedMemories} · 关系 ${result.result.newLinks}` }); }))];
       case "export": return [ui.text("导出 JSON", true), ctx.UI.TextField({ key: "memory-export-content", label: "JSON 内容", value: panel.content, readOnly: true, onValueChange: () => {}, fillMaxWidth: true, minLines: 16, maxLines: 24 }), ui.text("包含当前记忆库的完整记录与 USER.md。点击保存文件选择保存位置。"), ui.primary("memory-export-save", "保存文件", () => act(async () => { const current = live.current.panel; if (current?.type !== "export") return; const result = await ctx.saveFile({ suggestedName: current.name, content: current.content, mimeType: "application/json", extensions: ["json"] }); if (!result.cancelled && alive.current) update({ panel: null, notice: "文件已导出" }); }))];
-      case "delete-memory": return [ui.text("确定删除记忆「" + panel.title + "」及关联关系？"), ui.primary("memory-delete-confirm", "确认删除", () => act(async () => { const data = await uiRequest({ action: "deleteMemory", ownerKey, title: panel.title }); if (alive.current) update({ data, panel: null, selected: null, selectedEdge: null, page: 0, searchResult: null, searchIds: null, notice: "记忆已删除" }); }))];
-      case "delete-link": return [ui.text("确定删除这条记忆关系？"), ui.primary("link-delete-confirm", "确认删除", () => act(async () => { const data = await uiRequest({ action: "deleteLink", ownerKey, linkId: panel.id }); if (alive.current) update({ data, panel: null, selectedEdge: null, notice: "关系已删除" }); }))];
+      case "delete-memory": return [ui.text("确定删除记忆「" + panel.title + "」及关联关系？"), ui.primary("memory-delete-confirm", "确认删除", () => act(async () => { await uiRequest({ action: "deleteMemory", ownerKey, title: panel.title }); await refresh(0); if (alive.current) update({ panel: null, notice: "记忆已删除" }); }))];
+      case "delete-link": return [ui.text("确定删除这条记忆关系？"), ui.primary("link-delete-confirm", "确认删除", () => act(async () => { await uiRequest({ action: "deleteLink", ownerKey, linkId: panel.id }); await refresh(); if (alive.current) update({ panel: null, notice: "关系已删除" }); }))];
 
     }
   }
   /** Executes search with native controls and the production retrieval service. */
-  async function search(): Promise<void> {
-    await act(async () => { const query = live.current.query.trim(); const result = query === "" ? null : await uiRequest({ action: "previewMemorySearch", ownerKey, query, folderPath: live.current.folder === "*" ? null : live.current.folder }); if (alive.current) update({ searchResult: result, searchIds: result?.candidates.map(hit => hit.memory.uuid) ?? null, appliedQuery: query, page: 0, selected: null, selectedEdge: null, linkSource: null }); });
-  }
+  async function search(): Promise<void> { await act(() => refresh(0)); }
   const messages: ComposeNode[] = [];
   if (state.error !== "") messages.push(ctx.UI.Text({ key: "memory-workspace-error", text: state.error, color: ctx.MaterialTheme.colorScheme.error }));
   if (state.notice !== "") messages.push(ui.text(state.notice));
@@ -141,26 +126,24 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
   const direct = target.initial !== undefined && target.initial !== "browse" && state.data === null;
   if (!direct) {
     const data = state.data;
-    const filtered = ctx.useMemo(key + ":filtered", () => data === null ? null : filteredMemoryGraph(data, state.folder, state.searchIds), [data, state.folder, state.searchIds]);
-    const page = Math.min(state.page, Math.max(0, Math.ceil((filtered?.items.length ?? 0) / MEMORY_GRAPH_PAGE_SIZE) - 1));
-    const projection = ctx.useMemo(key + ":page", () => filtered === null ? null : memoryGraphPage(filtered, page), [filtered, page]);
+    const page = state.page, projection = data;
     const selected = data?.items.find(item => item.uuid === state.selected), edge = data?.graph.edges.find(item => item.id === state.selectedEdge);
     const header = ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 8, spacing: 8, verticalAlignment: "center" }, [
       ui.iconButton("memory-workspace-back", "关闭", "ArrowBack", close), ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: "记忆图谱", fontSize: 18, fontWeight: "600" }), ctx.UI.Text({ text: target.name, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant, maxLines: 1, overflow: "ellipsis" })]),
       ui.menu("memory-more", "更多操作", "MoreVert", [
         { key: "memory-settings-open", label: "记忆设置", name: "Tune", action: () => open({ type: "settings" }) },
-        { key: "memory-refresh", label: "刷新", name: "Refresh", enabled: data !== null, action: () => act(refresh) },
+        { key: "memory-refresh", label: "刷新", name: "Refresh", enabled: data !== null, action: () => act(() => refresh(0)) },
         { key: "memory-import", label: "导入记忆 JSON", name: "Upload", enabled: data !== null, action: () => open({ type: "import", strategy: "SKIP", content: "" }) },
         { key: "memory-export", label: "导出记忆 JSON", name: "Download", enabled: data !== null, action: () => act(async () => { const result = await uiRequest({ action: "exportMemory", ownerKey }); if (alive.current) open({ type: "export", name: "memory-backup.json", content: result.content }); }) },
       ], true),
     ]);
     let body: ComposeNode;
-    if (data === null || projection === null) body = ui.list("memory-loading", [...messages, ui.text(state.busy ? "正在读取记忆图谱…" : "记忆图谱未加载成功，未开放写入。"), ui.button("memory-load-retry", "重试", () => act(refresh))]);
+    if (data === null || projection === null) body = ui.list("memory-loading", [...messages, ui.text(state.busy ? "正在读取记忆图谱…" : "记忆图谱未加载成功，未开放写入。"), ui.button("memory-load-retry", "重试", () => act(() => refresh(0)))]);
     else {
-      const folders = ctx.useMemo(key + ":folders", () => [...new Set(["", ...data.items.map(item => item.folderPath ?? "")])].sort(), [data]);
+      const folders = [...new Set(["", ...state.folders])].sort();
       const filters = ctx.UI.Column({ fillMaxWidth: true, paddingHorizontal: 12, paddingBottom: 10, spacing: 8 }, [
-        ctx.UI.Row({ fillMaxWidth: true, height: 40, verticalAlignment: "center", spacing: 4, modifier: ctx.Modifier.clip({ cornerRadius: 12 }).background(ctx.MaterialTheme.colorScheme.surfaceContainerHigh) }, [ui.iconButton("memory-search", "搜索", "Search", search), ctx.UI.TextField({ key: "memory-search-query", placeholder: "搜索记忆…", decoration: { borderless: true, isDense: true, contentPadding: { horizontal: 4, vertical: 8 } }, style: { fontSize: 14 }, value: state.query, readOnly: state.busy, singleLine: true, imeAction: "search", weight: 1, onValueChange: query => update({ query }), onSubmitted: query => { if (live.current.busy) return; update({ query }); return search(); } }), ui.iconButton("memory-search-clear", "清除搜索", "Close", () => update({ query: "", appliedQuery: "", searchIds: null, searchResult: null, page: 0, selected: null, selectedEdge: null, linkSource: null }))]),
-        ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12 }, [ui.choose("memory-folder-filter", "文件夹", state.folder, [{ id: "*", label: "全部文件夹" }, ...folders.map(folder => ({ id: folder, label: folder === "" ? "根目录" : folder }))], folder => { update({ folder, page: 0, selected: null, selectedEdge: null, linkSource: null }); if (live.current.appliedQuery !== "") void search(); }, true), ctx.UI.FilterChip({ key: "memory-graph-link-mode", selected: state.linking, enabled: !state.busy && data.items.length > 1, label: ctx.UI.Text({ text: "链接" }), onClick: () => update({ linking: !live.current.linking, linkSource: null }) })]),
+        ctx.UI.Row({ fillMaxWidth: true, height: 40, verticalAlignment: "center", spacing: 4, modifier: ctx.Modifier.clip({ cornerRadius: 12 }).background(ctx.MaterialTheme.colorScheme.surfaceContainerHigh) }, [ui.iconButton("memory-search", "搜索", "Search", search), ctx.UI.TextField({ key: "memory-search-query", placeholder: "搜索记忆…", decoration: { borderless: true, isDense: true, contentPadding: { horizontal: 4, vertical: 8 } }, style: { fontSize: 14 }, value: state.query, readOnly: state.busy, singleLine: true, imeAction: "search", weight: 1, onValueChange: query => update({ query }), onSubmitted: query => { if (live.current.busy) return; update({ query }); return search(); } }), ui.iconButton("memory-search-clear", "清除搜索", "Close", () => { update({ query: "" }); return search(); })]),
+        ctx.UI.Row({ fillMaxWidth: true, verticalAlignment: "center", spacing: 12 }, [ui.choose("memory-folder-filter", "文件夹", state.folder, [{ id: "*", label: "全部文件夹" }, ...folders.map(folder => ({ id: folder, label: folder === "" ? "根目录" : folder }))], folder => { update({ folder }); return search(); }, true), ctx.UI.FilterChip({ key: "memory-graph-link-mode", selected: state.linking, enabled: !state.busy && data.items.length > 1, label: ctx.UI.Text({ text: "链接" }), onClick: () => update({ linking: !live.current.linking, linkSource: null }) })]),
         ...(state.searchResult ? [ctx.UI.Text({ text: `模拟聊天检索 · 阈值 ${state.searchResult.relevanceThreshold} · 使用记忆注入条数限制`, fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })] : []),
         ...(state.linking ? [ui.text(state.linkSource === null ? "选择两条记忆以建立链接 · 请选择源记忆" : "请选择目标记忆")] : []),
         ...(state.panel === null ? messages : []),
@@ -175,12 +158,12 @@ export function renderMemoryWorkspace(ctx: ComposeDslContext, target: MemoryTarg
         const hit = scores.get(item.uuid);
         return ctx.UI.Row({ key: "memory-select:" + item.uuid, fillMaxWidth: true, verticalAlignment: "center", spacing: 10, padding: 10, onClick: () => select("memory", item.uuid) }, [ctx.UI.Icon({ name: selected?.uuid === item.uuid ? "Check" : "PsychologyOutlined", size: 22 }), ctx.UI.Column({ weight: 1 }, [ctx.UI.Text({ text: (hit ? `${index + 1}. ` : "") + item.title, fontSize: 13, fontWeight: "500" }), ctx.UI.Text({ text: item.content.slice(0, 160), fontSize: 12, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant, maxLines: 2, overflow: "ellipsis" }), ...(hit ? [ctx.UI.Text({ text: `相关性 ${hit.score.toFixed(4)} · 关键词 ${hit.keywordScore.toFixed(4)} · 标签 ${hit.tagScore.toFixed(4)} · 语义 ${hit.vectorScore.toFixed(4)} · 关系 ${hit.edgeScore.toFixed(4)}`, fontSize: 11, color: ctx.MaterialTheme.colorScheme.onSurfaceVariant })] : [])])]);
       });
-      const total = filtered!.items.length, pages = Math.max(1, Math.ceil(total / MEMORY_GRAPH_PAGE_SIZE));
-      function changePage(next: number): void { update({ page: next, selected: null, selectedEdge: null, linkSource: null }); }
+      const total = data.total, pages = Math.max(1, Math.ceil(total / MEMORY_GRAPH_PAGE_SIZE));
+      async function changePage(next: number): Promise<void> { await act(() => refresh(next)); }
       const inspector = ctx.UI.Column({ key: "memory-inspector", weight: 2, fillMaxWidth: true, modifier: ctx.Modifier.background(ctx.MaterialTheme.colorScheme.surfaceContainer) }, [
         ctx.UI.Row({ fillMaxWidth: true, paddingHorizontal: 16, paddingVertical: 6, verticalAlignment: "center", spacing: 6 }, [ctx.UI.Text({ text: state.searchResult ? `搜索结果 ${total} · 按相关性排序` : `记忆库 ${total}`, fontSize: 14, fontWeight: "600", weight: 1 }), ...(pages > 1 ? [ui.button("memory-page-previous", "上一页", () => changePage(page - 1), page > 0), ui.text(`${page + 1}/${pages}`), ui.button("memory-page-next", "下一页", () => changePage(page + 1), page + 1 < pages)] : [])]),
         ...(total > MEMORY_GRAPH_PAGE_SIZE ? [ctx.UI.Text({ text: `图谱与列表显示第 ${page * MEMORY_GRAPH_PAGE_SIZE + 1}–${Math.min(total, (page + 1) * MEMORY_GRAPH_PAGE_SIZE)} 条，切换页码查看更多记忆`, fontSize: 12, paddingHorizontal: 16 })] : []),
-        ...(projection.graph.edges.length === MEMORY_GRAPH_EDGE_LIMIT ? [ui.text(`当前页最多展示 ${MEMORY_GRAPH_EDGE_LIMIT} 条关系；选择记忆可查看其全部关系`)] : []),
+        ...(projection.graph.edges.length === MEMORY_GRAPH_EDGE_LIMIT ? [ui.text(`当前页最多展示 ${MEMORY_GRAPH_EDGE_LIMIT} 条关系；仅展示当前页内的关系`)] : []),
         ui.list("memory-inspector-list", [...details, ...items, ...(items.length === 0 ? [ui.text(state.searchResult ? "没有达到聊天检索阈值的记忆" : "没有匹配的记忆")] : [])]),
       ]);
       const canvas = ctx.UI.Box({ key: "memory-canvas", weight: 3, fillMaxWidth: true }, [

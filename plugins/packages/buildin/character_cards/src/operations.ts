@@ -11,7 +11,7 @@ import { enqueueCandidate, startMemoryRebuild } from "./memory-jobs/scheduler";
 import { memoryJobProducer } from "./memory-jobs/producer";
 import { listMemoryChats, pruneMissingMemoryChats, requireChat } from "./memory-jobs/chat";
 import type { CharacterRepository } from "./canonical";
-import type { Card, Group, GroupValues, Memory, MemoryGraphResult, MemoryOwner, MemorySearchOptions, MemorySettings, MemorySearchConfig, Request, RequestOutput, Snapshot, Store, StoreValues, Tag, TagChanges, TagEdit, TagValues, MemoryLink } from "./model";
+import type { Card, Group, GroupValues, Memory, MemoryOwner, MemorySearchOptions, MemorySettings, MemorySearchConfig, Request, RequestOutput, Snapshot, Store, StoreValues, Tag, TagChanges, TagEdit, TagValues, MemoryLink } from "./model";
 import { assertBoolean, assertGroup, assertGroupValues, assertMemory, assertMemorySettings, assertObject, assertSearchConfig, assertSearchOptions, assertString, assertStrings, assertTag, assertTagValues, normalizeNames, requireId, requireName, assertNumber } from "./validation";
 import { decodeCharacterImport, decodeGroupImport, encodeCharacterExport } from "./serialization";
 import { readThemeChoices } from "./selection-application";
@@ -472,26 +472,15 @@ export async function resolveMemoryOwner(
   return ownerKey;
 }
 
-/** Reads full canonical memories for one validated owner. */
-export async function listMemories(
-  ownerKey: string,
-  host: CharacterRepository,
-): Promise<Memory[]> {
+/** Builds the graph exclusively from one database page and its bounded internal relationships. */
+export async function graph(ownerKey: string, host: CharacterRepository, options: import("./model").MemoryPageOptions = {}): Promise<import("./model").MemoryGraphPage> {
   await requireOwner(ownerKey, host);
-  return await host.listMemories(ownerKey);
-}
-
-/** Reads the actual UUID graph and complete records without projecting lossy tool query results. */
-export async function graph(
-  ownerKey: string,
-  host: CharacterRepository,
-): Promise<MemoryGraphResult> {
-  await requireOwner(ownerKey, host);
-  const [value, items] = await Promise.all([
-    host.readMemoryGraph(ownerKey),
-    host.listMemories(ownerKey),
-  ]);
-  return { graph: value, items };
+  const page = await host.readMemoryPage(ownerKey, options), byId = new Map(page.items.map(item => [item.id, item]));
+  const links = page.items.length ? await host.readMemoryLinks(ownerKey, { memoryIds: [...byId.keys()], limit: 1000 }) : [];
+  return { ...page, graph: {
+    nodes: page.items.map(item => ({ id: item.uuid, label: item.title, color: item.isDocumentNode ? 0xFF9575CD : 0xFFD3D3D3, metadata: { memoryId: item.id } })),
+    edges: links.map(link => { const source = byId.get(link.sourceMemoryId)!, target = byId.get(link.targetMemoryId)!; return { id: link.id, sourceId: source.uuid, targetId: target.uuid, label: link.type_, weight: link.weight, metadata: { description: link.description }, isCrossFolderLink: source.folderPath !== target.folderPath }; }),
+  } };
 }
 
 /** Normalizes a user-selected folder using the canonical slash-delimited repository contract. */
@@ -709,9 +698,10 @@ export async function dispatch(
       await executeDomain("memory.user.write", { ownerKey: request.ownerKey, content: request.content }, host);
       return { saved: true };
     case "graph":
-      return graph(request.ownerKey, host);
-    case "listMemories":
-      return listMemories(request.ownerKey, host);
+      return graph(request.ownerKey, host, request);
+    case "memoryPage":
+      await requireOwner(request.ownerKey, host);
+      return host.readMemoryPage(request.ownerKey, request);
     case "searchMemory":
       return searchMemories(
         {
@@ -739,22 +729,22 @@ export async function dispatch(
       };
       if (request.originalTitle === null) await executeDomain("memory.create", { ownerKey: request.ownerKey, values }, host);
       else await executeDomain("memory.update", { ownerKey: request.ownerKey, originalTitle: request.originalTitle, changes: values }, host);
-      return graph(request.ownerKey, host);
+      return { saved: true };
     }
     case "deleteMemory": {
       const { item } = await executeDomain("memory.get", { ownerKey: request.ownerKey, title: request.title }, host);
       await executeDomain("memory.delete", { ownerKey: request.ownerKey, id: item.id }, host);
-      return graph(request.ownerKey, host);
+      return { saved: true };
     }
     case "createLink":
       await executeDomain("memory.link.create", { ownerKey: request.ownerKey, sourceTitle: request.sourceTitle, targetTitle: request.targetTitle, linkType: request.linkType, weight: request.weight, description: request.description }, host);
-      return graph(request.ownerKey, host);
+      return { saved: true };
     case "deleteLink":
       await executeDomain("memory.link.delete", { ownerKey: request.ownerKey, linkId: request.linkId }, host);
-      return graph(request.ownerKey, host);
+      return { saved: true };
     case "updateLink":
       await executeDomain("memory.link.update", { ownerKey: request.ownerKey, linkId: request.linkId, changes: { linkType: request.linkType, weight: request.weight, description: request.description } }, host);
-      return graph(request.ownerKey, host);
+      return { saved: true };
     case "readMemorySettings": {
       await requireOwner(request.ownerKey, host);
       const settings = await host.readMemorySettings(request.ownerKey);
@@ -922,7 +912,7 @@ export async function resolveConfiguration(
 /** Implements every published domain operation with typed handlers sharing the editor's actual business service. */
 const handlers: DomainHandlers = {
   /** Ranks persisted document source vectors without writing during retrieval. */
-  "memory.chunks": (input, repository) => repository.searchMemoryChunks(input.ownerKey, input.memoryId, input.query, input.count),
+  "memory.chunks": (input, repository) => repository.searchMemoryChunks(input.ownerKey, input.memoryId, input.query, input.count, input.start),
   /** Searches bounded records and document chunks with one operation-scoped query vector. */
   "memory.searchWithOptions": async (input, repository) => {
     await requireOwner(input.ownerKey, repository);
@@ -1097,9 +1087,11 @@ const handlers: DomainHandlers = {
   /** Writes every persisted search configuration field. */
   "memory.searchConfig.write": (input, host) => writeMemorySearchConfig(input.ownerKey, input.config, host),
   /** Reads the actual repository graph with canonical UUID nodes. */
-  "memory.graph": async (input, host) => ({ ownerKey: input.ownerKey, graph: (await graph(input.ownerKey, host)).graph }),
-  /** Reads complete repository memories in the selected owner scope. */
-  "memory.list": async (input, host) => ({ ownerKey: input.ownerKey, items: await listMemories(input.ownerKey, host) }),
+  "memory.graph": async (input, host) => ({ ownerKey: input.ownerKey, ...await graph(input.ownerKey, host, input) }),
+  /** Reads one bounded filtered page in the selected owner scope. */
+  "memory.list": async (input, host) => { await requireOwner(input.ownerKey, host); return { ownerKey: input.ownerKey, ...await host.readMemoryPage(input.ownerKey, input) }; },
+  /** Resolves exact endpoint filters before querying bounded relationships. */
+  "memory.links": async (input, host) => { await requireOwner(input.ownerKey, host); const source = input.sourceTitle === undefined ? undefined : (await host.readMemoryByTitle(input.ownerKey, input.sourceTitle)).id, target = input.targetTitle === undefined ? undefined : (await host.readMemoryByTitle(input.ownerKey, input.targetTitle)).id; return { links: await host.readMemoryLinks(input.ownerKey, { ...input, sourceMemoryId: source, targetMemoryId: target }) }; },
   /** Searches complete repository records with the original explicit editor search filters. */
   "memory.search": async (input, host) => ({ ownerKey: input.ownerKey, query: input.query, items: await searchMemories({ ...input, folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null }, host) }),
   /** Resolves an exact title to one complete canonical memory. */

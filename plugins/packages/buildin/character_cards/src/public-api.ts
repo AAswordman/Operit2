@@ -436,6 +436,11 @@ export async function memoryGraphApi(event: ToolPkg.PublicApiEvent<DomainInput<"
   return dispatchDomain("memory.graph", parseDomainPayload("memory.graph", event.payload));
 }
 
+/** Executes a bounded relationship query through a durable exported callback. */
+export async function memoryLinksApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.links">>): Promise<DomainOutput<"memory.links">> {
+  return dispatchDomain("memory.links", parseDomainPayload("memory.links", event.payload));
+}
+
 /** Validates and executes the memory.list public domain method. */
 export async function memoryListApi(event: ToolPkg.PublicApiEvent<DomainInput<"memory.list">>): Promise<DomainOutput<"memory.list">> {
   return dispatchDomain("memory.list", parseDomainPayload("memory.list", event.payload));
@@ -566,6 +571,7 @@ export function registerDomainApis(): void {
   ToolPkg.registerApi<DomainInput<"memory.searchConfig.read">, DomainOutput<"memory.searchConfig.read">>({ name: "memory.searchConfig.read", function: memorySearchConfigReadApi });
   ToolPkg.registerApi<DomainInput<"memory.searchConfig.write">, DomainOutput<"memory.searchConfig.write">>({ name: "memory.searchConfig.write", function: memorySearchConfigWriteApi });
   ToolPkg.registerApi<DomainInput<"memory.graph">, DomainOutput<"memory.graph">>({ name: "memory.graph", function: memoryGraphApi });
+  ToolPkg.registerApi<DomainInput<"memory.links">, DomainOutput<"memory.links">>({ name: "memory.links", function: memoryLinksApi });
   ToolPkg.registerApi<DomainInput<"memory.list">, DomainOutput<"memory.list">>({ name: "memory.list", function: memoryListApi });
   ToolPkg.registerApi<DomainInput<"memory.search">, DomainOutput<"memory.search">>({ name: "memory.search", function: memorySearchApi });
   ToolPkg.registerApi<DomainInput<"memory.get">, DomainOutput<"memory.get">>({ name: "memory.get", function: memoryGetApi });

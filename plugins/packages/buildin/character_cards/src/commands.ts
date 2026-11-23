@@ -444,9 +444,9 @@ function parseMemoryItems(ownerKey: string, args: readonly string[]): CommandInv
   if (wantsHelp(args)) return { kind: "usage", usage: ITEM_USAGE };
   switch (args[0]) {
     case "list": {
-      arity(args, 1, 1, ITEM_USAGE[0]);
+      arity(args, 1, 2, ITEM_USAGE[0]);
       /** Preserves the original owner-plus-items list envelope. */
-      return invocation("memory.list", { ownerKey }, value => result(lines([`Memory items: ${value.items.length}`, ...value.items.map(memoryRow)]), value));
+      return invocation("memory.list", { ownerKey, offset: args.length === 2 ? integer(args[1], "offset") : 0 }, value => result(lines([`Memory items: ${value.items.length}/${value.total}`, ...value.items.map(memoryRow)]), value));
     }
     case "search": {
       arity(args, 2, 2, ITEM_USAGE[1]);
@@ -566,9 +566,9 @@ function parseOwner(ownerKey: string, args: readonly string[], usage: readonly s
     case "item": return parseMemoryItems(ownerKey, args.slice(1));
     case "link": return parseLinks(ownerKey, args.slice(1));
     case "graph": {
-      arity(args, 1, 1, "operit2 memory <owner> graph");
+      arity(args, 1, 2, "operit2 memory <owner> graph [offset]");
       /** Preserves the owner-plus-graph envelope used by the original CLI. */
-      return invocation("memory.graph", { ownerKey }, value => result(lines([`Memory graph for ${ownerKey}`, `Nodes: ${value.graph.nodes.length}`, `Edges: ${value.graph.edges.length}`]), value));
+      return invocation("memory.graph", { ownerKey, offset: args.length === 2 ? integer(args[1], "offset") : 0 }, value => result(lines([`Memory graph for ${ownerKey}`, `Nodes: ${value.graph.nodes.length}/${value.total}`, `Edges: ${value.graph.edges.length}`]), value));
     }
     case "export": {
       arity(args, 1, 1, "operit2 memory <owner> export");

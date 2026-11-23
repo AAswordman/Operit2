@@ -33,11 +33,9 @@ function rank(index: MemoryIndex, counts: Map<string, number>, weight: number, t
   });
   return new Map(ids.map((id, offset) => [id, weight * index.memories.get(id)!.importance * (1 + 0.6 * counts.get(id)! / Math.max(1, termCount)) / (61 + offset)]));
 }
-function ranked(index: MemoryIndex, scope: Scope, options: MemorySearchOptions, config: MemorySearchConfig, query: SourceEmbedding | null, debug: boolean): { hits: MemorySearchHit[]; excluded: number } {
+async function ranked(index: MemoryIndex, scope: Scope, options: MemorySearchOptions, config: MemorySearchConfig, query: SourceEmbedding | null, debug: boolean): Promise<{ hits: MemorySearchHit[]; excluded: number }> {
   const excluded = new Set(options.excludeIds ?? []), limit = options.limit ?? 100;
-  if (options.query.trim() === "*") return { excluded: [...excluded].filter(id => scope.ids.has(id)).length,
-    hits: [...scope.ids].filter(id => !excluded.has(id)).sort(compareId).slice(0, limit).map(id => ({ memory: index.memories.get(id)!, score: 1, keywordScore: 0, tagScore: 0, vectorScore: 0, edgeScore: 0, passedThreshold: true })) };
-  const terms = lexicalTerms(options.query), matched = index.matching(terms, scope, config.keywordWeight > 0, config.tagWeight > 0);
+  const terms = lexicalTerms(options.query), matched = await index.matching(terms, scope, config.keywordWeight > 0, config.tagWeight > 0);
   const lexicalBoost = config.scoreMode === "KEYWORD_FIRST" ? 1.3 : config.scoreMode === "SEMANTIC_FIRST" ? 0.8 : 1;
   const keywordWeight = config.keywordWeight * lexicalBoost, tagWeight = config.tagWeight * lexicalBoost;
   const vectorWeight = config.vectorWeight * (config.scoreMode === "SEMANTIC_FIRST" ? 1.3 : config.scoreMode === "KEYWORD_FIRST" ? 0.8 : 1);
@@ -67,18 +65,18 @@ function ranked(index: MemoryIndex, scope: Scope, options: MemorySearchOptions, 
   const seeds = [...hits.values()].filter(item => item.score > 0).sort((a, b) => b.score - a.score || compareId(a.memory.id, b.memory.id)).slice(0, 10);
   if (edgeWeight > 0) {
     const targets = new Set<string>();
-    for (const seed of seeds) for (const linkId of index.adjacency.get(seed.memory.id) ?? []) {
-      const link = index.links.get(linkId)!, id = link.sourceMemoryId === seed.memory.id ? link.targetMemoryId : link.sourceMemoryId;
-      if (scope.ids.has(id)) targets.add(id);
+    const seedIds = seeds.map(seed => seed.memory.id);
+    for await (const link of index.seedLinks(seedIds)) for (const seed of seedIds) {
+      const id = link.sourceMemoryId === seed ? link.targetMemoryId : link.targetMemoryId === seed ? link.sourceMemoryId : null;
+      if (id !== null && scope.ids.has(id)) targets.add(id);
     }
     if (query !== null) index.scoreCandidates(query, [...targets], semantic);
     for (const id of targets) { const item = hit(id); item.vectorScore = (semantic.get(id) ?? 0) * vectorWeight; item.score = item.keywordScore + item.tagScore + item.vectorScore; }
     // Seed scores are captured before edge propagation; links never recursively amplify a query.
-    const seedScores = seeds.map(seed => ({ id: seed.memory.id, score: seed.keywordScore + seed.tagScore + seed.vectorScore }));
-    for (const seed of seedScores) for (const linkId of index.adjacency.get(seed.id) ?? []) {
-      const link = index.links.get(linkId)!, id = link.sourceMemoryId === seed.id ? link.targetMemoryId : link.sourceMemoryId;
-      if (!scope.ids.has(id)) continue;
-      hit(id).edgeScore += (seed.score * link.weight + 0.03) * edgeWeight;
+    const seedScores = new Map(seeds.map(seed => [seed.memory.id, seed.keywordScore + seed.tagScore + seed.vectorScore]));
+    for await (const link of index.seedLinks(seedIds)) for (const [seed, score] of seedScores) {
+      const id = link.sourceMemoryId === seed ? link.targetMemoryId : link.targetMemoryId === seed ? link.sourceMemoryId : null;
+      if (id !== null && scope.ids.has(id)) hit(id).edgeScore += (score * link.weight + 0.03) * edgeWeight;
     }
   }
   let excludedCount = 0;
@@ -94,6 +92,16 @@ function ranked(index: MemoryIndex, scope: Scope, options: MemorySearchOptions, 
 export async function searchMemoryDatabase(database: CharacterMemoryDatabase, settings: MemorySettings, options: MemorySearchOptions, config: MemorySearchConfig, debug = false): Promise<{ result: MemorySearchDebug; queryEmbedding: SourceEmbedding | null }> {
   const limit = options.limit ?? 100, wildcard = options.query.trim() === "*";
   if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error("Memory search limit must be between 1 and 1000");
+  if (wildcard) {
+    const where = ["collection='memories'", "key>=?", "key<?", "json_extract(value,'$.record.title')<>'.folder_placeholder'"], params: import("../../../../types/storage").Storage.SqlValue[] = [options.ownerKey + "/", options.ownerKey + "0"];
+    if (options.folderPath !== null) { where.push("(json_extract(value,'$.record.folderPath')=? OR substr(json_extract(value,'$.record.folderPath'),1,length(?)+1)=?||'/')"); params.push(options.folderPath, options.folderPath, options.folderPath); }
+    if (options.createdAtStartMs !== null) { where.push("json_extract(value,'$.record.createdAt')>=?"); params.push(options.createdAtStartMs); }
+    if (options.createdAtEndMs !== null) { where.push("json_extract(value,'$.record.createdAt')<=?"); params.push(options.createdAtEndMs); }
+    const excluded = "json_extract(value,'$.record.id') IN (SELECT value FROM json_each(?))", exclusions = JSON.stringify(options.excludeIds ?? []);
+    const [count] = await database.query("SELECT COUNT(*) AS total,SUM(" + excluded + ") AS excluded FROM plugin_objects WHERE " + where.join(" AND "), [exclusions, ...params]);
+    const rows = await database.query("SELECT json_extract(value,'$.record') AS record FROM plugin_objects WHERE " + where.join(" AND ") + " AND NOT (" + excluded + ") ORDER BY key LIMIT ?", [...params, exclusions, limit]);
+    return { queryEmbedding: null, result: { query: options.query, config, relevanceThreshold: options.relevanceThreshold, memoriesInScopeCount: Number(count.total), excludedBySnapshotCount: Number(count.excluded ?? 0), candidates: rows.map(row => ({ memory: JSON.parse(String(row.record)), score: 1, keywordScore: 0, tagScore: 0, vectorScore: 0, edgeScore: 0, passedThreshold: true })) } };
+  }
   if (!wildcard) {
     if (options.query.trim() === "") throw new Error("Memory search query must not be blank");
     const vectorWeight = settings.cloudEmbeddingEnabled ? config.vectorWeight : 0;
@@ -106,7 +114,7 @@ export async function searchMemoryDatabase(database: CharacterMemoryDatabase, se
   const queryEmbedding = await prepareMemoryQuery(settings, options.query, config);
   return withMemoryIndex(database, options.ownerKey, async index => {
     for (let attempt = 0; attempt < 3; attempt++) {
-      const scope = index.scope(options), page = ranked(index, scope, options, config, queryEmbedding, debug);
+      const scope = index.scope(options), page = await ranked(index, scope, options, config, queryEmbedding, debug);
       if (page.hits.length) {
         const entries = await database.getMany<{ record: MemorySearchHit["memory"] }>("memories", page.hits.map(item => options.ownerKey + "/" + item.memory.id));
         if (entries.some((entry, offset) => entry === null || entry.version !== index.sources.get("memories/" + page.hits[offset].memory.id)?.version)) {

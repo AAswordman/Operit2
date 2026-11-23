@@ -57,10 +57,9 @@ test("real Operit1 snapshot opens in the character plugin", { skip: !process.env
       const jobs = await session.readMemoryJobState(owner.ownerKey);
       assert.equal(jobs.candidates.length, owner.candidates.length);
       assert.ok(jobs.candidates.every(candidate => typeof candidate.producerNodeId === "string" && candidate.producerNodeId.length > 0));
-      assert.equal((await session.listMemories(owner.ownerKey)).length, owner.memories.length);
-      const graph = await session.readMemoryGraph(owner.ownerKey);
-      assert.equal(graph.nodes.length, owner.memories.length);
-      assert.equal(graph.edges.length, owner.links.length);
+      assert.equal((await session.readMemorySpace(owner.ownerKey).then(space => space.memories)).length, owner.memories.length);
+      const links = await session.readMemoryLinks(owner.ownerKey, { limit: 200 });
+      assert.equal(links.length, owner.links.length);
     });
     for (const memory of owner.memories) for (const field of pendingImport ? [] : ["documentPath", "chunkIndexFilePath"]) {
       assert.equal(memory[field]?.startsWith("content://") === true, false);

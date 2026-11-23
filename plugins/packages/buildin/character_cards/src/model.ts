@@ -206,6 +206,11 @@ export interface MemoryGraph {
   edges: { id: string; sourceId: string; targetId: string; label: string | null; weight: number; metadata: Record<string, string>; isCrossFolderLink: boolean }[];
 }
 export interface MemoryGraphResult { graph: MemoryGraph; items: Memory[] }
+export type MemoryPageOptions = { after?: string; offset?: number; limit?: number; folderPath?: string | null; ids?: string[]; titles?: string[] }
+export interface MemoryPage { items: Memory[]; total: number }
+export interface MemoryGraphPage extends MemoryGraphResult { total: number }
+export interface MemoryLinkFilter { linkId?: string; sourceMemoryId?: string; targetMemoryId?: string; linkType?: string; memoryIds?: string[]; limit: number }
+export interface MemoryLinkView extends MemoryLink { sourceTitle: string; targetTitle: string }
 export interface UserDocument { ownerKey: string; content: string }
 export interface MemoryOwner { kind: "CHARACTER" | "SHARED"; id: string }
 
@@ -283,8 +288,8 @@ export type Request =
   | { action: "resolveMemoryOwner"; characterId: string }
   | { action: "readUser"; ownerKey: string }
   | { action: "writeUser"; ownerKey: string; content: string }
-  | { action: "graph"; ownerKey: string }
-  | { action: "listMemories"; ownerKey: string }
+  | ({ action: "graph"; ownerKey: string } & MemoryPageOptions)
+  | ({ action: "memoryPage"; ownerKey: string } & MemoryPageOptions)
   | { action: "searchMemory"; ownerKey: string; query: string }
   | { action: "searchMemories"; options: MemorySearchOptions }
   | { action: "saveMemory"; ownerKey: string; title: string; originalTitle: string | null; content: string; folderPath: string; tags: string; contentType: string; source: string; credibility: number; importance: number }
@@ -490,15 +495,15 @@ export interface RequestResults {
   resolveMemoryOwner: string;
   readUser: UserDocument;
   writeUser: { saved: boolean; };
-  graph: MemoryGraphResult;
-  listMemories: Memory[];
+  graph: MemoryGraphPage;
+  memoryPage: MemoryPage;
   searchMemory: Memory[];
   searchMemories: Memory[];
-  saveMemory: MemoryGraphResult;
-  deleteMemory: MemoryGraphResult;
-  createLink: MemoryGraphResult;
-  deleteLink: MemoryGraphResult;
-  updateLink: MemoryGraphResult;
+  saveMemory: { saved: true };
+  deleteMemory: { saved: true };
+  createLink: { saved: true };
+  deleteLink: { saved: true };
+  updateLink: { saved: true };
   readMemorySettings: MemorySettings;
   writeMemorySettings: MemorySettings;
   readMemorySearchConfig: MemorySearchConfig;

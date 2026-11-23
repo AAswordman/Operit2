@@ -1,4 +1,4 @@
-import type { MemoryChanges, MemoryRecord, LinkRecord, MemoryQueryMatch, MemoryQueryResult } from "../api";
+import type { DomainInput, MemoryChanges, MemoryRecord, MemoryQueryMatch, MemoryQueryResult } from "../api";
 import type { DocumentChunk } from "../model";
 import { parseMemoryIdentifier } from "../domain";
 import { MEMORY_SEARCH_THRESHOLD } from "../memory-search";
@@ -10,8 +10,6 @@ export type MemoryInfo = MemoryQueryMatch;
 /** Shares the exact query result contract with the public dependency API. */
 export type QueryResult = MemoryQueryResult;
 export interface LinkInfo { linkId: string; sourceTitle: string; targetTitle: string; linkType: string; weight: number; description: string }
-interface GraphMemory { id: string; uuid: string; title: string }
-interface MemoryGraphSnapshot { memories: GraphMemory[]; links: LinkRecord[] }
 interface Snapshot { seen: Set<string>; access: number; pending: Promise<void> }
 /** Owns ephemeral pagination only; all records and mutations remain in the main file repository. */
 export class MemoryTools {
@@ -59,30 +57,6 @@ export class MemoryTools {
     }
     return selected;
   }
-  /** Reads complete relationship records from the existing owner-scoped graph API. */
-  private async memoryGraph(ownerKey: string): Promise<MemoryGraphSnapshot> {
-    const result = await this.domain("memory.graph", { ownerKey });
-    if (result.ownerKey !== ownerKey) throw new Error("Memory graph owner does not match the requested owner");
-    const memories = result.graph.nodes.map(
-      /** Retains only the node fields needed by relationship tools. */
-      node => {
-        const id = node.metadata.memoryId;
-        if (id === undefined) throw new Error("Memory graph node has no record identity: " + node.id);
-        return { id, uuid: node.id, title: node.label };
-      },
-    ), idsByUuid = new Map<string, string>();
-    for (const memory of memories) idsByUuid.set(memory.uuid, memory.id);
-    const links = result.graph.edges.map(
-      /** Reconstructs the canonical relationship view from its actual graph edge. */
-      edge => {
-        const sourceMemoryId = idsByUuid.get(edge.sourceId), targetMemoryId = idsByUuid.get(edge.targetId), description = edge.metadata.description;
-        if (sourceMemoryId === undefined || targetMemoryId === undefined || edge.label === null || description === undefined)
-          throw new Error("Memory graph edge is incomplete: " + edge.id);
-        return { id: edge.id, sourceMemoryId, targetMemoryId, type_: edge.label, weight: edge.weight, description };
-      },
-    );
-    return { memories, links };
-  }
   /** Projects the historical model-facing result, keeping record identities internal to the plugin. */
   private info(ownerKey: string, memory: MemoryRecord): MemoryInfo {
     return { ownerKey, title: memory.title, content: memory.content, source: memory.source, tags: memory.tags.map(
@@ -114,47 +88,25 @@ export class MemoryTools {
     }
     return { id, state, created };
   }
-  /** Resolves a relationship by its exact lossless ID or an unambiguous title pair. */
-  private link(space: MemoryGraphSnapshot, input: ToolParameters): LinkRecord {
-    const id = optionalText(input, "link_id");
-    let matches: LinkRecord[];
-    if (id !== undefined) matches = space.links.filter(
-      /** Matches the validated string identity without a floating-point conversion. */
-      link => link.id === parseMemoryIdentifier(id, "link_id"),
-    );
-    else {
-      const source = this.memory(space, requiredText(input, "source_title")), target = this.memory(space, requiredText(input, "target_title"));
-      const type = optionalText(input, "link_type");
-      matches = space.links.filter(
-        /** Uses the exact directed title pair and optional relation type. */
-        link => link.sourceMemoryId === source.id && link.targetMemoryId === target.id && (type === undefined || link.type_ === type),
-      );
+  /** Sends only supplied relationship filters across the validated domain boundary. */
+  private readLinks(ownerKey: string, input: ToolParameters, count: number) {
+    const request: DomainInput<"memory.links"> = { ownerKey, limit: count };
+    for (const [parameter, field] of [["link_id", "linkId"], ["source_title", "sourceTitle"], ["target_title", "targetTitle"], ["link_type", "linkType"]] as const) {
+      const value = optionalText(input, parameter); if (value !== undefined) request[field] = field === "linkId" ? parseMemoryIdentifier(value, parameter) : value;
     }
-    if (matches.length === 0) throw new Error("No matching link found");
-    if (matches.length !== 1) throw new Error("Multiple links matched. Provide link_id or a more specific link_type.");
-    return matches[0];
+    return this.domain("memory.links", request);
   }
-  /** Requires an exact title and rejects ambiguous records instead of choosing one silently. */
-  private memory(space: MemoryGraphSnapshot, title: string): GraphMemory {
-    const matches = space.memories.filter(
-      /** Preserves exact title lookup semantics. */
-      memory => memory.title === title,
-    );
-    if (matches.length === 0) throw new Error("Memory not found with title: " + title);
-    if (matches.length !== 1) throw new Error("Multiple memories matched title: " + title);
-    return matches[0];
+  /** Resolves only the requested relationship and rejects an ambiguous title pair. */
+  private async link(ownerKey: string, input: ToolParameters): Promise<import("../model").MemoryLinkView> {
+    if (optionalText(input, "link_id") === undefined) { requiredText(input, "source_title"); requiredText(input, "target_title"); }
+    const { links } = await this.readLinks(ownerKey, input, 2);
+    if (links.length === 0) throw new Error("No matching link found");
+    if (links.length !== 1) throw new Error("Multiple links matched. Provide link_id or a more specific link_type.");
+    return links[0];
   }
-  /** Resolves complete relationship display fields from the authoritative same-owner records. */
-  private linkInfo(space: MemoryGraphSnapshot, link: LinkRecord): LinkInfo {
-    const source = space.memories.find(
-      /** Resolves the real source identity. */
-      memory => memory.id === link.sourceMemoryId,
-    ), target = space.memories.find(
-      /** Resolves the real target identity. */
-      memory => memory.id === link.targetMemoryId,
-    );
-    if (source === undefined || target === undefined) throw new Error("Memory link refers to a missing record: " + link.id);
-    return { linkId: link.id, sourceTitle: source.title, targetTitle: target.title, linkType: link.type_, weight: link.weight, description: link.description };
+  /** Projects the selected relationship without reconstructing an owner-wide graph. */
+  private linkInfo(link: import("../model").MemoryLinkView): LinkInfo {
+    return { linkId: link.id, sourceTitle: link.sourceTitle, targetTitle: link.targetTitle, linkType: link.type_, weight: link.weight, description: link.description };
   }
   /** Executes all twelve migrated tools without a Core domain executor or persistence shortcut. */
   async execute<N extends MemoryToolName>(operation: N, input: ToolParameters, context: CallerContext): Promise<MemoryToolResult<N>>;
@@ -198,16 +150,16 @@ export class MemoryTools {
       }
       case "query_memory_links": return this.links(ownerKey, input);
       case "update_memory_link": {
-        const space = await this.memoryGraph(ownerKey), link = this.link(space, input), changes: { linkType?: string; weight?: number; description?: string } = {};
+        const link = await this.link(ownerKey, input), changes: { linkType?: string; weight?: number; description?: string } = {};
         const type = optionalText(input, "new_link_type"), weight = score(input, "weight"), description = optionalText(input, "description");
         if (type !== undefined) { if (type.trim() === "") throw new Error("new_link_type must not be blank"); changes.linkType = type; }
         if (weight !== undefined) changes.weight = weight; if (description !== undefined) changes.description = description;
         if (Object.keys(changes).length === 0) throw new Error("At least one of new_link_type, weight, description must be provided");
         const result = await this.domain("memory.link.update", { ownerKey, linkId: link.id, changes });
-        return { totalCount: 1, links: [this.linkInfo(space, result.link)] };
+        return { totalCount: 1, links: [this.linkInfo({ ...link, ...result.link })] };
       }
       case "delete_memory_link": {
-        const link = this.link(await this.memoryGraph(ownerKey), input); await this.domain("memory.link.delete", { ownerKey, linkId: link.id }); return "Successfully deleted memory link: " + link.id;
+        const link = await this.link(ownerKey, input); await this.domain("memory.link.delete", { ownerKey, linkId: link.id }); return "Successfully deleted memory link: " + link.id;
       }
       default: throw new Error("Unknown memory tool: " + operation);
     }
@@ -281,20 +233,13 @@ export class MemoryTools {
     ).length;
     if (supplied > 1) throw new Error("Specify exactly one of query, chunk_range or chunk_index");
     if (query !== undefined && query.trim() === "") throw new Error("query must not be blank");
-    const { total, chunks } = await this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query: query === undefined ? "*" : query, count: query === undefined ? Number.MAX_SAFE_INTEGER : limit(input, 20) });
+    let start = 1, end = 0;
+    if (range !== undefined) { const parsed = /^(\d+)-(\d+)$/.exec(range); if (parsed === null) throw new Error("Invalid chunk_range. Expected start-end"); start = Number(parsed[1]); end = Number(parsed[2]); }
+    else if (index !== undefined) { start = index; end = index; }
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || (supplied > 0 && query === undefined && start > end)) throw new Error("Chunk range out of bounds");
+    const { total, chunks: selected } = await this.domain("memory.chunks", { ownerKey, memoryId: memory.id, query: query === undefined ? "*" : query, count: query === undefined ? Math.min(5, Math.max(0, end - start + 1)) : Math.min(200, limit(input, 20)), start: start - 1 });
     if (supplied === 0) return "Document: " + title + " (" + total + " chunks). Specify query, chunk_range (1-based start-end) or chunk_index (1-based).";
-    let selected: DocumentChunk[];
-    if (query !== undefined) selected = chunks;
-    else {
-      let start: number, end: number;
-      if (range !== undefined) { const parsed = /^(\d+)-(\d+)$/.exec(range); if (parsed === null) throw new Error("Invalid chunk_range. Expected start-end"); start = Number(parsed[1]); end = Number(parsed[2]); }
-      else { if (index === undefined) throw new Error("Document selector is missing"); start = index; end = index; }
-      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end > total || start > end) throw new Error("Chunk range out of bounds. Valid range: 1-" + total);
-      selected = chunks.filter(
-        /** Selects the validated one-based range using persisted zero-based indices. */
-        chunk => chunk.chunkIndex >= start - 1 && chunk.chunkIndex <= end - 1,
-      );
-    }
+    if (query === undefined && end > total) throw new Error("Chunk range out of bounds. Valid range: 1-" + total);
     if (selected.length === 0) throw new Error("No matching chunks found");
     return this.formatChunks(title, total, selected);
   }
@@ -311,30 +256,19 @@ export class MemoryTools {
       title => title !== "",
     ));
     if (names !== null && names.size === 0) throw new Error("titles must select at least one memory");
-    const records = await this.domain("memory.list", { ownerKey }), selected = records.items.filter(
-      /** Intersects both explicit selectors without silently changing selection strategy. */
-      memory => (names === null || names.has(memory.title)) && (source === undefined || (memory.folderPath === null ? "" : memory.folderPath) === source),
-    );
-    if (selected.length === 0) throw new Error("No matching memories found to move");
-    const ids = [...new Set(selected.map(
-      /** Keeps each lossless memory identity once. */
-      memory => memory.id,
-    ))];
-    const result = await this.domain("memory.move", { ownerKey, ids, folderPath: target });
-    return "Successfully moved " + result.moved + " memories to '" + target + "'";
+    let moved = 0, after: string | undefined;
+    for (;;) {
+      const page = await this.domain("memory.list", { ownerKey, ...(source === undefined ? {} : { folderPath: source }), ...(names === null ? {} : { titles: [...names] }), ...(after === undefined ? {} : { after }), limit: 200 });
+      if (page.items.length === 0) break;
+      moved += (await this.domain("memory.move", { ownerKey, ids: page.items.map(memory => memory.id), folderPath: target })).moved;
+      after = page.items[page.items.length - 1].id;
+    }
+    if (moved === 0) throw new Error("No matching memories found to move");
+    return "Successfully moved " + moved + " memories to '" + target + "'";
   }
   /** Queries actual directed relationships with precise filters and the original 200-result cap. */
   private async links(ownerKey: string, input: ToolParameters): Promise<{ totalCount: number; links: LinkInfo[] }> {
-    const space = await this.memoryGraph(ownerKey), id = optionalText(input, "link_id"), source = optionalText(input, "source_title"), target = optionalText(input, "target_title"), type = optionalText(input, "link_type");
-    if (id !== undefined) parseMemoryIdentifier(id, "link_id");
-    const sourceId = source === undefined ? null : this.memory(space, source).id, targetId = target === undefined ? null : this.memory(space, target).id;
-    const links = space.links.filter(
-      /** Applies every supplied filter to complete canonical relation records. */
-      link => (id === undefined || link.id === id) && (sourceId === null || link.sourceMemoryId === sourceId) && (targetId === null || link.targetMemoryId === targetId) && (type === undefined || link.type_ === type),
-    ).slice(0, Math.min(limit(input, 20), 200)).map(
-      /** Includes real relationship descriptions and unchanged string identities. */
-      link => this.linkInfo(space, link),
-    );
-    return { totalCount: links.length, links };
+    const result = await this.readLinks(ownerKey, input, Math.min(limit(input, 20), 200));
+    return { totalCount: result.links.length, links: result.links.map(link => this.linkInfo(link)) };
   }
 }

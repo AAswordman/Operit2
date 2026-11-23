@@ -99,11 +99,11 @@ test("memory native forms save all fields, preserve drafts on rejection and canc
   const plugin = await environment(t), ui = await memory(t, plugin);
   await action(ui, "memory-create"); nativeOnly(ui);
   for (const [key, value] of [["memory-title", "迁移记忆"], ["memory-content", "第一行\n第二行"], ["memory-content-type", "text/markdown"], ["memory-source", "test"], ["memory-credibility", 0.9], ["memory-importance", 0.6], ["memory-folder", "生活/日常"], ["memory-tags", "标签一,标签二"]]) await action(ui, key, "onValueChange", value);
-  await action(ui, "memory-save"); const items = await plugin.web({ action: "listMemories", ownerKey: "character:default" }); const item = items.find(item => item.title === "迁移记忆"); assert.ok(item);
+  await action(ui, "memory-save"); const items = (await plugin.web({ action: "memoryPage", ownerKey: "character:default" })).items; const item = items.find(item => item.title === "迁移记忆"); assert.ok(item);
   assert.equal(item.content, "第一行\n第二行"); assert.equal(item.contentType, "text/markdown"); assert.equal(item.credibility, 0.9); assert.equal(item.importance, 0.6); assert.equal(item.folderPath, "生活/日常"); assert.deepEqual(plain(item.tags.map(tag => tag.name)).sort(), ["标签一", "标签二"]);
   await action(ui, "memory-select:" + item.uuid); await action(ui, "memory-edit-selected"); await action(ui, "memory-title", "onValueChange", ""); await action(ui, "memory-save"); keyedNode(ui.render().tree, "memory-workspace-error"); assert.equal(keyedNode(ui.render().tree, "memory-importance").props.value, 0.6);
-  await action(ui, "memory-title", "onValueChange", "取消的草稿"); await action(ui, "memory-form-cancel"); assert.equal((await plugin.web({ action: "listMemories", ownerKey: "character:default" }))[0].title, "迁移记忆");
-  await action(ui, "memory-delete-selected"); assert.equal((await plugin.web({ action: "listMemories", ownerKey: "character:default" })).length, 1); await action(ui, "memory-delete-confirm"); assert.equal((await plugin.web({ action: "listMemories", ownerKey: "character:default" })).length, 0);
+  await action(ui, "memory-title", "onValueChange", "取消的草稿"); await action(ui, "memory-form-cancel"); assert.equal(((await plugin.web({ action: "memoryPage", ownerKey: "character:default" })).items)[0].title, "迁移记忆");
+  await action(ui, "memory-delete-selected"); assert.equal(((await plugin.web({ action: "memoryPage", ownerKey: "character:default" })).items).length, 1); await action(ui, "memory-delete-confirm"); assert.equal(((await plugin.web({ action: "memoryPage", ownerKey: "character:default" })).items).length, 0);
 });
 
 test("native USER.md edits use the selected shared owner and preserve private documents", async t => {
@@ -207,7 +207,7 @@ test("native memory import/export uses selected VFS files and keeps drafts after
   await plugin.web({ action: "deleteMemory", ownerKey, title: "真实文件导入" });
   const ui = await memory(t, plugin); await more(ui, "memory-import"); await action(ui, "memory-import-strategy", "onClick", 1); await action(ui, "memory-import-submit"); keyedNode(ui.render().tree, "memory-import-submit");
   selected = plugin.disk.directory + "/selected.json"; await plugin.disk.files.write(selected, "\uFEFF" + backup.content, false); await action(ui, "memory-import-submit");
-  assert.ok((await plugin.web({ action: "listMemories", ownerKey })).some(item => item.title === "真实文件导入"));
+  assert.ok(((await plugin.web({ action: "memoryPage", ownerKey })).items).some(item => item.title === "真实文件导入"));
   await more(ui, "memory-export"); await action(ui, "memory-export-save"); keyedNode(ui.render().tree, "memory-export-save");
   destination = plugin.disk.directory + "/export.json"; outcome = "save"; await action(ui, "memory-export-save"); assert.equal((await plugin.disk.files.read(destination)).content, saved.content); assert.equal(saved.mimeType, "application/json");
 });
@@ -286,18 +286,45 @@ test("search preview preserves production ranking, scores, threshold and folder 
   await action(ui, "memory-workspace-back"); keyedNode(ui.render().tree, "management-list");
 });
 
-test("large-library projections bound each page and do not add unmatched neighbors", () => {
-  const { memoryGraphPage, filteredMemoryGraph, MEMORY_GRAPH_PAGE_SIZE, MEMORY_GRAPH_EDGE_LIMIT } = loadModule("src/ui-memory-workspace.ts");
-  const base = fixture().graph.items[0];
-  const items = Array.from({ length: 10000 }, (_, index) => ({ ...base, id: String(index), uuid: "large-" + index }));
-  const data = { items, graph: { nodes: items.map(item => ({ id: item.uuid, label: item.title, color: 0, metadata: {} })), edges: Array.from({ length: 1500 }, (_, index) => ({ id: String(index), sourceId: "large-0", targetId: "large-" + (index % 199 + 1), weight: 1, metadata: {}, isCrossFolderLink: false, label: "related" })) } };
-  const first = memoryGraphPage(data, 0), last = memoryGraphPage(data, 49);
-  assert.equal(first.items.length, MEMORY_GRAPH_PAGE_SIZE); assert.equal(first.graph.nodes.length, MEMORY_GRAPH_PAGE_SIZE);
-  assert.equal(first.graph.edges.length, MEMORY_GRAPH_EDGE_LIMIT);
-  assert.equal(last.items.length, MEMORY_GRAPH_PAGE_SIZE); assert.equal(last.items[0].uuid, "large-9800");
-  assert.equal(last.graph.edges.length, 0);
-  const filtered = filteredMemoryGraph(data, "*", ["large-3", "large-0"]);
-  assert.deepEqual(plain(filtered.items.map(item => item.uuid)), ["large-3", "large-0"]);
-  assert.equal(filtered.graph.nodes.length, 2);
-  assert.ok(filtered.graph.edges.every(edge => edge.targetId === "large-3"));
+/** Exercises real SQLite, production dispatch and native serialization with fifty thousand sources. */
+test("50000 memories load, filter, page and search through bounded production reads", { timeout: 120000 }, async t => {
+  const plugin = await environment(t), ownerKey = "character:default", base = fixture().graph.items[0];
+  await plugin.web({ action: "snapshot" });
+  plugin.disk.storage.inspect(sql => {
+    const insert = sql.prepare("INSERT INTO records VALUES(?,?,?,?)"); sql.exec("BEGIN");
+    for (let index = 0; index < 50000; index++) {
+      const id = String(index).padStart(5, "0"), record = { ...base, id, uuid: "bulk-" + id, title: "记忆 " + id, content: "用户工作与生活记录。".repeat(40) + (index === 49999 ? "pressure_unique" : id), folderPath: index % 2 ? "work" : "other", createdAt: index * 7919 % 50000, updatedAt: index, importance: 1 };
+      insert.run("memories", ownerKey + "/" + id, JSON.stringify({ ownerKey, record, embedding: null }), "stress");
+      if (index > 0) insert.run("links", ownerKey + "/" + id, JSON.stringify({ ownerKey, record: { id, sourceMemoryId: String(index - 1).padStart(5, "0"), targetMemoryId: id, type_: "related", weight: 1, description: "" } }), "stress");
+    }
+    sql.exec("COMMIT");
+  });
+  plugin.disk.clearCalls(); const started = performance.now(), ui = await memory(t, plugin);
+  const rows = () => composeNodes(ui.render().tree, node => String(node.props.key).startsWith("memory-select:"));
+  assert.equal(rows().length, 200); assert.equal(plugin.disk.calls.some(call => call.method === "storage.changes"), false);
+  const loadMs = performance.now() - started;
+  await action(ui, "memory-page-next"); assert.equal(rows()[0].props.key, "memory-select:bulk-00200");
+  await action(ui, "memory-folder-filter", "onSelect", 3); assert.equal(rows().length, 200);
+  assert.equal(rows()[0].props.key, "memory-select:bulk-00001");
+  const last = await plugin.web({ action: "graph", ownerKey, offset: 49800 });
+  assert.equal(last.total, 50000); assert.equal(last.items.length, 200); assert.equal(last.items.at(-1).id, "49999");
+  assert.equal(last.graph.edges.length, 199);
+  const rankedIds = Array.from({ length: 300 }, (_, index) => String(49999 - index));
+  const rankedPage = await plugin.web({ action: "memoryPage", ownerKey, ids: rankedIds, offset: 200 });
+  assert.deepEqual(plain(rankedPage.items.map(item => item.id)), rankedIds.slice(200));
+  const wildcard = await plugin.web({ action: "searchMemories", options: { ownerKey, query: "*", folderPath: null, relevanceThreshold: 0, createdAtStartMs: null, createdAtEndMs: null, limit: 20 } });
+  assert.equal(wildcard.length, 20); assert.equal(plugin.disk.calls.some(call => call.method === "storage.changes"), false);
+  const cold = performance.now(); await action(ui, "memory-search-query", "onSubmitted", "pressure_unique");
+  assert.deepEqual(rows().map(row => row.props.key), ["memory-select:bulk-49999"]);
+  const coldMs = performance.now() - cold, warm = performance.now(); plugin.disk.clearCalls();
+  await action(ui, "memory-search"); assert.equal(rows().length, 1);
+  const warmMs = performance.now() - warm;
+  assert.equal(plugin.disk.calls.some(call => call.method === "storage.query" && /SELECT key,value,version/.test(call.args[0]) && call.args[1][0] !== "links"), false);
+  await action(ui, "memory-search-clear"); assert.equal(rows().length, 200);
+  await action(ui, "memory-graph-loader", "onLoad");
+  const canvas = plain((await ui.dispatch(ui.graphBridge().load, [])).actionResult.data);
+  assert.equal(canvas.items.length, 200); assert.ok(canvas.graph.edges.length <= 1000);
+  assert.equal(JSON.stringify(canvas).includes("用户工作与生活记录。"), false);
+  await assert.rejects(plugin.web({ action: "memoryPage", ownerKey, limit: 201 }), /between 1 and 200/);
+  t.diagnostic(JSON.stringify({ count: 50000, loadMs: Math.round(loadMs), coldSearchMs: Math.round(coldMs), warmSearchMs: Math.round(warmMs), heapMB: Math.round(process.memoryUsage().heapUsed / 1048576) }));
 });

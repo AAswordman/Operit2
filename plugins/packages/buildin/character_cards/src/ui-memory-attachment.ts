@@ -5,7 +5,7 @@ import { createUiScreenSession } from "./ui-contributions";
 import { nativeUi, uiRequest, uiState } from "./ui-controls";
 
 export interface AttachmentOwner { key: string; name: string }
-interface AttachmentState { snapshot: Snapshot | null; step: "owners" | "folders" | "content"; owner: AttachmentOwner | null; folders: string[] | null; folder: string | null; items: Memory[] | null; busy: boolean; error: string; finished: boolean }
+interface AttachmentState { snapshot: Snapshot | null; step: "owners" | "folders" | "content"; owner: AttachmentOwner | null; folders: string[] | null; folder: string | null; items: Memory[] | null; offset: number; total: number; busy: boolean; error: string; finished: boolean }
 
 /** Lists private and shared owner identities from the existing attachment contract. */
 export function memoryAttachmentOwners(snapshot: Snapshot): AttachmentOwner[] { return [...snapshot.cards.map(card => ({ key: "character:" + card.id, name: card.name })), ...snapshot.stores.map(store => ({ key: "shared:" + store.id, name: store.name }))]; }
@@ -25,7 +25,7 @@ export function renderMemoryAttachment(ctx: ComposeDslContext): ComposeNode {
   if (current.input.mode !== "memory-attachment") throw new Error("The attachment route requires an explicit attachment presentation");
   const input = current.input;
   const ownerPresentation = ctx.useRef("attachment-presentation", JSON.stringify(presentation));
-  const { state, live, update } = uiState<AttachmentState>(ctx, "memory-attachment", { snapshot: null, step: "owners", owner: null, folders: null, folder: null, items: null, busy: false, error: "", finished: false });
+  const { state, live, update } = uiState<AttachmentState>(ctx, "memory-attachment", { snapshot: null, step: "owners", owner: null, folders: null, folder: null, items: null, offset: 0, total: 0, busy: false, error: "", finished: false });
   const ui = nativeUi(ctx, !state.busy && !state.finished);
   /** Rejects callbacks retained from a different host presentation. */
   function assertOwner(): void { const [actual] = ctx.useState<UiPresentation | null>("presentation", null); if (JSON.stringify(actual) !== ownerPresentation.current) throw new Error("Attachment presentation owner changed"); }
@@ -38,13 +38,13 @@ export function renderMemoryAttachment(ctx: ComposeDslContext): ComposeNode {
     finally { update({ busy: false }); }
   }
   /** Reads only an existing folder and rejects a changed immutable scope. */
-  async function content(folder: string): Promise<void> {
+  async function content(folder: string, offset = 0): Promise<void> {
     const value = live.current;
     if (value.owner === null || value.folders === null || !value.folders.includes(folder)) throw new Error("请选择存在的记忆文件夹");
     if (input.folderPath !== null && input.folderPath !== folder) throw new Error("不能更改调用方指定的文件夹");
     update({ step: "content", folder, items: null });
-    const items = await uiRequest({ action: "listMemories", ownerKey: value.owner.key }); assertOwner();
-    update({ items: items.filter(item => (item.folderPath ?? "") === folder) });
+    const page = await uiRequest({ action: "memoryPage", ownerKey: value.owner.key, folderPath: folder, offset, limit: 200 }); assertOwner();
+    update({ ...page, offset });
   }
   /** Reads real folders and applies the explicitly locked folder when present. */
   async function folders(owner: AttachmentOwner): Promise<void> {
@@ -81,7 +81,7 @@ export function renderMemoryAttachment(ctx: ComposeDslContext): ComposeNode {
   else if (state.busy || state.snapshot === null) children.push(ui.text("正在读取记忆库…"));
   else if (state.step === "owners") { const owners = memoryAttachmentOwners(state.snapshot); children.push(...owners.map(owner => ctx.UI.Row({ key: "attachment-owner:" + owner.key, fillMaxWidth: true, paddingVertical: 12, spacing: 12, verticalAlignment: "center", onClick: () => act(() => folders(owner)) }, [ctx.UI.Icon({ name: owner.key.startsWith("shared:") ? "GroupsOutlined" : "PersonOutline", size: 22 }), ui.text(owner.name)]))); if (owners.length === 0) children.push(ui.text("没有可选的记忆库")); }
   else if (state.step === "folders") children.push(...(state.folders ?? []).map(folder => ctx.UI.Row({ key: "attachment-folder:" + folder, fillMaxWidth: true, paddingVertical: 12, spacing: 12, verticalAlignment: "center", onClick: () => act(() => content(folder)) }, [ctx.UI.Icon({ name: "FolderOutlined", size: 22 }), ui.text(folder === "" ? "/" : folder)])));
-  else if (state.owner !== null && state.folder !== null && state.items !== null) children.push(ui.text(memoryAttachmentContent(state.owner, state.folder, state.items) || "当前文件夹没有记忆"));
+  else if (state.owner !== null && state.folder !== null && state.items !== null) children.push(ui.text(`当前页 ${state.offset + 1}–${state.offset + state.items.length} / ${state.total} · 添加当前页记忆`), ui.actions([ui.button("attachment-previous", "上一页", () => act(() => content(state.folder!, state.offset - 200)), state.offset > 0), ui.button("attachment-next", "下一页", () => act(() => content(state.folder!, state.offset + 200)), state.offset + 200 < state.total)]), ui.text(memoryAttachmentContent(state.owner, state.folder, state.items) || "当前文件夹没有记忆"));
   const canBack = state.step === "folders" ? input.ownerKey === null : state.step === "content" && input.folderPath === null;
   return ctx.UI.Column({ key: "memory-attachment-root", fillMaxSize: true, onLoad: load }, [ctx.UI.Row({ fillMaxWidth: true, height: 58, paddingHorizontal: 18, spacing: 12, verticalAlignment: "center" }, [...(canBack ? [ui.iconButton("attachment-back", "返回", "ArrowBack", () => { if (state.step === "content") update({ step: "folders", folder: null, items: null, error: "" }); else update({ step: "owners", owner: null, folders: null, error: "" }); })] : []), ctx.UI.Text({ text: state.owner === null ? "记忆附件" : state.owner.name, fontSize: 20, fontWeight: "500" })]), ui.list("attachment-body", children), ctx.UI.Box({ fillMaxWidth: true, padding: 12 }, ui.actions([ui.button("attachment-cancel", "取消", cancel), ...(state.step === "content" && state.items !== null && state.items.length > 0 && state.error === "" ? [ui.button("attachment-confirm", "添加记忆附件", confirm)] : [])]))]);
 }

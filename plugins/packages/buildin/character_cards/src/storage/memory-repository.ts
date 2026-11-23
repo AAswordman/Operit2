@@ -177,11 +177,22 @@ export class DatabaseMemoryRepository {
     return (await searchMemoryDatabase(this.memoryDatabase, owner.value.settings, options, config, includeBelowThreshold)).result;
   }
 
-  /** Lists an explicitly requested owner library without loading other owners. */
-  async listMemories(ownerKey: string): Promise<Memory[]> {
-    if (!(await this.hasMemoryOwner(ownerKey))) return [];
-    const rows = await this.memoryDatabase.all<Envelope<Memory>>("memories", ownerKey);
-    return rows.map(/** Projects original records for the library view or export. */ row => row.value.record);
+  /** Filters and counts in SQLite; only a bounded page crosses the host bridge. */
+  async readMemoryPage(ownerKey: string, options: import("../model").MemoryPageOptions): Promise<import("../model").MemoryPage> {
+    requireId(ownerKey, "memory owner");
+    const { offset = 0, limit = 200, folderPath = null, ids, titles, after } = options;
+    if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isInteger(limit) || limit < 1 || limit > 200) throw new Error("Memory page requires offset >= 0 and limit between 1 and 200");
+    const conditions = ["collection='memories'", "key>=?", "key<?"], params: Storage.SqlValue[] = [ownerKey + "/", ownerKey + "0"];
+    if (after !== undefined) { conditions.push("key>?"); params.push(key(ownerKey, after)); }
+    if (folderPath !== null) { conditions.push("COALESCE(json_extract(value,'$.record.folderPath'),'')=?"); params.push(folderPath); }
+    if (ids !== undefined) { conditions.push("key IN (SELECT ?||value FROM json_each(?))"); params.push(ownerKey + "/", JSON.stringify(ids)); }
+    if (titles !== undefined) { conditions.push("json_extract(value,'$.record.title') IN (SELECT value FROM json_each(?))"); params.push(JSON.stringify(titles)); }
+    const where = conditions.join(" AND ");
+    const [count] = await this.memoryDatabase.query("SELECT COUNT(*) AS total FROM plugin_objects WHERE " + where, params);
+    const order = ids === undefined ? "key" : "(SELECT CAST(r.key AS INTEGER) FROM json_each(?) r WHERE r.value=json_extract(plugin_objects.value,'$.record.id'))";
+    const rows = await this.memoryDatabase.query("SELECT json_extract(value,'$.record') AS record FROM plugin_objects WHERE " + where + " ORDER BY " + order + " LIMIT ? OFFSET ?", [...params, ...(ids === undefined ? [] : [JSON.stringify(ids)]), limit, offset]);
+    const items: Memory[] = rows.map(row => JSON.parse(String(row.record)));
+    return { items, total: Number(count.total) };
   }
 
   /** Reads only the explicitly selected exact titles, including genuine duplicate clusters. */
@@ -303,10 +314,16 @@ export class DatabaseMemoryRepository {
     await this.commit(mutations);
   }
 
-  /** Lists explicit graph relationships for one owner. */
-  async listMemoryLinks(ownerKey: string): Promise<MemoryLink[]> {
-    if (!(await this.hasMemoryOwner(ownerKey))) return [];
-    return (await this.memoryDatabase.all<Envelope<MemoryLink>>("links", ownerKey)).map(/** Projects complete graph relationships. */ row => row.value.record);
+  /** Reads bounded relationships and their endpoint titles without loading memory bodies. */
+  async readMemoryLinks(ownerKey: string, filter: import("../model").MemoryLinkFilter): Promise<import("../model").MemoryLinkView[]> {
+    requireId(ownerKey, "memory owner");
+    if (!Number.isInteger(filter.limit) || filter.limit < 1 || filter.limit > 1000) throw new Error("Memory link limit must be between 1 and 1000");
+    const conditions = ["l.collection='links'", "l.key>=?", "l.key<?"], params: Storage.SqlValue[] = [ownerKey + "/", ownerKey + "0"];
+    if (filter.linkId !== undefined) { conditions.push("l.key=?"); params.push(key(ownerKey, filter.linkId)); }
+    for (const [field, value] of [["sourceMemoryId", filter.sourceMemoryId], ["targetMemoryId", filter.targetMemoryId], ["type_", filter.linkType]] as const) if (value !== undefined) { conditions.push("json_extract(l.value,'$.record." + field + "')=?"); params.push(value); }
+    if (filter.memoryIds !== undefined) for (const field of ["sourceMemoryId", "targetMemoryId"]) { conditions.push("json_extract(l.value,'$.record." + field + "') IN (SELECT value FROM json_each(?))"); params.push(JSON.stringify(filter.memoryIds)); }
+    const rows = await this.memoryDatabase.query("SELECT json_extract(l.value,'$.record') AS record,json_extract(s.value,'$.record.title') AS sourceTitle,json_extract(t.value,'$.record.title') AS targetTitle FROM plugin_objects l JOIN plugin_objects s ON s.collection='memories' AND s.key=?||json_extract(l.value,'$.record.sourceMemoryId') JOIN plugin_objects t ON t.collection='memories' AND t.key=?||json_extract(l.value,'$.record.targetMemoryId') WHERE " + conditions.join(" AND ") + " ORDER BY l.key LIMIT ?", [ownerKey + "/", ownerKey + "/", ...params, filter.limit]);
+    return rows.map(row => ({ ...JSON.parse(String(row.record)), sourceTitle: String(row.sourceTitle), targetTitle: String(row.targetTitle) }));
   }
 
   /** Reads one relationship by its exact owner-scoped identity. */
@@ -483,29 +500,25 @@ export class DatabaseMemoryRepository {
     this.snapshots.delete(state);
   }
 
-  /** Builds the explicitly requested graph from this owner's sources and relationships. */
-  async readMemoryGraph(ownerKey: string): Promise<MemoryGraph> {
-    const memories = await this.listMemories(ownerKey), links = await this.listMemoryLinks(ownerKey), byId = new Map(memories.map(/** Indexes graph endpoint identities. */ memory => [memory.id, memory]));
-    return { nodes: memories.map(/** Projects source identities for the graph view. */ memory => ({ id: memory.uuid, label: memory.title, color: memory.isDocumentNode ? 0xFF9575CD : 0xFFD3D3D3, metadata: { memoryId: memory.id } })),
-      edges: links.map(/** Requires actual persisted graph endpoints. */ link => {
-        const source = byId.get(link.sourceMemoryId), target = byId.get(link.targetMemoryId);
-        if (source === undefined || target === undefined) throw new Error("Memory relationship has a missing endpoint");
-        return { id: link.id, sourceId: source.uuid, targetId: target.uuid, label: link.type_, weight: link.weight, metadata: { description: link.description }, isCrossFolderLink: source.folderPath !== target.folderPath };
-      }) };
-  }
-
   /** Searches original document chunks using database-side lexical and vector ranking. */
-  async searchMemoryChunks(ownerKey: string, memoryId: string, query: string, count: number): Promise<{ total: number; chunks: DocumentChunk[] }> {
+  async searchMemoryChunks(ownerKey: string, memoryId: string, query: string, count: number, start = 0): Promise<{ total: number; chunks: DocumentChunk[] }> {
     const owner = await this.owner(ownerKey), memory = (await this.entry<Memory>("memories", ownerKey, memoryId)).value.record;
     if (!memory.isDocumentNode) throw new Error("Document search requires a stored document memory");
     if (query.trim() === "") throw new Error("Document search query must not be blank");
-    if (!Number.isSafeInteger(count) || count < 1) throw new Error("Chunk result count must be positive");
+    if (!Number.isInteger(count) || count < 0 || count > 200 || !Number.isSafeInteger(start) || start < 0) throw new Error("Chunk reads require count between 0 and 200 and start >= 0");
+    if (query.trim() === "*") {
+      const params = [ownerKey + "/", ownerKey + "0", memory.uuid], where = "collection='chunks' AND key>=? AND key<? AND json_extract(value,'$.record.memoryUuid')=?";
+      const [row] = await this.memoryDatabase.query("SELECT COUNT(*) AS total FROM plugin_objects WHERE " + where, params);
+      const rows = await this.memoryDatabase.query("SELECT json_extract(value,'$.record') AS record FROM plugin_objects WHERE " + where + " ORDER BY json_extract(value,'$.record.chunkIndex') LIMIT ? OFFSET ?", [...params, count, start]);
+      return { total: Number(row.total), chunks: rows.map(row => JSON.parse(String(row.record))) };
+    }
     const queryEmbedding = await prepareMemoryQuery(owner.value.settings, query, owner.value.searchConfig);
     return this.queryChunks(ownerKey, owner.value, memory, query, count, queryEmbedding);
   }
 
   /** Ranks document chunks with the query vector already prepared for this operation. */
   private async queryChunks(ownerKey: string, owner: Owner, memory: Memory, query: string, count: number, queryEmbedding: SourceEmbedding | null): Promise<{ total: number; chunks: DocumentChunk[] }> {
+    if (query.trim() === "*") return this.searchMemoryChunks(ownerKey, memory.id, query, count);
     return searchDocumentChunks(this.memoryDatabase, ownerKey, memory, query, count, owner.searchConfig, queryEmbedding);
   }
 

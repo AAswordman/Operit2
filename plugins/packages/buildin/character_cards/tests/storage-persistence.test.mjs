@@ -50,7 +50,7 @@ test("one memory edit publishes only that memory and the metadata guard", async 
   assert.equal(mutations.filter(row => row.collection === "memories").length, 1);
   assert.equal(mutations.filter(row => row.collection === "meta").length, 0);
   assert.equal(mutations.filter(row => row.collection === "cards").length, 0);
-  const reopened = await open(disk); assert.equal((await reopened.run(session => session.listMemories("character:default").then(rows => rows.find(row => row.id === first.id)))).title, "Edited");
+  const reopened = await open(disk); assert.equal((await reopened.run(session => session.readMemorySpace("character:default").then(space => space.memories).then(rows => rows.find(row => row.id === first.id)))).title, "Edited");
 });
 
 test("a fresh operation sees writes committed by another repository execution", async t => {
@@ -93,7 +93,7 @@ test("owner pages preserve exact int64 identities and more than 1000 independent
   const state = plain(disk.readState()); state.owners[0].memories = [];
   for (let index = 0; index < 1005; index += 1) state.owners[0].memories.push({ ...created, id: String(9007199254740993n + BigInt(index)), uuid: "source-" + index });
   disk.replaceState(state);
-  const reopened = await open(disk), retained = await reopened.run(session => session.listMemories("character:default"));
+  const reopened = await open(disk), retained = await reopened.run(session => session.readMemorySpace("character:default").then(space => space.memories));
   assert.equal(retained.length, 1005); assert.equal(retained[0].id, "9007199254740993");
 });
 
@@ -182,7 +182,7 @@ test("bulk memory import commits bounded host transactions and retains every rec
   const transactions = commits(disk);
   assert.ok(transactions.length > 1, "bulk import must span more than one host transaction");
   for (const call of transactions) assert.ok(call.args[0].length <= 1000, "each transaction must stay within the host mutation limit");
-  const reopened = await open(disk), retained = await reopened.run(session => session.listMemories("character:default"));
+  const reopened = await open(disk), retained = await reopened.run(session => session.readMemorySpace("character:default").then(space => space.memories));
   assert.equal(retained.length, 1005);
   assert.equal(new Set(retained.map(value => value.uuid)).size, 1005);
 });
@@ -218,7 +218,7 @@ test("memory import indexes retain skip, update and copy semantics for document 
   collision.memories[0].id = "other-document"; collision.memories[0].uuid = "other-uuid";
   collision.chunks[0].memoryUuid = "other-uuid"; collision.links[0].sourceMemoryId = "other-document";
   await assert.rejects(owner.run(session => session.importMemorySpace(ownerKey, collision, "UPDATE")), /Imported chunk id is occupied/);
-  assert.equal((await owner.run(session => session.listMemories(ownerKey))).length, 4);
+  assert.equal((await owner.run(session => session.readMemorySpace(ownerKey).then(space => space.memories))).length, 4);
 });
 
 /** Verifies full-record export reads every memory beyond one host page without truncation. */
@@ -240,10 +240,10 @@ test("a failed bulk import resumes with SKIP after earlier batches committed", a
   const failure = new Error("Second bulk transaction rejected");
   disk.failNext("storage.commit", failure, 2);
   await assert.rejects(owner.run(session => session.importMemorySpace("character:default", space, "SKIP")), error => error === failure);
-  const reopened = await open(disk), partial = await reopened.run(session => session.listMemories("character:default"));
+  const reopened = await open(disk), partial = await reopened.run(session => session.readMemorySpace("character:default").then(space => space.memories));
   assert.ok(partial.length > 0 && partial.length < 1005, "the first batch must remain committed");
   await reopened.run(session => session.importMemorySpace("character:default", space, "SKIP"));
-  const completed = await reopened.run(session => session.listMemories("character:default"));
+  const completed = await reopened.run(session => session.readMemorySpace("character:default").then(space => space.memories));
   assert.equal(completed.length, 1005);
   assert.equal(new Set(completed.map(value => value.uuid)).size, 1005);
 });
@@ -317,7 +317,7 @@ test("already migrated partial characters read with defaults without startup rep
   assert.equal(card.toolAccessConfig.enabled, false);
   assert.deepEqual(card.toolAccessConfig.allowedPackages, ["retained-package"]);
   assert.deepEqual(plain((await reopened.readSidebarDirectory()).cards), [card]);
-  assert.deepEqual(plain(await reopened.run(session => session.listMemories(ownerKey))), [savedMemory]);
+  assert.deepEqual(plain(await reopened.run(session => session.readMemorySpace(ownerKey).then(space => space.memories))), [savedMemory]);
   assert.equal(disk.storage.inspectPreferences("cards", values => values["record_" + original.id].createdAt), undefined);
   await reopened.run(session => session.updateCharacter({ ...card, description: "保存修改" }));
   assert.equal(disk.storage.inspectPreferences("cards", values => values["record_" + original.id].createdAt), 0);

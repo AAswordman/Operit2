@@ -300,10 +300,9 @@ test("missing libraries read as empty without writing owner records, files or sy
   await env.repository.run(async session => {
     assert.equal(await session.hasMemoryOwner(ownerKey), false);
     assert.equal((await session.readUser(ownerKey)).content, "");
-    assert.deepEqual(plain(await session.listMemories(ownerKey)), []);
-    assert.deepEqual(plain(await session.listMemoryLinks(ownerKey)), []);
+    assert.deepEqual(plain(await session.readMemoryPage(ownerKey, {})), { items: [], total: 0 });
+    assert.deepEqual(plain(await session.readMemoryLinks(ownerKey, { limit: 200 })), []);
     assert.deepEqual(plain(await session.listMemoryFolders(ownerKey)), []);
-    assert.deepEqual(plain(await session.readMemoryGraph(ownerKey)), { nodes: [], edges: [] });
     assert.deepEqual(plain(await session.searchMemories(options())), []);
     assert.deepEqual(plain(await session.searchMemoryPage(options())), { ownerKey, items: [], documents: [], excludedBySnapshotCount: 0 });
     assert.equal((await session.readMemoryAutoSaveStatus(ownerKey)).pendingCandidates, 0);
@@ -325,4 +324,16 @@ test("explicit library creation preserves existing USER.md and is idempotent", a
   await env.repository.run(session => session.createMemoryLibrary(ownerKey));
   assert.equal(env.disk.calls.some(call => call.method === "storage.commit"), false);
   await assert.rejects(env.repository.run(session => session.createMemoryLibrary("character:missing")), /does not identify exactly one record/);
+});
+
+/** Preserves literal underscores, Unicode case and per-parent term deduplication in SQLite. */
+test("SQL lexical matching preserves wildcard, Unicode and tag scoring", async t => {
+  const env = await environment(t), memory = await env.repository.run(session => session.createMemory(ownerKey, { ...values("ÉTÉ", "wild_name alpha beta"), tags: ["ALPHA", "beta"] }));
+  const config = { scoreMode: "BALANCED", keywordWeight: 1, tagWeight: 1, vectorWeight: 0, edgeWeight: 0 };
+  for (const query of ["été", "wild_name", "w*name", "alpha beta"]) {
+    const result = await env.repository.run(session => session.searchMemoryDebug(options(query), config, false));
+    assert.equal(result.candidates[0].memory.id, memory.id); assert.equal(result.candidates[0].memory.content, memory.content);
+    if (query === "alpha beta") assert.ok(result.candidates[0].tagScore > 0);
+  }
+  assert.equal((await env.repository.run(session => session.searchMemoryDebug(options("wildXname"), config, false))).candidates.length, 0);
 });

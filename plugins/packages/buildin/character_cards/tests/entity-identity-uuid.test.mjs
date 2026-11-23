@@ -70,7 +70,7 @@ test("memories minted on two devices keep distinct identities after merge", asyn
   merged.owners[0].memories.push(plain(source.owners[0].memories.find(item => item.id === left.id)));
   second.replaceState(merged);
   const reopened = await open(second);
-  const memories = plain(await reopened.run(session => session.listMemories("character:default")));
+  const memories = plain(await reopened.run(session => session.readMemorySpace("character:default").then(space => space.memories)));
   assert.deepEqual(memories.map(item => item.id).sort(), [left.id, right.id].sort());
 });
 
@@ -82,9 +82,9 @@ test("legacy decimal ids coexist with device-independent identities and their re
   state.owners[0].links.push({ id: "3", sourceMemoryId: created.id, targetMemoryId: "7", type_: "related", weight: 0.5, description: "" });
   disk.replaceState(state);
   const reopened = await open(disk);
-  const memories = plain(await reopened.run(session => session.listMemories("character:default")));
+  const memories = plain(await reopened.run(session => session.readMemorySpace("character:default").then(space => space.memories)));
   assert.deepEqual(memories.map(item => item.id).sort(), [created.id, "7"].sort());
-  const graph = plain(await reopened.run(session => session.readMemoryGraph("character:default")));
-  assert.equal(graph.edges.length, 1);
-  assert.equal(graph.edges[0].id, "3");
+  const graph = plain(await reopened.run(session => session.readMemoryLinks("character:default", { limit: 200 })));
+  assert.equal(graph.length, 1);
+  assert.equal(graph[0].id, "3");
 });
