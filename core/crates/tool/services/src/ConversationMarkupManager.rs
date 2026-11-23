@@ -25,6 +25,7 @@ impl ConversationMarkupManager {
             toolName,
             "error",
             &format!("<content><error>{}</error></content>", errorMessage),
+            None,
         )
     }
 
@@ -35,11 +36,21 @@ impl ConversationMarkupManager {
 
     /// Formats one result within a single Unicode-scalar budget.
     pub fn formatToolResultForMessage(result: &ToolResult) -> String {
+        Self::formatToolResultForMessageWithCallId(result, None)
+    }
+
+    /// Same bounded formatting, annotating the result with the originating call id so
+    /// history compilation can pair it with exactly one tool call.
+    pub fn formatToolResultForMessageWithCallId(
+        result: &ToolResult,
+        callId: Option<&str>,
+    ) -> String {
         if result.success {
             Self::createBoundedToolResultXml(
                 &result.toolName,
                 "success",
                 &result.result.toString(),
+                callId,
                 |payload| format!("<content>{payload}</content>"),
             )
         } else {
@@ -52,7 +63,7 @@ impl ConversationMarkupManager {
             } else {
                 detail
             };
-            Self::createBoundedToolResultXml(&result.toolName, "error", &errorPayload, |payload| {
+            Self::createBoundedToolResultXml(&result.toolName, "error", &errorPayload, callId, |payload| {
                 format!("<content><error>{payload}</error></content>")
             })
         }
@@ -102,9 +113,25 @@ impl ConversationMarkupManager {
 
     /// Bounds each result independently while preserving every result slot in invocation order.
     pub fn buildToolResultMessage(results: &[ToolResult]) -> String {
+        Self::buildToolResultMessageWithCallIds(results, None)
+    }
+
+    /// Builds the batch result message, echoing each result's call id when the model
+    /// assigned one so concurrent same-named calls stay addressable in history.
+    pub fn buildToolResultMessageWithCallIds(
+        results: &[ToolResult],
+        callIds: Option<&[Option<String>]>,
+    ) -> String {
         results
             .iter()
-            .map(Self::formatToolResultForMessage)
+            .enumerate()
+            .map(|(index, result)| {
+                let callId = callIds
+                    .and_then(|ids| ids.get(index))
+                    .and_then(|id| id.as_deref())
+                    .filter(|id| !id.trim().is_empty());
+                Self::formatToolResultForMessageWithCallId(result, callId)
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -122,10 +149,17 @@ impl ConversationMarkupManager {
         Self::createToolErrorStatus(toolName, errorMessage)
     }
 
-    /// Wraps a tool payload in one uniquely named result element.
-    fn createToolResultXml(toolName: &str, status: &str, content: &str) -> String {
+    /// Wraps a tool payload in one uniquely named result element, optionally annotated
+    /// with the call id it answers.
+    fn createToolResultXml(
+        toolName: &str,
+        status: &str,
+        content: &str,
+        callId: Option<&str>,
+    ) -> String {
         let tagName = ChatMarkupRegex::generate_random_tool_result_tag_name();
-        format!(r#"<{tagName} name="{toolName}" status="{status}">{content}</{tagName}>"#)
+        let callAttribute = Self::callIdAttribute(callId);
+        format!(r#"<{tagName} name="{toolName}" status="{status}"{callAttribute}>{content}</{tagName}>"#)
     }
 
     /// Reserves wrapper and truncation-marker space using the same character unit.
@@ -133,17 +167,34 @@ impl ConversationMarkupManager {
         toolName: &str,
         status: &str,
         rawPayload: &str,
+        callId: Option<&str>,
         bodyBuilder: impl Fn(&str) -> String,
     ) -> String {
         let tagName = ChatMarkupRegex::generate_random_tool_result_tag_name();
+        let callAttribute = Self::callIdAttribute(callId);
         let wrap = |payload: &str| {
             let content = bodyBuilder(payload);
-            format!(r#"<{tagName} name="{toolName}" status="{status}">{content}</{tagName}>"#)
+            format!(r#"<{tagName} name="{toolName}" status="{status}"{callAttribute}>{content}</{tagName}>"#)
         };
         let maxPayloadChars = ToolExecutionLimits::MAX_SINGLE_TOOL_RESULT_MESSAGE_CHARS
             .saturating_sub(wrap("").chars().count());
         let boundedPayload = Self::truncatePayload(rawPayload, maxPayloadChars);
         wrap(&boundedPayload)
+    }
+
+    /// Escapes and renders the optional call_id attribute for a result opening tag.
+    fn callIdAttribute(callId: Option<&str>) -> String {
+        callId
+            .map(|id| {
+                format!(
+                    " call_id=\"{}\"",
+                    id.replace('&', "&amp;")
+                        .replace('"', "&quot;")
+                        .replace('<', "&lt;")
+                        .replace('>', "&gt;")
+                )
+            })
+            .unwrap_or_default()
     }
 
     /// Truncates text on Unicode scalar boundaries while retaining the explicit marker.
@@ -176,6 +227,34 @@ mod tests {
         TerminalImplementation, TerminalType, ToolResultData,
     };
     use operit_tools::ConversationMarkupManager::{ConversationMarkupManager, ToolResult};
+
+    /// A known call id is echoed into the result opening tag so history compilation can
+    /// pair the result with exactly one tool call; without one the markup stays unchanged.
+    #[test]
+    fn call_id_is_annotated_on_result_markup() {
+        let result = ToolResult {
+            toolName: "example:pairing".into(),
+            success: true,
+            error: None,
+            result: ToolResultData::StringResultData(StringResultData {
+                value: "payload".into(),
+            }),
+        };
+        let annotated =
+            ConversationMarkupManager::formatToolResultForMessageWithCallId(&result, Some("c1"));
+        assert!(annotated.contains(r#"call_id="c1""#), "{annotated}");
+        assert!(annotated.contains("payload"), "{annotated}");
+        let plain = ConversationMarkupManager::formatToolResultForMessage(&result);
+        assert!(!plain.contains("call_id"), "{plain}");
+        let batch = ConversationMarkupManager::buildToolResultMessageWithCallIds(
+            &[result.clone(), result],
+            Some(&[Some("c1".into()), None]),
+        );
+        let lines = batch.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 2, "{batch}");
+        assert!(lines[0].contains(r#"call_id="c1""#), "{batch}");
+        assert!(!lines[1].contains("call_id"), "{batch}");
+    }
 
     #[test]
     fn display_metadata_preserves_native_result_type_and_stays_out_of_provider_text() {

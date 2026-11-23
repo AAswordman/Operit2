@@ -11,7 +11,7 @@ use std::sync::{Arc, Mutex};
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
 use super::StreamingResponseLines::SseDecoder;
-use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge};
+use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge, ToolResultIdentity};
 use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
@@ -426,24 +426,29 @@ impl GeminiProvider {
                         let (text_content, responses_list) =
                             self.parse_xml_tool_results(&content_without_gemini_meta);
                         if !responses_list.is_empty() && !open_function_calls.is_empty() {
-                            let result_names = responses_list
+                            let result_identities = responses_list
                                 .iter()
-                                .map(|response| {
-                                    response
+                                .map(|response| ToolResultIdentity {
+                                    name: response
                                         .get("name")
                                         .and_then(Value::as_str)
-                                        .map(|name| name.to_string())
+                                        .map(|name| name.to_string()),
+                                    call_id: response
+                                        .get("call_id")
+                                        .and_then(Value::as_str)
+                                        .map(|value| value.to_string()),
                                 })
                                 .collect::<Vec<_>>();
                             let matched_calls = StructuredToolCallBridge::consumeMatchingToolCalls(
                                 &mut open_function_calls,
-                                &result_names,
+                                &result_identities,
                             );
                             let mut parts = Vec::new();
                             for matched_call in matched_calls {
                                 let mut response =
                                     responses_list[matched_call.result_index].clone();
                                 if let Some(object) = response.as_object_mut() {
+                                    object.remove("call_id");
                                     let pending_name = &matched_call.call.function_name;
                                     if !pending_name.trim().is_empty() {
                                         object.insert("name".to_string(), json!(pending_name));
@@ -607,7 +612,22 @@ impl GeminiProvider {
                     .to_string();
                 args.insert(param_name, json!(param_value));
             }
-            function_calls.push(json!({"name": tool_match.name, "args": Value::Object(args)}));
+            // The call identity rides along for exact result pairing and is popped
+            // before the functionCall part reaches the Gemini API.
+            let mut function_call = json!({"name": tool_match.name, "args": Value::Object(args)});
+            if let Some(source_call_id) = attr_value(
+                &sanitized_content[tool_match.start..tool_match.end],
+                "call_id",
+            )
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
+            {
+                function_call
+                    .as_object_mut()
+                    .expect("function call object")
+                    .insert("call_id".to_string(), json!(source_call_id));
+            }
+            function_calls.push(function_call);
             text_content = text_content.replace(
                 &format!(
                     "<{} name=\"{}\">{}</{}>",
@@ -648,6 +668,9 @@ impl GeminiProvider {
                 .unwrap_or_else(|| block.body.trim().to_string());
             responses.push(json!({
                 "name": tool_name,
+                "call_id": attr_value(&block.raw, "call_id")
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
                 "response": {"result": result_content},
             }));
             text_content = text_content.replace(&block.raw, "").trim().to_string();
@@ -1251,7 +1274,17 @@ fn emit_queued_function_calls_if_needed(
             parts.push(json!({"text": text}));
         }
     }
-    for (index, function_call) in queued_function_calls.iter().enumerate() {
+    for (index, function_call) in queued_function_calls.iter_mut().enumerate() {
+        // Drop the pairing-only identity; Gemini rejects unknown functionCall fields.
+        let source_call_id = function_call
+            .as_object_mut()
+            .and_then(|object| {
+                object
+                    .remove("call_id")
+                    .and_then(|value| value.as_str().map(str::to_string))
+            })
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty());
         let mut part = Map::new();
         part.insert("functionCall".to_string(), function_call.clone());
         if index == 0 {
@@ -1270,6 +1303,7 @@ fn emit_queued_function_calls_if_needed(
             id: function_name.clone(),
             function_name,
             matching_name: StructuredToolCallBridge::toolCallName(function_call),
+            source_call_id,
         });
     }
     contents_array.push(json!({"role": "model", "parts": parts}));

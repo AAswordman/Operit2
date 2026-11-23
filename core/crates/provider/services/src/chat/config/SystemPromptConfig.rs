@@ -16,9 +16,11 @@ const TOOL_USAGE_GUIDELINES_EN: &str = r#"When calling a tool, the user will see
 
 To use a tool, use this format in your response:
 
-<tool name="tool_name">
+<tool name="tool_name" call_id="c1">
 <param name="parameter_name">parameter_value</param>
 </tool>
+
+Assign every tool call in one response a unique call_id (c1, c2, c3, ...). Each result comes back carrying the same call_id; never reuse a call_id across responses.
 
 When outputting XML (e.g., <tool>), insert a newline before it and ensure the opening tag starts at the beginning of a line.
 
@@ -28,9 +30,11 @@ const TOOL_USAGE_GUIDELINES_CN: &str = r#"调用工具时，用户会看到你�
 
 使用工具时，请使用以下格式：
 
-<tool name="tool_name">
+<tool name="tool_name" call_id="c1">
 <param name="parameter_name">parameter_value</param>
 </tool>
+
+为同一次响应中的每个工具调用分配唯一的 call_id（c1、c2、c3……）。工具结果会携带相同的 call_id 返回；不同响应之间不要复用 call_id。
 
 输出XML（如 <tool>）时，必须在XML前换行，并确保起始标签位于行首。
 
@@ -39,7 +43,7 @@ const TOOL_USAGE_GUIDELINES_CN: &str = r#"调用工具时，用户会看到你�
 const PACKAGE_SYSTEM_GUIDELINES_EN: &str = r#"PACKAGE SYSTEM
 - Some additional functionality is available through packages
 - To use a package, simply activate it with:
-  <tool name="use_package">
+  <tool name="use_package" call_id="c1">
   <param name="package_name">package_name_here</param>
   </tool>
 - This will show you all the tools in the package and how to use them
@@ -50,7 +54,7 @@ const PACKAGE_SYSTEM_GUIDELINES_EN: &str = r#"PACKAGE SYSTEM
 const PACKAGE_SYSTEM_GUIDELINES_CN: &str = r#"包系统：
 - 一些额外功能通过包提供
 - 要使用包，只需激活它：
-  <tool name="use_package">
+  <tool name="use_package" call_id="c1">
   <param name="package_name">package_name_here</param>
   </tool>
 - 这将显示包中的所有工具及其使用方法
@@ -264,7 +268,7 @@ impl SystemPromptConfig {
         if package_system_visible && !options.use_tool_call_api {
             packages_section.push('\n');
             packages_section.push_str("To use a package:\n");
-            packages_section.push_str("<tool name=\"use_package\"><param name=\"package_name\">package_name_here</param></tool>\n");
+            packages_section.push_str("<tool name=\"use_package\" call_id=\"c1\"><param name=\"package_name\">package_name_here</param></tool>\n");
         }
 
         let template_to_use = if !options.custom_system_prompt_template.is_empty() {
@@ -743,7 +747,7 @@ mod tests {
     async fn xmlToolPromptIncludesPackageInvocationSyntax() {
         let prompt = SystemPromptConfig::getSystemPrompt(packagePromptOptions(false)).await.expect("Tool-prompt policies must succeed in this test");
 
-        assert!(prompt.contains("<tool name=\"use_package\">"));
+        assert!(prompt.contains("<tool name=\"use_package\" call_id=\"c1\">"));
         assert!(prompt.contains("<param name=\"package_name\">"));
     }
 
