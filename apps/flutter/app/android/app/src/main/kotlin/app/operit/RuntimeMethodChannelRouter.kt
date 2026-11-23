@@ -58,10 +58,10 @@ class RuntimeMethodChannelRouter(
         return androidPlatformChannel.onRequestPermissionsResult(requestCode, permissions, grantResults)
     }
 
-    /** Delivers Android results to the owner of the uninstall, settings, or picker request. */
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: android.content.Intent?): Boolean {
+    /** Delivers Android results to the owner of the uninstall or settings request. */
+    fun onActivityResult(requestCode: Int, resultCode: Int): Boolean {
         if (ownerSystemChannel.onActivityResult(requestCode, resultCode)) return true
         if (androidPlatformChannel.onActivityResult(requestCode)) return true
-        return documentInputChannel.onActivityResult(requestCode, resultCode, data)
+        return false
     }
 }

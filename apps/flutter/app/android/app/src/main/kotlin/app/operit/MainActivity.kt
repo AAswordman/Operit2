@@ -25,6 +25,7 @@ class MainActivity : FlutterActivity() {
     private lateinit var runtimeRouter: RuntimeMethodChannelRouter
     private lateinit var nativeCrashChannel: NativeCrashChannel
     private lateinit var incomingFileChannel: IncomingFileChannel
+    internal val documentPickerRequest = DocumentPickerRequest()
     private var pendingNotificationActivation: Map<String, String>? = null
     private var notificationActivationReceiverReady = false
 
@@ -101,7 +102,8 @@ class MainActivity : FlutterActivity() {
     /** Delivers document-picker results to platform channels that own the selected content stream. */
     @Deprecated("Deprecated in Android API 35")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        if (::runtimeRouter.isInitialized && runtimeRouter.onActivityResult(requestCode, resultCode, data)) {
+        if (documentPickerRequest.onActivityResult(requestCode, resultCode, data)) return
+        if (::runtimeRouter.isInitialized && runtimeRouter.onActivityResult(requestCode, resultCode)) {
             return
         }
         super.onActivityResult(requestCode, resultCode, data)

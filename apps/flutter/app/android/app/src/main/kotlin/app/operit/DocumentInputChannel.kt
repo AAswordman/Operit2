@@ -18,7 +18,6 @@ class DocumentInputChannel(private val activity: MainActivity) {
     companion object {
         private const val SNAPSHOT_CHANNEL_NAME = "operit/snapshot_import_input"
         private const val FILE_CHANNEL_NAME = "operit/file_input"
-        private const val PICK_DOCUMENT_REQUEST_CODE = 46091
         private const val MAX_CHUNK_SIZE = 1024 * 1024
     }
 
@@ -33,7 +32,6 @@ class DocumentInputChannel(private val activity: MainActivity) {
     private val worker = HostTaskExecutor(serial = true)
     private val closed = AtomicBoolean(false)
     private val openInputs = mutableMapOf<String, OpenDocumentInput>()
-    private var pendingPick: PendingPick? = null
 
     fun attach(messenger: BinaryMessenger) {
         MethodChannel(messenger, SNAPSHOT_CHANNEL_NAME).setMethodCallHandler(::handle)
@@ -42,8 +40,7 @@ class DocumentInputChannel(private val activity: MainActivity) {
 
     fun clear() {
         if (!closed.compareAndSet(false, true)) return
-        pendingPick?.result?.error("CHANNEL_CLOSED", "Document input channel closed", null)
-        pendingPick = null
+        activity.documentPickerRequest.release(this)
         worker.execute {
             for (input in openInputs.values) {
                 try { input.stream?.close() } catch (_: Exception) { }
@@ -78,44 +75,40 @@ class DocumentInputChannel(private val activity: MainActivity) {
         mimeTypes: List<String>,
         imagesOnly: Boolean = false,
     ) {
-        if (pendingPick != null) {
-            result.error("PICK_IN_PROGRESS", "A document picker is already open", null)
-            return
-        }
-        pendingPick = PendingPick(result, multiple, requireLength)
-        try {
-            val intent = if (imagesOnly) {
-                // Let users select an image provider instead of routing older ROMs
-                // directly into DocumentsUI through the photo picker contract.
-                Intent.createChooser(Intent(Intent.ACTION_GET_CONTENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                    type = "image/*"
-                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
-                }, null)
-            } else {
-                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
-                    type = if (mimeTypes.size == 1) mimeTypes.first() else "*/*"
-                    if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
-                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+        val pick = PendingPick(result, multiple, requireLength)
+        activity.documentPickerRequest.launch(
+            owner = this,
+            complete = { resultCode, data -> completePick(pick, resultCode, data) },
+            fail = { code, message -> result.error(code, message, null) },
+            start = { requestCode ->
+                val intent = if (imagesOnly) {
+                    // Let users select an image provider instead of routing older ROMs
+                    // directly into DocumentsUI through the photo picker contract.
+                    Intent.createChooser(Intent(Intent.ACTION_GET_CONTENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        type = "image/*"
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+                    }, null)
+                } else {
+                    Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                        addCategory(Intent.CATEGORY_OPENABLE)
+                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                        type = if (mimeTypes.size == 1) mimeTypes.first() else "*/*"
+                        if (mimeTypes.isNotEmpty()) putExtra(Intent.EXTRA_MIME_TYPES, mimeTypes.toTypedArray())
+                        putExtra(Intent.EXTRA_ALLOW_MULTIPLE, multiple)
+                    }
                 }
-            }
-            activity.startActivityForResult(intent, PICK_DOCUMENT_REQUEST_CODE)
-        } catch (error: Exception) {
-            pendingPick = null
-            result.error("PICK_FAILED", error.message, null)
-        }
+                activity.startActivityForResult(intent, requestCode)
+            },
+        )
     }
 
-    fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?): Boolean {
-        if (requestCode != PICK_DOCUMENT_REQUEST_CODE) return false
-        val pick = pendingPick ?: return true
-        pendingPick = null
+    /** Opens metadata only for the engine that initiated this selection. */
+    private fun completePick(pick: PendingPick, resultCode: Int, data: Intent?) {
         if (resultCode != Activity.RESULT_OK) {
             pick.result.success(if (pick.multiple) emptyList<Map<String, Any?>>() else null)
-            return true
+            return
         }
         val uris = linkedSetOf<Uri>()
         data?.data?.let(uris::add)
@@ -124,7 +117,7 @@ class DocumentInputChannel(private val activity: MainActivity) {
         }
         if (uris.isEmpty()) {
             pick.result.error("MISSING_DOCUMENT", "Document picker returned no document", null)
-            return true
+            return
         }
         background(pick.result, "OPEN_FAILED") {
             val descriptors = uris.map { uri ->
@@ -149,7 +142,6 @@ class DocumentInputChannel(private val activity: MainActivity) {
             }
             if (pick.multiple) files else files.first()
         }
-        return true
     }
 
     private fun readChunk(call: MethodCall, result: MethodChannel.Result) {
