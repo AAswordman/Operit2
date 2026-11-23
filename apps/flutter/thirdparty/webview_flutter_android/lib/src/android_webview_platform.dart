@@ -6,9 +6,14 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 
 import 'android_webview_controller.dart';
 import 'android_webview_cookie_manager.dart';
+import 'android_web_visit_host.dart';
 
 /// Implementation of [WebViewPlatform] using the WebKit API.
 class AndroidWebViewPlatform extends WebViewPlatform {
+  /// Shares the process-owned visit bridge with execution and workspace clients.
+  @override
+  final PlatformWebVisitHost webVisitHost = AndroidWebVisitHost();
+
   /// Registers this class as the default instance of [WebViewPlatform].
   static void registerWith() {
     WebViewPlatform.instance = AndroidWebViewPlatform();

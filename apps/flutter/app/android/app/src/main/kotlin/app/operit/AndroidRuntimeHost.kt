@@ -46,6 +46,10 @@ class AndroidRuntimeHost(context: Context) {
     /** JNI worker entry point for capability-backed filesystem resources. */
     fun fileSystemResourceOperation(request: String): String = documentFileSystem.execute(request)
 
+    /** Executes a process-owned browser visit without requiring a Flutter engine or Activity. */
+    fun webVisitOperation(request: String): String =
+        io.flutter.plugins.webviewflutter.HostWebVisitManager.getInstance().execute(applicationContext, request)
+
     /** Keeps Wi-Fi multicast reception enabled for the native discovery daemon's lifetime. */
     fun acquireDiscoveryMulticastLock(): WifiManager.MulticastLock? {
         if (!applicationContext.packageManager.hasSystemFeature(PackageManager.FEATURE_WIFI)) {

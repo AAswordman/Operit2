@@ -8,10 +8,11 @@ import '../browser/BrowserSessions.dart';
 import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyModels.g.dart';
 import 'WebVisitModels.dart';
+import 'RuntimeWebVisitTask.dart';
 
 /// Executes visit_web through the same owner sessions as browser automation.
 /// Widgets observe this task; mounting or disposing them does not drive it.
-class RuntimeWebVisitSession extends ChangeNotifier {
+class RuntimeWebVisitSession extends RuntimeWebVisitTask {
   RuntimeWebVisitSession({required this.request, BrowserSessions? sessions})
     : _sessions = sessions ?? BrowserSessions();
 
@@ -21,14 +22,17 @@ class RuntimeWebVisitSession extends ChangeNotifier {
   static const Duration _extractDelay = Duration(milliseconds: 800);
   static const Duration _scriptTimeout = Duration(seconds: 10);
 
+  @override
   final WebVisitRequest request;
   final BrowserSessions _sessions;
   final Completer<WebVisitResponse> _response = Completer<WebVisitResponse>();
   StreamSubscription<BrowserSessionEvent>? _events;
+  @override
   RuntimeBrowserSessionInfo? browserSession;
   bool _disposed = false;
   Timer? _deadlineTimer;
 
+  @override
   Future<WebVisitResponse> get response => _response.future;
   bool get _active => !_disposed;
 
@@ -65,6 +69,8 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     unawaited(_start());
   }
 
+  /// Releases the runtime session after a terminal task response.
+  @override
   Future<void> disposeSession() async {
     if (_disposed) return;
     if (!_completed) _finishError('visit_web cancelled');
@@ -469,6 +475,8 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     );
   }
 
+  /// Pauses automatic extraction or cancels the current visit.
+  @override
   void handleLeftAction() {
     if (_autoCountdownActive) {
       _cancelCountdown();
@@ -483,6 +491,8 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     _finishError('visit_web cancelled');
   }
 
+  /// Extracts or returns the current document on explicit user request.
+  @override
   void handleRightAction() {
     if (_autoCountdownActive) {
       _cancelCountdown();
@@ -496,6 +506,7 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     unawaited(_extractPageContent());
   }
 
+  @override
   String get statusText {
     if (!_pageLoaded) {
       return 'Loading page';
@@ -515,6 +526,7 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     return 'Waiting';
   }
 
+  @override
   String get leftButtonText {
     if (_autoCountdownActive) {
       return 'Cancel countdown';
@@ -525,6 +537,7 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     return 'Cancel';
   }
 
+  @override
   String get rightButtonText {
     if (_autoCountdownActive) {
       return 'Continue now ${_autoCountdownSeconds}s';
@@ -538,6 +551,7 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     return 'Extract';
   }
 
+  @override
   String get helperText {
     if (!_pageLoaded) {
       return 'visit_web is loading the page in a runtime browser session.';
@@ -551,9 +565,15 @@ class RuntimeWebVisitSession extends ChangeNotifier {
     return '';
   }
 
+  @override
   bool get pageLoaded => _pageLoaded;
+  @override
   String get currentUrl => _currentUrl;
+  @override
   String get pageTitle => _pageTitle;
+
+  /// Cancels only this task and its owned browser session.
+  @override
   void cancel() => _finishError('visit_web cancelled');
 }
 

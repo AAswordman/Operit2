@@ -10,6 +10,7 @@ import io.flutter.embedding.engine.plugins.FlutterPlugin;
 import io.flutter.embedding.engine.plugins.activity.ActivityAware;
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding;
 import io.flutter.plugin.common.MethodChannel;
+import io.flutter.plugin.common.EventChannel;
 
 /**
  * Java platform implementation of the webview_flutter plugin.
@@ -20,6 +21,8 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
   private FlutterPluginBinding pluginBinding;
   private ProxyApiRegistrar proxyApiRegistrar;
   private MethodChannel themeChannel;
+  private MethodChannel visitChannel;
+  private EventChannel visitEvents;
 
   /**
    * Add an instance of this to {@link io.flutter.embedding.engine.plugins.PluginRegistry} to
@@ -33,6 +36,28 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
   @Override
   public void onAttachedToEngine(@NonNull FlutterPluginBinding binding) {
     pluginBinding = binding;
+    HostWebVisitManager visits = HostWebVisitManager.getInstance();
+    visitChannel = new MethodChannel(binding.getBinaryMessenger(), "operit/webview_visits");
+    visitChannel.setMethodCallHandler((call, result) -> {
+      if (call.method.equals("visit")) {
+        visits.visit(binding.getApplicationContext(), call.arguments, result);
+      } else if (call.method.equals("control")) {
+        try {
+          visits.control(call.argument("requestId"), call.argument("action"));
+          result.success(null);
+        } catch (Exception error) { result.error("web_visit", error.toString(), null); }
+      } else { result.notImplemented(); }
+    });
+    visitEvents = new EventChannel(binding.getBinaryMessenger(), "operit/webview_visit_events");
+    visitEvents.setStreamHandler(new EventChannel.StreamHandler() {
+      /** Replays active process-owned visits after a Flutter engine connects. */
+      @Override public void onListen(Object arguments, EventChannel.EventSink sink) {
+        visits.observe(WebViewFlutterPlugin.this, sink);
+      }
+      /** Unsubscribes this presentation engine without cancelling tasks. */
+      @Override public void onCancel(Object arguments) { visits.unobserve(WebViewFlutterPlugin.this); }
+    });
+    binding.getPlatformViewRegistry().registerViewFactory("operit/host_web_visit", visits.surfaceFactory(this));
     themeChannel = new MethodChannel(binding.getBinaryMessenger(), "operit/webview_theme");
     // Applies appearance through native WebView contexts, independently of page JavaScript.
     themeChannel.setMethodCallHandler((call, result) -> {
@@ -66,6 +91,10 @@ public class WebViewFlutterPlugin implements FlutterPlugin, ActivityAware {
 
   @Override
   public void onDetachedFromEngine(@NonNull FlutterPluginBinding binding) {
+    HostWebVisitManager.getInstance().unobserve(this);
+    HostWebVisitManager.getInstance().releaseSurfaces(this);
+    visitChannel.setMethodCallHandler(null);
+    visitEvents.setStreamHandler(null);
     themeChannel.setMethodCallHandler(null);
     if (proxyApiRegistrar != null) {
       proxyApiRegistrar.externalNavigation.dispose();

@@ -41,10 +41,7 @@ class WebVisitRequest {
       url: payload.url,
       headers: payload.headers
           .map(
-            (header) => WebVisitHeader(
-              name: header.name,
-              value: header.value,
-            ),
+            (header) => WebVisitHeader(name: header.name, value: header.value),
           )
           .toList(growable: false),
       userAgent: payload.userAgent,
@@ -83,6 +80,24 @@ class WebVisitLink {
 }
 
 class WebVisitResult {
+  /// Decodes an authoritative browser result using the public visit schema.
+  factory WebVisitResult.fromJson(Map<String, Object?> json) => WebVisitResult(
+    url: json['url'] as String,
+    title: json['title'] as String,
+    content: json['content'] as String,
+    metadata: Map<String, String>.from(json['metadata'] as Map),
+    links: (json['links'] as List)
+        .map((value) {
+          final link = value as Map;
+          return WebVisitLink(
+            url: link['url'] as String,
+            text: link['text'] as String,
+          );
+        })
+        .toList(growable: false),
+    imageLinks: List<String>.from(json['imageLinks'] as List),
+  );
+
   const WebVisitResult({
     required this.url,
     required this.title,

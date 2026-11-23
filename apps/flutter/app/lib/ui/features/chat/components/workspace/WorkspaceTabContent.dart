@@ -2,7 +2,6 @@
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:operit2/core/web_visit/WebVisitModels.dart';
 import 'package:operit_folder_access/operit_folder_access.dart';
 import '../../../../common/markdown/StreamMarkdownRenderer.dart';
 
@@ -57,7 +56,6 @@ class WorkspaceTabContent extends StatelessWidget {
     this.onCloseTerminalSession,
     this.onSelectBrowserTab,
     this.onCloseBrowserSession,
-    required this.onFinishWebVisit,
     required this.onCloseCurrentTab,
     required this.onOpenWorkspaceCreator,
     required this.onBindWorkspace,
@@ -107,8 +105,6 @@ class WorkspaceTabContent extends StatelessWidget {
   final ValueChanged<WorkspaceTerminalSessionInfo>? onCloseTerminalSession;
   final ValueChanged<WorkspaceBrowserTabState>? onSelectBrowserTab;
   final ValueChanged<String>? onCloseBrowserSession;
-  final void Function(WorkspaceTab tab, WebVisitResponse response)
-  onFinishWebVisit;
   final VoidCallback onCloseCurrentTab;
   final VoidCallback onOpenWorkspaceCreator;
   final Future<void> Function(String workspace) onBindWorkspace;
@@ -231,7 +227,6 @@ class WorkspaceTabContent extends StatelessWidget {
         }
         return WorkspaceWebVisitContent(
           request: request,
-          onFinished: (response) => onFinishWebVisit(tab, response),
         );
       case WorkspaceTabKind.filePreview:
         if (tab.pluginPresentation case final presentation?) {

@@ -1,0 +1,65 @@
+name: Web Visit Checks
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/web-visit-checks.yml'
+      - 'apps/flutter/app/lib/core/web_visit/**'
+      - 'apps/flutter/app/lib/core/host/browser/**'
+      - 'apps/flutter/app/lib/ui/features/chat/components/workspace/**'
+      - 'apps/flutter/app/test/core/browser/**'
+      - 'apps/flutter/app/test/workspace_mount_picker_test.dart'
+      - 'apps/flutter/thirdparty/webview_*/**'
+      - 'hosts/android/src/web_visit.rs'
+      - 'tools/tests/web_visit_extraction.test.mjs'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/web-visit-checks.yml'
+      - 'apps/flutter/app/lib/core/web_visit/**'
+      - 'apps/flutter/app/lib/core/host/browser/**'
+      - 'apps/flutter/app/lib/ui/features/chat/components/workspace/**'
+      - 'apps/flutter/app/test/core/browser/**'
+      - 'apps/flutter/app/test/workspace_mount_picker_test.dart'
+      - 'apps/flutter/thirdparty/webview_*/**'
+      - 'hosts/android/src/web_visit.rs'
+      - 'tools/tests/web_visit_extraction.test.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  extraction:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check production DOM extraction
+        run: node --test tools/tests/web_visit_extraction.test.mjs
+
+  sessions:
+    runs-on: windows-2025
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: apps/flutter/app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bootstrap Dart
+        uses: dart-lang/setup-dart@v1
+        with:
+          sdk: 3.11.5
+      - name: Install FVM
+        run: |
+          dart pub global activate fvm 4.3.0
+          "$env:APPDATA\Pub\Cache\bin" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Install project Flutter SDK
+        run: fvm install --skip-pub-get
+      - name: Resolve dependencies
+        run: fvm flutter pub get
+      - name: Check visit ownership and workspace presentation
+        run: fvm flutter test --no-pub test/core/browser/host_web_visit_test.dart test/core/browser/runtime_web_visit_test.dart test/workspace_mount_picker_test.dart

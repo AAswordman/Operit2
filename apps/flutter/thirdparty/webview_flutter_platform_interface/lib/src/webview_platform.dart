@@ -9,6 +9,7 @@ import 'platform_webview_controller.dart';
 import 'platform_webview_cookie_manager.dart';
 import 'platform_webview_data_manager.dart';
 import 'platform_webview_widget.dart';
+import 'platform_web_visit_host.dart';
 import 'types/types.dart';
 
 // TODO(bparrishMines): This should be removed once webview_flutter_android and
@@ -17,6 +18,9 @@ export 'types/types.dart';
 
 /// Interface for a platform implementation of a WebView.
 abstract class WebViewPlatform extends PlatformInterface {
+  /// Supplies process-owned visit execution and presentation when provided by the host.
+  PlatformWebVisitHost? get webVisitHost => null;
+
   /// Indicates whether this adapter can retain a browser without a visible widget.
   bool get supportsOffscreenWebViews => false;
 
@@ -24,7 +28,9 @@ abstract class WebViewPlatform extends PlatformInterface {
   PlatformWebViewDataManager createPlatformWebViewDataManager(
     PlatformWebViewDataManagerCreationParams params,
   ) {
-    throw UnsupportedError('This browser adapter does not implement a data manager');
+    throw UnsupportedError(
+      'This browser adapter does not implement a data manager',
+    );
   }
 
   /// Creates a new [WebViewPlatform].

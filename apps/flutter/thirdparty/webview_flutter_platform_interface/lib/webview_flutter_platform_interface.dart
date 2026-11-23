@@ -10,6 +10,7 @@ export 'src/platform_webview_data_manager.dart';
 export 'src/platform_webview_widget.dart';
 export 'src/types/types.dart';
 export 'src/webview_platform.dart';
+export 'src/platform_web_visit_host.dart';
 
 export 'src/local_resource.dart';
 export 'src/webview_download.dart';

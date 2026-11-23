@@ -116,6 +116,9 @@ class _RuntimeBrowserOwnerHostState extends State<RuntimeBrowserOwnerHost> {
       return;
     }
     unawaited(_browserSessionStore.ensureLoaded());
+    RuntimeWebVisitRegistry.instance.attachHost(
+      WebViewPlatform.instance?.webVisitHost,
+    );
     _attachOwnerUi();
     _disposeBridgeHandler = widget.bridge.registerHandler(_handleRequest);
     _disposeWebVisitHandler = const WebVisitBridge().registerHandler((

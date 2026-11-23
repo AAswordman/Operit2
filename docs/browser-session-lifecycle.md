@@ -1,6 +1,6 @@
 # 浏览器会话与工作区展示
 
-浏览器执行属于运行时宿主，会话是否存在不由工作区是否打开决定。Android、iOS、macOS、Windows、Linux 共用相同的会话和展示生命周期，平台实现仍由现有 WebView 插件承担；Web 客户端通过现有会话协议观看宿主合成画面。
+浏览器执行属于运行时宿主，会话是否存在不由工作区是否打开决定。通用浏览器使用现有会话协议；Android 的 `visit_web` 由进程级原生 Host 执行，工作区通过平台能力接口直接展示同一个 WebView。其他宿主继续使用运行时浏览器会话。
 
 ## 请求链路
 
@@ -13,12 +13,19 @@ browser_* 工具
   → RuntimeBrowserOwner 持有的 WebViewController
 
 visit_web 工具
+  → AndroidWebVisitHost → AndroidRuntimeHost.webVisitOperation
+  → HostWebVisitManager（原生主线程、私有虚拟显示、任务期限与 DOM 提取）
+  → PlatformWebVisitHost 观察状态并借用同一个 WebView 给工作区
+
+其他宿主及 Android 独立模块发起的 visit_web
   → FlutterHostAdapters → RuntimeHostInteractionService
   → RuntimeHostInteractionSubscriber → WebVisitBridge
   → RuntimeBrowserOwnerHost → RuntimeWebVisitRegistry / RuntimeWebVisitSession
   → BrowserSessions（现有 create / evaluate / events / close 协议）
   → RuntimeBrowserService → 同一个 RuntimeBrowserOwner
 ```
+
+Android 独立模块通过应用 owner 的 `PlatformWebVisitHost.visit` 接入相同的原生执行器；模块进程不初始化依赖应用上下文的 WebView。能力选择由 Host 装配及 WebView 平台适配器声明，不按执行失败切换路径。
 
 宿主交互订阅并发处理请求，因此 `visit_web` 等待期间仍可处理它发起的浏览器会话命令。Core 会话及事件协议没有添加 Android 专用操作。
 
@@ -36,6 +43,20 @@ visit_web 工具
 ## 临时访问与等待
 
 `RuntimeWebVisitSession` 在收到请求时直接创建会话并开始加载、检测和提取。工作区展示回调可以尚未注册或已被移除，执行仍可完成；后注册的工作区可以展示仍在执行的访问。展示失败只记录日志。
+
+`WorkspaceWebVisitContent` 只观察 `RuntimeWebVisitTask` 并提供浏览器展示锚点或原生 Host surface，不再创建控制器、导航网页或决定工具结果。原 `WorkspaceWebVisitSessionRegistry`、工作区 Completer、工作区自带提取与 SSL 绕过逻辑已删除。完成回调由工作区 presenter 订阅，因此未选中的访问标签也会在任务结束后移除；销毁工作区不会取消任务。
+
+### Android 离屏访问
+
+`AndroidWebVisitHost` 通过已注册的 JNI application Host 进入 `HostWebVisitManager`。执行不需要 Flutter engine、Activity、Widget build 或 Flutter 帧。每个任务在 Android 主 looper 创建独立 WebView，并使用 `Presentation` 将它附着到 1280×720、160 dpi 的私有虚拟显示。ImageReader 持续消费帧，避免缓冲区填满阻塞 compositor；不向 Flutter 传输截图或视频，也不申请悬浮窗权限。
+
+Flutter 的 `PlatformWebVisitHost` 只提供观察、显式访问、用户控制和 surface 接口。连接时重放仍在执行的任务；普通本地 Core 直接通过 JNI 开始访问，不等待 Flutter 观察者上线。原生平台视图借用执行中的同一个 WebView，不重新请求 URL，不克隆 Cookie 或 DOM。窗口隐藏或平台视图释放时，原生视图回到私有显示；引擎退出只释放观察者和借用视图。
+
+原生主线程每 250 ms 同步采样 DOM，等待 document complete 且正文、元数据和链接连续稳定 1 秒后返回。采样不使用页面定时器、滚动、`innerText` 或 Flutter 定时器。真实 SPA 在提取完成后继续请求的内容不能由这种稳定性判据预测；用户可在任务期限内切换手动模式并明确提取当前文档。验证码通过明确的挑战元素判断，保留实际页面供用户处理。采样会检查导航代数，旧文档的迟到响应不会当成新页面结果。
+
+总期限为 45 秒，单次脚本期限为 8 秒，JNI worker 最多等待 50 秒。HTTP 主框架错误、网络错误、renderer 退出和脚本错误均返回明确失败。成功、失败、取消均移除采样和期限回调，并在发布完成状态后立即释放 WebView 与私有显示资源，不等待 Flutter 下一帧或平台视图释放。使用现有 Core 前台服务管理进程后台任务，不新增页面唤醒屏幕行为。
+
+这些更改针对 `visit_web`。通用 `browser_*` 会话仍沿用其既有 Host；这里没有把所有交互浏览器迁移到原生访问执行器。
 
 工作区观察任务状态并提供手动提取、取消等操作，不拥有定时器、加载过程或工具返回的 Completer。工作区销毁不会取消任务；用户明确关闭访问标签才取消该请求。正常完成、失败和取消都会关闭临时会话。创建请求迟到时也会关闭已经失去任务所有者的会话。
 
@@ -104,3 +125,22 @@ fvm flutter test test/core/browser/workspace_browser_page_download_test.dart tes
 ## 会话回归验证
 
 Flutter 测试覆盖并发创建的正序与逆序返回、排队创建及错误传播、未打开工作区的访问、延迟展示、展示异常、并发完成与取消、迟到创建、脚本无响应、嵌套休眠、视图实例保持和偏移后的触摸命中。它们验证共享生命周期和控制器契约；各平台真实 WebView 的渲染、输入和后台行为仍需设备验证。
+
+### 离屏访问回归
+
+`.github/workflows/web-visit-checks.yml` 运行生产 DOM 提取脚本和 Flutter 会话回归：
+
+```sh
+node --test tools/tests/web_visit_extraction.test.mjs
+# apps/flutter/app
+fvm flutter test test/core/browser/host_web_visit_test.dart test/core/browser/runtime_web_visit_test.dart test/workspace_mount_picker_test.dart
+```
+
+原生设备用例位于 `android/app/src/androidTest/java/app/operit/HostWebVisitInstrumentedTest.java`，使用真实 HTTP fixture 和系统 WebView，检查没有 Flutter/Activity 时的动态页面动画帧、HTTP 错误，以及视图转移前后对象身份和 DOM 连续性。在配置好项目 Android 构建环境后可运行：
+
+```sh
+# apps/flutter/app/android
+./gradlew :app:connectedDebugAndroidTest -Pandroid.testInstrumentationRunnerArguments.class=app.operit.HostWebVisitInstrumentedTest
+```
+
+本次本地检查运行了 Node 提取测试、Flutter 会话测试和原生 Java 类型检查；未构建 APK，未执行上述设备用例。熄屏、应用后台、真实工作区触摸输入和各厂商 WebView 的虚拟显示行为仍需安装包含此更改的应用进行设备验收。

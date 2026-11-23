@@ -35,6 +35,7 @@ export 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
         WebViewOverScrollMode,
         WebViewPermissionResourceType,
         WebViewPlatform,
+        PlatformWebVisitHost,
         X509Certificate;
 
 export 'src/navigation_delegate.dart';

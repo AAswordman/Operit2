@@ -1,9 +1,14 @@
 // ignore_for_file: file_names
 
+import 'dart:async';
+import 'dart:convert';
+import 'package:webview_all/webview_all.dart';
 import 'package:operit2/core/browser/BrowserSessions.dart';
 import '../logging/ClientLogger.dart';
 import 'package:operit2/core/web_visit/RuntimeWebVisitSession.dart';
 import 'package:operit2/core/web_visit/WebVisitModels.dart';
+import 'RuntimeWebVisitTask.dart';
+import 'HostWebVisitSession.dart';
 
 /// Owns visit tasks independently from optional workspace presentations.
 class RuntimeWebVisitRegistry {
@@ -11,12 +16,55 @@ class RuntimeWebVisitRegistry {
 
   static final instance = RuntimeWebVisitRegistry();
   final BrowserSessions? _sessions;
-  final Map<String, RuntimeWebVisitSession> _visits = {};
+  final Map<String, RuntimeWebVisitTask> _visits = {};
+  PlatformWebVisitHost? _host;
+  StreamSubscription<Map<String, Object?>>? _hostEvents;
   Object? _presenterOwner;
   final Set<String> _presented = {};
   void Function(WebVisitRequest request)? _present;
 
-  RuntimeWebVisitSession? sessionFor(String requestId) => _visits[requestId];
+  RuntimeWebVisitTask? sessionFor(String requestId) => _visits[requestId];
+
+  /// Observes process-owned visits, including work started before Flutter connected.
+  void attachHost(PlatformWebVisitHost? host) {
+    if (identical(host, _host)) return;
+    unawaited(_hostEvents?.cancel());
+    _host = host;
+    _hostEvents = host?.watchVisits().listen(
+      _observeHostVisit,
+      onError: (Object error, StackTrace stack) {
+        ClientLogger.w(
+          'Observing Host web visits failed',
+          tag: 'RuntimeWebVisit',
+          error: error,
+          stackTrace: stack,
+        );
+      },
+    );
+  }
+
+  /// Adopts one authoritative task without starting a second browser or navigation.
+  void _observeHostVisit(Map<String, Object?> snapshot) {
+    final request = WebVisitRequest.decode(jsonEncode(snapshot['request']))!;
+    var task = _visits[request.requestId];
+    if (task == null) {
+      if (snapshot['completed'] == true) return;
+      final observed = HostWebVisitSession(request: request, host: _host!);
+      _visits[request.requestId] = observed;
+      unawaited(_trackHostTask(observed));
+      task = observed;
+    }
+    (task as HostWebVisitSession).apply(snapshot);
+    _presentVisit(request);
+  }
+
+  /// Releases observation after completion without owning the native browser lifetime.
+  Future<void> _trackHostTask(HostWebVisitSession task) async {
+    await task.response;
+    _visits.remove(task.request.requestId);
+    _presented.remove(task.request.requestId);
+    await task.disposeSession();
+  }
 
   void setControls({
     required Object owner,
@@ -40,6 +88,33 @@ class RuntimeWebVisitRegistry {
   Future<WebVisitResponse> visitWeb(WebVisitRequest request) async {
     final existing = _visits[request.requestId];
     if (existing != null) return existing.response;
+    final host = _host;
+    if (host != null) {
+      final task = HostWebVisitSession(request: request, host: host);
+      _visits[request.requestId] = task;
+      unawaited(_trackHostTask(task));
+      _presentVisit(request);
+      try {
+        task.complete(
+          await host.visit({
+            'requestId': request.requestId,
+            'url': request.url,
+            'headers': request.headers
+                .map((header) => {'name': header.name, 'value': header.value})
+                .toList(),
+            'userAgent': request.userAgent,
+            'includeImageLinks': request.includeImageLinks,
+          }),
+        );
+      } catch (error) {
+        task.complete({
+          'requestId': request.requestId,
+          'success': false,
+          'error': error.toString(),
+        });
+      }
+      return task.response;
+    }
     final visit = RuntimeWebVisitSession(request: request, sessions: _sessions);
     _visits[request.requestId] = visit;
     visit.start();
