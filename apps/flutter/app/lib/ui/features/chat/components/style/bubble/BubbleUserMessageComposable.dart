@@ -709,19 +709,9 @@ MessageParseResult _buildMessageParseResult({
     final link = i < linkCount ? imageLinks[i] : null;
     final raw = i < rawCount ? rawImageAttachments[i] : null;
 
-    if (link != null && raw != null) {
-      imageAttachments.add(
-        AttachmentData(
-          id: link.id,
-          filename: raw.filename,
-          type: raw.type,
-          size: raw.size,
-          content: raw.content,
-          mediaPoolType: 'image',
-          path: raw.path,
-          nodeId: raw.nodeId,
-        ),
-      );
+    if (raw != null) {
+      // Sent attachments retain their file identity across media pool eviction.
+      imageAttachments.add(raw);
     } else if (link != null) {
       imageAttachments.add(
         AttachmentData(
@@ -731,8 +721,6 @@ MessageParseResult _buildMessageParseResult({
           mediaPoolType: 'image',
         ),
       );
-    } else if (raw != null) {
-      imageAttachments.add(raw);
     }
   }
 

@@ -254,7 +254,8 @@ class _ImageLightboxViewerState extends State<_ImageLightboxViewer>
                     child: ClipRRect(
                       borderRadius: BorderRadius.circular(10),
                       child: ChatAttachmentImagePreview(
-                        attachmentPath: widget.attachment.id,
+                        attachmentPath:
+                            widget.attachment.path ?? widget.attachment.id,
                         fileName: widget.attachment.filename,
                         mediaPoolType: widget.attachment.mediaPoolType,
                         sourceNodeId: widget.attachment.nodeId,

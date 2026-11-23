@@ -7,6 +7,7 @@ import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/features/chat/components/attachments/AttachmentViewerDialog.dart';
 import 'package:operit2/ui/features/chat/components/style/input/common/ChatAttachmentImagePreview.dart';
 
@@ -85,6 +86,9 @@ void main() {
         'origin:/operitapp/outputs/family/.operit/attachments/id/report.pdf';
     await tester.pumpWidget(
       MaterialApp(
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        supportedLocales: AppLocalizations.supportedLocales,
+        locale: const Locale('zh'),
         home: Scaffold(
           body: AttachmentViewerDialog(
             visible: true,

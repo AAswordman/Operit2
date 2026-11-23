@@ -461,7 +461,7 @@ class _AttachmentThumbnailCard extends StatelessWidget {
     final Widget cardBody;
     if (attachment.isImage) {
       cardBody = ChatAttachmentImagePreview(
-        attachmentPath: attachment.id,
+        attachmentPath: attachment.path ?? attachment.id,
         fileName: attachment.filename,
         mediaPoolType: attachment.mediaPoolType,
         sourceNodeId: attachment.nodeId,

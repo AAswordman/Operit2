@@ -1,12 +1,21 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart'
     show AttachmentInfo;
+import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/ui/features/chat/components/attachments/AttachmentViewerDialog.dart';
+import 'package:operit2/ui/features/chat/components/attachments/ChatMessageImageAttachments.dart';
+import 'package:operit2/ui/features/chat/components/style/input/common/ChatAttachmentImagePreview.dart';
 import 'package:operit2/ui/features/chat/components/style/bubble/BubbleUserMessageComposable.dart'
     as bubble;
 import 'package:operit2/ui/features/chat/components/style/cursor/UserMessageComposable.dart'
     as cursor;
 
+/// Verifies persistent image references independently of temporary media pools.
 void main() {
   test('both message styles still parse location metadata and escaped paths', () {
     const toolPath =
@@ -50,7 +59,7 @@ void main() {
     );
   });
 
-  test('media pooling preserves the stable file location in both styles', () {
+  test('sent images retain their file identity in both styles', () {
     const markup =
         '<link type="image" id="pooled-image"/>'
         '<attachment id="/operitapp/outputs/family/photo.png" filename="photo.png" type="image/png" '
@@ -60,11 +69,107 @@ void main() {
       cursor.parseMessageContent(markup).imageAttachments,
     ]) {
       final image = attachments.single;
-      expect(image.id, 'pooled-image');
+      expect(image.id, '/operitapp/outputs/family/photo.png');
+      expect(image.mediaPoolType, isNull);
       expect(image.path, '/operitapp/outputs/family/photo.png');
       expect(image.nodeId, 'origin');
     }
   });
+
+  test('historical images without path metadata retain their original file', () {
+    const path = '/runtime/data/chat_attachments/chat-a/id/photo.png';
+    const markup =
+        '<link type="image" id="expired-image"/>'
+        '<attachment id="$path" filename="photo.png" type="image/png" size="3"/>';
+    for (final attachments in [
+      bubble.parseMessageContent(markup).imageAttachments,
+      cursor.parseMessageContent(markup).imageAttachments,
+    ]) {
+      final image = attachments.single;
+      expect(image.id, path);
+      expect(image.mediaPoolType, isNull);
+      expect(image.path, isNull);
+      expect(image.nodeId, isNull);
+    }
+  });
+
+  test('images with only a media link retain their pool identity', () {
+    const markup = '<link type="image" id="pool-only-image"/>';
+    for (final attachments in [
+      bubble.parseMessageContent(markup).imageAttachments,
+      cursor.parseMessageContent(markup).imageAttachments,
+    ]) {
+      final image = attachments.single;
+      expect(image.id, 'pool-only-image');
+      expect(image.mediaPoolType, 'image');
+      expect(image.path, isNull);
+    }
+  });
+
+  for (final isBubble in [false, true]) {
+    testWidgets(
+      'sent image and lightbox load original after remount, bubble=$isBubble',
+      (tester) async {
+        final directory = Directory.systemTemp.createTempSync('sent-image-');
+        addTearDown(() => directory.deleteSync(recursive: true));
+        final file = File('${directory.path}/photo.png');
+        final bytes = base64Decode(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAAAANSURBVBhXY2Bg+P8fAAMCAf/Jsq3uAAAAAElFTkSuQmCC',
+        );
+        file.writeAsBytesSync(bytes);
+        // The pool ID is deliberately unregistered, as it is after a restart.
+        final markup =
+            '<link type="image" id="expired-pool-image"/>'
+            '<attachment id="old-file-identity" filename="photo.png" '
+            'type="image/png" path="${file.uri}" size="${bytes.length}"/>';
+
+        // Reparse persisted markup and reload file bytes with no Flutter cache.
+        for (var mount = 0; mount < 2; mount++) {
+          final attachments = isBubble
+              ? bubble.parseMessageContent(markup).imageAttachments
+              : cursor.parseMessageContent(markup).imageAttachments;
+          await tester.pumpWidget(
+            MaterialApp(
+              localizationsDelegates: AppLocalizations.localizationsDelegates,
+              supportedLocales: AppLocalizations.supportedLocales,
+              home: Scaffold(
+                body: ChatMessageAttachments(
+                  attachments: attachments,
+                  enableDialogs: true,
+                  isBubbleMode: isBubble,
+                ),
+              ),
+            ),
+          );
+          await _loadAttachmentImages(tester, 1);
+          expect(find.byType(Image), findsOneWidget);
+          expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+          expect(
+            tester
+                .widget<ChatAttachmentImagePreview>(
+                  find.byType(ChatAttachmentImagePreview),
+                )
+                .attachmentPath,
+            file.uri.toString(),
+          );
+          await tester.tap(
+            find.descendant(
+              of: find.byType(ChatMessageAttachments),
+              matching: find.byType(InkWell),
+            ),
+          );
+          await _loadAttachmentImages(tester, 2);
+          expect(find.byType(AttachmentViewerDialog), findsOneWidget);
+          expect(find.byType(Image), findsNWidgets(2));
+          expect(find.byIcon(Icons.broken_image_outlined), findsNothing);
+          expect(tester.takeException(), isNull);
+          await tester.pumpWidget(const SizedBox.shrink());
+          PaintingBinding.instance.imageCache.clear();
+          PaintingBinding.instance.imageCache.clearLiveImages();
+        }
+      },
+    );
+  }
 
   test('legacy JSON has no invented source node', () {
     final attachment = AttachmentInfo.fromJson(<String, Object?>{
@@ -118,4 +223,21 @@ void main() {
       expect(inline.nodeId, isNull);
     }
   });
+}
+
+/// Lets real file reads and image decoding complete outside the fake clock.
+Future<void> _loadAttachmentImages(WidgetTester tester, int count) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+    await tester.pump();
+    if (find.byType(Image).evaluate().length == count) break;
+  }
+  expect(find.byType(Image), findsNWidgets(count));
+  for (final element in find.byType(Image).evaluate()) {
+    final image = element.widget as Image;
+    await tester.runAsync(() => precacheImage(image.image, element));
+  }
+  await tester.pumpAndSettle();
 }
