@@ -947,6 +947,11 @@ impl MessageCoordinationDelegate {
             "chat-summary",
             Box::new(move || {
                 Box::pin(async move {
+                    AppLogger::v_with_level(
+                        "MessageCoordinationDelegate",
+                        &format!("chat.summary.started chatId={workerChatId}"),
+                        operit_util::AppLogger::VERBOSE_LEVEL_2,
+                    );
                     let progressDelegate = std::sync::Mutex::new(worker.messageProcessingDelegate.clone_for_core());
                     let progressChatId = workerChatId.clone();
                     let progressTaskId = workerTaskId.clone();
@@ -1003,6 +1008,11 @@ impl MessageCoordinationDelegate {
                             Err("Conversation summary cancelled".to_string())
                         }
                     };
+                    AppLogger::v_with_level(
+                        "MessageCoordinationDelegate",
+                        &format!("chat.summary.finished chatId={workerChatId} result={result:?}"),
+                        operit_util::AppLogger::VERBOSE_LEVEL_2,
+                    );
                     worker
                         .messageProcessingDelegate
                         .finishSummaryTask(&workerChatId, &workerTaskId);
@@ -1189,6 +1199,11 @@ impl MessageCoordinationDelegate {
         {
             return Err("Summary continuation no longer owns the chat turn".to_string());
         }
+        AppLogger::v_with_level(
+            "MessageCoordinationDelegate",
+            &format!("chat.summary.resume chatId={} turnId={}", request.chatId, request.turnId),
+            operit_util::AppLogger::VERBOSE_LEVEL_2,
+        );
         Box::pin(self.sendMessageInternal(
             enhancedAiService,
             request.promptFunctionType,
