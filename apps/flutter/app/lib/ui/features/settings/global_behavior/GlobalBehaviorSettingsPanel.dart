@@ -21,6 +21,10 @@ class GlobalBehaviorSettingsPanel extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
       children: <Widget>[
         _GlobalBehaviorSectionCard(
+          title: l10n.settingsGlobalBehaviorChatLayoutSection,
+          children: const <Widget>[_ChatScrollNavigatorSideControl()],
+        ),
+        _GlobalBehaviorSectionCard(
           title: l10n.settingsGlobalBehaviorChatInputSection,
           children: const <Widget>[
             _EnterSendsMessageControl(),
@@ -28,6 +32,33 @@ class GlobalBehaviorSettingsPanel extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _ChatScrollNavigatorSideControl extends StatelessWidget {
+  const _ChatScrollNavigatorSideControl();
+
+  /// Changes the physical side of the message rail independently of the theme.
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return ValueListenableBuilder<bool>(
+      valueListenable: UserPreferencesManager.chatScrollNavigatorOnLeft,
+      builder: (context, enabled, _) => SwitchListTile(
+        key: const ValueKey('settings.chatScrollNavigatorOnLeft'),
+        contentPadding: EdgeInsets.zero,
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        title: Text(l10n.settingsGlobalBehaviorChatScrollNavigatorOnLeft),
+        subtitle: Text(
+          l10n.settingsGlobalBehaviorChatScrollNavigatorOnLeftDescription,
+        ),
+        value: enabled,
+        onChanged: (value) => unawaited(
+          const UserPreferencesManager().saveChatScrollNavigatorOnLeft(value),
+        ),
+      ),
     );
   }
 }

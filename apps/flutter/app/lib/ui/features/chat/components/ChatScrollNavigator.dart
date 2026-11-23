@@ -63,6 +63,7 @@ class ChatScrollNavigator extends StatefulWidget {
   const ChatScrollNavigator({
     super.key,
     this.messageNavigation,
+    this.onLeft = false,
     required this.messages,
     required this.currentChatId,
     required this.scrollController,
@@ -82,6 +83,7 @@ class ChatScrollNavigator extends StatefulWidget {
   });
 
   final ChatMessageNavigationController? messageNavigation;
+  final bool onLeft;
   final List<ChatUiMessage> messages;
   final String? currentChatId;
   final ScrollController scrollController;
@@ -128,7 +130,8 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
       oldWidget.messageNavigation?.removeListener(_onMessageNavigation);
       widget.messageNavigation?.addListener(_onMessageNavigation);
     }
-    if (oldWidget.viewportHeight != widget.viewportHeight) {
+    if (oldWidget.viewportHeight != widget.viewportHeight ||
+        oldWidget.onLeft != widget.onLeft) {
       _hoveredEntryIndex = null;
     }
     final favoritesChanged =
@@ -181,7 +184,8 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
           children: <Widget>[
             if (_locatorLoadFailed)
               Positioned(
-                right: 0,
+                left: widget.onLeft ? 0 : null,
+                right: widget.onLeft ? null : 0,
                 top: 16,
                 child: IconButton(
                   key: const ValueKey('chat-message-index-retry'),
@@ -194,33 +198,42 @@ class _ChatScrollNavigatorState extends State<ChatScrollNavigator> {
               ),
             if (geometry != null)
               Positioned(
-                right: 0,
+                left: widget.onLeft ? 0 : null,
+                right: widget.onLeft ? null : 0,
                 top: 0,
                 bottom: 0,
                 width: ChatScrollRailGeometry.interactionWidth,
-                child: _MessageTickRail(
-                  key: ValueKey(widget.currentChatId),
-                  entries: entries,
-                  activeTimestamp: activeTimestamp,
-                  geometry: geometry,
-                  onHoverEntry: (index, center) {
-                    if (_hoveredEntryIndex == index &&
-                        _hoveredEntryCenter == center) {
-                      return;
-                    }
-                    setState(() {
-                      _hoveredEntryIndex = index;
-                      _hoveredEntryCenter = center;
-                    });
-                  },
-                  onTapTick: _handleJumpToMessage,
+                child: Transform.flip(
+                  flipX: widget.onLeft,
+                  child: _MessageTickRail(
+                    key: ValueKey((widget.currentChatId, widget.onLeft)),
+                    entries: entries,
+                    activeTimestamp: activeTimestamp,
+                    geometry: geometry,
+                    onHoverEntry: (index, center) {
+                      if (_hoveredEntryIndex == index &&
+                          _hoveredEntryCenter == center) {
+                        return;
+                      }
+                      setState(() {
+                        _hoveredEntryIndex = index;
+                        _hoveredEntryCenter = center;
+                      });
+                    },
+                    onTapTick: _handleJumpToMessage,
+                  ),
                 ),
               ),
             if (hoveredIndex != null &&
                 hoveredIndex < entries.length &&
                 previewWidth > 0)
               Positioned(
-                right: ChatScrollRailGeometry.interactionWidth + 8,
+                left: widget.onLeft
+                    ? ChatScrollRailGeometry.interactionWidth + 8
+                    : null,
+                right: widget.onLeft
+                    ? null
+                    : ChatScrollRailGeometry.interactionWidth + 8,
                 top: (_hoveredEntryCenter - 32).clamp(
                   8.0,
                   math.max(8.0, widget.viewportHeight - 112),
@@ -539,7 +552,7 @@ class _MessageTickRailState extends State<_MessageTickRail>
     }
   }
 
-  /// The narrow right-hand strip owns one continuous press/move/release gesture.
+  /// The narrow edge strip owns one continuous press/move/release gesture.
   void _handlePointerDown(PointerDownEvent event) {
     if (_touchPointer != null || event.buttons != kPrimaryButton) return;
     _touchPointer = event.pointer;

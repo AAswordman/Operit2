@@ -1258,11 +1258,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsCategoryGlobalBehaviorSubtitle =>
-      'Input processing and interaction';
+      'Chat layout, input processing and interaction';
 
   @override
   String get settingsCategoryGlobalBehaviorDescription =>
-      'Configure application-wide input and interaction behavior.';
+      'Configure application-wide chat layout, input and interaction behavior.';
 
   @override
   String get settingsCategoryAppearanceTitle => 'Appearance & Interaction';
@@ -1316,6 +1316,17 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsGlobalBehaviorChatInputSection => 'Chat input';
+
+  @override
+  String get settingsGlobalBehaviorChatLayoutSection => 'Chat layout';
+
+  @override
+  String get settingsGlobalBehaviorChatScrollNavigatorOnLeft =>
+      'Show message navigator on the left';
+
+  @override
+  String get settingsGlobalBehaviorChatScrollNavigatorOnLeftDescription =>
+      'Mirror the navigator on the left side of the chat. It appears on the right by default.';
 
   @override
   String get settingsGlobalBehaviorEnterSendsMessage => 'Press Enter to send';

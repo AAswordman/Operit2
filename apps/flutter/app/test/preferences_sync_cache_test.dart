@@ -24,45 +24,98 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
   setUp(ClientLogger.initialize);
 
-  test('Enter preference persists choices and rejects invalid values', () async {
-    final bridge = _PreferenceBridge();
-    final preferences = UserPreferencesManager(
-      clients: GeneratedCoreProxyClients(bridge),
-    );
-    addTearDown(() => UserPreferencesManager.enterSendsMessage.value = null);
-    expect(await preferences.loadEnterSendsMessage(), isNull);
-    expect(bridge.preferenceWrites, 0);
-    await preferences.saveEnterSendsMessage(false);
-    expect(bridge._values[_userFile]!['enter_sends_message'], isFalse);
-    expect(UserPreferencesManager.enterSendsMessage.value, isFalse);
-    UserPreferencesManager.enterSendsMessage.value = null;
-    expect(await preferences.loadEnterSendsMessage(), isFalse);
+  test(
+    'navigator placement defaults right and persists and observes changes',
+    () async {
+      final bridge = _PreferenceBridge();
+      final preferences = UserPreferencesManager(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      addTearDown(
+        () => UserPreferencesManager.chatScrollNavigatorOnLeft.value = false,
+      );
+      expect(await preferences.loadChatScrollNavigatorOnLeft(), isFalse);
+      expect(bridge.preferenceWrites, 0);
+      await preferences.saveChatScrollNavigatorOnLeft(true);
+      expect(
+        bridge._values[_userFile]!['chat_scroll_navigator_on_left'],
+        isTrue,
+      );
+      expect(UserPreferencesManager.chatScrollNavigatorOnLeft.value, isTrue);
+      expect(await preferences.loadChatScrollNavigatorOnLeft(), isTrue);
+      await preferences.saveChatScrollNavigatorOnLeft(false);
+      expect(await preferences.loadChatScrollNavigatorOnLeft(), isFalse);
+      expect(UserPreferencesManager.chatScrollNavigatorOnLeft.value, isFalse);
 
-    final values = <bool?>[];
-    final errors = <Object>[];
-    final subscription = preferences.enterSendsMessageFlow().listen(
-      values.add,
-      onError: errors.add,
-    );
-    await _drainEvents();
-    bridge.applyPeerPreferences(_userFile, <String, Object?>{
-      'enter_sends_message': true,
-    });
-    bridge.applyPeerPreferences(_userFile, <String, Object?>{
-      'enter_sends_message': true,
-      'theme_mode': 'dark',
-    });
-    bridge.applyPeerPreferences(_userFile, <String, Object?>{});
-    bridge.applyPeerPreferences(_userFile, <String, Object?>{
-      'enter_sends_message': 'invalid',
-    });
-    await _drainEvents();
-    expect(values, <bool?>[false, true, null]);
-    expect(errors.single, isA<FormatException>());
-    expect(bridge.preferenceWrites, 1);
-    await subscription.cancel();
-    expect(bridge.activeWatches, 0);
-  });
+      final values = <bool>[];
+      final errors = <Object>[];
+      final subscription = preferences.chatScrollNavigatorOnLeftFlow().listen(
+        values.add,
+        onError: errors.add,
+      );
+      await _drainEvents();
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'chat_scroll_navigator_on_left': true,
+      });
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'chat_scroll_navigator_on_left': true,
+        'theme_mode': 'dark',
+      });
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{});
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'chat_scroll_navigator_on_left': 'invalid',
+      });
+      await _drainEvents();
+      expect(values, [false, true, false]);
+      expect(errors.single, isA<FormatException>());
+      expect(bridge.preferenceWrites, 2);
+      await subscription.cancel();
+      expect(bridge.activeWatches, 0);
+    },
+  );
+
+  test(
+    'Enter preference persists choices and rejects invalid values',
+    () async {
+      final bridge = _PreferenceBridge();
+      final preferences = UserPreferencesManager(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      addTearDown(() => UserPreferencesManager.enterSendsMessage.value = null);
+      expect(await preferences.loadEnterSendsMessage(), isNull);
+      expect(bridge.preferenceWrites, 0);
+      await preferences.saveEnterSendsMessage(false);
+      expect(bridge._values[_userFile]!['enter_sends_message'], isFalse);
+      expect(UserPreferencesManager.enterSendsMessage.value, isFalse);
+      UserPreferencesManager.enterSendsMessage.value = null;
+      expect(await preferences.loadEnterSendsMessage(), isFalse);
+
+      final values = <bool?>[];
+      final errors = <Object>[];
+      final subscription = preferences.enterSendsMessageFlow().listen(
+        values.add,
+        onError: errors.add,
+      );
+      await _drainEvents();
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'enter_sends_message': true,
+      });
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'enter_sends_message': true,
+        'theme_mode': 'dark',
+      });
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{});
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'enter_sends_message': 'invalid',
+      });
+      await _drainEvents();
+      expect(values, <bool?>[false, true, null]);
+      expect(errors.single, isA<FormatException>());
+      expect(bridge.preferenceWrites, 1);
+      await subscription.cancel();
+      expect(bridge.activeWatches, 0);
+    },
+  );
 
   test(
     'peer preferences refresh the live theme without restarting it',

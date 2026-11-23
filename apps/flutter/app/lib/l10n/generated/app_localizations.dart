@@ -2375,13 +2375,13 @@ abstract class AppLocalizations {
   /// No description provided for @settingsCategoryGlobalBehaviorSubtitle.
   ///
   /// In en, this message translates to:
-  /// **'Input processing and interaction'**
+  /// **'Chat layout, input processing and interaction'**
   String get settingsCategoryGlobalBehaviorSubtitle;
 
   /// No description provided for @settingsCategoryGlobalBehaviorDescription.
   ///
   /// In en, this message translates to:
-  /// **'Configure application-wide input and interaction behavior.'**
+  /// **'Configure application-wide chat layout, input and interaction behavior.'**
   String get settingsCategoryGlobalBehaviorDescription;
 
   /// No description provided for @settingsCategoryAppearanceTitle.
@@ -2479,6 +2479,24 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Chat input'**
   String get settingsGlobalBehaviorChatInputSection;
+
+  /// No description provided for @settingsGlobalBehaviorChatLayoutSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat layout'**
+  String get settingsGlobalBehaviorChatLayoutSection;
+
+  /// No description provided for @settingsGlobalBehaviorChatScrollNavigatorOnLeft.
+  ///
+  /// In en, this message translates to:
+  /// **'Show message navigator on the left'**
+  String get settingsGlobalBehaviorChatScrollNavigatorOnLeft;
+
+  /// No description provided for @settingsGlobalBehaviorChatScrollNavigatorOnLeftDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Mirror the navigator on the left side of the chat. It appears on the right by default.'**
+  String get settingsGlobalBehaviorChatScrollNavigatorOnLeftDescription;
 
   /// No description provided for @settingsGlobalBehaviorEnterSendsMessage.
   ///

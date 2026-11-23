@@ -1216,10 +1216,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsCategoryGlobalBehaviorTitle => '全局行为设置';
 
   @override
-  String get settingsCategoryGlobalBehaviorSubtitle => '输入处理与交互';
+  String get settingsCategoryGlobalBehaviorSubtitle => '聊天布局、输入处理与交互';
 
   @override
-  String get settingsCategoryGlobalBehaviorDescription => '设置应用全局的输入与交互行为。';
+  String get settingsCategoryGlobalBehaviorDescription =>
+      '设置应用全局的聊天布局、输入与交互行为。';
 
   @override
   String get settingsCategoryAppearanceTitle => '外观与交互';
@@ -1269,6 +1270,16 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsGlobalBehaviorChatInputSection => '聊天输入';
+
+  @override
+  String get settingsGlobalBehaviorChatLayoutSection => '聊天布局';
+
+  @override
+  String get settingsGlobalBehaviorChatScrollNavigatorOnLeft => '消息定位条显示在左侧';
+
+  @override
+  String get settingsGlobalBehaviorChatScrollNavigatorOnLeftDescription =>
+      '开启后，定位条镜像显示在聊天左侧。默认显示在右侧。';
 
   @override
   String get settingsGlobalBehaviorEnterSendsMessage => '回车键发送消息';

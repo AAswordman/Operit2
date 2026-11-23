@@ -34,7 +34,7 @@ class ChatScrollRailGeometry {
   /// Centers the rail independently of the number of messages in history.
   double get top => (viewportHeight - height) / 2;
 
-  /// The entire right-hand viewport is one target, regardless of tick count.
+  /// The entire edge strip is one target, regardless of tick count.
   double get hitHeight => viewportHeight;
 
   double get hitTop => 0;

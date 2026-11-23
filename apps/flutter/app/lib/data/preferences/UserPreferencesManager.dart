@@ -61,7 +61,13 @@ class UserPreferencesManager {
   static const int defaultLongPastedTextInputThreshold = 3000;
 
   /// An unset preference keeps the application's desktop/mobile layout default.
-  static final ValueNotifier<bool?> enterSendsMessage = ValueNotifier<bool?>(null);
+  static final ValueNotifier<bool?> enterSendsMessage = ValueNotifier<bool?>(
+    null,
+  );
+
+  /// Keeps message navigation on the right until the user enables the left side.
+  static final ValueNotifier<bool> chatScrollNavigatorOnLeft =
+      ValueNotifier<bool>(false);
 
   static final ValueNotifier<LongPastedTextInputSettings>
   longPastedTextInputSettings = ValueNotifier<LongPastedTextInputSettings>(
@@ -188,6 +194,8 @@ class UserPreferencesManager {
   static const String _KEY_LONG_PASTED_TEXT_INPUT_ENABLED =
       'long_pasted_text_input_enabled';
   static const String _KEY_ENTER_SENDS_MESSAGE = 'enter_sends_message';
+  static const String _KEY_CHAT_SCROLL_NAVIGATOR_ON_LEFT =
+      'chat_scroll_navigator_on_left';
   static const String _KEY_LONG_PASTED_TEXT_INPUT_THRESHOLD =
       'long_pasted_text_input_threshold';
 
@@ -200,7 +208,9 @@ class UserPreferencesManager {
 
   /// Observes the explicit Enter preference, preserving the unset default state.
   Stream<bool?> enterSendsMessageFlow() => preferencesFlow()
-      .map((values) => _decodeEnterSendsMessage(values[_KEY_ENTER_SENDS_MESSAGE]))
+      .map(
+        (values) => _decodeEnterSendsMessage(values[_KEY_ENTER_SENDS_MESSAGE]),
+      )
       .distinct();
 
   /// Decodes the optional switch without accepting malformed persisted values.
@@ -217,6 +227,37 @@ class UserPreferencesManager {
   Future<void> saveEnterSendsMessage(bool enabled) async {
     await _setValues(<String, Object?>{_KEY_ENTER_SENDS_MESSAGE: enabled});
     enterSendsMessage.value = enabled;
+  }
+
+  /// Observes the shared message navigator placement preference.
+  Stream<bool> chatScrollNavigatorOnLeftFlow() => preferencesFlow()
+      .map(
+        (values) => _decodeChatScrollNavigatorOnLeft(
+          values[_KEY_CHAT_SCROLL_NAVIGATOR_ON_LEFT],
+        ),
+      )
+      .distinct();
+
+  /// Defines right-side placement as the initial value and rejects invalid data.
+  bool _decodeChatScrollNavigatorOnLeft(Object? value) =>
+      value == null ? false : _decodeBool(value);
+
+  /// Loads placement before the application mounts its chat views.
+  Future<bool> loadChatScrollNavigatorOnLeft() async {
+    final values = await _getValues(<String>[
+      _KEY_CHAT_SCROLL_NAVIGATOR_ON_LEFT,
+    ]);
+    return _decodeChatScrollNavigatorOnLeft(
+      values[_KEY_CHAT_SCROLL_NAVIGATOR_ON_LEFT],
+    );
+  }
+
+  /// Persists placement and refreshes all mounted chat views.
+  Future<void> saveChatScrollNavigatorOnLeft(bool enabled) async {
+    await _setValues(<String, Object?>{
+      _KEY_CHAT_SCROLL_NAVIGATOR_ON_LEFT: enabled,
+    });
+    chatScrollNavigatorOnLeft.value = enabled;
   }
 
   /// Observes and validates the global long-paste settings from the shared store.
