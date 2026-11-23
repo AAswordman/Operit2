@@ -33,7 +33,7 @@ export interface Config {
   processed: string[];
   bindingsAccountId?: string;
   memberBindings?: Record<string, string>;
-  deliveries?: {key: string; event: InboundEvent; state: "pending" | "processing" | "failed"; delivered: number; error: string}[];
+  deliveries?: {key: string; event: InboundEvent; state: "pending" | "processing" | "failed"; delivered: number; error: string; groupHistoryQueued?: boolean}[];
 }
 export interface InboundEvent {
   scene: Scene;
