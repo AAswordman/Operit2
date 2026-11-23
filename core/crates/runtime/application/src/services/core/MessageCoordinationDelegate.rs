@@ -369,11 +369,9 @@ impl MessageCoordinationDelegate {
             .iter()
             .position(|message| message.timestamp == targetMessage.timestamp)
             .ok_or_else(|| format!("Runtime message timestamp not found: {messageTimestamp}"))?;
-        let executionLease = self
-            .chatHistoryDelegate
-            .chatHistoryManager
-            .beginChatExecution(&chatId)
-            .map_err(|error| error.to_string())?;
+        let executionLease = crate::services::ChatModelBindingService::ChatModelBindingService::beginExecution(
+            &self.chatHistoryDelegate.chatHistoryManager, &chatId,
+        )?;
         executionLease
             .protectRevision(targetMessage.timestamp, targetMessage.variantCount)
             .map_err(|error| error.to_string())?;
@@ -662,7 +660,9 @@ impl MessageCoordinationDelegate {
             .and_then(|chat| self.chatHistoryDelegate.primaryWorkspacePathForChat(chat));
         let executionLease = match match admittedLease {
             Some(lease) => Ok(lease),
-            None => self.chatHistoryDelegate.chatHistoryManager.beginChatExecution(&chatId),
+            None => crate::services::ChatModelBindingService::ChatModelBindingService::beginExecution(
+                &self.chatHistoryDelegate.chatHistoryManager, &chatId,
+            ),
         } {
             Ok(lease) => lease,
             Err(error) => {

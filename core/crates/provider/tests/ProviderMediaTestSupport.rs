@@ -135,6 +135,15 @@ impl ProviderRuntimeSupport for TestRuntimeSupport {
         Err("test runtime does not expose model bindings".to_string())
     }
 
+    /// Uses the fixture's functional binding for conversations without persisted overrides.
+    fn modelBindingForChat(
+        &self,
+        _chatId: Option<&str>,
+        functionType: FunctionType,
+    ) -> Result<ProviderFunctionModelBinding, String> {
+        self.modelBindingForFunction(functionType)
+    }
+
     /// Returns no model configuration in the isolated test runtime.
     fn resolvedModelConfig(
         &self,

@@ -17,8 +17,12 @@ class ToolPkgChatUiCatalog {
   Future<ChatModelSelection> loadModelSelection({
     required String? chatId,
   }) async {
-    final global = await clients.preferencesFunctionalConfigManager
-        .getModelBindingForFunction(functionType: core_proxy.FunctionType.chat);
+    final global = chatId == null
+        ? await clients.preferencesFunctionalConfigManager
+              .getModelBindingForFunction(
+                functionType: core_proxy.FunctionType.chat,
+              )
+        : await clients.chatRuntimeHolderMain.chatModelBinding(chatId: chatId);
     final owners = await _owners('chat.configuration.resolve');
     if (owners.isEmpty) {
       return ChatModelSelection(globalBinding: global, participants: const []);

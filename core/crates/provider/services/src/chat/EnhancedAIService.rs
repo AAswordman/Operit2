@@ -1513,8 +1513,7 @@ impl EnhancedAIService {
                 }
             }
             (None, None) => support
-                .modelBindingForFunction(options.functionType.clone(),
-                )
+                .modelBindingForChat(options.chatId.as_deref(), options.functionType.clone())
                 .map_err(AiServiceError::RequestFailed)?,
             _ => {
                 return Err(AiServiceError::RequestFailed(

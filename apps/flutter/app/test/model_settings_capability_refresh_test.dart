@@ -13,6 +13,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart' as core;
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/ApiErrorText.dart';
+import 'package:operit2/ui/common/contributions/ToolPkgChatUiCatalog.dart';
 import 'package:operit2/ui/features/settings/model/ModelSettingsPanel.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentModelSelectorPopup.dart';
@@ -107,7 +108,7 @@ void main() {
 
   for (final missingProvider in [true, false]) {
     testWidgets(
-      'model selector repairs a missing ${missingProvider ? 'provider' : 'model'} binding',
+      'composer selection isolates an ${missingProvider ? 'initial' : 'existing'} chat from global settings',
       (tester) async {
         final bridge = _ModelSettingsBridge()
           ..chatBinding = core.FunctionModelBinding(
@@ -122,6 +123,7 @@ void main() {
             Center(
               child: AgentModelSelectorPopup(
                 viewModel: ChatViewModel(bridge: bridge),
+                currentChatId: missingProvider ? null : 'existing-chat',
                 onDismiss: () => dismissed = true,
                 onModelChanged: (modelId, {providerTypeId, providerName}) =>
                     selectedModel = modelId,
@@ -138,14 +140,61 @@ void main() {
         await tester.tap(find.text('test-model').last);
         await tester.pumpAndSettle();
         expect(selectedModel, 'test-model');
-        expect(bridge.chatBinding.providerId, 'test-provider');
-        expect(bridge.chatBinding.modelId, 'test-model');
+        final chatId = missingProvider ? 'created-chat' : 'existing-chat';
+        expect(bridge.chatBindings[chatId]?.providerId, 'test-provider');
+        expect(bridge.chatBindings[chatId]?.modelId, 'test-model');
+        expect(
+          bridge.chatBinding.providerId,
+          missingProvider ? 'removed-provider' : 'test-provider',
+        );
+        expect(bridge.chatBinding.modelId, 'removed-model');
+        final selection = await ToolPkgChatUiCatalog(
+          clients: GeneratedCoreProxyClients(bridge),
+        ).loadModelSelection(chatId: 'another-chat');
+        expect(selection.singleBinding?.modelId, 'removed-model');
+        expect(find.textContaining('跟随全局'), findsNothing);
         expect(dismissed, isTrue);
         expect(tester.takeException(), isNull);
         await tester.pumpWidget(const SizedBox.shrink());
       },
     );
   }
+  testWidgets('embedded model menu changes only its originating chat', (
+    tester,
+  ) async {
+    final bridge = _ModelSettingsBridge()
+      ..chatBinding = const core.FunctionModelBinding(
+        providerId: 'global-provider',
+        modelId: 'global-model',
+        followsChat: false,
+      );
+    var dismissed = false;
+    await tester.pumpWidget(
+      _themed(
+        Center(
+          child: AgentModelMenuSection(
+            viewModel: ChatViewModel(bridge: bridge),
+            currentChatId: 'embedded-chat',
+            onDismiss: () => dismissed = true,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('模型'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('选择模型'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('Test Provider').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('test-model').last);
+    await tester.pumpAndSettle();
+    expect(bridge.chatBindings['embedded-chat']?.modelId, 'test-model');
+    expect(bridge.chatBinding.modelId, 'global-model');
+    expect(dismissed, isTrue);
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets(
     'fixed conversation shows its actual model and prevents a global switch',
     (tester) async {
@@ -740,6 +789,7 @@ Future<void> _pumpModelSettings(
 }
 
 class _ModelSettingsBridge extends OperitRuntimeBridge {
+  final Map<String, core.FunctionModelBinding> chatBindings = {};
   core.ProviderProfile? savedProvider;
   core.FunctionModelBinding chatBinding = binding;
   String modelId = binding.modelId;
@@ -868,6 +918,8 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     final Object? result;
     switch (request.methodName) {
+      case 'createSlotDefinitions':
+        result = <Object?>[];
       case 'getToolPkgPublicApiOwners':
         result = participantModels == null
             ? []
@@ -909,6 +961,20 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
       case 'getModelBindingForFunction':
         if (missingChatBinding) throw StateError('No chat model binding');
         result = chatBinding.toJson();
+      case 'chatModelBinding':
+        if (missingChatBinding) throw StateError('No chat model binding');
+        result = (chatBindings[(request.args as Map)['chatId']] ?? chatBinding)
+            .toJson();
+      case 'createNewChat':
+        result = 'created-chat';
+      case 'setChatModelBinding':
+        modelSelectionWrites++;
+        final args = request.args as Map;
+        chatBindings[args['chatId']
+            as String] = core.FunctionModelBinding.fromJson(
+          Map<String, Object?>.from(args['binding'] as Map),
+        );
+        result = null;
       case 'setModelForFunction':
         modelSelectionWrites++;
         final args = request.args as Map;
@@ -1077,6 +1143,8 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
     final Object? value;
     switch (request.propertyName) {
+      case 'chatHistoriesFlow':
+        value = <Object?>[];
       case 'functionModelBindingFlow':
         value = {
           for (final type in core.FunctionType.values)

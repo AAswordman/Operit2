@@ -73,14 +73,16 @@ verify(/if let Some\(participantId\) = &initial\.participantId/.test(create) && 
 verify(!/profile\.openingStatement|participants\.first|configuration\.profile/.test(create), "Core must not infer opening statements or select an execution participant during draft display");
 verify(/purpose: ChatConfigurationPurpose::Display/.test(create) && /resolveDraft/.test(create), "Drafts must resolve the explicit display purpose");
 verify(!/switchConfiguredChat|publishChatConfiguration/.test(processor), "Message execution must not publish an execution descriptor into the presentation cache");
-const deletion = section(history, "pub async fn deleteChatHistory(", "/// Deletes a message from a chat by timestamp.");
-verify(/self\.requireChatExists\(&chatId\)\?;/.test(deletion) && deletion.indexOf("requireChatExists") < deletion.indexOf("canDeleteChatHistory") && deletion.indexOf("if !canDelete") < deletion.indexOf("ChatConfigurationApi::ready"), "Deletion must reject missing or locked histories before invoking their owner");
+const deletion = section(history, "pub async fn deleteChatHistory(", "/// Clears a committed deletion");
+verify(/\.canDeleteChatHistory\(chatId\.clone\(\)\)[\s\S]*?\.map_err\(\|error\| error\.to_string\(\)\)\?;/.test(deletion) && deletion.indexOf("if !canDelete") < deletion.indexOf("ChatConfigurationApi::ready") && /if !canDelete\s*\{\s*return Err/.test(deletion), "Deletion must apply the canonical lock and tombstone policy before invoking its owner and propagate policy errors");
 verify(/api\.deleteConfiguration\(&chatId\)\.await\?;/.test(deletion), "Owner cleanup errors must stop deletion and propagate to the caller");
 verify(deletion.indexOf("api.deleteConfiguration") < deletion.indexOf(".deleteChatHistory(chatId.clone())"), "Owner cleanup must finish before the Core conversation is deleted");
 verify(/\.deleteChatHistory\(chatId\.clone\(\)\)[\s\S]*?\.map_err\(\|error\| error\.to_string\(\)\)\?;/.test(deletion), "Persistence failures must propagate without panicking or reporting success");
-verify(deletion.indexOf("if !deleted") < deletion.indexOf("self.chatConfigurationsFlow.update") && deletion.indexOf("self.chatConfigurationsFlow.update") < deletion.indexOf("self.finishDestructiveHistoryMutation"), "Deletion may clear projections and publish completion only after persistence succeeds");
-const coreDeletion = section(core, "pub async fn deleteChatHistory(", "/// Deletes one message from an explicit chat");
-verify(/self\s*\.chatHistoryDelegate\s*\.deleteChatHistory\(service, chatId\)\s*\.await\?/.test(coreDeletion) && !/deleteConfiguration|if let Err|AppLogger/.test(coreDeletion), "Core deletion must use the single history lifecycle and retain its errors");
+verify(/if !deleted\s*\{\s*return Err/.test(deletion) && deletion.indexOf("if !deleted") < deletion.indexOf("self.clearDeletedChatState(chatId)?"), "Deletion may clear projections only after persistence succeeds");
+const clearDeleted = section(history, "pub(crate) fn clearDeletedChatState(", "/// Deletes a message from a chat by timestamp.");
+verify(clearDeleted.indexOf("self.chatConfigurationsFlow.update") >= 0 && clearDeleted.indexOf("self.chatConfigurationsFlow.update") < clearDeleted.indexOf("self.finishDestructiveHistoryMutation"), "Committed deletion must clear configuration projections before publishing completion");
+const coreDeletion = section(core, "pub async fn deleteChatHistory(", "/// Stops deleted conversations");
+verify(/self\s*\.chatHistoryDelegate\s*\.deleteChatHistory\(service, chatId\.clone\(\)\)\s*\.await\?/.test(coreDeletion) && !/deleteConfiguration|if let Err|AppLogger/.test(coreDeletion), "Core deletion must use the single history lifecycle and retain its errors");
 const startup = section(history, "pub fn initialize(", "/// Loads the newest indexed display window");
 verify(/openChatHistory\(chatId, false\)\?/.test(startup) && !/switchConfiguredChat|\.resolve\(|ChatConfigurationApi/.test(startup), "Unbound startup must restore persisted history without resolving execution configuration");
 const historyOpen = section(history, "pub fn openChatHistory(", "/// Requires an actual Core chat record");
@@ -88,21 +90,22 @@ verify(/requireChatExists/.test(historyOpen) && /configurations\.remove\(&chatId
 verify(!/ChatConfigurationApi|\.resolve\(|pluginExtensions|defaultModelBinding/.test(historyOpen), "History navigation must not interpret namespaces or synthesize a default profile");
 const recordOpen = section(history, "fn openChatRecord(", "/// Initializes a true source branch");
 verify(!/chatConfigurationsFlow|\.resolve\(/.test(recordOpen) && /requireChatExists/.test(recordOpen), "Canonical record opening must not require an execution descriptor");
-const coreStartup = section(core, "pub async fn initializeChatConfiguration(", "fn syncTokenStatisticsForCurrentChat(");
+const coreStartup = section(core, "pub fn initializeChatConfiguration(", "fn syncTokenStatisticsForCurrentChat(");
 verify(/self\.chatHistoryDelegate\.initialize\(\)/.test(coreStartup) && !/enhancedAiService|initialize\([^)]*\)\.await/.test(coreStartup), "Core startup must call the synchronous history initializer without an AI runtime");
+verify(/std::future::ready\(self\.initializeChatHistory\(\)\)/.test(coreStartup), "The public initialization future must retain the synchronous history result");
 verify(/if let Some\(result\) = &self\.chatConfigurationInitialization/.test(coreStartup) && /Some\(result\.clone\(\)\)/.test(coreStartup), "Startup must retain its actual success or storage error without retry or error masking");
 for (const [start, end] of [["pub async fn switchChat(", "pub async fn switchChatLocal("], ["pub async fn switchChatLocal(", "/// Resolves and publishes only generic display identity"]]) {
   const navigation = section(core, start, end);
   verify(/openChatHistory/.test(navigation) && !/enhancedAiService|switchConfiguredChat|\.resolve\(/.test(navigation), "Both public history switch routes must work without configuration or an AI runtime");
 }
-const explicitConfiguration = section(core, "pub async fn chatConfiguration(", "/// Resolves the message author through the current chat configuration");
+const explicitConfiguration = section(core, "pub fn chatConfiguration(", "/// Resolves the message author through the current chat configuration");
 verify(/resolveDisplay/.test(explicitConfiguration) && /purpose: ChatConfigurationPurpose::Display/.test(explicitConfiguration) && /\.await\?/.test(explicitConfiguration), "Public presentation resolve must keep native errors visible without requiring an execution profile");
 verify(/ChatConfigurationDisplayResult/.test(explicitConfiguration) && !/resolveChatConfigurationForOptions|\.profile/.test(explicitConfiguration), "Public display results must remain independently typed");
 verify(/pub purpose: ChatConfigurationPurpose/.test(runtime) && !/serde\(default\)[^;]*purpose/s.test(runtime), "Every request must carry an explicit required purpose");
 verify(/purpose: ChatConfigurationPurpose::Execution/.test(enhanced), "Actual sends must resolve the execution purpose");
 const lifecycle = source(application + "plugins/toolpkg/ToolPkgChatLifecycleHookBridge.rs");
 const newValidation = section(lifecycle, "ToolPkgChatCreationKind::New =>", "ToolPkgChatCreationKind::Branch =>");
-verify(!/sourceChatId\.is_some/.test(newValidation) && /sourceMessageTimestamp\.is_some/.test(newValidation) && /parentChatId\.is_some/.test(newValidation), "New creation must accept a real source but reject branch-only context");
+verify(!/sourceChatId\.is_some|parentChatId\.is_some/.test(newValidation) && /sourceMessageTimestamp\.is_some/.test(newValidation), "New creation must allow source and tree parent identity but reject a branch message timestamp");
 verify(/loadChatHistory\(id\.clone\(\)\)/.test(create) && create.indexOf("Source chat does not exist") < create.indexOf("dispatchBeforeCreate"), "Actual nonempty source records must be read and validated before the hook");
 const inputBridge = source(application + "plugins/toolpkg/ToolPkgChatInputHookBridge.rs");
 verify(!/已跳过并继续|timeoutNoticeMessage|decodeToolPkgHookResult|unwrap_or_default/.test(inputBridge), "Submit failure must never degrade to a normal send or malformed-result no-contribution");
@@ -117,10 +120,17 @@ verify(/pub async fn currentChatIdFlow/.test(core) && /self\.initializeChatConfi
 const messageConfiguration = section(core, "pub async fn chatConfigurationForMessage(", "pub async fn currentChatIdFlow");
 verify(/PluginExtensionTarget::Message/.test(messageConfiguration) && /participantId/.test(messageConfiguration) && /api\.resolve/.test(messageConfiguration) && !/readSnapshot|messageExtension|executionData/.test(messageConfiguration), "Message execution must resolve current configuration using only its real author ID");
 verify(/applyConfigurationIdentity\(&mut aiMessage, &configuration\)/.test(processor) && !/applyConfigurationSnapshot|storeSnapshot/.test(processor + support), "Sending persists only the author identity without a snapshot API or storage call");
-verify(/beginChatExecution\(&chatId\)/.test(coordinator) && /executionLease: Option<ChatExecutionLease>/.test(processor), "Generation protection must be acquired and retained by the real streaming runtime");
+const modelSelection = source(application + "services/ChatModelBindingService.rs");
+const modelAdmission = section(modelSelection, "pub(crate) fn beginExecution(", "/// Reads a chat override");
+verify(/Self::read\(/.test(modelAdmission) && modelAdmission.indexOf("Self::read(") < modelAdmission.indexOf(".beginChatExecution("), "Obsolete model cleanup must finish before acquiring the unchanged store execution lease");
+verify(/ChatModelBindingService::beginExecution\(/.test(coordinator) && /executionLease: Option<ChatExecutionLease>/.test(processor), "Generation protection must be acquired and retained by the real streaming runtime");
 verify(/runtime\.executionLease\.take\(\)/.test(processor) && /protectRevision/.test(processor), "Completion/cancel must release guards protecting exact dirty revisions");
 verify(/runtime\.chatConfiguration\.profile\.id/.test(enhanced) && /"executionContext"/.test(enhanced), "Prompt hooks must receive the resolved execution participant");
-verify((enhanced.match(/let availableTools = applyToolPromptComposeHooksToAvailableTools\(/g) ?? []).length === 3, "Initial sends, subsequent tool rounds and estimates must actually filter model-visible tools");
+const composeTools = section(enhanced, "async fn composeAvailableTools(", "/// Estimates the request window");
+verify(/applyToolPromptComposeHooksToAvailableTools\([\s\S]*\)\.await/.test(composeTools), "Shared tool composition must await the registered model-visible tool filters");
+for (const [start, end] of [["pub async fn estimateRequestWindowFromMemory(", "pub fn requestWindowEstimateFlow("], ["async fn executeSendMessageWithRuntime(", "async fn processToolResults("], ["async fn processToolResults(", "pub async fn processStreamCompletion("]]) {
+  verify(/let availableTools = self\.composeAvailableTools\([\s\S]*?\)\.await\?;/.test(section(enhanced, start, end)), "Initial sends, subsequent tool rounds and estimates must each use shared tool composition and propagate filter errors");
+}
 verify(/options\.executionParticipantId = Some\(configuration\.profile\.id/.test(enhanced), "Tool execution context must use the same resolved participant identity");
 verify(/getServiceBundleForModel\([\s\S]*profile\.modelBinding/.test(enhanced), "The actual provider/model service bundle must come from the resolved profile");
 verify(/let introPrompt = profile\.introPrompt/.test(enhanced) && /let userPreferencesText = profile\.userPreferencesText/.test(enhanced), "Profile prompt content must be passed to the real runtime");
@@ -133,13 +143,18 @@ verify(!/pub mod ChatMemoryOwnerResolver/.test(source(application + "services/co
 verify(/pub fn speakWithConfig/.test(source(application + "services/TtsPlaybackService.rs")) && /pub fn synthesizeWithConfig/.test(source(application + "services/TtsSynthesisService.rs")), "TTS production services must accept explicit resolved configuration identities");
 const inputDispatch = section(inputBridge, "pub async fn dispatchChatInputHooks(", "/// Requires the process-owned runtime");
 verify(/readySnapshot/.test(inputDispatch) && /getEnabledToolPkgContainerRuntimes/.test(inputDispatch), "Input dispatch must inspect the actual ready enabled registry");
-verify(/remainingTimeoutMillis\(\)[\s\S]*ok_or_else/.test(inputDispatch) && /budget\.hasExpired\(\)[\s\S]*return Err/.test(inputDispatch), "Both timeout boundaries must reject the actual submit");
+const preHookTimeout = source(application + "plugins/toolpkg/ToolPkgPreHookTimeout.rs");
+const runHook = section(preHookTimeout, "pub async fn runHook(", "/// Returns the timeout milliseconds");
+verify(/ToolPkgPreHookTimeout::runHook\(\s*budget\.as_ref\(\)/.test(inputDispatch) && /\)\.await\.map_err\([\s\S]*?\)\?;/.test(inputDispatch), "Input dispatch must use the shared hook deadline and propagate its failure");
+verify(/remainingTimeoutMillis\(\)[\s\S]*ok_or_else/.test(preHookTimeout) && /budget\.remainingForHook\([\s\S]*?\)\?/.test(runHook) && /budget\.hasExpired\(\)[\s\S]*return Err/.test(runHook), "Both shared timeout boundaries must reject the actual submit");
 verify(!/Err\([^)]*\) =>[\s\S]*None|CHAT_INPUT_SUBMIT_ACTION_ALLOW\.to_string\(\)/.test(inputDispatch), "An invoked error or expired budget must never produce no-contribution or allow");
-const startSend = section(core, "pub(crate) async fn startUserMessage(", "/// Commits complete original input exactly once");
+const startSend = section(core, "async fn start(mut self,", "/// Creates a chat service core");
+const captureSend = section(core, "pub(crate) fn startUserMessage(", "/// Commits complete original input exactly once");
+verify(/captureUserMessageStarter/.test(captureSend) && /starter\?\.start\(/.test(captureSend), "The public send future must invoke the captured originating starter after releasing Holder");
 verify(/let submitDecision = submitDecision\?/.test(startSend) && /CHAT_INPUT_SUBMIT_ACTION_BLOCK \| CHAT_INPUT_SUBMIT_ACTION_CONSUME/.test(startSend), "Actual direct-send hook errors must stop before the coordinator while ownership decisions remain explicit");
 verify(/MessageSendOutcome::Consumed/.test(startSend) && /ChatTurnSubmission::Handled/.test(startSend), "Consumed input must not be reported as a completed model generation");
 verify(!/roleCardId|role_card_id|groupOrchestration|groupParticipant|isGroupOrchestration/.test(core + coordinator + processor + source(application + "core/chat/AIMessageManager.rs")), "Core execution must not retain role aliases or native group interpretation");
-const continuation = section(coordinator, "pub async fn sendMessageInternal(", "/// Starts a user-requested conversation summary");
+const continuation = section(coordinator, "pub async fn sendMessageInternal(", "/// Starts snapshot compaction");
 verify(/loadChatMessageVariant\(&chatId, continuation\.userMessageTimestamp, 0\)/.test(continuation) && /source\.sender != \"user\"/.test(continuation), "Continuation must read and validate the precise committed user record");
 verify(/request\.turnOptions\.continuation\.is_none\(\)/.test(processor), "Continuation must not enter the actual user insert path");
 const commitUser = section(history, "pub(crate) fn commitUserMessage(", "/// Commits one assistant segment");
@@ -164,7 +179,7 @@ verify(/fn sendMessage\(&self, request: ChatSendRequest\)/.test(sdkChat)
 verify(!/fn (startTurn|waitTurn|cancelTurn|finishSequence)\(|onIntermediateResult|ChatSendMessageStreamingOptions/.test(sdkChat), "Native execution handles and callback streaming must not leak into the current public contract");
 verify(/fn openPluginChatMessage\(/.test(toolsRuntime) && /fn requestPluginChatCancellation\(/.test(toolsRuntime), "The new public methods require actual owner-authenticated runtime implementations");
 verify(!/ChatTurnHandle|ChatSequenceFinishResultData/.test(sdkResults) && /uuid::Uuid::new_v4/.test(nativeTransport), "Only native admission generates execution handles; the author result contract does not expose them");
-verify(/manager\.beginChatExecution\(&chatId\)/.test(nativeTransport) && /lease: lease\.clone/.test(nativeTransport), "Native admission retains the canonical store lease through finalization");
+verify(/ChatModelBindingService::beginExecution\(manager, &chatId\)/.test(nativeTransport) && /lease: lease\.clone/.test(nativeTransport), "Native admission retains the canonical store lease through finalization");
 verify(/execution\.owner != owner/.test(nativeTransport) && /sequence\.owner != owner/.test(nativeTransport), "Execution and sequence operations must reject foreign authenticated owners");
 const chatTools = source("core/crates/tool/services/src/tools/defaultTool/standard/StandardChatManagerTool.rs");
 const registration = source("core/crates/tool/services/src/tools/ToolRegistration.rs");

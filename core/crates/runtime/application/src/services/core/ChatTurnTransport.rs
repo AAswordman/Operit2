@@ -97,7 +97,7 @@ impl ChatTurnTransport {
                 (chatId, runtime, notifyReply, Some(userMessageTimestamp), AdmittedChatTurnWork::Continue { userMessageTimestamp, participantId, summaryPolicy })
             }
         };
-        let lease = manager.beginChatExecution(&chatId).map_err(|error| error.to_string())?;
+        let lease = crate::services::ChatModelBindingService::ChatModelBindingService::beginExecution(manager, &chatId)?;
         let sequenceId = uuid::Uuid::new_v4().to_string();
         let executionId = uuid::Uuid::new_v4().to_string();
         let cancelled = Arc::new(AtomicBool::new(false));

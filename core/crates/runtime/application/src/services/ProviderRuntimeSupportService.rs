@@ -21,6 +21,8 @@ use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::data::preferences::TtsConfigManager::TtsConfigManager;
 use crate::plugins::toolpkg::ToolPkgAiProviderRegistry::ToolPkgAiProviderRegistry;
+use crate::services::ChatModelBindingService::ChatModelBindingService;
+use operit_store::repository::ChatHistoryManager::ChatHistoryManager;
 use operit_store::RuntimeStorePaths::RuntimeStorePaths;
 
 /// Creates runtime-backed services required by provider crates.
@@ -583,6 +585,29 @@ impl ProviderRuntimeSupport for RuntimeProviderSupport {
             providerId: binding.providerId,
             modelId: binding.modelId,
         })
+    }
+
+    /// Applies a conversation model only to chat, leaving auxiliary function bindings independent.
+    fn modelBindingForChat(
+        &self,
+        chatId: Option<&str>,
+        functionType: FunctionType,
+    ) -> Result<ProviderFunctionModelBinding, String> {
+        if functionType == FunctionType::CHAT {
+            if let Some(chatId) = chatId {
+                let history = ChatHistoryManager::default()
+                    .map_err(|error| error.to_string())?;
+                if let Some(binding) = ChatModelBindingService::read(
+                    &history, &ModelConfigManager::default(), chatId,
+                )? {
+                    return Ok(ProviderFunctionModelBinding {
+                        providerId: binding.providerId,
+                        modelId: binding.modelId,
+                    });
+                }
+            }
+        }
+        self.modelBindingForFunction(functionType)
     }
 
     /// Returns the resolved model config for a provider/model pair.

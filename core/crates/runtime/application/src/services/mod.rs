@@ -1,4 +1,6 @@
 pub(crate) mod PublishingTerminalHost;
+#[path = "ChatModelBindingService.rs"]
+pub(crate) mod ChatModelBindingService;
 #[path = "ExtensionRuntimeService.rs"]
 pub mod ExtensionRuntimeService;
 #[path = "PreparedChatDeliveryService.rs"]

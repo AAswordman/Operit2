@@ -1406,6 +1406,11 @@ impl ChatHistoryDelegate {
                         .map_err(|error| error.to_string())?
                         .ok_or_else(|| format!("Current chat does not exist: {currentId}"))?;
                     if current.workspaceId == draft.workspaceId
+                        && crate::services::ChatModelBindingService::ChatModelBindingService::read(
+                            &self.chatHistoryManager,
+                            &crate::data::preferences::ModelConfigManager::ModelConfigManager::default(),
+                            &currentId,
+                        )?.is_none()
                         && !self
                             .chatHistoryManager
                             .hasUserMessage(currentId.clone())

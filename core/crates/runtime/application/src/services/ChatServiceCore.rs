@@ -2,7 +2,7 @@ use crate::plugins::toolpkg::ToolPkgMessageTransformBridge::ToolPkgMessageTransf
 use operit_tools::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use crate::core::chat::AIMessageManager::AIMessageManager;
 use crate::data::preferences::ApiPreferences::ApiPreferences;
-use crate::data::preferences::FunctionalConfigManager::FunctionalConfigManager;
+use crate::data::preferences::FunctionalConfigManager::{FunctionModelBinding, FunctionalConfigManager};
 use crate::data::preferences::ModelConfigManager::ModelConfigManager;
 use crate::plugins::toolpkg::ToolPkgChatInputHookBridge::{
     ChatInputHookContext, ChatInputHookResult, ToolPkgChatInputHookBridge,
@@ -20,6 +20,7 @@ use crate::services::core::MessageProcessingDelegate::{
     ChatExecutionState, ChatTurnSubmission, MessageProcessingDelegate, SendUserMessageProcessingRequest,
 };
 use crate::services::core::TokenStatisticsDelegate::TokenStatisticsDelegate;
+use crate::services::ChatModelBindingService::ChatModelBindingService;
 use crate::services::ProviderRuntimeSupportService::{ChatConfigurationApi, MODEL_CONFIGURATION_OWNER};
 use crate::services::RuntimeHostInteractionService::{
     chatToolPermissionRequestsFlow, respondChatToolPermission,
@@ -862,11 +863,9 @@ impl ChatServiceCore {
         self.chatHistoryDelegate.openChatHistory(chatId.clone(), false)?;
         delegate.chatHistoryDelegate = self.chatHistoryDelegate.clone_for_core();
         delegate.messageProcessingDelegate = self.messageProcessingDelegate.clone_for_core();
-        let executionLease = self
-            .chatHistoryDelegate
-            .chatHistoryManager
-            .beginChatExecution(&chatId)
-            .map_err(|error| error.to_string())?;
+        let executionLease = ChatModelBindingService::beginExecution(
+            &self.chatHistoryDelegate.chatHistoryManager, &chatId,
+        )?;
         let mut api = ChatConfigurationApi::ready(&service.tool_handler).await;
         let support = service.provider_runtime_context.support();
         let configuration = api
@@ -877,7 +876,7 @@ impl ChatServiceCore {
                 participantId: Some(resumeContext.participantId.clone()),
                 promptFunctionType: resumeContext.promptFunctionType.clone(),
                 defaultModelBinding: support
-                    .modelBindingForFunction(FunctionType::CHAT)?,
+                    .modelBindingForChat(Some(&chatId), FunctionType::CHAT)?,
                 defaultTtsConfigId: support.defaultTtsConfigId()?,
             })
             .await?;
@@ -1212,6 +1211,45 @@ impl ChatServiceCore {
         Ok(())
     }
 
+    /// Returns the effective conversation model without modifying the global chat binding.
+    #[operit_route_macros::operit_core_route(binding = chatId)]
+    pub fn chatModelBinding(&self, chatId: String) -> Result<FunctionModelBinding, String> {
+        self.chatHistoryDelegate.requireChatExists(&chatId)?;
+        let models = ModelConfigManager::default();
+        if let Some(binding) = ChatModelBindingService::read(
+            &self.chatHistoryDelegate.chatHistoryManager,
+            &models,
+            &chatId,
+        )? {
+            return Ok(binding);
+        }
+        FunctionalConfigManager::default()
+            .getModelBindingForFunction(FunctionType::CHAT)
+            .map_err(|error| error.to_string())
+    }
+
+    /// Persists a model for this exact conversation; selecting the global pair resumes global updates.
+    #[operit_route_macros::operit_core_route(binding = chatId)]
+    pub fn setChatModelBinding(
+        &self,
+        chatId: String,
+        binding: Option<FunctionModelBinding>,
+    ) -> Result<(), String> {
+        self.chatHistoryDelegate.requireChatExists(&chatId)?;
+        let global = FunctionalConfigManager::default()
+            .getModelBindingForFunction(FunctionType::CHAT)
+            .map_err(|error| error.to_string())?;
+        let binding = binding.filter(|binding| {
+            binding.providerId != global.providerId || binding.modelId != global.modelId
+        });
+        ChatModelBindingService::write(
+            &self.chatHistoryDelegate.chatHistoryManager,
+            &ModelConfigManager::default(),
+            &chatId,
+            binding,
+        )
+    }
+
     /// Resolves and publishes only generic display identity, ordered participants and plugin-authored initialization data.
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub fn chatConfiguration(
@@ -1233,7 +1271,7 @@ impl ChatServiceCore {
                 chatExtension: None,
                 participantId: None,
                 promptFunctionType: PromptFunctionType::CHAT,
-                defaultModelBinding: support.modelBindingForFunction(FunctionType::CHAT)?,
+                defaultModelBinding: support.modelBindingForChat(Some(&chatId), FunctionType::CHAT)?,
                 defaultTtsConfigId: support.defaultTtsConfigId()?,
             }).await?;
             history
@@ -1270,12 +1308,12 @@ impl ChatServiceCore {
         let support = service.provider_runtime_context.support();
         api.resolve(ChatConfigurationRequest {
             purpose: ChatConfigurationPurpose::Execution,
-            chatId: Some(chatId),
+            chatId: Some(chatId.clone()),
             chatExtension: None,
             participantId,
             promptFunctionType: PromptFunctionType::CHAT,
             defaultModelBinding: support
-                .modelBindingForFunction(FunctionType::CHAT)?,
+                .modelBindingForChat(Some(&chatId), FunctionType::CHAT)?,
             defaultTtsConfigId: support.defaultTtsConfigId()?,
         })
         .await
@@ -1648,11 +1686,9 @@ impl ChatServiceCore {
             Some(id) if !id.trim().is_empty() => id,
             _ => self.chatHistoryDelegate.currentChatIdFlow.value().ok_or_else(|| "No chat is active".to_string())?,
         };
-        let executionLease = self
-            .chatHistoryDelegate
-            .chatHistoryManager
-            .beginChatExecution(&targetChatId)
-            .map_err(|error| error.to_string())?;
+        let executionLease = ChatModelBindingService::beginExecution(
+            &self.chatHistoryDelegate.chatHistoryManager, &targetChatId,
+        )?;
         let Some(mut enhancedAiService) = self.newEnhancedAiServiceForChat(&targetChatId) else {
             return Ok(false);
         };
@@ -3038,14 +3074,18 @@ impl ChatServiceCore {
             .triggerToggleForFlutter(toggleId, chatId, Some("main".into()))
     }
 
+    /// Returns usage and context limits for the effective conversation model.
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn chatInputMenuSummary(
         &self,
         chatId: Option<String>,
     ) -> Result<ChatInputMenuSummary, String> {
-        let binding = FunctionalConfigManager::default()
-            .getModelBindingForFunction(FunctionType::CHAT)
-            .map_err(|e| e.to_string())?;
+        let binding = match &chatId {
+            Some(id) => self.chatModelBinding(id.clone())?,
+            None => FunctionalConfigManager::default()
+                .getModelBindingForFunction(FunctionType::CHAT)
+                .map_err(|error| error.to_string())?,
+        };
         let config = ModelConfigManager::default()
             .getResolvedModelConfig(&binding.providerId, &binding.modelId)
             .map_err(|e| e.to_string())?;

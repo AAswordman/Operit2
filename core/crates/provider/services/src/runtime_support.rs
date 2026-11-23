@@ -317,6 +317,13 @@ pub trait ProviderRuntimeSupport: Send + Sync {
         functionType: FunctionType,
     ) -> Result<ProviderFunctionModelBinding, String>;
 
+    /// Resolves a chat's independent model for the requested function.
+    fn modelBindingForChat(
+        &self,
+        chatId: Option<&str>,
+        functionType: FunctionType,
+    ) -> Result<ProviderFunctionModelBinding, String>;
+
     /// Returns the resolved model config for a provider/model pair.
     fn resolvedModelConfig(
         &self,
