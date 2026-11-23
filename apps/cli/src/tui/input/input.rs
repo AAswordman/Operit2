@@ -9,7 +9,10 @@ use operit_util::stream::ReverseStream::ReverseStream;
 use std::path::PathBuf;
 
 use super::app::{OperitTui, QueuedAttachmentToken, QueuedAttachmentTokenKind};
-use super::commands::{complete_command_input, matching_command_specs, TuiCommandSuggestion};
+use super::commands::{
+    complete_command_input, ghost_hint, matching_command_specs, value_suggestions,
+    ValueContext, TuiCommandSuggestion,
+};
 use super::helpers::{char_to_byte_index, display_width, wrap_approx_lines};
 
 const PASTE_ATTACHMENT_CHAR_THRESHOLD: usize = 2_048;
@@ -133,11 +136,9 @@ impl OperitTui {
             (KeyCode::Up, _) => self.recall_previous_input(),
             (KeyCode::Down, _) => self.recall_next_input(),
             (KeyCode::Enter, KeyModifiers::NONE) => {
-                if self.should_complete_selected_command_on_enter() {
-                    self.complete_selected_command();
-                } else {
-                    self.submit_input().await?;
-                }
+                // Enter is reserved for submission; completion belongs to
+                // Tab (with Up/Down selecting the candidate).
+                self.submit_input().await?;
             }
             (KeyCode::Char('j'), KeyModifiers::CONTROL) => self.insert_char('\n'),
             (KeyCode::Char('v'), KeyModifiers::CONTROL) => {
@@ -163,9 +164,36 @@ impl OperitTui {
         Ok(())
     }
 
-    /// Returns command suggestions matching the current input buffer.
+    /// Returns command suggestions matching the current input buffer. Once
+    /// the command path is fully typed, falls back to argument-value
+    /// candidates from the live app state.
     pub(super) fn command_suggestions(&self) -> Vec<TuiCommandSuggestion> {
-        matching_command_specs(&self.input, &self.plugin_commands)
+        let mut suggestions = matching_command_specs(&self.input, &self.plugin_commands);
+        if suggestions.is_empty() {
+            suggestions = value_suggestions(
+                &self.input,
+                &self.plugin_commands,
+                &self.value_completion_context(),
+            );
+        }
+        suggestions
+    }
+
+    /// Gathers the dynamic completion sources for argument values.
+    fn value_completion_context(&self) -> ValueContext {
+        ValueContext {
+            chat_ids: self.chats.iter().map(|chat| chat.id.clone()).collect(),
+            // Device topology snapshots live inside the hub/device-manager
+            // modals only; there is no resident copy on the app state yet,
+            // so device candidates stay empty until that changes.
+            device_ids: Vec::new(),
+        }
+    }
+
+    /// Returns the muted ghost hint of remaining parameters, if the buffer
+    /// fully matches a command path.
+    pub(super) fn input_ghost_hint(&self) -> Option<String> {
+        ghost_hint(&self.input, &self.plugin_commands)
     }
 
     /// Returns the selected command suggestion index within the available range.
@@ -271,27 +299,6 @@ impl OperitTui {
         self.input = input;
         self.input_cursor = cursor;
         self.autocomplete_index = 0;
-    }
-
-    /// Returns whether Enter should commit the selected command suggestion.
-    fn should_complete_selected_command_on_enter(&self) -> bool {
-        let suggestions = self.command_suggestions();
-        if suggestions.is_empty() || self.input.contains('\n') {
-            return false;
-        }
-        let index = self.selected_command_index(suggestions.len());
-        let current = self
-            .input
-            .strip_prefix('/')
-            .map(str::trim_start)
-            .unwrap_or("")
-            .trim_end()
-            .to_ascii_lowercase();
-        let name = suggestions[index].name();
-        // Enter only completes while the buffer is still a prefix of the
-        // suggestion; once values follow (e.g. `/new source parent `),
-        // remaining option suggestions must not swallow the submission.
-        !current.is_empty() && current != name && name.starts_with(&current)
     }
 
     /// Moves the command suggestion selection up by one row.

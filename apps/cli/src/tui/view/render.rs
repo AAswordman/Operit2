@@ -1,9 +1,9 @@
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
-    ScrollbarState, Wrap,
+    Block, BorderType, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+    ScrollbarOrientation, ScrollbarState, Wrap,
 };
 use ratatui::Frame;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -19,12 +19,13 @@ use super::app::{
     space_join_is_active,
     ControlPanelMode, ControlPanelTab, DeviceManagerAction, DeviceManagerMode, DeviceManagerModal,
     DeviceManagerRow, FocusArea, FullUpdateDownloadState, ListenerField, NetworkHubModal,
-    NetworkHubRow, OperitTui, PairField, PairStage, PAIR_WIZARD_TRANSPORTS, StartupInstallState,
+    NetworkHubRow, OperitTui, OverlayKind, PairField, PairStage, PAIR_WIZARD_TRANSPORTS,
+    StartupInstallState,
 };
 use crate::cli::network_control_ui::{network_device_label_by_id, network_role_summary};
 use super::helpers::{
-    centered_rect, display_width, resolve_transcript_scroll, short_chat_label,
-    transcript_max_scroll, wrap_approx_lines,
+    centered_rect, display_width, resolve_transcript_scroll, transcript_max_scroll,
+    wrap_approx_lines,
 };
 use super::pending_queue::{
     pending_queue_preview_text, pending_queue_visible_items, pending_queue_visible_range,
@@ -42,24 +43,18 @@ impl OperitTui {
     pub(super) fn render(&mut self, frame: &mut Frame) {
         let root = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(1),
-                Constraint::Min(0),
-                Constraint::Length(1),
-            ])
+            .constraints([Constraint::Min(0), Constraint::Length(1)])
             .split(frame.area());
-
-        self.render_header(frame, root[0]);
 
         let main_area = if self.show_chat_list {
             let body = Layout::default()
                 .direction(Direction::Horizontal)
                 .constraints([Constraint::Length(28), Constraint::Min(0)])
-                .split(root[1]);
+                .split(root[0]);
             self.render_chat_list(frame, body[0]);
             body[1]
         } else {
-            root[1]
+            root[0]
         };
 
         let input_height = self.input_panel_height(main_area.width, main_area.height);
@@ -70,121 +65,71 @@ impl OperitTui {
 
         self.render_transcript(frame, main[0]);
         self.render_input(frame, main[1]);
-        self.render_footer(frame, root[2]);
+        self.render_footer(frame, root[1]);
         self.render_command_popup(frame, main[1]);
 
         // Overlays record the topmost popup content rect for mouse selection.
         self.popup_selection_rect = None;
 
-        if let Some(editor) = &self.compose.editor {
-            let area = centered_rect(80, 25, frame.area());
-            frame.render_widget(Clear, area);
-            frame.render_widget(
-                Paragraph::new(editor.value.as_str())
-                    .wrap(Wrap { trim: false })
-                    .block(
-                        Block::default()
-                            .title("Edit · Enter: apply · Esc: cancel")
-                            .borders(Borders::ALL),
-                    ),
-                area,
-            );
-        }
-
         if self.show_model_chooser {
             self.render_model_chooser(frame);
         }
 
-        if self.show_config_popup {
-            self.config_ui.render(frame, self.text());
-            self.popup_selection_rect = self.config_ui.selection_rect;
-        }
-
-        if self.show_help {
-            self.render_help_modal(frame);
-        }
-
-        if self.startup_install_prompt.is_some() {
-            self.render_startup_install_prompt(frame);
-        }
-
-        if self.startup_update_prompt.is_some() && self.startup_install_prompt.is_none() {
-            self.render_startup_update_prompt(frame);
-        }
-
-        if self.startup_workspace_prompt.is_some()
-            && self.startup_update_prompt.is_none()
-            && self.startup_install_prompt.is_none()
-        {
-            self.render_startup_workspace_prompt(frame);
-        }
-
-        if !self.current_tool_permission_requests.is_empty() {
-            self.render_approval_modal(frame);
-        }
-
-        if self.network_hub.is_some() {
-            self.render_network_hub(frame);
-        }
-
-        // The hub opens list popups (discover, audit, policy, token, leave,
-        // unpair); they render above the panel and take keys first, so they
-        // behave like the device window instead of being hidden behind it.
-        if self.show_list_popup {
-            self.render_list_popup(frame);
-        }
-
-        if self.device_manager.is_some() {
-            self.render_device_manager(frame);
-        }
-
-        if self.pair_wizard.is_some() {
-            self.render_pair_wizard(frame);
-        }
-
-        if self.join_decision.is_some() {
-            self.render_join_decision_modal(frame);
-        }
-
-        if self.listener_settings.is_some() {
-            self.render_listener_settings(frame);
-        }
-
-        if self.endpoint_edit.is_some() {
-            self.render_endpoint_edit(frame);
-        }
-
-        if let Some(modal) = &self.diff_viewer {
-            super::diff::render_diff_viewer_modal(modal, frame);
-        }
-
-        if self.control_panel.is_some() {
-            self.render_control_panel(frame);
+        // Every other surface renders back-to-front from the overlay stack —
+        // the same ordered list that routes keys front-to-back in
+        // `handle_key_event`, so z-order and key priority cannot drift.
+        for kind in self.overlay_stack() {
+            self.render_overlay(frame, kind);
         }
 
         self.finish_popup_selection(frame.buffer_mut());
     }
 
-    fn render_header(&mut self, frame: &mut Frame, area: Rect) {
-        let current_chat_id = self.current_chat_id().unwrap_or_default();
-        let title = self
-            .chats
-            .iter()
-            .find(|item| item.id == current_chat_id)
-            .map(|item| item.title.as_str())
-            .unwrap_or(self.text().new_chat_title());
-        let spans = Line::from(vec![
-            Span::styled(
-                format!(" {} ", short_chat_label(&current_chat_id)),
-                Style::default().fg(theme::TEXT_INVERTED).bg(theme::ACCENT),
-            ),
-            Span::raw(" "),
-            Span::styled(
-                title.to_string(),
-                Style::default().add_modifier(Modifier::BOLD),
-            ),
-        ]);
-        frame.render_widget(Paragraph::new(spans), area);
+    /// Renders one overlay surface. Arm order is irrelevant; the stack
+    /// decides visibility order.
+    fn render_overlay(&mut self, frame: &mut Frame, kind: OverlayKind) {
+        match kind {
+            OverlayKind::ComposeEditor => {
+                let Some(editor) = &self.compose.editor else {
+                    return;
+                };
+                let area = centered_rect(80, 25, frame.area());
+                frame.render_widget(Clear, area);
+                frame.render_widget(
+                    Paragraph::new(editor.value.as_str())
+                        .wrap(Wrap { trim: false })
+                        .block(theme::popup_block().title(" Edit · Enter: apply · Esc: cancel ")),
+                    area,
+                );
+            }
+            OverlayKind::Help => self.render_help_modal(frame),
+            OverlayKind::StartupInstall => self.render_startup_install_prompt(frame),
+            OverlayKind::StartupUpdate => self.render_startup_update_prompt(frame),
+            OverlayKind::StartupWorkspace => self.render_startup_workspace_prompt(frame),
+            OverlayKind::NetworkHub => self.render_network_hub(frame),
+            // List popups opened from the hub render above it and take keys
+            // first, so they behave like the device window instead of being
+            // hidden behind it.
+            OverlayKind::ListPopup => self.render_list_popup(frame),
+            OverlayKind::DeviceManager => self.render_device_manager(frame),
+            OverlayKind::PairWizard => self.render_pair_wizard(frame),
+            OverlayKind::JoinDecision => self.render_join_decision_modal(frame),
+            OverlayKind::ListenerSettings => self.render_listener_settings(frame),
+            OverlayKind::EndpointEdit => self.render_endpoint_edit(frame),
+            OverlayKind::DiffViewer => {
+                if let Some(modal) = &self.diff_viewer {
+                    super::diff::render_diff_viewer_modal(modal, frame);
+                }
+            }
+            OverlayKind::ControlPanel => self.render_control_panel(frame),
+            OverlayKind::Config => {
+                self.config_ui.render(frame, self.text());
+                self.popup_selection_rect = self.config_ui.selection_rect;
+            }
+            // The tool-permission prompt is a forced security modal: it
+            // renders and receives keys above every other surface.
+            OverlayKind::Approval => self.render_approval_modal(frame),
+        }
     }
 
     fn render_chat_list(&self, frame: &mut Frame, area: Rect) {
@@ -211,13 +156,14 @@ impl OperitTui {
         let border_style = if self.focus == FocusArea::Chats {
             Style::default().fg(theme::ACCENT)
         } else {
-            Style::default()
+            Style::default().fg(theme::BORDER_MUTED)
         };
         let list = List::new(items)
             .block(
                 Block::default()
                     .title(self.text().chats_title())
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .border_style(border_style),
             )
             .highlight_style(
@@ -275,9 +221,23 @@ impl OperitTui {
         self.transcript_scroll = scroll;
         self.follow_transcript = follows;
 
+        let current_chat_id = self.current_chat_id().ok();
+        let chat_title = self
+            .chats
+            .iter()
+            .find(|item| Some(item.id.as_str()) == current_chat_id.as_deref())
+            .map(|item| item.title.clone())
+            .unwrap_or_else(|| self.text().new_chat_title().to_string());
         let block = Block::default()
-            .title(self.text().conversation_title())
-            .borders(Borders::ALL);
+            .title(format!(" {chat_title} "))
+            .title_style(
+                Style::default()
+                    .fg(theme::ACCENT_STRONG)
+                    .add_modifier(Modifier::BOLD),
+            )
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(theme::BORDER_MUTED));
         frame.render_widget(block, area);
         let paragraph =
             Paragraph::new(Text::from(transcript_lines)).scroll((self.transcript_scroll, 0));
@@ -325,10 +285,11 @@ impl OperitTui {
         let border_style = match self.focus {
             FocusArea::Input => Style::default().fg(theme::ACCENT),
             FocusArea::Queue => Style::default().fg(theme::SELECTION_BG),
-            _ => Style::default(),
+            _ => Style::default().fg(theme::BORDER_MUTED),
         };
         let input_block = Block::default()
             .borders(Borders::ALL)
+            .border_type(BorderType::Rounded)
             .border_style(border_style);
         let inner = input_block.inner(area);
         let prompt_width = INPUT_PROMPT.chars().count();
@@ -341,6 +302,11 @@ impl OperitTui {
         let input_height = inner.height.saturating_sub(queue_height).max(1) as usize;
         let visible_text = self.input_view_text(text_width, input_height);
         let prompt_indent = " ".repeat(prompt_width);
+        let ghost_hint = if queue_lines.is_empty() && !visible_text.contains('\n') {
+            self.input_ghost_hint()
+        } else {
+            None
+        };
         let mut rendered_lines = queue_lines;
         rendered_lines.extend(visible_text.split('\n').enumerate().map(|(index, line)| {
             if index == 0 {
@@ -349,6 +315,14 @@ impl OperitTui {
                 Line::from(format!("{prompt_indent}{line}"))
             }
         }));
+        if let Some(hint) = ghost_hint {
+            if let Some(last) = rendered_lines.last_mut() {
+                last.spans.push(Span::styled(
+                    hint,
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ));
+            }
+        }
         let input = Paragraph::new(Text::from(rendered_lines))
             .block(input_block)
             .wrap(Wrap { trim: false });
@@ -473,7 +447,8 @@ impl OperitTui {
             .skip(first_visible)
             .take(visible_count)
             .map(|(index, spec)| {
-                let style = if index == selected {
+                let selected = index == selected;
+                let style = if selected {
                     Style::default()
                         .fg(theme::TEXT_INVERTED)
                         .bg(theme::ACCENT)
@@ -481,20 +456,35 @@ impl OperitTui {
                 } else {
                     Style::default()
                 };
-                ListItem::new(Line::from(vec![
-                    Span::styled(spec.usage().to_string(), style),
-                    Span::styled(
-                        format!("  {}", spec.description(self.language)),
-                        Style::default().fg(theme::TEXT_SUBTLE),
-                    ),
-                ]))
+                let mut usage_spans: Vec<Span<'static>> = Vec::new();
+                if selected {
+                    usage_spans.push(Span::styled(spec.usage().to_string(), style));
+                } else {
+                    for (token, is_param) in spec.usage_tokens() {
+                        let token_style = if is_param {
+                            Style::default().fg(theme::ACCENT_STRONG)
+                        } else {
+                            Style::default()
+                        };
+                        usage_spans.push(Span::styled(format!("{token} "), token_style));
+                    }
+                    if let Some(last) = usage_spans.last_mut() {
+                        *last = Span::styled(
+                            last.content.trim_end().to_string(),
+                            last.style,
+                        );
+                    }
+                }
+                usage_spans.push(Span::styled(
+                    format!("  {}", spec.description(self.language)),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ));
+                ListItem::new(Line::from(usage_spans))
             })
             .collect::<Vec<_>>();
         let popup = List::new(items)
             .block(
-                Block::default()
-                    .title(self.text().commands_title())
-                    .borders(Borders::ALL),
+                theme::popup_block().title(format!(" {} ", self.text().commands_title())),
             )
             .highlight_symbol("");
         frame.render_widget(Clear, area);
@@ -507,17 +497,51 @@ impl OperitTui {
         } else {
             self.status_message.clone()
         };
-        let text = if self.context_usage_label.is_empty() {
-            status_text
-        } else {
-            format!("{status_text} | {}", self.context_usage_label)
-        };
+        let mut info_spans: Vec<Span<'static>> = Vec::new();
+        if !self.model_label.is_empty() {
+            info_spans.push(Span::styled(
+                self.model_label.clone(),
+                Style::default().fg(theme::ACCENT_STRONG),
+            ));
+        }
+        if !self.context_usage_label.is_empty() {
+            if !info_spans.is_empty() {
+                info_spans.push(theme::status_separator_span());
+            }
+            info_spans.push(Span::styled(
+                self.context_usage_label.clone(),
+                Style::default().fg(theme::TEXT_MUTED),
+            ));
+        }
+        if info_spans.is_empty() {
+            frame.render_widget(
+                Paragraph::new(Line::from(Span::styled(
+                    format!(" {status_text}"),
+                    Style::default().fg(theme::TEXT_SUBTLE),
+                ))),
+                area,
+            );
+            return;
+        }
+        let info_width = info_spans
+            .iter()
+            .map(|span| display_width(&span.content))
+            .sum::<usize>()
+            .saturating_add(1) as u16;
+        let cols = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Min(0), Constraint::Length(info_width)])
+            .split(area);
         frame.render_widget(
             Paragraph::new(Line::from(Span::styled(
-                format!(" {text}"),
+                format!(" {status_text}"),
                 Style::default().fg(theme::TEXT_SUBTLE),
             ))),
-            area,
+            cols[0],
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(info_spans)).alignment(Alignment::Right),
+            cols[1],
         );
     }
 
@@ -525,14 +549,11 @@ impl OperitTui {
         let popup = centered_rect(84, 70, frame.area());
         frame.render_widget(Clear, popup);
 
-        let block = Block::default()
-            .title(if self.model_list_mode {
-                self.text().model_list_title()
-            } else {
-                self.text().choose_chat_model_title()
-            })
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT));
+        let block = theme::popup_block().title(if self.model_list_mode {
+            format!(" {} ", self.text().model_list_title())
+        } else {
+            format!(" {} ", self.text().choose_chat_model_title())
+        });
         let inner = block.inner(popup);
         self.popup_selection_rect = Some(inner);
         frame.render_widget(block, popup);
@@ -651,10 +672,7 @@ impl OperitTui {
             ControlPanelTab::Logs => self.text().control_logs_title(),
             ControlPanelTab::Identities => self.text().control_identities_title(),
         };
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT));
+        let block = theme::popup_block().title(format!(" {title} "));
         let inner = block.inner(popup);
         self.popup_selection_rect = Some(inner);
         frame.render_widget(block, popup);
@@ -850,9 +868,7 @@ impl OperitTui {
                         Line::from(hint),
                     ])
                     .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme::ACCENT)),
+                        theme::panel_block(false),
                     )
                     .wrap(Wrap { trim: true })
                     .alignment(ratatui::layout::Alignment::Center),
@@ -875,9 +891,7 @@ impl OperitTui {
                         Line::from(format!("> {input}_")),
                     ])
                     .block(
-                        Block::default()
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme::ACCENT)),
+                        theme::panel_block(false),
                     )
                     .wrap(Wrap { trim: true }),
                     input_popup,
@@ -891,10 +905,7 @@ impl OperitTui {
         let popup = centered_rect(60, 70, frame.area());
         frame.render_widget(Clear, popup);
 
-        let block = Block::default()
-            .title(self.list_popup_title.as_str())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT));
+        let block = theme::popup_block().title(format!(" {} ", self.list_popup_title));
         let inner = block.inner(popup);
         self.popup_selection_rect = Some(inner);
         frame.render_widget(block, popup);
@@ -981,9 +992,7 @@ impl OperitTui {
             .collect::<Vec<_>>();
         let help = Paragraph::new(Text::from(lines))
             .block(
-                Block::default()
-                    .title(self.text().help_title())
-                    .borders(Borders::ALL),
+                theme::popup_block().title(format!(" {} ", self.text().help_title())),
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(help, popup);
@@ -1069,10 +1078,7 @@ impl OperitTui {
         };
         let modal = Paragraph::new(Text::from(lines))
             .block(
-                Block::default()
-                    .title(text.install_command_title())
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
+                theme::popup_block().title(format!(" {} ", text.install_command_title())),
             )
             .wrap(Wrap { trim: false });
         frame.render_widget(modal, popup);
@@ -1101,10 +1107,7 @@ impl OperitTui {
                 .bg(theme::ACCENT)
                 .add_modifier(Modifier::BOLD)
         };
-        let modal_block = Block::default()
-            .title(text.workspace_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block = theme::popup_block().title(format!(" {} ", text.workspace_title()));
         let inner = modal_block.inner(popup);
         self.popup_selection_rect = Some(inner);
         frame.render_widget(modal_block, popup);
@@ -1312,10 +1315,7 @@ impl OperitTui {
 
         let modal = Paragraph::new(Text::from(lines))
             .block(
-                Block::default()
-                    .title(text.update_title())
-                    .borders(Borders::ALL)
-                    .border_style(Style::default().fg(theme::ACCENT_DIM)),
+                theme::popup_block().title(format!(" {} ", text.update_title())),
             )
             .wrap(Wrap { trim: false });
         self.popup_selection_rect = Some(Block::default().borders(Borders::ALL).inner(popup));
@@ -1351,10 +1351,7 @@ impl OperitTui {
         } else {
             text.approval_title().to_string()
         };
-        let modal_block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block = theme::popup_block().title(format!(" {title} "));
         let inner = modal_block.inner(popup);
         self.popup_selection_rect = Some(inner);
         frame.render_widget(modal_block, popup);
@@ -1449,10 +1446,8 @@ impl OperitTui {
         let text = self.text();
         let popup = centered_rect(70, 42, frame.area());
         frame.render_widget(Clear, popup);
-        let modal_block = Block::default()
-            .title(text.network_join_decision_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block =
+            theme::popup_block().title(format!(" {} ", text.network_join_decision_title()));
         let inner = modal_block.inner(popup);
         frame.render_widget(modal_block, popup);
         let chunks = Layout::default()
@@ -1513,10 +1508,7 @@ impl OperitTui {
         let text = self.text();
         let popup = centered_rect(78, 78, frame.area());
         frame.render_widget(Clear, popup);
-        let modal_block = Block::default()
-            .title(text.network_hub_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block = theme::popup_block().title(format!(" {} ", text.network_hub_title()));
         let inner = modal_block.inner(popup);
         frame.render_widget(modal_block, popup);
         let chunks = Layout::default()
@@ -1634,7 +1626,8 @@ impl OperitTui {
                 "{} ({todo_count})",
                 text.network_hub_todo_title()
             ))
-            .borders(Borders::TOP);
+            .borders(Borders::TOP)
+            .border_style(Style::default().fg(theme::BORDER_MUTED));
         let todo_inner = todo_block.inner(chunks[1]);
         frame.render_widget(todo_block, chunks[1]);
         if todo_lines.is_empty() {
@@ -1784,10 +1777,8 @@ impl OperitTui {
             PairStage::Code | PairStage::JoinOffer => (centered_rect(50, 30, frame.area()), wizard.stage),
         };
         frame.render_widget(Clear, popup);
-        let modal_block = Block::default()
-            .title(text.network_pair_wizard_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block =
+            theme::popup_block().title(format!(" {} ", text.network_pair_wizard_title()));
         let inner = modal_block.inner(popup);
         frame.render_widget(modal_block, popup);
         let chunks = Layout::default()
@@ -1965,10 +1956,8 @@ impl OperitTui {
         let text = self.text();
         let popup = centered_rect(74, 64, frame.area());
         frame.render_widget(Clear, popup);
-        let modal_block = Block::default()
-            .title(text.network_listener_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block =
+            theme::popup_block().title(format!(" {} ", text.network_listener_title()));
         let inner = modal_block.inner(popup);
         frame.render_widget(modal_block, popup);
         let chunks = Layout::default()
@@ -2135,10 +2124,8 @@ impl OperitTui {
         let text = self.text();
         let popup = centered_rect(64, 36, frame.area());
         frame.render_widget(Clear, popup);
-        let modal_block = Block::default()
-            .title(text.network_endpoint_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block =
+            theme::popup_block().title(format!(" {} ", text.network_endpoint_title()));
         let inner = modal_block.inner(popup);
         frame.render_widget(modal_block, popup);
         let chunks = Layout::default()
@@ -2215,10 +2202,8 @@ impl OperitTui {
         let text = self.text();
         let popup = centered_rect(72, 60, frame.area());
         frame.render_widget(Clear, popup);
-        let modal_block = Block::default()
-            .title(text.network_devices_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_DIM));
+        let modal_block =
+            theme::popup_block().title(format!(" {} ", text.network_devices_title()));
         let inner = modal_block.inner(popup);
         frame.render_widget(modal_block, popup);
         let chunks = Layout::default()
