@@ -141,6 +141,16 @@ pub struct ToolPkgFunctionHookRuntime {
     pub functionSource: Option<String>,
 }
 
+/// Describes one declared argument of a ToolPkg Core command.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgCommandArgRuntime {
+    pub name: String,
+    #[serde(default = "defaultTrue")]
+    pub required: bool,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgCoreCommandRuntime {
     pub id: String,
@@ -148,6 +158,8 @@ pub struct ToolPkgCoreCommandRuntime {
     pub title: LocalizedText,
     pub description: LocalizedText,
     pub usage: String,
+    #[serde(default)]
+    pub args: Vec<ToolPkgCommandArgRuntime>,
     pub function: String,
     #[serde(rename = "functionSource", alias = "function_source")]
     pub functionSource: Option<String>,
@@ -343,6 +355,16 @@ pub struct ToolPkgRegisteredFunctionHook {
     pub functionSource: Option<String>,
 }
 
+/// Describes one declared argument of a registered Core command.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ToolPkgRegisteredCommandArg {
+    pub name: String,
+    #[serde(default = "defaultTrue")]
+    pub required: bool,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolPkgRegisteredCoreCommand {
     pub id: String,
@@ -350,6 +372,8 @@ pub struct ToolPkgRegisteredCoreCommand {
     pub title: LocalizedText,
     pub description: LocalizedText,
     pub usage: String,
+    #[serde(default)]
+    pub args: Vec<ToolPkgRegisteredCommandArg>,
     pub function: String,
     #[serde(rename = "functionSource", alias = "function_source")]
     pub functionSource: Option<String>,
@@ -2132,12 +2156,31 @@ fn validateCoreCommands(
         if !names.insert(name.to_ascii_lowercase()) {
             return Err(format!("Duplicate core command name: {name}"));
         }
+        let args = command
+            .args
+            .iter()
+            .enumerate()
+            .map(|(argIndex, arg)| {
+                let argName = arg.name.trim().to_string();
+                if argName.is_empty() {
+                    return Err(format!(
+                        "{TOOLPKG_REGISTRATION_CORE_COMMAND}[{index}].args[{argIndex}].name is required"
+                    ));
+                }
+                Ok(ToolPkgCommandArgRuntime {
+                    name: argName,
+                    required: arg.required,
+                    options: arg.options.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>, String>>()?;
         runtimes.push(ToolPkgCoreCommandRuntime {
             id,
             name,
             title: command.title.clone(),
             description: command.description.clone(),
             usage: command.usage.trim().to_string(),
+            args,
             function: command.function.trim().to_string(),
             functionSource: command.functionSource.clone(),
         });

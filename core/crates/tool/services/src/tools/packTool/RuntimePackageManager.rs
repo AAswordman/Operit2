@@ -92,6 +92,22 @@ const TOOLPKG_CACHE_SIGNATURE_FILE: &str = ".toolpkg-cache-signature";
 const MARKET_TOOLPKG_FILE_PREFIX: &str = "market-";
 const PACKAGE_MANAGER_LOG_TAG: &str = "ToolPkg";
 
+/// Returns the default required value used by omitted command argument flags.
+fn defaultTrue() -> bool {
+    true
+}
+
+/// Describes one declared argument of a ToolPkg command for completion surfaces.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[allow(non_snake_case)]
+pub struct ToolPkgCommandArgInfo {
+    pub name: String,
+    #[serde(default = "defaultTrue")]
+    pub required: bool,
+    #[serde(default)]
+    pub options: Vec<String>,
+}
+
 /// Describes one slash command contributed by an enabled ToolPkg package.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[allow(non_snake_case)]
@@ -102,6 +118,8 @@ pub struct ToolPkgCoreCommandInfo {
     pub title: String,
     pub description: String,
     pub usage: String,
+    #[serde(default)]
+    pub args: Vec<ToolPkgCommandArgInfo>,
 }
 
 /// Contains the text and structured output returned by a ToolPkg command.
@@ -1885,6 +1903,15 @@ impl RuntimePackageManager {
                     title: command.title.resolve(useEnglish),
                     description: command.description.resolve(useEnglish),
                     usage: command.usage,
+                    args: command
+                        .args
+                        .into_iter()
+                        .map(|arg| ToolPkgCommandArgInfo {
+                            name: arg.name,
+                            required: arg.required,
+                            options: arg.options,
+                        })
+                        .collect(),
                 });
             }
         }
@@ -6104,5 +6131,83 @@ mod hook_timeout_notification_tests {
             notifyToolPkgHookTimeout(&context, "bridge.wechat", "before-send", "submit_requested");
         assert!(error.starts_with("TOOLPKG_BEFORE_HOOK_TIMEOUT: "));
         assert!(error.ends_with("超时提示显示失败：toast channel closed"));
+    }
+}
+
+#[cfg(test)]
+mod core_command_info_args_tests {
+    use super::*;
+
+    /// Parses declared command arguments from the plugin commands payload.
+    #[test]
+    fn declared_args_round_trip_through_json() {
+        let payload = r#"{
+            "containerPackageName": "goal",
+            "commandId": "goal.set",
+            "name": "goal",
+            "title": "Goal",
+            "description": "Manages goals",
+            "usage": "/goal <objective>",
+            "args": [
+                { "name": "objective", "required": true, "options": ["set", "edit", "pause"] },
+                { "name": "dryRun", "required": false }
+            ]
+        }"#;
+        let info: ToolPkgCoreCommandInfo = serde_json::from_str(payload).unwrap();
+        assert_eq!(info.args.len(), 2);
+        assert_eq!(info.args[0].name, "objective");
+        assert!(info.args[0].required);
+        assert_eq!(
+            info.args[0].options,
+            vec!["set".to_string(), "edit".to_string(), "pause".to_string()]
+        );
+        assert_eq!(info.args[1].name, "dryRun");
+        assert!(!info.args[1].required);
+        assert!(info.args[1].options.is_empty());
+
+        let encoded = serde_json::to_value(&info).unwrap();
+        assert_eq!(encoded["args"][0]["name"], "objective");
+        assert_eq!(encoded["args"][0]["required"], true);
+        assert_eq!(encoded["args"][0]["options"][2], "pause");
+        let decoded: ToolPkgCoreCommandInfo = serde_json::from_value(encoded).unwrap();
+        assert_eq!(decoded.args, info.args);
+    }
+
+    /// Keeps legacy payloads without arguments parsing as empty argument metadata.
+    #[test]
+    fn legacy_payload_without_args_parses_empty() {
+        let payload = r#"{
+            "containerPackageName": "legacy",
+            "commandId": "legacy.ping",
+            "name": "ping",
+            "title": "Ping",
+            "description": "Pings",
+            "usage": "/ping"
+        }"#;
+        let info: ToolPkgCoreCommandInfo = serde_json::from_str(payload).unwrap();
+        assert!(info.args.is_empty());
+
+        let with_empty_args = r#"{
+            "containerPackageName": "legacy",
+            "commandId": "legacy.ping",
+            "name": "ping",
+            "title": "Ping",
+            "description": "Pings",
+            "usage": "/ping",
+            "args": []
+        }"#;
+        let info: ToolPkgCoreCommandInfo = serde_json::from_str(with_empty_args).unwrap();
+        assert!(info.args.is_empty());
+    }
+
+    /// Defaults omitted required and options flags without losing explicit values.
+    #[test]
+    fn arg_flags_default_when_omitted() {
+        let arg: ToolPkgCommandArgInfo = serde_json::from_str(r#"{ "name": "objective" }"#).unwrap();
+        assert!(arg.required);
+        assert!(arg.options.is_empty());
+        let arg: ToolPkgCommandArgInfo =
+            serde_json::from_str(r#"{ "name": "dryRun", "required": false }"#).unwrap();
+        assert!(!arg.required);
     }
 }

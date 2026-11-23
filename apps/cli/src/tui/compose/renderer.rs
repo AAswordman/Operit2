@@ -1,6 +1,6 @@
 use super::super::{helpers::wrap_approx_lines, i18n::TuiText};
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
 };
 use serde::Deserialize;
@@ -74,7 +74,7 @@ pub(super) fn render(node: &Node, width: usize, locale: TuiText) -> Result<Surfa
         return render_node(node, width, locale);
     }
     let mut surface = render_node(node, width - 4, locale)?;
-    let border = Style::default().fg(Color::DarkGray);
+    let border = Style::default().fg(super::super::theme::BORDER_MUTED);
     for line in &mut surface.lines {
         let padding = (width - 4).saturating_sub(line.width());
         line.spans.insert(0, Span::styled("│ ", border));
@@ -322,10 +322,10 @@ fn render_node(node: &Node, width: usize, locale: TuiText) -> Result<Surface, St
             | "OutlinedTextField"
     );
     let color = match (enabled, text(node, "color").as_str()) {
-        (false, _) => Some(Color::DarkGray),
-        (true, "onSurfaceVariant") => Some(Color::DarkGray),
-        (true, "primary") => Some(Color::Cyan),
-        _ if is_control => Some(Color::Cyan),
+        (false, _) => Some(super::super::theme::TEXT_SUBTLE),
+        (true, "onSurfaceVariant") => Some(super::super::theme::TEXT_SUBTLE),
+        (true, "primary") => Some(super::super::theme::ACCENT_STRONG),
+        _ if is_control => Some(super::super::theme::ACCENT),
         _ => None,
     };
     for line in &mut surface.lines {

@@ -442,10 +442,8 @@ pub fn render_diff_viewer_modal(modal: &DiffViewerModal, frame: &mut Frame) {
         DiffViewMode::Unified => "Unified",
         DiffViewMode::SideBySide => "Split",
     };
-    let block = Block::default()
-        .title(format!(" Diff [{mode}] · Tab mode · [ ] files · e VS Code · q close "))
-        .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme::ACCENT));
+    let block = theme::popup_block()
+        .title(format!(" Diff [{mode}] · Tab mode · [ ] files · e VS Code · q close "));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let columns = Layout::default()
@@ -460,7 +458,7 @@ pub fn render_diff_viewer_modal(modal: &DiffViewerModal, frame: &mut Frame) {
 fn render_file_list(modal: &DiffViewerModal, frame: &mut Frame, area: Rect) {
     let block = Block::default()
         .borders(Borders::RIGHT)
-        .border_style(Style::default().fg(theme::TEXT_SUBTLE));
+        .border_style(Style::default().fg(theme::BORDER_MUTED));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     let lines = modal
@@ -574,20 +572,5 @@ fn render_split_view(file: &FileDiffEntry, scroll: usize, frame: &mut Frame, are
 }
 
 fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
+    super::helpers::centered_rect(percent_x, percent_y, area)
 }

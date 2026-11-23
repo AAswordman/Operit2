@@ -1,5 +1,6 @@
 //! Generic registered-command ownership; this catalog does not execute handlers.
 
+use super::ToolPkgCommandArgInfo;
 use super::ToolPkgCoreCommandInfo;
 use operit_plugin_sdk::toolpkg::ToolPkgParser::{
     ToolPkgContainerRuntime, ToolPkgCoreCommandRuntime,
@@ -62,6 +63,15 @@ impl ToolPkgCoreCommandCatalog {
                     title: declaration.title.resolve(use_english),
                     description: declaration.description.resolve(use_english),
                     usage: declaration.usage.clone(),
+                    args: declaration
+                        .args
+                        .iter()
+                        .map(|arg| ToolPkgCommandArgInfo {
+                            name: arg.name.clone(),
+                            required: arg.required,
+                            options: arg.options.clone(),
+                        })
+                        .collect(),
                 };
                 registrations.push(Registration {
                     info,
@@ -161,6 +171,7 @@ mod tests {
                 title: name.to_string(),
                 description: "description".to_string(),
                 usage: "usage".to_string(),
+                args: Vec::new(),
             },
             enabled,
             declaration: ToolPkgCoreCommandRuntime {
@@ -179,6 +190,7 @@ mod tests {
                     )]),
                 },
                 usage: "usage".to_string(),
+                args: Vec::new(),
                 function: "handler".to_string(),
                 functionSource: None,
             },

@@ -726,6 +726,33 @@ class ToolPkgChatMessageMenuItemRuntime {
   final ToolPkgChatMessageMenuDialogRuntime? dialog;
 }
 
+/// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgCommandArgRuntime`.
+class ToolPkgCommandArgRuntime {
+  const ToolPkgCommandArgRuntime({
+    required this.name,
+    required this.required,
+    required this.options,
+  });
+
+  /// Decodes `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgCommandArgRuntime` from a MessagePack value map.
+  factory ToolPkgCommandArgRuntime.fromMessagePackValue(Map<String, Object?> value) => ToolPkgCommandArgRuntime(
+    name: value['name'] as String,
+    required: value['required'] as bool,
+    options: (value['options'] as List<Object?>).map((item) => item as String).toList(growable: false),
+  );
+
+  /// Encodes this model into a MessagePack-compatible value map.
+  Map<String, Object?> toMessagePackValue() => <String, Object?>{
+    'name': name,
+    'required': required,
+    'options': options.map((item) => item).toList(growable: false),
+  };
+
+  final String name;
+  final bool required;
+  final List<String> options;
+}
+
 /// Generated SDK model for Rust type `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime`.
 class ToolPkgContainerRuntime {
   const ToolPkgContainerRuntime({
@@ -973,6 +1000,7 @@ class ToolPkgCoreCommandRuntime {
     required this.title,
     required this.description,
     required this.usage,
+    required this.args,
     required this.function,
     required this.functionSource,
   });
@@ -984,6 +1012,7 @@ class ToolPkgCoreCommandRuntime {
     title: LocalizedText.fromMessagePackValue(value['title'] as Map<String, Object?>),
     description: LocalizedText.fromMessagePackValue(value['description'] as Map<String, Object?>),
     usage: value['usage'] as String,
+    args: (value['args'] as List<Object?>).map((item) => ToolPkgCommandArgRuntime.fromMessagePackValue(item as Map<String, Object?>)).toList(growable: false),
     function: value['function'] as String,
     functionSource: value['functionSource'] == null ? null : value['functionSource'] as String,
   );
@@ -995,6 +1024,7 @@ class ToolPkgCoreCommandRuntime {
     'title': title.toMessagePackValue(),
     'description': description.toMessagePackValue(),
     'usage': usage,
+    'args': args.map((item) => item.toMessagePackValue()).toList(growable: false),
     'function': function,
     'functionSource': functionSource == null ? null : functionSource!,
   };
@@ -1004,6 +1034,7 @@ class ToolPkgCoreCommandRuntime {
   final LocalizedText title;
   final LocalizedText description;
   final String usage;
+  final List<ToolPkgCommandArgRuntime> args;
   final String function;
   final String? functionSource;
 }

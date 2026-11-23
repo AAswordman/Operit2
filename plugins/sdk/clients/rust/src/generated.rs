@@ -319,6 +319,17 @@ pub struct SdkToolPkgChatMessageMenuItemRuntime {
     pub dialog: Option<SdkToolPkgChatMessageMenuDialogRuntime>,
 }
 
+/// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgCommandArgRuntime`.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SdkToolPkgCommandArgRuntime {
+    #[serde(rename = "name")]
+    pub name: String,
+    #[serde(rename = "required")]
+    pub required: bool,
+    #[serde(rename = "options")]
+    pub options: Vec<String>,
+}
+
 /// Generated SDK model for `operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgContainerRuntime`.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SdkToolPkgContainerRuntime {
@@ -449,6 +460,8 @@ pub struct SdkToolPkgCoreCommandRuntime {
     pub description: SdkLocalizedText,
     #[serde(rename = "usage")]
     pub usage: String,
+    #[serde(rename = "args")]
+    pub args: Vec<SdkToolPkgCommandArgRuntime>,
     #[serde(rename = "function")]
     pub function: String,
     #[serde(rename = "functionSource")]

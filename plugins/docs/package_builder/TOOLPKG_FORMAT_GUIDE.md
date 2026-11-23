@@ -505,6 +505,12 @@ exports.onInputMenuToggle = onInputMenuToggle;
 | `ToolPkg.registerXmlRenderPlugin` | `function` | 是 | 函数引用（支持箭头函数） |
 | `ToolPkg.registerInputMenuTogglePlugin` | `id` | 是 | 输入菜单开关插件唯一标识 |
 | `ToolPkg.registerInputMenuTogglePlugin` | `function` | 是 | 函数引用（支持箭头函数） |
+| `ToolPkg.registerCoreCommand` | `id` | 是 | 斜杠命令唯一标识 |
+| `ToolPkg.registerCoreCommand` | `name` | 是 | 命令名（不含 `/`，不得含空白） |
+| `ToolPkg.registerCoreCommand` | `title` / `description` | 是 | 命令标题与描述（支持 `LocalizedText`） |
+| `ToolPkg.registerCoreCommand` | `usage` | 是 | 命令用法说明，如 `/goal <objective>`；展示仍以 `usage` 为准 |
+| `ToolPkg.registerCoreCommand` | `args` | 否 | 结构化参数声明数组，供命令补全使用；省略或为空表示传统命令，宿主继续解析 `usage`。每项含 `name`（参数名）、`required`（是否必需，缺省 `true`）、`options`（可选字面量列表）。示例：`args: [{ name: "objective", required: true, options: ["set", "edit", "pause"] }]`。若 `args` 与 `usage` 不一致，消费方优先采用 `args` |
+| `ToolPkg.registerCoreCommand` | `function` | 是 | 函数引用（支持箭头函数） |
 
 > **函数引用必须来自模块导出**：上表的 `function`（以及 `registerCoreCommand` 等注册的 `function`）必须传一个**已导出的函数**——可以是当前入口模块的导出（先 `exports.onX = onX`，再传 `onX`），也可以是 `require(...)` 引入模块的导出。直接传未导出的局部函数或内联箭头函数会报 `requires an exported ToolPkg function reference`。箭头函数本身可用，但同样要先导出再传入。
 

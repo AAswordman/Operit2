@@ -3778,6 +3778,24 @@ export namespace ToolPkg {
   }
 
   /**
+   * Describes one declared argument of a ToolPkg slash command.
+   */
+  export interface CoreCommandArgDeclaration {
+    /**
+     * Names the argument as shown by command completion surfaces.
+     */
+    name: string;
+    /**
+     * Marks whether the command cannot run without this argument; defaults to true when omitted.
+     */
+    required?: boolean;
+    /**
+     * Lists the known literal values offered by command completion surfaces.
+     */
+    options?: string[];
+  }
+
+  /**
    * Describes a slash command implemented by a ToolPkg callback.
    */
   export interface CoreCommandRegistration {
@@ -3801,6 +3819,10 @@ export namespace ToolPkg {
      * Documents the command usage displayed by command discovery surfaces.
      */
     usage: string;
+    /**
+     * Declares structured argument metadata for command completion; omitted for legacy commands.
+     */
+    args?: CoreCommandArgDeclaration[];
     /**
      * Provides the callback invoked when this command is executed.
      */

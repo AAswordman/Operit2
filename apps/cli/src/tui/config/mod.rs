@@ -219,10 +219,7 @@ impl ConfigUi {
         frame.render_widget(Clear, popup);
 
         let title = self.state.title(text);
-        let block = Block::default()
-            .title(title)
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT));
+        let block = theme::popup_block().title(title);
         let inner = block.inner(popup);
         self.selection_rect = Some(inner);
         frame.render_widget(block, popup);
@@ -529,10 +526,7 @@ impl ConfigUi {
             height: h,
         };
         frame.render_widget(Clear, popup);
-        let block = Block::default()
-            .title(self.confirm_title.as_str())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT_STRONG));
+        let block = theme::popup_block().title(format!(" {} ", self.confirm_title));
         let inner = block.inner(popup);
         self.selection_rect = Some(inner);
         frame.render_widget(block, popup);
@@ -559,10 +553,10 @@ impl ConfigUi {
             height: h,
         };
         frame.render_widget(Clear, popup);
-        let block = Block::default()
-            .title(text.config_add_model_title())
-            .borders(Borders::ALL)
-            .border_style(Style::default().fg(theme::ACCENT));
+        let block = theme::popup_block().title(format!(
+            " {} ",
+            text.config_add_model_title()
+        ));
         let inner = block.inner(popup);
         self.selection_rect = Some(inner);
         frame.render_widget(block, popup);
