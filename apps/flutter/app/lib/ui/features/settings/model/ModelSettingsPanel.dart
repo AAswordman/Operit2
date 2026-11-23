@@ -3818,9 +3818,7 @@ String? _formatContextLength(double? maxContextLength) {
   if (maxContextLength == null || maxContextLength <= 0) {
     return null;
   }
-  final k = maxContextLength >= 10000
-      ? maxContextLength / 1000.0
-      : maxContextLength;
+  final k = _normalizedContextLength(maxContextLength);
   if (k >= 950) {
     final millions = k / 1000.0;
     final millionsRounded = millions.round();
@@ -4973,13 +4971,7 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
     _claude1hPromptCache = config.request.enableClaude1HPromptCache;
     _builtinTools = config.builtinTools;
     _thinking = widget.initialThinking;
-    final rawContext = config.context.maxContextLength;
-    final normalizedContext = rawContext >= 10000
-        ? (rawContext / 1000).roundToDouble()
-        : rawContext;
-    _savedContext = normalizedContext > 0
-        ? normalizedContext.toStringAsFixed(0)
-        : '200';
+    _savedContext = _contextLengthInputText(config.context.maxContextLength);
     _contextController = TextEditingController(text: _savedContext);
     final summary = config.summary;
     final rawRatio = summary.summaryTokenThreshold;
@@ -5129,12 +5121,10 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
     );
   }
 
-  /// Saves the context window once the user leaves the field. An entry that is not a
-  /// positive number is marked and left unsaved.
+  /// Saves a normalized context window and shows the effective kilo-token value.
   void _commitContext({bool disposing = false}) {
-    final text = _contextController.text.trim();
-    final value = double.tryParse(text);
-    if (value == null || value <= 0) {
+    final parsed = double.tryParse(_contextController.text.trim());
+    if (parsed == null) {
       if (!disposing && !_contextInvalid) {
         setState(() {
           _contextInvalid = true;
@@ -5142,6 +5132,9 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
       }
       return;
     }
+    final value = _normalizedContextLength(parsed);
+    final text = _contextLengthInputText(value);
+    _contextController.text = text;
     if (!disposing && _contextInvalid) {
       setState(() {
         _contextInvalid = false;
@@ -5568,6 +5561,19 @@ class _ModelInlineSettingsFormState extends State<_ModelInlineSettingsForm> {
       ],
     );
   }
+}
+
+/// Matches ModelContextSpec's finite kilo-token bounds for the signed token budget.
+double _normalizedContextLength(double value) {
+  return value.isNaN ? 200.0 : value.clamp(1.0, 2147483.0).toDouble();
+}
+
+/// Displays the exact kilo-token value without interpreting large values as token counts.
+String _contextLengthInputText(double value) {
+  final normalized = _normalizedContextLength(value);
+  return normalized == normalized.roundToDouble()
+      ? normalized.toStringAsFixed(0)
+      : normalized.toString();
 }
 
 /// Height of the compact controls in a model's settings, roomier where people tap.

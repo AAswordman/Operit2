@@ -296,6 +296,7 @@ impl ModelBuiltinTool {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[allow(non_snake_case)]
 pub struct ModelContextSpec {
+    #[serde(deserialize_with = "ModelContextSpec::deserialize_length", serialize_with = "ModelContextSpec::serialize_length")]
     pub maxContextLength: f32,
 }
 
@@ -308,6 +309,25 @@ impl Default for ModelContextSpec {
 }
 
 impl ModelContextSpec {
+    pub const MAX_CONTEXT_LENGTH: f32 = (i32::MAX / 1000) as f32;
+
+    /// Keeps input finite and within the runtime's signed token budget before narrowing.
+    pub fn normalize_length(value: f64) -> f32 {
+        let value = if value.is_nan() { f64::from(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH) } else { value };
+        value.clamp(1.0, f64::from(Self::MAX_CONTEXT_LENGTH)) as f32
+    }
+
+    /// Recovers old null values and normalizes large transport doubles on every read.
+    fn deserialize_length<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+        let value = Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::from(ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH));
+        Ok(Self::normalize_length(value))
+    }
+
+    /// Prevents directly constructed Rust profiles from persisting non-finite values.
+    fn serialize_length<S: serde::Serializer>(value: &f32, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f32(Self::normalize_length(f64::from(*value)))
+    }
+
     /// Converts the persisted kilo-token limit into an absolute token budget.
     #[allow(non_snake_case)]
     pub fn maxContextTokens(&self) -> i32 {
@@ -319,6 +339,7 @@ impl ModelContextSpec {
 #[allow(non_snake_case)]
 pub struct ModelSummarySettings {
     pub enableSummary: bool,
+    #[serde(deserialize_with = "ModelSummarySettings::deserialize_threshold")]
     pub summaryTokenThreshold: f32,
 }
 
@@ -332,6 +353,12 @@ impl Default for ModelSummarySettings {
 }
 
 impl ModelSummarySettings {
+    /// Recovers thresholds written as null while retaining legacy percentage semantics.
+    fn deserialize_threshold<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<f32, D::Error> {
+        let value = Option::<f64>::deserialize(deserializer)?.unwrap_or(f64::from(ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD));
+        Ok(if value.is_nan() { ModelConfigDefaults::DEFAULT_SUMMARY_TOKEN_THRESHOLD } else { value.clamp(0.0, 100.0) as f32 })
+    }
+
     /// Returns the threshold as a context ratio, accepting legacy percent values.
     #[allow(non_snake_case)]
     pub fn tokenThresholdRatio(&self) -> f64 {
@@ -731,6 +758,8 @@ mod tests {
 
     #[test]
     fn context_budget_uses_decimal_kilo_tokens() {
+        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextLength":null}"#).unwrap().maxContextLength, ModelConfigDefaults::DEFAULT_MAX_CONTEXT_LENGTH);
+        assert_eq!(serde_json::from_str::<ModelContextSpec>(r#"{"maxContextLength":1e300}"#).unwrap().maxContextLength, ModelContextSpec::MAX_CONTEXT_LENGTH);
         assert_eq!(
             ModelContextSpec {
                 maxContextLength: 128.0

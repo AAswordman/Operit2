@@ -618,7 +618,9 @@ impl ModelConfigManager {
     ) -> Result<ModelProfile, ModelConfigError> {
         let (provider, mut model) = self.findModel(providerId, modelId)?;
         let inherited = ModelSpecResolver::new(&provider)?.inherited(&model);
-        model.contextOverride = ModelSpecResolver::contextOverride(&inherited, context);
+        model.contextOverride = ModelSpecResolver::contextOverride(&inherited, ModelContextSpec {
+            maxContextLength: ModelContextSpec::normalize_length(f64::from(context.maxContextLength)),
+        });
         self.updateModelProfile(providerId, model)
     }
 

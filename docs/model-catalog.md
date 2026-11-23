@@ -26,6 +26,9 @@
 - 没有模型列表接口的服务商（ChatGPT Codex）使用 `core/crates/foundation/model/collects/ModelCatalog.rs`
   里手工维护的固定列表。
 
+上下文设置以 K tokens 存储，保存和读取时规范至 1～2,147,483 K；超大数值取上限，NaN 取默认 200 K。
+旧配置中变成 `null` 的上下文长度和摘要阈值会在解码时恢复为默认 200 K 和 85%，保留其他模型及供应商字段；无须清空数据或重新配置。
+
 ## 识别规则
 
 匹配在 `core/crates/foundation/model/src/ModelsDevCatalog.rs`，按下面顺序查找，先找到的生效：
