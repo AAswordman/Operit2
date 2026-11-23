@@ -163,8 +163,10 @@ impl NativeRescueSession {
             let host = Arc::new(host);
             let archives = Arc::new(NativeArchiveStagingHost::new(application_root(&self.default_runtime)?.join("data-rescue/staging")));
             archives.cleanupAbandonedArchivesDuringMaintenance().map_err(text)?;
-            self.service = Some(DataRescue { host, archives });
-            return self.service.as_ref().ok_or("Rescue service was not created")?.host.describe();
+            let service = DataRescue { host, archives };
+            let description = service.host.describe()?;
+            self.service = Some(service);
+            return Ok(description);
         }
         if request["operation"] == "saveArchive" {
             let service = self.service.as_ref().ok_or("Prepare the data rescue storage session before continuing")?;

@@ -679,6 +679,28 @@ fn automatic_configuration_uses_recorded_custom_locations() {
     assert!(manifest["files"].as_array().unwrap().iter().any(|file| file["path"] == "workspaces/identities/a/file"));
 }
 
+/// Keeps a failed inventory from committing a partially configured service or masking its error.
+#[test]
+fn failed_configuration_preserves_the_error_and_allows_retry() {
+    let fixture = Fixture::new();
+    fixture.write("runtime/data", b"preserve this payload");
+    let external = fixture.0.join("external");
+    fs::create_dir_all(&external).unwrap();
+    let linked = fixture.0.join("runtime/linked-directory");
+    directory_alias(&external, &linked);
+    let mut session = NativeRescueSession::open(fixture.0.join("runtime"), None).unwrap();
+    let request = json!({"operation": "configure", "roots": fixture.roots()});
+    let error = session.execute(request.clone()).unwrap_err();
+    assert!(error.starts_with("Filesystem links require an explicit archival policy:"), "{error}");
+    assert!(session.service.is_none());
+    assert_eq!(session.execute(request.clone()).unwrap_err(), error);
+    fs::rename(&linked, fixture.0.join("data-rescue/linked-directory")).unwrap();
+    let description = session.execute(request).unwrap();
+    assert_eq!(description["roots"]["runtime"], json!(fixture.0.join("runtime")));
+    assert!(session.service.is_some());
+    assert_eq!(fs::read(fixture.0.join("runtime/data")).unwrap(), b"preserve this payload");
+}
+
 /// Reports missing location records without assigning the platform's standard directories.
 #[test]
 fn automatic_configuration_rejects_missing_location_records() {

@@ -192,8 +192,18 @@ class _DataRescueScreenState extends State<_DataRescueScreen> {
       Map<String, Object?>.from((await _task(request))! as Map);
 
   /// Prepares Host-owned data locations without exposing storage paths to the user.
-  Future<void> _open() async {
+  Future<void> _open({bool stopNormalProcess = false}) async {
     await _run('正在打开数据救援，请先关闭其他 Operit 窗口和后台进程…', () async {
+      if (_startup != null) {
+        await widget.request({'operation': 'close'});
+        _startup = null;
+        _configured = false;
+        _archiveId = null;
+        _manifest = null;
+      }
+      if (stopNormalProcess) {
+        await widget.request({'operation': 'stopNormalProcess'});
+      }
       final startup = await _map({'operation': 'open'});
       _startup = startup;
       final description = await _taskMap({'operation': 'configureAutomatic'});
@@ -204,12 +214,7 @@ class _DataRescueScreenState extends State<_DataRescueScreen> {
   }
 
   /// Requests the platform-owned normal process stop action before retrying the exclusive lease.
-  Future<void> _stopNormalProcess() async {
-    await _run('正在请求停止正常运行进程…', () async {
-      await widget.request({'operation': 'stopNormalProcess'});
-      await _open();
-    });
-  }
+  Future<void> _stopNormalProcess() => _open(stopNormalProcess: true);
 
   /// Opens Host-provided file management even when automatic rescue configuration failed.
   Future<void> _manageFiles() async {

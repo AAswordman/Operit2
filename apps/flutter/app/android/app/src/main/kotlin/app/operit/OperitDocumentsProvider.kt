@@ -236,19 +236,16 @@ internal object OperitDocumentManagement {
     /** Launches document management without requiring a configured runtime or a rescue session. */
     fun open(activity: Activity) {
         notifyRootsChanged(activity)
-        val picker = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-            addCategory(Intent.CATEGORY_OPENABLE)
-            type = "*/*"
-        }
-        val manager = checkNotNull(activity.packageManager.resolveActivity(picker,
-            PackageManager.MATCH_DEFAULT_ONLY or PackageManager.MATCH_SYSTEM_ONLY)) {
-            "The system document manager is unavailable"
-        }
-        activity.startActivity(Intent(Intent.ACTION_VIEW).apply {
-            // Operit's own attachment VIEW filter must not intercept document management.
-            setPackage(manager.activityInfo.packageName)
+        val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(DocumentsContract.buildRootUri("${activity.packageName}.data.documents", "private"),
                 Root.MIME_TYPE_ITEM)
-        })
+        }
+        val manager = checkNotNull(activity.packageManager.queryIntentActivities(intent,
+            PackageManager.MATCH_DEFAULT_ONLY or PackageManager.MATCH_SYSTEM_ONLY).firstOrNull()) {
+            "No system document manager can browse the application data root"
+        }
+        // Resolve the exact browse contract and exclude Operit's attachment VIEW handler.
+        intent.setClassName(manager.activityInfo.packageName, manager.activityInfo.name)
+        activity.startActivity(intent)
     }
 }

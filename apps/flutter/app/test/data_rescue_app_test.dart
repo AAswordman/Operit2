@@ -177,6 +177,7 @@ void main() {
       expect(host.operations, [
         'open',
         'configureAutomatic',
+        'close',
         'open',
         'configureAutomatic',
       ]);
@@ -187,6 +188,59 @@ void main() {
       expect(readyExport.onPressed, isNotNull);
     },
   );
+
+  /// Reopens a failed session before configuring roots after the explicit process-stop action.
+  testWidgets('process stop retry replaces the failed maintenance session', (
+    tester,
+  ) async {
+    final host = _MaintenanceHost(prepareFailures: 1);
+    await tester.pumpWidget(
+      DataRescueApp(request: host.request, canStopNormalProcess: true),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('停止正常运行进程后重试'));
+    await tester.tap(find.text('停止正常运行进程后重试'));
+    await tester.pumpAndSettle();
+    expect(host.operations, [
+      'open',
+      'configureAutomatic',
+      'close',
+      'stopNormalProcess',
+      'open',
+      'configureAutomatic',
+    ]);
+    expect(find.textContaining('已准备就绪'), findsOneWidget);
+    expect(find.textContaining('Close the maintenance session'), findsNothing);
+  });
+
+  /// Preserves a failed close diagnostic without reopening access over the old session.
+  testWidgets('retry stops when the previous session cannot close', (
+    tester,
+  ) async {
+    final host = _MaintenanceHost(prepareFailures: 1);
+    var rejectClose = true;
+    await tester.pumpWidget(
+      DataRescueApp(
+        request: (request) async {
+          if (request['operation'] == 'close' && rejectClose) {
+            throw StateError('Cannot release maintenance access');
+          }
+          return host.request(request);
+        },
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('重新打开维护会话'));
+    await tester.tap(find.text('重新打开维护会话'));
+    await tester.pumpAndSettle();
+    expect(host.operations, ['open', 'configureAutomatic']);
+    expect(
+      find.textContaining('Cannot release maintenance access'),
+      findsOneWidget,
+    );
+    rejectClose = false;
+  });
+
   testWidgets('shows measured restore progress while the task remains active', (
     tester,
   ) async {
@@ -361,6 +415,7 @@ class _MaintenanceHost {
   bool failResume = false;
   int uploaded = 0;
   bool failUpload = false;
+  bool configured = false;
 
   /// Accepts only automatic preparation and the maintenance operations exercised by these tests.
   Future<Object?> request(Map<String, Object?> request) async {
@@ -395,11 +450,20 @@ class _MaintenanceHost {
     operations.add(operation);
     switch (operation) {
       case 'close':
+        configured = false;
         return null;
       case 'open':
         return <String, Object?>{'commitPending': pending};
+      case 'stopNormalProcess':
+        return null;
       case 'configureAutomatic':
         expect(request.keys, ['operation']);
+        if (configured) {
+          throw StateError(
+            'Close the maintenance session before changing selected roots',
+          );
+        }
+        configured = true;
         if (prepareFailures > 0) {
           prepareFailures -= 1;
           throw StateError('应用的数据位置记录损坏，无法自动定位数据。');
