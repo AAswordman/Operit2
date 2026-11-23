@@ -85,9 +85,9 @@ class ThemeDrawerPalette {
         ? scheme.surfaceContainerLow.withValues(alpha: 0.18)
         : scheme.surfaceContainerLow.withValues(alpha: 0.72),
     selectedContainerColor: transparentSurface
-        ? scheme.secondaryContainer.withValues(alpha: 0.34)
-        : scheme.secondaryContainer.withValues(alpha: 0.78),
-    selectedContentColor: scheme.onSecondaryContainer,
+        ? scheme.primaryContainer.withValues(alpha: 0.34)
+        : scheme.primaryContainer.withValues(alpha: 0.78),
+    selectedContentColor: scheme.onPrimaryContainer,
     dividerColor: transparentSurface
         ? scheme.outlineVariant.withValues(alpha: 0.34)
         : scheme.outlineVariant.withValues(alpha: 0.62),

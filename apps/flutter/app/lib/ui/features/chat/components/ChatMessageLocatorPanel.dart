@@ -304,7 +304,7 @@ class _ChatMessageLocatorPanelState extends State<ChatMessageLocatorPanel> {
               Icons.star_rounded,
               size: 15,
               color: selected
-                  ? colors.onSecondaryContainer
+                  ? colors.onPrimaryContainer
                   : colors.onSurfaceVariant,
             )
           : null,
@@ -316,7 +316,7 @@ class _ChatMessageLocatorPanelState extends State<ChatMessageLocatorPanel> {
       visualDensity: VisualDensity.compact,
       labelStyle: TextStyle(
         fontSize: 12,
-        color: selected ? colors.onSecondaryContainer : colors.onSurfaceVariant,
+        color: selected ? colors.onPrimaryContainer : colors.onSurfaceVariant,
       ),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
     );

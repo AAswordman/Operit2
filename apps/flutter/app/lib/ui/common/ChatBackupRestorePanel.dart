@@ -201,7 +201,8 @@ class _ChatBackupRestorePanelState extends State<ChatBackupRestorePanel> {
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(8),
               ),
-              selectedTileColor: theme.colorScheme.secondaryContainer,
+              selectedTileColor: theme.colorScheme.primaryContainer,
+              selectedColor: theme.colorScheme.onPrimaryContainer,
               selected: _selected == snapshot,
               enabled: !_busy,
               onTap: () => setState(() => _selected = snapshot),

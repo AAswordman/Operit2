@@ -52,6 +52,56 @@ ThemeData buildOperitThemeData(
     ),
     canvasColor: colorScheme.surface,
     textTheme: textTheme,
+    // Main navigation and selection belong to the primary accent, not secondary.
+    segmentedButtonTheme: SegmentedButtonThemeData(
+      style: ButtonStyle(
+        backgroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return null;
+          return states.contains(WidgetState.selected)
+              ? colorScheme.primaryContainer
+              : null;
+        }),
+        foregroundColor: WidgetStateProperty.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) return null;
+          return states.contains(WidgetState.selected)
+              ? colorScheme.onPrimaryContainer
+              : null;
+        }),
+      ),
+    ),
+    chipTheme: ChipThemeData(
+      selectedColor: colorScheme.primaryContainer,
+      secondarySelectedColor: colorScheme.primaryContainer,
+      checkmarkColor: colorScheme.onPrimaryContainer,
+      labelStyle: TextStyle(
+        color: WidgetStateColor.resolveWith((states) {
+          if (states.contains(WidgetState.disabled)) {
+            return colorScheme.onSurface.withValues(alpha: 0.38);
+          }
+          return states.contains(WidgetState.selected)
+              ? colorScheme.onPrimaryContainer
+              : colorScheme.onSurfaceVariant;
+        }),
+      ),
+      secondaryLabelStyle: TextStyle(color: colorScheme.onPrimaryContainer),
+    ),
+    navigationBarTheme: NavigationBarThemeData(
+      indicatorColor: colorScheme.primaryContainer,
+      iconTheme: _navigationIconTheme(colorScheme),
+    ),
+    navigationRailTheme: NavigationRailThemeData(
+      indicatorColor: colorScheme.primaryContainer,
+      selectedIconTheme: IconThemeData(color: colorScheme.onPrimaryContainer),
+    ),
+    navigationDrawerTheme: NavigationDrawerThemeData(
+      indicatorColor: colorScheme.primaryContainer,
+      iconTheme: _navigationIconTheme(colorScheme),
+      labelTextStyle: WidgetStateProperty.resolveWith((states) {
+        return states.contains(WidgetState.selected)
+            ? TextStyle(color: colorScheme.onPrimaryContainer)
+            : null;
+      }),
+    ),
     inputDecorationTheme: _inputDecorationTheme(colorScheme, textTheme),
     dropdownMenuTheme: _dropdownMenuTheme(colorScheme, textTheme),
     menuTheme: _menuTheme(colorScheme, textTheme),
@@ -82,6 +132,14 @@ ThemeData buildOperitThemeData(
     useMaterial3: true,
   );
 }
+
+/// Pairs selected navigation icons with the primary selection indicator.
+WidgetStateProperty<IconThemeData?> _navigationIconTheme(ColorScheme scheme) =>
+    WidgetStateProperty.resolveWith((states) {
+      return states.contains(WidgetState.selected)
+          ? IconThemeData(color: scheme.onPrimaryContainer)
+          : null;
+    });
 
 /// Preserves Android's predictive back gesture and keeps ordinary navigation
 /// transparent to the background shared by all routes.

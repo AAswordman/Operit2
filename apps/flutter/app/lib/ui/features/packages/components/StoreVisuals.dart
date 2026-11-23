@@ -511,7 +511,7 @@ class StoreFilterChip extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final motion = ExtensionMotion.of(context);
     final foreground = selected
-        ? colorScheme.onSecondaryContainer
+        ? colorScheme.onPrimaryContainer
         : colorScheme.onSurfaceVariant;
     final count = this.count;
     final radius = BorderRadius.circular(8);
@@ -524,12 +524,12 @@ class StoreFilterChip extends StatelessWidget {
         height: 32,
         decoration: BoxDecoration(
           color: selected
-              ? colorScheme.secondaryContainer
-              : colorScheme.secondaryContainer.withValues(alpha: 0),
+              ? colorScheme.primaryContainer
+              : colorScheme.primaryContainer.withValues(alpha: 0),
           borderRadius: radius,
           border: Border.all(
             color: selected
-                ? colorScheme.secondaryContainer
+                ? colorScheme.primaryContainer
                 : colorScheme.outlineVariant.withValues(alpha: 0.72),
           ),
         ),

@@ -3293,13 +3293,13 @@ Future<void> _showMessageColorDialog(
   );
   var aiBubbleColor = Color(
     snapshot.bubbleAiBubbleColor ??
-        colorScheme.surfaceContainerHighest.toARGB32(),
+        colorScheme.secondaryContainer.toARGB32(),
   );
   var userTextColor = Color(
     snapshot.bubbleUserTextColor ?? colorScheme.onPrimaryContainer.toARGB32(),
   );
   var aiTextColor = Color(
-    snapshot.bubbleAiTextColor ?? colorScheme.onSurface.toARGB32(),
+    snapshot.bubbleAiTextColor ?? colorScheme.onSecondaryContainer.toARGB32(),
   );
   await showDialog<void>(
     context: context,

@@ -529,7 +529,7 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
                   width: width,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: scheme.secondaryContainer,
+                      color: scheme.primaryContainer,
                       borderRadius: BorderRadius.circular(10),
                     ),
                   ),
@@ -566,7 +566,7 @@ class _ChatSidebarTabHostState extends State<ChatSidebarTabHost> {
                                       ? FontWeight.w600
                                       : FontWeight.w400,
                                   color: entry.id == _selectedId
-                                      ? scheme.onSecondaryContainer
+                                      ? scheme.onPrimaryContainer
                                       : scheme.onSurfaceVariant,
                                 ),
                               ),

@@ -1333,7 +1333,7 @@ Color _classicActionBackground(
     return colorScheme.error;
   }
   if (showQueueAction) {
-    return colorScheme.tertiary;
+    return colorScheme.secondary;
   }
   if (canSend) {
     return colorScheme.primary;
@@ -1352,7 +1352,7 @@ Color _classicActionForeground(
     return colorScheme.onError;
   }
   if (showQueueAction) {
-    return colorScheme.onTertiary;
+    return colorScheme.onSecondary;
   }
   return colorScheme.onPrimary;
 }

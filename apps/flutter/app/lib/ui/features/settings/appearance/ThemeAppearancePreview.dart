@@ -93,7 +93,7 @@ class _ThemeMoodPreview extends StatelessWidget {
                   decoration: BoxDecoration(
                     color:
                         (aiColor == null
-                                ? scheme.surfaceContainerHighest
+                                ? scheme.secondaryContainer
                                 : Color(aiColor))
                             .withValues(alpha: .88),
                     borderRadius: BorderRadius.circular(5),
