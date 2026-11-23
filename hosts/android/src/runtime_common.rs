@@ -80,6 +80,9 @@ pub(crate) fn buildAndroidProotCommandWithRootfs(executable: &str, cwd: Option<&
     ensureRootfsAbsolutePath(&rootfsDir, &workspaceRoot)?;
     ensureRootfsAbsolutePath(&rootfsDir, Path::new("/data/local/tmp"))?;
     ensureRootfsAbsolutePath(&rootfsDir, &workingDir)?;
+    for mount in mounts {
+        ensureRootfsAbsolutePath(rootfsDir, Path::new(&mount.target))?;
+    }
     std::fs::create_dir_all(rootfsDir.join("dev/pts"))?;
     std::fs::create_dir_all(&tmpDir)?;
 

@@ -113,6 +113,57 @@ test('document-backed terminal directories reach Android instead of nativePath r
   assert.match(host, /resolveAndroidNativeWorkingDirectory\(path, &crate::document_filesystem::call\)/);
   const backend = source('apps/flutter/app/android/app/src/main/kotlin/app/operit/AndroidDocumentFileSystem.kt');
   assert.match(backend, /"resolveNativeDirectory" -> node\(request\.getString\("path"\)\)\.nativeDirectory\(\)/);
+  const launcher = source('hosts/android/src/runtime_common.rs');
+  assert.match(launcher, /command\.arg\("-b"\)\.arg\("\/storage"\)/);
+});
+
+/** All Android Linux PTYs must preserve selected storage roots as individual argv entries. */
+test('built-in and configured Android terminals share the literal proot launcher', () => {
+  const host = source('hosts/android/src/terminal.rs');
+  const builtin = section(host, 'fn buildAndroidBashPtyCommand(', 'fn buildAndroidShellPtyCommand(');
+  const configured = section(host, 'fn buildAndroidProfileCommand(', 'fn buildAndroidProotPtyCommand(');
+  assert.match(builtin, /buildAndroidProotPtyCommand\(&rootfs, workingDir, &\[\], &\["--login", "-i"\]\)/);
+  assert.match(configured, /buildAndroidProotPtyCommand\(&rootfs, workingDir, &mounts, &\["--noprofile", "--norc", "-i"\]\)/);
+  const launch = section(host, 'fn buildAndroidProotPtyCommand(', 'fn buildAndroidPtyCommand(');
+  assert.match(launch, /buildAndroidProotCommandWithRootfs\(/);
+  assert.match(launch, /command\.get_args\(\)/);
+  assert.doesNotMatch(host, /common\.sh|start_shell/);
   const assets = source('apps/flutter/app/android/app/src/main/kotlin/app/operit/AndroidRuntimeAssets.kt');
-  assert.match(assets, /"\/storage" to "\/storage"/);
+  assert.doesNotMatch(assets, /PROOT_BIND_ARGS|probe_and_append_bind_arg|writeCommonScript/);
+  const launcher = source('hosts/android/src/runtime_common.rs');
+  for (const key of ['INTERNAL_ROOT', 'RUNTIME_ROOT', 'WORKSPACE_ROOT']) {
+    assert.ok(launcher.includes(`requiredAndroidRuntimePath("OPERIT_ANDROID_${key}")?`));
+  }
+  for (const name of ['internalRoot', 'runtimeRoot', 'workspaceRoot']) {
+    assert.ok(launcher.includes(`command.arg("-b").arg(bindSamePath(&${name}))`));
+  }
+  assert.match(launcher, /command\.arg\("-w"\)\.arg\(&workingDir\)/);
+  assert.match(launcher, /ensureRootfsAbsolutePath\(rootfsDir, Path::new\(&mount\.target\)\)\?/);
+});
+
+/** Host workspaces must enter a profile's guest mount rather than its inaccessible source. */
+test('Android maps host workspaces through configured mounts before launch', () => {
+  const host = source('hosts/android/src/terminal.rs');
+  const resolve = section(host, 'fn resolveWorkingDirectory(', 'fn terminalInfo(');
+  assert.match(resolve, /let directory = resolveHostDirectory\(path\)\?/);
+  assert.match(resolve, /androidMountedWorkingDirectory\(&directory, &mounts\)/);
+  const map = section(host, 'fn androidMountedWorkingDirectory(', 'fn androidProfileMounts(');
+  assert.match(map, /strip_prefix\(&mount\.source\)/);
+  assert.match(map, /max_by_key/);
+  assert.doesNotMatch(map, /\.contains\(/);
+});
+
+/** Shells receive the resolved directory and never need an application VFS mount. */
+test('application VFS aliases resolve before the terminal receives its working directory', () => {
+  const mapper = source('core/crates/foundation/vfs/src/PathMapper.rs');
+  const regression = section(mapper, 'fn customStorageAliasesResolveToNativePlatformDirectories(', 'fn nativeStorageIngressRejectsUnsupportedPathModels(');
+  for (const path of ['/operitapp/data/config', '/operitapp/outputs/chat', '/operitapp/workspaces/project']) {
+    assert.ok(regression.includes(`"${path}"`));
+  }
+  assert.match(regression, /mapper\.resolve\(&platformPath\)\.unwrap\(\)\.nativePath\(\)\.unwrap\(\), directory/);
+  const runtime = source('core/crates/runtime/application/src/services/RuntimeTerminalService.rs');
+  const create = section(runtime, 'fn start_terminal_pty(', 'pub fn terminalPtyOutput(');
+  assert.match(create, /\.startPtySession\([\s\S]*?&resolvedWorkingDir,/);
+  const launcher = source('hosts/android/src/runtime_common.rs');
+  assert.doesNotMatch(launcher, /operitapp/);
 });

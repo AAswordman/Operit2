@@ -71,6 +71,24 @@ Linux rootfs，也可编辑已下载发行版的配置并沿用其路径。Chroo
 目录）和 `target`（guest 绝对目录）。Android 的 PRoot 和 chroot 当前支持
 可写目录挂载。两者都校验目标冲突，chroot 还拒绝符号链接挂载点。
 
+`/operitapp` 属于应用 VFS 命名空间，不是终端里的挂载目录。工作区和默认对话
+输出目录先通过所属 VFS 解析为用户当前配置位置下的宿主目录，再由所选终端
+Host 按自身路径规则转换。这个入口与 `/virtual/android/root/...` 等平台 VFS
+地址共用宿主目录解析，不要求各个终端认识 `/operitapp` 或建立同名挂载。
+
+Android 的内置 PRoot 与自定义 PRoot 配置共用参数数组启动器，使用解析后的
+终端目录作为工作目录。自定义目录中的空格、中文和引号保留在单个参数中，
+不经 shell 拆分。旧的 `common.sh` 生成与探测启动链路已移除。PRoot 对真实
+宿主目录的绑定属于该 Host 的文件系统实现，与应用 VFS 的地址别名分别处理。
+配置声明 `source` → `target` 时，宿主目录及其子目录按最具体的 source 映射到
+guest target；显式 `/virtual/linux`、`/mnt/linux` 地址继续表示 guest 内部路径。
+PRoot 在启动前创建配置声明的 guest 挂载点。
+
+桌面原生终端直接使用 VFS 对应的宿主路径，Windows WSL 通过所选发行版的
+`wslpath` 转换；iOS ARM64 在创建会话前登记工作目录绑定；Web 通过 9P 将
+浏览器文件系统暴露到 `/mnt/operit-host`；OpenHarmony 使用 `/mnt/host-root`。
+这些转换均由 Host 实现，工作区界面和工具调用继续传递 VFS 地址。
+
 ## 插件接口
 
 超级管理员插件统一提供 `list_terminals` 和 `terminal`，不再通过平台预设声明

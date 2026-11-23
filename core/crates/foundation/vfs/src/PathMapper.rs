@@ -1123,6 +1123,34 @@ mod tests {
         }
     }
 
+    /// Resolves application aliases and native platform addresses to the same selected directories.
+    #[test]
+    fn customStorageAliasesResolveToNativePlatformDirectories() {
+        use operit_host_contract::HostPlatform;
+        for (platform, selectedRoot, platformRoot) in [
+            (HostPlatform::Android, "/storage/emulated/0/Download/Operit data", "/virtual/android/root"),
+            (HostPlatform::Linux, "/home/user/Operit data", "/virtual/linux"),
+            (HostPlatform::Macos, "/Users/user/Operit data", "/virtual/macos"),
+            (HostPlatform::Ios, "/private/var/mobile/Containers/Shared/AppGroup/UUID/Operit data", "/virtual/ios"),
+            (HostPlatform::Ohos, "/data/storage/el2/base/files/Operit data", "/virtual/ohos"),
+        ] {
+            let runtimeRoot = format!("{selectedRoot}/runtime");
+            let workspaceRoot = format!("{selectedRoot}/workspaces");
+            let mut mapper = PathMapper::builtinOnly(runtimeRoot.clone().into(), workspaceRoot.clone().into());
+            mapper.hostRoots = HostFileSystemRoots::forPlatform(&platform);
+            for (applicationPath, nativePath) in [
+                ("/operitapp/data/config", format!("{runtimeRoot}/config")),
+                ("/operitapp/outputs/chat", format!("{runtimeRoot}/data/chat_outputs/chat")),
+                ("/operitapp/workspaces/project", format!("{workspaceRoot}/project")),
+            ] {
+                let directory = mapper.resolve(applicationPath).unwrap().nativePath().unwrap();
+                assert_eq!(directory, nativePath, "{platform:?}: {applicationPath}");
+                let platformPath = format!("{platformRoot}{nativePath}");
+                assert_eq!(mapper.resolve(&platformPath).unwrap().nativePath().unwrap(), directory);
+            }
+        }
+    }
+
     /// Requires drive-absolute Windows inputs and preserves explicit VFS addresses on private hosts.
     #[test]
     fn nativeStorageIngressRejectsUnsupportedPathModels() {

@@ -335,7 +335,14 @@ impl TerminalHost for AndroidTerminalHost {
         match requireAndroidTerminal(terminal, terminalType)?.as_str() {
             "bash" => operit_host_api::TerminalWorkingDirectory::resolveLinuxGuestDirectory(
                 workingDir,
-                resolveHostDirectory,
+                &|path| {
+                    let directory = resolveHostDirectory(path)?;
+                    let mounts = match &self.profile {
+                        Some(profile) => profileMounts(profile)?,
+                        None => Vec::new(),
+                    };
+                    Ok(androidMountedWorkingDirectory(&directory, &mounts))
+                },
             ),
             "shell" => {
                 let directory = resolveHostDirectory(workingDir)?;
@@ -1252,6 +1259,25 @@ fn androidWorkspaceRoots() -> HostResult<Vec<std::path::PathBuf>> {
         .into_iter().map(requiredAndroidRuntimePath).collect()
 }
 
+/// Maps host workspaces through the most specific configured directory binding.
+fn androidMountedWorkingDirectory(directory: &str, mounts: &[TerminalMount]) -> String {
+    let directoryPath = Path::new(directory);
+    let selected = mounts
+        .iter()
+        .filter_map(|mount| {
+            directoryPath.strip_prefix(&mount.source).ok()
+                .map(|relative| (mount, relative))
+        })
+        .max_by_key(|(mount, _)| Path::new(&mount.source).components().count());
+    match selected {
+        Some((mount, relative)) if relative.as_os_str().is_empty() => mount.target.clone(),
+        Some((mount, relative)) => format!(
+            "{}/{}", mount.target, relative.to_string_lossy().replace('\\', "/"),
+        ),
+        None => directory.to_string(),
+    }
+}
+
 /// Validates directory-only Android binds and reserves runtime paths from custom mounts.
 fn androidProfileMounts(profile: &operit_host_api::TerminalProfile) -> HostResult<Vec<TerminalMount>> {
     let mounts = profileMounts(profile)?;
@@ -1330,16 +1356,26 @@ fn buildAndroidProfileCommand(
     if profile.terminal == CHROOT_TERMINAL {
         return buildAndroidChrootCommand(&rootfs, workingDir, &mounts);
     }
+    buildAndroidProotPtyCommand(&rootfs, workingDir, &mounts, &["--noprofile", "--norc", "-i"])
+}
+
+/// Builds both built-in and configured Linux PTYs with literal directory and mount arguments.
+fn buildAndroidProotPtyCommand(
+    rootfs: &Path,
+    workingDir: &str,
+    mounts: &[TerminalMount],
+    shellArguments: &[&str],
+) -> HostResult<AndroidPtyCommand> {
     let mut command = crate::runtime_common::buildAndroidProotCommandWithRootfs(
         "/bin/bash",
         Some(workingDir),
-        &rootfs,
-        &mounts,
+        rootfs,
+        mounts,
     )?;
     command.env("TERM", "xterm-256color");
     command.env("PS1", "$PWD $ ");
     command.env("PROMPT_COMMAND", androidPtyPromptCommand());
-    command.args(["--noprofile", "--norc", "-i"]);
+    command.args(shellArguments);
     let executable = cstring(&command.get_program().to_string_lossy())?;
     let mut argv = vec![executable.clone()];
     for argument in command.get_args() {
@@ -1396,64 +1432,8 @@ fn buildAndroidPtyCommand(terminalType: &str, workingDir: &str) -> HostResult<An
 
 /// Builds the PTY startup command for Android proot Linux bash.
 fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
-    let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
-    let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
-    let tmpDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_TMP")?;
-    let bash = requiredAndroidRuntimePath("OPERIT_ANDROID_BASH")?;
-    let loader = requiredAndroidRuntimePath("OPERIT_ANDROID_LOADER")?;
-    let nativeLibraryDir = requiredAndroidRuntimePath("OPERIT_ANDROID_NATIVE_LIBRARY_DIR")?;
-
-    std::fs::create_dir_all(&tmpDir)?;
-
-    let workDir = nonBlank(workingDir, "working_directory")?;
-    let ldLibraryPath = format!(
-        "{}:{}",
-        nativeLibraryDir.to_string_lossy(),
-        runtimeDir.to_string_lossy()
-    );
-    let systemPath = env::var("PATH")
-        .map_err(|error| HostError::new(format!("Android terminal PATH is required: {error}")))?;
-    let promptCommand = androidPtyPromptCommand();
-    let commandText = "source $HOME/common.sh && start_shell";
-    let argv = vec![cstringPath(&bash)?, cstring("-c")?, cstring(commandText)?];
-    let envp = vec![
-        cstring(&format!(
-            "PATH={}:{}",
-            runtimeDir.to_string_lossy(),
-            systemPath
-        ))?,
-        cstring(&format!("HOME={}", internalRoot.to_string_lossy()))?,
-        cstring(&format!("PREFIX={}", runtimeDir.to_string_lossy()))?,
-        cstring(&format!("TERMUX_PREFIX={}", runtimeDir.to_string_lossy()))?,
-        cstring(&format!("LD_LIBRARY_PATH={ldLibraryPath}"))?,
-        cstring(&format!("PROOT_LOADER={}", loader.to_string_lossy()))?,
-        cstring(&format!("TMPDIR={}", tmpDir.to_string_lossy()))?,
-        cstring(&format!("PROOT_TMP_DIR={}", tmpDir.to_string_lossy()))?,
-        cstring(&format!("OPERIT_WORKING_DIR={workDir}"))?,
-        cstring("TERM=xterm-256color")?,
-        cstring("LANG=en_US.UTF-8")?,
-        cstring("PS1=$PWD $ ")?,
-        cstring(&format!("PROMPT_COMMAND={promptCommand}"))?,
-    ];
-    androidLogInfo(&format!(
-        "buildAndroidPtyCommand type=bash workingDir={workDir} runtimeDir={} internalRoot={} tmpDir={} bash={} loader={} nativeLibraryDir={}",
-        runtimeDir.to_string_lossy(),
-        internalRoot.to_string_lossy(),
-        tmpDir.to_string_lossy(),
-        bash.to_string_lossy(),
-        loader.to_string_lossy(),
-        nativeLibraryDir.to_string_lossy()
-    ));
-    Ok(AndroidPtyCommand {
-        executable: cstringPath(&bash)?,
-        argv,
-        envp,
-        cwd: cstringPath(&internalRoot)?,
-        shizuku: false,
-        dropRootToShell: false,
-        workingDir: None,
-        startupInput: None,
-    })
+    let rootfs = requiredAndroidRuntimePath("OPERIT_ANDROID_ROOTFS_DIR")?;
+    buildAndroidProotPtyCommand(&rootfs, workingDir, &[], &["--login", "-i"])
 }
 
 /// Builds the PTY startup command for Android system shell.
@@ -1635,12 +1615,11 @@ fn androidTerminalDebugInfo(workingDir: &str) -> HostResult<BTreeMap<String, Str
     info.insert("shellTerminalType".to_string(), "shell".to_string());
     info.insert(
         "argv".to_string(),
-        [
-            bash.to_string_lossy().to_string(),
-            "-c".to_string(),
-            "source $HOME/common.sh && start_shell".to_string(),
-        ]
-        .join(" "),
+        buildAndroidBashPtyCommand(&workDir)?
+            .argv.iter()
+            .map(|argument| quoteAndroidShellArgument(&argument.to_string_lossy()))
+            .collect::<Vec<_>>()
+            .join(" "),
     );
     Ok(info)
 }
@@ -2268,6 +2247,46 @@ pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Resolves custom host mount roots and descendants without matching sibling names.
+    #[test]
+    fn mounted_workspaces_use_the_declared_guest_directory() {
+        let mounts = vec![
+            TerminalMount { source: "/storage/emulated/0/项目 with spaces".into(), target: "/workspace".into() },
+            TerminalMount { source: "/storage/emulated/0/项目 with spaces/nested".into(), target: "/nested".into() },
+        ];
+        for (host, guest) in [
+            ("/storage/emulated/0/项目 with spaces", "/workspace"),
+            ("/storage/emulated/0/项目 with spaces/src/main", "/workspace/src/main"),
+            ("/storage/emulated/0/项目 with spaces/nested/output", "/nested/output"),
+            ("/storage/emulated/0/项目 with spaces-other", "/storage/emulated/0/项目 with spaces-other"),
+            ("/storage/emulated/0/Operit/workspaces/chat", "/storage/emulated/0/Operit/workspaces/chat"),
+        ] {
+            assert_eq!(androidMountedWorkingDirectory(host, &mounts), guest);
+        }
+    }
+
+    /// Applies mount translation after VFS resolution while retaining explicit guest paths.
+    #[test]
+    fn configured_terminal_resolves_vfs_workspaces_into_its_mounts() {
+        let host = AndroidTerminalHost {
+            profile: Some(operit_host_api::TerminalProfile {
+                id: "project".into(), name: "Project".into(), nameKey: None,
+                terminal: PROOT_TERMINAL.into(), terminalType: "bash".into(),
+                options: [("mounts".into(), r#"[{"source":"/storage/emulated/0/项目 with spaces","target":"/workspace"}]"#.into())].into(),
+            }),
+            ..AndroidTerminalHost::default()
+        };
+        assert_eq!(host.resolveWorkingDirectory(
+            PROOT_TERMINAL, "bash", "/operitapp/outputs/chat", &|path| {
+                assert_eq!(path, "/operitapp/outputs/chat");
+                Ok("/storage/emulated/0/项目 with spaces/outputs/chat".into())
+            },
+        ).unwrap(), "/workspace/outputs/chat");
+        assert_eq!(host.resolveWorkingDirectory(
+            PROOT_TERMINAL, "bash", "/virtual/linux/root", &|_| panic!("guest directory"),
+        ).unwrap(), "/root");
+    }
 
     fn document_resource() -> String {
         operit_host_api::FileSystemResource::FileSystemResource {
