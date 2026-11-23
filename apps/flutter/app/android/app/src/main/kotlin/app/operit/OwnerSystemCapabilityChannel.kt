@@ -780,12 +780,19 @@ class OwnerSystemCapabilityChannel(
             }
             player.isLooping = loopPlayback
             player.setVolume(volume.toFloat(), volume.toFloat())
-            player.setOnCompletionListener {
-                synchronized(musicLock) {
-                    if (musicPlayer === it) {
-                        musicState = "completed"
-                        musicMessage = "android music playback completed"
-                        syncMusicMediaSessionLocked()
+            player.setOnCompletionListener { completed ->
+                // Reaching the end is terminal. Hand the teardown to the main thread instead of
+                // touching the player from inside its own callback, and run it through the same
+                // path musicStop uses. Previously the drained player stayed attached, so the
+                // session kept reporting active and the shade held the card on a pause button
+                // that no longer did anything.
+                musicMainHandler.post {
+                    synchronized(musicLock) {
+                        if (musicPlayer === completed) {
+                            musicState = "completed"
+                            musicMessage = "android music playback completed"
+                            releaseMusicPlayerLocked()
+                        }
                     }
                 }
             }
