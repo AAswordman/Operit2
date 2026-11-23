@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.connector_hub",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": { "zh": "外部连接器", "en": "External Connectors" },
@@ -12,7 +12,7 @@
   "installation_scope": "device",
   "public_api": "src/api.ts",
   "optional_requires": [
-    { "id": "com.operit.qqbot_bundle", "min_version": "1.4.0" },
+    { "id": "com.operit.qqbot_bundle", "min_version": "1.5.0" },
     { "id": "com.operit.wechat_bot", "min_version": "1.2.0" },
     { "id": "com.operit.feishu_bot", "min_version": "1.0.0" }
   ]

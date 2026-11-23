@@ -10,7 +10,7 @@ function fixture(options = {}) {
   const values = Object.assign(load("model").defaultConfig(), options.initialConfig??{}); values.appId = "app"; values.appSecret = "private-secret";
   let dirty=false;const snapshots=[];
   const config = new Proxy(values,{set(target,key,value){target[key]=value;dirty=true;return true;}});
-  const http = [], created = [], submitted = [], cancelled = [], errors = [];
+  const http = [], created = [], submitted = [], cancelled = [], decisions = [], errors = [];
   let flushes = 0; const pendingReplies = new Map();
   const waifu = provider({ ...time });
   const initialized = waifu.call("settings.get", { profile: "default" }).then(settings => waifu.call("settings.set", { profile: "default", settings: { ...settings, charDelayMs: 0, enableEmoticons: true } }));
@@ -40,6 +40,10 @@ function fixture(options = {}) {
       },
     },
     Chat: {
+      async call(request) {
+        decisions.push(request);
+        return { text: options.decide ? await options.decide(request) : "SKIP" };
+      },
       async createNew(request) { created.push(request); return { chatId: `chat-${created.length}`, createdAt: time.Date.now() }; },
       async updateTitle() {}, async updateGroup() {},
       async *sendMessageStreaming(request) {
@@ -67,7 +71,7 @@ function fixture(options = {}) {
     if (failure !== undefined) throw failure;
     return result;
   }
-  return { config, time, socket, http, created, submitted, cancelled, errors, service, storage, complete, snapshots, resolveReply(chatId) { const resolve = pendingReplies.get(chatId); if (resolve) { pendingReplies.delete(chatId); resolve({ chatId, outcome: { type: "committed", status: "completed" } }); } }, flushes: () => flushes };
+  return { config, time, socket, http, created, submitted, cancelled, decisions, errors, service, storage, complete, snapshots, resolveReply(chatId, aiResponse) { const resolve = pendingReplies.get(chatId); if (resolve) { pendingReplies.delete(chatId); resolve({ chatId, aiResponse, outcome: { type: "committed", status: "completed" } }); } }, flushes: () => flushes };
 }
 
 test("configuration and status never return the persisted application secret", async () => {
@@ -483,14 +487,18 @@ test("captured rich messages retain typed media and reference routing after ackn
   const db = await f.storage.open({ path: "/plugin/channel_inbox.sqlite" });
   const route = (await db.collection("seen").get(message.key)).value.message;
   assert.doesNotMatch(JSON.stringify(route), /quoted-private-text|private-token|cdn.example|小明/);
-  await f.service.channel({ action: "reply", key: message.key, media: { kind: "video", source: "https://cdn.example/video.mp4" }, text: "[[reply_to:internal]]视频" });
-  const upload = f.http.find(request => request.url.endsWith("/files")), sent = f.http.find(request => request.url.endsWith("/messages"));
+  await f.service.channel({ action: "reply", key: message.key, text: "普通回复" });
+  await f.service.channel({ action: "reply", key: message.key, quote: true, media: { kind: "video", source: "https://cdn.example/video.mp4" }, text: "[[reply_to:internal]]视频" });
+  const upload = f.http.find(request => request.url.endsWith("/files"));
+  const [plainReply, sent] = f.http.filter(request => request.url.endsWith("/messages"));
+  assert.equal(plainReply.body.msg_id, "quoted");
+  assert.equal(Object.hasOwn(plainReply.body, "message_reference"), false);
   assert.equal(upload.body.file_type, 2); assert.equal(sent.body.msg_type, 7);
   assert.equal(sent.body.msg_id, "quoted"); assert.equal(sent.body.message_reference.message_id, "REFIDX_own=="); assert.equal(sent.body.content, "视频");
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
-test("automatic replies use readable quote context and native references while split internal tags never reach QQ", async () => {
+test("automatic replies use readable quote context without sending a native quote or internal tags", async () => {
   const f = fixture({ replyText: "[[reply_to:ROBOT1.0_internal]]收到。" });
   await f.complete(f.service.receive({ action: "start" }));
   await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true } }));
@@ -502,12 +510,36 @@ test("automatic replies use readable quote context and native references while s
   assert.doesNotMatch(f.submitted[0].input.text, /secret-token|REFIDX/);
   const sent = f.http.filter(request => request.url.endsWith("/messages"));
   assert.equal(sent.length, 1); assert.equal(sent[0].body.content, "收到。");
-  assert.equal(sent[0].body.msg_id, "secret-message"); assert.equal(sent[0].body.message_reference.message_id, "REFIDX_own==");
+  assert.equal(sent[0].body.msg_id, "secret-message");
+  assert.equal(Object.hasOwn(sent[0].body, "message_reference"), false);
   assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
   const [session]=(await f.service.channel({action:"conversations"})).conversations;
   const history=await f.service.channel({action:"history",conversationKey:session.key});
   assert.deepEqual(plain(history.messages.filter(m=>m.direction).map(m=>[m.text,m.delivery])),[["收到。","accepted"]]);
   await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("QQ channel sends text and media to known conversations without incoming messages", async () => {
+  const f = fixture({ initialConfig: { bindings: { "c2c:recipient": "chat-1", "group:room": "chat-2" } } });
+  const { conversations } = await f.service.channel({ action: "conversations" });
+  const direct = conversations.find(session => session.scene === "c2c");
+  const room = conversations.find(session => session.scene === "group");
+  await assert.rejects(f.service.channel({ action: "send", conversationKey: "unknown", text: "hi" }), /会话/);
+  await f.service.channel({ action: "send", conversationKey: direct.key, text: "hello" });
+  await f.service.channel({ action: "send", conversationKey: room.key, media: { kind: "image", source: "https://cdn.example/photo.png" } });
+  const [text, media] = f.http.filter(request => request.url.endsWith("/messages"));
+  assert.match(text.url, /\/users\/recipient\/messages$/);
+  assert.equal(text.body.content, "hello");
+  assert.match(media.url, /\/groups\/room\/messages$/);
+  assert.equal(media.body.media.file_info, "uploaded-image");
+  for (const { body } of [text, media]) {
+    assert.equal(Object.hasOwn(body, "msg_id"), false);
+    assert.equal(Object.hasOwn(body, "message_reference"), false);
+  }
+  const history = await f.service.channel({ action: "history", conversationKey: direct.key });
+  assert.equal(history.latestInboundId, undefined);
+  assert.deepEqual(plain(history.messages.map(({ direction, delivery, text }) => ({ direction, delivery, text }))),
+    [{ direction: "outgoing", delivery: "accepted", text: "hello" }]);
 });
 
 test('direct send records a timed-out request as unknown and never repeats it',async()=>{
@@ -621,4 +653,95 @@ test("delivery reservation survives config persistence and restart never automat
  await next.complete(next.service.receive({action:"retry_delivery",key:next.config.deliveries[0].key,skip:true}));await next.time.advance(800);
  assert.equal(next.submitted.length,1);assert.match(next.submitted[0].input.text,/第二条反馈/);
  await next.complete(next.service.receive({action:"stop"}));
+});
+
+test("an oversized QQ attachment does not abort automatic reply", async () => {
+  const f = fixture();
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true } }));
+  const frame = c2c("large-file");
+  frame.d.content = "";
+  frame.d.attachments = [{ content_type: "file", filename: "large.zip", size: 21 * 1024 * 1024, url: "https://cdn.example/file" }];
+  f.socket.frame(frame);
+  await f.time.advance(2000);
+  assert.equal(f.submitted.length, 1);
+  const { input } = f.submitted[0];
+  assert.equal(input.attachments.length, 0);
+  assert.match(input.text, /20 MiB/);
+  assert.ok(input.text.includes('large.zip'));
+  assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("AI group mode retains skipped messages and only generates on REPLY or a mention", async () => {
+  const f = fixture({ decide(request) {
+    const input = JSON.parse(request.turns[1].content);
+    return { idle: "SKIP", ask: "REPLY", invalid: "REPLY with explanation" }[input.message.text];
+  } });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, group_reply_mode: "ai" } }));
+  f.socket.frame(groupMessage("quiet", "alice", "group-a", false, "idle"));
+  await f.time.advance(700);
+  assert.equal(f.submitted.length, 0);
+  assert.equal(f.created.length, 0);
+  assert.equal(f.config.deliveries.length, 0);
+  f.socket.frame(groupMessage("ask", "alice", "group-a", false, "ask"));
+  await f.time.advance(700);
+  assert.equal(f.decisions.length, 2);
+  assert.equal(f.decisions[1].functionType, "CHAT");
+  assert.equal(JSON.parse(f.decisions[1].turns[1].content).history.at(-1).text, "idle");
+  f.socket.frame(groupMessage("invalid", "alice", "group-a", false, "invalid"));
+  await f.time.advance(700);
+  f.socket.frame(groupMessage("mention", "alice", "group-a", true, "mention"));
+  f.socket.frame(groupMessage("after-mention", "bob", "group-a", false, "idle"));
+  await f.time.advance(900);
+  assert.equal(f.decisions.length, 3);
+  assert.deepEqual(f.http.filter(request => request.url.endsWith("/messages")).map(request => request.body.msg_id), ["ask", "mention"]);
+  assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("ordinary group messages do not interrupt a reply and a timed-out decision cannot send", async () => {
+  let resolveDecision;
+  const f = fixture({ deferReply: true, decide: () => new Promise(resolve => { resolveDecision = resolve; }) });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, group_reply_mode: "ai", ai_timeout_ms: 3_000, waifu_profile: "native" } }));
+  f.socket.frame(groupMessage("first", "alice", "group-a", true, "first"));
+  await f.time.advance(700);
+  f.socket.frame(groupMessage("later", "bob", "group-a", false, "later"));
+  await f.time.advance(700);
+  assert.equal(f.submitted.length, 1);
+  assert.deepEqual(f.cancelled, []);
+  assert.equal(f.decisions.length, 0);
+  f.resolveReply(f.submitted[0].chatId, "first answer");
+  await f.time.advance(800);
+  assert.equal(f.decisions.length, 1);
+  await f.time.advance(3_200);
+  resolveDecision("REPLY");
+  await f.time.advance(600);
+  assert.equal(f.submitted.length, 1);
+  assert.equal(f.config.deliveries.length, 0);
+  assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
+  await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("a mention supersedes an in-flight group decision that uses the QQ voice transcript", async () => {
+  let resolveDecision;
+  const f = fixture({ decide: () => new Promise(resolve => { resolveDecision = resolve; }) });
+  await f.complete(f.service.receive({ action: "start" }));
+  await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true, group_reply_mode: "ai" } }));
+  const voice = groupMessage("voice", "alice", "group-a", false, "");
+  voice.d.attachments = [{ content_type: "voice", url: "https://cdn.example/voice", asr_refer_text: "can you help" }];
+  f.socket.frame(voice);
+  await f.time.advance(700);
+  assert.match(JSON.parse(f.decisions[0].turns[1].content).message.text, /can you help/);
+  assert.equal(f.submitted.length, 0);
+  f.socket.frame(groupMessage("mention", "alice", "group-a", true, "direct request"));
+  await f.time.advance(900);
+  resolveDecision("REPLY");
+  await f.time.advance(500);
+  assert.equal(f.decisions.length, 1);
+  assert.equal(f.submitted.length, 1);
+  assert.deepEqual(f.http.filter(request => request.url.endsWith("/messages")).map(request => request.body.msg_id), ["mention"]);
+  await f.complete(f.service.receive({ action: "stop" }));
 });

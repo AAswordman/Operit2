@@ -21,7 +21,7 @@ export type ManagementStatus = ChannelStatus & {
     failed: number;
     running: boolean;
     directEnabled: boolean;
-    groupMode: "off" | "mentioned" | "all";
+    groupMode: "off" | "mentioned" | "all" | "ai";
   };
   login?: { state: string; qrContent: string; expiresAt: number; error: string };
 };
@@ -90,6 +90,16 @@ function validateSend(channel: Channel, fields: SendFields): void {
   if (fields.markdown && channel !== "qq" || fields.post && channel !== "feishu" || fields.card && channel === "wechat") throw Error("该渠道不支持这种消息类型");
 }
 
+async function deliver(channel: Channel,
+  route: { action: "reply"; key: string; quote?: true } | { action: "send"; conversationKey: string },
+  fields: SendFields): Promise<{ response: null }> {
+  validateSend(channel, fields);
+  if (route.action === "send" && channel === "wechat") throw Error("此渠道需要回复一条已收到的消息");
+  const { text, media, markdown, post, card } = fields;
+  await bot(channel, { ...route, text, media, markdown, post, card });
+  return { response: null };
+}
+
 function replyKey(history: History, messageId: string): string {
   const { channel, accountId, scene, conversationId } = history.conversation;
   const base = [channel, accountId, conversationId, messageId];
@@ -135,14 +145,8 @@ export async function dispatch(payload: Request, caller: string): Promise<unknow
       return { messages: result.messages.map(sanitizedMessage) };
     }
     case "ack": return bot(channel, { action: "ack", key: payload.key, consumerId: caller });
-    case "reply":
-    case "send": {
-      validateSend(channel, payload);
-      if (payload.action === "send" && channel !== "feishu") throw Error("此渠道需要回复一条已收到的消息");
-      const { text, media, markdown, post, card } = payload;
-      await bot(channel, { action: payload.action, ...(payload.action === "reply" ? { key: payload.key } : { conversationKey: payload.conversationKey }), text, media, markdown, post, card });
-      return { response: null };
-    }
+    case "reply": return deliver(channel, { action: "reply", key: payload.key }, payload);
+    case "send": return deliver(channel, { action: "send", conversationKey: payload.conversationKey }, payload);
     default: return bot(channel, body);
   }
 }
@@ -162,10 +166,10 @@ export async function consoleRequest(payload: ConsoleRequest): Promise<unknown> 
     return bot<ManagementStatus>(channel, command);
   }
   if (payload.action === "console_reply") {
-    const { conversationKey, key, channel, text, media } = payload;
+    const { conversationKey, key, channel } = payload;
     const existing = await history(channel, { action: "history", channel, conversationKey, limit: 50 });
     if (!key || existing.latestReplyKey !== key && !existing.messages.some(item => item.replyKey === key)) throw Error("该消息不在近期会话记录内，请刷新后再试");
-    return dispatch({ action: "reply", channel, key, text, media }, PACKAGE);
+    return deliver(channel, { action: "reply", key, ...(channel === "qq" ? { quote: true } : {}) }, payload);
   }
   return dispatch(payload, PACKAGE);
 }

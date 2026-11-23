@@ -116,8 +116,9 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
     icon("ChevronRight", 18, colors.onSurfaceVariant)])));
 
   if (view === "conversations" && selected) {
-    const target = reply ?? history?.latestReplyKey ?? [...(history?.messages ?? [])].reverse().find(item => item.replyKey)?.replyKey;
-    const canSend = !!target || selected.channel === "feishu";
+    const target = selected.channel === "qq" ? reply
+      : reply ?? history?.latestReplyKey ?? [...(history?.messages ?? [])].reverse().find(item => item.replyKey)?.replyKey;
+    const canSend = !!target || selected.channel !== "wechat";
     nodes.push(row("conversation-title", [ui.IconButton({ key: "back", icon: "ArrowBack", tooltip: "返回会话列表", enabled: !busy, onClick: closeConversation }),
       ui.Column({ weight: 1, spacing: 3 }, [text(selected.title, "titleLarge", { maxLines: 2, overflow: "ellipsis" }), sub(platforms[selected.channel].name)])]));
     if (history?.truncated && history.messages.length < 100 && history.messages[0]) nodes.push(flow("older-actions", [button("older", "加载更早消息", () => run(() => load(selected, history.messages[0].receivedAt)), "text", true, "History")]));
@@ -247,7 +248,9 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
             enabled: !busy && status.listenerEnabled === true, onCheckedChange: enabled => { void run(() => manage({ action: "manage", channel, command: "start", autoReply: enabled })); } })])];
         if (channel === "qq" && status.replyActivity) {
           const activity = status.replyActivity;
-          const group = activity.groupMode === "mentioned" ? "群聊仅被 @ 时回复" : activity.groupMode === "all" ? "群聊回复所有消息" : "群聊回复关闭";
+          const group = {
+            mentioned: "群聊仅被 @ 时回复", all: "群聊回复所有消息", ai: "群聊由 AI 判断是否接话", off: "群聊回复关闭",
+          }[activity.groupMode];
           replies.push(sub(`${activity.directEnabled ? "私聊回复开启" : "私聊回复关闭"} · ${group}`),
             sub(`本次运行收到 ${activity.received} 条 · 已回复 ${activity.replied} 条`));
           if (status.autoReplyEnabled && !activity.running) replies.push(sub("自动回复等待监听恢复"));

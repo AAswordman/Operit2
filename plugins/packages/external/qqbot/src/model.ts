@@ -5,12 +5,14 @@ export const MAX_EVENTS = 200;
 export type Scene = "c2c" | "group" | "unknown";
 export type JsonObject = Record<string, unknown>;
 
+export type GroupReplyMode = "mentioned" | "all" | "ai";
+
 export interface AutoReplyConfig {
   enabled: boolean;
   c2cEnabled: boolean;
   groupEnabled: boolean;
   groupContext: "shared" | "member";
-  groupReplyMode: "mentioned" | "all";
+  groupReplyMode: GroupReplyMode;
   listenGroupMessages: boolean;
   aiTimeoutMs: number;
   chatGroup: string;
@@ -69,7 +71,7 @@ export interface SendParams {
 }
 export interface ConfigureParams { app_id?: string; app_secret?: string; use_sandbox?: boolean; listener_enabled?: boolean; test_connection?: boolean; restart_service?: boolean }
 export interface ReceiveParams { limit?: number; consume?: boolean; scene?: Scene; event_type?: string; include_raw?: boolean; auto_start?: boolean }
-export interface AutoReplyParams { group_context?: "shared" | "member"; group_reply_mode?: "mentioned" | "all"; listen_group_messages?: boolean; enabled?: boolean; c2c_enabled?: boolean; group_enabled?: boolean; ai_timeout_ms?: number; chat_group?: string; character_selection?: string; assistant_instruction?: string; waifu_profile?: string; start_now?: boolean }
+export interface AutoReplyParams { group_context?: "shared" | "member"; group_reply_mode?: GroupReplyMode; listen_group_messages?: boolean; enabled?: boolean; c2c_enabled?: boolean; group_enabled?: boolean; ai_timeout_ms?: number; chat_group?: string; character_selection?: string; assistant_instruction?: string; waifu_profile?: string; start_now?: boolean }
 export type Request =
   | { action: "configure"; params: ConfigureParams }
   | { action: "status" }
