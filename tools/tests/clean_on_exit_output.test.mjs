@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import vm from 'node:vm';
+import { loadSuperAdmin } from './fixtures/super_admin_runtime.mjs';
 
 const root = new URL('../../', import.meta.url);
 const cleanOnExit = '/operitapp/data/temp/clean_on_exit';
@@ -30,6 +31,8 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
     getChatId: () => 'test-chat',
     console: { log() {}, error: (...args) => logs.push(args) },
     complete: (result) => completions.push(result),
+    /** Accepts stream events independently of the final tool output. */
+    sendIntermediateResult() {},
     toolCall: async () => ({ statusCode: 200, content: output, contentType: 'application/json' }),
     Tools: {
       Files: {
@@ -46,7 +49,14 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
       System: {
         terminal: {
           /** Describes the fixture's native macOS Bash terminal. */
-          info: async () => ({ platform: 'macos', terminal: 'native', terminalType: 'bash', types: [] }),
+          info: async () => ({ platform: 'macos', terminal: 'native', terminalType: 'bash', types: [],
+            defaultProfileId: 'native', profiles: [{id:'native', available:true}] }),
+          /** Emits the profile session identity and completed command through the production stream shape. */
+          async *runStream(request) {
+            const created = await this.create(request.sessionName, 'bash');
+            yield {type:'start', ...created};
+            yield {type:'completed', result:await this.exec(created.sessionId)};
+          },
           /** Creates a fixture session with the explicitly requested interpreter. */
           async create(name, type) {
             if (!sessions.has(name)) sessions.set(name, `session-${sessions.size + 1}`);
@@ -58,14 +68,20 @@ async function fixture(t, packagePath, output, injectedPath = cleanOnExit) {
       },
     },
   });
-  const source = await readFile(new URL(packagePath, root), 'utf8');
-  vm.runInContext(stripTypeScriptTypes(source), context);
-  return { tools: context.exports, calls, sessions, logs, completions, resolve, runtimeRoot };
+  let tools;
+  if (packagePath === 'plugins/packages/buildin/super_admin/src/tools.ts') {
+    tools = loadSuperAdmin(context).tools;
+  } else {
+    const source = await readFile(new URL(packagePath, root), 'utf8');
+    vm.runInContext(stripTypeScriptTypes(source), context);
+    tools = context.exports;
+  }
+  return { tools, calls, sessions, logs, completions, resolve, runtimeRoot };
 }
 
 test('bash short output stays inline and does not create temporary directories', async (t) => {
-  const f = await fixture(t, 'plugins/packages/buildin/super_admin.ts', 'x'.repeat(12000));
-  const result = await f.tools.bash({ command: 'printf small' });
+  const f = await fixture(t, 'plugins/packages/buildin/super_admin/src/tools.ts', 'x'.repeat(12000));
+  const result = await f.tools.terminal({ command: 'printf small' });
   assert.equal(result.output.length, 12000);
   assert.deepEqual(f.calls, []);
   assert.deepEqual(f.logs, []);
@@ -73,10 +89,10 @@ test('bash short output stays inline and does not create temporary directories',
 
 test('bash large output is readable under the active identity, reusing its session', async (t) => {
   const output = 'x'.repeat(12001);
-  const f = await fixture(t, 'plugins/packages/buildin/super_admin.ts', output);
+  const f = await fixture(t, 'plugins/packages/buildin/super_admin/src/tools.ts', output);
   // The first call creates a missing temp tree; later calls use the existing tree.
   for (let i = 0; i < 5; i++) {
-    const result = await f.tools.bash({ command: 'printf large' });
+    const result = await f.tools.terminal({ command: 'printf large' });
     assert.equal(result.output, '(saved_to_file)');
     assert.equal(result.output_chars, output.length);
     assert.equal(result.operit_clean_on_exit_dir, cleanOnExit);
@@ -90,9 +106,9 @@ test('bash large output is readable under the active identity, reusing its sessi
 });
 
 test('an existing physical directory does not make a host path a VFS path', async (t) => {
-  const f = await fixture(t, 'plugins/packages/buildin/super_admin.ts', 'x'.repeat(12001), '/Users/test/temp/clean_on_exit');
+  const f = await fixture(t, 'plugins/packages/buildin/super_admin/src/tools.ts', 'x'.repeat(12001), '/Users/test/temp/clean_on_exit');
   await mkdir(f.resolve(cleanOnExit), { recursive: true });
-  await assert.rejects(f.tools.bash({ command: 'printf large' }), /Unknown VFS root/);
+  await assert.rejects(f.tools.terminal({ command: 'printf large' }), /Unknown VFS root/);
   assert.deepEqual(await readdir(f.resolve(cleanOnExit)), []);
   assert.equal(f.calls.length, 1, 'invalid path must fail before writing output');
 });

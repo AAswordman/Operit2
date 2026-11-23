@@ -113,7 +113,7 @@ mod tests {
     #[test]
     fn bundled_terminal_tools_declare_display_in_every_platform_state() {
         let package = JsPackageLoader::parse(include_str!(
-            "../../../../../../plugins/packages/buildin/super_admin.ts"
+            "../../../../../../plugins/packages/buildin/super_admin/src/tools.ts"
         ))
         .unwrap();
         for tool in package

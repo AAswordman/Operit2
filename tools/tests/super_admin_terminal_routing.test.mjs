@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
+import { loadSuperAdmin } from './fixtures/super_admin_runtime.mjs';
 import test from 'node:test';
 import vm from 'node:vm';
 
@@ -21,6 +21,7 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
   const intermediate = [];
   let chatId = 'chat-a';
   let sessionSequence = 0;
+  let now = 0;
   const terminalInfo = {
     platform,
     terminal: implementations[defaultType],
@@ -29,6 +30,7 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
   };
   const context = vm.createContext({
     exports: {},
+    Date: class extends Date { /** Supplies a deterministic idle clock. */ static now() { return now; } },
     OPERIT_CLEAN_ON_EXIT_DIR: '/operitapp/data/temp/clean_on_exit',
     /** Supplies the active chat identity without a platform-dependent branch. */
     getChatId() { return chatId; },
@@ -94,6 +96,23 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
             }
             throw new Error(`Terminal session not found: ${sessionId}`);
           },
+          /** Atomically enforces identity and host idleness for cleanup. */
+          async closeIfIdle(sessionId, sessionName) {
+            calls.push({ operation: 'closeIfIdle', sessionId, sessionName });
+            const session = [...sessions.values()].find(value => value.sessionId === sessionId);
+            assert.ok(session);
+            assert.ok(session.sessionName === sessionName || /^\d+$/.test(session.sessionName.slice(`${sessionName}_generation_`.length)) && session.sessionName.startsWith(`${sessionName}_generation_`));
+            if (session.commandRunning) throw new Error('Command in progress');
+            return this.close(sessionId);
+          },
+          /** Returns host state without marking the plugin's automatic checks as user activity. */
+          async screen(sessionId) {
+            const session = [...sessions.values()].find(value => value.sessionId === sessionId);
+            if (!session) throw new Error('Session does not exist');
+            return { ...session, rows: 24, cols: 80, content: output };
+          },
+          /** Models successful interactive input independently of command execution. */
+          async input() { return 'Input accepted'; },
           /** Returns the actual selected session's identity with the command output. */
           async exec(...args) {
             const [sessionId, command] = args;
@@ -114,9 +133,11 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
       },
     },
   });
-  vm.runInContext(stripTypeScriptTypes(source('plugins/packages/buildin/super_admin.ts')), context);
+  const runtime = loadSuperAdmin(context);
   return {
-    context, tools: context.exports, sessions, calls, files, errors, intermediate, terminalInfo,
+    context, ...runtime, sessions, calls, files, errors, intermediate, terminalInfo,
+    /** Advances the clock without sleeping. */
+    setTime(value) { now = value; },
     /** Changes the active chat to exercise session identity isolation. */
     setChatId(value) { chatId = value; },
   };
@@ -125,7 +146,7 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
 
 /** Exercises the shared profile tools independently of platform-specific names. */
 test('one execution entry point advertises discovery without platform presets', () => {
-  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
+  const metadata = JSON.parse(source('plugins/packages/buildin/super_admin/src/tools.ts').match(/\/\* METADATA\s*([\s\S]*?)\*\//)[1]);
   assert.equal(metadata.states, undefined);
   assert.ok(metadata.tools.some(tool => tool.name === 'terminal'));
   assert.ok(metadata.tools.some(tool => tool.name === 'list_terminals'));
@@ -155,7 +176,7 @@ function managedFixture(options = {}) {
   f.context.Tools.System.terminal.runStream = async function*(request) {
     const profile = f.terminalInfo.profiles.find(value => value.id === request.profileId);
     f.calls.push({operation:'selectedProfile', profileId:request.profileId});
-    yield* originalRun.call(this, {...request, terminalType:profile.terminalType});
+    yield* originalRun.call(this, {...request, sessionName:`${request.sessionName}_profile_${profile.id}`, terminalType:profile.terminalType});
   };
   return f;
 }
@@ -229,4 +250,178 @@ test('a slow command emits live output while its package promise remains pending
   release();
   assert.equal((await running).output, 'first\nsecond\n');
   assert.equal(f.intermediate[2].chunk, 'second\n');
+});
+
+/** Proves cleanup runs from the durable Host hook without another AI tool invocation. */
+test('the plugin closes an idle session at ten minutes and recreates its context on next use', async () => {
+  const f = managedFixture();
+  assert.equal(f.hooks.length, 1);
+  assert.equal(f.hooks[0].trigger.intervalMs, 60000);
+  const first = await f.tools.terminal({command:'pwd'});
+  f.setTime(599999);
+  await f.hooks[0].function();
+  assert.equal(f.sessions.size, 1);
+  f.setTime(600000);
+  await f.hooks[0].function();
+  assert.equal(f.sessions.size, 0);
+  assert.equal(f.calls.filter(call => call.operation === 'closeIfIdle').length, 1);
+  assert.notEqual((await f.tools.terminal({command:'pwd'})).sessionId, first.sessionId);
+});
+
+/** Restarts the inactivity deadline for commands, screen reads and interactive input. */
+test('terminal interactions reset only the used session deadline', async () => {
+  const f = managedFixture();
+  const a = await f.tools.terminal({command:'pwd'});
+  const b = await f.tools.terminal({command:'pwd',profileId:'ubuntu_b'});
+  f.setTime(500000);
+  await f.tools.get_screen({sessionId:a.sessionId});
+  f.setTime(600000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  assert.equal([...f.sessions.values()][0].sessionId, a.sessionId);
+  assert.ok(f.calls.some(call => call.operation === 'closeIfIdle' && call.sessionId === b.sessionId));
+  f.setTime(1000000);
+  await f.tools.input({sessionId:a.sessionId,input:'pwd'});
+  f.setTime(1500000);
+  await f.tools.terminal({command:'pwd'});
+  f.setTime(2099999);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  f.setTime(2100000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 0);
+});
+
+/** Keeps a silent running command protected even after many inactivity intervals. */
+test('a pending stream stays alive and receives a full idle period after completion', async () => {
+  const f = managedFixture();
+  const original = f.context.Tools.System.terminal.runStream;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.runStream = async function*(request) {
+    for await (const event of original.call(this,request)) {
+      if (event.type === 'completed') await gate;
+      yield event;
+    }
+  };
+  const running = f.tools.terminal({command:'silent build'});
+  await new Promise(resolve => setImmediate(resolve));
+  f.setTime(3600000);
+  await f.main.onClock();
+  assert.equal(f.calls.filter(call => call.operation === 'closeIfIdle').length, 0);
+  release();
+  await running;
+  f.setTime(4199999);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  f.setTime(4200000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 0);
+});
+
+/** Ensures one long command does not indefinitely retain completed sessions in the same chat. */
+test('an idle generation is reclaimed while another generation is running', async () => {
+  const f = managedFixture();
+  const first = await f.tools.terminal({command:'pwd'});
+  const idle = [...f.sessions.values()][0];
+  idle.commandRunning = true;
+  const original = f.context.Tools.System.terminal.runStream;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.runStream = async function*(request) {
+    for await (const event of original.call(this,request)) {
+      if (event.type === 'chunk') await gate;
+      yield event;
+    }
+  };
+  const running = f.tools.terminal({command:'build'});
+  await new Promise(resolve => setImmediate(resolve));
+  idle.commandRunning = false;
+  f.setTime(600000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  assert.notEqual([...f.sessions.values()][0].sessionId, first.sessionId);
+  release();
+  await running;
+  f.setTime(1200000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 0);
+});
+
+/** Protects an in-flight interaction and counts idleness from its completion. */
+test('cleanup does not interrupt a pending screen read', async () => {
+  const f = managedFixture();
+  const result = await f.tools.terminal({command:'pwd'});
+  const original = f.context.Tools.System.terminal.screen;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.screen = async function(sessionId) {
+    await gate;
+    return original.call(this,sessionId);
+  };
+  f.setTime(500000);
+  const reading = f.tools.get_screen({sessionId:result.sessionId});
+  await new Promise(resolve => setImmediate(resolve));
+  f.setTime(1100000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  release();
+  await reading;
+  f.context.Tools.System.terminal.screen = original;
+  f.setTime(1699999);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  f.setTime(1700000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 0);
+});
+
+/** Checks independent host activity after this plugin's stream has already completed. */
+test('a host-running command is not closed and restarts idleness when it finishes', async () => {
+  const f = managedFixture();
+  await f.tools.terminal({command:'pwd'});
+  const session = [...f.sessions.values()][0];
+  session.commandRunning = true;
+  f.setTime(600000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  session.commandRunning = false;
+  f.setTime(1200000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  f.setTime(1800000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 0);
+});
+
+/** Keeps conditional-close rejection visible without escalating to an unconditional close. */
+test('a command starting between observation and close is preserved', async () => {
+  const f = managedFixture();
+  await f.tools.terminal({command:'pwd'});
+  f.context.Tools.System.terminal.closeIfIdle = async () => { throw new Error('Command in progress'); };
+  f.setTime(600000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  assert.equal(f.calls.some(call => call.operation === 'close'), false);
+  assert.match(f.errors[0][0], /Command in progress/);
+});
+
+/** Ensures plugin ownership excludes terminals created directly in the workspace. */
+test('manual terminals are excluded and explicit close removes the cleanup record', async () => {
+  const f = managedFixture();
+  const manual = await f.context.Tools.System.terminal.create('workspace-tab', 'bash');
+  const owned = await f.tools.terminal({command:'pwd'});
+  await f.tools.close({sessionId:owned.sessionId});
+  f.setTime(600000);
+  await f.main.onClock();
+  assert.deepEqual([...f.sessions.values()].map(session => session.sessionId), [manual.sessionId]);
+  assert.equal(f.calls.some(call => call.operation === 'closeIfIdle'), false);
+});
+
+/** Keeps the new container discoverable while preserving all existing tool names. */
+test('the ToolPkg manifest owns the existing super_admin tool namespace', () => {
+  const manifest = JSON.parse(source('plugins/packages/buildin/super_admin/manifest.json'));
+  assert.equal(manifest.main, 'dist/main.js');
+  assert.deepEqual(manifest.subpackages, [{id:'super_admin',entry:'dist/tools.js'}]);
+  assert.equal(manifest.enabled_by_default, true);
 });

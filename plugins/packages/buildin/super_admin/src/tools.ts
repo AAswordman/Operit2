@@ -1,3 +1,5 @@
+import { manageSessions } from "./sessions";
+
 type SuperAdminParams = Record<string, unknown>;
 
 type TerminalParams = SuperAdminParams & {
@@ -73,8 +75,8 @@ type PersistedTerminalOutput = {
                 "targetParameter": "command"
             },
             "description": {
-                "zh": "在用户配置的终端中执行命令并持续返回输出。省略 profileId 使用默认配置；先用 list_terminals 查询具体配置，不要按平台猜测 shell。包执行默认等待20秒，随后返回 execution_id，命令继续运行；使用 package_wait 读取后续输出和完成结果。终端开始事件提供 sessionId，可用于 get_screen、input、close。",
-                "en": "Execute in a user-configured terminal and stream output until completion. Omit profileId for the default or select a profile from list_terminals. Package execution waits up to 20 seconds, then returns execution_id while the command continues. Use package_wait for further output and completion. The terminal start event supplies sessionId for get_screen, input and close."
+                "zh": "在用户配置的终端中执行命令并持续返回输出。省略 profileId 使用默认配置；先用 list_terminals 查询具体配置，不要按平台猜测 shell。包执行默认等待20秒，随后返回 execution_id，命令继续运行；使用 package_wait 读取后续输出和完成结果。终端开始事件提供 sessionId，可用于 get_screen、input、close。命令结束后闲置10分钟的会话会自动关闭，之后执行命令将新建会话，原上下文不再保留。",
+                "en": "Execute in a user-configured terminal and stream output until completion. Omit profileId for the default or select a profile from list_terminals. Package execution waits up to 20 seconds, then returns execution_id while the command continues. Use package_wait for further output and completion. The terminal start event supplies sessionId for get_screen, input and close. Sessions idle for 10 minutes after completion close automatically; subsequent commands create a new session without the previous context."
             },
             "parameters": [
                 {
@@ -246,6 +248,8 @@ const superAdmin = (function () {
      * @param command - Command to execute.
      */
     async function terminal(params: TerminalParams) {
+        let acquiredFamily: string | undefined;
+        let activeSession: string | undefined;
         try {
             if (!params.command) {
                 throw new Error("命令不能为空");
@@ -256,13 +260,23 @@ const superAdmin = (function () {
             const profile = terminalInfo.profiles.find(entry => entry.id === profileId);
             if (!profile) throw new Error(`Terminal profile is not registered: ${profileId}`);
             if (!profile.available) throw new Error(`Terminal profile is unavailable: ${profileId}`);
+            const sessionName = getDefaultTerminalSessionName(profileId);
+            const sessionFamily = `${sessionName}_profile_${profileId}`;
+            await manageSessions({ action: "acquire_family", sessionName: sessionFamily });
+            acquiredFamily = sessionFamily;
             console.log(`执行终端命令: ${command}`);
             const stream = Tools.System.terminal.runStream({
-                sessionName: getDefaultTerminalSessionName(profileId),
+                sessionName,
                 profileId,
                 command
             });
             for await (const event of stream) {
+                if (event.type === "start") {
+                    await manageSessions({ action: "track", sessionId: event.sessionId, sessionName: sessionFamily });
+                    activeSession = event.sessionId;
+                    await manageSessions({ action: "release_family", sessionName: sessionFamily });
+                    acquiredFamily = undefined;
+                }
                 if (event.type !== "completed") {
                     sendIntermediateResult(event);
                     continue;
@@ -284,6 +298,10 @@ const superAdmin = (function () {
             console.error(error.stack);
             throw error;
         }
+        finally {
+            if (activeSession !== undefined) await manageSessions({ action: "release_session", sessionId: activeSession });
+            if (acquiredFamily !== undefined) await manageSessions({ action: "release_family", sessionName: acquiredFamily });
+        }
     }
 
     /** Lists user-managed profiles and their default without platform assumptions. */
@@ -293,13 +311,21 @@ const superAdmin = (function () {
 
     /** Closes the specified terminal session through the host terminal API. */
     async function close(params: TerminalSessionParams) {
-        return Tools.System.terminal.close(params.sessionId);
+        await manageSessions({ action: "acquire_session", sessionId: params.sessionId });
+        try {
+            const result = await Tools.System.terminal.close(params.sessionId);
+            if (result.success) await manageSessions({ action: "forget", sessionId: params.sessionId });
+            return result;
+        } finally {
+            await manageSessions({ action: "release_session", sessionId: params.sessionId });
+        }
     }
     /**
      * Gets the visible screen content for a terminal session.
      * @param sessionId - Target session ID.
      */
     async function get_screen(params: TerminalSessionParams) {
+        await manageSessions({ action: "acquire_session", sessionId: params.sessionId });
         try {
             const sessionId = params.sessionId;
             const result = await Tools.System.terminal.screen(sessionId);
@@ -317,6 +343,9 @@ const superAdmin = (function () {
             console.error(error.stack);
             throw error;
         }
+        finally {
+            await manageSessions({ action: "release_session", sessionId: params.sessionId });
+        }
     }
     /**
      * Writes input or a control key to a terminal session.
@@ -325,6 +354,7 @@ const superAdmin = (function () {
      * @param control - Control key.
      */
     async function input(params: TerminalInputParams) {
+        await manageSessions({ action: "acquire_session", sessionId: params.sessionId });
         try {
             if (params.input === undefined && params.control === undefined) {
                 throw new Error("input和control至少需要提供一个");
@@ -345,6 +375,9 @@ const superAdmin = (function () {
             console.error(`[input] 错误: ${error.message}`);
             console.error(error.stack);
             throw error;
+        }
+        finally {
+            await manageSessions({ action: "release_session", sessionId: params.sessionId });
         }
     }
     return {
