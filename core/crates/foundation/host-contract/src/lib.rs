@@ -1930,7 +1930,7 @@ pub trait TerminalHost: Send + Sync {
     /// Declares editable fields for each implementation without probing or starting processes.
     fn terminalProfileSupport(&self) -> HostResult<Vec<TerminalProfileSupport>> {
         Ok(self.terminalInfo()?.types.into_iter().map(|entry| TerminalProfileSupport {
-            terminal: entry.terminal, terminalType: entry.terminalType, fields: Vec::new(),
+            terminal: entry.terminal, terminalType: entry.terminalType, fields: Vec::new(), fieldChoices: None,
         }).collect())
     }
     /// Creates an isolated host with immutable launch options for new sessions.

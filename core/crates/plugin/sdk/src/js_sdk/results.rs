@@ -570,6 +570,8 @@ pub enum TerminalImplementation {
     Native,
     #[serde(rename = "proot")]
     Proot,
+    #[serde(rename = "chroot")]
+    Chroot,
     #[serde(rename = "android-system")]
     AndroidSystem,
     #[serde(rename = "adb")]
@@ -589,6 +591,7 @@ impl TerminalImplementation {
         match self {
             Self::Native => "native",
             Self::Proot => "proot",
+            Self::Chroot => "chroot",
             Self::AndroidSystem => "android-system",
             Self::Adb => "adb",
             Self::Shell => "shell",
@@ -611,6 +614,7 @@ impl TryFrom<&str> for TerminalImplementation {
         match value {
             "native" => Ok(Self::Native),
             "proot" => Ok(Self::Proot),
+            "chroot" => Ok(Self::Chroot),
             "android-system" => Ok(Self::AndroidSystem),
             "adb" => Ok(Self::Adb),
             "shell" => Ok(Self::Shell),

@@ -136,7 +136,8 @@ operit2 cli terminal update @/operitapp/workspaces/demo/wsl-ubuntu.json
 operit2 cli terminal delete powershell7
 ```
 
-WSL 发行版须已在 Windows 注册；发行版名称、程序路径和启动参数由对应宿主解释。
+WSL 发行版须在运行 Core 的 Windows 账户下注册，`terminal support` 返回已发现的
+发行版名称。只填写 `wslDistribution` 时，宿主使用系统的 `wsl.exe`。
 只能使用 `terminal support` 返回的实现及字段。`add` 不覆盖已有 ID，`update` 不创建
 未知 ID。删除默认实例前须先选择另一个默认实例；删除配置保留 rootfs 和已有会话。
 

@@ -25,6 +25,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get terminalImplementationAndroidSystem => 'Android system terminal';
 
   @override
+  String get terminalImplementationChroot => 'Chroot (Root)';
+
+  @override
   String get terminalImplementationQemu => 'QEMU Linux emulated terminal';
 
   @override
@@ -122,6 +125,28 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get terminalProfileRootfs => 'Root filesystem directory';
+
+  @override
+  String get terminalProfileChrootRootfsHelp =>
+      'Requires Root authorization and the absolute path to a trusted Linux root filesystem containing /bin/bash.';
+
+  @override
+  String get terminalProfileRootfsRequired => 'Enter the root filesystem path.';
+
+  @override
+  String get terminalProfileMounts => 'Directory mounts';
+
+  @override
+  String get terminalProfileAddMount => 'Add mount';
+
+  @override
+  String get terminalProfileMountSource => 'Host directory';
+
+  @override
+  String get terminalProfileMountTarget => 'Guest directory';
+
+  @override
+  String get terminalProfileMountPathRequired => 'Enter a directory path.';
 
   @override
   String get terminalProfileRootfsHelp =>
@@ -5568,14 +5593,22 @@ class AppLocalizationsEn extends AppLocalizations {
   String get terminalDistributionsTitle => 'Download Linux distributions';
 
   @override
-  String get terminalDistributionsDescription =>
-      'Only Alpine is bundled. Download an ARM64 root filesystem to add a separate instance, then choose it as the default. You can install the same distribution multiple times.';
-
-  @override
   String get terminalDistributionDownload => 'Download and install';
 
   @override
+  String get terminalDistributionInstallAnother => 'Install another';
+
+  @override
   String get terminalInstallQueued => 'Waiting to install';
+
+  @override
+  String get terminalInstallConnecting => 'Testing download mirrors…';
+
+  @override
+  String get terminalInstallCancelling => 'Cancelling…';
+
+  @override
+  String get terminalInstallErrorDetails => 'Error details';
 
   @override
   String get terminalInstallDownloading => 'Downloading root filesystem';
@@ -5597,9 +5630,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get terminalInstallFailed => 'Installation failed';
 
   @override
-  String get terminalProfileWslDistribution => 'WSL distribution (optional)';
+  String get terminalProfileWslDistribution => 'WSL distribution';
+
+  @override
+  String get terminalProfileWslDistributionRequired =>
+      'Select a WSL distribution.';
 
   @override
   String get terminalProfileWslHelp =>
-      'For WSL, select Bash, enter the absolute path to wsl.exe and a distribution name from wsl --list --quiet, such as Ubuntu-24.04. Leave this field blank for a native Bash executable.';
+      'Install a WSL distribution on the Windows device running Core, then reopen this dialog.';
 }

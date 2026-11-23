@@ -22,23 +22,28 @@ PowerShell，或多个 WSL 发行版。每套配置都有独立 ID 和会话上�
 用户为每次安装填写名称。即使重复下载同一发行版，也会安装到新的实例目录，
 不会覆盖已有系统。完成后加入配置列表，由用户明确选择默认项。
 
-下载以文件流写入临时安装目录；支持查看进度和取消。安装前校验 SHA-256，
+终端和应用更新共用 GitHub 镜像列表和测速逻辑。每次传输开始前并发从上游和镜像
+读取归档前 64 KiB，检查字节范围、归档总大小和 XZ 文件头，再选择实测速率最高的下载源。
+发行版原行显示镜像测速、已下载大小、百分比与校验、解压进度。失败或取消后可在原行
+使用相同名称重试，从已保存的字节偏移续传。安装前校验 SHA-256，
 解压时限制路径、条目数量和展开大小，保留 guest 内的链接关系并检查 Bash
 是否为 ELF64 / AArch64。符号链接在普通文件之后创建，guest 的绝对链接转换
-为实例内的相对链接。失败或取消会清理本次临时目录；注册配置失败时回收本次
+为实例内的相对链接。失败或取消会清理本次解压目录，并保留可续传的下载文件；校验失败
+会丢弃归档。注册配置失败时回收本次
 新实例。安装器不向其他发行版执行 Alpine 软件包安装脚本。
 
 删除配置仅移除启动入口，保留根文件系统及其中的用户文件，正在运行的会话
-仍可使用原环境。设备断电或进程被强制终止时，下载进度不会跨进程恢复。
+仍可使用原环境。重启后可以手动发起安装，复用已保存的下载字节。
 
 ## 平台注册的能力
 
 | 平台 | 实现 / 解释器 | 可配置项 |
 | --- | --- | --- |
-| Android | proot / bash | 自定义 rootfs，或按需安装 ARM64 发行版 |
+| Android | proot / bash | 自定义 rootfs、目录挂载，或按需安装 ARM64 发行版 |
+| Android | chroot / bash | 可信的 rootfs 目录、目录挂载，启动时需要 Root 授权 |
 | Android | android-system / shell | 系统终端；权限使用现有 Android 权限配置 |
 | Windows | native / powershell | PowerShell 5、7 等解释器的绝对路径和 JSON 参数数组 |
-| Windows | native / bash | Bash 的绝对路径和参数；填写 WSL 发行版时通过 wsl.exe 启动 |
+| Windows | native / bash | 本机 Bash 的绝对路径和参数，或从宿主发现的 WSL 发行版中选择 |
 | Linux | native / bash | Bash 或兼容启动器的绝对路径和参数 |
 | macOS | native / 已注册解释器 | 绝对路径和参数；保留原沙箱及解释器协议 |
 | OpenHarmony | qemu-vroot / shell | 自定义 rootfs，或按需安装 ARM64 发行版 |
@@ -49,11 +54,22 @@ PowerShell，或多个 WSL 发行版。每套配置都有独立 ID 和会话上�
 只有启动参数、没有程序路径的自定义配置会被拒绝。所有选项为空时，明确使用
 该 host 的内置启动方式。
 
-Windows 添加 WSL：选择 `native / bash`，程序填写 `wsl.exe` 的绝对路径，
-WSL 发行版填写 `wsl --list --quiet` 列出的名称，例如 `Ubuntu-24.04`。host 使用
-该发行版的 `wslpath` 转换工作区路径，通过 `--cd` 设置 guest 目录，再启动带
-完成协议的 Bash。PowerShell 5 和 7 可分别填写 `powershell.exe` 和 `pwsh.exe`
-的绝对路径，保存为不同配置。
+Windows 添加 WSL：在「添加终端配置」中选择 `WSL`，从运行 Core 的 Windows
+账户已注册的发行版中选择一项。保存后可将其设为默认，也可在工作区下拉菜单中单次
+选择。配置使用系统的 `wsl.exe`，已保存的显式启动器路径继续生效。host 使用该
+发行版的 `wslpath` 转换工作区路径，通过 `--cd` 设置 guest 目录，再启动 Bash。
+PowerShell 5 和 7 可分别填写 `powershell.exe` 和 `pwsh.exe` 的绝对路径保存。
+
+Android 的 PRoot 启动保持其默认 seccomp 行为。自定义 rootfs 与托管运行时启动时
+移除 `PROOT_NO_SECCOMP`，允许 PRoot 在设备内核支持时启用 seccomp 加速。
+
+Android 可在添加或编辑配置时切换到 `Chroot（需要 Root）`。可以填写自行准备的
+Linux rootfs，也可编辑已下载发行版的配置并沿用其路径。Chroot 使用会话独立的
+挂载命名空间，Shell 以 Root 身份运行，请使用可信的 rootfs。
+
+`mounts` 是宿主能力声明中的通用选项，值为 JSON 数组。每项包含 `source`（宿主
+目录）和 `target`（guest 绝对目录）。Android 的 PRoot 和 chroot 当前支持
+可写目录挂载。两者都校验目标冲突，chroot 还拒绝符号链接挂载点。
 
 ## 插件接口
 
@@ -93,7 +109,7 @@ for await (const event of Tools.System.terminal.runStream({
 
 ## 存储及实现边界
 
-`TerminalHost.terminalProfileSupport` 声明表单字段，`configuredTerminal` 生成
+`TerminalHost.terminalProfileSupport` 声明表单字段和宿主发现的选项，`configuredTerminal` 生成
 具有不可变参数的宿主。`terminalDistributions` 及安装接口属于 host，Flutter
 不判断操作系统。安装下载和本地路径消费复用 native host 层；共享 runtime
 不直接读写原生路径。应用先安装 `ProfileTerminalHost`，再安装统一的会话通知

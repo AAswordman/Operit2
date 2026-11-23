@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -6,8 +7,9 @@ import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
 import 'package:operit2/core/proxy/generated/CoreProxyClients.g.dart';
-import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/features/settings/workspace/TerminalProfilesSettings.dart';
+import 'package:operit2/ui/theme/OperitTheme.dart';
 
 /// Emulates Core persistence and installation progress across the actual generated wire clients.
 class _TerminalBridge extends OperitRuntimeBridge {
@@ -34,6 +36,8 @@ class _TerminalBridge extends OperitRuntimeBridge {
   final saves = <Map<String, Object?>>[];
   final installs = <Map<String, Object?>>[];
   bool advertiseDownloads = false;
+  bool advertiseWsl = false;
+  bool advertiseChroot = false;
   bool rejectSave = false;
 
   /// Answers only the terminal-management protocol exercised by these widget tests.
@@ -56,10 +60,24 @@ class _TerminalBridge extends OperitRuntimeBridge {
             'terminalType': 'bash',
             'fields': ['rootfs'],
           },
+          if (advertiseChroot)
+            {
+              'terminal': 'chroot',
+              'terminalType': 'bash',
+              'fields': ['rootfs', 'mounts'],
+            },
           {
             'terminal': 'native',
             'terminalType': 'bash',
-            'fields': ['executable', 'arguments'],
+            'fields': [
+              'executable',
+              'arguments',
+              if (advertiseWsl) 'wslDistribution',
+            ],
+            if (advertiseWsl)
+              'fieldChoices': {
+                'wslDistribution': ['Debian', 'Ubuntu-24.04'],
+              },
           },
         ];
       case 'terminalDistributions':
@@ -95,12 +113,12 @@ class _TerminalBridge extends OperitRuntimeBridge {
         value = settings;
       case 'startTerminalDistributionInstall':
         installs.add({
-          'installId': 'rootfs_a',
+          'installId': 'rootfs_${installs.length + 1}',
           'distributionId': args['distributionId'],
           'name': args['name'],
           'state': 'queued',
           'downloadedBytes': 0,
-          'totalBytes': 1024,
+          'totalBytes': 4 * 1048576,
           'profileId': null,
           'error': null,
         });
@@ -123,17 +141,22 @@ Future<void> _render(
   WidgetTester tester,
   _TerminalBridge bridge, {
   Locale locale = const Locale('en'),
+  double width = 900,
 }) async {
-  tester.view.physicalSize = const Size(900, 1600);
+  tester.view.physicalSize = Size(width, 1600);
   tester.view.devicePixelRatio = 1;
+  tester.binding.platformDispatcher.localesTestValue = [locale];
   addTearDown(tester.view.resetPhysicalSize);
   addTearDown(tester.view.resetDevicePixelRatio);
+  addTearDown(tester.binding.platformDispatcher.clearLocalesTestValue);
   await tester.pumpWidget(
-    MaterialApp(
-      locale: locale,
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      supportedLocales: AppLocalizations.supportedLocales,
-      home: Scaffold(
+    OperitTheme(
+      initialThemePreferenceSnapshot:
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+      initialThemeIsReady: false,
+      unconfiguredChildEnabled: true,
+      hostInteractionHostsEnabled: false,
+      child: Scaffold(
         body: SingleChildScrollView(
           child: TerminalProfilesSettings(
             clients: GeneratedCoreProxyClients(bridge),
@@ -256,11 +279,79 @@ void main() {
   );
 
   testWidgets(
+    'selects a host-discovered WSL distribution without an executable',
+    (tester) async {
+      final bridge = _TerminalBridge()..advertiseWsl = true;
+      await _render(tester, bridge, width: 390);
+      await tester.tap(find.text('Add terminal profile'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Native terminal / PowerShell').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('WSL').last);
+      await tester.pumpAndSettle();
+      expect(find.byType(TextFormField), findsOneWidget);
+      await tester.tap(find.text('WSL distribution'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Ubuntu-24.04').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      final profile = (bridge.settings['profiles']! as List).last as Map;
+      expect(profile['name'], 'Ubuntu-24.04');
+      expect(profile['terminal'], 'native');
+      expect(profile['terminalType'], 'bash');
+      expect(profile['options'], {'wslDistribution': 'Ubuntu-24.04'});
+      expect(find.text('WSL · Ubuntu-24.04'), findsOneWidget);
+      await tester.tap(find.text('Ubuntu-24.04'));
+      await tester.pumpAndSettle();
+      expect(bridge.settings['defaultProfileId'], profile['id']);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'chroot requires a rootfs and saves structured directory mounts',
+    (tester) async {
+      final bridge = _TerminalBridge()..advertiseChroot = true;
+      await _render(tester, bridge, width: 390);
+      await tester.tap(find.text('Add terminal profile'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Native terminal / PowerShell').last);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Chroot (Root) / Bash').last);
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextFormField).first, 'Ubuntu root');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      expect(find.text('Enter the root filesystem path.'), findsOneWidget);
+      await tester.enterText(find.byType(TextFormField).at(1), '/data/rootfs');
+      await tester.tap(find.text('Add mount'));
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byType(TextFormField).at(2),
+        '/sdcard/Projects',
+      );
+      await tester.enterText(find.byType(TextFormField).at(3), '/mnt/projects');
+      await tester.tap(find.text('Save'));
+      await tester.pumpAndSettle();
+      final profiles = bridge.saves.single['profiles']! as List;
+      final profile = profiles.last as Map;
+      final options = profile['options'] as Map;
+      expect(profile['terminal'], 'chroot');
+      expect(options['rootfs'], '/data/rootfs');
+      expect(jsonDecode(options['mounts'] as String), [
+        {'source': '/sdcard/Projects', 'target': '/mnt/projects'},
+      ]);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'completed downloads add independent profiles without selecting them implicitly',
     (tester) async {
       final bridge = _TerminalBridge()..advertiseDownloads = true;
-      await _render(tester, bridge);
-      await tester.tap(find.byTooltip('Download and install'));
+      await _render(tester, bridge, width: 390);
+      await tester.tap(find.text('Download and install'));
       await tester.pumpAndSettle();
       await tester.enterText(find.byType(TextFormField), 'Ubuntu work');
       await tester.tap(
@@ -268,15 +359,48 @@ void main() {
       );
       await tester.pump();
       expect(bridge.installs.single['name'], 'Ubuntu work');
-      bridge.installs.single['state'] = 'completed';
-      bridge.installs.single['profileId'] = 'rootfs_a';
+      final distribution = find.byKey(
+        const ValueKey('terminal-distribution-ubuntu-24_04'),
+      );
+      bridge.installs.single['state'] = 'connecting';
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+      expect(find.text('Testing download mirrors…'), findsOneWidget);
+      bridge.installs.single['state'] = 'downloading';
+      bridge.installs.single['downloadedBytes'] = 1048576;
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pump();
+      final progress = find.descendant(
+        of: distribution,
+        matching: find.byType(LinearProgressIndicator),
+      );
+      expect(tester.widget<LinearProgressIndicator>(progress).value, 0.25);
+      expect(find.text('25% · 1.0 / 4.0 MiB'), findsOneWidget);
+      expect(find.text('Ubuntu work'), findsNothing);
+      bridge.installs.single['state'] = 'failed';
+      bridge.installs.single['error'] = 'Connection dropped';
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Error details'));
+      await tester.pumpAndSettle();
+      expect(find.text('Connection dropped'), findsOneWidget);
+      await tester.tap(find.text('Close'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Retry'));
+      await tester.pump();
+      expect(bridge.installs, hasLength(2));
+      expect(bridge.installs.last['name'], 'Ubuntu work');
+      expect(distribution, findsOneWidget);
+      expect(find.text('Ubuntu work'), findsNothing);
+      bridge.installs.last['state'] = 'completed';
+      bridge.installs.last['profileId'] = 'rootfs_2';
       bridge.settings = {
         ...bridge.settings,
         'revision': 1,
         'profiles': [
           ...bridge.settings['profiles']! as List,
           {
-            'id': 'rootfs_a',
+            'id': 'rootfs_2',
             'name': 'Ubuntu work',
             'terminal': 'proot',
             'terminalType': 'bash',
@@ -286,7 +410,8 @@ void main() {
       };
       await tester.pump(const Duration(seconds: 1));
       await tester.pumpAndSettle();
-      expect(find.text('Ubuntu work'), findsNWidgets(2));
+      expect(find.text('Ubuntu work'), findsOneWidget);
+      expect(find.text('Install another'), findsOneWidget);
       expect(
         find.text('Installed · available in terminal profiles'),
         findsOneWidget,

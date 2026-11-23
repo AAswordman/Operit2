@@ -6,9 +6,8 @@ import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../../../l10n/generated/app_localizations.dart';
 import '../../../common/components/M3LoadingIndicator.dart';
-import '../../../theme/OperitGlassSurface.dart';
-import '../components/SettingsControlStyles.dart';
 import 'TerminalProfilesSettings.dart';
+import 'WorkspaceSettingsSection.dart';
 
 class WorkspaceSettingsPanel extends StatefulWidget {
   const WorkspaceSettingsPanel({super.key, GeneratedCoreProxyClients? clients})
@@ -161,10 +160,10 @@ class _WorkspaceSettingsPanelState extends State<WorkspaceSettingsPanel> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           children: <Widget>[
             TerminalProfilesSettings(clients: widget.clients),
-            _SectionCard(
+            WorkspaceSettingsSection(
               title: l10n.settingsWorkspaceBoundOverview,
+              description: l10n.settingsWorkspaceBoundOverviewDescription,
               children: <Widget>[
-                _BodyText(l10n.settingsWorkspaceBoundOverviewDescription),
                 _InfoLine(
                   label: l10n.settingsWorkspaceBoundChats,
                   value: '${data.boundChatCount} / ${data.chatHistoryCount}',
@@ -237,10 +236,10 @@ class _UnboundWorkspaceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
-    return _SectionCard(
+    return WorkspaceSettingsSection(
       title: l10n.settingsWorkspaceUnboundTitle,
+      description: l10n.settingsWorkspaceUnboundSubtitle,
       children: <Widget>[
-        _BodyText(l10n.settingsWorkspaceUnboundSubtitle),
         if (workspaces.isEmpty)
           Padding(
             padding: const EdgeInsets.symmetric(vertical: 8),
@@ -394,61 +393,6 @@ class _UnboundWorkspaceRow extends StatelessWidget {
             Icon(Icons.folder_outlined, color: colorScheme.onSurfaceVariant),
           ],
         ),
-      ),
-    );
-  }
-}
-
-class _SectionCard extends StatelessWidget {
-  const _SectionCard({required this.title, required this.children});
-
-  final String title;
-  final List<Widget> children;
-
-  @override
-  Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final radius = BorderRadius.circular(12);
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: OperitGlassSurface(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.36),
-        borderRadius: radius,
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-        ),
-        material: true,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                title,
-                style: SettingsControlStyles.sectionTitleTextStyle(context),
-              ),
-              const SizedBox(height: 6),
-              ...children,
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _BodyText extends StatelessWidget {
-  const _BodyText(this.text);
-
-  final String text;
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      child: Text(
-        text,
-        style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
       ),
     );
   }

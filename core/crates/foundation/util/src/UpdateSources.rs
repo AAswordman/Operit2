@@ -49,12 +49,11 @@ const SAMPLE_BYTES: usize = 64 * 1024;
 const PROBE_TIMEOUT_MS: u64 = 3_000;
 const SAMPLE_COMPLETE: &str = "UPDATE_SOURCE_SAMPLE_COMPLETE";
 
-/// Derives mirror requests only after validating the canonical project asset URL.
-fn sources(url: &str, name: &str) -> Result<Vec<String>, String> {
-    validateUpdatePackageSource(url, name)?;
-    Ok(std::iter::once(url.to_string())
+/// Derives candidates for a caller-validated public GitHub release asset URL.
+fn sources(url: &str) -> Vec<String> {
+    std::iter::once(url.to_string())
         .chain(MIRRORS.iter().map(|prefix| format!("{prefix}{url}")))
-        .collect())
+        .collect()
 }
 
 /// Checks sample bytes so HTML gateways never win a speed test.
@@ -76,9 +75,10 @@ fn validateSample(prefix: &[u8], name: &str) -> Result<(), String> {
 /// Measures useful bytes including connection time, with a bounded sample and Host-owned deadline.
 async fn probe(
     url: &str,
-    name: &str,
     context: &HostManager,
     control: HttpDownloadControl,
+    expectedRangeTotal: Option<u64>,
+    validate: impl Fn(&[u8]) -> Result<(), String> + Send + 'static,
 ) -> Result<Option<u64>, String> {
     let http = context
         .httpHost
@@ -101,6 +101,14 @@ async fn probe(
     let pending = requestOptional(http, request, control.clone(), move |event| {
         match event {
             UpdateHttpEvent::Head(head) => {
+                if let Some(total) = expectedRangeTotal {
+                    let range = format!("bytes 0-{}/{total}", SAMPLE_BYTES - 1);
+                    if head.statusCode != 206 || !head.headers.iter().any(|(key, value)| {
+                        key.eq_ignore_ascii_case("content-range") && value == &range
+                    }) {
+                        return Err("Download source does not serve the expected archive byte range".into());
+                    }
+                }
                 if !matches!(head.statusCode, 200 | 206) {
                     return Err(format!(
                         "Unexpected download source status {}",
@@ -148,7 +156,7 @@ async fn probe(
         _ => {}
     }
     let sample = sample.lock().map_err(|e| e.to_string())?;
-    validateSample(&sample.0, name)?;
+    validate(&sample.0)?;
     let elapsed = clock
         .monotonicTimeMillis()
         .map_err(|e| e.to_string())?
@@ -165,12 +173,44 @@ pub(crate) async fn ranked(
     control: HttpDownloadControl,
     optional: bool,
 ) -> Result<Vec<String>, String> {
+    validateUpdatePackageSource(url, name)?;
+    let name = name.to_owned();
+    rankSources(url, context, control, optional, None, move |prefix| validateSample(prefix, &name)).await
+}
+
+/// Selects the fastest range-capable source for a host-pinned Termux XZ release asset.
+pub async fn fastestTermuxRootfsSource(
+    url: &str,
+    expectedBytes: u64,
+    context: &HostManager,
+    control: HttpDownloadControl,
+) -> Result<String, String> {
+    let path = url.strip_prefix("https://github.com/termux/proot-distro/releases/download/")
+        .ok_or("Rootfs URL must reference a Termux GitHub release asset")?;
+    if expectedBytes < SAMPLE_BYTES as u64 || !path.ends_with(".tar.xz") || path.contains(['?', '#']) {
+        return Err("Invalid Termux rootfs release asset".into());
+    }
+    rankSources(url, context, control, false, Some(expectedBytes), |prefix| {
+        if prefix.starts_with(b"\xfd7zXZ\0") { Ok(()) } else { Err("Download source did not return an XZ archive".into()) }
+    }).await?.into_iter().next().ok_or_else(|| "No reachable rootfs download source".into())
+}
+
+/// Measures all candidates concurrently and ranks their effective throughput.
+async fn rankSources(
+    url: &str,
+    context: &HostManager,
+    control: HttpDownloadControl,
+    optional: bool,
+    expectedRangeTotal: Option<u64>,
+    validate: impl Fn(&[u8]) -> Result<(), String> + Clone + Send + 'static,
+) -> Result<Vec<String>, String> {
     ensureDownloadActive(&control)?;
     let mut probes = FuturesUnordered::new();
-    for source in sources(url, name)? {
+    for source in sources(url) {
         let control = control.clone();
+        let validate = validate.clone();
         probes.push(async move {
-            let result = probe(&source, name, context, control).await;
+            let result = probe(&source, context, control, expectedRangeTotal, validate).await;
             (source, result)
         });
     }
@@ -191,7 +231,7 @@ pub(crate) async fn ranked(
     }
     if available.is_empty() && !(optional && absent) {
         return Err(format!(
-            "{originalError}; no reachable update download source"
+            "{originalError}; no reachable download source"
         ));
     }
     available.sort_by_key(|(_, speed)| std::cmp::Reverse(*speed));

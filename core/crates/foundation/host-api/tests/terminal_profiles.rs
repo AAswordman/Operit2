@@ -124,6 +124,7 @@ impl TerminalHost for TestTerminal {
                 terminal: entry.terminal,
                 terminalType: entry.terminalType,
                 fields: vec!["rootfs".into()],
+                fieldChoices: None,
             })
             .collect())
     }

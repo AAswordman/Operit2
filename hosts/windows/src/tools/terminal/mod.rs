@@ -4,6 +4,7 @@ use operit_host_api::TerminalText::{appendPtyOutput, csiParams, csiValue, nonBla
 mod terminal_command;
 mod conpty;
 mod powershell_runtime;
+mod wsl;
 
 use operit_host_api::TerminalControl::{controlToSequence, normalizeControl};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
@@ -104,6 +105,7 @@ impl WindowsTerminalHost {
 impl TerminalHost for WindowsTerminalHost {
     /// Registers configurable interpreter executables and launcher argument prefixes.
     fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
+        let distributions = wsl::registered_distributions()?;
         Ok(self
             .terminalInfo()?
             .types
@@ -120,6 +122,9 @@ impl TerminalHost for WindowsTerminalHost {
                 } else {
                     vec!["executable".into(), "arguments".into()]
                 },
+                fieldChoices: (entry.terminalType == "bash").then(|| {
+                    BTreeMap::from([("wslDistribution".into(), distributions.clone())])
+                }),
             })
             .collect())
     }
@@ -131,15 +136,6 @@ impl TerminalHost for WindowsTerminalHost {
     ) -> HostResult<Arc<dyn TerminalHost>> {
         requireNativeTerminal(&profile.terminal)?;
         normalizeTerminalType(&profile.terminalType)?;
-        let executable = profile
-            .options
-            .get("executable")
-            .ok_or_else(|| HostError::new("Custom terminal requires executable"))?;
-        if !Path::new(executable).is_absolute() || !Path::new(executable).is_file() {
-            return Err(HostError::new(
-                "Terminal executable must be an existing absolute file path",
-            ));
-        }
         operit_host_api::TerminalProfiles::profileArguments(profile)?;
         if let Some(distribution) = profile.options.get("wslDistribution") {
             if profile.terminalType != "bash"
@@ -150,6 +146,13 @@ impl TerminalHost for WindowsTerminalHost {
                     "WSL requires an explicit distribution name and Bash semantics",
                 ));
             }
+        }
+        let executable = configuredExecutable(profile)?;
+        if !executable.is_absolute() || !executable.is_file() {
+            return Err(HostError::new(format!(
+                "Terminal executable must be an existing absolute file path: {}",
+                executable.display()
+            )));
         }
         Ok(Arc::new(Self {
             state: Arc::default(),
@@ -934,11 +937,7 @@ fn configuredPtyCommand(
     if let Some(distribution) = profile.options.get("wslDistribution") {
         return wslPtyCommand(profile, distribution, workingDir);
     }
-    let executable = profile
-        .options
-        .get("executable")
-        .ok_or_else(|| HostError::new("Terminal executable is required"))?;
-    let mut command = CommandBuilder::new(executable);
+    let mut command = CommandBuilder::new(configuredExecutable(profile)?);
     for argument in operit_host_api::TerminalProfiles::profileArguments(profile)? {
         command.arg(argument);
     }
@@ -971,17 +970,22 @@ fn configuredPtyCommand(
     Ok(command)
 }
 
+/// Resolves the explicit custom launcher or the system launcher for a WSL profile.
+fn configuredExecutable(profile: &operit_host_api::TerminalProfile) -> HostResult<PathBuf> {
+    match (profile.options.get("executable"), profile.options.get("wslDistribution")) {
+        (Some(executable), _) => Ok(PathBuf::from(executable)),
+        (None, Some(_)) => wsl::system_executable(),
+        (None, None) => Err(HostError::new("Custom terminal requires executable")),
+    }
+}
+
 /// Converts the host-resolved workspace path using the exact selected WSL distribution.
 fn wslDirectory(profile: &operit_host_api::TerminalProfile, native: &str) -> HostResult<String> {
-    let executable = profile
-        .options
-        .get("executable")
-        .ok_or_else(|| HostError::new("WSL executable is required"))?;
     let distribution = profile
         .options
         .get("wslDistribution")
         .ok_or_else(|| HostError::new("WSL distribution is required"))?;
-    let output = std::process::Command::new(executable)
+    let output = crate::process::background_command(configuredExecutable(profile)?)
         .args(operit_host_api::TerminalProfiles::profileArguments(
             profile,
         )?)
@@ -1017,16 +1021,12 @@ fn wslPtyCommand(
     distribution: &str,
     workingDir: &str,
 ) -> HostResult<CommandBuilder> {
-    let executable = profile
-        .options
-        .get("executable")
-        .ok_or_else(|| HostError::new("WSL executable is required"))?;
     let directory = if workingDir.starts_with('/') {
         workingDir.to_string()
     } else {
         wslDirectory(profile, workingDir)?
     };
-    let mut command = CommandBuilder::new(executable);
+    let mut command = CommandBuilder::new(configuredExecutable(profile)?);
     command.args(operit_host_api::TerminalProfiles::profileArguments(
         profile,
     )?);
@@ -1715,13 +1715,11 @@ mod tests {
             nameKey: None,
             terminal: "native".into(),
             terminalType: "bash".into(),
-            options: BTreeMap::from([
-                ("executable".into(), "C:/Windows/System32/wsl.exe".into()),
-                ("wslDistribution".into(), "Ubuntu-24.04".into()),
-            ]),
+            options: BTreeMap::from([("wslDistribution".into(), "Ubuntu-24.04".into())]),
         };
         let command =
             configuredPtyCommand(&profile, TerminalKind::Bash, "/mnt/c/work space").unwrap();
+        assert_eq!(command.get_program(), wsl::system_executable().unwrap().as_os_str());
         let argv: Vec<_> = command
             .get_args()
             .map(|value| value.to_string_lossy().into_owned())

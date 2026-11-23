@@ -1011,6 +1011,9 @@ async fn downloadOneFileAsync(
         let Some(chunk) = chunk else {
             break;
         };
+        if chunk.len() as u64 > file.expectedBytes - fileDownloadedBytes {
+            return Err(HostError::new(format!("HTTP download exceeds declared size: {}", file.fileId)));
+        }
         output
             .write_all(&chunk)
             .map_err(|error| HostError::new(error.to_string()))?;
@@ -1107,6 +1110,9 @@ fn prepareResumableDownload(
         return Err(HostError::new(format!(
             "HTTP partial download exceeds declared byte count: expected={expectedBytes} actual={partialBytes}"
         )));
+    }
+    if partialBytes == expectedBytes {
+        fs::rename(partialTarget, target)?;
     }
     Ok(partialBytes)
 }

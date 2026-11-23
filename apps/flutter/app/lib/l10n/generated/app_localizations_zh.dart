@@ -24,6 +24,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get terminalImplementationAndroidSystem => 'Android 系统终端';
 
   @override
+  String get terminalImplementationChroot => 'Chroot（需要 Root）';
+
+  @override
   String get terminalImplementationQemu => 'QEMU Linux 模拟终端';
 
   @override
@@ -118,6 +121,28 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get terminalProfileRootfs => '根文件系统目录';
+
+  @override
+  String get terminalProfileChrootRootfsHelp =>
+      '需要授予 Operit Root 权限，并填写可信 Linux 根文件系统的绝对路径，其中须包含 /bin/bash。';
+
+  @override
+  String get terminalProfileRootfsRequired => '请输入根文件系统路径。';
+
+  @override
+  String get terminalProfileMounts => '目录挂载';
+
+  @override
+  String get terminalProfileAddMount => '添加挂载';
+
+  @override
+  String get terminalProfileMountSource => '宿主目录';
+
+  @override
+  String get terminalProfileMountTarget => '终端内目录';
+
+  @override
+  String get terminalProfileMountPathRequired => '请输入目录路径。';
 
   @override
   String get terminalProfileRootfsHelp =>
@@ -5326,14 +5351,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String get terminalDistributionsTitle => '下载 Linux 发行版';
 
   @override
-  String get terminalDistributionsDescription =>
-      '软件仅内置 Alpine。按需下载 ARM64 根文件系统，安装为独立实例后可设为默认；同一发行版可以安装多套。';
-
-  @override
   String get terminalDistributionDownload => '下载安装';
 
   @override
+  String get terminalDistributionInstallAnother => '再装一套';
+
+  @override
   String get terminalInstallQueued => '等待安装';
+
+  @override
+  String get terminalInstallConnecting => '正在对下载镜像测速…';
+
+  @override
+  String get terminalInstallCancelling => '正在取消…';
+
+  @override
+  String get terminalInstallErrorDetails => '查看错误详情';
 
   @override
   String get terminalInstallDownloading => '正在下载根文件系统';
@@ -5354,9 +5387,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get terminalInstallFailed => '安装失败';
 
   @override
-  String get terminalProfileWslDistribution => 'WSL 发行版（可选）';
+  String get terminalProfileWslDistribution => 'WSL 发行版';
+
+  @override
+  String get terminalProfileWslDistributionRequired => '请选择 WSL 发行版。';
 
   @override
   String get terminalProfileWslHelp =>
-      '使用 WSL 时选择 Bash，填写 wsl.exe 的绝对路径及 wsl --list --quiet 列出的发行版名称，例如 Ubuntu-24.04。使用本机 Bash 时留空。';
+      '请在运行 Core 的 Windows 设备上安装 WSL 发行版，然后重新打开此对话框。';
 }

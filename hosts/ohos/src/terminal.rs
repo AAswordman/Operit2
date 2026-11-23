@@ -383,6 +383,7 @@ impl TerminalHost for OhosTerminalHost {
                 },
                 terminal: entry.terminal,
                 terminalType: entry.terminalType,
+                fieldChoices: None,
             })
             .collect())
     }

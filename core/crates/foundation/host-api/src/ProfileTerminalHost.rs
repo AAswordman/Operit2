@@ -326,6 +326,10 @@ impl TerminalHost for ProfileTerminalHost {
             }
             if !profile.options.is_empty() {
                 self.base.configuredTerminal(profile)?;
+            } else if !info.types.iter().any(|entry| {
+                entry.terminal == profile.terminal && entry.terminalType == profile.terminalType
+            }) {
+                return Err(HostError::new("Terminal implementation requires launch options"));
             }
             if profile.id == settings.defaultProfileId
                 && profile.options.is_empty()
@@ -403,15 +407,22 @@ impl TerminalHost for ProfileTerminalHost {
         let mut info = self.base.terminalInfo()?;
         info.terminal = selected.terminal.clone();
         info.terminalType = selected.terminalType.clone();
-        let index = info
+        let index = match info
             .types
             .iter()
             .position(|entry| {
                 entry.terminal == selected.terminal && entry.terminalType == selected.terminalType
-            })
-            .ok_or_else(|| {
-                HostError::new("Configured terminal implementation is no longer registered")
-            })?;
+            }) {
+            Some(index) => index,
+            None => {
+                let configured = self.host(selected)?.terminalInfo()?;
+                let entry = configured.types.into_iter().find(|entry| {
+                    entry.terminal == selected.terminal && entry.terminalType == selected.terminalType
+                }).ok_or_else(|| HostError::new("Configured terminal implementation is no longer registered"))?;
+                info.types.push(entry);
+                info.types.len() - 1
+            }
+        };
         info.types[index].description = selected.name.clone();
         info.types[index].nameKey = selected.nameKey.clone();
         if !selected.options.is_empty() {

@@ -27,6 +27,7 @@ abstract final class TerminalLabels {
     final label = switch (terminal) {
       'native' => l10n.terminalImplementationNative,
       'proot' => l10n.terminalImplementationProot,
+      'chroot' => l10n.terminalImplementationChroot,
       'android-system' => l10n.terminalImplementationAndroidSystem,
       'qemu-vroot' => l10n.terminalImplementationQemu,
       'arm64' => l10n.terminalImplementationArm64,

@@ -23,6 +23,9 @@ pub struct TerminalProfileSupport {
     pub terminal: String,
     pub terminalType: String,
     pub fields: Vec<String>,
+    /// Choices discovered on the terminal host, keyed by the corresponding launch field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fieldChoices: Option<BTreeMap<String, Vec<String>>>,
 }
 
 /// Terminal profiles and the explicitly selected default on this Core device.
@@ -104,6 +107,39 @@ pub fn profileArguments(profile: &TerminalProfile) -> HostResult<Vec<String>> {
             Ok(arguments)
         }
     }
+}
+
+/// A directory exposed from the owning terminal host at a guest path.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalMount {
+    pub source: String,
+    pub target: String,
+}
+
+/// Parses the shared mount option and rejects conflicting targets before host-specific validation.
+pub fn profileMounts(profile: &TerminalProfile) -> HostResult<Vec<TerminalMount>> {
+    let Some(value) = profile.options.get("mounts") else {
+        return Ok(Vec::new());
+    };
+    let mounts: Vec<TerminalMount> = serde_json::from_str(value)
+        .map_err(|error| HostError::new(format!("Invalid terminal mounts: {error}")))?;
+    let mut targets = BTreeSet::new();
+    for mount in &mounts {
+        if mount.source.trim().is_empty()
+            || mount.source.contains('\0')
+            || !mount.target.starts_with('/')
+            || mount.target[1..].split('/').any(|part| {
+                part.is_empty() || matches!(part, "." | "..") || part.contains('\0')
+            })
+            || !targets.insert(mount.target.as_str())
+        {
+            return Err(HostError::new(
+                "Terminal mounts require a source and a unique, normalized absolute guest directory other than /",
+            ));
+        }
+    }
+    Ok(mounts)
 }
 
 /// A downloadable root filesystem advertised by the active terminal host.

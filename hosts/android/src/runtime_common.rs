@@ -3,6 +3,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use operit_host_api::{HostError, HostResult};
+use operit_host_api::TerminalProfiles::TerminalMount;
+
+pub(crate) const PROOT_NO_SECCOMP: &str = "PROOT_NO_SECCOMP";
 
 #[allow(non_snake_case)]
 pub(crate) fn requiredAndroidRuntimePath(name: &str) -> HostResult<PathBuf> {
@@ -39,11 +42,11 @@ pub(crate) fn validateRootfsExecutable(executable: &str) -> HostResult<()> {
 #[allow(non_snake_case)]
 pub(crate) fn buildAndroidProotCommand(executable: &str, cwd: Option<&str>) -> HostResult<Command> {
     let rootfsDir = requiredAndroidRuntimePath("OPERIT_ANDROID_ROOTFS_DIR")?;
-    buildAndroidProotCommandWithRootfs(executable, cwd, &rootfsDir)
+    buildAndroidProotCommandWithRootfs(executable, cwd, &rootfsDir, &[])
 }
 
 /// Builds proot with one explicit rootfs while preserving the standard app/workspace mounts.
-pub(crate) fn buildAndroidProotCommandWithRootfs(executable: &str, cwd: Option<&str>, rootfsDir: &Path) -> HostResult<Command> {
+pub(crate) fn buildAndroidProotCommandWithRootfs(executable: &str, cwd: Option<&str>, rootfsDir: &Path, mounts: &[TerminalMount]) -> HostResult<Command> {
     let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let runtimeRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
     let workspaceRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_WORKSPACE_ROOT")?;
@@ -84,7 +87,7 @@ pub(crate) fn buildAndroidProotCommandWithRootfs(executable: &str, cwd: Option<&
     command.current_dir(&runtimeDir);
     command.env("PROOT_TMP_DIR", tmpDir);
     command.env("PROOT_LOADER", loader);
-    command.env("PROOT_NO_SECCOMP", "1");
+    command.env_remove(PROOT_NO_SECCOMP);
     command.env("LD_LIBRARY_PATH", "");
     command.env("HOME", "/root");
     command.env("LANG", "C.UTF-8");
@@ -104,6 +107,9 @@ pub(crate) fn buildAndroidProotCommandWithRootfs(executable: &str, cwd: Option<&
     command.arg("-b").arg(bindSamePath(&internalRoot));
     command.arg("-b").arg(bindSamePath(&runtimeRoot));
     command.arg("-b").arg(bindSamePath(&workspaceRoot));
+    for mount in mounts {
+        command.arg("-b").arg(format!("{}:{}!", mount.source, mount.target));
+    }
     command.arg("-w").arg(&workingDir);
     command.arg(executable);
     Ok(command)

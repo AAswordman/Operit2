@@ -7,7 +7,7 @@ publish = false
 
 [features]
 default = []
-terminal-rootfs = ["http", "dep:tar", "dep:sha2", "dep:lzma-rust2"]
+terminal-rootfs = ["http", "dep:fs2", "dep:tar", "dep:sha2", "dep:lzma-rust2", "dep:operit-util"]
 app-install = ["dep:flate2", "dep:tar", "dep:zip"]
 daemon = ["dep:tokio"]
 fs = ["dep:operit-host-native-filesystem"]
@@ -19,6 +19,7 @@ tcp = ["dep:async-trait", "dep:tokio"]
 serial = ["dep:async-trait", "dep:tokio", "dep:serial2", "dep:libc", "dep:windows-sys"]
 
 [dependencies]
+fs2 = { version = "0.4", optional = true }
 sha2 = { version = "0.10", optional = true }
 lzma-rust2 = { version = "0.13", default-features = false, features = ["std", "xz", "encoder"], optional = true }
 flate2 = { version = "1", optional = true }
@@ -26,6 +27,7 @@ tar = { version = "0.4", optional = true }
 zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 bytes = "1"
 operit-host-api = { path = "../../../core/crates/foundation/host-api" }
+operit-util = { path = "../../../core/crates/foundation/util", default-features = false, optional = true }
 operit-host-native-filesystem = { path = "../operit-host-native-filesystem", optional = true }
 operit-host-native-http = { path = "../operit-host-native-http", optional = true }
 operit-host-native-storage = { path = "../operit-host-native-storage", optional = true }

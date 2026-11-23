@@ -4,6 +4,7 @@ use std::collections::BTreeMap;
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use operit_host_api::{
     HostError, HostResult, HttpDownloadControl, HttpDownloadFileRequest, HttpDownloadRequest,
@@ -11,11 +12,29 @@ use operit_host_api::{
     TerminalProfile,
 };
 use sha2::{Digest, Sha256};
+use operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost;
 
 use crate::NativeHttpHost;
 
 const MAX_ROOTFS_BYTES: u64 = 8 * 1024 * 1024 * 1024;
 const MAX_ROOTFS_ENTRIES: usize = 500_000;
+const ROOTFS_UPSTREAM: &str = "https://github.com/termux/proot-distro/releases/download";
+
+/// Uses the application's update mirror catalog and sample-throughput ranking on this host.
+fn fastestSource(distribution: &TerminalDistribution, control: HttpDownloadControl) -> HostResult<String> {
+    let url = distribution.url.clone();
+    let expectedBytes = distribution.downloadBytes;
+    let scheduler = NativeHostRuntimeTaskSchedulerHost::new();
+    let context = operit_host_api::HostManager::HostManager {
+        httpHost: Some(Arc::new(NativeHttpHost::new())),
+        hostRuntimeTaskSchedulerHost: Some(Arc::new(scheduler.clone())),
+        ..Default::default()
+    };
+    scheduler.runNetworkTask("terminal-rootfs-sources", move || async move {
+        operit_util::UpdateSources::fastestTermuxRootfsSource(&url, expectedBytes, &context, control)
+            .await.map_err(HostError::new)
+    })
+}
 
 /// Lists pinned proot-distro archives with publisher-provided SHA-256 digests.
 pub fn distributions() -> Vec<TerminalDistribution> {
@@ -54,9 +73,7 @@ pub fn distributions() -> Vec<TerminalDistribution> {
             id: id.into(),
             name: name.into(),
             architecture: "aarch64".into(),
-            url: format!(
-                "https://github.com/termux/proot-distro/releases/download/{release}/{file}"
-            ),
+            url: format!("{ROOTFS_UPSTREAM}/{release}/{file}"),
             sha256: sha256.into(),
             downloadBytes,
             notice: notice.into(),
@@ -119,21 +136,43 @@ pub fn install(
     fs::create_dir(&staging)?;
     let result = (|| {
         checkCancelled(&control)?;
-        let archivePath = staging.join("archive.tar.xz");
+        let downloads = root.join(".downloads");
+        fs::create_dir_all(&downloads)?;
+        let lock = File::options().write(true).create(true).truncate(false)
+            .open(downloads.join(format!("{}.lock", distribution.id)))?;
+        fs2::FileExt::try_lock_exclusive(&lock).map_err(|error| HostError::new(format!(
+            "Cannot lock terminal distribution download: {error}"
+        )))?;
+        let archivePath = downloads.join(format!("{}-{}.tar.xz", distribution.id, distribution.sha256));
+        let archiveTarget = archivePath.to_string_lossy().into_owned();
+        let partialPath = operit_host_api::httpDownloadPartialTargetPath(&archiveTarget);
+        let retainedBytes = match Path::new(&partialPath).metadata() {
+            Ok(metadata) => metadata.len(),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
+            Err(error) => return Err(error.into()),
+        };
         let downloadProgress = progress.clone();
+        let complete = archivePath.metadata().is_ok_and(|metadata| metadata.len() == distribution.downloadBytes)
+            || retainedBytes == distribution.downloadBytes;
+        let url = if complete {
+            distribution.url.clone()
+        } else {
+            report(&progress, "connecting", retainedBytes, distribution.downloadBytes);
+            fastestSource(&distribution, control.clone())?
+        };
         NativeHttpHost::new().downloadFiles(
             HttpDownloadRequest {
                 downloadId: instanceId.into(),
                 files: vec![HttpDownloadFileRequest {
                     fileId: instanceId.into(),
-                    url: distribution.url.clone(),
-                    targetPath: archivePath.to_string_lossy().into_owned(),
-                    headers: Vec::new(),
+                    url,
+                    targetPath: archiveTarget,
+                    headers: vec![("Accept-Encoding".into(), "identity".into())],
                     expectedBytes: distribution.downloadBytes,
                 }],
                 maxConcurrency: 1,
-                connectTimeoutSeconds: 30,
-                readTimeoutSeconds: 120,
+                connectTimeoutSeconds: 12,
+                readTimeoutSeconds: 30,
                 followRedirects: true,
                 ignoreSsl: false,
                 proxyHost: String::new(),
@@ -155,7 +194,12 @@ pub fn install(
             distribution.downloadBytes,
             distribution.downloadBytes,
         );
-        verifyArchive(&archivePath, &distribution.sha256, &control)?;
+        if let Err(error) = verifyArchive(&archivePath, &distribution.sha256, &control) {
+            if !control.isCancelled() {
+                fs::remove_file(&archivePath)?;
+            }
+            return Err(error);
+        }
         report(
             &progress,
             "extracting",
@@ -175,6 +219,7 @@ pub fn install(
         fs::write(&resolver, "nameserver 1.1.1.1\nnameserver 8.8.8.8\n")?;
         fs::create_dir_all(extracted.join("root"))?;
         checkCancelled(&control)?;
+        fs::remove_file(&archivePath)?;
         fs::rename(&extracted, &target)?;
         Ok(TerminalProfile {
             id: instanceId.into(),

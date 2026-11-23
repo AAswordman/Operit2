@@ -6,7 +6,7 @@ use operit_host_api::{
 };
 
 use crate::runtime_common::{
-    buildAndroidProotCommand, requiredAndroidRuntimePath, validateRootfsExecutable,
+    buildAndroidProotCommand, requiredAndroidRuntimePath, validateRootfsExecutable, PROOT_NO_SECCOMP,
 };
 
 #[path = "../../common/managed_runtime_process.rs"]
@@ -62,7 +62,7 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
         let mut command = buildAndroidProotCommand(&executable, request.cwd.as_deref())?;
         command.args(request.args);
         command.envs(request.env);
-        command.env("PROOT_NO_SECCOMP", "1");
+        command.env_remove(PROOT_NO_SECCOMP);
         command.stdin(Stdio::piped());
         command.stdout(Stdio::piped());
         command.stderr(Stdio::piped());
@@ -80,7 +80,7 @@ impl ManagedRuntimeHost for AndroidManagedRuntimeHost {
         let mut command = buildAndroidProotCommand(&executable, request.cwd.as_deref())?;
         command.args(request.args);
         command.envs(request.env);
-        command.env("PROOT_NO_SECCOMP", "1");
+        command.env_remove(PROOT_NO_SECCOMP);
         NativeManagedRuntimeProcess::run(command)
     }
 }

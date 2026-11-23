@@ -4,3 +4,5 @@ apps/flutter/packages/operit_ui/assets/licenses/*.txt -text
 # Preserve provenance hashes of the imported v1 declaration snapshot.
 plugins/types-v1/*.d.ts -text
 plugins/types-v1/LICENSE -text
+
+hosts/android/src/terminal_chroot.sh text eol=lf

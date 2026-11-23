@@ -104,6 +104,7 @@ impl TerminalHost for AppleTerminalHost {
                 },
                 terminal: entry.terminal,
                 terminalType: entry.terminalType,
+                fieldChoices: None,
             })
             .collect())
     }

@@ -86,14 +86,18 @@ struct TerminalInstallJob {
     snapshot: RuntimeTerminalInstall,
 }
 
-static TERMINAL_INSTALL_JOBS: OnceLock<
-    Mutex<std::collections::BTreeMap<String, TerminalInstallJob>>,
-> = OnceLock::new();
+static TERMINAL_INSTALL_JOBS: OnceLock<Mutex<Vec<TerminalInstallJob>>> = OnceLock::new();
 
 /// Returns the bounded host-owned installation registry shared by service handles.
-fn terminal_install_jobs() -> &'static Mutex<std::collections::BTreeMap<String, TerminalInstallJob>>
-{
-    TERMINAL_INSTALL_JOBS.get_or_init(|| Mutex::new(std::collections::BTreeMap::new()))
+fn terminal_install_jobs() -> &'static Mutex<Vec<TerminalInstallJob>> {
+    TERMINAL_INSTALL_JOBS.get_or_init(|| Mutex::new(Vec::new()))
+}
+
+impl TerminalInstallJob {
+    /// Reports whether this attempt has released its installation resources.
+    fn isFinished(&self) -> bool {
+        matches!(self.snapshot.state.as_str(), "completed" | "failed" | "cancelled")
+    }
 }
 
 /// Facade over host terminal APIs and shared terminal output streams.
@@ -417,43 +421,35 @@ impl RuntimeTerminalService {
             let mut jobs = terminal_install_jobs()
                 .lock()
                 .map_err(|_| "Terminal installation registry is poisoned")?;
-            jobs.retain(|_, job| job.host.strong_count() > 0);
-            if jobs
-                .values()
-                .filter(|job| {
-                    !matches!(
-                        job.snapshot.state.as_str(),
-                        "completed" | "failed" | "cancelled"
-                    )
-                })
-                .count()
-                >= 4
-            {
+            jobs.retain(|job| job.host.strong_count() > 0);
+            let host = Arc::downgrade(&self.terminalHost);
+            if jobs.iter().any(|job| {
+                std::sync::Weak::ptr_eq(&job.host, &host)
+                    && job.snapshot.distributionId == distributionId
+                    && !job.isFinished()
+            }) {
+                return Err("This terminal distribution is already being installed".into());
+            }
+            if jobs.iter().filter(|job| !job.isFinished()).count() >= 4 {
                 return Err("Too many active terminal installations".into());
             }
             if jobs.len() >= 32 {
-                jobs.retain(|_, job| {
-                    !matches!(
-                        job.snapshot.state.as_str(),
-                        "completed" | "failed" | "cancelled"
-                    )
-                });
+                if let Some(index) = jobs.iter().position(TerminalInstallJob::isFinished) {
+                    jobs.remove(index);
+                }
             }
-            jobs.insert(
-                installId.clone(),
-                TerminalInstallJob {
-                    host: Arc::downgrade(&self.terminalHost),
-                    control: control.clone(),
-                    snapshot: snapshot.clone(),
-                },
-            );
+            jobs.push(TerminalInstallJob {
+                host,
+                control: control.clone(),
+                snapshot: snapshot.clone(),
+            });
         }
         let progressId = installId.clone();
         let progress: TerminalInstallProgressCallback = Arc::new(move |value| {
             let mut jobs = terminal_install_jobs()
                 .lock()
                 .expect("Terminal installation registry is poisoned");
-            if let Some(job) = jobs.get_mut(&progressId) {
+            if let Some(job) = jobs.iter_mut().find(|job| job.snapshot.installId == progressId) {
                 job.snapshot.state = value.state;
                 job.snapshot.downloadedBytes = value.downloadedBytes;
                 job.snapshot.totalBytes = value.totalBytes;
@@ -474,7 +470,7 @@ impl RuntimeTerminalService {
                 let mut jobs = terminal_install_jobs()
                     .lock()
                     .expect("Terminal installation registry is poisoned");
-                if let Some(job) = jobs.get_mut(&workerId) {
+                if let Some(job) = jobs.iter_mut().find(|job| job.snapshot.installId == workerId) {
                     match result {
                         Ok(profile) => {
                             job.snapshot.state = "completed".into();
@@ -497,19 +493,19 @@ impl RuntimeTerminalService {
             terminal_install_jobs()
                 .lock()
                 .map_err(|_| "Terminal installation registry is poisoned")?
-                .remove(&installId);
+                .retain(|job| job.snapshot.installId != installId);
             return Err(error.message);
         }
         Ok(snapshot)
     }
 
-    /// Reads installation progress belonging to this Core host, including terminal errors.
+    /// Reads this host's installation attempts in start order, including terminal errors.
     pub fn terminalDistributionInstalls(&self) -> Result<Vec<RuntimeTerminalInstall>, String> {
         let jobs = terminal_install_jobs()
             .lock()
             .map_err(|_| "Terminal installation registry is poisoned")?;
         Ok(jobs
-            .values()
+            .iter()
             .filter(|job| std::sync::Weak::ptr_eq(&job.host, &Arc::downgrade(&self.terminalHost)))
             .map(|job| job.snapshot.clone())
             .collect())
@@ -521,13 +517,11 @@ impl RuntimeTerminalService {
             .lock()
             .map_err(|_| "Terminal installation registry is poisoned")?;
         let job = jobs
-            .get(&installId)
+            .iter()
+            .find(|job| job.snapshot.installId == installId)
             .filter(|job| std::sync::Weak::ptr_eq(&job.host, &Arc::downgrade(&self.terminalHost)))
             .ok_or("Terminal installation does not exist")?;
-        if matches!(
-            job.snapshot.state.as_str(),
-            "completed" | "failed" | "cancelled"
-        ) {
+        if job.isFinished() {
             return Err("Terminal installation has already finished".into());
         }
         job.control.cancel();

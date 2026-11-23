@@ -83,6 +83,7 @@ impl TerminalHost for LinuxTerminalHost {
             terminal: TERMINAL.into(),
             terminalType: PRIMARY_TERMINAL_TYPE.into(),
             fields: vec!["executable".into(), "arguments".into()],
+            fieldChoices: None,
         }])
     }
     /// Creates an isolated registry for one exact custom bash launcher.

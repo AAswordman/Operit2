@@ -31,6 +31,18 @@ impl ShellPrivileges {
     }
 }
 
+/// Requires an approved Root transport, or an already privileged module process.
+pub(crate) fn requireRootArguments() -> HostResult<Vec<String>> {
+    #[cfg(target_os = "android")]
+    if unsafe { libc::geteuid() } == 0 {
+        return Ok(Vec::new());
+    }
+    match privileges()?.select()? {
+        ShellTransport::Root(arguments) => Ok(arguments),
+        _ => Err(HostError::new("Android chroot requires Root authorization for Operit")),
+    }
+}
+
 /// Reads approved Android privileges through the runtime-owned JNI bridge.
 pub(crate) fn privileges() -> HostResult<ShellPrivileges> {
     // A module already owns a Root process; no application JVM or su child is required.
