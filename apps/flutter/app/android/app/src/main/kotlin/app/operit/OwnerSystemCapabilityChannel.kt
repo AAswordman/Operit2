@@ -20,11 +20,19 @@ import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.pm.PackageManager
+import android.media.AudioAttributes
+import android.media.AudioFocusRequest
+import android.media.AudioManager
+import android.media.MediaMetadata
 import android.media.MediaPlayer
 import android.media.projection.MediaProjection
+import android.media.session.MediaSession
+import android.media.session.PlaybackState
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
@@ -62,6 +70,9 @@ class OwnerSystemCapabilityChannel(
         private const val TTS_SYNTHESIS_TIMEOUT_MS = 120_000L
         private const val APPLICATION_NOTIFICATION_CHANNEL_ID = "operit_app_notifications"
         private const val APPLICATION_NOTIFICATION_CHANNEL_NAME = "Operit"
+        private const val MUSIC_NOTIFICATION_CHANNEL_ID = "operit_music_playback"
+        private const val MUSIC_NOTIFICATION_CHANNEL_NAME = "Operit 播放媒体"
+        private const val MUSIC_NOTIFICATION_ID = 4090
         private val PNG_SIGNATURE =
             byteArrayOf(
                 0x89.toByte(),
@@ -114,6 +125,52 @@ class OwnerSystemCapabilityChannel(
     private var musicVolume: Double = 1.0
     private var musicLoopPlayback: Boolean = false
     private var musicMessage: String = "android music player idle"
+    private var musicMediaSession: MediaSession? = null
+    // MediaSession and focus-callback APIs need a Looper, so media-card work runs here.
+    private val musicMainHandler = Handler(Looper.getMainLooper())
+    private var musicAudioFocusRequest: AudioFocusRequest? = null
+    private var musicHasAudioFocus: Boolean = false
+    private val musicFocusListener =
+        AudioManager.OnAudioFocusChangeListener { change ->
+            synchronized(musicLock) {
+                val player = musicPlayer ?: return@OnAudioFocusChangeListener
+                when (change) {
+                    AudioManager.AUDIOFOCUS_LOSS -> {
+                        musicHasAudioFocus = false
+                        if (player.isPlaying) {
+                            player.pause()
+                            musicState = "paused"
+                            musicMessage = "android music playback paused (audio focus lost)"
+                        }
+                    }
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT -> {
+                        if (player.isPlaying) {
+                            player.pause()
+                            musicState = "paused"
+                            musicMessage = "android music playback paused (audio focus transient loss)"
+                        }
+                    }
+                    AudioManager.AUDIOFOCUS_LOSS_TRANSIENT_CAN_DUCK -> {
+                        if (player.isPlaying) {
+                            player.setVolume(
+                                (musicVolume * 0.2).toFloat(),
+                                (musicVolume * 0.2).toFloat(),
+                            )
+                        }
+                    }
+                    AudioManager.AUDIOFOCUS_GAIN -> {
+                        musicHasAudioFocus = true
+                        player.setVolume(musicVolume.toFloat(), musicVolume.toFloat())
+                        if (!player.isPlaying && musicState == "paused") {
+                            player.start()
+                            musicState = "playing"
+                            musicMessage = "android music playback resumed (audio focus gained)"
+                        }
+                    }
+                }
+                syncMusicMediaSessionLocked()
+            }
+        }
     private val locationReader = AndroidLocationReader(activity)
     private val packageOperations = AndroidPackageOperations(activity, uiServer, uiAutomation)
     private val bluetoothClassicSockets = ConcurrentHashMap<String, BluetoothSocket>()
@@ -719,6 +776,7 @@ class OwnerSystemCapabilityChannel(
         val startPositionMs = ((payload["positionMs"] as? Number)?.toLong() ?: 0L).coerceAtLeast(0L)
         val player = MediaPlayer()
         try {
+            player.setAudioAttributes(musicAudioAttributes())
             when (sourceType) {
                 "path" -> player.setDataSource(File(source).absolutePath)
                 "uri", "url" -> player.setDataSource(activity.applicationContext, Uri.parse(source))
@@ -726,11 +784,19 @@ class OwnerSystemCapabilityChannel(
             }
             player.isLooping = loopPlayback
             player.setVolume(volume.toFloat(), volume.toFloat())
-            player.setOnCompletionListener {
-                synchronized(musicLock) {
-                    if (musicPlayer === it) {
-                        musicState = "completed"
-                        musicMessage = "android music playback completed"
+            player.setOnCompletionListener { completed ->
+                // Reaching the end is terminal. Hand the teardown to the main thread instead of
+                // touching the player from inside its own callback, and run it through the same
+                // path musicStop uses. Previously the drained player stayed attached, so the
+                // session kept reporting active and the shade held the card on a pause button
+                // that no longer did anything.
+                musicMainHandler.post {
+                    synchronized(musicLock) {
+                        if (musicPlayer === completed) {
+                            musicState = "completed"
+                            musicMessage = "android music playback completed"
+                            releaseMusicPlayerLocked()
+                        }
                     }
                 }
             }
@@ -739,6 +805,7 @@ class OwnerSystemCapabilityChannel(
                     if (musicPlayer === activePlayer) {
                         musicState = "error"
                         musicMessage = "android music playback error"
+                        syncMusicMediaSessionLocked()
                     }
                 }
                 true
@@ -760,10 +827,25 @@ class OwnerSystemCapabilityChannel(
                 musicLoopPlayback = loopPlayback
                 musicMessage = "android music playback started"
             }
+            requestMusicAudioFocus()
             player.start()
+            synchronized(musicLock) {
+                syncMusicMediaSessionLocked()
+            }
             return musicStatus("android music playback started")
         } catch (error: Throwable) {
-            player.release()
+            // start() can fail after musicPlayer already points at this player; tearing it
+            // down through releaseMusicPlayerLocked also detaches the media session and the
+            // notification, instead of leaving a dead player synced as playing.
+            synchronized(musicLock) {
+                if (musicPlayer === player) {
+                    musicState = "error"
+                    musicMessage = "android music playback failed to start"
+                    releaseMusicPlayerLocked()
+                } else {
+                    player.release()
+                }
+            }
             throw error
         }
     }
@@ -775,6 +857,7 @@ class OwnerSystemCapabilityChannel(
                 player.pause()
                 musicState = "paused"
                 musicMessage = "android music playback paused"
+                syncMusicMediaSessionLocked()
             }
         }
         return musicStatus("android music playback paused")
@@ -786,6 +869,7 @@ class OwnerSystemCapabilityChannel(
             player.start()
             musicState = "playing"
             musicMessage = "android music playback resumed"
+            syncMusicMediaSessionLocked()
         }
         return musicStatus("android music playback resumed")
     }
@@ -795,6 +879,7 @@ class OwnerSystemCapabilityChannel(
             releaseMusicPlayerLocked()
             musicState = "stopped"
             musicMessage = "android music playback stopped"
+            syncMusicMediaSessionLocked()
         }
         return musicStatus("android music playback stopped")
     }
@@ -804,6 +889,7 @@ class OwnerSystemCapabilityChannel(
             val player = musicPlayer ?: throw IllegalStateException("android music player is not initialized")
             player.seekTo(positionMs.coerceAtLeast(0L).toInt())
             musicMessage = "android music playback seeked"
+            syncMusicMediaSessionLocked()
         }
         return musicStatus("android music playback seeked")
     }
@@ -815,6 +901,7 @@ class OwnerSystemCapabilityChannel(
             player.setVolume(normalizedVolume.toFloat(), normalizedVolume.toFloat())
             musicVolume = normalizedVolume
             musicMessage = "android music playback volume changed"
+            syncMusicMediaSessionLocked()
         }
         return musicStatus("android music playback volume changed")
     }
@@ -840,6 +927,7 @@ class OwnerSystemCapabilityChannel(
                 "volume" to musicVolume,
                 "loopPlayback" to musicLoopPlayback,
                 "message" to message,
+                "stateMessage" to musicMessage,
             )
         }
     }
@@ -853,6 +941,222 @@ class OwnerSystemCapabilityChannel(
     private fun releaseMusicPlayerLocked() {
         musicPlayer?.release()
         musicPlayer = null
+        musicMainHandler.post { releaseMusicMediaSessionOnMain() }
+        abandonMusicAudioFocus()
+    }
+
+    /** Builds the media AudioAttributes used for playback and focus requests. */
+    private fun musicAudioAttributes(): AudioAttributes =
+        AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
+            .setContentType(AudioAttributes.CONTENT_TYPE_MUSIC)
+            .build()
+
+    /** Requests transient-forever music focus so other apps duck/pause us correctly. */
+    private fun requestMusicAudioFocus(): Boolean {
+        val audioManager =
+            activity.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return false
+        val request =
+            musicAudioFocusRequest
+                ?: AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN)
+                    .setAudioAttributes(musicAudioAttributes())
+                    .setWillPauseWhenDucked(false)
+                    .setOnAudioFocusChangeListener(musicFocusListener, musicMainHandler)
+                    .build()
+                .also { musicAudioFocusRequest = it }
+        val granted = audioManager.requestAudioFocus(request) == AudioManager.AUDIOFOCUS_REQUEST_GRANTED
+        musicHasAudioFocus = granted
+        return granted
+    }
+
+    /** Releases music focus held by the channel, if any. */
+    private fun abandonMusicAudioFocus() {
+        if (!musicHasAudioFocus) return
+        musicHasAudioFocus = false
+        val request = musicAudioFocusRequest ?: return
+        val audioManager =
+            activity.applicationContext.getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+                ?: return
+        audioManager.abandonAudioFocusRequest(request)
+    }
+
+    /** Creates the MediaSession lazily and marks it active. */
+    private fun ensureMusicMediaSessionLocked(): MediaSession {
+        musicMediaSession?.let { return it }
+        val session =
+            MediaSession(activity.applicationContext, "OperitMusicPlayback").apply {
+                setCallback(
+                    object : MediaSession.Callback() {
+                        override fun onPlay() {
+                            runCatching { musicResume() }
+                        }
+
+                        override fun onPause() {
+                            runCatching { musicPause() }
+                        }
+
+                        override fun onStop() {
+                            runCatching { musicStop() }
+                        }
+
+                        override fun onSeekTo(pos: Long) {
+                            runCatching { musicSeek(pos) }
+                        }
+                    },
+                )
+                isActive = true
+            }
+        musicMediaSession = session
+        return session
+    }
+
+    /**
+     * Schedules a media-session update on the main thread.
+     *
+     * MediaSession builds a Handler from the calling thread's Looper, so it cannot be
+     * touched from the runtime's background workers; every update is marshalled through
+     * [musicMainHandler]. Callers already hold [musicLock].
+     */
+    private fun syncMusicMediaSessionLocked() {
+        musicMainHandler.post { syncMusicMediaSessionOnMain() }
+    }
+
+    /** Applies current metadata and playback state to the media session + notification. */
+    private fun syncMusicMediaSessionOnMain() {
+        synchronized(musicLock) {
+            val session = musicMediaSession
+            val player = musicPlayer
+            if (session == null && player == null) {
+                cancelMusicNotification()
+                return
+            }
+            val target = session ?: ensureMusicMediaSessionLocked()
+            val duration = musicDurationMs ?: 0L
+            val metadata =
+                MediaMetadata.Builder()
+                    .putString(MediaMetadata.METADATA_KEY_TITLE, musicTitle ?: musicSource ?: "Operit")
+                    .putString(MediaMetadata.METADATA_KEY_ARTIST, musicArtist ?: "")
+                    .putLong(MediaMetadata.METADATA_KEY_DURATION, duration)
+                    .build()
+            target.setMetadata(metadata)
+            val playbackState =
+                PlaybackState.Builder()
+                    .setActions(
+                        PlaybackState.ACTION_PLAY or
+                            PlaybackState.ACTION_PAUSE or
+                            PlaybackState.ACTION_PLAY_PAUSE or
+                            PlaybackState.ACTION_STOP or
+                            PlaybackState.ACTION_SEEK_TO,
+                    )
+                    .setState(musicPlaybackStateFor(player), player?.currentPosition?.toLong() ?: 0L, 1.0f)
+                    .build()
+            target.setPlaybackState(playbackState)
+            if (player == null) {
+                cancelMusicNotification()
+            } else {
+                postMusicNotification(target)
+            }
+        }
+    }
+
+    /** Maps the channel's string state onto a platform PlaybackState constant. */
+    private fun musicPlaybackStateFor(player: MediaPlayer?): Int =
+        when {
+            player == null -> PlaybackState.STATE_STOPPED
+            player.isPlaying -> PlaybackState.STATE_PLAYING
+            musicState == "completed" -> PlaybackState.STATE_STOPPED
+            musicState == "error" -> PlaybackState.STATE_ERROR
+            musicState == "paused" -> PlaybackState.STATE_PAUSED
+            else -> PlaybackState.STATE_PAUSED
+        }
+
+    /** Posts the MediaStyle notification that renders the system media card. */
+    private fun postMusicNotification(session: MediaSession) {
+        val context = activity.applicationContext
+        val notificationManager =
+            context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager ?: return
+        if (
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) !=
+                    PackageManager.PERMISSION_GRANTED
+        ) {
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            notificationManager.createNotificationChannel(
+                NotificationChannel(
+                    MUSIC_NOTIFICATION_CHANNEL_ID,
+                    MUSIC_NOTIFICATION_CHANNEL_NAME,
+                    NotificationManager.IMPORTANCE_LOW,
+                ).apply {
+                    setShowBadge(false)
+                    description = "Operit 播放器媒体控制"
+                },
+            )
+        }
+        val launchIntent =
+            Intent(activity, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            }
+        val contentIntent =
+            PendingIntent.getActivity(
+                activity,
+                0,
+                launchIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+        val title = musicTitle ?: musicSource?.substringAfterLast('/') ?: "Operit"
+        val subtitle = musicArtist?.takeIf { it.isNotBlank() } ?: "Operit 播放器"
+        val builder =
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                Notification.Builder(context, MUSIC_NOTIFICATION_CHANNEL_ID)
+            } else {
+                @Suppress("DEPRECATION")
+                Notification.Builder(context)
+            }
+        builder
+            .setContentTitle(title)
+            .setContentText(subtitle)
+            .setSubText(subtitle)
+            .setSmallIcon(R.drawable.ic_stat_operit)
+            .setContentIntent(contentIntent)
+            .setOngoing(true)
+            .setShowWhen(false)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
+            .setOnlyAlertOnce(true)
+        @Suppress("DEPRECATION")
+        builder.setStyle(
+            Notification.MediaStyle().setMediaSession(session.sessionToken),
+        )
+        notificationManager.notify(MUSIC_NOTIFICATION_ID, builder.build())
+    }
+
+    /** Removes the media card once nothing is playing. */
+    private fun cancelMusicNotification() {
+        val notificationManager =
+            activity.applicationContext.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+                ?: return
+        runCatching { notificationManager.cancel(MUSIC_NOTIFICATION_ID) }
+    }
+
+    /** Releases the media session and clears the card; runs on the main thread. */
+    private fun releaseMusicMediaSessionOnMain() {
+        synchronized(musicLock) {
+            musicMediaSession?.let { session ->
+                runCatching {
+                    session.setPlaybackState(
+                        PlaybackState.Builder()
+                            .setState(PlaybackState.STATE_STOPPED, 0L, 1.0f)
+                            .build(),
+                    )
+                    session.isActive = false
+                    session.release()
+                }
+            }
+            musicMediaSession = null
+            cancelMusicNotification()
+        }
     }
 
     private fun bluetooth(payloadJson: String): String {
