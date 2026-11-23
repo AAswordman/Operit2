@@ -2,7 +2,7 @@ import { ChannelStore, conversationKey } from "./channel-store.js";
 import { ChannelInbox, messageKey } from "./channel-inbox.js";
 import type { ChannelRequest, ChannelResponses, ChannelMessage, ChannelConversation, ConversationHistory, ReplyFields } from "./channel-api.js";
 import { getSettings as waifuSettings, stream as waifuStream } from "./dependencies/waifu/api.js";
-import { chatText, ReplyTextStream } from "./messages.js";
+import { chatText, messageAttachments, ReplyTextStream } from "./messages.js";
 import { attachments, CHAT_ATTACHMENT_LIMIT, downloadConsoleAttachment } from "./attachments.js";
 import { QQGateway } from "./gateway.js";
 import { QQOpenApi } from "./openapi.js";
@@ -14,6 +14,7 @@ const GROUP_DECISION_TIMEOUT_MS = 8_000;
 type Delivery = NonNullable<Config["deliveries"]>[number];
 interface ReplyTask {
   superseded: boolean;
+  submitted?: boolean;
   stopDelivery?: () => void;
   done?: Promise<void>;
   cancellation?: Promise<unknown>;
@@ -30,6 +31,7 @@ class QQBotService {
   private readonly seen = new Set<string>();
   private autoTimer: number | null = null;
   private readonly autoTasks = new Map<string, ReplyTask>();
+  private readonly groupHistoryWrites = new Map<string, { tail: Promise<void>; count: number }>();
   private readonly groupDecisionCalls = new Set<Promise<unknown>>();
   private autoGeneration = 0;
   private readonly activeChats = new Map<string, string>();
@@ -91,7 +93,11 @@ class QQBotService {
   }
 
   /** Stops pending AI work and the socket before releasing the listener runtime. */
-  async stopRuntime(): Promise<void> { await this.stopAuto(); await this.gateway.stop(); }
+  async stopRuntime(): Promise<void> {
+    await this.stopAuto();
+    await this.gateway.stop();
+    await Promise.all([...this.groupHistoryWrites.values()].map(queue => queue.tail));
+  }
 
   /** Validates a configuration patch before durably committing it and restarting its affected runtime. */
   private async configure(params: ConfigureParams): Promise<void> {
@@ -139,6 +145,47 @@ class QQBotService {
   private needsGroupDecision(event: InboundEvent): boolean {
     return this.config.autoReply.groupReplyMode === "ai" && event.scene === "group" && event.eventType !== "GROUP_AT_MESSAGE_CREATE";
   }
+  /** Records a received message in an existing group chat without starting a model turn. */
+  private recordGroupMessage(event: InboundEvent): boolean {
+    if (event.scene !== "group") return false;
+    const groupId = event.groupOpenId;
+    const binding = `group:${groupId}`;
+    const chatId = this.config.bindings[binding];
+    const accountId = this.config.appId;
+    if (!chatId) return false;
+    const text = chatText(event).slice(0, 6000);
+    const media = messageAttachments(event).slice(0, 10).map(item => item.fileName.slice(0, 150) || item.kind);
+    if (!text && media.length === 0) return false;
+    const author = (event.author?.name || event.userOpenId || "群成员").replace(/\s+/g, " ").slice(0, 100);
+    const content = [`[QQ 群聊] ${author}`, text, media.length ? `附件：${media.join("、")}` : ""].filter(Boolean).join("\n");
+    const queue = this.groupHistoryWrites.get(groupId) ?? { tail: Promise.resolve(), count: 0 };
+    if (queue.count >= MAX_EVENTS) {
+      console.error("[qqbot.group_history] Too many pending history writes");
+      return false;
+    }
+    // Native Chat admits one writer at a time per chat. A history write must never cancel an active reply.
+    const reply = this.autoTasks.get(JSON.stringify(["group", groupId]))?.done;
+    queue.count++;
+    queue.tail = queue.tail.then(async () => {
+      await reply?.catch(() => {});
+      if (this.config.appId !== accountId || this.config.bindings[binding] !== chatId) return;
+      const result = await Tools.Chat.sendMessage({ kind: "submit", chatId, runtime: "main",
+        input: { text: content, attachments: [], replyToMessageTimestamp: null },
+        turn: { kind: "record_only" }, notifyReply: false });
+      if (result.outcome.type !== "committed" || result.outcome.status !== "completed") {
+        throw Error("QQ group history was not saved to the bound chat");
+      }
+    }).catch(error => console.error("[qqbot.group_history]", error)).finally(() => {
+      if (--queue.count === 0) this.groupHistoryWrites.delete(groupId);
+    });
+    this.groupHistoryWrites.set(groupId, queue);
+    return true;
+  }
+
+  private recordGroupDelivery(delivery: Delivery): void {
+    if (!delivery.groupHistoryQueued && this.recordGroupMessage(delivery.event)) delivery.groupHistoryQueued = true;
+  }
+
   /** Stores readable group history separately from model turns and maintenance deliveries. */
   private async enqueue(event: InboundEvent): Promise<void> {
     const key=event.messageId===""?`${event.eventType}:${event.eventId}:${event.seq}`:JSON.stringify([this.config.appId,event.scene,event.scene==="group"?event.groupOpenId:event.userOpenId,event.messageId]);
@@ -147,18 +194,23 @@ class QQBotService {
     let channelOnly=false;
     if(valid){
       const message=this.normalized(event), binding=`${event.scene}:${message.conversationId}`;
-      if(event.scene!=="group" || this.config.autoReply.listenGroupMessages || this.shouldReply(event))
-        await this.sessions.observe(message,event.scene as "c2c"|"group",`QQ ${event.scene==="group"?"群聊":"私聊"} ${message.conversationId}`,this.config.bindings[binding]);
+      const shouldReply = this.shouldReply(event);
+      const observed = (event.scene !== "group" || this.config.autoReply.listenGroupMessages || shouldReply) &&
+        await this.sessions.observe(message, event.scene as "c2c" | "group", `QQ ${event.scene === "group" ? "群聊" : "私聊"} ${message.conversationId}`, this.config.bindings[binding]);
       const captured=this.config.channelCapture && (!Array.isArray(this.config.channelConversationIds) || this.config.channelConversationIds.includes(message.conversationId));
       if(captured)await this.channelInbox.record(message);
-      channelOnly=captured && this.config.channelOnlyWhenNoAuto && !this.shouldReply(event);
+      channelOnly=captured && this.config.channelOnlyWhenNoAuto && !shouldReply;
       const needsDecision = this.needsGroupDecision(event);
       const replyBinding = this.binding(event);
       const pendingMention = needsDecision && this.config.deliveries!.some(item =>
         item.state === "pending" && !this.needsGroupDecision(item.event) && this.binding(item.event) === replyBinding);
-      if(this.shouldReply(event) && !pendingMention && !this.config.processed.includes(key) && !this.config.processed.includes(`${event.scene}:${event.messageId}`) && !this.config.deliveries!.some(item=>item.key===key)){
+      if (event.scene === "group" && observed && (!shouldReply || pendingMention) && this.config.autoReply.listenGroupMessages) {
+        this.recordGroupMessage(event);
+      }
+      if(shouldReply && !pendingMention && !this.config.processed.includes(key) && !this.config.processed.includes(`${event.scene}:${event.messageId}`) && !this.config.deliveries!.some(item=>item.key===key)){
         if (!needsDecision) this.interrupt(replyBinding);
-        this.coalescePending(event);
+        const dropped = this.coalescePending(event);
+        for (const item of dropped) this.recordGroupDelivery(item);
         const deliveries = this.config.deliveries!;
         if (deliveries.length >= MAX_DELIVERIES) {
           const oldestFailure = deliveries.findIndex(item => item.state === "failed");
@@ -169,6 +221,7 @@ class QQBotService {
         }
         if (deliveries.length >= MAX_DELIVERIES) {
           this.autoError = "自动回复积压已达 200 条，新消息仍保存在近期会话中。";
+          if (observed) this.recordGroupMessage(event);
         } else {
           this.config.deliveries = [...deliveries, { key, event, state: "pending", delivered: 0, error: "" }];
           await PluginConfig.flush(this.config);
@@ -283,19 +336,22 @@ class QQBotService {
   }
 
   /** Keeps the last waiting event per reply context, including after upgrading. */
-  private coalescePending(replacement?: InboundEvent): void {
+  private coalescePending(replacement?: InboundEvent): Delivery[] {
     const seen = new Set(replacement ? [this.binding(replacement)] : []);
-    const dropped = new Set<string>();
+    const dropped: Delivery[] = [];
     const pending = this.config.deliveries!.filter(item => item.state === "pending").reverse();
     pending.sort((left, right) => Number(this.needsGroupDecision(left.event)) - Number(this.needsGroupDecision(right.event)));
     for (const item of pending) {
       const binding = this.binding(item.event);
-      if (seen.has(binding)) dropped.add(item.key);
+      if (seen.has(binding)) dropped.push(item);
       else seen.add(binding);
     }
-    if (dropped.size === 0) return;
-    this.config.deliveries = this.config.deliveries!.filter(item => !dropped.has(item.key));
-    this.config.processed = [...this.config.processed, ...dropped].slice(-512);
+    if (dropped.length > 0) {
+      const keys = new Set(dropped.map(item => item.key));
+      this.config.deliveries = this.config.deliveries!.filter(item => !keys.has(item.key));
+      this.config.processed = [...this.config.processed, ...keys].slice(-512);
+    }
+    return dropped.reverse();
   }
 
   private interrupt(binding: string): void {
@@ -314,7 +370,8 @@ class QQBotService {
 
   private takeEvent(): Delivery | undefined {
     const eligible = (item: Delivery) => item.state === "pending" && this.shouldReply(item.event) &&
-      !this.autoTasks.has(this.binding(item.event));
+      !this.autoTasks.has(this.binding(item.event)) &&
+      !(item.event.scene === "group" && this.config.autoReply.groupContext === "shared" && this.groupHistoryWrites.has(item.event.groupOpenId));
     const delivery = this.config.deliveries!.find(item => !this.needsGroupDecision(item.event) && eligible(item))
       ?? this.config.deliveries!.find(eligible);
     if (!delivery) return;
@@ -425,6 +482,7 @@ class QQBotService {
         const shouldReply = await this.decideGroupReply(event, task, current);
         if (!current()) return;
         if (!shouldReply) {
+          if (config.listenGroupMessages) this.recordGroupDelivery(delivery);
           await this.finishDelivery(delivery);
           return;
         }
@@ -432,8 +490,10 @@ class QQBotService {
       await this.conversations();
       if (!current()) return;
       const session=await this.openChat(conversationKey("qq",this.config.appId,scene,target));
+      if (!current()) return;
       let chatId=session.chatId!;
       if(scene==="group"&&config.groupContext==="member"){
+        this.recordGroupDelivery(delivery);
         const key=JSON.stringify([session.key,event.userOpenId]);
         let isolated=this.config.memberBindings![key];
         if(!isolated){
@@ -466,6 +526,7 @@ class QQBotService {
         const begin = () => {
           if (!current() || timedOut) return null;
           this.activeChats.set(taskBinding, chatId);
+          task.submitted = true;
           return Tools.Chat.sendMessageStreaming(request)[Symbol.asyncIterator]();
         };
         const stopped = new Promise<void>(resolve => { task.stopDelivery = resolve; });
@@ -500,6 +561,7 @@ class QQBotService {
       console.error("[qqbot.auto]",error);
     } finally {
       if (task.superseded && this.config.deliveries!.includes(delivery)) {
+        if (!task.submitted) this.recordGroupDelivery(delivery);
         this.config.deliveries = this.config.deliveries!.filter(item => item !== delivery);
         this.config.processed = [...this.config.processed, delivery.key].slice(-512);
         await PluginConfig.flush(this.config);

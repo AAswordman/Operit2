@@ -47,13 +47,13 @@ export class ChannelStore {
       await db.commit([{op:"put",collection:"conversations",key:conversation.key,value:value(old?{...old.value,chatId:conversation.chatId}:conversation),expectedVersion:old?.version??null}]);
     });
   }
-  observe(message: ChannelMessage, scene: "c2c" | "group", title: string, chatId?: string): Promise<void> {
+  observe(message: ChannelMessage, scene: "c2c" | "group", title: string, chatId?: string): Promise<boolean> {
     return this.serial(async () => {
       const db = await this.open(), key = conversationKey(message.channel, message.accountId, scene, message.conversationId);
       const row = await db.collection<ChannelConversation>("conversations").get(key);
       const history = await db.collection<ContextMessage[]>("history").get(key);
       const messages = history?.value ?? [];
-      if (await db.collection("reply_routes").get(message.key)) return;
+      if (await db.collection("reply_routes").get(message.key)) return false;
       const at = Math.max(Date.now(), (row?.value.lastMessageAt ?? 0) + 1);
       const readable: ContextMessage = {messageId: message.messageId, authorId: message.authorId,
         authorName: message.channel === "qq" && "author" in message ? String((message as {author?: {name: string}}).author?.name ?? "").slice(0,100) : "",
@@ -88,6 +88,7 @@ export class ChannelStore {
         mutations.push({op:"put",collection:"deliveries",key:consumerKey(subscriber.key,message.key),value:value({conversationKey:key,receivedAt:at,message}),expectedVersion:null});
       }
       await db.commit(mutations);
+      return true;
     });
   }
   bind(key: string, chatId: string | null): Promise<ChannelConversation> {
