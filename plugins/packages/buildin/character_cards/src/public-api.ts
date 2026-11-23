@@ -1,11 +1,33 @@
-import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, ChatConfigurationResult, DomainInput, DomainOutput, EmptyParams } from "./api";
+import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, ChatConfigurationResult, ChatIdentityRequest, ChatDisplayIdentity, DomainInput, DomainOutput, EmptyParams } from "./api";
 import { parseDomainPayload, parseMemoryQueryRequest } from "./domain";
 import { MemoryTools } from "./runtime-tools/memory";
-import { dispatchDomain } from "./service-runtime";
+import { dispatchDomain, getService } from "./service-runtime";
 import { findChatBinding, chatSelection, readDraftBinding, commitDraftBinding, abortDraftBinding } from "./chat-storage";
+import { parseChatSelection, selectionForActive } from "./chat-bindings";
+import { resolveChatDisplay } from "./group-execution/display";
+import { requireId } from "./validation";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
 const memoryQueries = new MemoryTools(dispatchDomain);
+
+/** Reads role presentation through the same selection and display rules used by chat creation. */
+export async function chatIdentityApi(event: ToolPkg.PublicApiEvent<ChatIdentityRequest>): Promise<ChatDisplayIdentity | null> {
+  const input = event.payload;
+  if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 1 || !("chatId" in input)) {
+    throw new Error("chat.identity requires exactly chatId");
+  }
+  if (input.chatId !== null) requireId(input.chatId, "chat.identity.chatId");
+  const selection = input.chatId === null
+    ? selectionForActive(await dispatchDomain("activePrompt.get", {}))
+    : await chatSelection(input.chatId);
+  if (parseChatSelection(selection).kind === "model") return null;
+  const result = await resolveChatDisplay({
+    purpose: "display", chatId: input.chatId, chatExtension: { version: 1, selection },
+    participantId: null, promptFunctionType: "VOICE",
+    defaultModelBinding: { providerId: "", modelId: "" }, defaultTtsConfigId: "",
+  }, await getService());
+  return result.identity;
+}
 
 /** Resolves the provider's default avatar for dependency UIs. */
 export function defaultAvatarApi(event: ToolPkg.PublicApiEvent<EmptyParams>): Promise<string> {
@@ -76,6 +98,7 @@ export async function chatConfigurationBindingDeleteApi(event: ToolPkg.PublicApi
 
 /** Registers chat APIs without opening storage or evaluating business reads. */
 export function registerChatConfigurationApis(): void {
+  ToolPkg.registerApi({ name: "chat.identity", function: chatIdentityApi });
   ToolPkg.registerApi({ name: "chat.configuration.resolve", function: chatConfigurationResolveApi });
   ToolPkg.registerApi({ name: "chat.configuration.delete", function: chatConfigurationDeleteApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.find", function: chatConfigurationBindingFindApi });

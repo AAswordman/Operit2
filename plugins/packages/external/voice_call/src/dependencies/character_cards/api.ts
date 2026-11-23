@@ -103,6 +103,8 @@ export interface ChatConfigurationExecutionResult {
 
 /** Describes presentation identity without resolving a model, speech voice or memory owner. */
 export interface ChatDisplayIdentity { title: string; avatarUri: string | null }
+/** Selects the active role before creation or the persisted role of one existing chat. */
+export interface ChatIdentityRequest { chatId: string | null }
 /** Preserves the plugin-declared presentation order and real participant identity. */
 export interface ChatDisplayParticipant { id: string; name: string; avatarUri: string | null }
 /** Supplies an explicitly authored initial message and its complete immutable participant snapshot. */
@@ -321,6 +323,9 @@ export const characterCards = {
     ToolPkg.callDependency<EmptyParams, string>("com.operit.character_cards", "avatar.default", {}),
 
   chat: {
+    /** Reads the selected role's display identity; model-only mode has no role identity. Requires 0.2.9. */
+    identity: (payload: ChatIdentityRequest): Promise<ChatDisplayIdentity | null> =>
+      ToolPkg.callDependency<ChatIdentityRequest, ChatDisplayIdentity | null>("com.operit.character_cards", "chat.identity", payload),
     configuration: {
       /** Resolves this chat's stored configuration without changing its selection. */
       resolve: (payload: ChatConfigurationRequest): Promise<ChatConfigurationResult> => call("chat.configuration.resolve", payload),

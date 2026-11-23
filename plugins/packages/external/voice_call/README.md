@@ -8,6 +8,6 @@
 
 系统支持全局悬浮时，通话窗使用系统悬浮窗。其他支持应用内悬浮的平台在 Operit 内显示。实际能否在应用切到后台时继续录音由系统决定。
 
-通话通过公开客户端的 `characterCards.defaultAvatar()` 获取 Operit 默认头像。启用通话插件前，需要安装并启用角色卡插件 0.2.8 或更新版本。收音时水波从头像向外扩散，音量越大，波纹越亮、扩散越远。识别、等待回复和朗读时使用柔和的波纹提示。此版本需要宿主提供 `recordingLevel` 接口。
+通话通过公开客户端的 `characterCards.chat.identity({ chatId })` 获取角色名称和头像。打开窗口时预览当前选中的角色，开始或继续通话时读取通话会话实际绑定的角色；切换全局角色不会改变已经建立的通话对象。角色组使用组名和组头像。未设置头像的角色不显示图片，纯模型模式不显示角色身份。读取失败会显示实际错误，开始通话时读取失败会暂停通话。启用通话插件前，需要安装并启用角色卡插件 0.2.9 或更新版本。收音时水波从头像向外扩散，音量越大，波纹越亮、扩散越远。识别、等待回复和朗读时使用柔和的波纹提示。此版本需要宿主提供 `recordingLevel` 接口。
 
 窗口由 `ToolPkg.ui.floatingWindows` 承载。录音接口见[悬浮窗文档](../../../docs/FLOATING_WINDOWS.md)。插件调用 `Tools.Stt.transcribe` 和 `Tools.Chat.sendMessage`，用 `Tools.Tts.speak` 的 `waitForCompletion` 等待全部音频分段播完。`playbackId` 仅在当前插件内有效，挂断时用 `Tools.Tts.cancel` 取消同一条朗读。

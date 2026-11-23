@@ -296,6 +296,13 @@ copy that file into their own source tree, import it locally and declare
 `characterCards.defaultAvatar()` requires `com.operit.character_cards >= 0.2.8`.
 It returns the shared VFS path of the default Operit avatar for dependency UIs.
 
+`characterCards.chat.identity({ chatId })` requires version 0.2.9 and returns
+`{ title, avatarUri }` for a role or role group. Pass `null` to preview the active
+selection, or an existing chat ID to read its persisted binding. It uses the same
+display resolver as chat creation without reading model, speech or memory
+configuration. Model-only mode returns `null`; an unset portrait stays `null`.
+Deleted references and storage errors propagate to the caller.
+
 `characterCards.memory.query({ participantId, query, limit, snapshotId })`
 resolves the explicit participant's actual memory binding and reuses the
 plugin's existing query implementation. Results contain complete typed

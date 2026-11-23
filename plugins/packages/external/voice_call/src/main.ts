@@ -1,12 +1,11 @@
 import type { ComposeCanvasCommand, ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
-import { characterCards } from "./dependencies/character_cards/api.js";
+import { characterCards, type ChatDisplayIdentity } from "./dependencies/character_cards/api.js";
 
 const PACKAGE = "com.operit.voice_call";
 const CONTROL_ROUTE = `toolpkg:${PACKAGE}:ui:control`;
 const CALL_ROUTE = `toolpkg:${PACKAGE}:ui:call`;
 const WINDOW = "voice-call";
 const title = { zh: "语音通话", en: "Voice Call" };
-const AVATAR = "Operit";
 const WAVE_SIZE = 212;
 const CENTER = WAVE_SIZE / 2;
 
@@ -106,7 +105,7 @@ export function control(ctx: ComposeDslContext): ComposeNode {
 }
 
 /** Sends soft circular wavefronts out from the avatar. */
-function avatarWave(ctx: ComposeDslContext, avatar: string, phase: Phase, frame: { time: number; level: number }): ComposeNode {
+function avatarWave(ctx: ComposeDslContext, identity: ChatDisplayIdentity | null, phase: Phase, frame: { time: number; level: number }): ComposeNode {
   const ui = ctx.UI;
   const colors = ctx.MaterialTheme.colorScheme;
   const processing = phase === "waiting" || phase === "recognizing";
@@ -132,8 +131,8 @@ function avatarWave(ctx: ComposeDslContext, avatar: string, phase: Phase, frame:
   }
   return ui.Box({ width: WAVE_SIZE, height: WAVE_SIZE, contentAlignment: "center" }, [
     ui.Canvas({ key: "avatar-wave", width: WAVE_SIZE, height: WAVE_SIZE, commands }),
-    ...(avatar ? [ui.Image({ key: "call-avatar", path: avatar, width: 104, height: 104, contentScale: "crop",
-      modifier: ctx.Modifier.clip({ type: "circle" }), contentDescription: AVATAR })] : []),
+    ...(identity?.avatarUri ? [ui.Image({ key: "call-avatar", path: identity.avatarUri, width: 104, height: 104, contentScale: "crop",
+      modifier: ctx.Modifier.clip({ type: "circle" }), contentDescription: identity.title })] : []),
   ]);
 }
 
@@ -144,7 +143,8 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   const [heard, setHeard] = ctx.useState("heard", "");
   const [reply, setReply] = ctx.useState("reply", "");
   const [failure, setFailure] = ctx.useState("failure", "");
-  const [avatar, setAvatar] = ctx.useState("avatar", "");
+  const [identity, setIdentity] = ctx.useState<ChatDisplayIdentity | null>("identity", null);
+  const identityRequest = ctx.useRef("identityRequest", 0);
   const [frame, setFrame] = ctx.useState("frame", { time: 0, level: 0 });
   const session = ctx.useRef("session", {
     chatId: "",
@@ -167,10 +167,11 @@ export function call(ctx: ComposeDslContext): ComposeNode {
 
   ctx.useEffect("call-avatar", () => {
     let disposed = false;
-    void characterCards.defaultAvatar().then(path => {
-      if (!disposed) setAvatar(path);
+    const request = ++identityRequest.current;
+    void characterCards.chat.identity({ chatId: null }).then(value => {
+      if (!disposed && request === identityRequest.current) setIdentity(value);
     }).catch(error => {
-      if (!disposed) setFailure(report(error));
+      if (!disposed && request === identityRequest.current) setFailure(report(error));
     });
     return () => { disposed = true; };
   }, []);
@@ -212,13 +213,17 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   async function run(): Promise<void> {
     if (session.active || session.closing) return;
     session.active = true;
+    ++identityRequest.current;
     setFailure("");
     try {
+      setPhase("connecting");
       if (!session.chatId) {
-        setPhase("connecting");
         const chat = await Tools.Chat.createNew({ setAsCurrentChat: false });
         session.chatId = chat.chatId;
       }
+      const currentIdentity = await characterCards.chat.identity({ chatId: session.chatId });
+      if (!session.active) return;
+      setIdentity(currentIdentity);
       while (session.active) {
         setPhase("listening");
         const recording = await windowApi.record(WINDOW, { maxDurationMs: 20000, silenceMs: 900 });
@@ -315,8 +320,8 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       ui.Text({ text: title[getLang().startsWith("zh") ? "zh" : "en"], style: "labelMedium", color: colors.onSurfaceVariant }),
       ui.ScrollArea({ weight: 1, fillMaxWidth: true }, [
         ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 6, paddingBottom: 8 }, [
-          avatarWave(ctx, avatar, phase, frame),
-          ui.Text({ text: AVATAR, style: "headlineSmall", color: colors.onSurface }),
+          avatarWave(ctx, identity, phase, frame),
+          ...(identity ? [ui.Text({ text: identity.title, style: "headlineSmall", color: colors.onSurface })] : []),
           ui.Row({ verticalAlignment: "center", spacing: 5, paddingHorizontal: 11, paddingVertical: 5,
             background: statusColor.copy({ alpha: 0.1 }), backgroundShape: { type: "rounded", radius: 20 },
           }, [
