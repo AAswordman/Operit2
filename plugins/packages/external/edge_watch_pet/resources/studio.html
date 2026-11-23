@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="dark">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'">
   <title>手表桌宠</title>
   <style>
     :root {
@@ -81,24 +81,23 @@
       overflow: hidden;
       background: var(--night);
     }
-    .face canvas { display: block; width: 100%; height: auto; }
+    .face { background: radial-gradient(circle, var(--glow, #a5e9cb26), transparent 72%), var(--night); }
+    .face img { display: block; width: 88%; height: auto; image-rendering: pixelated; }
+    .moods { display: flex; flex-wrap: wrap; justify-content: center; gap: 6px; }
+    .moods button { padding: 5px 10px; border: 1px solid var(--line); border-radius: 14px; color: var(--muted); background: transparent; }
+    .moods button[aria-pressed=true] { color: var(--mint); border-color: var(--mint); }
     figcaption, .help, .toggle small { color: var(--muted); font-size: 13px; }
     .panel { background: var(--panel); padding: clamp(15px, 3vw, 24px); }
     .device strong { display: block; overflow-wrap: anywhere; font-size: 16px; }
     .device small { color: var(--muted); }
-    .device + form:not([hidden]) { margin-top: 16px; }
-    .connect label { display: block; margin-bottom: 7px; font-weight: 600; }
-    .connect .help { margin-top: 9px; }
-    .input-row { display: flex; flex-wrap: wrap; gap: 8px; }
-    .input-row input { flex: 1 1 150px; min-width: 0; }
-    input[type=text] {
-      min-height: 44px;
-      padding: 9px 12px;
-      color: inherit;
-      background: var(--night);
-      border: 1px solid var(--line);
-      border-radius: 13px;
-    }
+    .discovery { display: grid; gap: 12px; margin-top: 16px; }
+    .discovery-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .watch-list { display: grid; gap: 8px; }
+    .watch-option { width: 100%; padding: 12px; text-align: left; color: var(--ink); background: var(--night); border: 1px solid var(--line); border-radius: 14px; }
+    .watch-option strong, .watch-option small { display: block; overflow-wrap: anywhere; }
+    .watch-option small { color: var(--muted); margin-top: 4px; }
+    .watch-option[aria-pressed=true] { border-color: var(--mint); }
+    .scan-issues { white-space: pre-line; color: var(--peach); font-size: 13px; }
     .action { min-height: 44px; padding: 8px 16px; border: 1px solid transparent; border-radius: 999px; font-weight: 650; }
     .primary { color: var(--night); background: var(--mint); }
     .quiet { color: var(--ink); background: transparent; border-color: var(--line); }
@@ -153,25 +152,28 @@
       <figure class="preview">
         <div class="watch">
           <button id="face" class="face" type="button" aria-label="轻点小猫打招呼">
-            <canvas id="pet" width="480" height="480" aria-hidden="true"></canvas>
+            <img id="pet" src="idle.webp" width="720" height="704" alt="空闲待命的任务状态猫">
           </button>
         </div>
-        <figcaption>手表预览</figcaption>
+        <figcaption id="caption">空闲待命 · 轻点小猫互动</figcaption>
+        <div class="moods" role="group" aria-label="预览动作">
+          <button type="button" data-mood="working">工作</button><button type="button" data-mood="thinking">思考</button>
+          <button type="button" data-mood="approval">待批准</button><button type="button" data-mood="completed">完成</button>
+          <button type="button" data-mood="idle" aria-pressed="true">待机</button><button type="button" data-mood="error">异常</button>
+        </div>
+        <p class="help">任务变化会自动同步到所选手表。这里可预览六种动作。</p>
       </figure>
       <section class="panel" aria-label="桌宠设置">
         <div class="device" id="device" hidden>
           <div><small>当前手表</small><strong id="watch-name"></strong></div>
           <button class="action quiet" id="switch" type="button">切换</button>
         </div>
-        <form class="connect" id="connect">
-          <label for="reference">手表名称或节点 ID</label>
-          <div class="input-row">
-            <input id="reference" type="text" maxlength="128" required autocomplete="off" spellcheck="false" aria-describedby="connect-help">
-            <button id="connect-button" class="action primary" type="submit" disabled>连接</button>
-          </div>
-          <p class="help" id="connect-help">先在 Operit 的「设备空间」完成配对和加入。输入不含空格的设备名称或节点 ID。</p>
-        </form>
-        <button class="action quiet read" id="read" type="button" hidden>重新读取</button>
+        <div class="discovery" id="discovery">
+          <div class="discovery-heading"><strong>可用手表</strong><button class="action quiet" id="refresh" type="button" disabled>刷新设备</button></div>
+          <p class="help" id="discovery-help" role="status">正在识别已连接的手表…</p>
+          <div class="watch-list" id="watch-list" role="group" aria-label="选择手表"></div>
+        </div>
+        <p id="scan-issues" class="scan-issues" hidden></p>
         <fieldset class="settings" id="settings" hidden disabled>
           <fieldset class="theme">
             <legend>氛围配色</legend>
@@ -191,143 +193,65 @@
   </main>
   <script>
     const elements = Object.fromEntries(
-      ['status', 'face', 'pet', 'device', 'watch-name', 'switch', 'connect', 'reference',
-        'connect-button', 'read', 'settings', 'haptics', 'awake', 'save', 'message']
+      ['status', 'face', 'pet', 'caption', 'device', 'watch-name', 'switch', 'discovery', 'refresh',
+        'discovery-help', 'watch-list', 'scan-issues', 'settings', 'haptics', 'awake', 'save', 'message']
         .map(id => [id, document.getElementById(id)])
     );
     const swatches = [...document.querySelectorAll('input[name="accent"]')];
     const colors = { mint: '#a5e9cb', peach: '#ffbb9e', lilac: '#c6bcff' };
-    const brush = elements.pet.getContext('2d');
-    const state = { target: null, saved: null, draft: null, editing: true, ready: false, busy: false };
-    let animation = 0;
-    const cat = {
-      body: new Path2D('M-34 14 C-47 31 -49 52 -36 61 C-25 68 14 67 25 59 C38 49 33 26 18 12 Z'),
-      tail: new Path2D('M19 52 C49 69 83 53 75 29 C71 16 56 18 57 29'),
-      head: new Path2D(
-        'M-56 -23 C-59 -35 -62 -50 -59 -60 Q-58 -65 -53 -62 C-43 -58 -33 -49 -27 -44 ' +
-        'C-17 -48 -2 -49 11 -45 C20 -53 29 -59 39 -62 Q44 -64 45 -59 C47 -50 44 -33 41 -24 ' +
-        'C55 -15 55 3 49 14 C40 31 18 37 -8 37 C-35 37 -55 29 -62 12 C-67 0 -66 -14 -56 -23 Z'
-      ),
-      ears: new Path2D(
-        'M-53 -55 Q-43 -53 -35 -43 Q-46 -40 -51 -34 Q-54 -46 -53 -55 Z ' +
-        'M38 -54 Q40 -46 35 -34 Q30 -39 21 -43 Q30 -51 38 -54 Z'
-      ),
-      muzzle: new Path2D('M-43 12 C-38 1 -22 3 -8 10 C4 3 22 1 28 11 C36 22 22 33 -8 34 C-34 34 -50 24 -43 12 Z'),
-      nose: new Path2D('M-13 11 Q-8 9 -3 11 Q-3 14 -8 17 Q-13 14 -13 11 Z'),
-      whiskers: new Path2D('M-39 12 L-60 8 M-39 18 L-58 22 M23 12 L44 8 M23 18 L42 22'),
-      smile: new Path2D('M-8 17 L-8 21 C-11 25 -17 24 -19 20 M-8 21 C-5 25 1 24 3 20'),
-      spark: new Path2D('M0 -1 Q.18 -.18 1 0 Q.18 .18 0 1 Q-.18 .18 -1 0 Q-.18 -.18 0 -1 Z'),
-    };
+    const state = { target: null, saved: null, draft: null, watches: [], issues: [], editing: true, ready: false, busy: false, scanning: false, scanned: false };
+    const labels = { working: '正在执行', thinking: '正在思考', approval: '等待批准', completed: '任务完成', idle: '空闲待命', error: '需要处理' };
+    const moodButtons = [...document.querySelectorAll('[data-mood]')];
+    let selectedMood = 'idle', displayedMood = '', reactionTimer = null, completionTimer = null;
 
-    /** Paints the blue cat with the same pose and greeting as the watch renderer. */
-    function drawPet(accent, hop = 0) {
-      brush.clearRect(0, 0, 480, 480);
-      brush.save();
-      brush.translate(240, 221);
-      brush.scale(1.98, 1.98);
-      const halo = brush.createRadialGradient(0, -13, 0, 0, -13, 124);
-      halo.addColorStop(0, `${accent}3d`);
-      halo.addColorStop(1, `${accent}00`);
-      oval(0, -13, 124, 124, halo);
-      oval(8, 65, 60 - hop * 6, 6, '#090c1399');
-      brush.save();
-      brush.translate(0, -12 * hop);
-      drawBody(hop);
-      drawFace(hop > .25);
-      brush.restore();
-      if (hop > .01) {
-        drawSpark(-73 - hop * 5, -21 - hop * 18, 5 * hop, '#ffbb9e');
-        drawSpark(67 + hop * 5, -20 - hop * 15, 7 * hop, accent);
+    /** Plays the exact packaged animation without drawing a second cat design. */
+    function showMood(mood) {
+      if (displayedMood !== mood) {
+        displayedMood = mood;
+        elements.pet.src = `${mood}.webp`;
+        elements.pet.alt = `${labels[mood]}的任务状态猫`;
       }
-      brush.restore();
+      elements.caption.textContent = `${labels[mood]} · 轻点小猫互动`;
+      for (const button of moodButtons) button.setAttribute('aria-pressed', String(button.dataset.mood === selectedMood));
+      clearTimeout(completionTimer);
+      if (mood === 'completed') completionTimer = setTimeout(() => {
+        selectedMood = 'idle'; showMood('idle');
+      }, 3000);
     }
 
-    /** Draws the curling tail behind the sitting pose. */
-    function drawBody(hop) {
-      brush.save();
-      brush.translate(19, 52);
-      brush.rotate(-Math.PI * hop / 15);
-      brush.translate(-19, -52);
-      brush.strokeStyle = '#508fc5';
-      brush.lineCap = 'round';
-      brush.lineWidth = 15;
-      brush.stroke(cat.tail);
-      brush.restore();
-      brush.fillStyle = '#477db0';
-      brush.fill(cat.body);
-      oval(-9.5, 43, 16.5, 18, '#9ec8e5');
-      oval(-23.5, 60, 13.5, 6, '#c5e3f4');
-      oval(8.5, 60, 13.5, 6, '#c5e3f4');
+    /** Changes only the ambient light around the original blue pixel cat. */
+    function renderAccent() {
+      const accent = state.draft ? colors[state.draft.accent] : colors.mint;
+      elements.face.style.setProperty('--glow', `${accent}26`);
     }
-
-    /** Draws the cat's coat and facial details at small sizes. */
-    function drawFace(greeting) {
-      const shade = brush.createLinearGradient(-31, -54, 19, 30);
-      shade.addColorStop(0, '#85c8ed');
-      shade.addColorStop(1, '#4d91cb');
-      brush.fillStyle = shade;
-      brush.fill(cat.head);
-      brush.fillStyle = '#df9eac';
-      brush.fill(cat.ears);
-      brush.fillStyle = '#d9edf7';
-      brush.fill(cat.muzzle);
-      brush.strokeStyle = '#182d45';
-      brush.lineWidth = 3.4;
-      brush.lineCap = 'round';
-      for (const center of [-30, 14]) {
-        if (greeting) {
-          brush.beginPath();
-          brush.ellipse(center, -4, 7, 6, 0, 13 * Math.PI / 12, 23 * Math.PI / 12);
-          brush.stroke();
-        } else {
-          oval(center, -4.5, 6, 8.5, '#182d45');
-          oval(center - 2, -8, 1.8, 1.8, '#f4fbfd');
-        }
-      }
-      brush.strokeStyle = '#365570';
-      brush.lineWidth = 2.1;
-      brush.stroke(cat.smile);
-      brush.strokeStyle = '#325671';
-      brush.lineWidth = 1.8;
-      brush.stroke(cat.whiskers);
-      brush.fillStyle = '#b7607f';
-      brush.fill(cat.nose);
-    }
-
-    /** Draws one small spark during the greeting. */
-    function drawSpark(centerX, centerY, radius, color) {
-      brush.save();
-      brush.translate(centerX, centerY);
-      brush.scale(radius, radius);
-      brush.fillStyle = color;
-      brush.fill(cat.spark);
-      brush.restore();
-    }
-
-    /** Fills a single pet detail in logical watch coordinates. */
-    function oval(xCenter, yCenter, xRadius, yRadius, color) {
-      brush.fillStyle = color;
-      brush.beginPath();
-      brush.ellipse(xCenter, yCenter, xRadius, yRadius, 0, 0, 2 * Math.PI);
-      brush.fill();
-    }
-
-    /** Uses mint for the unconfigured preview and the draft color while editing. */
-    function currentColor() { return state.draft ? colors[state.draft.accent] : colors.mint; }
 
     /** Synchronizes controls with the selected watch and its unsaved settings. */
     function render() {
-      elements.status.textContent = state.busy ? '处理中' : state.saved ? '已连接' : '未连接';
+      elements.status.textContent = state.scanning ? '正在识别' : state.busy ? '处理中' : state.saved ? '已连接' : '未连接';
       elements.status.dataset.connected = String(Boolean(state.saved) && !state.busy);
       elements.device.hidden = !state.target;
       elements['watch-name'].textContent = state.target?.label ?? '';
       elements.switch.textContent = state.editing ? '取消' : '切换';
       elements.switch.disabled = state.busy;
-      elements.connect.hidden = !state.editing;
-      elements['connect-button'].disabled = !state.ready || state.busy;
-      elements.reference.disabled = state.busy;
-      elements.read.hidden = !state.target || Boolean(state.saved) || state.editing;
-      elements.read.disabled = state.busy;
+      elements.discovery.hidden = !state.editing;
+      elements.refresh.disabled = !state.ready || state.busy;
+      elements['discovery-help'].textContent = state.scanning ? '正在识别已连接的手表…'
+        : !state.scanned ? '打开后会自动识别设备空间里已连接的手表。'
+        : state.watches.length === 0 ? '没有发现可用手表。请在设备空间确认手表已加入且在线，然后刷新设备。'
+        : state.watches.length === 1 ? '已识别到 1 块手表，将自动连接。' : `发现 ${state.watches.length} 块手表，请选择要使用的一块。`;
+      elements['scan-issues'].hidden = !state.issues.length;
+      elements['scan-issues'].textContent = state.issues.map(issue => `${issue.label}：${issue.message}`).join('\n');
+      elements['watch-list'].replaceChildren();
+      for (const watch of state.watches) {
+        const button = document.createElement('button');
+        button.type = 'button'; button.className = 'watch-option'; button.disabled = state.busy;
+        button.setAttribute('aria-pressed', String(watch.target.nodeId === state.target?.nodeId));
+        const name = document.createElement('strong'); name.textContent = watch.target.label;
+        const detail = document.createElement('small'); detail.textContent = `${watch.model} · ${watch.target.nodeId}`;
+        button.append(name, detail);
+        button.addEventListener('click', () => void perform(() => connectSelected(watch.target.nodeId)));
+        elements['watch-list'].append(button);
+      }
       elements.settings.hidden = !state.draft || state.editing;
       elements.settings.disabled = state.busy;
       if (state.draft) {
@@ -336,7 +260,7 @@
         elements.awake.checked = state.draft.keepAwake;
         elements.save.disabled = JSON.stringify(state.draft) === JSON.stringify(state.saved);
       }
-      drawPet(currentColor());
+      renderAccent();
     }
 
     /** Calls the package bridge for one operation and reports native errors in place. */
@@ -370,40 +294,48 @@
       state.draft = { ...config };
     }
 
-    /** Reads settings for the currently selected device. */
-    async function readSelected() {
-      applyConfig(await request({ action: 'read', nodeId: state.target.nodeId }));
+    /** Connects only an identified device, using its exact identity behind the scenes. */
+    async function connectSelected(nodeId) {
+      const connected = await request({ action: 'connect', nodeId });
+      state.target = connected.target;
+      applyConfig(connected.config);
+      state.editing = false;
+      elements.message.textContent = `已连接 ${connected.target.label}`;
     }
 
-    /** Restores the selection when the Compose host has installed the bridge. */
+    /** Refreshes eligible devices and applies the backend's verified automatic selection. */
+    async function discover(choosing = false) {
+      state.scanning = true;
+      state.watches = []; state.issues = []; state.scanned = false;
+      state.saved = null; state.draft = null;
+      render();
+      try {
+        const result = await request({ action: 'discover' });
+        state.watches = result.watches; state.issues = result.issues; state.scanned = true;
+        if (result.connected) {
+          state.target = result.connected.target;
+          applyConfig(result.connected.config);
+          state.editing = choosing && result.watches.length > 1;
+          elements.message.textContent = `已连接 ${result.connected.target.label}`;
+        } else {
+          state.target = null; state.saved = null; state.draft = null; state.editing = true;
+        }
+      } finally { state.scanning = false; }
+    }
+
+    /** Discovers connected watches as soon as the host bridge becomes available. */
     async function initialize() {
       if (state.ready) return;
       state.ready = true;
-      await perform(async () => {
-        state.target = await request({ action: 'selected' });
-        state.editing = !state.target;
-        if (state.target) await readSelected();
-      });
+      await perform(discover);
     }
 
-    elements.connect.addEventListener('submit', event => {
-      event.preventDefault();
-      const reference = elements.reference.value;
-      void perform(async () => {
-        const connected = await request({ action: 'connect', reference });
-        state.target = connected.target;
-        state.editing = false;
-        elements.reference.value = '';
-        applyConfig(connected.config);
-      });
-    });
+    elements.refresh.addEventListener('click', () => void perform(() => discover(state.editing && Boolean(state.target))));
     elements.switch.addEventListener('click', () => {
-      state.editing = !state.editing;
-      elements.message.textContent = '';
-      render();
-      if (state.editing) elements.reference.focus();
+      if (state.editing && state.target) { state.editing = false; render(); return; }
+      state.editing = true;
+      void perform(() => discover(true));
     });
-    elements.read.addEventListener('click', () => void perform(readSelected));
     elements.settings.addEventListener('change', () => {
       state.draft = {
         version: 1,
@@ -418,18 +350,19 @@
       applyConfig(await request({ action: 'save', nodeId: state.target.nodeId, config: state.draft }));
       elements.message.textContent = '已保存到手表';
     }));
-    elements.face.addEventListener('click', () => {
-      if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-      cancelAnimationFrame(animation);
-      const start = performance.now();
-      /** Animates a brief local greeting without writing watch settings. */
-      function greet(now) {
-        const progress = Math.min(1, (now - start) / 620);
-        drawPet(currentColor(), Math.sin(progress * Math.PI));
-        if (progress < 1) animation = requestAnimationFrame(greet);
-      }
-      animation = requestAnimationFrame(greet);
+    for (const button of moodButtons) button.addEventListener('click', () => {
+      clearTimeout(reactionTimer);
+      selectedMood = button.dataset.mood;
+      if (displayedMood === selectedMood) { elements.pet.removeAttribute('src'); displayedMood = ''; }
+      showMood(selectedMood);
     });
+    elements.face.addEventListener('click', () => {
+      clearTimeout(reactionTimer);
+      clearTimeout(completionTimer);
+      showMood('approval');
+      reactionTimer = setTimeout(() => showMood(selectedMood), 1200);
+    });
+    showMood('idle');
     render();
     window.addEventListener('operitComposeDslInterfacesReady', initialize, { once: true });
     if (window.WatchStudio) void initialize();

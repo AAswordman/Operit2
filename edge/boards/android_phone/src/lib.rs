@@ -33,11 +33,12 @@ use std::{
 
 struct Face(Mutex<String>);
 impl RobotFaceHost for Face {
-    /// Accepts only expressions painted by the phone's local Canvas renderer.
+    /// Accepts task-cat moods and the six established robot-face commands.
     fn setExpression(&self, request: RobotFaceExpressionRequest) -> HostResult<RobotFaceState> {
         if !matches!(
             request.expression.as_str(),
             "neutral" | "happy" | "listening" | "thinking" | "speaking" | "sleeping"
+                | "working" | "approval" | "completed" | "idle" | "error"
         ) {
             return Err(HostError::new("Unsupported phone expression"));
         }
@@ -83,7 +84,7 @@ pub struct PhoneNode {
 impl PhoneNode {
     /// Starts one genuine Edge identity over TCP with SDK-owned authentication.
     pub async fn start(root: PathBuf, model: String, bind: String, keep_awake: bool) -> Result<Self, String> {
-        let face = Arc::new(Face(Mutex::new("happy".into())));
+        let face = Arc::new(Face(Mutex::new("idle".into())));
         let storage = Arc::new(storage::PhoneStorage::open(root).map_err(|error| error.to_string())?);
         let preferences = Arc::new(pet::PetPreferences::open(storage.clone(), keep_awake)?);
         let host = HostManager::new()
