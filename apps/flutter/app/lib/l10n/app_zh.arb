@@ -1250,8 +1250,18 @@
   },
   "runtimeIdentitySwitchDescription": "每个身份拥有独立的聊天、配置、设备空间、配对设备和工作区。切换会结束当前运行实例；应用再次启动时将进入所选身份。",
   "runtimeIdentitySwitchConfirm": "切换身份",
+  "runtimeIdentityActivate": "切换",
+  "runtimeIdentityActions": "身份操作",
+  "runtimeIdentityDelete": "删除身份",
+  "runtimeIdentityDeleteTitle": "删除「{identityName}」？",
+  "@runtimeIdentityDeleteTitle": {
+    "placeholders": {
+      "identityName": {"type": "String"}
+    }
+  },
+  "runtimeIdentityDeleteDescription": "该身份将从这台设备的身份列表中移除，本地文件会保留。",
   "runtimeIdentityCurrent": "当前",
-  "settingsUserProfileTitle": "用户档案",
+  "settingsUserProfileTitle": "身份管理",
   "settingsUserProfileSubtitle": "头像、名字、身份与 GitHub",
   "settingsUserProfileDescription": "管理当前档案并切换隔离的身份。",
   "settingsUserProfileUnnamed": "未命名",
@@ -1279,7 +1289,7 @@
   "settingsUserProfileChooseAvatar": "选择头像",
   "settingsUserProfileClearAvatar": "清除头像",
   "settingsUserProfileEditName": "修改名字",
-  "settingsUserProfileIdentities": "身份",
+  "settingsUserProfileIdentities": "本机身份",
   "settingsUserProfileGitHub": "GitHub 账号",
   "settingsUserProfileGitHubDescription": "未登录",
   "settingsUserProfileLogin": "登录",

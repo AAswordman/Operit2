@@ -2777,10 +2777,28 @@ class AppLocalizationsEn extends AppLocalizations {
   String get runtimeIdentitySwitchConfirm => 'Switch identity';
 
   @override
+  String get runtimeIdentityActivate => 'Switch';
+
+  @override
+  String get runtimeIdentityActions => 'Identity actions';
+
+  @override
+  String get runtimeIdentityDelete => 'Delete identity';
+
+  @override
+  String runtimeIdentityDeleteTitle(String identityName) {
+    return 'Delete $identityName?';
+  }
+
+  @override
+  String get runtimeIdentityDeleteDescription =>
+      'This identity will be removed from the switcher on this device. Its local files will be kept.';
+
+  @override
   String get runtimeIdentityCurrent => 'Current';
 
   @override
-  String get settingsUserProfileTitle => 'User profile';
+  String get settingsUserProfileTitle => 'Identity management';
 
   @override
   String get settingsUserProfileSubtitle =>
@@ -2828,7 +2846,7 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsUserProfileEditName => 'Edit name';
 
   @override
-  String get settingsUserProfileIdentities => 'Identities';
+  String get settingsUserProfileIdentities => 'Local identities';
 
   @override
   String get settingsUserProfileGitHub => 'GitHub account';

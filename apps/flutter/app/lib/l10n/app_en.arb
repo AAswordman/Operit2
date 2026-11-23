@@ -1356,8 +1356,18 @@
   },
   "runtimeIdentitySwitchDescription": "Each identity has separate chats, settings, device space, paired devices, and workspaces. Switching ends the current runtime; the selected identity is used the next time the app starts.",
   "runtimeIdentitySwitchConfirm": "Switch identity",
+  "runtimeIdentityActivate": "Switch",
+  "runtimeIdentityActions": "Identity actions",
+  "runtimeIdentityDelete": "Delete identity",
+  "runtimeIdentityDeleteTitle": "Delete {identityName}?",
+  "@runtimeIdentityDeleteTitle": {
+    "placeholders": {
+      "identityName": {"type": "String"}
+    }
+  },
+  "runtimeIdentityDeleteDescription": "This identity will be removed from the switcher on this device. Its local files will be kept.",
   "runtimeIdentityCurrent": "Current",
-  "settingsUserProfileTitle": "User profile",
+  "settingsUserProfileTitle": "Identity management",
   "settingsUserProfileSubtitle": "Avatar, name, identities, and GitHub",
   "settingsUserProfileDescription": "Manage this profile and switch isolated identities.",
   "settingsUserProfileUnnamed": "Unnamed",
@@ -1385,7 +1395,7 @@
   "settingsUserProfileChooseAvatar": "Choose avatar",
   "settingsUserProfileClearAvatar": "Clear avatar",
   "settingsUserProfileEditName": "Edit name",
-  "settingsUserProfileIdentities": "Identities",
+  "settingsUserProfileIdentities": "Local identities",
   "settingsUserProfileGitHub": "GitHub account",
   "settingsUserProfileGitHubDescription": "Not logged in",
   "settingsUserProfileLogin": "Log in",

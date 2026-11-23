@@ -2663,10 +2663,27 @@ class AppLocalizationsZh extends AppLocalizations {
   String get runtimeIdentitySwitchConfirm => '切换身份';
 
   @override
+  String get runtimeIdentityActivate => '切换';
+
+  @override
+  String get runtimeIdentityActions => '身份操作';
+
+  @override
+  String get runtimeIdentityDelete => '删除身份';
+
+  @override
+  String runtimeIdentityDeleteTitle(String identityName) {
+    return '删除「$identityName」？';
+  }
+
+  @override
+  String get runtimeIdentityDeleteDescription => '该身份将从这台设备的身份列表中移除，本地文件会保留。';
+
+  @override
   String get runtimeIdentityCurrent => '当前';
 
   @override
-  String get settingsUserProfileTitle => '用户档案';
+  String get settingsUserProfileTitle => '身份管理';
 
   @override
   String get settingsUserProfileSubtitle => '头像、名字、身份与 GitHub';
@@ -2712,7 +2729,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsUserProfileEditName => '修改名字';
 
   @override
-  String get settingsUserProfileIdentities => '身份';
+  String get settingsUserProfileIdentities => '本机身份';
 
   @override
   String get settingsUserProfileGitHub => 'GitHub 账号';

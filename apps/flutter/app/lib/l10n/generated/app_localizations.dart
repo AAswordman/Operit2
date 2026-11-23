@@ -5016,6 +5016,36 @@ abstract class AppLocalizations {
   /// **'Switch identity'**
   String get runtimeIdentitySwitchConfirm;
 
+  /// No description provided for @runtimeIdentityActivate.
+  ///
+  /// In en, this message translates to:
+  /// **'Switch'**
+  String get runtimeIdentityActivate;
+
+  /// No description provided for @runtimeIdentityActions.
+  ///
+  /// In en, this message translates to:
+  /// **'Identity actions'**
+  String get runtimeIdentityActions;
+
+  /// No description provided for @runtimeIdentityDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete identity'**
+  String get runtimeIdentityDelete;
+
+  /// No description provided for @runtimeIdentityDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete {identityName}?'**
+  String runtimeIdentityDeleteTitle(String identityName);
+
+  /// No description provided for @runtimeIdentityDeleteDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'This identity will be removed from the switcher on this device. Its local files will be kept.'**
+  String get runtimeIdentityDeleteDescription;
+
   /// No description provided for @runtimeIdentityCurrent.
   ///
   /// In en, this message translates to:
@@ -5025,7 +5055,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsUserProfileTitle.
   ///
   /// In en, this message translates to:
-  /// **'User profile'**
+  /// **'Identity management'**
   String get settingsUserProfileTitle;
 
   /// No description provided for @settingsUserProfileSubtitle.
@@ -5109,7 +5139,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsUserProfileIdentities.
   ///
   /// In en, this message translates to:
-  /// **'Identities'**
+  /// **'Local identities'**
   String get settingsUserProfileIdentities;
 
   /// No description provided for @settingsUserProfileGitHub.

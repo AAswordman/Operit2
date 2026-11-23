@@ -13,17 +13,22 @@ import '../../../../l10n/generated/app_localizations.dart';
 import '../../../theme/OperitGlassSurface.dart';
 import '../../../theme/OperitTheme.dart';
 import '../../../theme/OperitThemeAssets.dart';
+import '../../packages/components/StoreVisuals.dart';
 import '../../packages/screens/GitHubOAuthLoginDialog.dart';
 import 'UserProfileSummaryTile.dart';
 
-const double _profileOverviewAvatarSize = 56;
-const double _profileTileAvatarSize = 36;
-const double _githubAvatarRadius = 18;
+enum _IdentityAction { rename, chooseAvatar, clearAvatar, delete }
 
 class UserProfileSettingsPanel extends StatefulWidget {
-  const UserProfileSettingsPanel({super.key, this.onProfileChanged});
+  /// Creates the identity settings panel with its Core API client.
+  const UserProfileSettingsPanel({
+    super.key,
+    this.onProfileChanged,
+    this.clients = const GeneratedCoreProxyClients(ProxyCoreRuntimeBridge()),
+  });
 
   final VoidCallback? onProfileChanged;
+  final GeneratedCoreProxyClients clients;
 
   /// Creates the profile editor state for the active runtime identity.
   @override
@@ -32,9 +37,8 @@ class UserProfileSettingsPanel extends StatefulWidget {
 }
 
 class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
-  final GeneratedCoreProxyClients _clients = const GeneratedCoreProxyClients(
-    ProxyCoreRuntimeBridge(),
-  );
+  /// Returns the Core clients used by account and active-device actions.
+  GeneratedCoreProxyClients get _clients => widget.clients;
 
   bool _loadingGitHub = true;
   bool _loggedIn = false;
@@ -65,197 +69,209 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
     final avatarUri = OperitTheme.of(
       context,
     ).themePreferenceSnapshot.customUserAvatarUri;
-    final textTheme = Theme.of(context).textTheme;
+    final hasAvatar = avatarUri != null && avatarUri.trim().isNotEmpty;
+    final otherIdentities = manager.identities
+        .where((identity) => identity.id != activeIdentity.id)
+        .toList(growable: false);
+    final scheme = Theme.of(context).colorScheme;
     return ListView(
-      padding: const EdgeInsets.fromLTRB(14, 8, 14, 18),
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
       children: <Widget>[
-        _ProfileOverview(
-          avatarUri: avatarUri,
-          name: runtimeIdentityDisplayName(activeIdentity, l10n),
-          githubStatus: _githubStatus(l10n),
-        ),
-        const SizedBox(height: 10),
-        _ProfileSection(
-          title: l10n.settingsUserProfileOverview,
-          children: <Widget>[
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              visualDensity: VisualDensity.compact,
-              minLeadingWidth: _profileTileAvatarSize,
-              horizontalTitleGap: 10,
-              leading: UserProfileAvatar(
-                storagePath: avatarUri,
-                size: _profileTileAvatarSize,
-              ),
-              title: Text(l10n.settingsUserProfileAvatar),
-              subtitle: Text(
-                avatarUri == null || avatarUri.trim().isEmpty
-                    ? l10n.settingsAppearanceAvatarDefault
-                    : l10n.settingsAppearanceAvatarCustom,
-              ),
-            ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: <Widget>[
-                FilledButton.tonalIcon(
-                  onPressed: _chooseAvatar,
-                  style: _profileActionButtonStyle(),
-                  icon: const Icon(Icons.image_outlined, size: 18),
-                  label: Text(l10n.settingsUserProfileChooseAvatar),
-                ),
-                OutlinedButton.icon(
-                  onPressed: avatarUri == null || avatarUri.trim().isEmpty
-                      ? null
-                      : _clearAvatar,
-                  style: _profileActionButtonStyle(),
-                  icon: const Icon(Icons.person_off_outlined, size: 18),
-                  label: Text(l10n.settingsUserProfileClearAvatar),
-                ),
-              ],
-            ),
-            const SizedBox(height: 6),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              dense: true,
-              visualDensity: VisualDensity.compact,
-              minLeadingWidth: _profileTileAvatarSize,
-              horizontalTitleGap: 10,
-              leading: const Icon(Icons.badge_outlined, size: 22),
-              title: Text(l10n.settingsUserProfileName),
-              subtitle: Text(runtimeIdentityDisplayName(activeIdentity, l10n)),
-              trailing: IconButton(
-                tooltip: l10n.settingsUserProfileEditName,
-                onPressed: () => _renameIdentity(activeIdentity),
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 32,
-                  height: 32,
-                ),
-                padding: EdgeInsets.zero,
-                iconSize: 20,
-                icon: const Icon(Icons.edit_outlined),
-              ),
-            ),
-          ],
-        ),
-        _ProfileSection(
-          title: l10n.settingsUserProfileIdentities,
-          children: <Widget>[
-            for (final identity in manager.identities)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                visualDensity: VisualDensity.compact,
-                minLeadingWidth: _profileTileAvatarSize,
-                horizontalTitleGap: 10,
-                selected: identity.id == activeIdentity.id,
-                leading: Icon(
-                  identity.id == activeIdentity.id
-                      ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                  size: 22,
-                ),
-                title: Text(
-                  runtimeIdentityDisplayName(identity, l10n),
-                  style: textTheme.bodyMedium?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                subtitle: identity.id == activeIdentity.id
-                    ? Text(l10n.runtimeIdentityCurrent)
-                    : null,
-                onTap: identity.id == activeIdentity.id
-                    ? null
-                    : () => _switchIdentity(identity),
-                trailing: IconButton(
-                  tooltip: l10n.runtimeIdentityRename,
-                  onPressed: () => _renameIdentity(identity),
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 32,
-                    height: 32,
-                  ),
-                  padding: EdgeInsets.zero,
-                  iconSize: 20,
-                  icon: const Icon(Icons.edit_outlined),
-                ),
-              ),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: FilledButton.tonalIcon(
-                onPressed: _createIdentity,
-                style: _profileActionButtonStyle(),
-                icon: const Icon(Icons.person_add_alt_1_outlined, size: 18),
-                label: Text(l10n.runtimeIdentityCreate),
-              ),
-            ),
-          ],
-        ),
-        _ProfileSection(
-          title: l10n.settingsUserProfileGitHub,
-          children: <Widget>[
-            if (_loadingGitHub)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 10),
-                child: LinearProgressIndicator(),
-              )
-            else if (_githubError != null)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8),
+        StoreContentWidth(
+          maxWidth: 640,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: <Widget>[
+              _ProfileCard(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: <Widget>[
-                    SelectableText(
-                      l10n.settingsUserProfileGitHubStatusError(
-                        _githubError.toString(),
+                    _ProfileRow(
+                      title: l10n.settingsUserProfileIdentities,
+                      action: FilledButton.tonalIcon(
+                        onPressed: _createIdentity,
+                        style: FilledButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                        ),
+                        icon: const Icon(Icons.add_rounded, size: 18),
+                        label: Text(l10n.runtimeIdentityCreate),
+                      ),
+                      actionWidthFraction: 0.58,
+                    ),
+                    ColoredBox(
+                      color: scheme.primaryContainer.withValues(alpha: 0.30),
+                      child: _ProfileRow(
+                        leading: hasAvatar
+                            ? UserProfileAvatar(
+                                storagePath: avatarUri,
+                                size: 40,
+                              )
+                            : const _ProfileGlyph(
+                                icon: Icons.person_rounded,
+                                current: true,
+                              ),
+                        title: runtimeIdentityDisplayName(activeIdentity, l10n),
+                        subtitle: l10n.runtimeIdentity,
+                        current: true,
+                        menu: _identityMenu(
+                          activeIdentity,
+                          isCurrent: true,
+                          hasAvatar: hasAvatar,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 8),
-                    OutlinedButton.icon(
-                      onPressed: _logoutGitHub,
-                      style: _profileActionButtonStyle(),
-                      icon: const Icon(Icons.logout, size: 18),
-                      label: Text(l10n.settingsUserProfileLogout),
-                    ),
+                    for (final identity in otherIdentities) ...<Widget>[
+                      Divider(
+                        height: 1,
+                        indent: 68,
+                        endIndent: 16,
+                        color: storeCardBorderColor(scheme),
+                      ),
+                      _ProfileRow(
+                        leading: const _ProfileGlyph(
+                          icon: Icons.person_outline_rounded,
+                        ),
+                        title: runtimeIdentityDisplayName(identity, l10n),
+                        action: TextButton(
+                          onPressed: () => _switchIdentity(identity),
+                          child: Text(l10n.runtimeIdentityActivate),
+                        ),
+                        menu: _identityMenu(identity),
+                      ),
+                    ],
                   ],
                 ),
-              )
-            else
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                dense: true,
-                visualDensity: VisualDensity.compact,
-                minLeadingWidth: _profileTileAvatarSize,
-                horizontalTitleGap: 10,
-                leading: _GitHubAvatar(user: _githubUser),
-                title: Text(
-                  _loggedIn
-                      ? _githubDisplayName(_githubUser!)
-                      : l10n.settingsUserProfileNotLoggedIn,
-                ),
-                subtitle: _loggedIn
-                    ? Text('@${_githubUser!.login}')
-                    : Text(l10n.settingsUserProfileGitHubDescription),
-                trailing: _loggedIn
-                    ? OutlinedButton.icon(
-                        onPressed: _logoutGitHub,
-                        style: _profileActionButtonStyle(),
-                        icon: const Icon(Icons.logout, size: 18),
-                        label: Text(l10n.settingsUserProfileLogout),
-                      )
-                    : FilledButton.tonalIcon(
-                        onPressed: _loginGitHub,
-                        style: _profileActionButtonStyle(),
-                        icon: const Icon(Icons.login, size: 18),
-                        label: Text(l10n.settingsUserProfileLogin),
-                      ),
               ),
-          ],
+              const SizedBox(height: 16),
+              _buildGitHubCard(l10n),
+            ],
+          ),
         ),
       ],
     );
+  }
+
+  /// Shows operations that apply to the selected identity.
+  Widget _identityMenu(
+    RuntimeIdentity identity, {
+    bool isCurrent = false,
+    bool hasAvatar = false,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    return PopupMenuButton<_IdentityAction>(
+      key: ValueKey<String>('identity-actions-${identity.id}'),
+      tooltip: l10n.runtimeIdentityActions,
+      icon: const Icon(Icons.more_horiz_rounded),
+      onSelected: (action) {
+        switch (action) {
+          case _IdentityAction.rename:
+            unawaited(_renameIdentity(identity));
+          case _IdentityAction.chooseAvatar:
+            unawaited(_chooseAvatar());
+          case _IdentityAction.clearAvatar:
+            unawaited(_clearAvatar());
+          case _IdentityAction.delete:
+            unawaited(_deleteIdentity(identity));
+        }
+      },
+      itemBuilder: (context) => <PopupMenuEntry<_IdentityAction>>[
+        PopupMenuItem<_IdentityAction>(
+          value: _IdentityAction.rename,
+          child: _menuLabel(Icons.edit_outlined, l10n.runtimeIdentityRename),
+        ),
+        if (isCurrent) ...<PopupMenuEntry<_IdentityAction>>[
+          PopupMenuItem<_IdentityAction>(
+            value: _IdentityAction.chooseAvatar,
+            child: _menuLabel(
+              Icons.image_outlined,
+              l10n.settingsUserProfileChooseAvatar,
+            ),
+          ),
+          if (hasAvatar)
+            PopupMenuItem<_IdentityAction>(
+              value: _IdentityAction.clearAvatar,
+              child: _menuLabel(
+                Icons.person_off_outlined,
+                l10n.settingsUserProfileClearAvatar,
+              ),
+            ),
+        ] else
+          PopupMenuItem<_IdentityAction>(
+            value: _IdentityAction.delete,
+            child: _menuLabel(
+              Icons.delete_outline_rounded,
+              l10n.runtimeIdentityDelete,
+              color: scheme.error,
+            ),
+          ),
+      ],
+    );
+  }
+
+  /// Builds the icon and label for a menu command.
+  Widget _menuLabel(IconData icon, String label, {Color? color}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        Icon(icon, size: 19, color: color),
+        const SizedBox(width: 10),
+        Flexible(
+          child: Text(label, style: TextStyle(color: color)),
+        ),
+      ],
+    );
+  }
+
+  /// Displays account status and the relevant GitHub action.
+  Widget _buildGitHubCard(AppLocalizations l10n) {
+    final user = _githubUser;
+    final error = _githubError;
+    final status = switch ((error, _loadingGitHub, _loggedIn)) {
+      (_, true, _) => l10n.settingsUserProfileGitHubLoading,
+      (final Object error, false, _) =>
+        l10n.settingsUserProfileGitHubStatusError(error.toString()),
+      (_, false, true) => _githubAccountLabel(user!),
+      _ => l10n.settingsUserProfileNotLoggedIn,
+    };
+    return _ProfileCard(
+      child: _ProfileRow(
+        leading: _loggedIn && user != null
+            ? CircleAvatar(
+                radius: 20,
+                backgroundImage: NetworkImage(user.avatarUrl),
+              )
+            : const _ProfileGlyph(icon: Icons.code_rounded),
+        title: l10n.settingsUserProfileGitHub,
+        subtitle: status,
+        action: _loadingGitHub
+            ? const Padding(
+                padding: EdgeInsets.all(10),
+                child: SizedBox.square(
+                  dimension: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              )
+            : _loggedIn || error != null
+            ? TextButton(
+                onPressed: _logoutGitHub,
+                child: Text(l10n.settingsUserProfileLogout),
+              )
+            : TextButton(
+                onPressed: _loginGitHub,
+                child: Text(l10n.settingsUserProfileLogin),
+              ),
+      ),
+    );
+  }
+
+  /// Shows the GitHub handle with its display name when set.
+  String _githubAccountLabel(
+    core_proxy.CoreDataPreferencesGitHubAuthPreferencesGitHubUser user,
+  ) {
+    final name = user.name?.trim();
+    return name == null || name.isEmpty
+        ? '@${user.login}'
+        : '$name · @${user.login}';
   }
 
   /// Rebuilds the identity list after bootstrap metadata changes.
@@ -381,6 +397,48 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
     }
   }
 
+  /// Confirms removal of an inactive identity from this installation.
+  Future<void> _deleteIdentity(RuntimeIdentity identity) async {
+    final l10n = AppLocalizations.of(context)!;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        icon: Icon(
+          Icons.delete_outline_rounded,
+          color: Theme.of(context).colorScheme.error,
+        ),
+        title: Text(
+          l10n.runtimeIdentityDeleteTitle(
+            runtimeIdentityDisplayName(identity, l10n),
+          ),
+        ),
+        content: Text(l10n.runtimeIdentityDeleteDescription),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text(MaterialLocalizations.of(context).cancelButtonLabel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(context).colorScheme.error,
+              foregroundColor: Theme.of(context).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text(l10n.runtimeIdentityDelete),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) {
+      return;
+    }
+    try {
+      await RuntimeBootstrapManager.instance.deleteIdentity(identity.id);
+    } catch (error, stackTrace) {
+      _showError(error, stackTrace);
+    }
+  }
+
   /// Opens the shared GitHub OAuth browser-choice flow for this identity.
   void _loginGitHub() {
     unawaited(
@@ -447,21 +505,6 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
     }
   }
 
-  /// Formats the current GitHub status for the profile overview.
-  String _githubStatus(AppLocalizations l10n) {
-    if (_loadingGitHub) {
-      return l10n.settingsUserProfileGitHubLoading;
-    }
-    final error = _githubError;
-    if (error != null) {
-      return l10n.settingsUserProfileGitHubStatusError(error.toString());
-    }
-    if (!_loggedIn) {
-      return l10n.settingsUserProfileNotLoggedIn;
-    }
-    return l10n.settingsUserProfileGitHubAccount(_githubUser!.login);
-  }
-
   /// Logs one profile action failure and exposes its actual message to the user.
   void _showError(Object error, StackTrace stackTrace) {
     debugPrint('User profile action failed: $error\n$stackTrace');
@@ -477,76 +520,98 @@ class _UserProfileSettingsPanelState extends State<UserProfileSettingsPanel> {
   }
 }
 
-/// Builds the compact action button style used by profile settings rows.
-ButtonStyle _profileActionButtonStyle() {
-  return ButtonStyle(
-    visualDensity: VisualDensity.compact,
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-    minimumSize: const WidgetStatePropertyAll<Size>(Size(0, 32)),
-    padding: const WidgetStatePropertyAll<EdgeInsetsGeometry>(
-      EdgeInsets.symmetric(horizontal: 12, vertical: 7),
-    ),
-  );
-}
+class _ProfileCard extends StatelessWidget {
+  /// Groups identity or account rows into one surface.
+  const _ProfileCard({required this.child});
 
-class _ProfileOverview extends StatelessWidget {
-  const _ProfileOverview({
-    required this.avatarUri,
-    required this.name,
-    required this.githubStatus,
-  });
+  final Widget child;
 
-  final String? avatarUri;
-  final String name;
-  final String githubStatus;
-
-  /// Builds the first-viewport profile identity summary.
+  /// Applies the same surface and border used by the package management cards.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final backgroundColor = Color.alphaBlend(
-      colorScheme.primary.withValues(alpha: 0.08),
-      colorScheme.surfaceContainerHighest,
-    ).withValues(alpha: 0.42);
+    final scheme = Theme.of(context).colorScheme;
     return OperitGlassSurface(
-      color: backgroundColor,
-      layer: OperitGlassSurfaceLayer.card,
-      borderRadius: BorderRadius.circular(10),
-      border: Border.all(color: colorScheme.primary.withValues(alpha: 0.24)),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
+      color: storeCardColor(scheme),
+      borderRadius: storeCardRadius,
+      border: Border.all(color: storeCardBorderColor(scheme)),
+      material: true,
+      child: child,
+    );
+  }
+}
+
+class _ProfileRow extends StatelessWidget {
+  /// Describes a row with a flexible title and trailing account controls.
+  const _ProfileRow({
+    required this.title,
+    this.leading,
+    this.subtitle,
+    this.current = false,
+    this.action,
+    this.actionWidthFraction = 0.42,
+    this.menu,
+  });
+
+  final Widget? leading;
+  final String title;
+  final String? subtitle;
+  final bool current;
+  final Widget? action;
+  final double actionWidthFraction;
+  final Widget? menu;
+
+  /// Lays out the row while reserving room for long identity names.
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final subtitle = this.subtitle;
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(16, 8, 12, 8),
+      child: LayoutBuilder(
+        builder: (context, constraints) => Row(
           children: <Widget>[
-            UserProfileAvatar(
-              storagePath: avatarUri,
-              size: _profileOverviewAvatarSize,
-            ),
-            const SizedBox(width: 14),
+            if (leading case final leading?) ...<Widget>[
+              leading,
+              const SizedBox(width: 12),
+            ],
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
                   Text(
-                    name,
+                    title,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      color: colorScheme.onSurface,
-                      fontWeight: FontWeight.w800,
-                    ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    githubStatus,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
+                  if (subtitle != null) ...<Widget>[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: current
+                            ? theme.colorScheme.primary
+                            : theme.colorScheme.onSurfaceVariant,
+                      ),
                     ),
-                  ),
+                  ],
                 ],
               ),
             ),
+            if (action case final action?) ...<Widget>[
+              const SizedBox(width: 8),
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxWidth: constraints.maxWidth * actionWidthFraction,
+                ),
+                child: action,
+              ),
+            ],
+            ?menu,
           ],
         ),
       ),
@@ -554,70 +619,31 @@ class _ProfileOverview extends StatelessWidget {
   }
 }
 
-class _ProfileSection extends StatelessWidget {
-  const _ProfileSection({required this.title, required this.children});
+class _ProfileGlyph extends StatelessWidget {
+  /// Describes the icon shown in place of a row image.
+  const _ProfileGlyph({required this.icon, this.current = false});
 
-  final String title;
-  final List<Widget> children;
+  final IconData icon;
+  final bool current;
 
-  /// Builds one un-nested profile settings section.
+  /// Builds a tinted square that matches the extension catalog icon treatment.
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: OperitGlassSurface(
-        color: colorScheme.surfaceContainerHighest.withValues(alpha: 0.32),
-        layer: OperitGlassSurfaceLayer.card,
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: 40,
+      height: 40,
+      decoration: BoxDecoration(
+        color: current
+            ? scheme.primaryContainer
+            : scheme.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-          color: colorScheme.outlineVariant.withValues(alpha: 0.18),
-        ),
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              Text(
-                title,
-                style: Theme.of(
-                  context,
-                ).textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w800),
-              ),
-              const SizedBox(height: 4),
-              ...children,
-            ],
-          ),
-        ),
       ),
-    );
-  }
-}
-
-class _GitHubAvatar extends StatelessWidget {
-  const _GitHubAvatar({required this.user});
-
-  final core_proxy.CoreDataPreferencesGitHubAuthPreferencesGitHubUser? user;
-
-  /// Builds the saved GitHub avatar or an explicit logged-out placeholder.
-  @override
-  Widget build(BuildContext context) {
-    final currentUser = user;
-    if (currentUser == null) {
-      final colorScheme = Theme.of(context).colorScheme;
-      return CircleAvatar(
-        radius: _githubAvatarRadius,
-        backgroundColor: colorScheme.secondaryContainer.withValues(alpha: 0.72),
-        child: Icon(
-          Icons.code_outlined,
-          size: 20,
-          color: colorScheme.onSecondaryContainer,
-        ),
-      );
-    }
-    return CircleAvatar(
-      radius: _githubAvatarRadius,
-      backgroundImage: NetworkImage(currentUser.avatarUrl),
+      child: Icon(
+        icon,
+        size: 20,
+        color: current ? scheme.onPrimaryContainer : scheme.onSurfaceVariant,
+      ),
     );
   }
 }
@@ -703,12 +729,4 @@ class _IdentityNameDialogState extends State<_IdentityNameDialog> {
       ],
     );
   }
-}
-
-/// Returns the preferred GitHub account display name.
-String _githubDisplayName(
-  core_proxy.CoreDataPreferencesGitHubAuthPreferencesGitHubUser user,
-) {
-  final name = user.name?.trim();
-  return name == null || name.isEmpty ? user.login : name;
 }

@@ -74,7 +74,8 @@ class RuntimeBootstrapManager extends ChangeNotifier {
   LocalRuntimeStorageConfig _config =
       LocalRuntimeStorageConfig.platformDefault();
   ThemeMode _startupThemeMode = ThemeMode.system;
-  Future<void> _bootstrapWriteTail = Future<void>.value();
+  Future<void>? _bootstrapWriteTail;
+  String? _nextIdentityId;
 
   /// Returns the current local bootstrap configuration.
   LocalRuntimeStorageConfig get config => _config;
@@ -106,7 +107,9 @@ class RuntimeBootstrapManager extends ChangeNotifier {
       if (encoded == null) {
         _startupThemeMode = ThemeMode.system;
         storedConfig = LocalRuntimeStorageConfig.platformDefault();
-        await _writeBootstrapConfig(storedConfig);
+        await _serializeBootstrapWrite(
+          () => _writeBootstrapConfig(storedConfig),
+        );
       } else {
         final decoded = jsonDecode(encoded) as Map<String, Object?>;
         _startupThemeMode = _decodeStartupThemeMode(
@@ -215,54 +218,71 @@ class RuntimeBootstrapManager extends ChangeNotifier {
   /// Creates a new isolated identity without changing the running runtime.
   Future<RuntimeIdentity> createIdentity([String name = '']) async {
     final identity = RuntimeIdentity.create(name);
-    await _apply(
-      _config.copyWith(
+    await _updateBootstrapConfig(
+      () => _config.copyWith(
         identities: <RuntimeIdentity>[...identities, identity],
         updatedAt: DateTime.now().millisecondsSinceEpoch,
       ),
-      persist: true,
     );
     return identity;
   }
 
   /// Renames one isolated identity without changing its storage roots.
-  Future<void> renameIdentity(String identityId, String name) async {
-    final renamed = identities
-        .map(
-          (identity) =>
-              identity.id == identityId ? identity.rename(name) : identity,
-        )
-        .toList(growable: false);
-    if (!renamed.any((identity) => identity.id == identityId)) {
+  Future<void> renameIdentity(String identityId, String name) {
+    return _updateBootstrapConfig(() {
+      _requireIdentity(identityId);
+      return _config.copyWith(
+        identities: <RuntimeIdentity>[
+          for (final identity in identities)
+            identity.id == identityId ? identity.rename(name) : identity,
+        ],
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+    });
+  }
+
+  /// Removes an inactive identity from the local registry while retaining its files.
+  Future<void> deleteIdentity(String identityId) {
+    return _updateBootstrapConfig(() {
+      _requireIdentity(identityId);
+      if (identityId == activeIdentity.id || identityId == _nextIdentityId) {
+        throw StateError(
+          'cannot delete a running or selected runtime identity',
+        );
+      }
+      return _config.copyWith(
+        identities: identities
+            .where((identity) => identity.id != identityId)
+            .toList(growable: false),
+        updatedAt: DateTime.now().millisecondsSinceEpoch,
+      );
+    });
+  }
+
+  /// Rejects operations targeting an identity outside the local registry.
+  void _requireIdentity(String identityId) {
+    if (!identities.any((identity) => identity.id == identityId)) {
       throw StateError('runtime identity does not exist: $identityId');
     }
-    await _apply(
-      _config.copyWith(
-        identities: renamed,
-        updatedAt: DateTime.now().millisecondsSinceEpoch,
-      ),
-      persist: true,
-    );
   }
 
   /// Persists one identity selection and restarts before runtime state can diverge.
   Future<void> switchIdentity(String identityId) async {
-    if (!identities.any((identity) => identity.id == identityId)) {
-      throw StateError('runtime identity does not exist: $identityId');
-    }
-    final sourceIdentityId = activeIdentity.id;
-    ClientLogger.v(
-      'switch identity start sourceIdentityId=$sourceIdentityId targetIdentityId=$identityId',
-      tag: _logTag,
-      verboseLevel: VerboseLevel.level1,
-    );
-    final now = DateTime.now().millisecondsSinceEpoch;
-    final selectedConfig = _config.copyWith(
-      activeIdentityId: identityId,
-      updatedAt: now,
-    );
-    selectedConfig.validate();
-    await _writeBootstrapConfig(selectedConfig);
+    await _serializeBootstrapWrite(() async {
+      _requireIdentity(identityId);
+      ClientLogger.v(
+        'switch identity start sourceIdentityId=${activeIdentity.id} targetIdentityId=$identityId',
+        tag: _logTag,
+        verboseLevel: VerboseLevel.level1,
+      );
+      await _writeBootstrapConfig(
+        _config.copyWith(
+          activeIdentityId: identityId,
+          updatedAt: DateTime.now().millisecondsSinceEpoch,
+        ),
+      );
+      _nextIdentityId = identityId;
+    });
     ClientLogger.i(
       'switch identity persisted targetIdentityId=$identityId; requesting required application exit',
       tag: _logTag,
@@ -345,19 +365,23 @@ class RuntimeBootstrapManager extends ChangeNotifier {
 
   /// Persists a machine-local backup directory without changing runtime or workspace roots.
   Future<void> saveChatBackupDirectory(String directory) async {
-    final next = _config.copyWith(chatBackupDirectory: directory);
-    await _writeBootstrapConfig(next);
-    _config = next;
-    notifyListeners();
+    await _updateBootstrapConfig(
+      () => _config.copyWith(chatBackupDirectory: directory),
+    );
   }
 
   /// Persists the theme mode needed before Core preferences become available.
-  Future<void> saveStartupThemeMode(ThemeMode themeMode) async {
-    if (_startupThemeMode == themeMode) {
-      return;
-    }
-    await _writeBootstrapConfig(_config, startupThemeMode: themeMode);
-    _startupThemeMode = themeMode;
+  Future<void> saveStartupThemeMode(ThemeMode themeMode) {
+    return _serializeBootstrapWrite(() async {
+      if (_startupThemeMode == themeMode) {
+        return;
+      }
+      await _writeBootstrapConfig(
+        _config.copyWith(activeIdentityId: _nextIdentityId),
+        startupThemeMode: themeMode,
+      );
+      _startupThemeMode = themeMode;
+    });
   }
 
   /// Applies one local runtime storage configuration.
@@ -371,14 +395,23 @@ class RuntimeBootstrapManager extends ChangeNotifier {
       tag: _logTag,
       verboseLevel: VerboseLevel.level1,
     );
-    _config = config;
     if (persist) {
-      await _writeBootstrapConfig(config);
+      await _updateBootstrapConfig(
+        () => _config.copyWith(
+          confirmed: config.confirmed,
+          runtimeRoot: config.runtimeRoot,
+          workspaceRoot: config.workspaceRoot,
+          updatedAt: config.updatedAt,
+        ),
+      );
+    } else {
+      _config = config;
+      _nextIdentityId = null;
+      notifyListeners();
     }
     if (config.confirmed) {
       ClientLogger.attachPersistentStorage();
     }
-    notifyListeners();
     ClientLogger.v(
       'apply done persist=$persist elapsedMs=${stopwatch.elapsedMilliseconds}',
       tag: _logTag,
@@ -386,26 +419,46 @@ class RuntimeBootstrapManager extends ChangeNotifier {
     );
   }
 
-  /// Serializes one validated bootstrap configuration through the platform Host.
+  /// Publishes a configuration only after the Host has persisted it.
+  Future<void> _updateBootstrapConfig(
+    LocalRuntimeStorageConfig Function() update,
+  ) {
+    return _serializeBootstrapWrite(() async {
+      final next = update();
+      await _writeBootstrapConfig(
+        next.copyWith(activeIdentityId: _nextIdentityId),
+      );
+      _config = next;
+      notifyListeners();
+    });
+  }
+
+  /// Queues each bootstrap mutation against the latest persisted state.
+  Future<void> _serializeBootstrapWrite(Future<void> Function() operation) {
+    final pending = _bootstrapWriteTail;
+    final write = pending == null
+        ? operation()
+        : pending.then((_) => operation());
+    final tail = write.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    _bootstrapWriteTail = tail;
+    return write.whenComplete(() {
+      if (identical(_bootstrapWriteTail, tail)) {
+        _bootstrapWriteTail = null;
+      }
+    });
+  }
+
+  /// Writes one validated bootstrap configuration through the platform Host.
   Future<void> _writeBootstrapConfig(
     LocalRuntimeStorageConfig config, {
     ThemeMode? startupThemeMode,
-  }) {
-    // Serialize overlapping theme and identity updates.
-    final write = _bootstrapWriteTail.then((_) async {
-      config.validate();
-      final encodedConfig = <String, Object?>{
-        ...config.toJson(),
-        _startupThemeModeKey: (startupThemeMode ?? _startupThemeMode).name,
-      };
-      await platformCoreProxy.runtimeBootstrapWrite(jsonEncode(encodedConfig));
-      if (startupThemeMode != null) _startupThemeMode = startupThemeMode;
-    });
-    _bootstrapWriteTail = write.then<void>(
-      (_) {},
-      onError: (Object _, StackTrace _) {},
-    );
-    return write;
+  }) async {
+    config.validate();
+    final encodedConfig = <String, Object?>{
+      ...config.toJson(),
+      _startupThemeModeKey: (startupThemeMode ?? _startupThemeMode).name,
+    };
+    await platformCoreProxy.runtimeBootstrapWrite(jsonEncode(encodedConfig));
   }
 }
 

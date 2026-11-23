@@ -1712,6 +1712,7 @@ class _DeviceSpaceIdentityChipState extends State<_DeviceSpaceIdentityChip> {
       builder: (context, constraints) {
         return InkWell(
           onTap: widget.onTap,
+          mouseCursor: SystemMouseCursors.click,
           borderRadius: BorderRadius.circular(20),
           child: ConstrainedBox(
             constraints: BoxConstraints(
@@ -1760,6 +1761,13 @@ class _DeviceSpaceIdentityChipState extends State<_DeviceSpaceIdentityChip> {
                           fontWeight: FontWeight.w700,
                         ),
                       ),
+                    ),
+                    const SizedBox(width: 6),
+                    Icon(
+                      Icons.chevron_right_rounded,
+                      size: 17,
+                      color: scheme.onSurfaceVariant,
+                      semanticLabel: l10n.runtimeIdentityManage,
                     ),
                   ],
                 ),
