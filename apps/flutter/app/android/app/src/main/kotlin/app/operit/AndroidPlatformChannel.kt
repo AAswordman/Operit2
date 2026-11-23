@@ -1,5 +1,7 @@
 package app.operit
 
+import app.operit.shizuku.EmbeddedShizukuActivity
+
 import android.Manifest
 import android.app.AppOpsManager
 import android.content.ClipboardManager
@@ -18,7 +20,6 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import java.io.ByteArrayOutputStream
 import java.util.Locale
-import rikka.shizuku.Shizuku
 
 class AndroidPlatformChannel(
     private val activity: MainActivity,
@@ -27,8 +28,6 @@ class AndroidPlatformChannel(
     private val storageAccess = AndroidStorageAccess(activity)
     private val accessibilitySetup = AndroidAccessibilitySetup(activity)
     private var pendingPermissionResult: MethodChannel.Result? = null
-    private var pendingShizukuAuthorizationResult: MethodChannel.Result? = null
-    private var pendingShizukuAuthorizationListener: Shizuku.OnRequestPermissionResultListener? = null
 
     fun handle(call: MethodCall, result: MethodChannel.Result): Boolean {
         when (call.method) {
@@ -402,63 +401,13 @@ class AndroidPlatformChannel(
         return requirementWithStatus("android.shizuku", status)
     }
 
-    /** Requests the Shizuku authorization needed for optional Android host features. */
+    /** Opens native backend management even when a service is already authorized or disconnected. */
     private fun requestShizukuAuthorization(result: MethodChannel.Result) {
-        when (AndroidPrivilegeAuthorization.shizukuAuthorizationStatus()) {
-            ShizukuAuthorizationStatus.Unavailable -> {
-                result.error(
-                    "SHIZUKU_UNAVAILABLE",
-                    "Start Shizuku or Sui before requesting host authorization",
-                    null,
-                )
-                return
-            }
-            ShizukuAuthorizationStatus.Authorized -> {
-                result.success(null)
-                return
-            }
-            ShizukuAuthorizationStatus.Missing -> Unit
-        }
-        if (pendingShizukuAuthorizationResult != null) {
-            result.error(
-                "SHIZUKU_AUTHORIZATION_REQUEST_ACTIVE",
-                "A Shizuku permission request is already active",
-                null,
-            )
-            return
-        }
-        val listener =
-            object : Shizuku.OnRequestPermissionResultListener {
-                /** Completes the matching Flutter request after Shizuku responds. */
-                override fun onRequestPermissionResult(requestCode: Int, grantResult: Int) {
-                    if (requestCode != SHIZUKU_PERMISSION_REQUEST_CODE) {
-                        return
-                    }
-                    Shizuku.removeRequestPermissionResultListener(this)
-                    pendingShizukuAuthorizationListener = null
-                    val pendingResult = pendingShizukuAuthorizationResult
-                    pendingShizukuAuthorizationResult = null
-                    if (grantResult == PackageManager.PERMISSION_GRANTED) {
-                        pendingResult?.success(null)
-                    } else {
-                        pendingResult?.error(
-                            "SHIZUKU_AUTHORIZATION_DENIED",
-                            "Shizuku permission was denied",
-                            null,
-                        )
-                    }
-                }
-            }
-        pendingShizukuAuthorizationResult = result
-        pendingShizukuAuthorizationListener = listener
         try {
-            Shizuku.addRequestPermissionResultListener(listener)
-            Shizuku.requestPermission(SHIZUKU_PERMISSION_REQUEST_CODE)
-        } catch (error: Throwable) {
-            Shizuku.removeRequestPermissionResultListener(listener)
-            pendingShizukuAuthorizationListener = null
-            pendingShizukuAuthorizationResult = null
-            result.error("SHIZUKU_AUTHORIZATION_REQUEST_ERROR", error.message, null)
+            activity.startActivity(Intent(activity, EmbeddedShizukuActivity::class.java))
+            result.success(null)
+        } catch (error: Exception) {
+            result.error("SHIZUKU_SETUP_ERROR", error.message, null)
         }
     }
 
@@ -718,7 +667,6 @@ class AndroidPlatformChannel(
             "android.fileManagement", "android.root", "android.shizuku", "android.batteryOptimization",
         )
         private const val ONBOARDING_PERMISSION_REQUEST_CODE = 2407
-        private const val SHIZUKU_PERMISSION_REQUEST_CODE = 2408
         private const val ROOT_AUTHORIZATION_TIMEOUT_MS = 30_000L
     }
 }

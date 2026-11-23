@@ -1,0 +1,27 @@
+Operit embeds a modified, owner-only Shizuku service.
+
+Shizuku source: https://github.com/RikkaApps/Shizuku
+Revision: b844bc491f1790c72328e1a8e5b2349f8978f0ea
+License: Apache License 2.0 (Shizuku-Apache-2.0.txt)
+
+Shizuku-API source: https://github.com/RikkaApps/Shizuku-API
+Revision: a27f6e4151ba7b39965ca47edb2bf0aeed7102e5
+Copyright (c) 2021 RikkaW
+License: MIT (Shizuku-API-MIT.txt)
+
+Operit modifications: private backend selection and publication, shell startup
+identity, native supervisor, Android 17 framework enumeration compatibility,
+bounded ADB I/O, in-app activation and opt-in recovery scheduling.
+
+The original Shizuku manager card layouts, styles, icons, English/Chinese strings,
+app bar, pairing tutorial and notification RemoteInput service are also included.
+Card and guide layout XML is copied unchanged; unused standalone-manager resources
+and strings have been removed. Kotlin UI files
+identify their upstream originals; package/resource references, theme selection,
+owner activation callbacks and coroutine ownership are adapted for this APK.
+
+Standalone-manager application lists, third-party authorization/config storage,
+legacy client protocol handling and rish are omitted. The retained server-shared
+Binder/UserService code remains covered by the included Shizuku-API MIT license.
+
+Stellar, ShizukuX and Brevent code is not included in this fork.

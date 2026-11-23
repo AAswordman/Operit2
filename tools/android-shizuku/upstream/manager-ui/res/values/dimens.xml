@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copied from Shizuku (Apache-2.0); unused standalone-manager resources removed. -->
+<resources>
+    <dimen name="home_padding">0dp</dimen>
+    <dimen name="home_icon_padding">16dp</dimen>
+</resources>

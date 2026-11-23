@@ -436,11 +436,10 @@ class _HostRequirement {
   final String action;
 
   bool get canRequest =>
-      status != 'Satisfied' &&
-      status != 'Unavailable' &&
-      (action == 'RuntimePermission' ||
-          action == 'OpenSystemSettings' ||
-          action == 'HostManaged');
+      action == 'OpenSystemSettings' ||
+      (status != 'Satisfied' &&
+          status != 'Unavailable' &&
+          (action == 'RuntimePermission' || action == 'HostManaged'));
 
   _HostRequirement withStatus(String status) {
     return _HostRequirement(
@@ -683,6 +682,9 @@ Color _statusColor(String status, ColorScheme colorScheme) {
 }
 
 String _actionLabel(_HostRequirement requirement, AppLocalizations l10n) {
+  if (requirement.action == 'OpenSystemSettings') {
+    return l10n.settingsToolsOpenSettings;
+  }
   if (requirement.status == 'Satisfied') {
     return l10n.onboardingPermissionGranted;
   }

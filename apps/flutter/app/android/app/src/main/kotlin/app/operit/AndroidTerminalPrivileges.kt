@@ -38,11 +38,11 @@ class AndroidTerminalPrivileges private constructor(private val context: Context
     private val mainHandler = Handler(Looper.getMainLooper())
     private val owner = Binder()
     private data class RemoteSession(val binder: IBinder, val pid: Int)
+    private data class RemoteService(val server: IBinder, val binder: IBinder)
     private val sessions = ConcurrentHashMap<Int, RemoteSession>()
     private val nextSession = AtomicInteger(1)
-    @Volatile private var service: IBinder? = null
-    private val args = Shizuku.UserServiceArgs(ComponentName(context, AndroidTerminalUserService::class.java))
-        .daemon(false).processNameSuffix("terminal").version(1)
+    private val nextBinding = AtomicInteger(1)
+    @Volatile private var service: RemoteService? = null
 
     /** Executes one native terminal bridge request without requesting new permissions. */
     fun execute(encoded: String): String = try {
@@ -66,20 +66,35 @@ class AndroidTerminalPrivileges private constructor(private val context: Context
     /** Obtains one service connection; an existing session never reconnects to a new process. */
     @Synchronized
     private fun bindService(): IBinder {
-        service?.let { if (it.isBinderAlive) return it }
         check(AndroidPrivilegeAuthorization.isShizukuAuthorized()) { "Shizuku authorization is not granted" }
+        val server = checkNotNull(Shizuku.getBinder()) { "Shizuku disconnected" }
+        service?.let { if (it.server === server && it.binder.isBinderAlive) return it.binder }
+        val args = Shizuku.UserServiceArgs(ComponentName(context, AndroidTerminalUserService::class.java))
+            .daemon(false).processNameSuffix("terminal").version(1).tag("operit-terminal-${nextBinding.getAndIncrement()}")
         val ready = CompletableFuture<IBinder>()
         val connection = object : ServiceConnection {
+            private var boundBinder: IBinder? = null
+
             /** Publishes the privileged Binder on the Android callback thread. */
             override fun onServiceConnected(name: ComponentName, binder: IBinder) {
-                service = binder
+                if (Shizuku.getBinder() !== server) {
+                    ready.completeExceptionally(IllegalStateException("Shizuku backend changed while binding"))
+                    return
+                }
+                boundBinder = binder
+                service = RemoteService(server, binder)
                 ready.complete(binder)
             }
             /** Invalidates the connection without replacing any live terminal session. */
-            override fun onServiceDisconnected(name: ComponentName) { service = null }
+            override fun onServiceDisconnected(name: ComponentName) {
+                if (service?.binder === boundBinder) service = null
+            }
         }
         mainHandler.post {
-            try { Shizuku.bindUserService(args, connection) }
+            try {
+                check(Shizuku.getBinder() === server) { "Shizuku backend changed before binding" }
+                Shizuku.bindUserService(args, connection)
+            }
             catch (error: Exception) { ready.completeExceptionally(error) }
         }
         try {
@@ -87,7 +102,7 @@ class AndroidTerminalPrivileges private constructor(private val context: Context
         } catch (error: Exception) {
             mainHandler.post {
                 try {
-                    Shizuku.unbindUserService(args, connection, false)
+                    if (Shizuku.getBinder() === server) Shizuku.unbindUserService(args, connection, false)
                 } catch (cleanupError: Exception) {
                     Log.w("OperitTerminal", "Failed to unbind terminal service after binding failed", cleanupError)
                 }
@@ -133,7 +148,7 @@ class AndroidTerminalPrivileges private constructor(private val context: Context
             }
             return response
         } catch (error: DeadObjectException) {
-            if (service === binder) service = null
+            if (service?.binder === binder) service = null
             // The owning process is gone. Never send this session's PID to a replacement service.
             return when (operation) {
                 "poll" -> JSONObject().put("exitCode", -1)

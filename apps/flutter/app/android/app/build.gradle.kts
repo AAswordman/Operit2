@@ -219,6 +219,7 @@ android {
     }
 
     packaging {
+        resources.excludes += "META-INF/versions/**/OSGI-INF/MANIFEST.MF"
         jniLibs {
             useLegacyPackaging = true
         }
@@ -298,8 +299,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.0")
     implementation("com.github.topjohnwu.libsu:core:6.0.0")
-    implementation("dev.rikka.shizuku:api:13.1.5")
-    implementation("dev.rikka.shizuku:provider:13.1.5")
+    implementation(project(":embeddedShizuku"))
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.mockito:mockito-core:5.23.0")
     // Real org.json for JVM unit tests; shadows the "not mocked" android.jar stubs.
@@ -307,6 +307,9 @@ dependencies {
     androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
 }
+
+// Shizuku's AppCompat fork provides the same classes and its original theme integration.
+configurations.configureEach { exclude(group = "androidx.appcompat", module = "appcompat") }
 
 val operitBridgeCrate = project.layout.projectDirectory
     .dir("../../../native/operit-flutter-bridge")

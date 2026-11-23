@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copied from Shizuku (Apache-2.0); unused standalone-manager resources removed. -->
+<resources>
+    <string name="home_status_service_is_running">%1$s 正在執行</string>
+    <string name="home_status_service_not_running">%1$s 未在執行</string>
+    <string name="home_root_button_start">啟動</string>
+    <string name="home_root_button_restart">重新啟動</string>
+    <string name="home_root_title">啟動 (針對已 Root 裝置)</string>
+    <string name="home_adb_title">透過與電腦連線來啟動 (使用 ADB)</string>
+    <string name="home_adb_description">沒有 Root 的裝置需藉助 ADB 來啟動 Shizuku (須與電腦連線)。在裝置每次重新啟動後，這項作業皆須重新進行。請<b><a href="%1$s">閱讀說明</a></b>。</string>
+    <string name="home_root_description">另外，Shizuku 可以在開機時自動啟動。如果沒有啟動，請檢查 Shizuku 是否被您的系統或是第三方工具限制。&lt;br&gt;你可以參考 %s。</string>
+    <string name="home_adb_dialog_view_command_copy_button">複製</string>
+    <string name="home_adb_button_view_command">檢視命令</string>
+    <string name="dialog_adb_pairing_paring_code">配對碼</string>
+    <string name="home_wireless_adb_title">透過無線偵錯啟動</string>
+    <string name="home_wireless_adb_description">在 Android 11 或更高版本上，您可以直接從您的裝置啟用無線偵錯並啟動 Shizuku，無須與電腦連線。&lt;p&gt;請先檢視分步驟指南。</string>
+    <string name="paring_code_is_wrong">配對碼錯誤。</string>
+    <string name="cannot_connect_port">無法連線至無線偵錯服務。</string>
+    <string name="adb_pairing">配對</string>
+    <string name="development_settings">開發人員選項</string>
+    <string name="adb_pairing_tutorial_title">將 Shizuku 與您的裝置配對</string>
+    <string name="adb_pairing_tutorial_content_steps">進入「開發人員選項」-「無線偵錯」。輕觸「使用配對碼配對裝置」，您將看到一個六位數字代碼。</string>
+    <string name="adb_pairing_tutorial_content_enter_pairing_code">在通知中輸入代碼來完成配對。</string>
+    <string name="notification_channel_adb_pairing">無線偵錯配對</string>
+    <string name="notification_adb_pairing_input_paring_code">輸入配對碼</string>
+    <string name="notification_adb_pairing_searching_for_service_title">正在尋找配對服務</string>
+    <string name="notification_adb_pairing_service_found_title">已找到配對服務</string>
+    <string name="notification_adb_pairing_stop_searching">停止尋找</string>
+    <string name="notification_adb_pairing_working_title">正在進行配對</string>
+    <string name="notification_adb_pairing_succeed_title">配對成功</string>
+    <string name="notification_adb_pairing_succeed_text">您現在可以啟動 Shizuku 服務了。</string>
+    <string name="notification_adb_pairing_failed_title">配對失敗</string>
+    <string name="notification_adb_pairing_retry">重試</string>
+    <string name="adb_pairing_tutorial_content_notification_blocked">配對過程需要您與 Shizuku 的通知互動。請允許 Shizuku 發布通知。</string>
+    <string name="notification_settings">通知設定</string>
+    <string name="adb_pairing_tutorial_content_miui">MIUI 使用者可能需要在系統設定中從「通知管理」-「通知顯示設定」將通知樣式切換為「原生樣式」。</string>
+    <string name="adb_pairing_tutorial_content_miui_2">否則，您可能會無法從通知輸入配對碼。</string>
+    <string name="adb_pairing_tutorial_content_notification">一則來自 Shizuku 的通知將協助您完成配對。</string>
+    <string name="adb_pairing_tutorial_content_left_is_clickable">請注意，「無線偵錯」選項的左側是可點選的，輕觸它將開啟一個新的頁面。僅開啟右側的開關是錯誤的。</string>
+    <string name="home_wireless_adb_view_guide_button">分步驟指南</string>
+    <string name="adb_pairing_tutorial_content_network">Shizuku 需要存取本機網路。它由網路權限控制。</string>
+    <string name="adb_pairing_tutorial_content_network_limation_not_foreground">某些系統 (例如 MIUI) 不允許應用程式在不可見時存取網路，即使應用程式已按標準使用前景服務。請在此類系統上為 Shizuku 停用電池效能最佳化功能。</string>
+    <string name="adb_pairing_tutorial_content_finish">回到 Shizuku 並啟動 Shizuku。</string>
+</resources>

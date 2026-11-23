@@ -2,6 +2,8 @@
     xmlns:tools="http://schemas.android.com/tools">
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="com.termux.permission.RUN_COMMAND" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+    <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="app.operit.accessibility.permission.AUTOMATE_UI" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -35,6 +37,24 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true">
+        <activity android:name=".shizuku.EmbeddedShizukuActivity" android:exported="false" android:theme="@style/AppTheme" />
+        <activity android:name=".shizuku.EmbeddedShizukuPairingActivity" android:exported="false" android:theme="@style/AppTheme" />
+        <service android:name=".shizuku.EmbeddedShizukuPairingService" android:exported="false" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-initiated wireless ADB pairing with notification RemoteInput" />
+        </service>
+        <service android:name=".shizuku.EmbeddedShizukuRestoreService" android:exported="true" android:permission="android.permission.BIND_JOB_SERVICE" />
+        <service android:name=".shizuku.EmbeddedShizukuLockedBootService" android:exported="false"
+            android:process=":maintenance" android:directBootAware="true" android:foregroundServiceType="specialUse">
+            <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-enabled paired ADB system-service activation before unlock" />
+        </service>
+        <receiver android:name=".shizuku.EmbeddedShizukuBootReceiver" android:exported="false" android:directBootAware="true">
+            <intent-filter>
+                <action android:name="android.intent.action.LOCKED_BOOT_COMPLETED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.USER_UNLOCKED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -143,8 +163,9 @@
             android:authorities="${applicationId}.openfiles"
             android:exported="false"
             android:grantUriPermissions="true" />
+        <provider android:name="rikka.shizuku.ShizukuProvider" tools:node="remove" />
         <provider
-            android:name="rikka.shizuku.ShizukuProvider"
+            android:name=".shizuku.EmbeddedShizukuProvider"
             android:authorities="${applicationId}.shizuku"
             android:multiprocess="false"
             android:enabled="true"

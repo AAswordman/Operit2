@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Copied from Shizuku (Apache-2.0); unused standalone-manager resources removed. -->
+<resources>
+    <attr name="homeCardStyle" format="reference" />
+    <attr name="appColorPrimary" format="reference" />
+</resources>

@@ -37,6 +37,9 @@ test('Shizuku owns the PTY and transports ordinary pipes with the same process l
   assert.match(client, /"writeFd", second\.detachFd\(\)/);
   assert.match(client, /RemoteSession\(binder, response\.getInt\("pid"\)\)/);
   assert.match(client, /session\?\.binder \?: bindService\(\)/);
+  assert.match(client, /it\.server === server && it\.binder\.isBinderAlive/);
+  assert.match(client, /RemoteService\(server, binder\)/);
+  assert.match(client, /tag\("operit-terminal-\$\{nextBinding\.getAndIncrement\(\)\}"\)/);
   assert.match(service, /ParcelFileDescriptor\.adoptFd/);
   assert.match(service, /ParcelFileDescriptor\.createPipe\(\)/);
   assert.match(service, /HostTaskScheduler\.executeServices/);
@@ -47,7 +50,7 @@ test('Shizuku owns the PTY and transports ordinary pipes with the same process l
   assert.doesNotMatch(service, /newProcess\(/);
   const terminal = source('hosts/android/src/terminal.rs');
   assert.match(terminal, /AndroidPtyProcess::Shizuku/);
-  assert.match(terminal, /resizeAndroidPtyProcess\(session.pid, session.masterFd, rows, cols\)/);
+  assert.match(terminal, /resizeAndroidPtyProcess\(&mut session.process, session.masterFd, rows, cols\)/);
   assert.match(terminal, /"readFd"/);
   assert.match(terminal, /"writeFd"/);
   assert.match(terminal, /Android PTY reached EOF/);

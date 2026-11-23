@@ -912,12 +912,12 @@ fn androidOnboardingRequirements() -> Vec<HostOnboardingRequirement> {
         HostOnboardingRequirement {
             id: "android.shizuku".to_string(),
             title: "Shizuku".to_string(),
-            description: "可选。需先启动 Shizuku 或 Sui；授权后 Operit 可以使用支持 Shizuku 的 Android 系统能力。"
+            description: "可选。管理内置系统服务，可通过 Root 或无线调试激活；也可选择外部 Shizuku 或 Sui。"
                 .to_string(),
             capabilityIds: vec!["host.privilege".to_string()],
             isRequired: false,
             status: HostRequirementStatus::Missing,
-            action: HostRequirementAction::HostManaged,
+            action: HostRequirementAction::OpenSystemSettings,
         },
         HostOnboardingRequirement {
             id: "android.root".to_string(),

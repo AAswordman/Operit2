@@ -15,12 +15,14 @@ void main() {
   const channel = MethodChannel('operit/runtime');
   var status = 'Missing';
   var failRequest = false;
+  var requirementAction = 'RuntimePermission';
   late List<MethodCall> requests;
 
   setUpAll(ClientLogger.initialize);
   setUp(() {
     status = 'Missing';
     failRequest = false;
+    requirementAction = 'RuntimePermission';
     requests = [];
     TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
         .setMockMethodCallHandler(channel, (call) async {
@@ -63,7 +65,7 @@ void main() {
         hostInteractionHostsEnabled: false,
         child: Scaffold(
           body: ToolSettingsPanel(
-            clients: GeneratedCoreProxyClients(_SettingsBridge()),
+            clients: GeneratedCoreProxyClients(_SettingsBridge(requirementAction)),
           ),
         ),
       ),
@@ -110,6 +112,25 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  for (final state in ['Satisfied', 'Unavailable']) {
+    testWidgets('system settings remain manageable when status is $state', (
+      tester,
+    ) async {
+      status = state;
+      requirementAction = 'OpenSystemSettings';
+      await pumpSettings(tester);
+
+      final button = find.widgetWithText(FilledButton, '打开设置');
+      expect(tester.widget<FilledButton>(button).onPressed, isNotNull);
+      await tester.tap(button);
+      await tester.pumpAndSettle();
+
+      expect(requests, hasLength(1));
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    });
+  }
+
   testWidgets('system request errors stay in the authorization page', (
     tester,
   ) async {
@@ -127,6 +148,10 @@ void main() {
 }
 
 class _SettingsBridge extends OperitRuntimeBridge {
+  _SettingsBridge(this.requirementAction);
+
+  final String requirementAction;
+
   @override
   Future<Uint8List> callBytes(CoreCallRequest request) async {
     final Object value = switch (request.methodName) {
@@ -170,7 +195,7 @@ class _SettingsBridge extends OperitRuntimeBridge {
             'capabilityIds': ['system.notifications.send'],
             'isRequired': true,
             'status': 'Missing',
-            'action': 'RuntimePermission',
+            'action': requirementAction,
           },
         ],
       },

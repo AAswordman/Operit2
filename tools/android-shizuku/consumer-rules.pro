@@ -1,0 +1,4 @@
+-keep class rikka.shizuku.server.** { *; }
+-keep class moe.shizuku.starter.** { *; }
+-keep class moe.shizuku.manager.adb.PairingContext { *; }
+-keep class app.operit.embeddedshizuku.** { *; }
