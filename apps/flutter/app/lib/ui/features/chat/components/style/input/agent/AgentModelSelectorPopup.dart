@@ -22,6 +22,7 @@ class AgentModelSelectorPopup extends StatefulWidget {
     super.key,
     required this.viewModel,
     this.currentChatId,
+    this.settingsRevision = 0,
     required this.onDismiss,
     required this.onModelChanged,
     this.onThinkingChanged,
@@ -29,6 +30,9 @@ class AgentModelSelectorPopup extends StatefulWidget {
 
   final ChatViewModel viewModel;
   final String? currentChatId;
+
+  /// Reloads model settings without closing or recreating the popup.
+  final int settingsRevision;
   final VoidCallback onDismiss;
   final void Function(
     String modelId, {
@@ -68,12 +72,13 @@ class _AgentModelSelectorPopupState extends State<AgentModelSelectorPopup> {
     return _loadAgentModelSelectorData(_clients, widget.currentChatId);
   }
 
-  /// Discards model-specific settings when the popup receives a different chat.
+  /// Reloads changed settings while preserving the open popup and its controls.
   @override
   void didUpdateWidget(covariant AgentModelSelectorPopup oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.currentChatId != widget.currentChatId ||
-        oldWidget.viewModel != widget.viewModel) {
+        oldWidget.viewModel != widget.viewModel ||
+        oldWidget.settingsRevision != widget.settingsRevision) {
       _thinking = null;
       _settingsFuture = _loadSettings();
     }

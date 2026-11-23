@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit_ui/operit_ui.dart';
 import 'package:operit2/core/bridge/OperitRuntimeBridge.dart';
 import 'package:operit2/core/link/CoreLinkCodec.dart';
 import 'package:operit2/core/link/CoreLinkProtocol.dart';
@@ -27,6 +28,82 @@ Map<String, Object?> _participantModel({required bool followsGlobal}) => {
 };
 
 void main() {
+  testWidgets(
+    'thinking changes refresh the open composer model popup without dismissing it',
+    (tester) async {
+      final bridge = _ObservableModelSettingsBridge();
+      addTearDown(bridge.close);
+      final controller = TextEditingController();
+      final focus = FocusNode();
+      addTearDown(controller.dispose);
+      addTearDown(focus.dispose);
+      await tester.pumpWidget(
+        _themed(
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: AgentChatInputSection(
+              controller: controller,
+              focusNode: focus,
+              isLoading: false,
+              inputState: core.InputProcessingState.idle(),
+              viewModel: ChatViewModel(bridge: bridge),
+              currentChatId: 'thinking-chat',
+              onSendMessage: () {},
+              onQueueMessage: () {},
+              onCancelMessage: () {},
+              isSpeechRecording: false,
+              isSpeechTranscribing: false,
+              onSpeechInput: () {},
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final selector = find.byType(ThemeComposerModelSelector);
+      final popup = find.byType(AgentModelSelectorPopup);
+      await tester.tap(selector);
+      await tester.pumpAndSettle();
+      final popupState = tester.state(popup);
+      final slider = find.byType(AgentThinkingSliderRow);
+      final sliderState = tester.state(slider);
+      final track = tester.getRect(find.byKey(AgentThinkingSliderRow.trackKey));
+
+      await tester.tapAt(track.center);
+      await tester.pumpAndSettle();
+      expect(bridge.thinkingLevel, core.ThinkingLevel.medium);
+      expect(popup, findsOneWidget);
+      expect(tester.state(popup), same(popupState));
+      expect(tester.state(slider), same(sliderState));
+      expect(tester.widget<AgentThinkingSliderRow>(slider).stop, 1);
+
+      await tester.tapAt(Offset(track.right - 12.5, track.center.dy));
+      await tester.pumpAndSettle();
+      expect(bridge.thinkingLevel, core.ThinkingLevel.high);
+      expect(tester.state(slider), same(sliderState));
+      expect(tester.widget<AgentThinkingSliderRow>(slider).stop, 2);
+
+      bridge.thinkingLevel = core.ThinkingLevel.low;
+      bridge.emitProfiles();
+      await tester.pumpAndSettle();
+      expect(tester.state(popup), same(popupState));
+      expect(tester.widget<AgentThinkingSliderRow>(slider).stop, 0);
+
+      await tester.tapAt(const Offset(20, 20));
+      await tester.pumpAndSettle();
+      expect(popup, findsNothing);
+      await tester.tap(selector);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('Test Provider').first);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('test-model').last);
+      await tester.pumpAndSettle();
+      expect(popup, findsNothing);
+      expect(bridge.modelSelectionWrites, 1);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
   for (final missingProvider in [true, false]) {
     testWidgets(
       'model selector repairs a missing ${missingProvider ? 'provider' : 'model'} binding',
@@ -1036,6 +1113,50 @@ class _ModelSettingsBridge extends OperitRuntimeBridge {
 class _ObservableModelSettingsBridge extends _ModelSettingsBridge {
   final _bindings = StreamController<Object?>.broadcast();
   final _profiles = StreamController<Object?>.broadcast();
+  core.ThinkingLevel thinkingLevel = core.ThinkingLevel.low;
+
+  /// Describes the model's editable levels and its latest persisted selection.
+  core.ModelThinkingSettings get thinkingSettings => core.ModelThinkingSettings(
+    spec: const core.ModelThinkingSpec(
+      supported: true,
+      toggle: false,
+      efforts: [
+        core.ThinkingLevel.low,
+        core.ThinkingLevel.medium,
+        core.ThinkingLevel.high,
+      ],
+      budget: null,
+    ),
+    source: core.ThinkingSpecSource.unknown,
+    catalog: null,
+    levels: [
+      for (final level in [
+        core.ThinkingLevel.low,
+        core.ThinkingLevel.medium,
+        core.ThinkingLevel.high,
+      ])
+        core.ThinkingLevelOption(level: level, budgetTokens: null),
+    ],
+    current: thinkingLevel,
+    chosen: true,
+  );
+
+  /// Emits the same profile update as a real thinking-level persistence write.
+  @override
+  Future<Uint8List> callBytes(CoreCallRequest request) async {
+    switch (request.methodName) {
+      case 'getThinkingSettingsForModel':
+        return encodeCoreLink([0, thinkingSettings.toJson()]);
+      case 'setThinkingLevelForModel':
+        thinkingLevel = core.ThinkingLevel.fromJson(
+          (request.args as Map)['level'],
+        );
+        emitProfiles();
+        return encodeCoreLink([0, thinkingSettings.toJson()]);
+      default:
+        return super.callBytes(request);
+    }
+  }
 
   bool get hasListeners => _bindings.hasListener || _profiles.hasListener;
   void emitBindings(

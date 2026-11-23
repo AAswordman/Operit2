@@ -141,6 +141,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
   _modelProfilesSubscription;
   StreamSubscription<void>? _modelCatalogSubscription;
   int _modelLabelGeneration = 0;
+  int _modelSettingsRevision = 0;
   List<core_proxy.ProviderProfile> _modelProfiles = const [];
   bool _draggingFiles = false;
   bool _inputExpanded = false;
@@ -275,6 +276,7 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                     key: _modelPopupWidgetKey,
                     viewModel: widget.viewModel,
                     currentChatId: widget.currentChatId,
+                    settingsRevision: _modelSettingsRevision,
                     onDismiss: _dismissModelSettingsPopup,
                     onModelChanged: _handleModelChanged,
                   ),
@@ -433,9 +435,10 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     }
   }
 
-  /// Invalidates open model controls and reloads the actual chat binding.
+  /// Refreshes open model controls in place and reloads the actual chat binding.
   void _requestModelRefresh() {
-    _dismissModelSettingsPopup();
+    _modelSettingsRevision++;
+    _modelPopupEntry?.markNeedsBuild();
     unawaited(_refreshCurrentModelLabel());
   }
 
