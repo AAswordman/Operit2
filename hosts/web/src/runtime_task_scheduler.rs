@@ -1,6 +1,6 @@
 use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
-    HostRuntimeTurnFuture,
+    HostRuntimeTurnFuture, HostRuntimePooledTask,
 };
 use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
@@ -94,6 +94,15 @@ impl HostRuntimeTaskSchedulerHost for WebHostRuntimeTaskSchedulerHost {
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
         wasm_bindgen_futures::spawn_local(task());
+        Ok(())
+    }
+
+    /// Admits both stream stages together on the browser's cooperative event executor.
+    fn scheduleHostRuntimePooledTask(&self, _name: &str, opening: Option<HostRuntimeAsyncTask>, task: HostRuntimePooledTask) -> HostResult<()> {
+        wasm_bindgen_futures::spawn_local(async move {
+            if let Some(opening) = opening { wasm_bindgen_futures::spawn_local(async move { opening().await }); }
+            task.await;
+        });
         Ok(())
     }
 

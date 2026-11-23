@@ -64,6 +64,10 @@ impl AndroidSystemOperationHost {
 }
 
 impl SystemOperationHost for AndroidSystemOperationHost {
+    /// Uses the installed APK as the update base instead of retaining its downloaded copy.
+    fn retainsApplicationUpdatePackages(&self) -> bool {
+        false
+    }
     /// Transforms APK entries with the standard zlib codec owned by the Android Host.
     fn transformApplicationUpdate(
         &self,

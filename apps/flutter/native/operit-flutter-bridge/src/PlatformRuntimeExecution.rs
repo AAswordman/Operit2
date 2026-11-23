@@ -47,6 +47,9 @@ struct BrowserStreamSession {
     next_tag: Cell<i64>,
 }
 
+#[cfg(target_arch = "wasm32")]
+type BrowserWatchDelivery = (String, i64, bool, Vec<Vec<u8>>);
+
 impl PlatformBridgeState {
     /// Creates the lifecycle state used by the selected host.
     pub(crate) fn new() -> Self {
@@ -156,8 +159,10 @@ impl OperitFlutterBridge {
     /// Returns the one browser connection backed by the shared Host stream owner.
     fn streamSession(&self) -> Result<&BrowserStreamSession, CoreLinkError> {
         if self.platform.streams.get().is_none() {
-            let (streams, mut events) =
-                BridgeStreams::start(self.localCore.clone(), self.taskScheduler.as_ref())?;
+            let (outbox, mut events) = tokio::sync::mpsc::channel(WATCH_BATCH_CAPACITY);
+            let streams = BridgeStreams::start(
+                self.localCore.clone(), self.taskScheduler.clone(), outbox, browser_watch_frames,
+            )?;
             let streams = Rc::new(streams);
             let callbacks = Rc::new(RefCell::new(HashMap::<String, BrowserWatch>::new()));
             let session = BrowserStreamSession {
@@ -171,22 +176,19 @@ impl OperitFlutterBridge {
             wasm_bindgen_futures::spawn_local(async move {
                 let mut batch = Vec::with_capacity(WATCH_BATCH_CAPACITY);
                 while events.recv_many(&mut batch, WATCH_BATCH_CAPACITY).await != 0 {
-                    for delivery in batch.drain(..) {
+                    for (id, tag, terminal, frames) in batch.drain(..) {
                         let callback = callbacks
                             .borrow()
-                            .get(&delivery.id)
-                            .filter(|entry| entry.tag == delivery.tag)
+                            .get(&id)
+                            .filter(|entry| entry.tag == tag)
                             .map(|entry| entry.callback.clone());
                         let Some(callback) = callback else {
                             continue;
                         };
-                        let terminal = !matches!(&delivery.event, Ok(Some(_)));
                         if terminal {
-                            callbacks.borrow_mut().remove(&delivery.id);
+                            callbacks.borrow_mut().remove(&id);
                         }
-                        let id = delivery.id.clone();
-                        let tag = delivery.tag;
-                        for bytes in browser_watch_frames(delivery) {
+                        for bytes in frames {
                             if let Err(error) = callback.call1(
                                 &JsValue::NULL,
                                 &js_sys::Uint8Array::from(bytes.as_slice()).into(),
@@ -197,11 +199,10 @@ impl OperitFlutterBridge {
                                 );
                                 callbacks.borrow_mut().remove(&id);
                                 if let Err(error) = streams
-                                    .request(StreamAction::CloseWatch {
+                                    .submit(StreamAction::CloseWatch {
                                         id: id.clone(),
                                         tag,
                                     })
-                                    .await
                                 {
                                     operit_host_api::logHostError(
                                         "BridgeStreams",
@@ -230,7 +231,7 @@ impl OperitFlutterBridge {
     ) -> Result<Option<String>, CoreLinkError> {
         self.streamSession()?
             .streams
-            .request(StreamAction::OpenPush(request))
+            .enqueue(StreamAction::OpenPush(request))
             .await
     }
 
@@ -238,7 +239,7 @@ impl OperitFlutterBridge {
     pub(crate) async fn pushItem(&self, item: CorePushItem) -> Result<(), CoreLinkError> {
         self.streamSession()?
             .streams
-            .request(StreamAction::PushItem(item))
+            .enqueue(StreamAction::PushItem(item))
             .await
             .map(|_| ())
     }
@@ -247,7 +248,7 @@ impl OperitFlutterBridge {
     pub(crate) async fn pushClose(&self, id: &str) -> Result<(), CoreLinkError> {
         self.streamSession()?
             .streams
-            .request(StreamAction::ClosePush(id.to_string()))
+            .enqueue(StreamAction::ClosePush(id.to_string()))
             .await
             .map(|_| ())
     }
@@ -285,7 +286,7 @@ impl OperitFlutterBridge {
         }
         let result = session
             .streams
-            .request(StreamAction::OpenWatch {
+            .enqueue(StreamAction::OpenWatch {
                 id: id.clone(),
                 request,
                 tag,
@@ -318,18 +319,20 @@ impl OperitFlutterBridge {
 
 /// Encodes browser deliveries with the same explicit value, error, and close frame kinds.
 #[cfg(target_arch = "wasm32")]
-fn browser_watch_frames(delivery: WatchDelivery) -> Vec<Vec<u8>> {
+fn browser_watch_frames(delivery: WatchDelivery) -> BrowserWatchDelivery {
     let frame = |kind, payload: Vec<u8>| {
         let mut bytes = NativeFrame::empty(kind, delivery.tag).into_parts().0;
         bytes.extend(payload);
         bytes
     };
-    match delivery.event {
+    let terminal = !matches!(&delivery.event, Ok(Some(_)));
+    let frames = match delivery.event {
         Ok(Some(event)) => vec![frame(1, native_watch_event_vec(&delivery.id, event))],
         Ok(None) => vec![frame(3, Vec::new())],
         Err(error) => vec![
             frame(2, native_result_vec(Err::<(), _>(error))),
             frame(3, Vec::new()),
         ],
-    }
+    };
+    (delivery.id, delivery.tag, terminal, frames)
 }

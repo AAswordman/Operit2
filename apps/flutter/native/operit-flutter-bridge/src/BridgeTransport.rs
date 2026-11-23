@@ -1,16 +1,16 @@
-//! Connection-owned Push/Watch multiplexing on one Host executor task.
-//! Stream futures share that task; transports only submit commands and deliver batches.
+//! Bounded connection mailboxes and independently ready Push/Watch continuations.
+//! Affine opens are transient; ongoing sources share the Host pool's ready queue.
 
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
 
-use futures_util::{future::BoxFuture, stream::FuturesUnordered, FutureExt, StreamExt};
-use operit_host_api::HostRuntimeTaskSchedulerHost;
+use futures_util::{future::BoxFuture, FutureExt};
+use operit_host_api::{HostRuntimePooledTask, HostRuntimeTaskSchedulerHost};
 use operit_link::{
     CoreEvent, CoreEventKind, CoreLinkError, CoreLinkSharedClient, CorePushItem, CorePushRequest,
-    CoreWatchRequest,
+    CoreWatchRequest, CoreEventStream, CoreLinkPushSession,
 };
 use tokio::sync::{mpsc, oneshot, watch, Mutex};
 
@@ -22,7 +22,8 @@ type Reply = oneshot::Sender<Result<Option<String>, CoreLinkError>>;
 pub(crate) type StreamReply = oneshot::Receiver<Result<Option<String>, CoreLinkError>>;
 pub(crate) type StreamSubmission = BoxFuture<'static, Result<Option<String>, CoreLinkError>>;
 type Client = Arc<dyn CoreLinkSharedClient + Send + Sync>;
-type StreamTask = Pin<Box<dyn Future<Output = (StreamKey, Arc<()>)>>>;
+type Completion = (StreamKey, Arc<()>);
+type Opened<T> = oneshot::Receiver<Result<T, CoreLinkError>>;
 
 /// Identifies a logical stream without conflating Push and Watch namespaces.
 #[derive(Clone, Hash, PartialEq, Eq)]
@@ -77,66 +78,59 @@ struct WatchRegistration {
     cancel: oneshot::Sender<()>,
 }
 
-struct StreamOwner {
+struct StreamOwner<T = WatchDelivery> {
     core: Client,
+    scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
     commands: mpsc::Receiver<Command>,
-    events: mpsc::Sender<WatchDelivery>,
+    events: mpsc::Sender<T>,
+    encode: fn(WatchDelivery) -> T,
     shutdown: watch::Receiver<bool>,
     pushes: HashMap<String, PushRegistration>,
     watches: HashMap<String, WatchRegistration>,
-    tasks: FuturesUnordered<StreamTask>,
+    complete: mpsc::Sender<Completion>,
+    completed: mpsc::Receiver<Completion>,
 }
 
 impl BridgeStreams {
     /// Starts exactly one owner task using the runtime's installed Host scheduler.
-    pub(crate) fn start(
+    pub(crate) fn start<T: Send + 'static>(
         core: Client,
-        scheduler: &dyn HostRuntimeTaskSchedulerHost,
-    ) -> Result<(Self, mpsc::Receiver<WatchDelivery>), CoreLinkError> {
-        let (client, events, owner) = Self::channel(core);
-        // Only the mailbox crosses threads; local stream futures are created by its executor.
-        let StreamOwner {
-            core,
-            commands,
-            events: sender,
-            shutdown,
-            ..
-        } = owner;
+        scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+        events: mpsc::Sender<T>,
+        encode: fn(WatchDelivery) -> T,
+    ) -> Result<Self, CoreLinkError> {
+        let (client, owner) = Self::channel(core, scheduler.clone(), events, encode);
         scheduler
-            .scheduleHostRuntimeAsyncTask(
+            .scheduleHostRuntimePooledTask(
                 "operit-bridge-streams",
-                Box::new(move || {
-                    Box::pin(
-                        StreamOwner {
-                            core,
-                            commands,
-                            events: sender,
-                            shutdown,
-                            pushes: HashMap::new(),
-                            watches: HashMap::new(),
-                            tasks: FuturesUnordered::new(),
-                        }
-                        .run(),
-                    )
-                }),
+                None,
+                Box::pin(owner.run()),
             )
             .map_err(|error| CoreLinkError::internal(error.to_string()))?;
-        Ok((client, events))
+        Ok(client)
     }
 
     /// Creates bounded connection queues before moving their owner onto its executor.
-    fn channel(core: Client) -> (Self, mpsc::Receiver<WatchDelivery>, StreamOwner) {
+    fn channel<T>(
+        core: Client,
+        scheduler: Arc<dyn HostRuntimeTaskSchedulerHost>,
+        events: mpsc::Sender<T>,
+        encode: fn(WatchDelivery) -> T,
+    ) -> (Self, StreamOwner<T>) {
         let (commands, receiver) = mpsc::channel(COMMAND_CAPACITY);
-        let (events, outbox) = mpsc::channel(WATCH_BATCH_CAPACITY);
         let (shutdown, stopped) = watch::channel(false);
+        let (complete, completed) = mpsc::channel(COMMAND_CAPACITY);
         let owner = StreamOwner {
             core,
+            scheduler,
             commands: receiver,
             events,
+            encode,
             shutdown: stopped,
             pushes: HashMap::new(),
             watches: HashMap::new(),
-            tasks: FuturesUnordered::new(),
+            complete,
+            completed,
         };
         (
             Self {
@@ -144,7 +138,6 @@ impl BridgeStreams {
                 shutdown,
                 admission: Arc::new(Mutex::new(())),
             },
-            outbox,
             owner,
         )
     }
@@ -203,25 +196,14 @@ impl BridgeStreams {
         Ok(response)
     }
 
-    /// Applies asynchronous backpressure while submitting a browser stream operation.
-    pub(crate) async fn request(
-        &self,
-        action: StreamAction,
-    ) -> Result<Option<String>, CoreLinkError> {
-        if *self.shutdown.borrow() {
-            return Err(closed());
-        }
-        let (reply, response) = oneshot::channel();
-        self.commands
-            .send(Command { action, reply })
-            .await
-            .map_err(|_| closed())?;
-        response.await.map_err(|_| closed())?
-    }
-
     /// Cancels pending opens, active sources, and queued pushes as one connection lifetime.
     pub(crate) fn close(&self) {
         self.shutdown.send_replace(true);
+    }
+
+    /// Lets transport writers stop without waiting for another source event.
+    pub(crate) fn stopped(&self) -> watch::Receiver<bool> {
+        self.shutdown.subscribe()
     }
 }
 
@@ -232,8 +214,8 @@ impl Drop for BridgeStreams {
     }
 }
 
-impl StreamOwner {
-    /// Polls every stream on this executor without spawning a task per subscription.
+impl<T: Send + 'static> StreamOwner<T> {
+    /// Polls commands and Host job completions without executing Core source code.
     async fn run(mut self) {
         loop {
             if *self.shutdown.borrow() {
@@ -245,7 +227,7 @@ impl StreamOwner {
                     Some(command) => self.dispatch(command),
                     None => break,
                 },
-                Some((key, generation)) = self.tasks.next(), if !self.tasks.is_empty() => {
+                Some((key, generation)) = self.completed.recv() => {
                     match key {
                         StreamKey::Push(id) => {
                             if self.pushes.get(&id).is_some_and(|entry| Arc::ptr_eq(&entry.generation, &generation)) {
@@ -287,9 +269,12 @@ impl StreamOwner {
                 );
                 let core = self.core.clone();
                 let events = self.events.clone();
-                self.spawn(StreamKey::Watch(id.clone()), generation, async move {
-                    forward_watch(core, id, request, tag, reply, cancelled, events).await;
-                });
+                let encode = self.encode;
+                let name = format!("operit-bridge-watch id={id} tag={tag} target={} property={}", request.target, request.propertyName);
+                self.spawn(&name, StreamKey::Watch(id.clone()), generation, reply,
+                    move || Box::pin(async move { core.watch(request).await }),
+                    move |reply, opened| Box::pin(forward_watch(opened, id, tag, reply, cancelled, events, encode)),
+                );
             }
             StreamAction::CloseWatch { id, tag } => {
                 if self.watches.get(&id).is_some_and(|entry| entry.tag == tag) {
@@ -317,9 +302,11 @@ impl StreamOwner {
                     },
                 );
                 let core = self.core.clone();
-                self.spawn(StreamKey::Push(id), generation, async move {
-                    run_push(core, request, reply, receiver).await;
-                });
+                let name = format!("operit-bridge-push id={id} target={} method={}", request.target, request.methodName);
+                self.spawn(&name, StreamKey::Push(id.clone()), generation, reply,
+                    move || Box::pin(async move { core.openPush(request).await }),
+                    move |reply, opened| Box::pin(run_push(opened, id, reply, receiver)),
+                );
             }
             action @ (StreamAction::PushItem(_) | StreamAction::ClosePush(_)) => {
                 let (id, closing) = match &action {
@@ -358,34 +345,77 @@ impl StreamOwner {
         }
     }
 
-    /// Confines a source panic to its stream and keeps generation cleanup on the owner.
-    fn spawn(
+    /// Reserves a movable continuation and a transient affine open in the same bounded Host pool.
+    fn spawn<S: Send + 'static>(
         &mut self,
+        name: &str,
         key: StreamKey,
         generation: Arc<()>,
-        task: impl Future<Output = ()> + 'static,
+        reply: Reply,
+        open: impl FnOnce() -> Pin<Box<dyn Future<Output = Result<S, CoreLinkError>>>> + Send + 'static,
+        task: impl FnOnce(Reply, Opened<S>) -> HostRuntimePooledTask + Send + 'static,
     ) {
-        self.tasks.push(Box::pin(async move {
-            if let Err(payload) = std::panic::AssertUnwindSafe(task).catch_unwind().await {
-                operit_host_api::logHostError(
-                    "BridgeStreams",
-                    &crate::BridgeExports::panic_payload_message(payload.as_ref()),
-                );
+        let (start, started) = oneshot::channel::<Reply>();
+        let complete = self.complete.clone();
+        let completion = (key.clone(), generation);
+        let (mut opened, source) = oneshot::channel();
+        let mut shutdown = self.shutdown.clone();
+        let scheduled = self.scheduler.scheduleHostRuntimePooledTask(
+            name,
+            Some(Box::new(move || Box::pin(async move {
+                let result = std::panic::AssertUnwindSafe(async {
+                    tokio::select! {
+                        biased;
+                        _ = opened.closed() => None,
+                        result = async move { open().await } => Some(result),
+                    }
+                }).catch_unwind().await.unwrap_or_else(|payload| Some(Err(panic_error(payload))));
+                if let Some(result) = result { let _ = opened.send(result); }
+            }))),
+            Box::pin(async move {
+                let Ok(reply) = started.await else { return; };
+                if *shutdown.borrow() { return; }
+                let source = async move { task(reply, source).await };
+                let outcome = std::panic::AssertUnwindSafe(async {
+                    tokio::select! {
+                        biased;
+                        _ = shutdown.changed() => {},
+                        _ = source => {},
+                    }
+                }).catch_unwind().await;
+                if let Err(payload) = outcome {
+                    operit_host_api::logHostError(
+                        "BridgeStreams",
+                        &crate::BridgeExports::panic_payload_message(payload.as_ref()),
+                    );
+                }
+                let _ = complete.send(completion).await;
+            }),
+        );
+        if let Err(error) = scheduled {
+            match &key {
+                StreamKey::Push(id) => { self.pushes.remove(id); }
+                StreamKey::Watch(id) => { self.watches.remove(id); }
             }
-            (key, generation)
-        }));
+            let _ = reply.send(Err(CoreLinkError::internal(error.to_string())));
+            return;
+        }
+        // Transfer the opening reply only after scheduling succeeds so admission errors keep their cause.
+        if let Err(reply) = start.send(reply) {
+            let _ = reply.send(Err(closed()));
+        }
     }
 }
 
 /// Opens and forwards one source with cancellation during both opening and delivery.
-async fn forward_watch(
-    core: Client,
+async fn forward_watch<T: Send>(
+    mut opened: Opened<CoreEventStream>,
     id: String,
-    request: CoreWatchRequest,
     tag: i64,
     reply: Reply,
     mut cancelled: oneshot::Receiver<()>,
-    events: mpsc::Sender<WatchDelivery>,
+    events: mpsc::Sender<T>,
+    encode: fn(WatchDelivery) -> T,
 ) {
     let mut streaming = false;
     let mut reply = Some(reply);
@@ -393,7 +423,7 @@ async fn forward_watch(
         let opened = tokio::select! {
             biased;
             _ = &mut cancelled => Err(CoreLinkError::new("WATCH_CLOSED", "Watch was cancelled while opening")),
-            opened = core.watch(request) => opened,
+            opened = &mut opened => opened.unwrap_or_else(|_| Err(closed())),
         };
         let mut source = match opened {
             Ok(source) => source,
@@ -408,7 +438,7 @@ async fn forward_watch(
                 event = source.recv() => match event { Some(event) => event, None => break },
             };
             let completed = event.kind == CoreEventKind::Completed;
-            let delivery = WatchDelivery { id: id.clone(), tag, event: Ok(Some(event)) };
+            let delivery = encode(WatchDelivery { id: id.clone(), tag, event: Ok(Some(event)) });
             tokio::select! {
                 biased;
                 _ = &mut cancelled => break,
@@ -419,28 +449,22 @@ async fn forward_watch(
     }).catch_unwind().await;
     // Failed opens are settled by their reply; only opened sources publish completion.
     if !streaming && outcome.is_ok() { return; }
-    let event = outcome.map(|_| None).map_err(|payload| {
-        CoreLinkError::new(
-            "FATAL_CORE_PANIC",
-            crate::BridgeExports::panic_payload_message(payload.as_ref()),
-        )
-    });
+    let event = outcome.map(|_| None).map_err(panic_error);
     if let Some(reply) = reply {
         let _ = reply.send(event.map(|_| Some(id)));
         return;
     }
-    let _ = events.send(WatchDelivery { id, tag, event }).await;
+    let _ = events.send(encode(WatchDelivery { id, tag, event })).await;
 }
 
 /// Serializes one Push's values while other streams remain independently pollable.
 async fn run_push(
-    core: Client,
-    request: CorePushRequest,
+    opened: Opened<Box<dyn CoreLinkPushSession>>,
+    id: String,
     reply: Reply,
     mut commands: mpsc::Receiver<Command>,
 ) {
-    let id = request.requestId.0.clone();
-    let mut session = match core.openPush(request).await {
+    let mut session = match opened.await.unwrap_or_else(|_| Err(closed())) {
         Ok(session) => session,
         Err(error) => {
             let _ = reply.send(Err(error));
@@ -483,6 +507,11 @@ async fn run_push(
             _ => unreachable!(),
         }
     }
+}
+
+/// Preserves source panic details in the opening reply or terminal event.
+fn panic_error(payload: Box<dyn std::any::Any + Send>) -> CoreLinkError {
+    CoreLinkError::new("FATAL_CORE_PANIC", crate::BridgeExports::panic_payload_message(payload.as_ref()))
 }
 
 /// Reports a stopped owner instead of leaving an operation waiting indefinitely.

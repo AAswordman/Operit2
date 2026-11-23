@@ -163,24 +163,24 @@ impl ApplicationUpdateManager {
             scheduler
         };
         let _busy = self.begin()?;
-        let host = context
-            .systemOperationHost
-            .as_ref()
-            .ok_or("SystemOperationHost is not registered for application updates")?;
-        let Some(target) = host
-            .applicationUpdateTarget()
-            .map_err(|error| error.to_string())?
-        else {
+        let (prepared, preparation) = tokio::sync::oneshot::channel();
+        scheduler.scheduleHostRuntimeTask("application-update-prepare", Box::new(move || {
+            let result = (|| -> Result<_, String> {
+                let host = context.systemOperationHost.as_ref()
+                    .ok_or("SystemOperationHost is not registered for application updates")?;
+                let Some(target) = host.applicationUpdateTarget().map_err(|e| e.to_string())? else { return Ok(None); };
+                let installTiming = target.installTiming;
+                let target = FullUpdateTarget::fromApplicationTarget(target)?;
+                operit_util::IncrementalUpdate::cleanupUpdateCache(
+                    crate::CORE_VERSION, &target.assetNameForVersion(crate::CORE_VERSION)?, &context,
+                )?;
+                Ok(Some((target, installTiming)))
+            })();
+            let _ = prepared.send(result);
+        })).map_err(|e| e.to_string())?;
+        let Some((target, installTiming)) = preparation.await.map_err(|e| e.to_string())?? else {
             return Ok(None);
         };
-        let installTiming = target.installTiming;
-        let target = FullUpdateTarget::fromApplicationTarget(target)?;
-        // Owner interactions require the Core connection that issued this update check.
-        operit_util::IncrementalUpdate::cleanupUpdateCache(
-            crate::CORE_VERSION,
-            &target.assetNameForVersion(crate::CORE_VERSION)?,
-            &context,
-        )?;
         operit_util::AppLogger::AppLogger::i("ApplicationUpdate", &format!(
             "Checking current={} package={}", crate::CORE_VERSION,
             target.assetNameForVersion(crate::CORE_VERSION)?,

@@ -1332,10 +1332,7 @@ pub fn cleanupUpdateCache(
         .split_once(&format!("-{currentVersion}."))
         .ok_or("Invalid current package identity")?;
     let installedBase = match &context.systemOperationHost {
-        Some(host) => !matches!(
-            host.applicationUpdateBase().map_err(|e| e.to_string())?,
-            operit_host_api::ApplicationUpdateBase::RetainedPackage
-        ),
+        Some(host) => !host.retainsApplicationUpdatePackages(),
         None => false,
     };
     let finished = storage

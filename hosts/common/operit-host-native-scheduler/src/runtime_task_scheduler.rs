@@ -1,8 +1,8 @@
 use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
-    HostRuntimeTurnFuture,
+    HostRuntimeTurnFuture, HostRuntimePooledTask,
 };
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, OnceLock};
 
 const RUNTIME_WORKER_COUNT: usize = 16;
@@ -46,8 +46,14 @@ struct WorkerSignals {
 }
 
 impl TaskQueueState {
+    /// Counts queued and executing work, including suspended affine and movable futures.
+    fn occupied(&self) -> usize {
+        self.pending.len() + self.pooled.len() + self.active.iter().sum::<usize>()
+    }
+
+    /// Chooses an available worker for either affine admissions or movable ready polls.
     fn selectedWorker(&self) -> Option<usize> {
-        if self.pending.is_empty() { return None; }
+        if self.pending.is_empty() && self.ready.is_empty() { return None; }
         (0..self.active.len())
             .map(|offset| (self.cursor + offset) % self.active.len())
             .filter(|worker| !self.polling[*worker])
@@ -72,9 +78,50 @@ impl WorkerSignals {
 
 struct TaskQueueState {
     pending: VecDeque<HostRuntimeAsyncTask>,
+    ready: VecDeque<u64>,
+    pooled: HashMap<u64, PooledEntry>,
+    next_id: u64,
+    prefer_pooled: bool,
     active: Vec<usize>,
     polling: Vec<bool>,
     cursor: usize,
+}
+
+struct PooledEntry {
+    future: Option<HostRuntimePooledTask>,
+    queued: bool,
+    wake: Arc<PooledWake>,
+}
+
+struct PooledWake {
+    id: u64,
+    state: std::sync::Weak<Mutex<TaskQueueState>>,
+    changed: std::sync::Weak<WorkerSignals>,
+}
+
+enum ReadyTask {
+    Affine(HostRuntimeAsyncTask),
+    Pooled(u64, HostRuntimePooledTask, Arc<PooledWake>),
+}
+
+impl std::task::Wake for PooledWake {
+    /// Coalesces wakes, including a wake racing the currently executing poll.
+    fn wake(self: Arc<Self>) {
+        self.wake_by_ref();
+    }
+
+    /// Publishes at most one ready entry without touching an executing future.
+    fn wake_by_ref(self: &Arc<Self>) {
+        let Some(state) = self.state.upgrade() else { return; };
+        let mut queue = state.lock().expect("runtime task queue mutex poisoned");
+        let Some(entry) = queue.pooled.get_mut(&self.id) else { return; };
+        if entry.queued { return; }
+        entry.queued = true;
+        if entry.future.is_none() { return; }
+        queue.ready.push_back(self.id);
+        drop(queue);
+        if let Some(changed) = self.changed.upgrade() { changed.wakeNext(&state); }
+    }
 }
 
 struct TrackedTask {
@@ -153,7 +200,7 @@ impl RuntimeTaskQueue {
             .lock()
             .expect("runtime task queue mutex poisoned");
         if self.changed.is_closed()
-            || tasks.len() > TASK_QUEUE_CAPACITY.saturating_sub(pending.pending.len())
+            || tasks.len() > TASK_QUEUE_CAPACITY.saturating_sub(pending.occupied())
         {
             return Err(());
         }
@@ -161,6 +208,68 @@ impl RuntimeTaskQueue {
         drop(pending);
         self.changed.wakeNext(&self.pending);
         Ok(())
+    }
+
+    /// Atomically reserves live capacity for both stages; wakes reuse their reservation.
+    fn sendPooled(&self, future: HostRuntimePooledTask, opening: Option<HostRuntimeAsyncTask>) -> Result<(), ()> {
+        let mut state = self.pending.lock().expect("runtime task queue mutex poisoned");
+        if self.changed.is_closed() || 1 + usize::from(opening.is_some()) > TASK_QUEUE_CAPACITY.saturating_sub(state.occupied()) {
+            return Err(());
+        }
+        let id = state.next_id;
+        state.next_id = id.checked_add(1).ok_or(())?;
+        let wake = Arc::new(PooledWake {
+            id, state: Arc::downgrade(&self.pending), changed: Arc::downgrade(&self.changed),
+        });
+        state.pooled.insert(id, PooledEntry { future: Some(future), queued: true, wake });
+        state.ready.push_back(id);
+        state.pending.extend(opening);
+        drop(state);
+        self.changed.wakeNext(&self.pending);
+        Ok(())
+    }
+
+    /// Applies common monitoring and atomic admission for every native Host embedding.
+    pub(crate) fn schedulePooled(&self, name: &str, opening: Option<HostRuntimeAsyncTask>, task: HostRuntimePooledTask) -> HostResult<()> {
+        self.sendPooled(
+            crate::task_poll_monitor::monitorFuture(name, task)?,
+            opening.map(|opening| crate::task_poll_monitor::monitorTask(&format!("{name} phase=open"), opening)).transpose()?,
+        ).map_err(|_| HostError::new(format!("pooled task queue is closed or full: {name}")))
+    }
+}
+
+/// Polls one movable continuation without retaining queue locks during application code.
+fn pollPooled(
+    id: u64,
+    mut future: HostRuntimePooledTask,
+    wake: Arc<PooledWake>,
+    state: &Mutex<TaskQueueState>,
+    changed: &std::sync::Weak<WorkerSignals>,
+    worker: usize,
+) {
+    let lease = PollLease { state, changed, worker };
+    if let Some(changed) = changed.upgrade() { changed.wakeNext(state); }
+    let waker = std::task::Waker::from(wake);
+    let mut cx = std::task::Context::from_waker(&waker);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| future.as_mut().poll(&mut cx)));
+    {
+        let mut queue = state.lock().expect("runtime task queue mutex poisoned");
+        if matches!(outcome, Ok(std::task::Poll::Pending)) {
+            let entry = queue.pooled.get_mut(&id).expect("admitted pooled task");
+            entry.future = Some(future);
+            if entry.queued {
+                queue.ready.push_back(id);
+            }
+            return;
+        }
+        // The removed entry has no future: destruction runs outside the queue lock.
+        queue.pooled.remove(&id);
+    }
+    // Keep the worker marked busy while destructors execute arbitrary source callbacks.
+    let dropped = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| drop(future)));
+    drop(lease);
+    if outcome.is_err() || dropped.is_err() {
+        operit_host_api::logHostError("HostRuntimePool", "Pooled task panicked during poll or destruction");
     }
 }
 
@@ -178,6 +287,10 @@ pub(crate) fn spawnTaskPoolWithOptions(
 ) -> Result<RuntimeTaskQueue, String> {
     let pending = Arc::new(Mutex::new(TaskQueueState {
         pending: VecDeque::new(),
+        ready: VecDeque::new(),
+        pooled: HashMap::new(),
+        next_id: 0,
+        prefer_pooled: true,
         active: vec![0; count],
         polling: vec![false; count],
         cursor: 0,
@@ -229,9 +342,22 @@ pub(crate) fn spawnTaskPoolWithOptions(
                                     pending.lock().expect("runtime task queue mutex poisoned");
                                 let selected = state.selectedWorker();
                                 if selected == Some(index) {
-                                    let task = state.pending.pop_front();
-                                    if task.is_some() {
+                                    let task = if !state.ready.is_empty() && (state.prefer_pooled || state.pending.is_empty()) {
+                                        let id = state.ready.pop_front().expect("ready pooled task");
+                                        let entry = state.pooled.get_mut(&id).expect("admitted pooled task");
+                                        entry.queued = false;
+                                        let task = ReadyTask::Pooled(id, entry.future.take().expect("unpolled ready task"), entry.wake.clone());
+                                        state.polling[index] = true;
+                                        state.prefer_pooled = false;
+                                        Some(task)
+                                    } else {
+                                        state.prefer_pooled = true;
+                                        state.pending.pop_front().map(ReadyTask::Affine)
+                                    };
+                                    if matches!(task, Some(ReadyTask::Affine(_))) {
                                         state.active[index] += 1;
+                                    }
+                                    if task.is_some() {
                                         state.cursor = (index + 1) % count;
                                     }
                                     task
@@ -246,12 +372,19 @@ pub(crate) fn spawnTaskPoolWithOptions(
                                 continue;
                             };
                             // Both factory and future stay inside the LocalSet panic boundary.
-                            local.spawn_local(TrackedTask {
-                                future: Box::pin(async move { task().await }),
-                                state: pending.clone(),
-                                changed: changed.clone(),
-                                worker: index,
-                            });
+                            match task {
+                                ReadyTask::Affine(task) => {
+                                    local.spawn_local(TrackedTask {
+                                        future: Box::pin(async move { task().await }),
+                                        state: pending.clone(),
+                                        changed: changed.clone(),
+                                        worker: index,
+                                    });
+                                }
+                                ReadyTask::Pooled(id, future, wake) => {
+                                    pollPooled(id, future, wake, &pending, &changed, index);
+                                }
+                            }
                             if let Some(changed) = changed.upgrade() {
                                 changed.wakeNext(&pending);
                             }
@@ -291,14 +424,14 @@ impl RuntimeTaskPool {
     /// Enqueues one coordination task on a free persistent worker.
     fn scheduleCoordination(&self, taskName: &str, task: HostRuntimeAsyncTask) -> HostResult<()> {
         self.coordination
-            .send(task)
+            .send(crate::task_poll_monitor::monitorTask(taskName, task)?)
             .map_err(|_| HostError::new(format!("coordination task worker closed: {taskName}")))
     }
 
     /// Enqueues one possibly blocking task on a free blocking worker.
     fn scheduleBlocking(&self, taskName: &str, task: HostRuntimeAsyncTask) -> HostResult<()> {
         self.blocking
-            .send(task)
+            .send(crate::task_poll_monitor::monitorTask(taskName, task)?)
             .map_err(|_| HostError::new(format!("blocking task worker closed: {taskName}")))
     }
 }
@@ -338,7 +471,8 @@ mod tests {
     fn empty_queue_does_not_notify_dispatchers() {
         let (sender, receiver) = tokio::sync::watch::channel(());
         let signals = WorkerSignals { workers: vec![sender] };
-        let state = Mutex::new(TaskQueueState { pending: VecDeque::new(), active: vec![0],
+        let state = Mutex::new(TaskQueueState { pending: VecDeque::new(), ready: VecDeque::new(),
+            pooled: HashMap::new(), next_id: 0, prefer_pooled: true, active: vec![0],
             polling: vec![false], cursor: 0 });
         signals.wakeNext(&state);
         assert!(!receiver.has_changed().unwrap());
@@ -352,6 +486,7 @@ mod tests {
         let signals = WorkerSignals { workers: senders };
         let state = Mutex::new(TaskQueueState {
             pending: VecDeque::from([Box::new(|| -> std::pin::Pin<Box<dyn std::future::Future<Output = ()>>> { Box::pin(async {}) }) as HostRuntimeAsyncTask]),
+            ready: VecDeque::new(), pooled: HashMap::new(), next_id: 0, prefer_pooled: true,
             active: vec![0, 0, 0], polling: vec![true, false, false], cursor: 0,
         });
         signals.wakeNext(&state);
@@ -380,6 +515,118 @@ mod tests {
         let mut delivered = std::collections::BTreeSet::new();
         for _ in 0..256 { delivered.insert(received.recv_timeout(Duration::from_secs(5)).unwrap()); }
         assert_eq!(delivered.len(), 256);
+    }
+
+    /// Pending continuations can resume elsewhere after their original worker blocks.
+    #[test]
+    fn pooled_continuation_escapes_its_original_blocked_worker() {
+        let pool = spawnTaskPool("test-pooled-move", 2).unwrap();
+        let (release_first, first_wait) = mpsc::channel();
+        let (first_entered, first_ready) = mpsc::channel();
+        pool.send(Box::new(move || Box::pin(async move {
+            first_entered.send(std::thread::current().id()).unwrap();
+            let _ = first_wait.recv_timeout(Duration::from_secs(5));
+        }))).unwrap();
+        let first = first_ready.recv_timeout(Duration::from_secs(3)).unwrap();
+
+        let (resume, resumed) = tokio::sync::oneshot::channel();
+        let (release_second, second_wait) = mpsc::channel();
+        let (armed, armed_ready) = mpsc::channel();
+        let (blocked, blocked_ready) = mpsc::channel();
+        pool.send(Box::new(move || Box::pin(async move {
+            armed.send(std::thread::current().id()).unwrap();
+            resumed.await.unwrap();
+            blocked.send(std::thread::current().id()).unwrap();
+            let _ = second_wait.recv_timeout(Duration::from_secs(5));
+        }))).unwrap();
+        let original = armed_ready.recv_timeout(Duration::from_secs(3)).unwrap();
+        assert_ne!(first, original);
+
+        let (wake, wait) = tokio::sync::oneshot::channel();
+        let (pending, pending_ready) = mpsc::channel();
+        let (done, completed) = mpsc::channel();
+        pool.sendPooled(Box::pin(async move {
+            pending.send(std::thread::current().id()).unwrap();
+            wait.await.unwrap();
+            done.send(std::thread::current().id()).unwrap();
+        }), None).unwrap();
+        assert_eq!(pending_ready.recv_timeout(Duration::from_secs(3)).unwrap(), original);
+        release_first.send(()).unwrap();
+        resume.send(()).unwrap();
+        assert_eq!(blocked_ready.recv_timeout(Duration::from_secs(3)).unwrap(), original);
+        wake.send(()).unwrap();
+        let result = completed.recv_timeout(Duration::from_secs(3));
+        release_second.send(()).unwrap();
+        assert_eq!(result.unwrap(), first);
+    }
+
+    /// Wake storms during a poll schedule exactly one continuation without losing the wake.
+    #[test]
+    fn pooled_wakes_are_coalesced_while_polling() {
+        let pool = spawnTaskPool("test-pooled-wake", 2).unwrap();
+        let (done, completed) = mpsc::channel();
+        let mut polls = 0;
+        pool.sendPooled(Box::pin(std::future::poll_fn(move |cx| {
+            polls += 1;
+            if polls == 1 {
+                for _ in 0..10_000 { cx.waker().wake_by_ref(); }
+                return std::task::Poll::Pending;
+            }
+            done.send(polls).unwrap();
+            std::task::Poll::Ready(())
+        })), None).unwrap();
+        assert_eq!(completed.recv_timeout(Duration::from_secs(3)).unwrap(), 2);
+    }
+
+    /// Pending subscriptions retain bounded admission, then completion releases the reservation.
+    #[test]
+    fn pooled_pending_tasks_retain_admission_capacity() {
+        let pool = spawnTaskPool("test-pooled-limit", 2).unwrap();
+        let (ready, started) = mpsc::channel();
+        let mut releases: Vec<tokio::sync::oneshot::Sender<()>> = Vec::new();
+        for index in 0..TASK_QUEUE_CAPACITY {
+            if index == TASK_QUEUE_CAPACITY - 1 {
+                assert!(pool.schedulePooled("atomic-pair",
+                    Some(Box::new(|| panic!("rejected opener started"))),
+                    Box::pin(async { panic!("rejected continuation started") }),
+                ).is_err());
+            }
+            let ready = ready.clone();
+            let (release, wait) = tokio::sync::oneshot::channel();
+            releases.push(release);
+            pool.sendPooled(Box::pin(async move {
+                ready.send(()).unwrap();
+                let _ = wait.await;
+            }), None).unwrap();
+        }
+        for _ in 0..TASK_QUEUE_CAPACITY { started.recv_timeout(Duration::from_secs(5)).unwrap(); }
+        assert!(pool.sendPooled(Box::pin(async {}), None).is_err());
+        assert!(pool.send(Box::new(|| Box::pin(async {}))).is_err());
+        drop(releases);
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !pool.pending.lock().unwrap().pooled.is_empty() {
+            assert!(std::time::Instant::now() < deadline);
+            std::thread::yield_now();
+        }
+        pool.sendPooled(Box::pin(async {}), None).unwrap();
+    }
+
+    /// A panic releases the reservation and leaves the same worker available for later polls.
+    #[test]
+    fn pooled_panics_do_not_kill_workers() {
+        operit_host_api::setHostLogSink(Arc::new(|tag, message| eprintln!("{tag}: {message}")));
+        let pool = spawnTaskPool("test-pooled-panic", 1).unwrap();
+        let (entered, started) = mpsc::channel();
+        pool.sendPooled(Box::pin(async move {
+            entered.send(std::thread::current().id()).unwrap();
+            panic!("pooled poll panic");
+        }), None).unwrap();
+        let owner = started.recv_timeout(Duration::from_secs(3)).unwrap();
+        let (done, completed) = mpsc::channel();
+        pool.sendPooled(Box::pin(async move {
+            done.send(std::thread::current().id()).unwrap();
+        }), None).unwrap();
+        assert_eq!(completed.recv_timeout(Duration::from_secs(3)).unwrap(), owner);
     }
 
     /// A resumed blocking call must not retain the queue needed by an idle worker.
@@ -593,7 +840,7 @@ impl NativeHostRuntimeTaskSchedulerHost {
         .as_ref()
         .map_err(|error| HostError::new(format!("create JavaScript task pool failed: {error}")))?;
         queue
-            .send(task)
+            .send(crate::task_poll_monitor::monitorTask(name, task)?)
             .map_err(|_| HostError::new(format!("JavaScript task queue is closed or full: {name}")))
     }
 
@@ -741,6 +988,13 @@ impl HostRuntimeTaskSchedulerHost for NativeHostRuntimeTaskSchedulerHost {
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
         self.scheduleHostRuntimeAsyncTask(taskName, task)
+    }
+
+    /// Shares existing workers while keeping control polls independent of affine business work.
+    fn scheduleHostRuntimePooledTask(&self, taskName: &str, opening: Option<HostRuntimeAsyncTask>, task: HostRuntimePooledTask) -> HostResult<()> {
+        let pool = runtimeTaskPool()?;
+        let queue = if opening.is_some() { &pool.blocking } else { &pool.coordination };
+        queue.schedulePooled(taskName, opening, task)
     }
 
     /// Waits asynchronously and executes delayed work on the blocking pool.

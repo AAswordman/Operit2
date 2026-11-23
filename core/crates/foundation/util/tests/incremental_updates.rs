@@ -1275,6 +1275,10 @@ fn startup_cleans_only_obsolete_update_files() {
     cleanupUpdateCache("2.0.0-preview.2", current, &fixture.context).unwrap();
     assert!(storage.exists(&future).unwrap());
     assert!(storage.exists(&format!("{root}/{current}")).unwrap());
+    let mut android = fixture.context.clone();
+    android.systemOperationHost = Some(apk::application_host(String::new()));
+    cleanupUpdateCache("2.0.0-preview.2", current, &android).unwrap();
+    assert!(!storage.exists(&format!("{root}/{current}")).unwrap());
     for path in [
         &old,
         &abandoned,

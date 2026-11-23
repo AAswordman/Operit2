@@ -46,6 +46,10 @@ impl SystemOperationHost for FlutterSystemOperationBridge {
     fn applicationUpdateBase(&self) -> HostResult<operit_host_api::ApplicationUpdateBase> {
         self.host.applicationUpdateBase()
     }
+    /// Forwards cache policy without requesting an installed package from the owner.
+    fn retainsApplicationUpdatePackages(&self) -> bool {
+        self.host.retainsApplicationUpdatePackages()
+    }
     /// Preserves the selected host's application installation identity.
     fn applicationUpdateTarget(
         &self,

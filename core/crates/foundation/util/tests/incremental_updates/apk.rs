@@ -3,12 +3,15 @@ use operit_host_api::*;
 use super::flutter_system_operation::{FlutterSystemBindings, FlutterSystemOperationBridge};
 
 /// Assembles the production Android system host behind the same Flutter decorator used by the app.
-fn application_host(path: String) -> Arc<dyn SystemOperationHost> {
+pub(super) fn application_host(path: String) -> Arc<dyn SystemOperationHost> {
     let host = android_system_operation::AndroidSystemOperationHost::new(
         Arc::new(|_, _| panic!("unexpected settings read")),
         Arc::new(|_, _, _| panic!("unexpected settings write")),
         Arc::new(move |operation, params| match operation {
-            "application_update_base" => Ok(serde_json::json!({"path": path})),
+            "application_update_base" => {
+                assert!(!path.is_empty(), "cache cleanup must not request an installed APK from the owner");
+                Ok(serde_json::json!({"path": path}))
+            }
             "install_app" => {
                 assert!(std::path::Path::new(params["path"].as_str().unwrap()).is_file());
                 Ok(serde_json::json!({

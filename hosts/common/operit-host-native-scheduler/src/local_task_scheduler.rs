@@ -2,7 +2,7 @@
 use crate::runtime_task_scheduler::{spawnTaskPoolWithOptions, RuntimeTaskQueue};
 use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
-    HostRuntimeTurnFuture,
+    HostRuntimeTurnFuture, HostRuntimePooledTask,
 };
 use std::sync::Arc;
 
@@ -72,7 +72,7 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
         self.tasks
-            .send(task)
+            .send(crate::task_poll_monitor::monitorTask(name, task)?)
             .map_err(|_| HostError::new(format!("Host async queue is closed or full: {name}")))
     }
 
@@ -83,7 +83,7 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
         self.blocking
-            .send(task)
+            .send(crate::task_poll_monitor::monitorTask(name, task)?)
             .map_err(|_| HostError::new(format!("Host blocking queue is closed or full: {name}")))
     }
 
@@ -94,6 +94,12 @@ impl HostRuntimeTaskSchedulerHost for LocalHostRuntimeTaskSchedulerHost {
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()> {
         self.scheduleHostRuntimeAsyncTask(name, task)
+    }
+
+    /// Admits movable source polls to the existing bounded device blocking pool.
+    fn scheduleHostRuntimePooledTask(&self, name: &str, opening: Option<HostRuntimeAsyncTask>, task: HostRuntimePooledTask) -> HostResult<()> {
+        let queue = if opening.is_some() { &self.blocking } else { &self.tasks };
+        queue.schedulePooled(name, opening, task)
     }
 
     /// Waits without occupying a thread and runs the synchronous callback on blocking capacity.

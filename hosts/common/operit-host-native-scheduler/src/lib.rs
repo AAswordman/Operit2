@@ -10,6 +10,7 @@ mod javascript_runtime;
 mod javascript_values;
 mod runtime_event_scheduler;
 mod runtime_task_scheduler;
+mod task_poll_monitor;
 mod terminal_command;
 
 #[cfg(feature = "javascript")]

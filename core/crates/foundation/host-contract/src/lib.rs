@@ -2456,6 +2456,9 @@ pub type HostRuntimeTask = Box<dyn FnOnce() + Send + 'static>;
 pub type HostRuntimeAsyncTask =
     Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = ()> + 'static>> + Send + 'static>;
 
+/// Owns a thread-independent continuation that a Host pool may move between polls.
+pub type HostRuntimePooledTask = Pin<Box<dyn Future<Output = ()> + Send + 'static>>;
+
 /// Represents one platform-owned asynchronous delay that may cross runtime schedulers.
 pub type HostRuntimeTurnFuture = Pin<Box<dyn Future<Output = HostResult<()>> + Send + 'static>>;
 
@@ -2728,6 +2731,17 @@ pub trait HostRuntimeTaskSchedulerHost: Send + Sync {
         taskName: &str,
         task: HostRuntimeAsyncTask,
     ) -> HostResult<()>;
+
+    /// Admits movable work; an optional affine opener reserves both stages atomically.
+    /// Native Hosts use coordination capacity without an opener, blocking capacity with one.
+    fn scheduleHostRuntimePooledTask(
+        &self,
+        _taskName: &str,
+        _opening: Option<HostRuntimeAsyncTask>,
+        _task: HostRuntimePooledTask,
+    ) -> HostResult<()> {
+        Err(HostError::new("Pooled runtime tasks are not supported by this host"))
+    }
 
     /// Schedules a named runtime task after a platform-owned delay.
     fn scheduleDelayedHostRuntimeTask(
@@ -3515,6 +3529,10 @@ pub trait SystemOperationHost: Send + Sync {
     /// Selects the platform's package source; desktop installers use node-local retained packages.
     fn applicationUpdateBase(&self) -> HostResult<ApplicationUpdateBase> {
         Ok(ApplicationUpdateBase::RetainedPackage)
+    }
+    /// Reports cache retention policy without querying an installer or its owner UI.
+    fn retainsApplicationUpdatePackages(&self) -> bool {
+        true
     }
     /// Reports the running application's distribution; None disables in-app updates.
     fn applicationUpdateTarget(&self) -> HostResult<Option<ApplicationUpdateTarget>> {

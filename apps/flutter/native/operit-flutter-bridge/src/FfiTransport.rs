@@ -3,7 +3,7 @@
 
 use crate::BridgeCodec::*;
 use crate::BridgeExports;
-use crate::BridgeTransport::{BridgeStreams, StreamAction, StreamSubmission, WATCH_BATCH_CAPACITY};
+use crate::BridgeTransport::{BridgeStreams, StreamAction, StreamSubmission, WatchDelivery, WATCH_BATCH_CAPACITY};
 use crate::OperitFlutterBridge;
 use futures_util::FutureExt;
 use operit_host_native_common::DartPort::{recent_post_diagnostics, DartPort, PostCObject};
@@ -13,31 +13,25 @@ use operit_host_native_common::SharedBuffer::{
 use operit_link::{CoreLinkError, CoreLinkSharedClient};
 use std::ffi::{c_char, c_void, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
+use tokio::sync::mpsc;
 
 pub struct FfiSession {
     bridge: Arc<OperitFlutterBridge>,
     target: OnceLock<Arc<dyn Fn(Vec<NativeFrame>) -> bool + Send + Sync>>,
-    delivery: Mutex<()>,
+    outbox: OnceLock<mpsc::Sender<Vec<NativeFrame>>>,
     streams: OnceLock<BridgeStreams>,
     closed: AtomicBool,
 }
 
 impl FfiSession {
-    /// Delivers one ordinary response using the same batch envelope as watch events.
-    fn post(&self, frame: NativeFrame) {
-        self.postBatch(vec![frame]);
-    }
-
-    /// Transfers ready frames together while preserving each frame's binary attachment scope.
+    /// Hands encoded frames to the nonblocking platform sink without any delivery lock.
     fn postBatch(&self, frames: Vec<NativeFrame>) {
-        let delivery = self.delivery.lock().expect("FFI delivery lock");
         if self.closed.load(Ordering::Acquire) {
             return;
         }
         let frame_count = frames.len();
         if !self.target.get().expect("FFI session must be connected")(frames) {
-            drop(delivery);
             operit_util::AppLogger::AppLogger::w(
                 "CoreFfiTransport",
                 &format!(
@@ -51,7 +45,6 @@ impl FfiSession {
 
     /// Cancels every source and pending stream operation belonging to this connection.
     pub(crate) fn close(&self) {
-        let _delivery = self.delivery.lock().expect("FFI delivery lock");
         self.closed.store(true, Ordering::Release);
         if let Some(streams) = self.streams.get() {
             streams.close();
@@ -75,8 +68,9 @@ impl FfiSession {
             return false;
         }
         let scheduler = self.bridge.runtimeTaskScheduler();
-        let (streams, mut events) =
-            match BridgeStreams::start(self.bridge.localCore.clone(), scheduler.as_ref()) {
+        let (outbox, mut events) = mpsc::channel(WATCH_BATCH_CAPACITY);
+        let streams =
+            match BridgeStreams::start(self.bridge.localCore.clone(), scheduler.clone(), outbox.clone(), watchFrames) {
                 Ok(connection) => connection,
                 Err(error) => {
                     operit_util::AppLogger::AppLogger::e(
@@ -86,36 +80,28 @@ impl FfiSession {
                     return false;
                 }
             };
+        let mut stopped = streams.stopped();
+        if self.outbox.set(outbox).is_err() { return false; }
         if self.streams.set(streams).is_err() {
             return false;
         }
         let weak = Arc::downgrade(self);
-        let result = scheduler.scheduleHostRuntimeAsyncTask(
-            "operit-ffi-stream-delivery",
-            Box::new(move || {
-                Box::pin(async move {
+        let result = scheduler.scheduleHostRuntimePooledTask(
+            "operit-ffi-delivery",
+            None,
+            Box::pin(async move {
                     let mut batch = Vec::with_capacity(WATCH_BATCH_CAPACITY);
-                    while events.recv_many(&mut batch, WATCH_BATCH_CAPACITY).await != 0 {
+                    loop {
+                        tokio::select! {
+                            biased;
+                            _ = stopped.changed() => return,
+                            count = events.recv_many(&mut batch, WATCH_BATCH_CAPACITY) => if count == 0 { return; },
+                        }
                         let Some(session) = weak.upgrade() else {
                             return;
                         };
-                        session.postBatch(
-                            batch
-                                .drain(..)
-                                .flat_map(|delivery| match delivery.event {
-                                    Ok(Some(event)) => {
-                                        vec![NativeFrame::watch(delivery.tag, &delivery.id, event)]
-                                    }
-                                    Ok(None) => vec![NativeFrame::empty(3, delivery.tag)],
-                                    Err(error) => vec![
-                                        NativeFrame::result(2, delivery.tag, Err::<(), _>(error)),
-                                        NativeFrame::empty(3, delivery.tag),
-                                    ],
-                                })
-                                .collect(),
-                        );
+                        session.postBatch(batch.drain(..).flatten().collect());
                     }
-                })
             }),
         );
         if let Err(error) = result {
@@ -146,7 +132,7 @@ impl FfiSession {
         Arc::new(Self {
             bridge,
             target: OnceLock::new(),
-            delivery: Mutex::new(()),
+            outbox: OnceLock::new(),
             streams: OnceLock::new(),
             closed: AtomicBool::new(false),
         })
@@ -161,59 +147,32 @@ impl FfiSession {
         length: usize,
         buffers: Arc<[operit_link::CoreBytes]>,
     ) {
-        let stream = match operation {
-            1 | 2 | 3 | 5 | 6 => {
-                Some(self.submitStream(operation, request, &bytes[..length], buffers.clone()))
-            }
-            _ => None,
-        };
+        let scheduler = self.bridge.runtimeTaskScheduler();
         let session = self.clone();
-        let result = self
-            .bridge
-            .runtimeTaskScheduler()
-            .scheduleHostRuntimeAsyncTask(
-                "operit-connection-request",
-                Box::new(move || {
-                    Box::pin(async move {
-                        let response = std::panic::AssertUnwindSafe(async {
-                            match stream {
-                                Some(reply) => {
-                                    let result = match reply {
-                                        Ok(reply) => reply.await,
-                                        Err(error) => Err(error),
-                                    };
-                                    Ok(NativeFrame::result(0, request, result))
-                                }
-                                None => Ok(session
-                                    .dispatch(operation, request, &bytes[..length], buffers)
-                                    .await),
-                            }
-                        })
-                        .catch_unwind()
-                        .await;
-                        let response = match response {
-                            Ok(Ok(frame)) => frame,
-                            Ok(Err(error)) => {
-                                NativeFrame::result(0, request, Err::<(), CoreLinkError>(error))
-                            }
-                            Err(payload) => NativeFrame::error(
-                                0,
-                                request,
-                                "FATAL_CORE_PANIC",
-                                BridgeExports::panic_payload_message(payload.as_ref()),
-                            ),
-                        };
-                        session.post(response);
-                    })
-                }),
-            );
+        let outbox = self.outbox.get().expect("FFI outbox attached").clone();
+        let result = match operation {
+            1 | 2 | 3 | 5 | 6 => {
+                let reply = self.submitStream(operation, request, &bytes[..length], buffers);
+                scheduler.scheduleHostRuntimePooledTask("operit-connection-reply", None, Box::pin(async move {
+                    let result = match reply { Ok(reply) => reply.await, Err(error) => Err(error) };
+                    let _ = outbox.send(vec![NativeFrame::result(0, request, result)]).await;
+                }))
+            }
+            _ => scheduler.scheduleHostRuntimeAsyncTask("operit-connection-call", Box::new(move || Box::pin(async move {
+                let response = std::panic::AssertUnwindSafe(session.dispatch(operation, request, &bytes[..length], buffers))
+                    .catch_unwind().await.unwrap_or_else(|payload| NativeFrame::error(
+                        0, request, "FATAL_CORE_PANIC", BridgeExports::panic_payload_message(payload.as_ref()),
+                    ));
+                let _ = outbox.send(vec![response]).await;
+            }))),
+        };
         if let Err(error) = result {
-            self.post(NativeFrame::error(
+            self.postBatch(vec![NativeFrame::error(
                 0,
                 request,
                 "FFI_SCHEDULE",
                 error.to_string(),
-            ));
+            )]);
         }
     }
 
@@ -269,28 +228,33 @@ impl FfiSession {
         }
         match operation {
             0 => {
-                let result = match operit_link::codec::withLinkBuffers(buffers, || {
-                    decode_native_call_request(bytes)
-                }) {
-                    Ok(request) => self.bridge.prepareCall(request).execute().await.result,
-                    Err(error) => Err(error),
-                };
+                let result = async {
+                    let request = operit_link::codec::withLinkBuffers(buffers, || decode_native_call_request(bytes))?;
+                    self.bridge.prepareCall(request).execute().await.result
+                }.await;
                 NativeFrame::result(0, request, result)
             }
             4 => {
-                let result = match operit_link::codec::withLinkBuffers(buffers, || {
-                    decode_native_watch_snapshot_request(bytes)
-                }) {
-                    Ok(request) => {
-                        CoreLinkSharedClient::watchSnapshot(self.bridge.localCore.as_ref(), request)
-                            .await
-                    }
-                    Err(error) => Err(error),
-                };
+                let result = async {
+                    let request = operit_link::codec::withLinkBuffers(buffers, || decode_native_watch_snapshot_request(bytes))?;
+                    CoreLinkSharedClient::watchSnapshot(self.bridge.localCore.as_ref(), request).await
+                }.await;
                 NativeFrame::result(0, request, result.map(native_watch_event_payload))
             }
             _ => NativeFrame::error(0, request, "FFI_OPERATION", "Unknown FFI operation"),
         }
+    }
+}
+
+/// Encodes on the individual source task before it enters the shared ready-frame outbox.
+fn watchFrames(delivery: WatchDelivery) -> Vec<NativeFrame> {
+    match delivery.event {
+        Ok(Some(event)) => vec![NativeFrame::watch(delivery.tag, &delivery.id, event)],
+        Ok(None) => vec![NativeFrame::empty(3, delivery.tag)],
+        Err(error) => vec![
+            NativeFrame::result(2, delivery.tag, Err::<(), _>(error)),
+            NativeFrame::empty(3, delivery.tag),
+        ],
     }
 }
 

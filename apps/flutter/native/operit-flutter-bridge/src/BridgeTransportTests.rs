@@ -15,6 +15,7 @@ struct TestCore {
     watches: Mutex<HashMap<String, oneshot::Receiver<CoreEventStream>>>,
     pushes: Mutex<HashMap<String, Box<dyn CoreLinkPushSession>>>,
     opening: Arc<AtomicUsize>,
+    blocking: Mutex<Option<(oneshot::Sender<()>, std::sync::mpsc::Receiver<()>)>>,
 }
 
 impl TestCore {
@@ -48,6 +49,11 @@ impl CoreLinkSharedClient for TestCore {
     /// Waits for the test to provide a source while exposing cancellation ownership.
     async fn watch(&self, request: CoreWatchRequest) -> Result<CoreEventStream, CoreLinkError> {
         if request.propertyName == "panic" { panic!("Watch opening panicked"); }
+        if request.propertyName == "blocking" {
+            let (entered, released) = self.blocking.lock().unwrap().take().unwrap();
+            let _ = entered.send(());
+            let _ = released.recv();
+        }
         self.opening.fetch_add(1, Ordering::SeqCst);
         let _opening = Opening(self.opening.clone());
         let receiver = self
@@ -126,11 +132,91 @@ fn event() -> CoreEvent {
 
 /// Drives one production owner alongside a bounded test scenario.
 async fn drive(owner: StreamOwner, scenario: impl Future<Output = ()>) {
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        tokio::join!(owner.run(), scenario);
-    })
-    .await
-    .expect("Stream owner scenario stalled");
+    let scheduler = owner.scheduler.clone();
+    tokio::select! {
+        _ = scheduler.waitForHostRuntimeDelay(5_000) => panic!("Stream owner scenario stalled"),
+        _ = async { tokio::join!(owner.run(), scenario); } => {},
+    }
+}
+
+/// Uses production Host workers so synchronous source polls are isolated from the test owner.
+fn channel(core: Client) -> (BridgeStreams, mpsc::Receiver<WatchDelivery>, StreamOwner) {
+    let (events, receiver) = mpsc::channel(WATCH_BATCH_CAPACITY);
+    let (client, owner) = BridgeStreams::channel(
+        core,
+        Arc::new(operit_host_native_common::NativeHostRuntimeTaskSchedulerHost::new()),
+        events,
+        std::convert::identity,
+    );
+    (client, receiver, owner)
+}
+
+/// A synchronously blocked Core open must leave the owner, unrelated watches and cancellation responsive.
+#[tokio::test]
+async fn synchronous_watch_open_does_not_block_the_connection_owner() {
+    let core = Arc::new(TestCore::default());
+    let (entered, entering) = oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    *core.blocking.lock().unwrap() = Some((entered, released));
+    let blocked_source = core.watch_source("blocking");
+    let healthy_source = core.watch_source("healthy");
+    let (sender, stream) = CoreEventStream::channel();
+    healthy_source.send(stream).ok().unwrap();
+    let scheduler = Arc::new(operit_host_native_common::NativeHostRuntimeTaskSchedulerHost::new());
+    let (outbox, mut events) = mpsc::channel(WATCH_BATCH_CAPACITY);
+    let client = BridgeStreams::start(core, scheduler.clone(), outbox, |delivery| delivery.tag).unwrap();
+    let scenario = async move {
+        let opening = client.submit(open_watch("blocked", "blocking", 1)).unwrap();
+        entering.await.unwrap();
+        client.enqueue(open_watch("healthy", "healthy", 2)).await.unwrap();
+        sender.send(event()).unwrap();
+        assert_eq!(events.recv().await.unwrap(), 2);
+        // The owner acknowledges cancellation before the blocked synchronous call returns.
+        client.enqueue(StreamAction::CloseWatch { id: "blocked".into(), tag: 1 }).await.unwrap();
+        drop(release);
+        assert_eq!(opening.await.unwrap().unwrap_err().code, "WATCH_CLOSED");
+        while !blocked_source.is_closed() { tokio::task::yield_now().await; }
+        assert!(blocked_source.is_closed());
+        client.close();
+    };
+    tokio::select! {
+        _ = scheduler.waitForHostRuntimeDelay(5_000) => panic!("Production owner stalled"),
+        _ = scenario => {},
+    }
+}
+
+/// Synchronous event conversion must not block commands or delivery on another subscription.
+#[tokio::test]
+async fn synchronous_watch_event_does_not_block_other_subscriptions() {
+    let core = Arc::new(TestCore::default());
+    let slow = core.watch_source("slow-map");
+    let healthy = core.watch_source("healthy-map");
+    let (entered, entering) = oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel::<()>();
+    let (slow_sender, values) = mpsc::unbounded_channel::<()>();
+    let mut entered = Some(entered);
+    let slow_stream = CoreEventStream::fromMappedReceiver(values, move |_| {
+        if let Some(entered) = entered.take() {
+            let _ = entered.send(());
+            let _ = released.recv();
+        }
+        Some(event())
+    });
+    slow.send(slow_stream).ok().unwrap();
+    let (healthy_sender, stream) = CoreEventStream::channel();
+    healthy.send(stream).ok().unwrap();
+    let (client, mut events, owner) = channel(core);
+    drive(owner, async move {
+        client.enqueue(open_watch("slow", "slow-map", 1)).await.unwrap();
+        client.enqueue(open_watch("healthy", "healthy-map", 2)).await.unwrap();
+        slow_sender.send(()).unwrap();
+        entering.await.unwrap();
+        healthy_sender.send(event()).unwrap();
+        assert_eq!(events.recv().await.unwrap().tag, 2);
+        client.enqueue(StreamAction::CloseWatch { id: "slow".into(), tag: 1 }).await.unwrap();
+        drop(release);
+        client.close();
+    }).await;
 }
 
 /// Verifies that a blocked push cannot serialize another push or an unrelated watch.
@@ -157,25 +243,25 @@ async fn blocked_push_preserves_per_stream_order_without_stalling_other_streams(
     let source = core.watch_source("source");
     let (sender, stream) = CoreEventStream::channel();
     source.send(stream).ok().unwrap();
-    let (client, mut events, owner) = BridgeStreams::channel(core);
+    let (client, mut events, owner) = channel(core);
     drive(owner, async {
         client
-            .request(StreamAction::OpenPush(CorePushRequest::new(
+            .enqueue(StreamAction::OpenPush(CorePushRequest::new(
                 "slow", "test", "input",
             )))
             .await
             .unwrap();
         client
-            .request(StreamAction::OpenPush(CorePushRequest::new(
+            .enqueue(StreamAction::OpenPush(CorePushRequest::new(
                 "fast", "test", "input",
             )))
             .await
             .unwrap();
         let first = client.submit(item("slow", 0)).unwrap();
         let second = client.submit(item("slow", 1)).unwrap();
-        client.request(item("fast", 0)).await.unwrap();
+        client.enqueue(item("fast", 0)).await.unwrap();
         client
-            .request(open_watch("watch", "source", 1))
+            .enqueue(open_watch("watch", "source", 1))
             .await
             .unwrap();
         sender.send(event()).unwrap();
@@ -189,9 +275,9 @@ async fn blocked_push_preserves_per_stream_order_without_stalling_other_streams(
             *slow.lock().unwrap(),
             [CoreValue::Unsigned(0), CoreValue::Unsigned(1)]
         );
-        let error = client.request(item("slow", 4)).await.unwrap_err();
+        let error = client.enqueue(item("slow", 4)).await.unwrap_err();
         assert_eq!(error.code, "PUSH_SEQUENCE_MISMATCH");
-        client.request(item("slow", 2)).await.unwrap();
+        client.enqueue(item("slow", 2)).await.unwrap();
         client.close();
     })
     .await;
@@ -202,20 +288,24 @@ async fn blocked_push_preserves_per_stream_order_without_stalling_other_streams(
 async fn cancellation_drops_an_inflight_source_open() {
     let core = Arc::new(TestCore::default());
     let source = core.watch_source("pending");
-    let (client, mut events, owner) = BridgeStreams::channel(core.clone());
+    let (client, mut events, owner) = channel(core.clone());
     drive(owner, async {
         let opening = client.submit(open_watch("watch", "pending", 7)).unwrap();
         while core.opening.load(Ordering::SeqCst) == 0 {
             tokio::task::yield_now().await;
         }
         client
-            .request(StreamAction::CloseWatch {
+            .enqueue(StreamAction::CloseWatch {
                 id: "watch".into(),
                 tag: 7,
             })
             .await
             .unwrap();
         assert_eq!(opening.await.unwrap().unwrap_err().code, "WATCH_CLOSED");
+        // Cancellation settles the caller before the separate affine opener is dropped.
+        while !source.is_closed() || core.opening.load(Ordering::SeqCst) != 0 {
+            tokio::task::yield_now().await;
+        }
         assert!(source.is_closed());
         assert_eq!(core.opening.load(Ordering::SeqCst), 0);
         assert!(events.try_recv().is_err());
@@ -230,9 +320,9 @@ async fn failed_watch_open_has_no_completion_delivery() {
     let core = Arc::new(TestCore::default());
     let source = core.watch_source("failed");
     drop(source);
-    let (client, mut events, owner) = BridgeStreams::channel(core);
+    let (client, mut events, owner) = channel(core);
     drive(owner, async {
-        let error = client.request(open_watch("watch", "failed", 8)).await.unwrap_err();
+        let error = client.enqueue(open_watch("watch", "failed", 8)).await.unwrap_err();
         assert_eq!(error.code, "TEST_CLOSED");
         assert!(events.try_recv().is_err());
         client.close();
@@ -242,13 +332,13 @@ async fn failed_watch_open_has_no_completion_delivery() {
 /// A source panic during opening must retain its cause in the opening response.
 #[tokio::test]
 async fn panicking_watch_open_preserves_original_failure() {
-    let (client, mut events, owner) = BridgeStreams::channel(Arc::new(TestCore::default()));
+    let (client, mut events, owner) = channel(Arc::new(TestCore::default()));
     drive(owner, async {
-        let error = client.request(open_watch("watch", "panic", 8)).await.unwrap_err();
+        let error = client.enqueue(open_watch("watch", "panic", 8)).await.unwrap_err();
         assert_eq!(error.code, "FATAL_CORE_PANIC");
         assert_eq!(error.message, "Watch opening panicked");
         assert!(events.try_recv().is_err());
-        client.request(StreamAction::CloseWatch { id: "watch".into(), tag: 8 }).await.unwrap();
+        client.enqueue(StreamAction::CloseWatch { id: "watch".into(), tag: 8 }).await.unwrap();
         client.close();
     }).await;
 }
@@ -270,17 +360,17 @@ async fn cancellation_releases_a_source_even_with_a_full_outbox() {
     for _ in 0..WATCH_BATCH_CAPACITY + 2 {
         sender.send(event()).unwrap();
     }
-    let (client, mut events, owner) = BridgeStreams::channel(core);
+    let (client, mut events, owner) = channel(core);
     drive(owner, async {
         client
-            .request(open_watch("watch", "full", 9))
+            .enqueue(open_watch("watch", "full", 9))
             .await
             .unwrap();
         while events.len() != WATCH_BATCH_CAPACITY {
             tokio::task::yield_now().await;
         }
         client
-            .request(StreamAction::CloseWatch {
+            .enqueue(StreamAction::CloseWatch {
                 id: "watch".into(),
                 tag: 9,
             })
@@ -309,33 +399,33 @@ async fn duplicate_and_stale_watch_generations_do_not_replace_the_live_source() 
     let (second_sender, second_stream) = CoreEventStream::channel();
     first.send(first_stream).ok().unwrap();
     second.send(second_stream).ok().unwrap();
-    let (client, mut events, owner) = BridgeStreams::channel(core);
+    let (client, mut events, owner) = channel(core);
     drive(owner, async {
         client
-            .request(open_watch("same", "first", 10))
+            .enqueue(open_watch("same", "first", 10))
             .await
             .unwrap();
         assert_eq!(
             client
-                .request(open_watch("same", "unused", 11))
+                .enqueue(open_watch("same", "unused", 11))
                 .await
                 .unwrap_err()
                 .code,
             "WATCH_ALREADY_EXISTS"
         );
         client
-            .request(StreamAction::CloseWatch {
+            .enqueue(StreamAction::CloseWatch {
                 id: "same".into(),
                 tag: 10,
             })
             .await
             .unwrap();
         client
-            .request(open_watch("same", "second", 12))
+            .enqueue(open_watch("same", "second", 12))
             .await
             .unwrap();
         client
-            .request(StreamAction::CloseWatch {
+            .enqueue(StreamAction::CloseWatch {
                 id: "same".into(),
                 tag: 10,
             })
@@ -349,7 +439,9 @@ async fn duplicate_and_stale_watch_generations_do_not_replace_the_live_source() 
                 break;
             }
         }
-        assert!(first_sender.is_closed());
+        while !first_sender.is_closed() {
+            tokio::task::yield_now().await;
+        }
         assert!(!second_sender.is_closed());
         client.close();
     })
@@ -360,7 +452,7 @@ async fn duplicate_and_stale_watch_generations_do_not_replace_the_live_source() 
 #[tokio::test]
 async fn bounded_ingress_and_shutdown_release_queued_operations() {
     let core = Arc::new(TestCore::default());
-    let (client, _events, owner) = BridgeStreams::channel(core);
+    let (client, _events, owner) = channel(core);
     let mut replies = Vec::new();
     for index in 0..COMMAND_CAPACITY {
         replies.push(
@@ -386,7 +478,7 @@ async fn bounded_ingress_and_shutdown_release_queued_operations() {
     }
     assert_eq!(
         client
-            .request(StreamAction::ClosePush("closed".into()))
+            .enqueue(StreamAction::ClosePush("closed".into()))
             .await
             .unwrap_err()
             .code,
@@ -397,7 +489,7 @@ async fn bounded_ingress_and_shutdown_release_queued_operations() {
 /// Native bursts wait outside the bounded mailbox even if reply tasks are polled backwards.
 #[tokio::test]
 async fn native_ingress_waits_for_capacity_without_failing_the_session() {
-    let (client, _events, owner) = BridgeStreams::channel(Arc::new(TestCore::default()));
+    let (client, _events, owner) = channel(Arc::new(TestCore::default()));
     let mut fillers = Vec::new();
     for index in 0..COMMAND_CAPACITY {
         fillers.push(
@@ -437,7 +529,7 @@ async fn native_ingress_waits_for_capacity_without_failing_the_session() {
 async fn native_queued_close_cancels_a_pending_open_in_submission_order() {
     let core = Arc::new(TestCore::default());
     let _source = core.watch_source("pending");
-    let (client, _events, owner) = BridgeStreams::channel(core);
+    let (client, _events, owner) = channel(core);
     let mut fillers = Vec::new();
     for index in 0..COMMAND_CAPACITY {
         fillers.push(
@@ -470,7 +562,7 @@ async fn native_queued_close_cancels_a_pending_open_in_submission_order() {
 /// Shutdown settles deferred admission as well as already admitted requests.
 #[tokio::test]
 async fn native_shutdown_releases_commands_waiting_for_capacity() {
-    let (client, _events, owner) = BridgeStreams::channel(Arc::new(TestCore::default()));
+    let (client, _events, owner) = channel(Arc::new(TestCore::default()));
     let mut fillers = Vec::new();
     for index in 0..COMMAND_CAPACITY {
         fillers.push(
