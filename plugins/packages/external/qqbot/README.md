@@ -91,21 +91,23 @@ for (const message of messages) {
 }
 ```
 
-`request` 按 `action` 推导返回类型；未安装、停用、版本不符或调用失败时会拒绝 Promise。`reply` 的上游响应保持 `unknown`，不对平台未承诺的字段作类型保证。
+`request` 按 `action` 推导返回类型；未安装、停用、版本不符或调用失败时会拒绝 Promise。`reply` 和 `send` 的上游响应保持 `unknown`，不对平台未承诺的字段作类型保证。
 
 ## 多模态与消息属性（1.2.0）
 
 事件摘要和渠道收件箱现在提供 `author`（昵称、头像、机器人标记）、`messageType`、`attachments`（类型、MIME、大小、宽高、WAV 地址和语音转写）、`card`、递归 `elements`，以及本条消息的 `referenceIndex` 和用户引用对象的 `referencedMessageIndex`。这些属性不依赖 `include_raw`。原始事件仍可按需读取。
 
-`msg_id` 用于被动回复及去重；`message_reference.message_id` 使用 QQ 的引用索引：收到消息时取 `message_scene.ext` 的 `msg_idx`（规范化为 `referenceIndex`），机器人自己发送的消息取响应 `ext_info.ref_idx`。不能用 Operit 内部消息 ID 替代。自动回复和渠道 `reply` 在存在引用索引时使用原生引用，缺少索引时省略引用；工具调用可显式提供引用。
+`msg_id` 用于被动回复及去重；`message_reference.message_id` 使用 QQ 的引用索引：收到消息时取 `message_scene.ext` 的 `msg_idx`（规范化为 `referenceIndex`），机器人自己发送的消息取响应 `ext_info.ref_idx`。不能用 Operit 内部消息 ID 替代。自动回复和渠道 `reply` 默认只提交 `msg_id`。调用 `reply` 时可用 `quote: true` 引用原消息，或显式传入 `message_reference`。渠道 `send` 使用已发现会话的 `conversationKey` 主动发送，受 QQ 的主动消息设置和频控限制。
 
 统一发送出口会移除已知的内部引用封套（如 `[[reply_to:...]]`、`[CQ:reply,id=...]` 和 XML 引用属性）。流式回复跨分句缓存未闭合的引用标记，避免把 ID 的片段发到群里。模型输入使用结构化 JSON，区分消息 ID、发送者身份和正文，正文包含可读引用、卡片摘要和附件；鉴权令牌及原始事件不会进入模型输入。此过滤针对已知协议标记，不会任意删改普通正文中的数字、URL 或用户自行书写的标识。
 
 渠道客户端保持原有文本调用兼容，并支持：
 
 ```ts
-// 普通文本，存在平台索引时自动使用原生引用。
+// 普通被动回复。
 await request({ action: "reply", key: message.key, text: "收到。" });
+// 引用原消息，需有 QQ 引用索引。
+await request({ action: "reply", key: message.key, quote: true, text: "收到。" });
 // 发送视频；audio、image、file 同样适用。
 await request({ action: "reply", key: message.key,
   media: { kind: "video", source: "https://example.com/demo.mp4" }, text: "演示视频" });

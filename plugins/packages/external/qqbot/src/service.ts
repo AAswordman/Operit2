@@ -1,6 +1,6 @@
 import { ChannelStore, conversationKey } from "./channel-store.js";
 import { ChannelInbox, messageKey } from "./channel-inbox.js";
-import type { ChannelRequest, ChannelResponses, ChannelMessage, ChannelConversation, ConversationHistory } from "./channel-api.js";
+import type { ChannelRequest, ChannelResponses, ChannelMessage, ChannelConversation, ConversationHistory, ReplyFields } from "./channel-api.js";
 import { getSettings as waifuSettings, stream as waifuStream } from "./dependencies/waifu/api.js";
 import { chatText, ReplyTextStream } from "./messages.js";
 import { attachments, downloadConsoleAttachment } from "./attachments.js";
@@ -409,8 +409,8 @@ class QQBotService {
           if (output.type === "segment") {
             const content = output.segment.kind === "text" ? rendered.push(output.segment.text) : "";
             if (output.segment.kind === "text" && content === "") continue;
-            if (output.segment.kind === "text") await this.api.send(scene, target, { content, msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) }, () => current() && !timedOut);
-            else await this.api.sendMedia(scene, target, { kind: "image", source: output.segment.source }, { msg_id: event.messageId, ...(event.referenceIndex ? { message_reference: { message_id: event.referenceIndex } } : {}) }, () => current() && !timedOut);
+            if (output.segment.kind === "text") await this.api.send(scene, target, { content, msg_id: event.messageId }, () => current() && !timedOut);
+            else await this.api.sendMedia(scene, target, { kind: "image", source: output.segment.source }, { msg_id: event.messageId }, () => current() && !timedOut);
             delivered++;delivery.delivered++;this.config.deliveries=[...this.config.deliveries!];await PluginConfig.flush(this.config);
           }
         }
@@ -436,6 +436,19 @@ class QQBotService {
         await PluginConfig.flush(this.config);
       } else if(delivery.state==="processing" && this.config.deliveries!.includes(delivery)){delivery.state="failed";delivery.error="回复被停止；请确认发送情况后重试或跳过。";this.config.deliveries=[...this.config.deliveries!];await PluginConfig.flush(this.config);}
     }
+  }
+
+  private async sendChannelMessage(scene: ChannelConversation["scene"], target: string, request: ReplyFields,
+    reply?: { messageId: string; referenceIndex?: string }): Promise<ChannelResponses["send"]> {
+    const api = this.api;
+    const params = {
+      content: request.text, markdown: request.markdown, keyboard: request.keyboard, card: request.card,
+      msg_id: reply?.messageId,
+      message_reference: request.message_reference ?? (reply?.referenceIndex ? { message_id: reply.referenceIndex } : undefined),
+    };
+    const accountIsCurrent = () => api === this.api;
+    return { response: request.media === undefined ? await api.send(scene, target, params, accountIsCurrent)
+      : await api.sendMedia(scene, target, request.media, params, accountIsCurrent) };
   }
 
   /** Independent public channel contract, separate from the automatic-reply queue. */
@@ -500,15 +513,21 @@ class QQBotService {
         return bytes;
       }
       case "reply": {
+        const api = this.api;
         const message = await this.channelInbox.get(request.key) ?? await this.sessions.replyRoute(request.key);
         if (message === null) throw new Error("Pending message not found");
-        if (message.accountId !== this.config.appId) throw new Error("Message belongs to a different QQ account");
+        if (message.accountId !== this.config.appId || api !== this.api) throw new Error("Message belongs to a different QQ account");
         const scene = message.context.scene;
         if (scene !== "c2c" && scene !== "group") throw new Error("Unsupported QQ reply scene");
-        const params = { content: request.text, markdown: request.markdown, keyboard: request.keyboard, card: request.card,
-          message_reference: request.message_reference ?? (message.referenceIndex ? { message_id: message.referenceIndex } : undefined), msg_id: message.messageId };
-        return { response: request.media === undefined ? await this.api.send(scene, message.conversationId, params)
-          : await this.api.sendMedia(scene, message.conversationId, request.media, params) };
+        return this.sendChannelMessage(scene, message.conversationId, request, {
+          messageId: message.messageId, referenceIndex: request.quote === true ? message.referenceIndex : undefined,
+        });
+      }
+      case "send": {
+        const api = this.api;
+        const session = await this.sessions.get(request.conversationKey);
+        if (session.accountId !== this.config.appId || api !== this.api) throw Error("QQ 会话不属于当前账户");
+        return this.sendChannelMessage(session.scene, session.conversationId, request);
       }
       default: throw new Error("Unknown channel request");
     }

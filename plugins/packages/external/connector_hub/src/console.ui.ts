@@ -116,8 +116,9 @@ export default function consoleScreen(ctx: ComposeDslContext): ComposeNode {
     icon("ChevronRight", 18, colors.onSurfaceVariant)])));
 
   if (view === "conversations" && selected) {
-    const target = reply ?? history?.latestReplyKey ?? [...(history?.messages ?? [])].reverse().find(item => item.replyKey)?.replyKey;
-    const canSend = !!target || selected.channel === "feishu";
+    const target = selected.channel === "qq" ? reply
+      : reply ?? history?.latestReplyKey ?? [...(history?.messages ?? [])].reverse().find(item => item.replyKey)?.replyKey;
+    const canSend = !!target || selected.channel !== "wechat";
     nodes.push(row("conversation-title", [ui.IconButton({ key: "back", icon: "ArrowBack", tooltip: "返回会话列表", enabled: !busy, onClick: closeConversation }),
       ui.Column({ weight: 1, spacing: 3 }, [text(selected.title, "titleLarge", { maxLines: 2, overflow: "ellipsis" }), sub(platforms[selected.channel].name)])]));
     if (history?.truncated && history.messages.length < 100 && history.messages[0]) nodes.push(flow("older-actions", [button("older", "加载更早消息", () => run(() => load(selected, history.messages[0].receivedAt)), "text", true, "History")]));

@@ -5,7 +5,7 @@ import {createRequire} from 'node:module';
 const screen=createRequire(import.meta.url)('../dist/console.ui.js').default;
 const conversation={key:'lark-room',channel:'feishu',title:'团队反馈'};
 
-function fixture({files=[{path:'/selected/image.png',name:'image.png',mimeType:'image/png'}], messages, feishu, qq, wechat=true, conversations=[conversation]}={}){
+function fixture({files=[{path:'/selected/image.png',name:'image.png',mimeType:'image/png'}], messages, latestReplyKey='target-b', feishu, qq, wechat=true, conversations=[conversation]}={}){
   const state=new Map(), refs=new Map(), calls=[], saved=[], navigation=[];
   let login={state:'idle',qrContent:'',error:'',expiresAt:0};
   globalThis.ToolPkg={ipc:{async call(channel,request,options){
@@ -19,8 +19,8 @@ function fixture({files=[{path:'/selected/image.png',name:'image.png',mimeType:'
       if(request.command==='login_verify')login={state:'confirmed',qrContent:'',error:'',expiresAt:0};
       return {login};
     }
-    if(request.action==='history')return {conversation,latestReplyKey:'target-b',messages:messages??[{messageId:'a',replyKey:'target-a',text:'第一条',receivedAt:1},{messageId:'b',replyKey:'target-b',text:'第二条',receivedAt:2}]};
-    if(request.action==='console_reply')return {response:null};
+    if(request.action==='history')return {conversation:conversations.find(item=>item.key===request.conversationKey),latestReplyKey,messages:messages??[{messageId:'a',replyKey:'target-a',text:'第一条',receivedAt:1},{messageId:'b',replyKey:'target-b',text:'第二条',receivedAt:2}]};
+    if(request.action==='console_reply'||request.action==='send')return {response:null};
     if(request.action==='attachment')return {fileName:'photo.png',mimeType:'image/png',contentBase64:'cGhvdG8='};
     throw Error('unexpected action');
   }}};
@@ -95,6 +95,33 @@ test('console uses the selected message and the picker typed attachment without 
   const f=fixture();await f.load();await f.click('open-lark-room');await f.click('reply-a');await f.click('attachment');await f.click('send');
   assert.deepEqual(f.calls.find(request=>request.action==='console_reply'),{action:'console_reply',channel:'feishu',conversationKey:'lark-room',key:'target-a',media:{kind:'image',source:'/selected/image.png',fileName:'image.png'}});
   assert.equal(f.state.get('media'),null);
+});
+
+test('QQ sends without an incoming message and adds a quote only when selected', async () => {
+  const room = { key: 'qq-room', channel: 'qq', title: 'QQ 群' };
+  const qq = { configured: true, service: 'ready' };
+  const empty = fixture({ qq, conversations: [room], messages: [], latestReplyKey: null });
+  await empty.load();
+  await empty.click('open-qq-room');
+  empty.state.set('draft', '主动消息');
+  await empty.click('send');
+  assert.deepEqual(empty.calls.find(request => request.action === 'send'),
+    { action: 'send', channel: 'qq', conversationKey: room.key, text: '主动消息' });
+
+  const f = fixture({ qq, conversations: [room] });
+  await f.load();
+  await f.click('open-qq-room');
+  f.state.set('draft', '取消引用');
+  await f.click('reply-a');
+  await f.click('clear-quote');
+  await f.click('send');
+  assert.equal(f.calls.find(request => request.action === 'send').text, '取消引用');
+  assert.equal(f.calls.some(request => request.action === 'console_reply'), false);
+  f.state.set('draft', '引用第一条');
+  await f.click('reply-a');
+  await f.click('send');
+  assert.deepEqual(f.calls.find(request => request.action === 'console_reply'),
+    { action: 'console_reply', channel: 'qq', conversationKey: room.key, key: 'target-a', text: '引用第一条' });
 });
 
 test('MP4 without a cover is sent as native video in one action',async()=>{

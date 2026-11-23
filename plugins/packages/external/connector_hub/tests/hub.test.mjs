@@ -66,6 +66,28 @@ test('manual reply verifies the selected message and merges outgoing records',as
   assert.equal((await dispatch({channel:'wechat',action:'history',conversationKey:row.key,before:10,limit:1},maintenance)).messages[0].messageId,'legacy');
   assert.equal(calls.filter(item=>item.payload.action==='reply').length,1);
 });
+test('QQ direct send and explicit console quote reach separate provider actions', async () => {
+  const conversation = { ...row, key: 'qq-room', channel: 'qq', scene: 'group' };
+  const calls = [];
+  globalThis.ToolPkg = { getLocalDataDir: () => '/device', async callDependency(provider, method, payload) {
+    assert.equal(provider, 'com.operit.qqbot_bundle');
+    assert.equal(method, 'channel.v1');
+    calls.push(payload);
+    if (payload.action === 'history') return { ...source, conversation };
+    return { response: { opaque: true } };
+  } };
+  const route = { channel: 'qq', conversationKey: conversation.key };
+  const quoteKey = 'qq:wx-account:group:peer:m';
+  assert.deepEqual(await dispatch({ action: 'send', ...route, text: '主动发送' }, maintenance), { response: null });
+  await consoleRequest({ action: 'console_reply', ...route, key: quoteKey, text: '明确引用' });
+  await dispatch({ action: 'reply', channel: 'qq', key: quoteKey, text: '普通回复' }, maintenance);
+  await assert.rejects(dispatch({ action: 'send', channel: 'wechat', conversationKey: row.key, text: 'hello' }, maintenance), /需要回复/);
+  assert.deepEqual(calls.map(({ action, key, conversationKey, quote }) => [action, key, conversationKey, quote]), [
+    ['send', undefined, conversation.key, undefined], ['history', undefined, conversation.key, undefined],
+    ['reply', quoteKey, undefined, true], ['reply', quoteKey, undefined, undefined],
+  ]);
+});
+
 test('maintenance vendors the exact dependency client',()=>{
   assert.equal(readFileSync(new URL('../src/api.ts',import.meta.url),'utf8'),readFileSync(new URL('../../project_maintenance/src/dependencies/connector_hub/api.ts',import.meta.url),'utf8'));
 });

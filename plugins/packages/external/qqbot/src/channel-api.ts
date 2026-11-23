@@ -81,7 +81,8 @@ export type ChannelRequest =
   | { action: "active_context"; chatId: string }
   | { action: "peek"; limit?: number; conversationId?: string; consumerId?: string; conversationKey?: string }
   | { action: "ack"; key: string; consumerId?: string }
-  | ({ action: "reply"; key: string } & ReplyFields);
+  | ({ action: "reply"; key: string; quote?: boolean } & ReplyFields)
+  | ({ action: "send"; conversationKey: string } & ReplyFields);
 
 export interface ChannelConfiguration {
   capture: boolean;
@@ -123,6 +124,7 @@ export interface ChannelResponses {
   ack: { acknowledged: boolean };
   /** The upstream platform response is opaque to a channel consumer. */
   reply: { response: unknown };
+  send: { response: unknown };
 }
 export type ChannelResponse<R extends ChannelRequest> = ChannelResponses[R["action"]];
 /** The request discriminant determines the response; consumers cannot invent its type. */

@@ -483,14 +483,18 @@ test("captured rich messages retain typed media and reference routing after ackn
   const db = await f.storage.open({ path: "/plugin/channel_inbox.sqlite" });
   const route = (await db.collection("seen").get(message.key)).value.message;
   assert.doesNotMatch(JSON.stringify(route), /quoted-private-text|private-token|cdn.example|小明/);
-  await f.service.channel({ action: "reply", key: message.key, media: { kind: "video", source: "https://cdn.example/video.mp4" }, text: "[[reply_to:internal]]视频" });
-  const upload = f.http.find(request => request.url.endsWith("/files")), sent = f.http.find(request => request.url.endsWith("/messages"));
+  await f.service.channel({ action: "reply", key: message.key, text: "普通回复" });
+  await f.service.channel({ action: "reply", key: message.key, quote: true, media: { kind: "video", source: "https://cdn.example/video.mp4" }, text: "[[reply_to:internal]]视频" });
+  const upload = f.http.find(request => request.url.endsWith("/files"));
+  const [plainReply, sent] = f.http.filter(request => request.url.endsWith("/messages"));
+  assert.equal(plainReply.body.msg_id, "quoted");
+  assert.equal(Object.hasOwn(plainReply.body, "message_reference"), false);
   assert.equal(upload.body.file_type, 2); assert.equal(sent.body.msg_type, 7);
   assert.equal(sent.body.msg_id, "quoted"); assert.equal(sent.body.message_reference.message_id, "REFIDX_own=="); assert.equal(sent.body.content, "视频");
   await f.complete(f.service.receive({ action: "stop" }));
 });
 
-test("automatic replies use readable quote context and native references while split internal tags never reach QQ", async () => {
+test("automatic replies use readable quote context without sending a native quote or internal tags", async () => {
   const f = fixture({ replyText: "[[reply_to:ROBOT1.0_internal]]收到。" });
   await f.complete(f.service.receive({ action: "start" }));
   await f.complete(f.service.receive({ action: "auto_configure", params: { enabled: true } }));
@@ -502,12 +506,36 @@ test("automatic replies use readable quote context and native references while s
   assert.doesNotMatch(f.submitted[0].input.text, /secret-token|REFIDX/);
   const sent = f.http.filter(request => request.url.endsWith("/messages"));
   assert.equal(sent.length, 1); assert.equal(sent[0].body.content, "收到。");
-  assert.equal(sent[0].body.msg_id, "secret-message"); assert.equal(sent[0].body.message_reference.message_id, "REFIDX_own==");
+  assert.equal(sent[0].body.msg_id, "secret-message");
+  assert.equal(Object.hasOwn(sent[0].body, "message_reference"), false);
   assert.equal((await f.service.receive({ action: "status" })).status.autoReply.lastError, "");
   const [session]=(await f.service.channel({action:"conversations"})).conversations;
   const history=await f.service.channel({action:"history",conversationKey:session.key});
   assert.deepEqual(plain(history.messages.filter(m=>m.direction).map(m=>[m.text,m.delivery])),[["收到。","accepted"]]);
   await f.complete(f.service.receive({ action: "stop" }));
+});
+
+test("QQ channel sends text and media to known conversations without incoming messages", async () => {
+  const f = fixture({ initialConfig: { bindings: { "c2c:recipient": "chat-1", "group:room": "chat-2" } } });
+  const { conversations } = await f.service.channel({ action: "conversations" });
+  const direct = conversations.find(session => session.scene === "c2c");
+  const room = conversations.find(session => session.scene === "group");
+  await assert.rejects(f.service.channel({ action: "send", conversationKey: "unknown", text: "hi" }), /会话/);
+  await f.service.channel({ action: "send", conversationKey: direct.key, text: "hello" });
+  await f.service.channel({ action: "send", conversationKey: room.key, media: { kind: "image", source: "https://cdn.example/photo.png" } });
+  const [text, media] = f.http.filter(request => request.url.endsWith("/messages"));
+  assert.match(text.url, /\/users\/recipient\/messages$/);
+  assert.equal(text.body.content, "hello");
+  assert.match(media.url, /\/groups\/room\/messages$/);
+  assert.equal(media.body.media.file_info, "uploaded-image");
+  for (const { body } of [text, media]) {
+    assert.equal(Object.hasOwn(body, "msg_id"), false);
+    assert.equal(Object.hasOwn(body, "message_reference"), false);
+  }
+  const history = await f.service.channel({ action: "history", conversationKey: direct.key });
+  assert.equal(history.latestInboundId, undefined);
+  assert.deepEqual(plain(history.messages.map(({ direction, delivery, text }) => ({ direction, delivery, text }))),
+    [{ direction: "outgoing", delivery: "accepted", text: "hello" }]);
 });
 
 test('direct send records a timed-out request as unknown and never repeats it',async()=>{
