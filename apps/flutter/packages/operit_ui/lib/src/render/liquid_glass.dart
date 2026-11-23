@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
@@ -12,6 +13,10 @@ Future<void> prepareLiquidGlass() async {
 
 /// Shares one live background texture between the glass surfaces in a scene.
 class LiquidGlassBackdrop extends StatefulWidget {
+  /// Observes real texture captures in debug tests without changing rendering.
+  @visibleForTesting
+  static VoidCallback? debugOnCapture;
+
   /// Creates the background capture and its foreground composition.
   const LiquidGlassBackdrop({
     super.key,
@@ -60,20 +65,17 @@ class _LiquidGlassBackdropState extends State<LiquidGlassBackdrop>
   Widget build(BuildContext context) {
     return _LiquidBackdropScope(
       backdrop: _backdrop,
-      child: _LiquidScene(
-        backdrop: _backdrop,
-        child: Stack(
-          fit: widget.fit,
-          children: <Widget>[
-            Positioned.fill(
-              child: _LiquidBackground(
-                backdrop: _backdrop,
-                child: widget.background,
-              ),
+      child: Stack(
+        fit: widget.fit,
+        children: <Widget>[
+          Positioned.fill(
+            child: _LiquidBackground(
+              backdrop: _backdrop,
+              child: widget.background,
             ),
-            widget.child,
-          ],
-        ),
+          ),
+          widget.child,
+        ],
       ),
     );
   }
@@ -156,7 +158,7 @@ class _LiquidGlassSourceAnimationState extends State<LiquidGlassSourceAnimation>
 
   /// Updates composition without invalidating background or foreground paint.
   void _requestComposition(Duration elapsed) {
-    _backdrop!.source!.markNeedsCompositedLayerUpdate();
+    _backdrop!.source!.invalidateTexture();
   }
 
   /// Preserves the player's layout and independently updated texture layer.
@@ -257,6 +259,7 @@ class _LiquidBackdrop extends ChangeNotifier {
   set pixelRatio(double value) {
     if (_pixelRatio == value) return;
     _pixelRatio = value;
+    source?.invalidateTexture();
     notifyListeners();
   }
 
@@ -268,14 +271,20 @@ class _LiquidBackdrop extends ChangeNotifier {
       _loading = true;
       unawaited(_prepareProgram());
     }
-    if (_surfaceCount == 1) notifyListeners();
+    if (_surfaceCount == 1) {
+      source?.invalidateTexture();
+      notifyListeners();
+    }
   }
 
   /// Stops texture frame requests when the final lens leaves the scene.
   void removeSurface(VoidCallback listener) {
     super.removeListener(listener);
     _surfaceCount--;
-    if (_surfaceCount == 0 && !_disposed) notifyListeners();
+    if (_surfaceCount == 0 && !_disposed) {
+      releaseImage();
+      notifyListeners();
+    }
   }
 
   /// Requests a paint when the asynchronously compiled shader becomes ready.
@@ -283,7 +292,14 @@ class _LiquidBackdrop extends ChangeNotifier {
     final loaded = await loadProgram();
     if (_disposed) return;
     program = loaded;
+    source?.invalidateTexture();
     notifyListeners();
+  }
+
+  /// Releases the retained source when its scene or final lens goes away.
+  void releaseImage() {
+    image?.dispose();
+    image = null;
   }
 
   /// Releases the scene without leaving any pending capture callbacks.
@@ -291,76 +307,8 @@ class _LiquidBackdrop extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     source = null;
+    releaseImage();
     super.dispose();
-  }
-}
-
-class _LiquidScene extends SingleChildRenderObjectWidget {
-  /// Wraps the scene in a composition layer shared by every lens.
-  const _LiquidScene({required this.backdrop, required super.child});
-
-  final _LiquidBackdrop backdrop;
-
-  /// Creates the render object that owns the composition layer.
-  @override
-  _RenderLiquidScene createRenderObject(BuildContext context) =>
-      _RenderLiquidScene(backdrop);
-
-  /// Keeps the composition layer aligned with its source owner.
-  @override
-  void updateRenderObject(
-    BuildContext context,
-    _RenderLiquidScene renderObject,
-  ) {
-    renderObject.backdrop = backdrop;
-  }
-}
-
-class _RenderLiquidScene extends RenderProxyBox {
-  /// Stores the source owner until this scene paints.
-  _RenderLiquidScene(this.backdrop);
-
-  _LiquidBackdrop backdrop;
-
-  /// Composes source textures after all repaint boundaries have painted.
-  @override
-  bool get alwaysNeedsCompositing => true;
-
-  /// Inserts one shared texture capture before composing the scene's lenses.
-  @override
-  void paint(PaintingContext context, Offset offset) {
-    final sceneLayer = layer as _LiquidSceneLayer? ?? _LiquidSceneLayer();
-    sceneLayer.backdrop = backdrop;
-    layer = sceneLayer;
-    context.pushLayer(sceneLayer, super.paint, offset);
-  }
-}
-
-class _LiquidSceneLayer extends ContainerLayer {
-  late _LiquidBackdrop backdrop;
-
-  /// Samples on every submitted scene, including retained paint and textures.
-  @override
-  bool get alwaysNeedsAddToScene => true;
-
-  /// Captures a fully painted source once and shares it within this composition.
-  @override
-  void addToScene(ui.SceneBuilder builder) {
-    final source = backdrop.source!;
-    if (backdrop.hasSurfaces &&
-        backdrop.program != null &&
-        !source.size.isEmpty) {
-      final image = source.captureTexture(backdrop._pixelRatio);
-      backdrop.image = image;
-      try {
-        addChildrenToScene(builder);
-      } finally {
-        backdrop.image = null;
-        image.dispose();
-      }
-    } else {
-      addChildrenToScene(builder);
-    }
   }
 }
 
@@ -396,26 +344,104 @@ class _RenderLiquidBackground extends RenderRepaintBoundary {
   /// Moves this boundary to a different scene owner.
   set backdrop(_LiquidBackdrop value) {
     if (value == _backdrop) return;
+    _backdrop.releaseImage();
     _backdrop.source = null;
     _backdrop = value;
     value.source = this;
     markNeedsPaint();
   }
 
-  /// Samples the completed layer during scene composition on the raster thread.
-  ui.Image captureTexture(double pixelRatio) {
-    assert(!debugNeedsPaint);
-    return (layer! as OffsetLayer).toImageSync(
-      Offset.zero & size,
-      pixelRatio: pixelRatio,
-    );
+  /// Invalidates external texture frames and density without repainting content.
+  void invalidateTexture() {
+    (layer as _LiquidBackgroundLayer?)?.invalidateTexture();
+    markNeedsCompositedLayerUpdate();
+  }
+
+  /// Lets Flutter's retained layer tree detect source and descendant changes.
+  @override
+  OffsetLayer updateCompositedLayer({
+    required _LiquidBackgroundLayer? oldLayer,
+  }) {
+    final result = oldLayer ?? _LiquidBackgroundLayer();
+    result.configure(_backdrop, Offset.zero & size);
+    return result;
   }
 
   /// Removes this boundary from the scene before releasing its layer.
   @override
   void dispose() {
-    if (_backdrop.source == this) _backdrop.source = null;
+    if (_backdrop.source == this) {
+      _backdrop.source = null;
+      _backdrop.releaseImage();
+    }
     super.dispose();
+  }
+}
+
+class _LiquidBackgroundLayer extends OffsetLayer {
+  _LiquidBackdrop? _backdrop;
+  Rect _bounds = Rect.zero;
+  double _pixelRatio = 0;
+  bool _capturing = false;
+  bool _hasLiveTexture = false;
+
+  /// External texture pixels can change without any Dart layer invalidation.
+  @override
+  bool get alwaysNeedsAddToScene => _hasLiveTexture;
+
+  /// Rebuilds the full-resolution capture when source ownership or size changes.
+  void configure(_LiquidBackdrop backdrop, Rect bounds) {
+    if (!identical(_backdrop, backdrop) ||
+        _bounds != bounds ||
+        _pixelRatio != backdrop._pixelRatio) {
+      _backdrop = backdrop;
+      _bounds = bounds;
+      _pixelRatio = backdrop._pixelRatio;
+      invalidateTexture();
+    }
+  }
+
+  /// Marks externally updated textures dirty through the normal layer protocol.
+  void invalidateTexture() {
+    if (!alwaysNeedsAddToScene) markNeedsAddToScene();
+  }
+
+  /// Identifies native textures when the source layer tree actually changes.
+  bool _containsLiveTexture(ContainerLayer parent) {
+    for (
+      Layer? child = parent.firstChild;
+      child != null;
+      child = child.nextSibling
+    ) {
+      if (child is TextureLayer && !child.freeze) return true;
+      if (child is ContainerLayer && _containsLiveTexture(child)) return true;
+    }
+    return false;
+  }
+
+  /// Captures changed sources before lenses, retaining static sources otherwise.
+  @override
+  void addToScene(ui.SceneBuilder builder) {
+    final backdrop = _backdrop!;
+    if (!_capturing) _hasLiveTexture = _containsLiveTexture(this);
+    if (!_capturing &&
+        backdrop.hasSurfaces &&
+        backdrop.program != null &&
+        !_bounds.isEmpty) {
+      _capturing = true;
+      try {
+        final image = toImageSync(_bounds, pixelRatio: _pixelRatio);
+        backdrop.releaseImage();
+        backdrop.image = image;
+        assert(() {
+          LiquidGlassBackdrop.debugOnCapture?.call();
+          return true;
+        }());
+      } finally {
+        _capturing = false;
+      }
+    }
+    super.addToScene(builder);
   }
 }
 
@@ -454,6 +480,9 @@ class _RenderLiquidGlass extends RenderProxyBox {
   _LiquidBackdrop _backdrop;
   LiquidGlassSurface _surface;
   ui.FragmentShader? _shader;
+  ui.Image? _pictureImage;
+  List<double>? _pictureValues;
+  ui.Picture? _picture;
 
   /// Subscribes to a replacement scene and releases the old shader sampler.
   set backdrop(_LiquidBackdrop value) {
@@ -461,6 +490,7 @@ class _RenderLiquidGlass extends RenderProxyBox {
     if (attached) _backdrop.removeSurface(markNeedsPaint);
     _shader?.dispose();
     _shader = null;
+    _releasePicture();
     _backdrop = value;
     if (attached) _backdrop.addSurface(markNeedsPaint);
     markNeedsPaint();
@@ -528,21 +558,35 @@ class _RenderLiquidGlass extends RenderProxyBox {
         origin.dx, origin.dy, source.size.width, source.size.height,
         xAxis.dx, xAxis.dy, yAxis.dx, yAxis.dy,
       ];
-      for (var i = 0; i < values.length; i++) {
-        shader.setFloat(i, values[i]);
+      if (!identical(_pictureImage, image) ||
+          !listEquals(_pictureValues, values)) {
+        for (var i = 0; i < values.length; i++) {
+          shader.setFloat(i, values[i]);
+        }
+        shader.setImageSampler(0, image);
+        final recorder = ui.PictureRecorder();
+        Canvas(recorder).drawRect(offset & size, Paint()..shader = shader);
+        _releasePicture();
+        _picture = recorder.endRecording();
+        _pictureImage = image;
+        _pictureValues = values;
       }
-      shader.setImageSampler(0, image);
-      final recorder = ui.PictureRecorder();
-      Canvas(recorder).drawRect(offset & size, Paint()..shader = shader);
-      final picture = recorder.endRecording();
-      builder.addPicture(Offset.zero, picture);
-      picture.dispose();
+      builder.addPicture(Offset.zero, _picture!);
     }
+  }
+
+  /// Releases recorded optical content when any sampler or uniform changes.
+  void _releasePicture() {
+    _picture?.dispose();
+    _picture = null;
+    _pictureImage = null;
+    _pictureValues = null;
   }
 
   /// Releases this lens's shader and its reference to the sampled image.
   @override
   void dispose() {
+    _releasePicture();
     _shader?.dispose();
     super.dispose();
   }

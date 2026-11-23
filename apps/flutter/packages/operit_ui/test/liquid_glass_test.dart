@@ -11,6 +11,73 @@ import 'package:operit_ui/operit_ui.dart';
 /// Exercises actual GPU shader output and the shared background lifecycle.
 void main() {
   testWidgets(
+    'moving glass reuses static full-resolution pixels and matches fresh capture',
+    (tester) async {
+      await tester.runAsync(prepareLiquidGlass);
+      var captures = 0;
+      LiquidGlassBackdrop.debugOnCapture = () => captures++;
+      addTearDown(() => LiquidGlassBackdrop.debugOnCapture = null);
+      final left = ValueNotifier<double>(40);
+      addTearDown(left.dispose);
+      final key = GlobalKey();
+      await tester.pumpWidget(_gradientScene(key, left: left, detail: true));
+      await _readComposedScene(tester, key);
+      final initialCaptures = captures;
+      expect(initialCaptures, greaterThan(0));
+      for (var frame = 0; frame < 60; frame++) {
+        left.value = 40 + frame / 3;
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+      final retained = await _readComposedScene(tester, key);
+      expect(captures, initialCaptures);
+      final source = tester.renderObject<RenderCustomPaint>(
+        find.byWidgetPredicate(
+          (widget) =>
+              widget is CustomPaint && widget.painter is _CoordinateBackground,
+        ),
+      );
+      source.markNeedsPaint();
+      await tester.pump();
+      final fresh = await _readComposedScene(tester, key);
+      expect(captures, initialCaptures + 1);
+      expect(retained, orderedEquals(fresh));
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('nested source repaint refreshes every lens in the same frame', (
+    tester,
+  ) async {
+    await tester.runAsync(prepareLiquidGlass);
+    var captures = 0;
+    LiquidGlassBackdrop.debugOnCapture = () => captures++;
+    addTearDown(() => LiquidGlassBackdrop.debugOnCapture = null);
+    final color = ValueNotifier<Color>(const Color(0xFFFF0000));
+    addTearDown(color.dispose);
+    final key = GlobalKey();
+    await tester.pumpWidget(
+      _solidScene(
+        key,
+        background: RepaintBoundary(
+          child: ValueListenableBuilder<Color>(
+            valueListenable: color,
+            builder: (context, value, child) => ColoredBox(color: value),
+          ),
+        ),
+      ),
+    );
+    await _readComposedScene(tester, key);
+    final initialCaptures = captures;
+    color.value = const Color(0xFF0000FF);
+    await tester.pump();
+    final pixels = await _readComposedScene(tester, key);
+    expect(captures, initialCaptures + 1);
+    expect(_red(pixels, 80, 120), 0);
+    expect(_red(pixels, 240, 120), 0);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets(
     'lens preserves the center and bends straight edges like liquid 1.1.1',
     (tester) async {
       final key = GlobalKey();
