@@ -830,7 +830,18 @@ class OwnerSystemCapabilityChannel(
             }
             return musicStatus("android music playback started")
         } catch (error: Throwable) {
-            player.release()
+            // start() can fail after musicPlayer already points at this player; tearing it
+            // down through releaseMusicPlayerLocked also detaches the media session and the
+            // notification, instead of leaving a dead player synced as playing.
+            synchronized(musicLock) {
+                if (musicPlayer === player) {
+                    musicState = "error"
+                    musicMessage = "android music playback failed to start"
+                    releaseMusicPlayerLocked()
+                } else {
+                    player.release()
+                }
+            }
             throw error
         }
     }
@@ -912,6 +923,7 @@ class OwnerSystemCapabilityChannel(
                 "volume" to musicVolume,
                 "loopPlayback" to musicLoopPlayback,
                 "message" to message,
+                "stateMessage" to musicMessage,
             )
         }
     }
