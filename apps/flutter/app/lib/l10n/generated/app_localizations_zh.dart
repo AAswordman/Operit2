@@ -27,6 +27,22 @@ class AppLocalizationsZh extends AppLocalizations {
   String get terminalImplementationChroot => 'Chroot（需要 Root）';
 
   @override
+  String get terminalImplementationTermux => 'Termux';
+
+  @override
+  String get terminalProfileDirectoryMode => '起始目录';
+
+  @override
+  String get terminalProfileDirectoryHome => 'Termux 主目录';
+
+  @override
+  String get terminalProfileDirectoryWorkspace => '工作区（共享存储）';
+
+  @override
+  String get terminalProfileTermuxSetup =>
+      '打开 Termux，运行 pkg install --no-install-recommends python。在 ~/.termux/termux.properties 中设置 allow-external-apps = true，运行 termux-reload-settings，再到 Android 设置里允许 Operit 在 Termux 中运行命令。';
+
+  @override
   String get terminalImplementationQemu => 'QEMU Linux 模拟终端';
 
   @override

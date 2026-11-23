@@ -7,7 +7,7 @@ use std::env;
 use std::ffi::CString;
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,6 +21,7 @@ use operit_host_api::{
 use uuid::Uuid;
 
 use crate::runtime_common::requiredAndroidRuntimePath;
+use crate::terminal_termux::{self, TermuxControl, TermuxLauncher};
 
 #[cfg(target_os = "android")]
 use std::ptr;
@@ -32,6 +33,7 @@ const PTY_PROMPT_MARKER_END: u8 = 7;
 const PLATFORM: &str = "android";
 const PROOT_TERMINAL: &str = "proot";
 const CHROOT_TERMINAL: &str = "chroot";
+const TERMUX_TERMINAL: &str = "termux";
 const ANDROID_SYSTEM_TERMINAL: &str = "android-system";
 const PRIMARY_TERMINAL_TYPE: &str = "bash";
 
@@ -72,6 +74,7 @@ extern "C" {
 pub struct AndroidTerminalHost {
     state: Arc<Mutex<AndroidTerminalState>>,
     profile: Option<operit_host_api::TerminalProfile>,
+    termuxLauncher: Option<TermuxLauncher>,
 }
 
 #[derive(Default)]
@@ -86,7 +89,7 @@ struct AndroidPtySession {
     terminal: String,
     terminalType: String,
     workingDir: String,
-    pid: AndroidPtyProcess,
+    process: AndroidPtyProcess,
     masterFd: RawFd,
     writer: Arc<Mutex<RawFd>>,
     reader: Option<Box<dyn FnOnce() + Send>>,
@@ -100,10 +103,10 @@ struct AndroidPtySession {
 type AndroidPtyCommandOutput = Arc<operit_host_api::TerminalCommand::TerminalCommandBuffer>;
 
 /// Keeps remote process ownership distinct from local child PIDs.
-#[derive(Clone, Copy, Debug)]
 enum AndroidPtyProcess {
     Local(AndroidPid),
     Shizuku(i32),
+    Termux(TermuxControl),
 }
 
 type AndroidPtyCursorState = Arc<Mutex<AndroidPtyCursor>>;
@@ -112,10 +115,13 @@ impl Drop for AndroidPtySession {
     /// Stops the reader before releasing its separately owned write handle.
     fn drop(&mut self) {
         self.commandOutput.fail(HostError::new("Terminal session was closed"));
+        if let AndroidPtyProcess::Termux(control) = &self.process {
+            control.close();
+        }
         if let Some(close) = self.reader.take() { close(); }
         #[cfg(target_os = "android")]
         unsafe {
-            terminateAndroidPtyProcess(self.pid);
+            terminateAndroidPtyProcess(&self.process);
             let mut writerFd = self
                 .writer
                 .lock()
@@ -132,6 +138,12 @@ impl Drop for AndroidPtySession {
 impl AndroidTerminalHost {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Binds Termux service launches to the Android application that hosts the runtime UI.
+    pub fn withTermuxLauncher(mut self, launcher: TermuxLauncher) -> Self {
+        self.termuxLauncher = Some(launcher);
+        self
     }
 
     /// Starts an Android PTY session for one exact terminal implementation and type.
@@ -152,6 +164,7 @@ impl AndroidTerminalHost {
         let workDir = nonBlank(workingDir, "working_directory")?;
         let session = createAndroidPtySession(
             self.profile.as_ref(),
+            self.termuxLauncher.as_ref(),
             normalizedSessionName,
             normalizedTerminalType,
             workDir,
@@ -194,11 +207,11 @@ impl AndroidTerminalHost {
     }
 
     pub fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
-        let state = self.lockState()?;
-        let session = state.ptySessions.get(sessionId).ok_or_else(|| {
+        let mut state = self.lockState()?;
+        let session = state.ptySessions.get_mut(sessionId).ok_or_else(|| {
             HostError::new(format!("Android PTY session does not exist: {sessionId}"))
         })?;
-        resizeAndroidPtyProcess(session.pid, session.masterFd, rows, cols)
+        resizeAndroidPtyProcess(&mut session.process, session.masterFd, rows, cols)
     }
 
     pub fn pollPtyExitCode(&self, sessionId: &str) -> HostResult<Option<i32>> {
@@ -209,7 +222,7 @@ impl AndroidTerminalHost {
         if let Some(exitCode) = session.exitCode {
             return Ok(Some(exitCode));
         }
-        let exitCode = pollPidExitCode(session.pid)?;
+        let exitCode = pollPidExitCode(&mut session.process)?;
         if let Some(code) = exitCode {
             session.exitCode = Some(code);
         }
@@ -292,7 +305,7 @@ impl TerminalHost for AndroidTerminalHost {
 
     /// Registers user-supplied Linux root filesystems without modifying the bundled runtime.
     fn terminalProfileSupport(&self) -> HostResult<Vec<operit_host_api::TerminalProfileSupport>> {
-        Ok([PROOT_TERMINAL, CHROOT_TERMINAL, ANDROID_SYSTEM_TERMINAL]
+        let mut support: Vec<_> = [PROOT_TERMINAL, CHROOT_TERMINAL, ANDROID_SYSTEM_TERMINAL]
             .into_iter().map(|terminal| operit_host_api::TerminalProfileSupport {
                 fields: if terminal == ANDROID_SYSTEM_TERMINAL {
                     Vec::new()
@@ -303,7 +316,18 @@ impl TerminalHost for AndroidTerminalHost {
                 terminalType: if terminal == ANDROID_SYSTEM_TERMINAL { "shell" } else { "bash" }.into(),
                 fieldChoices: None,
             })
-            .collect())
+            .collect();
+        if self.termuxLauncher.is_some() {
+            support.push(operit_host_api::TerminalProfileSupport {
+                terminal: TERMUX_TERMINAL.into(),
+                terminalType: "bash".into(),
+                fields: vec!["directoryMode".into()],
+                fieldChoices: Some(BTreeMap::from([
+                    ("directoryMode".into(), vec!["home".into(), "workspace".into()]),
+                ])),
+            });
+        }
+        Ok(support)
     }
 
     /// Creates a separate PTY registry for one Linux rootfs and mount configuration.
@@ -312,11 +336,22 @@ impl TerminalHost for AndroidTerminalHost {
         profile: &operit_host_api::TerminalProfile,
     ) -> HostResult<Arc<dyn TerminalHost>> {
         requireAndroidTerminal(&profile.terminal, &profile.terminalType)?;
-        androidProfileRootfs(profile)?;
-        androidProfileMounts(profile)?;
+        if profile.terminal == TERMUX_TERMINAL {
+            if self.termuxLauncher.is_none() {
+                return Err(HostError::new("Termux requires an Android app owner"));
+            }
+            match profile.options.get("directoryMode").map(String::as_str) {
+                Some("home" | "workspace") if profile.options.len() == 1 => {}
+                _ => return Err(HostError::new("Termux directory mode must be home or workspace")),
+            }
+        } else {
+            androidProfileRootfs(profile)?;
+            androidProfileMounts(profile)?;
+        }
         Ok(Arc::new(Self {
             state: Arc::default(),
             profile: Some(profile.clone()),
+            termuxLauncher: self.termuxLauncher.clone(),
         }))
     }
 
@@ -332,7 +367,15 @@ impl TerminalHost for AndroidTerminalHost {
         workingDir: &str,
         resolveHostDirectory: &dyn Fn(&str) -> HostResult<String>,
     ) -> HostResult<String> {
-        match requireAndroidTerminal(terminal, terminalType)?.as_str() {
+        let terminalType = requireAndroidTerminal(terminal, terminalType)?;
+        if terminal == TERMUX_TERMINAL {
+            return match self.profile.as_ref().and_then(|profile| profile.options.get("directoryMode")).map(String::as_str) {
+                Some("home") => Ok(terminal_termux::HOME.into()),
+                Some("workspace") => resolveHostDirectory(workingDir),
+                _ => Err(HostError::new("Termux requires a configured directory mode")),
+            };
+        }
+        match terminalType.as_str() {
             "bash" => operit_host_api::TerminalWorkingDirectory::resolveLinuxGuestDirectory(
                 workingDir,
                 &|path| {
@@ -443,7 +486,7 @@ impl TerminalHost for AndroidTerminalHost {
         let mut entries = Vec::new();
         for (sessionId, session) in state.ptySessions.iter_mut() {
             if session.exitCode.is_none() {
-                if let Some(exitCode) = pollPidExitCode(session.pid)? {
+                if let Some(exitCode) = pollPidExitCode(&mut session.process)? {
                     session.exitCode = Some(exitCode);
                 }
             }
@@ -496,9 +539,10 @@ impl TerminalHost for AndroidTerminalHost {
             }
         }
 
-        let workingDir = initialAndroidWorkingDir(&normalizedTerminalType)?;
+        let workingDir = initialAndroidWorkingDir(terminal, &normalizedTerminalType)?;
         let session = createAndroidPtySession(
             self.profile.as_ref(),
+            self.termuxLauncher.as_ref(),
             normalizedSessionName.clone(),
             normalizedTerminalType.clone(),
             workingDir,
@@ -874,9 +918,10 @@ fn hiddenAndroidPtySessionId(
 
     let session = createAndroidPtySession(
         host.profile.as_ref(),
+        host.termuxLauncher.as_ref(),
         format!("hidden:{executorLabel}"),
         terminalType.to_string(),
-        initialAndroidWorkingDir(terminalType)?,
+        initialAndroidWorkingDir(host.implementation(terminalType)?, terminalType)?,
         24,
         80,
     )?;
@@ -891,6 +936,7 @@ fn hiddenAndroidPtySessionId(
 
 fn createAndroidPtySession(
     profile: Option<&operit_host_api::TerminalProfile>,
+    termuxLauncher: Option<&TermuxLauncher>,
     sessionName: String,
     terminalType: String,
     workingDir: String,
@@ -900,14 +946,24 @@ fn createAndroidPtySession(
     androidLogInfo(&format!(
         "createAndroidPtySession start name={sessionName} type={terminalType} workingDir={workingDir} size={rows}x{cols}"
     ));
-    let command = match profile {
-        Some(profile) => buildAndroidProfileCommand(profile, &workingDir)?,
-        None => buildAndroidPtyCommand(&terminalType, &workingDir)?,
+    let terminal = match profile {
+        Some(profile) => profile.terminal.as_str(),
+        None => androidTerminalName(&terminalType)?,
     };
-    let (pid, readerFd, masterFd) = startAndroidPtyProcess(&command, rows, cols)?;
-    androidLogInfo(&format!(
-        "createAndroidPtySession forked pid={pid:?} masterFd={masterFd} name={sessionName}"
-    ));
+    let (process, readerFd, masterFd, workingDir, startupInput) = if terminal == TERMUX_TERMINAL {
+        let launcher = termuxLauncher.ok_or_else(|| HostError::new("Termux launcher is unavailable"))?;
+        let (control, reader, writer) = terminal_termux::start(
+            launcher, &androidPtyPromptCommand(), &workingDir, rows, cols,
+        )?;
+        (AndroidPtyProcess::Termux(control), reader, writer, workingDir, None)
+    } else {
+        let command = match profile {
+            Some(profile) => buildAndroidProfileCommand(profile, &workingDir)?,
+            None => buildAndroidPtyCommand(&terminalType, &workingDir)?,
+        };
+        let (process, reader, writer) = startAndroidPtyProcess(&command, rows, cols)?;
+        (process, reader, writer, command.workingDir.unwrap_or(workingDir), command.startupInput)
+    };
     let writer = Arc::new(Mutex::new(masterFd));
     let output = Arc::new(Mutex::new(VecDeque::new()));
     let commandOutput: AndroidPtyCommandOutput =
@@ -915,15 +971,16 @@ fn createAndroidPtySession(
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
     let cursorState: AndroidPtyCursorState =
         Arc::new(Mutex::new(AndroidPtyCursor { row: 1, col: 1 }));
+    let outputClosed = match &process {
+        AndroidPtyProcess::Termux(control) => Some(control.outputClosed()),
+        _ => None,
+    };
     let mut session = AndroidPtySession {
         sessionName,
-        terminal: match profile {
-            Some(profile) => profile.terminal.clone(),
-            None => androidTerminalName(&terminalType)?.into(),
-        },
+        terminal: terminal.into(),
         terminalType,
-        workingDir: command.workingDir.unwrap_or(workingDir),
-        pid,
+        workingDir,
+        process,
         masterFd,
         writer: writer.clone(),
         reader: None,
@@ -940,8 +997,9 @@ fn createAndroidPtySession(
         commandOutput.clone(),
         screenOutput.clone(),
         cursorState,
+        outputClosed,
     )?);
-    if let Some(input) = command.startupInput {
+    if let Some(input) = startupInput {
         writeAndroidPtyBytes(&writer, input.as_bytes())?;
     }
     if let Err(error) =
@@ -953,13 +1011,13 @@ fn createAndroidPtySession(
     )
     {
         androidLogError(&format!(
-            "createAndroidPtySession initial prompt failed pid={pid:?} masterFd={masterFd} name={}: {error}", session.sessionName
+            "createAndroidPtySession initial prompt failed masterFd={masterFd} name={}: {error}", session.sessionName
         ));
         return Err(error);
     }
     clearAndroidPtyCommandOutput(&commandOutput)?;
     androidLogInfo(&format!(
-        "createAndroidPtySession ready pid={pid:?} masterFd={masterFd} name={}",
+        "createAndroidPtySession ready masterFd={masterFd} name={}",
         session.sessionName
     ));
     Ok(session)
@@ -970,6 +1028,7 @@ fn scheduleAndroidPtyReader(
     readerFd: RawFd, writer: Arc<Mutex<RawFd>>, output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: AndroidPtyCommandOutput, screenOutput: Arc<Mutex<VecDeque<u8>>>,
     cursorState: AndroidPtyCursorState,
+    outputClosed: Option<Arc<AtomicBool>>,
 ) -> HostResult<Box<dyn FnOnce() + Send>> {
     #[cfg(target_os = "android")]
     {
@@ -994,7 +1053,12 @@ fn scheduleAndroidPtyReader(
                 appendAndroidPtyCommandOutput(&commandOutput, &commandChunk);
                 Ok(())
             },
-            move |error| closed.fail(HostError::new(format!("Android PTY reached EOF or stopped: {}", error.message))),
+            move |error| {
+                if let Some(outputClosed) = outputClosed {
+                    outputClosed.store(true, Ordering::Release);
+                }
+                closed.fail(HostError::new(format!("Android PTY reached EOF or stopped: {}", error.message)));
+            },
         )?;
         Ok(Box::new(move || {
             if let Err(error) = reader.close() { androidLogError(&error.message); }
@@ -1002,7 +1066,7 @@ fn scheduleAndroidPtyReader(
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (readerFd, writer, output, commandOutput, screenOutput, cursorState);
+        let _ = (readerFd, writer, output, commandOutput, screenOutput, cursorState, outputClosed);
         Err(HostError::new("Android PTY is only available on Android target"))
     }
 }
@@ -1161,7 +1225,7 @@ fn normalizeAndroidTerminalType(terminalType: &str) -> HostResult<String> {
 fn requireAndroidTerminal(terminal: &str, terminalType: &str) -> HostResult<String> {
     let normalizedTerminalType = normalizeAndroidTerminalType(terminalType)?;
     match (terminal.trim(), normalizedTerminalType.as_str()) {
-        (PROOT_TERMINAL | CHROOT_TERMINAL, "bash") | (ANDROID_SYSTEM_TERMINAL, "shell") => Ok(normalizedTerminalType),
+        (PROOT_TERMINAL | CHROOT_TERMINAL | TERMUX_TERMINAL, "bash") | (ANDROID_SYSTEM_TERMINAL, "shell") => Ok(normalizedTerminalType),
         (implementation, terminalType) => Err(HostError::new(format!(
             "Unsupported Android terminal implementation and type: {implementation}/{terminalType}"
         ))),
@@ -1180,7 +1244,10 @@ fn androidTerminalName(terminalType: &str) -> HostResult<&'static str> {
 }
 
 /// Returns the initial working directory for an Android terminal type.
-fn initialAndroidWorkingDir(terminalType: &str) -> HostResult<String> {
+fn initialAndroidWorkingDir(terminal: &str, terminalType: &str) -> HostResult<String> {
+    if terminal == TERMUX_TERMINAL {
+        return Ok(terminal_termux::HOME.into());
+    }
     match terminalType {
         "bash" => Ok("/root".to_string()),
         "shell" => requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")
@@ -1663,7 +1730,7 @@ fn startAndroidPtyProcess(
     {
         let writer = unsafe { libc::fcntl(fd, libc::F_DUPFD_CLOEXEC, 0) };
         if writer < 0 {
-            terminateAndroidPtyProcess(AndroidPtyProcess::Local(pid));
+            terminateAndroidPtyProcess(&AndroidPtyProcess::Local(pid));
             unsafe {
                 libc::close(fd);
             }
@@ -1689,8 +1756,9 @@ fn requiredPtyInteger(value: &serde_json::Value, key: &str) -> HostResult<i32> {
 }
 
 /// Stops a session through the same security context that created it.
-fn terminateAndroidPtyProcess(process: AndroidPtyProcess) {
+fn terminateAndroidPtyProcess(process: &AndroidPtyProcess) {
     match process {
+        AndroidPtyProcess::Termux(control) => control.close(),
         AndroidPtyProcess::Shizuku(pid) => {
             if let Err(error) = crate::terminal_privilege::call(
                 serde_json::json!({"operation": "close", "pid": pid}),
@@ -1703,6 +1771,7 @@ fn terminateAndroidPtyProcess(process: AndroidPtyProcess) {
             unsafe {
                 let mut status = 0;
                 // A reaped PID can already belong to an unrelated process.
+                let pid = *pid;
                 if libc::waitpid(pid, &mut status, libc::WNOHANG) != 0 {
                     return;
                 }
@@ -1721,12 +1790,13 @@ fn terminateAndroidPtyProcess(process: AndroidPtyProcess) {
 
 /// Resizes the remote controlling PTY rather than assuming a local child.
 fn resizeAndroidPtyProcess(
-    process: AndroidPtyProcess,
+    process: &mut AndroidPtyProcess,
     fd: RawFd,
     rows: u16,
     cols: u16,
 ) -> HostResult<()> {
     match process {
+        AndroidPtyProcess::Termux(control) => control.resize(rows, cols),
         AndroidPtyProcess::Local(_) => setPtyWindowSize(fd, rows, cols),
         AndroidPtyProcess::Shizuku(pid) => crate::terminal_privilege::call(
             serde_json::json!({"operation": "resize", "pid": pid, "rows": rows, "cols": cols}),
@@ -1886,7 +1956,7 @@ fn forkPtyExecve(
             }
         }
         if unsafe { libc::fcntl(masterFd, libc::F_SETFD, libc::FD_CLOEXEC) } < 0 {
-            terminateAndroidPtyProcess(AndroidPtyProcess::Local(pid));
+            terminateAndroidPtyProcess(&AndroidPtyProcess::Local(pid));
             unsafe {
                 libc::close(masterFd);
             }
@@ -1969,7 +2039,7 @@ fn forkPipeExecve(command: &AndroidPtyCommand) -> HostResult<(AndroidPid, RawFd,
         libc::close(stderrPipe[1]);
         for fd in [stdoutPipe[0], stderrPipe[0]] {
             if libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) < 0 {
-                terminateAndroidPtyProcess(AndroidPtyProcess::Local(pid));
+                terminateAndroidPtyProcess(&AndroidPtyProcess::Local(pid));
                 libc::close(stdoutPipe[0]);
                 libc::close(stderrPipe[0]);
                 return Err(HostError::new("Could not mark Android exec pipes close-on-exec"));
@@ -2110,8 +2180,9 @@ fn setPtyWindowSize(fd: RawFd, rows: u16, cols: u16) -> HostResult<()> {
 }
 
 /// Polls locally owned children or the Shizuku-owned remote process.
-fn pollPidExitCode(process: AndroidPtyProcess) -> HostResult<Option<i32>> {
+fn pollPidExitCode(process: &mut AndroidPtyProcess) -> HostResult<Option<i32>> {
     let pid = match process {
+        AndroidPtyProcess::Termux(control) => return control.pollExit(),
         AndroidPtyProcess::Shizuku(pid) => {
             let response = crate::terminal_privilege::call(
                 serde_json::json!({"operation": "poll", "pid": pid}),
@@ -2126,7 +2197,7 @@ fn pollPidExitCode(process: AndroidPtyProcess) -> HostResult<Option<i32>> {
                 None => Err(HostError::new("Missing Shizuku terminal exit code")),
             };
         }
-        AndroidPtyProcess::Local(pid) => pid,
+        AndroidPtyProcess::Local(pid) => *pid,
     };
     #[cfg(not(target_os = "android"))]
     {
@@ -2223,10 +2294,10 @@ pub fn androidPrivilegedPtyOperation(request: &str) -> HostResult<String> {
             json!({"pid": pid, "stdoutFd": stdoutFd, "stderrFd": stderrFd})
         }
         Some("poll") => {
-            json!({"exitCode": pollPidExitCode(AndroidPtyProcess::Local(requiredPtyInteger(&request, "pid")?))?})
+            json!({"exitCode": pollPidExitCode(&mut AndroidPtyProcess::Local(requiredPtyInteger(&request, "pid")?))?})
         }
         Some("close") => {
-            terminateAndroidPtyProcess(AndroidPtyProcess::Local(requiredPtyInteger(
+            terminateAndroidPtyProcess(&AndroidPtyProcess::Local(requiredPtyInteger(
                 &request, "pid",
             )?));
             json!({})

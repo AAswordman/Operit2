@@ -321,6 +321,10 @@ class OwnerSystemCapabilityChannel(
                         ?: throw IllegalArgumentException("system operation paramsJson is required")
                 val response =
                     when (operation) {
+                        "launch_termux_terminal" -> {
+                            TermuxTerminalLauncher.start(activity.applicationContext, JSONObject(paramsJson))
+                            mapOf("resultJson" to "null")
+                        }
                         "ui_automation" -> mapOf("resultJson" to uiAutomation.execute(JSONObject(paramsJson)).toString())
                         "send_notification" -> systemSendNotification(JSONObject(paramsJson))
                         "get_device_location" -> mapOf(

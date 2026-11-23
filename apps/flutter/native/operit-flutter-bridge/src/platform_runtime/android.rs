@@ -58,7 +58,9 @@ pub(crate) fn create_host_context(startup: &BridgeStartup) -> Result<HostManager
             )),
         )
     }
-    .withTerminalHost(Arc::new(AndroidTerminalHost::new()));
+    .withTerminalHost(Arc::new(AndroidTerminalHost::new().withTermuxLauncher(Arc::new(
+        |request| ownerSystemOperation("launch_termux_terminal", request),
+    ))));
     context = context.withUiAutomationHost(Arc::new(operit_host_api::UiAutomation::OwnerUiAutomationHost {
         invoke: Arc::new(|operation, parameters| ownerSystemOperation("ui_automation", serde_json::json!({ "operation": operation, "parameters": parameters }))),
     }));

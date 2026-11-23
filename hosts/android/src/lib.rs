@@ -30,6 +30,7 @@ mod secret_store;
 mod service_discovery;
 mod system_operation;
 mod terminal;
+mod terminal_termux;
 #[path = "../../common/terminal_command.rs"]
 mod terminal_command;
 mod terminal_privilege;
@@ -65,6 +66,7 @@ pub use runtime_storage::AndroidRuntimeStorageHost;
 pub use secret_store::{clearAndroidHostSecretStoreBridge, setAndroidHostSecretStoreBridge};
 pub use system_operation::AndroidSystemOperationHost;
 pub use terminal::AndroidTerminalHost;
+pub use terminal_termux::TermuxLauncher;
 pub use tts_playback::{AndroidTtsPlaybackCommand, AndroidTtsPlaybackHost};
 pub use tts_synthesis::AndroidTtsSynthesisHost;
 pub use web_visit::AndroidWebVisitHost;

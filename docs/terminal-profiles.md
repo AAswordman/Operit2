@@ -41,6 +41,7 @@ PowerShell，或多个 WSL 发行版。每套配置都有独立 ID 和会话上�
 | --- | --- | --- |
 | Android | proot / bash | 自定义 rootfs、目录挂载，或按需安装 ARM64 发行版 |
 | Android | chroot / bash | 可信的 rootfs 目录、目录挂载，启动时需要 Root 授权 |
+| Android | termux / bash | Termux 主目录或可由 Termux 访问的共享工作区 |
 | Android | android-system / shell | 系统终端；权限使用现有 Android 权限配置 |
 | Windows | native / powershell | PowerShell 5、7 等解释器的绝对路径和 JSON 参数数组 |
 | Windows | native / bash | 本机 Bash 的绝对路径和参数，或从宿主发现的 WSL 发行版中选择 |
@@ -66,6 +67,22 @@ Android 的 PRoot 启动保持其默认 seccomp 行为。自定义 rootfs 与托
 Android 可在添加或编辑配置时切换到 `Chroot（需要 Root）`。可以填写自行准备的
 Linux rootfs，也可编辑已下载发行版的配置并沿用其路径。Chroot 使用会话独立的
 挂载命名空间，Shell 以 Root 身份运行，请使用可信的 rootfs。
+
+### Termux
+
+安装并打开支持 `RUN_COMMAND` 的 Termux，在 Termux 内运行
+`pkg install --no-install-recommends python`。在 `~/.termux/termux.properties`
+中设置 `allow-external-apps = true` 并运行 `termux-reload-settings`，然后在
+Android 的 Operit 应用权限中允许「在 Termux 中运行命令」。
+
+部分 Android 系统会冻结后台的 Termux，导致工作区无法拉起命令服务。在 ColorOS 上，
+可在 Termux 的应用信息中打开「耗电管理 → 完全允许后台行为」，重新打开一次 Termux，
+再回 Operit 启动终端。
+
+在终端配置中选择 `Termux` 并保存。起始目录可选 Termux 主目录，或 Termux 有权
+读取的共享工作区。应用私有工作区需要选 Termux 主目录。将该配置设为默认后，终端工具
+和工作区都会使用它，也可以在工作区下拉菜单中单次选择。会话以 Termux 的应用身份运行，
+真实 PTY 通过带单次令牌的本机连接流式收发终端数据，支持交互、调整尺寸和退出状态。
 
 `mounts` 是宿主能力声明中的通用选项，值为 JSON 数组。每项包含 `source`（宿主
 目录）和 `target`（guest 绝对目录）。Android 的 PRoot 和 chroot 当前支持

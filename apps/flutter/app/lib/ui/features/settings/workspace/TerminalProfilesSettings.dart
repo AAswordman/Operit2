@@ -690,6 +690,7 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
   late TerminalProfileSupport _implementation;
   late bool _usesWsl;
   String? _distribution;
+  late String _directoryMode;
 
   /// Initializes the saved implementation and its registered fields.
   @override
@@ -704,6 +705,7 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
                 entry.terminalType == widget.profile!.terminalType,
           );
     _distribution = widget.profile?.options[_wslDistributionField];
+    _directoryMode = widget.profile?.options['directoryMode'] ?? 'home';
     _usesWsl = _distribution != null;
     final mounts = widget.profile?.options['mounts'];
     if (mounts != null) {
@@ -715,7 +717,11 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
     }
     for (final field
         in widget.support.expand((entry) => entry.fields).toSet()) {
-      if (field == _wslDistributionField || field == 'mounts') continue;
+      if (field == _wslDistributionField ||
+          field == 'mounts' ||
+          field == 'directoryMode') {
+        continue;
+      }
       _options[field] = TextEditingController(
         text: widget.profile?.options[field] ?? '',
       );
@@ -727,11 +733,16 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
     (field) =>
         field != _wslDistributionField &&
         field != 'mounts' &&
+        field != 'directoryMode' &&
         (!_usesWsl || widget.profile?.options.containsKey(field) == true),
   );
 
   /// Exposes mounts only when the selected launcher advertises native mount support.
   bool get _supportsMounts => _implementation.fields.contains('mounts');
+
+  /// Reads the starting-directory policies supported by the selected launcher.
+  List<String> get _directoryModes =>
+      _implementation.fieldChoices?['directoryMode'] ?? const [];
 
   /// Shows the translated default while retaining its stored name on an unchanged save.
   @override
@@ -781,6 +792,7 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
             if (_options[field]!.text.trim().isNotEmpty)
               field: _options[field]!.text.trim(),
           if (_usesWsl) _wslDistributionField: _distribution!,
+          if (_directoryModes.isNotEmpty) 'directoryMode': _directoryMode,
           if (_supportsMounts && _mounts.isNotEmpty)
             'mounts': jsonEncode([
               for (final mount in _mounts)
@@ -926,7 +938,41 @@ class _TerminalProfileDialogState extends State<_TerminalProfileDialog> {
                         : null,
                   ),
                 ),
-              if (!_usesWsl && _launchFields.isEmpty && !_supportsMounts)
+              if (_directoryModes.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.only(top: 16),
+                  child: DropdownButtonFormField<String>(
+                    key: ValueKey(_implementation.terminal),
+                    initialValue: _directoryMode,
+                    isExpanded: true,
+                    decoration: InputDecoration(
+                      labelText: l10n.terminalProfileDirectoryMode,
+                    ),
+                    items: [
+                      for (final mode in _directoryModes)
+                        DropdownMenuItem(
+                          value: mode,
+                          child: Text(switch (mode) {
+                            'home' => l10n.terminalProfileDirectoryHome,
+                            'workspace' => l10n.terminalProfileDirectoryWorkspace,
+                            _ => mode,
+                          }),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) setState(() => _directoryMode = value);
+                    },
+                  ),
+                ),
+              if (_implementation.terminal == 'termux')
+                Padding(
+                  padding: const EdgeInsets.only(top: 12),
+                  child: Text(l10n.terminalProfileTermuxSetup),
+                ),
+              if (!_usesWsl &&
+                  _launchFields.isEmpty &&
+                  !_supportsMounts &&
+                  _directoryModes.isEmpty)
                 Padding(
                   padding: const EdgeInsets.only(top: 16),
                   child: Text(l10n.terminalProfileNoOptions),

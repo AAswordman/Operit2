@@ -136,6 +136,36 @@ abstract class AppLocalizations {
   /// **'Chroot (Root)'**
   String get terminalImplementationChroot;
 
+  /// No description provided for @terminalImplementationTermux.
+  ///
+  /// In en, this message translates to:
+  /// **'Termux'**
+  String get terminalImplementationTermux;
+
+  /// No description provided for @terminalProfileDirectoryMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting directory'**
+  String get terminalProfileDirectoryMode;
+
+  /// No description provided for @terminalProfileDirectoryHome.
+  ///
+  /// In en, this message translates to:
+  /// **'Termux home'**
+  String get terminalProfileDirectoryHome;
+
+  /// No description provided for @terminalProfileDirectoryWorkspace.
+  ///
+  /// In en, this message translates to:
+  /// **'Workspace (shared storage)'**
+  String get terminalProfileDirectoryWorkspace;
+
+  /// No description provided for @terminalProfileTermuxSetup.
+  ///
+  /// In en, this message translates to:
+  /// **'Open Termux and run pkg install --no-install-recommends python. Set allow-external-apps = true in ~/.termux/termux.properties, then run termux-reload-settings. In Android settings, allow Operit to run commands in Termux.'**
+  String get terminalProfileTermuxSetup;
+
   /// No description provided for @terminalImplementationQemu.
   ///
   /// In en, this message translates to:

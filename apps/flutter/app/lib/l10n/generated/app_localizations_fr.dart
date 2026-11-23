@@ -28,6 +28,23 @@ class AppLocalizationsFr extends AppLocalizations {
   String get terminalImplementationChroot => 'Chroot (Root)';
 
   @override
+  String get terminalImplementationTermux => 'Termux';
+
+  @override
+  String get terminalProfileDirectoryMode => 'Répertoire de démarrage';
+
+  @override
+  String get terminalProfileDirectoryHome => 'Répertoire personnel de Termux';
+
+  @override
+  String get terminalProfileDirectoryWorkspace =>
+      'Espace de travail (stockage partagé)';
+
+  @override
+  String get terminalProfileTermuxSetup =>
+      'Ouvrez Termux et exécutez pkg install --no-install-recommends python. Ajoutez allow-external-apps = true dans ~/.termux/termux.properties, puis exécutez termux-reload-settings. Dans les paramètres Android, autorisez Operit à exécuter des commandes dans Termux.';
+
+  @override
   String get terminalImplementationQemu => 'Terminal Linux émulé QEMU';
 
   @override
