@@ -103,7 +103,10 @@ fn lightweight_skill_install_and_update_preserve_settings_and_installed_plugins(
     let filesystem = Arc::new(host.vfs().unwrap());
     let support = asset_runtime();
     let manager = SkillManager::new(paths, filesystem.clone());
-    assert_eq!(support.builtinSkillNames(), &["PackageBuilder"]);
+    assert_eq!(
+        support.builtinSkillNames(),
+        &["PackageBuilder", "multi-node-collaboration"]
+    );
     assert!(!manager
         .getBundledExternalSkillCandidates(support.as_ref())
         .iter()

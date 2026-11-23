@@ -28,6 +28,12 @@
 
 `wait_agent` 观察的是调用时的轮次。其他入口打断并启动下一轮时，旧 wait 返回旧轮次的取消回执；下一次 wait 才观察新轮次。多选等待采用任一结束语义，继续等待剩余任务时应传入仍在运行的 ID。
 
+## 多端协作
+
+应用内置 `multi-node-collaboration` Skill，介绍主 Agent 在同一设备空间内按节点分工、让子 Agent 切换执行节点并收取结果的用法。在插件管理中开启该 Skill 的 AI 可见性，并安装、启用本插件后使用。
+
+主 Agent 用 `list_core_nodes` 选择可达且 `canExecute=true` 的目标，把完整节点 ID 和自包含任务写入 `spawn_agent.task`。子 Agent 在自己的会话中调用 `switch_core`，在迁移续跑后用 `list_core_nodes.currentNodeId` 核验目标，再开始设备上的工作。各子会话独立绑定执行节点，父子关系与 agent ID 保留；主 Agent 继续通过 `wait_agent`、`send_input` 和 `close_agent` 管理任务，可同时派发其他独立工作。Skill 源文件位于 `plugins/skills/buildin/multi-node-collaboration/SKILL.md`。
+
 ## 架构和生命周期
 
 - `src/manager.ts` 管理创建、轮次、容量、等待订阅、取消和关闭。
