@@ -3,9 +3,85 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
-/// Verifies that neutral seeds generate neutral accents and surfaces in both modes.
+/// Verifies exact custom accents, independent secondary tones and neutral palettes.
 void main() {
   for (final brightness in Brightness.values) {
+    for (final (primary, secondary) in <(int, int)>[
+      (0xFFFF00FF, 0xFF00FFFF),
+      (0xFF123456, 0xFFFFB020),
+      (0xFFFFFF00, 0xFF000080),
+      (0xFF000000, 0xFFFFFFFF),
+      (0xFFFFFFFF, 0xFF000000),
+      (0xFF808080, 0xFF333333),
+    ]) {
+      test('custom pair $primary / $secondary stays exact in $brightness', () {
+        final snapshot = ThemePreferenceSnapshot.fromJson(
+          UserPreferencesManager.defaultThemePreferenceSnapshot.toJson()
+            ..['useCustomColors'] = true
+            ..['customPrimaryColor'] = primary
+            ..['customSecondaryColor'] = secondary,
+        );
+        final scheme = operitColorScheme(brightness, snapshot);
+        expect(scheme.primary.toARGB32(), primary);
+        expect(scheme.primaryContainer.toARGB32(), primary);
+        expect(scheme.secondary.toARGB32(), secondary);
+        expect(scheme.secondaryContainer.toARGB32(), secondary);
+        for (final (background, foreground) in <(Color, Color)>[
+          (scheme.primary, scheme.onPrimary),
+          (scheme.primaryContainer, scheme.onPrimaryContainer),
+          (scheme.secondary, scheme.onSecondary),
+          (scheme.secondaryContainer, scheme.onSecondaryContainer),
+        ]) {
+          expect(_contrast(background, foreground), greaterThanOrEqualTo(4.5));
+        }
+      });
+    }
+
+    test('secondary tones are independent of the primary in $brightness', () {
+      final schemes = <ColorScheme>[];
+      for (final primary in [0xFFFF00FF, 0xFF000000, 0xFF123456]) {
+        schemes.add(
+          operitColorScheme(
+            brightness,
+            ThemePreferenceSnapshot.fromJson(
+              UserPreferencesManager.defaultThemePreferenceSnapshot.toJson()
+                ..['useCustomColors'] = true
+                ..['customPrimaryColor'] = primary
+                ..['customSecondaryColor'] = 0xFF00FFFF,
+            ),
+          ),
+        );
+      }
+      for (final scheme in schemes.skip(1)) {
+        expect(scheme.secondary, schemes.first.secondary);
+        expect(scheme.onSecondary, schemes.first.onSecondary);
+        expect(scheme.secondaryContainer, schemes.first.secondaryContainer);
+        expect(scheme.onSecondaryContainer, schemes.first.onSecondaryContainer);
+        expect(scheme.secondaryFixed, schemes.first.secondaryFixed);
+        expect(scheme.secondaryFixedDim, schemes.first.secondaryFixedDim);
+        expect(scheme.onSecondaryFixed, schemes.first.onSecondaryFixed);
+        expect(
+          scheme.onSecondaryFixedVariant,
+          schemes.first.onSecondaryFixedVariant,
+        );
+      }
+    });
+
+    test('disabled saved accents do not change the brand in $brightness', () {
+      final values =
+          UserPreferencesManager.defaultThemePreferenceSnapshot.toJson()
+            ..['useCustomColors'] = false
+            ..['customPrimaryColor'] = 0xFFFF00FF
+            ..['customSecondaryColor'] = 0xFF00FFFF;
+      expect(
+        operitColorScheme(brightness, ThemePreferenceSnapshot.fromJson(values)),
+        operitColorScheme(
+          brightness,
+          UserPreferencesManager.defaultThemePreferenceSnapshot,
+        ),
+      );
+    });
+
     for (final seed in <int>[0xFF000000, 0xFFFFFFFF, 0xFF808080]) {
       test('neutral seed $seed stays grayscale in $brightness', () {
         final snapshot = ThemePreferenceSnapshot.fromJson(

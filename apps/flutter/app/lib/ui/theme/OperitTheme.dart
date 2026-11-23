@@ -1902,11 +1902,12 @@ ColorScheme operitColorScheme(
       brightness,
     );
   }
-  final seedColor =
+  final customPrimary =
       themePreferenceSnapshot.useCustomColors &&
           themePreferenceSnapshot.customPrimaryColor != null
       ? Color(themePreferenceSnapshot.customPrimaryColor!)
-      : _brandSeedColor;
+      : null;
+  final seedColor = customPrimary ?? _brandSeedColor;
   final customSecondary =
       themePreferenceSnapshot.useCustomColors &&
           themePreferenceSnapshot.customSecondaryColor != null
@@ -1915,15 +1916,48 @@ ColorScheme operitColorScheme(
   final monochrome =
       _isGrayscaleThemeColor(seedColor) &&
       (customSecondary == null || _isGrayscaleThemeColor(customSecondary));
-  final scheme = ColorScheme.fromSeed(
+  var scheme = ColorScheme.fromSeed(
     seedColor: seedColor,
     brightness: brightness,
-    dynamicSchemeVariant: monochrome
+    dynamicSchemeVariant: _isGrayscaleThemeColor(seedColor)
         ? DynamicSchemeVariant.monochrome
-        : DynamicSchemeVariant.tonalSpot,
+        : customPrimary == null
+        ? DynamicSchemeVariant.tonalSpot
+        : DynamicSchemeVariant.fidelity,
   );
 
-  // Preserve grayscale surfaces and contrast between generated secondary pairs.
+  if (customPrimary != null) {
+    final foreground = _themeAccentForeground(customPrimary);
+    scheme = scheme.copyWith(
+      primary: customPrimary,
+      onPrimary: foreground,
+      primaryContainer: customPrimary,
+      onPrimaryContainer: foreground,
+      surfaceTint: customPrimary,
+    );
+  }
+  if (customSecondary != null) {
+    final secondaryScheme = ColorScheme.fromSeed(
+      seedColor: customSecondary,
+      brightness: brightness,
+      dynamicSchemeVariant: _isGrayscaleThemeColor(customSecondary)
+          ? DynamicSchemeVariant.monochrome
+          : DynamicSchemeVariant.fidelity,
+    );
+    final foreground = _themeAccentForeground(customSecondary);
+    scheme = scheme.copyWith(
+      secondary: customSecondary,
+      onSecondary: foreground,
+      secondaryContainer: customSecondary,
+      onSecondaryContainer: foreground,
+      secondaryFixed: secondaryScheme.primaryFixed,
+      secondaryFixedDim: secondaryScheme.primaryFixedDim,
+      onSecondaryFixed: secondaryScheme.onPrimaryFixed,
+      onSecondaryFixedVariant: secondaryScheme.onPrimaryFixedVariant,
+    );
+  }
+
+  // Preserve neutral surfaces when both selected accents are grayscale.
   if (monochrome) {
     return scheme;
   }
@@ -1944,7 +1978,6 @@ ColorScheme operitColorScheme(
       outlineVariant: const Color(0xFF262628),
       onSurface: const Color(0xFFECECEC),
       onSurfaceVariant: const Color(0xFFA0A1A7),
-      secondary: customSecondary ?? scheme.secondary,
     );
   } else {
     return scheme.copyWith(
@@ -1960,7 +1993,6 @@ ColorScheme operitColorScheme(
       outlineVariant: const Color(0xFFE2E4E8),
       onSurface: const Color(0xFF1B1C1E),
       onSurfaceVariant: const Color(0xFF5A5C63),
-      secondary: customSecondary ?? scheme.secondary,
     );
   }
 }
@@ -1968,3 +2000,11 @@ ColorScheme operitColorScheme(
 /// Identifies achromatic seed colors without treating dark chromatic colors as gray.
 bool _isGrayscaleThemeColor(Color color) =>
     color.r == color.g && color.g == color.b;
+
+/// Chooses the black or white foreground with the higher WCAG contrast ratio.
+Color _themeAccentForeground(Color background) {
+  final luminance = background.computeLuminance();
+  final blackContrast = (luminance + 0.05) / 0.05;
+  final whiteContrast = 1.05 / (luminance + 0.05);
+  return blackContrast >= whiteContrast ? Colors.black : Colors.white;
+}

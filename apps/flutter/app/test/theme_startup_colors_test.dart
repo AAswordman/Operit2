@@ -38,7 +38,7 @@ void main() {
             tester.element(find.byType(RuntimeBootstrapScreen)),
           ).colorScheme;
           expect(scheme.brightness, brightness);
-          expect(scheme.primary, expected.primary);
+          expect(scheme.primary, custom ? Color(seed!) : expected.primary);
           if (custom) {
             expect(
               scheme.primary,
