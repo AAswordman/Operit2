@@ -4260,6 +4260,10 @@ export namespace ToolPkg {
      * Discards active capture without returning audio.
      */
     cancelRecording(id: string): Promise<void>;
+    /**
+     * Captures a user-enabled camera frame for a voice call turn; returns null if the camera is off or unsupported.
+     */
+    captureCameraFrame(id: string, chatId: string): Promise<Chat.SendAttachment | null>;
   }
 
   /**

@@ -1,14 +1,18 @@
 // ignore_for_file: file_names
+import 'dart:async';
+
 import 'package:floating_windows/floating_windows.dart';
 import 'package:flutter/material.dart';
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/errors/UnhandledErrorReporter.dart';
+import '../../core/host/VoiceCallCamera.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../theme/OperitTheme.dart' show operitColorScheme;
+import 'VoiceCallCameraPanel.dart';
 
 /// Hosts an ordinary live plugin UI session on a transparent, undecorated root.
 class FloatingWindowApp extends StatefulWidget {
@@ -26,23 +30,64 @@ class FloatingWindowApp extends StatefulWidget {
   State<FloatingWindowApp> createState() => _FloatingWindowAppState();
 }
 
-class _FloatingWindowAppState extends State<FloatingWindowApp> {
+class _FloatingWindowAppState extends State<FloatingWindowApp>
+    with WidgetsBindingObserver {
   final _session = ToolPkgUiSessionController();
   late final _preferences = UserPreferencesManager(
     clients: widget.clients,
   ).windowPreferencesFlow();
 
-  /// Registers the session drain with the floating window host.
+  VoiceCallCamera? _camera;
+
+  Future<Object?> _cameraCommand(String name) async {
+    switch (name) {
+      case voiceCallCameraCapture:
+        return _camera?.capture();
+      case voiceCallCameraStop:
+        unawaited(_camera?.stop());
+        return null;
+      default:
+        throw ArgumentError('Unknown camera command: $name');
+    }
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.hidden ||
+        state == AppLifecycleState.paused ||
+        state == AppLifecycleState.detached) {
+      unawaited(_camera?.stop());
+    }
+  }
+
   @override
   void initState() {
     super.initState();
-    FloatingWindows.setBeforeClose(widget.launch, _session.close);
+    if (voiceCallCameraSupported &&
+        (!voiceCallCameraNeedsActivity ||
+            widget.launch.onBeforeCloseChanged != null) &&
+        widget.launch.payload['route'] == voiceCallRoute &&
+        (widget.launch.payload['plugin'] as Map)['packageName'] ==
+            voiceCallPackage) {
+      _camera = VoiceCallCamera();
+      FloatingWindows.setContentCommandHandler(widget.launch, _cameraCommand);
+      WidgetsBinding.instance.addObserver(this);
+    }
+    FloatingWindows.setBeforeClose(widget.launch, () async {
+      final stopping = _camera?.stop();
+      await _session.close();
+      await stopping;
+    });
   }
 
-  /// Releases the host close hook when the surface leaves the tree.
   @override
   void dispose() {
     FloatingWindows.setBeforeClose(widget.launch, null);
+    if (_camera != null) {
+      WidgetsBinding.instance.removeObserver(this);
+      FloatingWindows.setContentCommandHandler(widget.launch, null);
+      _camera?.dispose();
+    }
     super.dispose();
   }
 
@@ -85,6 +130,16 @@ class _FloatingWindowAppState extends State<FloatingWindowApp> {
       canvasColor: Colors.transparent,
     );
 
+    final launcher = ToolPkgUiLauncherScreen(
+      clients: widget.clients,
+      plugin: plugin,
+      initialRouteId: payload['route'] as String,
+      showLauncherChrome: false,
+      showLoadingIndicator: false,
+      sessionController: _session,
+      initialState: (payload['state'] as Map).cast<String, Object?>(),
+    );
+
     return MaterialApp(
       debugShowCheckedModeBanner: false,
       color: Colors.transparent,
@@ -98,15 +153,14 @@ class _FloatingWindowAppState extends State<FloatingWindowApp> {
       home: UnhandledErrorHost(
         child: Material(
           type: MaterialType.transparency,
-          child: ToolPkgUiLauncherScreen(
-            clients: widget.clients,
-            plugin: plugin,
-            initialRouteId: payload['route'] as String,
-            showLauncherChrome: false,
-            showLoadingIndicator: false,
-            sessionController: _session,
-            initialState: (payload['state'] as Map).cast<String, Object?>(),
-          ),
+          child: _camera == null
+              ? launcher
+              : Column(
+                  children: [
+                    Expanded(child: launcher),
+                    VoiceCallCameraPanel(camera: _camera!),
+                  ],
+                ),
         ),
       ),
     );

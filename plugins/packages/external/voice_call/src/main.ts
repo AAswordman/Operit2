@@ -4,6 +4,7 @@ import { characterCards, type ChatDisplayIdentity } from "./dependencies/charact
 const PACKAGE = "com.operit.voice_call";
 const CONTROL_ROUTE = `toolpkg:${PACKAGE}:ui:control`;
 const CALL_ROUTE = `toolpkg:${PACKAGE}:ui:call`;
+const VOICE_OVERLAY_ROUTE = `toolpkg:${PACKAGE}:ui:voice-overlay`;
 const WINDOW = "voice-call";
 const title = { zh: "语音通话", en: "Voice Call" };
 const WAVE_SIZE = 212;
@@ -24,7 +25,8 @@ const labels = {
   submit: ["说完了", "Done speaking"],
   interrupt: ["打断并说话", "Interrupt and speak"],
   hangup: ["挂断", "Hang up"],
-  open: ["打开通话悬浮窗", "Open call window"],
+  open: ["打开通话窗", "Open call window"],
+  voiceOverlay: ["打开系统语音悬浮窗", "Open system voice overlay"],
   grant: ["授予悬浮窗权限", "Grant overlay permission"],
   unsupported: ["当前宿主不支持悬浮窗。", "Floating windows are unavailable on this host."],
   permission: ["在系统设置授权后，再打开通话窗。", "Grant permission in system settings, then open the call window."],
@@ -32,6 +34,7 @@ const labels = {
   system: ["已打开系统悬浮窗。", "Opened the system overlay."],
   application: ["已打开 Operit 应用内悬浮窗。", "Opened a floating window inside Operit."],
   noReply: ["本轮没有可播报的 AI 回复。", "No assistant reply was available to speak."],
+  cameraFrameFailed: ["本轮未能发送摄像头画面。", "Couldn't send the camera frame for this turn."],
   you: ["你", "You"],
 } as const;
 
@@ -56,10 +59,19 @@ export function control(ctx: ComposeDslContext): ComposeNode {
   const [status, setStatus] = ctx.useState("status", "");
   const [needsPermission, setNeedsPermission] = ctx.useState("needsPermission", false);
   const [busy, setBusy] = ctx.useState("busy", false);
+  const [offersVoiceOverlay, setOffersVoiceOverlay] = ctx.useState("offersVoiceOverlay", false);
   const inFlight = ctx.useRef("inFlight", false);
 
+  ctx.useEffect("voice-overlay-capability", () => {
+    let disposed = false;
+    void windowApi.capabilities().then(caps => {
+      if (!disposed) setOffersVoiceOverlay(caps.scope === "application" && caps.systemOverlay === true);
+    }).catch(report);
+    return () => { disposed = true; };
+  }, []);
+
   /** Runs an explicit window operation and reflects its outcome. */
-  async function launch(): Promise<void> {
+  async function launch(voiceOverlay: boolean): Promise<void> {
     if (inFlight.current) return;
     inFlight.current = true;
     setBusy(true);
@@ -72,16 +84,22 @@ export function control(ctx: ComposeDslContext): ComposeNode {
         return;
       }
       const windows = await windowApi.list();
-      if (windows.some(window => window.id === WINDOW)) {
+      const existing = windows.find(window => window.id === WINDOW);
+      if (existing) {
         await windowApi.show(WINDOW);
       } else {
+        if (voiceOverlay && !await windowApi.requestPermission()) {
+          setStatus(text("permission"));
+          return;
+        }
         await windowApi.open({
           id: WINDOW,
-          route: CALL_ROUTE,
-          options: { width: 340, height: 404, draggable: true },
+          route: voiceOverlay ? VOICE_OVERLAY_ROUTE : CALL_ROUTE,
+          options: { width: 340, height: voiceOverlay ? 404 : 460, draggable: true },
         });
       }
-      setStatus(text(caps.scope === "system" ? "system" : "application"));
+      const system = caps.scope === "system" || (existing ? existing.route === VOICE_OVERLAY_ROUTE : voiceOverlay);
+      setStatus(text(system ? "system" : "application"));
     } catch (error) {
       setStatus(report(error));
     } finally {
@@ -101,7 +119,10 @@ export function control(ctx: ComposeDslContext): ComposeNode {
 
   return ctx.UI.Column({ padding: 16, spacing: 10 }, [
     ctx.UI.Text({ text: text("setup"), style: "bodyMedium" }),
-    ctx.UI.Button({ text: text("open"), enabled: !busy, onClick: launch }),
+    ctx.UI.Button({ text: text("open"), enabled: !busy, onClick: () => launch(false) }),
+    ...(offersVoiceOverlay ? [ctx.UI.OutlinedButton({ enabled: !busy, onClick: () => launch(true) }, [
+      ctx.UI.Text({ text: text("voiceOverlay") }),
+    ])] : []),
     ...(needsPermission ? [ctx.UI.OutlinedButton({ onClick: requestPermission }, [ctx.UI.Text({ text: text("grant") })])] : []),
     ...(status ? [ctx.UI.Text({ text: status, style: "bodySmall" })] : []),
   ]);
@@ -146,6 +167,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   const [heard, setHeard] = ctx.useState("heard", "");
   const [reply, setReply] = ctx.useState("reply", "");
   const [failure, setFailure] = ctx.useState("failure", "");
+  const [cameraNotice, setCameraNotice] = ctx.useState("cameraNotice", "");
   const [identity, setIdentity] = ctx.useState<ChatDisplayIdentity | null>("identity", null);
   const identityRequest = ctx.useRef("identityRequest", 0);
   const [frame, setFrame] = ctx.useState("frame", { time: 0, level: 0 });
@@ -194,7 +216,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   }, []);
 
   ctx.useEffect("call-wave", () => {
-    if (phase !== "listening" && phase !== "recognizing" && phase !== "waiting" && phase !== "speaking") {
+    if ((phase !== "listening" && phase !== "recognizing" && phase !== "waiting" && phase !== "speaking")) {
       return () => {};
     }
     const start = Date.now();
@@ -305,6 +327,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     session.active = true;
     ++identityRequest.current;
     setFailure("");
+    setCameraNotice("");
     try {
       setPhase("connecting");
       if (!session.chatId) {
@@ -335,12 +358,21 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         setHeard(transcript);
         setReply("");
         setPhase("waiting");
+        setCameraNotice("");
+        const frame = typeof windowApi.captureCameraFrame === "function"
+          ? await windowApi.captureCameraFrame(WINDOW, session.chatId).catch(error => {
+              if (session.active) setCameraNotice(text("cameraFrameFailed"));
+              report(error);
+              return null;
+            })
+          : null;
+        if (!session.active) return;
         session.sending = true;
         const turn = await Tools.Chat.sendMessage({
           kind: "submit",
           chatId: session.chatId,
           runtime: "floating",
-          input: { text: transcript, attachments: [], replyToMessageTimestamp: null },
+          input: { text: transcript, attachments: frame ? [frame] : [], replyToMessageTimestamp: null },
           turn: { kind: "execute" },
           notifyReply: false,
         }).finally(() => { session.sending = false; });
@@ -396,6 +428,31 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   const statusColor = phase === "error" ? colors.error : colors.primary;
   const statusIcon = listening ? "mic" : phase === "speaking" ? "graphic_eq" : canStart ? "call" : "more_horiz";
   const detail = failure || (phase === "speaking" ? reply : heard ? `${text("you")}  ${heard}` : "");
+  const status = [
+    ui.Row({ verticalAlignment: "center", spacing: 5, paddingHorizontal: 11, paddingVertical: 5,
+      background: statusColor.copy({ alpha: 0.1 }), backgroundShape: { type: "rounded", radius: 20 },
+    }, [
+      ui.Icon({ name: statusIcon, size: 14, tint: statusColor }),
+      ui.Text({ text: text(phase), style: "labelMedium", color: statusColor }),
+    ]),
+    ...(cameraNotice ? [ui.Text({ text: cameraNotice, textAlign: "center", style: "bodySmall",
+      color: colors.onSurfaceVariant })] : []),
+    ...(detail ? [ui.Text({ text: detail, fillMaxWidth: true, textAlign: "center", style: "bodySmall",
+      color: failure ? colors.error : colors.onSurfaceVariant })] : []),
+  ];
+  const actions = ui.Row({ spacing: 10, verticalAlignment: "center", fillMaxWidth: true, horizontalArrangement: "center" }, [
+    ...(canStart || listening || speaking ? [ui.FilledTonalButton({
+      weight: 1,
+      text: text(speaking ? "interrupt" : listening ? "submit" : session.chatId ? "retry" : "start"),
+      onClick: speaking ? interruptSpeech : listening ? finishRecording : run,
+    })] : []),
+    ui.Button({ weight: 1, enabled: phase !== "closing", onClick: hangup,
+      containerColor: colors.error, contentColor: colors.onError,
+    }, [ui.Row({ spacing: 6, verticalAlignment: "center" }, [
+      ui.Icon({ name: "call_end", size: 16, tint: colors.onError }),
+      ui.Text({ text: text("hangup"), style: "labelLarge", color: colors.onError }),
+    ])]),
+  ]);
   return ui.Surface({ fillMaxSize: true, containerColor: colors.surface, shape: { type: "rounded", radius: 28 } }, [
     ui.Column({ fillMaxSize: true, horizontalAlignment: "center", paddingHorizontal: 20, paddingVertical: 16, spacing: 6,
       backgroundShape: { type: "rounded", radius: 28 },
@@ -406,29 +463,10 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 6, paddingBottom: 8 }, [
           avatarWave(ctx, identity, phase, frame),
           ...(identity ? [ui.Text({ text: identity.title, style: "headlineSmall", color: colors.onSurface })] : []),
-          ui.Row({ verticalAlignment: "center", spacing: 5, paddingHorizontal: 11, paddingVertical: 5,
-            background: statusColor.copy({ alpha: 0.1 }), backgroundShape: { type: "rounded", radius: 20 },
-          }, [
-            ui.Icon({ name: statusIcon, size: 14, tint: statusColor }),
-            ui.Text({ text: text(phase), style: "labelMedium", color: statusColor }),
-          ]),
-          ...(detail ? [ui.Text({ text: detail, fillMaxWidth: true, textAlign: "center", style: "bodySmall",
-            color: failure ? colors.error : colors.onSurfaceVariant })] : []),
+          ...status,
         ]),
       ]),
-      ui.Row({ spacing: 10, verticalAlignment: "center", fillMaxWidth: true, horizontalArrangement: "center" }, [
-        ...(canStart || listening || speaking ? [ui.FilledTonalButton({
-          weight: 1,
-          text: text(speaking ? "interrupt" : listening ? "submit" : session.chatId ? "retry" : "start"),
-          onClick: speaking ? interruptSpeech : listening ? finishRecording : run,
-        })] : []),
-        ui.Button({ weight: 1, enabled: phase !== "closing", onClick: hangup,
-          containerColor: colors.error, contentColor: colors.onError,
-        }, [ui.Row({ spacing: 6, verticalAlignment: "center" }, [
-          ui.Icon({ name: "call_end", size: 16, tint: colors.onError }),
-          ui.Text({ text: text("hangup"), style: "labelLarge", color: colors.onError }),
-        ])]),
-      ]),
+      actions,
     ]),
   ]);
 }
@@ -437,6 +475,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
 export function registerToolPkg(): boolean {
   ToolPkg.registerUiRoute({ id: "control", route: CONTROL_ROUTE, runtime: "compose_dsl", screen: control, title });
   ToolPkg.registerUiRoute({ id: "call", route: CALL_ROUTE, runtime: "compose_dsl", screen: call, title });
+  ToolPkg.registerUiRoute({ id: "voice-overlay", route: VOICE_OVERLAY_ROUTE, runtime: "compose_dsl", screen: call, title });
   ToolPkg.registerNavigationEntry({ id: "control", route: CONTROL_ROUTE, title, surface: "toolbox", icon: "Call" });
   return true;
 }

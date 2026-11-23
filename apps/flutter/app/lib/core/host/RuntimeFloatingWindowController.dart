@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:floating_windows/floating_windows.dart';
 import 'package:flutter/foundation.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
@@ -9,6 +10,7 @@ import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../../ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 import 'RuntimeWindowRecording.dart';
+import 'VoiceCallCamera.dart';
 
 class _OwnedFloatingWindow {
   _OwnedFloatingWindow(
@@ -103,6 +105,9 @@ class RuntimeFloatingWindowController {
     });
     _tail = work.then<void>((_) {}, onError: (Object _, StackTrace stack) {});
     return work.then((value) async {
+      if (value case (final _OwnedFloatingWindow window, final String chatId)) {
+        return _captureCameraFrame(window, chatId);
+      }
       if (value is! (_OwnedFloatingWindow, RuntimeWindowRecording)) {
         return value;
       }
@@ -128,6 +133,24 @@ class RuntimeFloatingWindowController {
     if (capture != null) unawaited(capture.finish(discard: true));
   }
 
+  static bool _useApplicationWindow(String route) =>
+      route == voiceCallRoute && voiceCallCameraNeedsActivity;
+
+  static Future<Map<String, Object?>> _capabilities({
+    required bool applicationOnly,
+  }) async {
+    final support = await FloatingWindows.capabilities(
+      applicationOnly: applicationOnly,
+    );
+    if (!applicationOnly) return support;
+    final native = await FloatingWindows.capabilities();
+    return {
+      ...support,
+      'recordingEchoCancellation': native['recordingEchoCancellation'],
+      'systemOverlay': native['systemOverlay'],
+    };
+  }
+
   /// Applies one authenticated plugin command in host arrival order.
   static Future<Object?> _command(Map<String, Object?> request) async {
     final owner = request['packageName'];
@@ -135,7 +158,12 @@ class RuntimeFloatingWindowController {
       throw ArgumentError('Missing authenticated window owner');
     }
     final operation = request['operation'];
-    if (operation == 'capabilities') return FloatingWindows.capabilities();
+    if (operation == 'capabilities') {
+      return _capabilities(
+        applicationOnly:
+            owner == voiceCallPackage && voiceCallCameraNeedsActivity,
+      );
+    }
     if (operation == 'requestPermission') {
       return FloatingWindows.requestPermission();
     }
@@ -172,12 +200,29 @@ class RuntimeFloatingWindowController {
         await owned.window.show();
         owned.visible = true;
       case 'hide':
+        if (owner == voiceCallPackage &&
+            owned.route == voiceCallRoute &&
+            voiceCallCameraSupported) {
+          await owned.window.contentCommand(voiceCallCameraStop);
+        }
         await owned.window.hide();
         _discardRecording(owned);
         owned.visible = false;
       case 'close':
         await _close(key, owned);
         return null;
+      case 'captureCameraFrame':
+        if (!owned.visible ||
+            owned.route != voiceCallRoute ||
+            owner != voiceCallPackage ||
+            !voiceCallCameraSupported) {
+          return null;
+        }
+        final chatId = request['chatId'];
+        if (chatId is! String || chatId.isEmpty || chatId.length > 128) {
+          throw ArgumentError('A valid call chat id is required');
+        }
+        return (owned, chatId);
       case 'record':
         if (!owned.visible) throw StateError('The recording window is hidden');
         if (_activeRecording != null) {
@@ -188,8 +233,7 @@ class RuntimeFloatingWindowController {
         final silence = _duration(request, 'silenceMs', 300, 3000);
         final echoCancellation = request['echoCancellation'] == true;
         if (echoCancellation &&
-            (await FloatingWindows.capabilities())[
-                    'recordingEchoCancellation'] !=
+            (await FloatingWindows.capabilities())['recordingEchoCancellation'] !=
                 true) {
           throw UnsupportedError('Recording echo cancellation is unavailable');
         }
@@ -216,6 +260,46 @@ class RuntimeFloatingWindowController {
         throw ArgumentError('Unknown floating window operation: $operation');
     }
     return owned.info(id);
+  }
+
+  /// Imports the frame into the call chat using the regular attachment path.
+  static Future<Map<String, Object?>?> _captureCameraFrame(
+    _OwnedFloatingWindow owned,
+    String chatId,
+  ) async {
+    final bytes = await owned.window
+        .contentCommand(voiceCallCameraCapture)
+        .timeout(const Duration(seconds: 5));
+    if (bytes == null || !owned.visible || !_windows.containsValue(owned)) {
+      return null;
+    }
+    if (bytes is! Uint8List ||
+        bytes.isEmpty ||
+        bytes.length > voiceCallFrameLimit) {
+      throw StateError('Invalid camera frame');
+    }
+    const fileName = 'camera-frame.jpg';
+    final transfer = _clients.servicesAttachmentTransferManager;
+    final uploadId = await transfer.beginAttachmentUpload(
+      fileName: fileName,
+      expectedByteLength: bytes.length,
+    );
+    await transfer.writeSelectedAttachment(
+      chatId: chatId,
+      uploadId: uploadId,
+      fileName: fileName,
+      expectedByteLength: bytes.length,
+      bytes: Stream.fromIterable([bytes, Uint8List(0)]),
+    );
+    final attachment = await transfer.completeSelectedAttachment(
+      chatId: chatId,
+      uploadId: uploadId,
+      fileName: fileName,
+      expectedByteLength: bytes.length,
+    );
+    return owned.visible && _windows.containsValue(owned)
+        ? attachment.toJson()
+        : null;
   }
 
   /// Reconciles desired content without exposing handle or permission bookkeeping to creators.
@@ -245,7 +329,9 @@ class RuntimeFloatingWindowController {
         'Close the window before changing its route or fill mode',
       );
     }
-    final support = await FloatingWindows.capabilities();
+    final support = await _capabilities(
+      applicationOnly: _useApplicationWindow(route),
+    );
     final String? unavailable = support['supported'] != true
         ? 'unsupported'
         : support['permissionGranted'] != true
@@ -284,7 +370,9 @@ class RuntimeFloatingWindowController {
       ((request['options'] as Map?) ?? {}).cast<String, Object?>(),
     );
     final fill = (request['fill'] as bool?) ?? false;
-    final support = await FloatingWindows.capabilities();
+    final route = request['route'] as String;
+    final applicationOnly = _useApplicationWindow(route);
+    final support = await _capabilities(applicationOnly: applicationOnly);
     if ((options.x != null ||
             options.y != null ||
             options.screenBounds != null) &&
@@ -296,8 +384,8 @@ class RuntimeFloatingWindowController {
     if (request['state'] != null && request['state'] is! Map) {
       throw ArgumentError('Window state must be an object');
     }
-    final route = request['route'] as String;
     final window = await FloatingWindows.open(
+      applicationOnly: applicationOnly,
       payload: {
         'plugin': request['plugin'],
         'route': route,

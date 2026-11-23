@@ -559,7 +559,8 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                 recordingLevel: function(id) { return windowCommand('recordingLevel', {id:id}); },
                 recordingHasSpeech: function(id) { return windowCommand('recordingHasSpeech', {id:id}); },
                 finishRecording: function(id) { return windowCommand('finishRecording', {id:id}); },
-                cancelRecording: function(id) { return windowCommand('cancelRecording', {id:id}); }
+                cancelRecording: function(id) { return windowCommand('cancelRecording', {id:id}); },
+                captureCameraFrame: function(id, chatId) { return windowCommand('captureCameraFrame', {id:id, chatId:chatId}); }
               }
             },
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'ToolPkg.registerToolboxUiModule'),

@@ -21,6 +21,7 @@ class _ApplicationWindow {
   FloatingWindowOptions options;
   final bool fill;
   Future<void> Function()? beforeClose;
+  Future<Object?> Function(String name)? onContentCommand;
   bool visible = true;
   bool closing = false;
 }
@@ -58,6 +59,8 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
     switch (method) {
       case 'ready':
         return true;
+      case 'contentCommand':
+        return window.onContentCommand?.call(arguments as String);
       case 'getBounds':
         final bounds = _bounds(window);
         return {
@@ -206,6 +209,9 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
                     fill: window.fill,
                     onBeforeCloseChanged: (callback) {
                       window.beforeClose = callback;
+                    },
+                    onContentCommandChanged: (callback) {
+                      window.onContentCommand = callback;
                     },
                   ),
                 ),

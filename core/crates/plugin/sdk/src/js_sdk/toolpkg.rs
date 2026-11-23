@@ -3222,6 +3222,8 @@ pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
     fn finishRecording(&self, id: String) -> JsFuture<()>;
     /// Discards active capture without returning audio.
     fn cancelRecording(&self, id: String) -> JsFuture<()>;
+    /// Captures a user-enabled camera frame for a voice call turn; returns null if the camera is off or unsupported.
+    fn captureCameraFrame(&self, id: String, chatId: String) -> JsFuture<JsNullable<super::chat::ChatSendAttachment>>;
 }
 /// Groups runtime presentation services for plugin-owned user interfaces.
 pub struct ToolPkgUiApi {

@@ -176,10 +176,13 @@ class FloatingWindowLaunch {
     required this.options,
     this.fill = false,
     this.onBeforeCloseChanged,
+    this.onContentCommandChanged,
   });
 
   /// The application host keeps one close hook per surface.
   final void Function(Future<void> Function()? callback)? onBeforeCloseChanged;
+  final void Function(Future<Object?> Function(String name)? callback)?
+  onContentCommandChanged;
   final Map<String, Object?> payload;
   final FloatingWindowOptions options;
   final bool fill;
@@ -199,6 +202,9 @@ class FloatingWindows {
         TargetPlatform.linux,
       ].contains(defaultTargetPlatform);
   static Future<void> Function()? beforeClose;
+
+  /// Receives an app command in a dedicated native window engine.
+  static Future<Object?> Function(String name)? onContentCommand;
 
   /// Lets the application retain engine startup diagnostics in its normal log sink.
   static void Function(String message)? onDiagnostic;
@@ -254,8 +260,22 @@ class FloatingWindows {
     }
   }
 
-  static Future<Map<String, Object?>> capabilities() async {
-    if (_desktop || _android) {
+  static void setContentCommandHandler(
+    FloatingWindowLaunch launch,
+    Future<Object?> Function(String name)? callback,
+  ) {
+    final register = launch.onContentCommandChanged;
+    if (register != null) {
+      register(callback);
+    } else {
+      onContentCommand = callback;
+    }
+  }
+
+  static Future<Map<String, Object?>> capabilities({
+    bool applicationOnly = false,
+  }) async {
+    if (!applicationOnly && (_desktop || _android)) {
       final native = await channel.invokeMapMethod<String, Object?>(
         'capabilities',
       );
@@ -295,6 +315,7 @@ class FloatingWindows {
     FloatingWindowOptions options = const FloatingWindowOptions(),
     bool fill = false,
     Duration startupTimeout = const Duration(seconds: 30),
+    bool applicationOnly = false,
   }) async {
     final stopwatch = Stopwatch()..start();
     _diagnostic(
@@ -306,7 +327,7 @@ class FloatingWindows {
     if (fill && (options.hasBounds || options.draggable == true)) {
       throw ArgumentError('A fill window cannot set bounds or enable dragging');
     }
-    final support = await capabilities();
+    final support = await capabilities(applicationOnly: applicationOnly);
     if (support['supported'] != true || support['permissionGranted'] != true) {
       throw StateError(
         'Floating windows are unsupported or overlay permission is missing',
@@ -488,6 +509,9 @@ class FloatingWindows {
         return null;
       }
       if (closing) throw StateError('Floating window is closing');
+      if (call.method == 'contentCommand') {
+        return onContentCommand?.call(call.arguments as String);
+      }
       if (call.method == 'update') {
         final args = (call.arguments as Map).cast<String, Object?>();
         final payload = args['payload'] as Map?;
@@ -625,6 +649,11 @@ class FloatingWindow {
       FloatingWindowOptions.fromMap(
         Map<String, Object?>.from((await _command('getBounds')) as Map),
       );
+
+  /// Sends a command to the application content owned by this window.
+  Future<Object?> contentCommand(String name) =>
+      _command('contentCommand', name);
+
   Future<void> show() async => _command('show');
   Future<void> hide() async => _command('hide');
 

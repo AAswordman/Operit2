@@ -149,6 +149,20 @@ export interface MemoryGraphRecord {
 }
 /** Defines a stored relationship between memory items. */
 export interface LinkRecord { id: string; sourceMemoryId: string; targetMemoryId: string; type_: string; weight: number; description: string }
+/** Filters and paginates a memory library. */
+export interface MemoryPageOptions {
+  after?: string;
+  offset?: number;
+  limit?: number;
+  folderPath?: string | null;
+  ids?: string[];
+  titles?: string[];
+}
+/** Includes both endpoint titles in a memory relationship. */
+export interface MemoryLinkView extends LinkRecord {
+  sourceTitle: string;
+  targetTitle: string;
+}
 /** Defines the active prompt's externally tagged serialization. */
 export type ActivePromptRecord = { CharacterCard: { id: string } } | { CharacterGroup: { id: string } } | { Model: { id: "chat" } };
 /** Defines the editor's complete directory snapshot. */
@@ -291,9 +305,9 @@ export interface DomainOperations {
   "memory.settings.write": { input: OwnerParams & { settings: MemorySettingsRecord }; output: MemorySettingsRecord };
   "memory.searchConfig.read": { input: OwnerParams; output: MemorySearchConfigRecord };
   "memory.searchConfig.write": { input: OwnerParams & { config: MemorySearchConfigRecord }; output: MemorySearchConfigRecord };
-  "memory.graph": { input: OwnerParams & import("./model").MemoryPageOptions; output: { ownerKey: string; graph: MemoryGraphRecord; total: number; items: MemoryRecord[] } };
-  "memory.list": { input: OwnerParams & import("./model").MemoryPageOptions; output: { ownerKey: string; items: MemoryRecord[]; total: number } };
-  "memory.links": { input: OwnerParams & { linkId?: string; sourceTitle?: string; targetTitle?: string; linkType?: string; limit: number }; output: { links: import("./model").MemoryLinkView[] } };
+  "memory.graph": { input: OwnerParams & MemoryPageOptions; output: { ownerKey: string; graph: MemoryGraphRecord; total: number; items: MemoryRecord[] } };
+  "memory.list": { input: OwnerParams & MemoryPageOptions; output: { ownerKey: string; items: MemoryRecord[]; total: number } };
+  "memory.links": { input: OwnerParams & { linkId?: string; sourceTitle?: string; targetTitle?: string; linkType?: string; limit: number }; output: { links: MemoryLinkView[] } };
   "memory.search": { input: OwnerParams & { query: string }; output: { ownerKey: string; query: string; items: MemoryRecord[] } };
   "memory.get": { input: OwnerParams & { title: string }; output: { ownerKey: string; item: MemoryRecord } };
   "memory.create": { input: OwnerParams & { values: MemoryCreate }; output: { ownerKey: string; item: MemoryRecord; created: boolean } };

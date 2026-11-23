@@ -228,3 +228,44 @@ test("hanging up during playback cancels both the utterance and its capture", as
   assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
   assert.deepEqual(screen.chatInputs, ["Question"]);
 });
+test("the call sends a camera attachment with its transcribed turn", async () => {
+  const frame = { filePath: "/app/camera.jpg", fileName: "camera.jpg", mimeType: "image/jpeg", fileSize: 42, content: "" };
+  const sent = [];
+  const screen = callScreen(() => null, {
+    floatingWindows: {
+      async record() { return sent.length === 0 ? { text: "What am I holding?" } : null; },
+      async captureCameraFrame(id, chatId) {
+        assert.equal(id, "voice-call");
+        assert.equal(chatId, "actual-call");
+        return frame;
+      },
+    },
+    stt: { async transcribe(audio) { return audio; } },
+    chat: { async sendMessage(request) {
+      sent.push(plain(request.input));
+      return { outcome: { type: "completed" }, aiResponse: "A mug", sentAt: 1 };
+    } },
+    tts: { async speak() {} },
+  });
+  await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  assert.deepEqual(sent, [{ text: "What am I holding?", attachments: [frame], replyToMessageTimestamp: null }]);
+});
+
+test("when taking a camera frame fails, the voice turn still sends", async () => {
+  const sent = [];
+  const screen = callScreen(() => null, {
+    floatingWindows: {
+      async record() { return sent.length === 0 ? { text: "Hello" } : null; },
+      async captureCameraFrame() { throw new Error("Camera unavailable"); },
+    },
+    stt: { async transcribe(audio) { return audio; } },
+    chat: { async sendMessage(request) {
+      sent.push(plain(request.input));
+      return { outcome: { type: "completed" }, aiResponse: "Hello", sentAt: 1 };
+    } },
+    tts: { async speak() {} },
+  });
+  await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  assert.deepEqual(sent, [{ text: "Hello", attachments: [], replyToMessageTimestamp: null }]);
+  assert.equal(screen.states.get("cameraNotice"), "Couldn't send the camera frame for this turn.");
+});

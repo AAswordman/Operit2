@@ -149,6 +149,20 @@ export interface MemoryGraphRecord {
 }
 /** Defines a stored relationship between memory items. */
 export interface LinkRecord { id: string; sourceMemoryId: string; targetMemoryId: string; type_: string; weight: number; description: string }
+/** Filters and paginates a memory library. */
+export interface MemoryPageOptions {
+  after?: string;
+  offset?: number;
+  limit?: number;
+  folderPath?: string | null;
+  ids?: string[];
+  titles?: string[];
+}
+/** Includes both endpoint titles in a memory relationship. */
+export interface MemoryLinkView extends LinkRecord {
+  sourceTitle: string;
+  targetTitle: string;
+}
 /** Defines the active prompt's externally tagged serialization. */
 export type ActivePromptRecord = { CharacterCard: { id: string } } | { CharacterGroup: { id: string } } | { Model: { id: "chat" } };
 /** Defines the editor's complete directory snapshot. */
@@ -226,7 +240,7 @@ export interface MemoryQueryResult { memories: MemoryQueryMatch[]; snapshotId: s
 /** Maps every published domain method to its exact input and output contract. */
 export interface DomainOperations {
   "memory.searchWithOptions": { input: MemorySearchOptions; output: { ownerKey: string; items: MemoryRecord[]; documents: ({ memoryId: string } & DomainOperations["memory.chunks"]["output"])[]; excludedBySnapshotCount: number } };
-  "memory.chunks": { input: OwnerParams & { memoryId: string; query: string; count: number }; output: { total: number; chunks: { id: string; memoryUuid: string; chunkIndex: number; content: string }[] } };
+  "memory.chunks": { input: OwnerParams & { memoryId: string; query: string; count: number; start?: number }; output: { total: number; chunks: { id: string; memoryUuid: string; chunkIndex: number; content: string }[] } };
   "memory.chat.list": { input: { ownerKey: string }; output: MemoryChatListing };
   "memory.chat.pruneMissing": { input: { ownerKey: string }; output: { removedChatIds: string[]; removedCandidateIds: string[] } };
   "memory.chat.update": { input: { ownerKey: string; chatId: string }; output: MemoryExtractionResult };
@@ -291,8 +305,9 @@ export interface DomainOperations {
   "memory.settings.write": { input: OwnerParams & { settings: MemorySettingsRecord }; output: MemorySettingsRecord };
   "memory.searchConfig.read": { input: OwnerParams; output: MemorySearchConfigRecord };
   "memory.searchConfig.write": { input: OwnerParams & { config: MemorySearchConfigRecord }; output: MemorySearchConfigRecord };
-  "memory.graph": { input: OwnerParams; output: { ownerKey: string; graph: MemoryGraphRecord } };
-  "memory.list": { input: OwnerParams; output: { ownerKey: string; items: MemoryRecord[] } };
+  "memory.graph": { input: OwnerParams & MemoryPageOptions; output: { ownerKey: string; graph: MemoryGraphRecord; total: number; items: MemoryRecord[] } };
+  "memory.list": { input: OwnerParams & MemoryPageOptions; output: { ownerKey: string; items: MemoryRecord[]; total: number } };
+  "memory.links": { input: OwnerParams & { linkId?: string; sourceTitle?: string; targetTitle?: string; linkType?: string; limit: number }; output: { links: MemoryLinkView[] } };
   "memory.search": { input: OwnerParams & { query: string }; output: { ownerKey: string; query: string; items: MemoryRecord[] } };
   "memory.get": { input: OwnerParams & { title: string }; output: { ownerKey: string; item: MemoryRecord } };
   "memory.create": { input: OwnerParams & { values: MemoryCreate }; output: { ownerKey: string; item: MemoryRecord; created: boolean } };
@@ -485,9 +500,9 @@ export const characterCards = {
       write: (payload: DomainInput<"memory.searchConfig.write">): Promise<MemorySearchConfigRecord> => call("memory.searchConfig.write", payload),
     },
     /** Reads a memory graph. */
-    graph: (payload: OwnerParams): Promise<DomainOutput<"memory.graph">> => call("memory.graph", payload),
+    graph: (payload: DomainInput<"memory.graph">): Promise<DomainOutput<"memory.graph">> => call("memory.graph", payload),
     /** Lists memory records. */
-    list: (payload: OwnerParams): Promise<DomainOutput<"memory.list">> => call("memory.list", payload),
+    list: (payload: DomainInput<"memory.list">): Promise<DomainOutput<"memory.list">> => call("memory.list", payload),
     /** Searches bounded source and document hits using one ephemeral query vector. */
     searchWithOptions: (payload: MemorySearchOptions): Promise<DomainOutput<"memory.searchWithOptions">> => call("memory.searchWithOptions", payload),
     /** Searches memory records. */
@@ -503,6 +518,8 @@ export const characterCards = {
     /** Moves memory records to a folder. */
     move: (payload: DomainInput<"memory.move">): Promise<DomainOutput<"memory.move">> => call("memory.move", payload),
     links: {
+      /** Reads only relationships matching explicit filters and a bounded limit. */
+      query: (payload: DomainInput<"memory.links">): Promise<DomainOutput<"memory.links">> => call("memory.links", payload),
       /** Creates a memory relationship. */
       create: (payload: DomainInput<"memory.link.create">): Promise<DomainOutput<"memory.link.create">> => call("memory.link.create", payload),
       /** Applies a memory relationship patch. */
