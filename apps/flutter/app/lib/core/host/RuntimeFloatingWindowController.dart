@@ -186,12 +186,25 @@ class RuntimeFloatingWindowController {
         final maxDuration =
             _duration(request, 'maxDurationMs', 1000, 20000) ?? 15000;
         final silence = _duration(request, 'silenceMs', 300, 3000);
-        final capture = RuntimeWindowRecording(maxDuration, silence);
+        final echoCancellation = request['echoCancellation'] == true;
+        if (echoCancellation &&
+            (await FloatingWindows.capabilities())[
+                    'recordingEchoCancellation'] !=
+                true) {
+          throw UnsupportedError('Recording echo cancellation is unavailable');
+        }
+        final capture = RuntimeWindowRecording(
+          maxDuration,
+          silence,
+          echoCancellation: echoCancellation,
+        );
         _activeRecording = capture;
         owned.recording = capture;
         return (owned, capture);
       case 'recordingLevel':
         return owned.recording?.level ?? 0.0;
+      case 'recordingHasSpeech':
+        return owned.recording?.hasSpeech ?? false;
       case 'finishRecording':
       case 'cancelRecording':
         final capture = owned.recording;

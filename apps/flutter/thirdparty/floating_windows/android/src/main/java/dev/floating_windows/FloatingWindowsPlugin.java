@@ -7,6 +7,7 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.input.InputManager;
 import android.graphics.PixelFormat;
+import android.media.audiofx.AcousticEchoCanceler;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -241,6 +242,7 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 caps.put("supported",engineConfigurer != null); caps.put("permissionGranted",permitted());
                 caps.put("positioning",true); caps.put("alwaysOnTop",false);
                 caps.put("clickThrough",true); caps.put("focusable",true);
+                caps.put("recordingEchoCancellation", AcousticEchoCanceler.isAvailable());
                 result.success(caps); return;
             }
             case "requestPermission":

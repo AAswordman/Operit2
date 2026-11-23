@@ -557,6 +557,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                     return windowCommand('record', Object.assign({}, options, {id:id}));
                 },
                 recordingLevel: function(id) { return windowCommand('recordingLevel', {id:id}); },
+                recordingHasSpeech: function(id) { return windowCommand('recordingHasSpeech', {id:id}); },
                 finishRecording: function(id) { return windowCommand('finishRecording', {id:id}); },
                 cancelRecording: function(id) { return windowCommand('cancelRecording', {id:id}); }
               }

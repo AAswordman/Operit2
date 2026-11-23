@@ -109,7 +109,8 @@ if (recording !== null) {
 ```
 
 - `record(id, options?)` 等待完成并返回 `{audio, fileName, contentType}`，音频为 16 kHz、单声道、16 位 PCM WAV。
-- 录音期间可调用 `recordingLevel(id)` 获取当前窗口的归一化音量（`0` 到 `1`），用于绘制波纹或音量计。不采集时返回 `0`。
+- 录音期间可调用 `recordingLevel(id)` 获取归一化音量（`0` 到 `1`），或用 `recordingHasSpeech(id)` 查询当前录音是否已检测到语音。
+- 当 `capabilities().recordingEchoCancellation` 为 `true` 时，`record(id, { echoCancellation: true })` 可请求开启录音回声消除，并仅保留语音开始前的一小段录音。
 - `maxDurationMs` 可设为 1000–20000 毫秒，默认 15000。`silenceMs` 可设为 300–3000 毫秒，设置后检测到一段声音才开始判断尾部静音，整段没有达到发声阈值时返回 `null`。
 - 从另一个界面事件调用 `finishRecording(id)` 可提前结束采集，WAV 由原来的 `record` 调用返回。`cancelRecording(id)` 丢弃采集，`record` 返回 `null`。权限或音频设备错误会拒绝 Promise。
 - 真实可用范围取决于宿主麦克风权限和系统的后台录音规则。系统悬浮窗权限只决定窗口能否显示。

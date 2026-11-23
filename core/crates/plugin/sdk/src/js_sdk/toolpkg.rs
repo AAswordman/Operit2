@@ -3164,6 +3164,8 @@ pub struct ToolPkgFloatingWindowCapabilities {
     pub alwaysOnTop: bool,
     pub clickThrough: bool,
     pub focusable: bool,
+    /// Indicates support for echo cancellation in microphone capture.
+    pub recordingEchoCancellation: Option<bool>,
 }
 /// Describes a live window owned by the executing plugin.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -3179,6 +3181,8 @@ pub struct ToolPkgFloatingWindowRecordingOptions {
     pub maxDurationMs: Option<u32>,
     /// Stops after this much trailing silence (300–3000 ms) once speech is detected.
     pub silenceMs: Option<u32>,
+    /// Requests echo cancellation and keeps a short lead-in before detected speech.
+    pub echoCancellation: Option<bool>,
 }
 /// Carries a complete speech recording ready for STT.
 pub struct ToolPkgFloatingWindowRecording {
@@ -3212,6 +3216,8 @@ pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
     fn record(&self, id: String, options: Option<ToolPkgFloatingWindowRecordingOptions>) -> JsFuture<JsNullable<ToolPkgFloatingWindowRecording>>;
     /// Reads the normalized microphone level (0 to 1) for this owned window; zero while idle.
     fn recordingLevel(&self, id: String) -> JsFuture<f64>;
+    /// Reports whether the current recording has detected speech.
+    fn recordingHasSpeech(&self, id: String) -> JsFuture<bool>;
     /// Ends active capture and delivers its WAV to the pending record call.
     fn finishRecording(&self, id: String) -> JsFuture<()>;
     /// Discards active capture without returning audio.

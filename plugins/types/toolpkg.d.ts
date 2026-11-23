@@ -4156,6 +4156,10 @@ export namespace ToolPkg {
     alwaysOnTop: boolean;
     clickThrough: boolean;
     focusable: boolean;
+    /**
+     * Indicates support for echo cancellation in microphone capture.
+     */
+    recordingEchoCancellation?: boolean;
   }
 
   /**
@@ -4180,6 +4184,10 @@ export namespace ToolPkg {
      * Stops after this much trailing silence (300–3000 ms) once speech is detected.
      */
     silenceMs?: number;
+    /**
+     * Requests echo cancellation and keeps a short lead-in before detected speech.
+     */
+    echoCancellation?: boolean;
   }
 
   /**
@@ -4240,6 +4248,10 @@ export namespace ToolPkg {
      * Reads the normalized microphone level (0 to 1) for this owned window; zero while idle.
      */
     recordingLevel(id: string): Promise<number>;
+    /**
+     * Reports whether the current recording has detected speech.
+     */
+    recordingHasSpeech(id: string): Promise<boolean>;
     /**
      * Ends active capture and delivers its WAV to the pending record call.
      */

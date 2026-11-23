@@ -8,6 +8,7 @@ const WINDOW = "voice-call";
 const title = { zh: "语音通话", en: "Voice Call" };
 const WAVE_SIZE = 212;
 const CENTER = WAVE_SIZE / 2;
+const RECORDING_OPTIONS = { maxDurationMs: 20000, silenceMs: 900 };
 
 const labels = {
   idle: ["准备通话", "Ready to call"],
@@ -21,6 +22,7 @@ const labels = {
   start: ["开始通话", "Start call"],
   retry: ["继续通话", "Resume call"],
   submit: ["说完了", "Done speaking"],
+  interrupt: ["打断并说话", "Interrupt and speak"],
   hangup: ["挂断", "Hang up"],
   open: ["打开通话悬浮窗", "Open call window"],
   grant: ["授予悬浮窗权限", "Grant overlay permission"],
@@ -35,6 +37,7 @@ const labels = {
 
 type Label = keyof typeof labels;
 type Phase = "idle" | "connecting" | "listening" | "recognizing" | "waiting" | "speaking" | "closing" | "error";
+type Playback = { id: string; done: boolean; failed: boolean; cancellation?: Promise<boolean> };
 
 /** Selects window and control text using the plugin locale. */
 function text(label: Label): string {
@@ -136,7 +139,7 @@ function avatarWave(ctx: ComposeDslContext, identity: ChatDisplayIdentity | null
   ]);
 }
 
-/** Runs a half-duplex call in the real floating window's UI session. */
+/** Runs a call in the floating window. */
 export function call(ctx: ComposeDslContext): ComposeNode {
   const windowApi = ToolPkg.ui.floatingWindows;
   const [phase, setPhase] = ctx.useState<Phase>("phase", "idle");
@@ -151,15 +154,29 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     active: false,
     closing: false,
     sending: false,
-    playbackId: "",
+    playback: null as Playback | null,
+    recording: false,
   }).current;
 
-  /** Prevents another turn and cancels any chat or speech already started. */
+  async function interruptSpeech(): Promise<void> {
+    const playback = session.playback;
+    if (playback && !playback.done) {
+      const cancellation = playback.cancellation ??= Tools.Tts.cancel(playback.id).catch(error => {
+        if (session.active) setFailure(report(error));
+        else report(error);
+        return false;
+      });
+      if (!await cancellation && playback.cancellation === cancellation) playback.cancellation = undefined;
+    }
+  }
+
+  /** Prevents another turn and releases resources already in use. */
   async function stopCall(): Promise<void> {
     session.active = false;
     await Promise.all([
       ...(session.sending ? [Tools.Chat.cancel(session.chatId).catch(report)] : []),
-      ...(session.playbackId ? [Tools.Tts.cancel(session.playbackId).catch(report)] : []),
+      interruptSpeech(),
+      ...(session.recording ? [windowApi.cancelRecording(WINDOW).catch(report)] : []),
     ]);
   }
 
@@ -209,7 +226,80 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     };
   }, [phase]);
 
-  /** Records each turn, persists it in chat, and waits for speech before listening again. */
+  async function record(echoCancellation = false): Promise<ToolPkg.FloatingWindowRecording | null> {
+    session.recording = true;
+    try {
+      return await windowApi.record(WINDOW, { ...RECORDING_OPTIONS, ...(echoCancellation ? { echoCancellation } : {}) });
+    } finally {
+      session.recording = false;
+    }
+  }
+
+  /** Listens during playback and carries the captured interruption into the next turn. */
+  async function listenDuringPlayback(playback: Playback): Promise<ToolPkg.FloatingWindowRecording | null> {
+    let checking = false;
+    const detector = setInterval(() => {
+      if (checking || !session.active || playback.done || !session.recording || playback.cancellation) return;
+      checking = true;
+      void windowApi.recordingHasSpeech(WINDOW).then(async hasSpeech => {
+        if (hasSpeech && session.active && session.playback === playback) await interruptSpeech();
+      }).catch(error => {
+        clearInterval(detector);
+        report(error);
+      }).finally(() => { checking = false; });
+    }, 100);
+    try {
+      // The host bounds each capture. Keep listening if that limit expires during a long reply.
+      while (session.active && !playback.failed) {
+        const startedDuringPlayback = !playback.done;
+        const captured = await record(true);
+        if (!session.active || playback.failed) return null;
+        if (captured) {
+          await interruptSpeech();
+          return captured;
+        }
+        if (!startedDuringPlayback) break;
+      }
+      return null;
+    } finally {
+      clearInterval(detector);
+    }
+  }
+
+  async function speak(answer: string, sentAt: number, autoInterrupt: boolean): Promise<ToolPkg.FloatingWindowRecording | null> {
+    setPhase("speaking");
+    const playback: Playback = { id: `call-${session.chatId}-${sentAt}`, done: false, failed: false };
+    session.playback = playback;
+    const speaking = Tools.Tts.speak({
+      text: answer,
+      interrupt: false,
+      waitForCompletion: true,
+      playbackId: playback.id,
+    }).catch(async error => {
+      if (await playback.cancellation) return;
+      playback.failed = true;
+      throw error;
+    }).finally(() => {
+      playback.done = true;
+      if (session.active && !playback.failed && autoInterrupt && session.recording) setPhase("listening");
+    });
+    const listening = autoInterrupt ? listenDuringPlayback(playback).catch(error => {
+      report(error);
+      return null;
+    }) : Promise.resolve(null);
+    try {
+      const [, captured] = await Promise.all([speaking, listening]);
+      return captured;
+    } catch (error) {
+      if (session.recording) await windowApi.cancelRecording(WINDOW).catch(report);
+      await listening;
+      throw error;
+    } finally {
+      session.playback = null;
+    }
+  }
+
+  /** Records each turn, persists it in chat, and plays the reply. */
   async function run(): Promise<void> {
     if (session.active || session.closing) return;
     session.active = true;
@@ -224,9 +314,13 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       const currentIdentity = await characterCards.chat.identity({ chatId: session.chatId });
       if (!session.active) return;
       setIdentity(currentIdentity);
+      const caps = await windowApi.capabilities();
+      const autoInterrupt = caps.recordingEchoCancellation === true && typeof windowApi.recordingHasSpeech === "function";
+      let nextRecording: ToolPkg.FloatingWindowRecording | null = null;
       while (session.active) {
-        setPhase("listening");
-        const recording = await windowApi.record(WINDOW, { maxDurationMs: 20000, silenceMs: 900 });
+        if (!nextRecording) setPhase("listening");
+        const recording = nextRecording ?? await record();
+        nextRecording = null;
         if (!session.active) return;
         if (!recording) {
           setPhase("idle");
@@ -258,18 +352,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         if (!answer) throw new Error(text("noReply"));
 
         setReply(answer);
-        setPhase("speaking");
-        session.playbackId = `call-${session.chatId}-${turn.sentAt}`;
-        try {
-          await Tools.Tts.speak({
-            text: answer,
-            interrupt: false,
-            waitForCompletion: true,
-            playbackId: session.playbackId,
-          });
-        } finally {
-          session.playbackId = "";
-        }
+        nextRecording = await speak(answer, turn.sentAt, autoInterrupt);
       }
     } catch (error) {
       if (session.active) {
@@ -309,6 +392,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   const colors = ctx.MaterialTheme.colorScheme;
   const canStart = phase === "idle" || phase === "error";
   const listening = phase === "listening";
+  const speaking = phase === "speaking";
   const statusColor = phase === "error" ? colors.error : colors.primary;
   const statusIcon = listening ? "mic" : phase === "speaking" ? "graphic_eq" : canStart ? "call" : "more_horiz";
   const detail = failure || (phase === "speaking" ? reply : heard ? `${text("you")}  ${heard}` : "");
@@ -333,10 +417,10 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         ]),
       ]),
       ui.Row({ spacing: 10, verticalAlignment: "center", fillMaxWidth: true, horizontalArrangement: "center" }, [
-        ...(canStart || listening ? [ui.FilledTonalButton({
+        ...(canStart || listening || speaking ? [ui.FilledTonalButton({
           weight: 1,
-          text: text(listening ? "submit" : session.chatId ? "retry" : "start"),
-          onClick: listening ? finishRecording : run,
+          text: text(speaking ? "interrupt" : listening ? "submit" : session.chatId ? "retry" : "start"),
+          onClick: speaking ? interruptSpeech : listening ? finishRecording : run,
         })] : []),
         ui.Button({ weight: 1, enabled: phase !== "closing", onClick: hangup,
           containerColor: colors.error, contentColor: colors.onError,
