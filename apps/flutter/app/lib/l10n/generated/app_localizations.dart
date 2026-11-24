@@ -10400,6 +10400,18 @@ abstract class AppLocalizations {
   /// **'Invalid request parameters'**
   String get apiErrorInvalidParametersTitle;
 
+  /// No description provided for @apiErrorReasoningContentTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a provider that supports reasoning replay'**
+  String get apiErrorReasoningContentTitle;
+
+  /// No description provided for @apiErrorReasoningContentMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'The request involves reasoning_content. In model settings, select a provider type that supports sending reasoning content back, such as DeepSeek or OpenAI Compatible, and make sure it matches your API endpoint.'**
+  String get apiErrorReasoningContentMessage;
+
   /// No description provided for @apiErrorInvalidParametersMessage.
   ///
   /// In en, this message translates to:
