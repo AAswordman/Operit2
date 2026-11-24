@@ -2982,6 +2982,8 @@
   "appUpdateDownloadSizePending": "{size} · 正在获取文件大小",
   "appUpdateBadgeAvailable": "发现新版本 {version}，点击更新",
   "apiErrorInvalidParametersTitle": "请求参数有误",
+  "apiErrorReasoningContentTitle": "请使用支持思考回传的供应商",
+  "apiErrorReasoningContentMessage": "请求涉及 reasoning_content。请在模型设置中选择 DeepSeek、OpenAI 兼容等支持思考内容回传的供应商类型，并确认与当前 API 接口匹配。",
   "apiErrorInvalidParametersMessage": "API 服务器无法处理请求参数，请检查模型名称、模型能力与参数配置，并查看原始错误中的具体原因。",
   "apiErrorInvalidKeyTitle": "API Key 有误",
   "apiErrorInvalidKeyMessage": "你的 API Key 未通过服务器验证，请检查密钥是否正确、完整且有效。",

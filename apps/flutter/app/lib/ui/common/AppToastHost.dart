@@ -8,6 +8,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../../core/host/AppToastController.dart';
 import '../../l10n/generated/app_localizations.dart';
+import 'ApiErrorText.dart';
 import 'OperitLogoMark.dart';
 
 /// Presents the process-wide notice stack at the top-right of the window.
@@ -420,6 +421,7 @@ class _MacNoticeCard extends StatelessWidget {
 }
 
 class _NoticeBody extends StatelessWidget {
+  /// Creates the expandable, localized body of a corner notice.
   const _NoticeBody({
     required this.notice,
     required this.style,
@@ -432,20 +434,24 @@ class _NoticeBody extends StatelessWidget {
   final bool expanded;
   final ValueChanged<bool> onExpandedChanged;
 
+  /// Explains explicit HTTP failures in the active application language.
   @override
   Widget build(BuildContext context) {
+    final message = apiErrorHttpStatus(notice.text) == null
+        ? notice.text
+        : apiErrorText(notice.text, AppLocalizations.of(context)!);
     return LayoutBuilder(
       builder: (context, constraints) {
         final painter = TextPainter(
-          text: TextSpan(text: notice.text, style: style),
+          text: TextSpan(text: message, style: style),
           textDirection: Directionality.of(context),
           textScaler: MediaQuery.textScalerOf(context),
         )..layout(maxWidth: constraints.maxWidth);
         final needsExpansion = painter.height > _maxBodyHeight;
         painter.dispose();
         final text = notice.selectable || expanded
-            ? SelectableText(notice.text, style: style)
-            : Text(notice.text, style: style);
+            ? SelectableText(message, style: style)
+            : Text(message, style: style);
         if (!needsExpansion) {
           return text;
         }
@@ -471,7 +477,7 @@ class _NoticeBody extends StatelessWidget {
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(maxHeight: _maxBodyHeight),
                   child: Text(
-                    notice.text,
+                    message,
                     style: style,
                     maxLines: 6,
                     overflow: TextOverflow.ellipsis,

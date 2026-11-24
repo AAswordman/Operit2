@@ -3090,6 +3090,8 @@
   "appUpdateDownloadSizePending": "{size} · Calcul de la taille du fichier",
   "appUpdateBadgeAvailable": "La version {version} est disponible. Sélectionnez pour mettre à jour.",
   "apiErrorInvalidParametersTitle": "Paramètres de requête invalides",
+  "apiErrorReasoningContentTitle": "Utilisez un fournisseur prenant en charge le renvoi du raisonnement",
+  "apiErrorReasoningContentMessage": "La requête concerne reasoning_content. Dans les paramètres du modèle, sélectionnez un type de fournisseur prenant en charge le renvoi du contenu de raisonnement, comme DeepSeek ou Compatible OpenAI, et vérifiez qu’il correspond à votre API.",
   "apiErrorInvalidParametersMessage": "L’API n’a pas pu traiter les paramètres. Vérifiez le nom du modèle, ses capacités et ses paramètres, puis consultez l’erreur d’origine.",
   "apiErrorInvalidKeyTitle": "Clé API invalide",
   "apiErrorInvalidKeyMessage": "Le serveur a refusé la clé API. Vérifiez qu’elle est correcte, complète et active.",

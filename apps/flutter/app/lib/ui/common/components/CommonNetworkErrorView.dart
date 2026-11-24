@@ -8,11 +8,7 @@ import '../ApiErrorText.dart';
 
 class CommonNetworkErrorView extends StatelessWidget {
   /// Creates a model configuration error with its original details.
-  const CommonNetworkErrorView({
-    super.key,
-    this.errorDetails,
-    this.errorText,
-  });
+  const CommonNetworkErrorView({super.key, this.errorDetails, this.errorText});
 
   final core_proxy.CoreProxyErrorDetails? errorDetails;
   final String? errorText;
@@ -24,7 +20,11 @@ class CommonNetworkErrorView extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final textTheme = theme.textTheme;
     final l10n = AppLocalizations.of(context)!;
-    final summary = NetworkErrorSummary.fromDetails(errorDetails, errorText, l10n);
+    final summary = NetworkErrorSummary.fromDetails(
+      errorDetails,
+      errorText,
+      l10n,
+    );
 
     return Semantics(
       liveRegion: true,
@@ -32,20 +32,14 @@ class CommonNetworkErrorView extends StatelessWidget {
         decoration: BoxDecoration(
           color: colorScheme.errorContainer.withValues(alpha: 0.34),
           borderRadius: BorderRadius.circular(18),
-          border: Border.all(
-            color: colorScheme.error.withValues(alpha: 0.18),
-          ),
+          border: Border.all(color: colorScheme.error.withValues(alpha: 0.18)),
         ),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: <Widget>[
-              Icon(
-                summary.icon,
-                size: 20,
-                color: colorScheme.error,
-              ),
+              Icon(summary.icon, size: 20, color: colorScheme.error),
               const SizedBox(width: 10),
               Expanded(
                 child: Column(
@@ -114,7 +108,11 @@ class NetworkErrorSummary {
       final int status => status,
       null => apiErrorHttpStatus(original ?? ''),
     };
-    final httpExplanation = apiErrorExplanation(statusCode, l10n);
+    final httpExplanation = apiErrorExplanation(
+      statusCode,
+      l10n,
+      original: original,
+    );
     final explanation = switch ((
       httpExplanation,
       details?.variant,
@@ -127,7 +125,10 @@ class NetworkErrorSummary {
       ),
       (_, 'ModelAlreadyExists', _) => (
         title: l10n.apiErrorModelExistsTitle,
-        message: l10n.apiErrorModelExistsMessage(details!.stringField('modelId')!, details.stringField('providerName')!),
+        message: l10n.apiErrorModelExistsMessage(
+          details!.stringField('modelId')!,
+          details.stringField('providerName')!,
+        ),
         category: ApiErrorCategory.info,
       ),
       (_, 'ModelListFetch', _) => (

@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:operit_ui/operit_ui.dart';
 import 'package:operit2/core/host/AppToastController.dart';
+import 'package:operit2/l10n/generated/app_localizations.dart';
+import 'package:operit2/ui/common/ApiErrorText.dart';
 import 'package:operit2/ui/common/AppToastHost.dart';
 import 'package:operit2/ui/common/MacNoticeScaffoldMessenger.dart';
 
@@ -125,6 +127,96 @@ void main() {
     await _pumpNotice(tester);
 
     expect(find.text('Frontend toast'), findsNothing);
+  });
+
+  testWidgets(
+    'HTTP notices localize on language changes and retain selectable details',
+    (tester) async {
+      tester.view.physicalSize = const Size(393, 852);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      const original =
+          'request failed: 401 Unauthorized: '
+          '{"error":{"message":"Authentication Fails (governor) '
+          '(request_id: ea5fd864-18f4-46a2-8c77-c636a35dea70)",'
+          '"type":"authentication_error","param":null,'
+          '"code":"invalid_request_error"}}';
+      final language = ValueNotifier(const Locale('zh'));
+      addTearDown(language.dispose);
+      await tester.pumpWidget(
+        ValueListenableBuilder<Locale>(
+          valueListenable: language,
+          builder: (context, locale, child) => MaterialApp(
+            locale: locale,
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            builder: (context, child) => AppToastHost(child: child!),
+            home: const Scaffold(),
+          ),
+        ),
+      );
+      final controller = AppToastController.instance;
+      controller.show(original);
+      await _pumpNotice(tester);
+      final body = find.textContaining('HTTP 401：API Key 有误');
+      expect(body, findsOneWidget);
+      expect(controller.notices.value.single.text, original);
+      expect(find.text('展开全文'), findsOneWidget);
+      _expectTopRightNotice(tester, tester.widget<Text>(body).data!);
+
+      await tester.tap(find.text('展开全文'));
+      await tester.pump();
+      final chineseContext = tester.element(find.byType(SelectableText));
+      expect(
+        tester.widget<SelectableText>(find.byType(SelectableText)).data,
+        apiErrorText(original, AppLocalizations.of(chineseContext)!),
+      );
+      expect(tester.takeException(), isNull);
+
+      language.value = const Locale('en');
+      await tester.pumpAndSettle();
+      final englishContext = tester.element(find.byType(SelectableText));
+      final english = tester.widget<SelectableText>(
+        find.byType(SelectableText),
+      );
+      expect(english.data, startsWith('HTTP 401'));
+      expect(
+        english.data,
+        apiErrorText(original, AppLocalizations.of(englishContext)!),
+      );
+      expect(english.data, endsWith(original));
+      expect(controller.notices.value, hasLength(1));
+      expect(find.text('Collapse'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets('reasoning_content HTTP 400 notices guide provider selection', (
+    tester,
+  ) async {
+    const original =
+        'request failed: 400 Bad Request: '
+        '{"error":{"message":"Missing reasoning_content field in the '
+        'assistant message at index 2","type":"invalid_request_error"}}';
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('zh'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        builder: (context, child) => AppToastHost(child: child!),
+        home: const Scaffold(),
+      ),
+    );
+    AppToastController.instance.show(original, selectable: true);
+    await _pumpNotice(tester);
+    await tester.tap(find.text('展开全文'));
+    await tester.pump();
+    final body = tester.widget<SelectableText>(find.byType(SelectableText));
+    expect(body.data, startsWith('HTTP 400：请使用支持思考回传的供应商\n'));
+    expect(body.data, contains('DeepSeek、OpenAI 兼容'));
+    expect(body.data, endsWith('原始错误：\n$original'));
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets(

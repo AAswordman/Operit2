@@ -6073,6 +6073,14 @@ class AppLocalizationsFr extends AppLocalizations {
       'Paramètres de requête invalides';
 
   @override
+  String get apiErrorReasoningContentTitle =>
+      'Utilisez un fournisseur prenant en charge le renvoi du raisonnement';
+
+  @override
+  String get apiErrorReasoningContentMessage =>
+      'La requête concerne reasoning_content. Dans les paramètres du modèle, sélectionnez un type de fournisseur prenant en charge le renvoi du contenu de raisonnement, comme DeepSeek ou Compatible OpenAI, et vérifiez qu’il correspond à votre API.';
+
+  @override
   String get apiErrorInvalidParametersMessage =>
       'L’API n’a pas pu traiter les paramètres. Vérifiez le nom du modèle, ses capacités et ses paramètres, puis consultez l’erreur d’origine.';
 

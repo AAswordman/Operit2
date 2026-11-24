@@ -38,8 +38,21 @@ typedef ApiErrorExplanation = ({
   ApiErrorCategory category,
 });
 
-/// Explains HTTP failures from their status without guessing from body text.
-ApiErrorExplanation? apiErrorExplanation(int? status, AppLocalizations l10n) {
+/// Explains HTTP failures, including the explicit reasoning-content 400 rule.
+ApiErrorExplanation? apiErrorExplanation(
+  int? status,
+  AppLocalizations l10n, {
+  String? original,
+}) {
+  if (status == 400 &&
+      original != null &&
+      original.contains('reasoning_content')) {
+    return (
+      title: l10n.apiErrorReasoningContentTitle,
+      message: l10n.apiErrorReasoningContentMessage,
+      category: ApiErrorCategory.request,
+    );
+  }
   final description = switch (status) {
     400 || 422 => (
       l10n.apiErrorInvalidParametersTitle,
@@ -182,7 +195,7 @@ ApiErrorExplanation? apiErrorExplanation(int? status, AppLocalizations l10n) {
 String apiErrorText(String original, AppLocalizations l10n) {
   final status = apiErrorHttpStatus(original);
   if (status == null) return original;
-  final explanation = apiErrorExplanation(status, l10n);
+  final explanation = apiErrorExplanation(status, l10n, original: original);
   if (explanation == null) return original;
   return '${l10n.apiErrorHttpTitle(status, explanation.title)}\n'
       '${explanation.message}\n\n${l10n.apiErrorOriginal(original)}';

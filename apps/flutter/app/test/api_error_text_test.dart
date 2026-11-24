@@ -1,10 +1,47 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:operit2/l10n/generated/app_localizations_en.dart';
+import 'package:operit2/l10n/generated/app_localizations_fr.dart';
 import 'package:operit2/l10n/generated/app_localizations_zh.dart';
 import 'package:operit2/ui/common/ApiErrorText.dart';
 
 /// Verifies status recognition boundaries and lossless error presentation.
 void main() {
   final l10n = AppLocalizationsZh();
+  test(
+    'HTTP 400 reasoning_content guides provider choice in every language',
+    () {
+      const original =
+          'request failed: 400 Bad Request: '
+          '{"error":{"message":"Missing reasoning_content field"}}';
+      for (final language in [
+        l10n,
+        AppLocalizationsEn(),
+        AppLocalizationsFr(),
+      ]) {
+        final formatted = apiErrorText(original, language);
+        expect(formatted, contains(language.apiErrorReasoningContentTitle));
+        expect(formatted, contains(language.apiErrorReasoningContentMessage));
+        expect(formatted, contains('DeepSeek'));
+        expect(formatted, contains('OpenAI'));
+        expect(formatted, endsWith(original));
+      }
+    },
+  );
+
+  test('reasoning guidance requires both HTTP 400 and the specified field', () {
+    expect(
+      apiErrorText('request failed: 400: invalid model', l10n),
+      startsWith('HTTP 400：请求参数有误\n'),
+    );
+    expect(
+      apiErrorText('request failed: 401: reasoning_content', l10n),
+      startsWith('HTTP 401：API Key 有误\n'),
+    );
+    const unstructured =
+        '{"error":{"code":400,"message":"Missing reasoning_content"}}';
+    expect(apiErrorText(unstructured, l10n), unstructured);
+  });
+
   for (final (status, title) in [
     (400, '请求参数有误'),
     (401, 'API Key 有误'),
@@ -66,15 +103,22 @@ void main() {
     });
   }
 
-  test('classifies the complete HTTP error range and preserves raw responses', () {
-    for (var status = 400; status < 600; status++) {
-      final original = 'request failed: $status: body contains HTTP 401';
-      expect(apiErrorHttpStatus(original), status);
-      expect(apiErrorExplanation(status, l10n), isNotNull, reason: 'HTTP $status');
-      expect(apiErrorText(original, l10n), endsWith(original));
-    }
-    for (final status in [null, 0, 200, 301, 399, 600]) {
-      expect(apiErrorExplanation(status, l10n), isNull);
-    }
-  });
+  test(
+    'classifies the complete HTTP error range and preserves raw responses',
+    () {
+      for (var status = 400; status < 600; status++) {
+        final original = 'request failed: $status: body contains HTTP 401';
+        expect(apiErrorHttpStatus(original), status);
+        expect(
+          apiErrorExplanation(status, l10n),
+          isNotNull,
+          reason: 'HTTP $status',
+        );
+        expect(apiErrorText(original, l10n), endsWith(original));
+      }
+      for (final status in [null, 0, 200, 301, 399, 600]) {
+        expect(apiErrorExplanation(status, l10n), isNull);
+      }
+    },
+  );
 }

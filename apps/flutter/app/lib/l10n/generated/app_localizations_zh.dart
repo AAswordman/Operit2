@@ -5669,6 +5669,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get apiErrorInvalidParametersTitle => '请求参数有误';
 
   @override
+  String get apiErrorReasoningContentTitle => '请使用支持思考回传的供应商';
+
+  @override
+  String get apiErrorReasoningContentMessage =>
+      '请求涉及 reasoning_content。请在模型设置中选择 DeepSeek、OpenAI 兼容等支持思考内容回传的供应商类型，并确认与当前 API 接口匹配。';
+
+  @override
   String get apiErrorInvalidParametersMessage =>
       'API 服务器无法处理请求参数，请检查模型名称、模型能力与参数配置，并查看原始错误中的具体原因。';
 

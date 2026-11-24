@@ -5927,6 +5927,14 @@ class AppLocalizationsEn extends AppLocalizations {
   String get apiErrorInvalidParametersTitle => 'Invalid request parameters';
 
   @override
+  String get apiErrorReasoningContentTitle =>
+      'Use a provider that supports reasoning replay';
+
+  @override
+  String get apiErrorReasoningContentMessage =>
+      'The request involves reasoning_content. In model settings, select a provider type that supports sending reasoning content back, such as DeepSeek or OpenAI Compatible, and make sure it matches your API endpoint.';
+
+  @override
   String get apiErrorInvalidParametersMessage =>
       'The API could not process the request parameters. Check the model name, capabilities, and parameters, and review the original error.';
 
