@@ -415,18 +415,18 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
     _wasExecutionActive = isExecutionActive;
     _scheduleFollowLatest();
 
-    return SelectionContainer.disabled(
-      child: _ThinkToolsGroupAlpha(
-        visible: widget.forceExpandGroups || widget.isVisible,
-        duration: widget.forceExpandGroups
-            ? _instantDuration
-            : _groupFadeDuration,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: <Widget>[
-              MessagePressShieldRegion(
+    return _ThinkToolsGroupAlpha(
+      visible: widget.forceExpandGroups || widget.isVisible,
+      duration: widget.forceExpandGroups
+          ? _instantDuration
+          : _groupFadeDuration,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(0, 0, 0, 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            SelectionContainer.disabled(
+              child: MessagePressShieldRegion(
                 child: InkWell(
                   onTap: () {
                     setState(() {
@@ -467,65 +467,66 @@ class _ThinkToolsXmlGroupState extends State<_ThinkToolsXmlGroup> {
                   ),
                 ),
               ),
-              _ThinkToolsContentVisibility(
-                visible: _expanded,
-                duration: widget.forceExpandGroups
-                    ? _instantDuration
-                    : _contentFadeDuration,
-                builder: (context) {
-                  final bodyChildren = widget.mergeRender(
-                    startIndex: widget.group.startIndex,
-                    endIndexInclusive: widget.group.endIndexInclusive,
-                    renderInstanceKeyPrefix: 'group-${widget.group.stableKey}',
-                    shouldRenderNode: _renderToolGroupXmlNode,
-                  );
-                  return Padding(
-                    padding: const EdgeInsets.only(top: 2, bottom: 4, left: 10),
-                    child: Container(
-                      decoration: BoxDecoration(
-                        border: Border(
-                          left: BorderSide(
-                            color: Theme.of(context).colorScheme.outlineVariant
-                                .withValues(alpha: 0.55),
-                            width: 1.5,
-                          ),
+            ),
+            _ThinkToolsContentVisibility(
+              visible: _expanded,
+              duration: widget.forceExpandGroups
+                  ? _instantDuration
+                  : _contentFadeDuration,
+              builder: (context) {
+                final bodyChildren = widget.mergeRender(
+                  startIndex: widget.group.startIndex,
+                  endIndexInclusive: widget.group.endIndexInclusive,
+                  renderInstanceKeyPrefix: 'group-${widget.group.stableKey}',
+                  shouldRenderNode: _renderToolGroupXmlNode,
+                );
+                return Padding(
+                  padding: const EdgeInsets.only(top: 2, bottom: 4, left: 10),
+                  child: Container(
+                    decoration: BoxDecoration(
+                      border: Border(
+                        left: BorderSide(
+                          color: Theme.of(
+                            context,
+                          ).colorScheme.outlineVariant.withValues(alpha: 0.55),
+                          width: 1.5,
                         ),
                       ),
-                      padding: const EdgeInsets.only(left: 12),
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxHeight: _maxBodyHeight,
-                        ),
-                        child: NotificationListener<ScrollNotification>(
-                          onNotification: _handleBodyScrollNotification,
-                          child: Listener(
-                            onPointerDown: _handleBodyPointerStart,
-                            onPointerUp: _handleBodyPointerEnd,
-                            onPointerCancel: _handleBodyPointerEnd,
-                            onPointerPanZoomStart: _handleBodyPointerStart,
-                            onPointerPanZoomEnd: _handleBodyPointerEnd,
-                            child: Scrollbar(
+                    ),
+                    padding: const EdgeInsets.only(left: 12),
+                    child: ConstrainedBox(
+                      constraints: const BoxConstraints(
+                        maxHeight: _maxBodyHeight,
+                      ),
+                      child: NotificationListener<ScrollNotification>(
+                        onNotification: _handleBodyScrollNotification,
+                        child: Listener(
+                          onPointerDown: _handleBodyPointerStart,
+                          onPointerUp: _handleBodyPointerEnd,
+                          onPointerCancel: _handleBodyPointerEnd,
+                          onPointerPanZoomStart: _handleBodyPointerStart,
+                          onPointerPanZoomEnd: _handleBodyPointerEnd,
+                          child: Scrollbar(
+                            controller: _bodyScrollController,
+                            child: ListView(
                               controller: _bodyScrollController,
-                              child: ListView(
-                                controller: _bodyScrollController,
-                                primary: false,
-                                shrinkWrap: true,
-                                padding: const EdgeInsets.only(right: 14),
-                                children: <Widget>[
-                                  for (final child in bodyChildren)
-                                    _KeepAliveGroupItem(child: child),
-                                ],
-                              ),
+                              primary: false,
+                              shrinkWrap: true,
+                              padding: const EdgeInsets.only(right: 14),
+                              children: <Widget>[
+                                for (final child in bodyChildren)
+                                  _KeepAliveGroupItem(child: child),
+                              ],
                             ),
                           ),
                         ),
                       ),
                     ),
-                  );
-                },
-              ),
-            ],
-          ),
+                  ),
+                );
+              },
+            ),
+          ],
         ),
       ),
     );

@@ -10,6 +10,44 @@ import 'package:operit2/ui/common/code_editor/CodeEditorZoomTransform.dart';
 Widget app(Widget child) => MaterialApp(home: Scaffold(body: child));
 
 void main() {
+  testWidgets('editor layouts preserve one continuous ballistic activity', (
+    tester,
+  ) async {
+    final scroll = CodeEditorScrollController();
+    final controller = TextEditingController(
+      text: List.filled(500, 'same source line').join('\n'),
+    );
+    addTearDown(scroll.dispose);
+    addTearDown(controller.dispose);
+    var simulations = 0;
+    await tester.pumpWidget(
+      app(
+        CodeEditor(
+          controller: controller,
+          scrollController: scroll,
+          style: const TextStyle(fontSize: 14, height: 1),
+          scrollPhysics: _TrackingScrollPhysics(
+            onBallistic: () => simulations++,
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    simulations = 0;
+    (scroll.position as ScrollPositionWithSingleContext).goBallistic(1500);
+    await tester.pump();
+    for (var frame = 0; frame < 10; frame++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(scroll.offset, greaterThan(100));
+    expect(
+      simulations,
+      1,
+      reason: 'Stable text geometry must not restart inertia',
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets(
     'read-only source uses editor syntax and selection without input or edits',
     (tester) async {
@@ -303,4 +341,27 @@ void main() {
     await tester.pumpAndSettle();
     expect(tester.takeException(), isNull);
   });
+}
+
+/// Counts native ballistic simulations while retaining Flutter's scroll physics.
+class _TrackingScrollPhysics extends ClampingScrollPhysics {
+  /// Shares the counter across physics composition.
+  const _TrackingScrollPhysics({required this.onBallistic, super.parent});
+
+  final VoidCallback onBallistic;
+
+  /// Preserves instrumentation when Flutter composes inherited scroll behavior.
+  @override
+  _TrackingScrollPhysics applyTo(ScrollPhysics? ancestor) =>
+      _TrackingScrollPhysics(
+        onBallistic: onBallistic,
+        parent: buildParent(ancestor),
+      );
+
+  /// Counts each restart of the native scrolling simulation.
+  @override
+  Simulation? createBallisticSimulation(ScrollMetrics position, double velocity) {
+    onBallistic();
+    return super.createBallisticSimulation(position, velocity);
+  }
 }

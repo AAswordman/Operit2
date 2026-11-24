@@ -148,21 +148,23 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
                     children: <Widget>[
                       Expanded(
                         child: widget.language.isNotEmpty
-                            ? Padding(
-                                padding: const EdgeInsets.only(left: 4),
-                                child: Text(
-                                  widget.language,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: const Color(0xFFAAAAAA),
-                                        fontSize: 11,
-                                        height: 1.0,
-                                        fontFamily: markdownCodeFontFamily,
-                                        fontFamilyFallback:
-                                            markdownCodeFontFamilyFallback,
-                                      ),
+                            ? SelectionContainer.disabled(
+                                child: Padding(
+                                  padding: const EdgeInsets.only(left: 4),
+                                  child: Text(
+                                    widget.language,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: const Color(0xFFAAAAAA),
+                                          fontSize: 11,
+                                          height: 1.0,
+                                          fontFamily: markdownCodeFontFamily,
+                                          fontFamilyFallback:
+                                              markdownCodeFontFamilyFallback,
+                                        ),
+                                  ),
                                 ),
                               )
                             : const SizedBox.shrink(),

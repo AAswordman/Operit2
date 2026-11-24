@@ -7,6 +7,7 @@ import 'package:flutter/material.dart';
 import '../../theme/OperitTheme.dart';
 import 'MarkdownInlineSpannable.dart';
 import 'MarkdownNodeGrouper.dart';
+import 'MarkdownSelectionArea.dart';
 import 'StreamMarkdownRenderer.dart';
 import 'StreamMarkdownRendererState.dart';
 
@@ -90,7 +91,7 @@ class EnhancedTableBlock extends StatelessWidget {
           ),
           child: Padding(
             padding: const EdgeInsets.all(tableBorderWidth),
-            child: SelectionArea(
+            child: MarkdownSelectionArea(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 physics: const BouncingScrollPhysics(),

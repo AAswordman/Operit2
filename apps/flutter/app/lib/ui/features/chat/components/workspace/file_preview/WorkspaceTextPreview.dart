@@ -433,27 +433,30 @@ class _WorkspaceTextPreviewState extends State<WorkspaceTextPreview> {
                         ),
                       ),
                       if (_showMarkdown)
-                        CodeEditor(
-                          key: _viewportKey,
-                          identity: _document,
-                          scrollController: _previewScroll,
-                          scale: _document.scale,
-                          onScaleChanged: _document.updateScale,
-                          readOnly: true,
-                          panEnabled: false,
-                          wrapToViewport: false,
-                          contentBuilder: (context) => StreamMarkdownRenderer(
+                        // Let viewport drags win before mouse text selection.
+                        SelectionArea(
+                          child: CodeEditor(
+                            key: _viewportKey,
+                            identity: _document,
                             scrollController: _previewScroll,
-                            scrollPhysics: CodeEditorViewportScope.maybeOf(
-                              context,
-                            )?.physics,
-                            scrollPadding: const EdgeInsets.all(12),
-                            content: _document.text,
-                            isStreaming: false,
-                            textColor: theme.colorScheme.onSurface,
-                            backgroundColor: Colors.transparent,
-                            onLinkClick: _openMarkdownLink,
-                            splitMarkdownContent: widget.splitMarkdownContent,
+                            scale: _document.scale,
+                            onScaleChanged: _document.updateScale,
+                            readOnly: true,
+                            wrapToViewport: false,
+                            contentBuilder: (context) => StreamMarkdownRenderer(
+                              selectionRoot: false,
+                              scrollController: _previewScroll,
+                              scrollPhysics: CodeEditorViewportScope.maybeOf(
+                                context,
+                              )?.physics,
+                              scrollPadding: const EdgeInsets.all(12),
+                              content: _document.text,
+                              isStreaming: false,
+                              textColor: theme.colorScheme.onSurface,
+                              backgroundColor: Colors.transparent,
+                              onLinkClick: _openMarkdownLink,
+                              splitMarkdownContent: widget.splitMarkdownContent,
+                            ),
                           ),
                         )
                       else

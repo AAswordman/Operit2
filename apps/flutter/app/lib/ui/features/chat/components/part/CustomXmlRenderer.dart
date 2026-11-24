@@ -714,15 +714,15 @@ class _ThinkPanelState extends State<_ThinkPanel> {
     final bodyScrollPhysics = renderFullHeight
         ? const NeverScrollableScrollPhysics()
         : null;
-    return SelectionContainer.disabled(
-      child: Semantics(
-        // The visible preview/body owns its text semantics. A collapsed header
-        // must not also expose the full hidden transcript to accessibility.
-        label: thinkingTitle,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            MessagePressShieldRegion(
+    return Semantics(
+      // The visible preview/body owns its text semantics. A collapsed header
+      // must not also expose the full hidden transcript to accessibility.
+      label: thinkingTitle,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: <Widget>[
+          SelectionContainer.disabled(
+            child: MessagePressShieldRegion(
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
@@ -777,78 +777,78 @@ class _ThinkPanelState extends State<_ThinkPanel> {
                 ),
               ),
             ),
-            ChatActivityDisclosure(
-              child: shouldRenderBody
-                  ? Padding(
-                      key: ValueKey<int>(_expandSession),
-                      padding: const EdgeInsets.only(top: 2, bottom: 4),
-                      child: Stack(
-                        children: <Widget>[
-                          PositionedDirectional(
-                            start: 10,
-                            top: 0,
-                            bottom: 0,
-                            child: Container(
-                              width: 1,
-                              decoration: BoxDecoration(
-                                color: color.withValues(alpha: 0.2),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
+          ),
+          ChatActivityDisclosure(
+            child: shouldRenderBody
+                ? Padding(
+                    key: ValueKey<int>(_expandSession),
+                    padding: const EdgeInsets.only(top: 2, bottom: 4),
+                    child: Stack(
+                      children: <Widget>[
+                        PositionedDirectional(
+                          start: 10,
+                          top: 0,
+                          bottom: 0,
+                          child: Container(
+                            width: 1,
+                            decoration: BoxDecoration(
+                              color: color.withValues(alpha: 0.2),
+                              borderRadius: BorderRadius.circular(999),
                             ),
                           ),
-                          Padding(
-                            padding: const EdgeInsetsDirectional.only(
-                              start: ChatActivityRowStyle.contentInset,
-                            ),
-                            child: MessagePressShieldRegion(
-                              child: GestureDetector(
-                                key: const ValueKey<String>(
-                                  'thinking-body-toggle',
-                                ),
-                                behavior: HitTestBehavior.translucent,
-                                onTap: _handleBodyTap,
-                                child: SizedBox(
-                                  width: double.infinity,
-                                  child: AnimatedSize(
-                                    alignment: Alignment.topCenter,
-                                    duration: const Duration(milliseconds: 240),
-                                    curve: Curves.easeOutCubic,
-                                    child: ConstrainedBox(
-                                      constraints: bodyConstraints,
-                                      child:
-                                          NotificationListener<
-                                            ScrollNotification
-                                          >(
-                                            onNotification:
-                                                _handleScrollNotification,
-                                            child: SingleChildScrollView(
-                                              controller: _scrollController,
-                                              physics: bodyScrollPhysics,
-                                              child: _ThinkMarkdownBody(
-                                                contentText: contentText,
-                                                contentStream:
-                                                    hasStreamingMarkdown
-                                                    ? widget.markdownEventStream
-                                                    : null,
-                                                textColor: widget.textColor,
-                                                splitMarkdownContent:
-                                                    widget.splitMarkdownContent,
-                                              ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsetsDirectional.only(
+                            start: ChatActivityRowStyle.contentInset,
+                          ),
+                          child: MessagePressShieldRegion(
+                            child: GestureDetector(
+                              key: const ValueKey<String>(
+                                'thinking-body-toggle',
+                              ),
+                              behavior: HitTestBehavior.translucent,
+                              onTap: _handleBodyTap,
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: AnimatedSize(
+                                  alignment: Alignment.topCenter,
+                                  duration: const Duration(milliseconds: 240),
+                                  curve: Curves.easeOutCubic,
+                                  child: ConstrainedBox(
+                                    constraints: bodyConstraints,
+                                    child:
+                                        NotificationListener<
+                                          ScrollNotification
+                                        >(
+                                          onNotification:
+                                              _handleScrollNotification,
+                                          child: SingleChildScrollView(
+                                            controller: _scrollController,
+                                            physics: bodyScrollPhysics,
+                                            child: _ThinkMarkdownBody(
+                                              contentText: contentText,
+                                              contentStream:
+                                                  hasStreamingMarkdown
+                                                  ? widget.markdownEventStream
+                                                  : null,
+                                              textColor: widget.textColor,
+                                              splitMarkdownContent:
+                                                  widget.splitMarkdownContent,
                                             ),
                                           ),
-                                    ),
+                                        ),
                                   ),
                                 ),
                               ),
                             ),
                           ),
-                        ],
-                      ),
-                    )
-                  : null,
-            ),
-          ],
-        ),
+                        ),
+                      ],
+                    ),
+                  )
+                : null,
+          ),
+        ],
       ),
     );
   }
@@ -883,7 +883,6 @@ class _ThinkMarkdownBody extends StatelessWidget {
               isStreaming: false,
               textColor: textColor.withValues(alpha: 0.6),
               backgroundColor: Colors.transparent,
-              selectionRoot: false,
               splitMarkdownContent: splitMarkdownContent,
             )
           : StreamMarkdownRenderer(
@@ -892,7 +891,6 @@ class _ThinkMarkdownBody extends StatelessWidget {
               isStreaming: true,
               textColor: textColor.withValues(alpha: 0.6),
               backgroundColor: Colors.transparent,
-              selectionRoot: false,
               splitMarkdownContent: splitMarkdownContent,
             ),
     );

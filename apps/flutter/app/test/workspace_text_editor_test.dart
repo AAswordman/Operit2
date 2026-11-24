@@ -134,6 +134,11 @@ void main() {
       PointerPanZoomStartEvent(pointer: 190, position: focal),
     );
     await tester.pump();
+    // Enter pinch mode before measuring steady-state zoom layout work.
+    tester.binding.handlePointerEvent(
+      PointerPanZoomUpdateEvent(pointer: 190, position: focal, scale: 0.8),
+    );
+    await tester.pump();
     final previous = debugOnRebuildDirtyWidget;
     var symbolBuilds = 0;
     var toolbarBuilds = 0;
@@ -1353,6 +1358,85 @@ void main() {
     expect(document.isDirty, isFalse);
   });
 
+  for (final scale in [1.0, 2.0]) {
+    testWidgets(
+      'editable text retains touch inertia at scale $scale',
+      (tester) async {
+        final document = WorkspaceTextDocument(
+          List.generate(
+            500,
+            (i) =>
+                'line ${i.toString().padLeft(4, '0')} ${'source content ' * 12}',
+          ).join('\n'),
+        )..updateScale(scale);
+        await tester.pumpWidget(
+          _app(_content(_textTab(document), (_, _) async {})),
+        );
+        await tester.pumpAndSettle();
+        final input = tester.widget<CodeEditorInput>(
+          find.byType(CodeEditorInput),
+        );
+        final scroll = input.scrollController;
+        scroll.jumpTo(500);
+        await tester.pumpAndSettle();
+        final beforeSelection = input.controller.selection;
+        final origin = tester.getCenter(find.byType(CodeEditorViewport));
+        final gesture = await tester.startGesture(origin);
+        await gesture.moveBy(const Offset(0, -30));
+        await tester.pump(const Duration(milliseconds: 16));
+        await gesture.moveBy(
+          const Offset(0, -24),
+          timeStamp: const Duration(milliseconds: 16),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+        final beforeDrag = scroll.offset;
+        for (var step = 0; step < 5; step++) {
+          await gesture.moveBy(
+            const Offset(0, -24),
+            timeStamp: Duration(milliseconds: 32 + step * 16),
+          );
+          await tester.pump(const Duration(milliseconds: 16));
+        }
+        expect(scroll.offset, closeTo(beforeDrag + 120 / scale, 0.1));
+        await gesture.up(timeStamp: const Duration(milliseconds: 112));
+        final releaseOffset = scroll.offset;
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 100));
+        expect(scroll.offset, greaterThan(releaseOffset + 10 / scale));
+        final stop = await tester.startGesture(origin);
+        final stoppedOffset = scroll.offset;
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(scroll.offset, closeTo(stoppedOffset, 0.01));
+        await stop.cancel();
+        await tester.pumpAndSettle();
+        final position = scroll.position as ScrollPositionWithSingleContext;
+        final simulation = position.physics.createBallisticSimulation(
+          position,
+          1500,
+        )!;
+        position.goBallistic(1500);
+        await tester.pump();
+        for (var frame = 1; frame <= 10; frame++) {
+          await tester.pump(const Duration(milliseconds: 16));
+          expect(
+            scroll.offset,
+            closeTo(simulation.x(frame * 0.016), 0.1),
+            reason: 'Text layout must preserve the native inertia trajectory',
+          );
+        }
+        await tester.pumpAndSettle();
+        expect(input.controller.selection, beforeSelection);
+        expect(document.scale, scale);
+        expect(document.isDirty, isFalse);
+        expect(tester.takeException(), isNull);
+      },
+      variant: TargetPlatformVariant({
+        TargetPlatform.android,
+        TargetPlatform.windows,
+      }),
+    );
+  }
+
   testWidgets('draft and zoom survive editor unmount and remount', (
     tester,
   ) async {
@@ -1593,6 +1677,109 @@ void main() {
       findsOneWidget,
     );
   });
+
+  for (final kind in [PointerDeviceKind.touch, PointerDeviceKind.mouse]) {
+    for (final scale in [1.0, 2.0]) {
+      testWidgets('Markdown drag retains inertia for $kind at scale $scale', (
+        tester,
+      ) async {
+        final document = WorkspaceTextDocument(
+          List.generate(200, (i) => 'Preview paragraph $i').join('\n\n'),
+        )..updateScale(scale);
+        await tester.pumpWidget(
+          _app(
+            WorkspaceTextPreview(
+              tab: _textTab(document, kind: WorkspaceFilePreviewKind.markdown),
+              onWriteWorkspaceFileBytes: (_, _) async {},
+              onOpenBrowser: ({url, localFilePath, workspaceHtmlPath}) {},
+              splitMarkdownContent: (_) async => [
+                for (var i = 0; i < 200; i++)
+                  for (final type in [
+                    'markdownBlockStart',
+                    'markdownInlineStart',
+                    'markdownInlineChunk',
+                    'markdownBlockEnd',
+                  ])
+                    core_proxy.MarkdownStreamEvent(
+                      chatId: 'workspace-drag-preview',
+                      eventType: type,
+                      value: type == 'markdownInlineChunk'
+                          ? 'Preview paragraph $i'
+                          : null,
+                      id: null,
+                      blockId: i,
+                      inlineId: 0,
+                      parentBlockId: null,
+                      nodeType: null,
+                      headerLevel: null,
+                      xml: null,
+                    ),
+              ],
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        await tester.tap(find.byTooltip('Markdown 预览'));
+        await tester.pumpAndSettle();
+        final preview = find.byType(StreamMarkdownRenderer);
+        final scroll = tester
+            .widget<StreamMarkdownRenderer>(preview)
+            .scrollController!;
+        expect(scroll.position.maxScrollExtent, greaterThan(1000));
+        final origin = tester.getCenter(find.byType(CodeEditorViewport).last);
+        final gesture = await tester.startGesture(origin, kind: kind);
+        await gesture.moveBy(const Offset(0, -30));
+        await tester.pump(const Duration(milliseconds: 16));
+        await gesture.moveBy(
+          const Offset(0, -24),
+          timeStamp: const Duration(milliseconds: 16),
+        );
+        await tester.pump(const Duration(milliseconds: 16));
+        final beforeDrag = scroll.offset;
+        final previousRebuild = debugOnRebuildDirtyWidget;
+        var viewportBuilds = 0;
+        debugOnRebuildDirtyWidget = (element, builtOnce) {
+          previousRebuild?.call(element, builtOnce);
+          if (element.widget is CodeEditorViewport) viewportBuilds++;
+        };
+        try {
+          for (var step = 0; step < 5; step++) {
+            await gesture.moveBy(
+              const Offset(0, -24),
+              timeStamp: Duration(milliseconds: 32 + step * 16),
+            );
+            await tester.pump(const Duration(milliseconds: 16));
+          }
+          expect(scroll.offset, closeTo(beforeDrag + 120 / scale, 0.01));
+          await gesture.up(timeStamp: const Duration(milliseconds: 112));
+          final releaseOffset = scroll.offset;
+          await tester.pump();
+          await tester.pump(const Duration(milliseconds: 100));
+          expect(
+            scroll.offset,
+            greaterThan(releaseOffset + 10 / scale),
+            reason: 'Releasing a fast drag must continue scrolling',
+          );
+          expect(
+            viewportBuilds,
+            0,
+            reason: 'Vertical motion only scrolls rows',
+          );
+        } finally {
+          debugOnRebuildDirtyWidget = previousRebuild;
+        }
+        final stop = await tester.startGesture(origin, kind: kind);
+        final stoppedOffset = scroll.offset;
+        await tester.pump(const Duration(milliseconds: 150));
+        expect(scroll.offset, stoppedOffset);
+        await stop.up();
+        await tester.pumpAndSettle();
+        expect(document.scale, scale);
+        expect(document.isDirty, isFalse);
+        expect(tester.takeException(), isNull);
+      });
+    }
+  }
 
   testWidgets('Markdown zoom corrects the scroll viewport before painting', (
     tester,

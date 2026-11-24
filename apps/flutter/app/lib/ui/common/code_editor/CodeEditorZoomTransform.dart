@@ -2,6 +2,7 @@
 
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show precisionErrorTolerance;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/rendering.dart';
@@ -225,6 +226,7 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
   double _startScale = 1;
   double? _startDistance;
   bool _trackpadPinching = false;
+  Offset? _trackpadPan;
   bool _pointerEventsActive = true;
   RenderBox? _target;
   Offset? _sceneAnchor;
@@ -267,6 +269,7 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
     _touches.clear();
     _startDistance = null;
     _trackpadPinching = false;
+    _trackpadPan = null;
     _target = null;
     _sceneAnchor = null;
     _textAnchor = null;
@@ -422,6 +425,7 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
     if (wasPinching != _pinching) setState(() {});
   }
 
+  /// Scrolls rows directly and rebuilds only when horizontal translation changes.
   void _pan(Offset delta) {
     if (!_pointerEventsActive || _pinching) return;
     _scroll.jumpTo(
@@ -430,15 +434,43 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
         _scroll.position.maxScrollExtent,
       ),
     );
-    setState(() {
-      _horizontal = _boundHorizontal(_horizontal + delta.dx, _scale);
-    });
+    final horizontal = _boundHorizontal(_horizontal + delta.dx, _scale);
+    if (!nearEqual(horizontal, _horizontal, precisionErrorTolerance)) {
+      setState(() => _horizontal = horizontal);
+    }
   }
 
   void _flingTick() {
     final travel = _inertia.value;
     _pan(_flingDirection * (travel - _lastTravel));
     _lastTravel = travel;
+  }
+
+  /// Starts trackpad scrolling without taking ownership from Flutter's drag.
+  void _trackpadStart(PointerPanZoomStartEvent event) {
+    if (!_pointerEventsActive) return;
+    _inertia.stop();
+    _startScale = _scale;
+    _trackpadPan = Offset.zero;
+  }
+
+  /// Captures the current focal point only when a trackpad actually pinches.
+  void _trackpadUpdate(PointerPanZoomUpdateEvent event) {
+    final previousPan = _trackpadPan;
+    if (!_pointerEventsActive || previousPan == null) return;
+    _trackpadPan = event.pan;
+    if (!_trackpadPinching) {
+      if (event.scale == 1) return;
+      _capture(event.position + previousPan);
+      setState(() => _trackpadPinching = true);
+    }
+    _zoom(_startScale * event.scale, event.position + event.pan);
+  }
+
+  /// Releases pinch ownership while leaving ordinary trackpad pans native.
+  void _trackpadEnd(PointerPanZoomEndEvent event) {
+    _trackpadPan = null;
+    if (_trackpadPinching) setState(() => _trackpadPinching = false);
   }
 
   @override
@@ -489,21 +521,9 @@ class CodeEditorViewportState extends State<CodeEditorViewport>
       onPointerMove: _pointerMove,
       onPointerUp: _pointerUp,
       onPointerCancel: _pointerUp,
-      onPointerPanZoomStart: (event) {
-        if (!_pointerEventsActive) return;
-        _startScale = _scale;
-        _trackpadPinching = true;
-        _capture(event.position);
-        setState(() {});
-      },
-      onPointerPanZoomUpdate: (event) {
-        if (!_trackpadPinching) return;
-        _zoom(_startScale * event.scale, event.position + event.pan);
-      },
-      onPointerPanZoomEnd: (_) {
-        if (!_trackpadPinching) return;
-        setState(() => _trackpadPinching = false);
-      },
+      onPointerPanZoomStart: _trackpadStart,
+      onPointerPanZoomUpdate: _trackpadUpdate,
+      onPointerPanZoomEnd: _trackpadEnd,
       onPointerSignal: widget.panEnabled
           ? (event) {
               if (event is! PointerScrollEvent) return;

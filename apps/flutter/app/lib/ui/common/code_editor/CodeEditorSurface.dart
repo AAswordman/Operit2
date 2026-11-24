@@ -327,7 +327,9 @@ class RenderCodeEditorText extends RenderEditable {
       working.add(i);
     }
     // Commit discovered prefix geometry before any text, gutter, or handle paint.
-    offset.correctBy(textLayout.topOf(first) - oldTop);
+    final correction = textLayout.topOf(first) - oldTop;
+    // Even a zero correction makes Flutter restart its ballistic activity.
+    if (correction != 0) offset.correctBy(correction);
     for (final i in working) {
       if (textLayout.topOf(i) < offset.pixels + size.height &&
           textLayout.topOf(i + 1) > offset.pixels) {

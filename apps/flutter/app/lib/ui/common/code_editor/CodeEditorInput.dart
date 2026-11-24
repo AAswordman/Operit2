@@ -775,7 +775,6 @@ class CodeEditorInputState extends State<CodeEditorInput>
 
   /// Uses Flutter's shortcut compatibility layer instead of guessing modifiers.
   late final Map<Type, Action<Intent>> _editingActions = {
-    DoNothingAndStopPropagationTextIntent: DoNothingAction(consumesKey: false),
     DeleteCharacterIntent: _action<DeleteCharacterIntent>(
       (intent) => _delete(intent.forward, false),
     ),
@@ -1043,7 +1042,13 @@ class CodeEditorInputState extends State<CodeEditorInput>
     final pan = CodeEditorViewportScope.maybeOf(context)?.panEnabled ?? false;
     return DefaultTextEditingShortcuts(
       child: Actions(
-        actions: _editingActions,
+        actions: {
+          ..._editingActions,
+          if (!widget.readOnly)
+            DoNothingAndStopPropagationTextIntent: DoNothingAction(
+              consumesKey: false,
+            ),
+        },
         child: TextFieldTapRegion(
           groupId: widget.groupId,
           onTapOutside: _tapOutside,

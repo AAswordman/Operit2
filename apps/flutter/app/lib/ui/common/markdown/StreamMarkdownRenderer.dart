@@ -12,6 +12,7 @@ import '../interactions/MessagePressShield.dart';
 import 'EnhancedCodeBlock.dart';
 import 'EnhancedTableBlock.dart';
 import 'MarkdownNodeGrouper.dart';
+import 'MarkdownSelectionArea.dart';
 import 'MarkdownTextReveal.dart';
 import 'MarkdownBlockQuote.dart';
 import 'MarkdownFootnotes.dart';
@@ -449,7 +450,7 @@ class _StreamMarkdownRendererState extends State<StreamMarkdownRenderer> {
     if (!widget.selectionRoot) {
       return scopedContent;
     }
-    return SelectionArea(child: scopedContent);
+    return MarkdownSelectionArea(child: scopedContent);
   }
 }
 

@@ -3,10 +3,12 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show SelectedContent;
 
 import '../interactions/ChainedScrollController.dart';
 
 import 'MarkdownCodeTypeface.dart';
+import 'MarkdownSelectionArea.dart';
 
 /// Builds and highlights only the code lines inside the capped viewport.
 class CanvasMonospaceCodeBlockBody extends StatefulWidget {
@@ -29,6 +31,7 @@ class CanvasMonospaceCodeBlockBody extends StatefulWidget {
 class _CanvasMonospaceCodeBlockBodyState
     extends State<CanvasMonospaceCodeBlockBody> {
   final _controller = ChainedScrollController();
+  late final _selection = _CodeSelectionDelegate(widget.lines);
   int? _maxColumns;
 
   int _measureColumns() {
@@ -48,12 +51,14 @@ class _CanvasMonospaceCodeBlockBodyState
     super.didUpdateWidget(oldWidget);
     if (!identical(oldWidget.lines, widget.lines)) {
       _maxColumns = null;
+      _selection.lines = widget.lines;
     }
   }
 
   @override
   void dispose() {
     _controller.dispose();
+    _selection.dispose();
     super.dispose();
   }
 
@@ -73,41 +78,80 @@ class _CanvasMonospaceCodeBlockBodyState
         text: widget.lines[index],
         span: widget.highlightLine?.call(widget.lines[index]),
         autoWrapEnabled: widget.autoWrapEnabled,
+        selection: _selection,
       ),
     );
-    return SelectionArea(
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          if (widget.autoWrapEnabled) return list;
-          final measure = TextPainter(
-            text: TextSpan(text: 'M', style: markdownCodeTextStyle(context)),
-            textDirection: Directionality.of(context),
-            textScaler: MediaQuery.textScalerOf(context),
-          )..layout();
-          final width = math.max(
-            constraints.maxWidth,
-            gutterWidth +
-                (_maxColumns ??= _measureColumns()) * measure.width +
-                12,
-          );
-          measure.dispose();
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SizedBox(width: width, child: list),
-          );
-        },
-      ),
+    final body = LayoutBuilder(
+      builder: (context, constraints) {
+        if (widget.autoWrapEnabled) return list;
+        final measure = TextPainter(
+          text: TextSpan(text: 'M', style: markdownCodeTextStyle(context)),
+          textDirection: Directionality.of(context),
+          textScaler: MediaQuery.textScalerOf(context),
+        )..layout();
+        final width = math.max(
+          constraints.maxWidth,
+          gutterWidth +
+              (_maxColumns ??= _measureColumns()) * measure.width +
+              12,
+        );
+        measure.dispose();
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: SizedBox(width: width, child: list),
+        );
+      },
+    );
+    return MarkdownSelectionArea(
+      child: SelectionContainer(delegate: _selection, child: body),
     );
   }
 }
 
-class _CodeLine extends StatelessWidget {
+/// Reconstructs source between selected row endpoints, retaining empty lines.
+class _CodeSelectionDelegate extends StaticSelectionContainerDelegate {
+  /// Keeps source text independent of highlighted and virtualized paragraphs.
+  _CodeSelectionDelegate(this.lines);
+
+  List<String> lines;
+  final rows = <int, StaticSelectionContainerDelegate>{};
+
+  /// Copies source separators rather than concatenating paragraph fragments.
+  @override
+  SelectedContent? getSelectedContent() {
+    final selected = [
+      for (final index in rows.keys.toList()..sort())
+        if (rows[index]!.getSelection() case final range?)
+          (index: index, range: range),
+    ];
+    if (selected.isEmpty) return null;
+    final first = selected.first;
+    final last = selected.last;
+    final start = math.min(first.range.startOffset, first.range.endOffset);
+    final end = math.max(last.range.startOffset, last.range.endOffset);
+    if (first.index == last.index) {
+      return SelectedContent(
+        plainText: lines[first.index].substring(start, end),
+      );
+    }
+    return SelectedContent(
+      plainText: [
+        lines[first.index].substring(start),
+        ...lines.sublist(first.index + 1, last.index),
+        lines[last.index].substring(0, end),
+      ].join('\n'),
+    );
+  }
+}
+
+class _CodeLine extends StatefulWidget {
   const _CodeLine({
     required this.lineNumber,
     required this.gutterWidth,
     required this.text,
     required this.span,
     required this.autoWrapEnabled,
+    required this.selection,
   });
 
   final int lineNumber;
@@ -115,9 +159,61 @@ class _CodeLine extends StatelessWidget {
   final String text;
   final InlineSpan? span;
   final bool autoWrapEnabled;
+  final _CodeSelectionDelegate selection;
 
+  /// Retains a row's source-selection endpoint across ordinary rebuilds.
+  @override
+  State<_CodeLine> createState() => _CodeLineState();
+}
+
+class _CodeLineState extends State<_CodeLine>
+    with AutomaticKeepAliveClientMixin<_CodeLine> {
+  final _selection = StaticSelectionContainerDelegate();
+
+  /// Retains selected source endpoints when scrolling recycles visible rows.
+  @override
+  bool get wantKeepAlive => _selection.value.hasSelection;
+
+  /// Updates row retention only when its selection geometry changes.
+  void _selectionChanged() => updateKeepAlive();
+
+  /// Registers source row identity alongside Flutter's selection geometry.
+  @override
+  void initState() {
+    super.initState();
+    _selection.addListener(_selectionChanged);
+    widget.selection.rows[widget.lineNumber - 1] = _selection;
+  }
+
+  /// Rebinds recycled rows before the next selection query.
+  @override
+  void didUpdateWidget(covariant _CodeLine oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _unregister(oldWidget);
+    widget.selection.rows[widget.lineNumber - 1] = _selection;
+  }
+
+  /// Prevents retiring wrap-mode rows from removing their replacements.
+  void _unregister(_CodeLine row) {
+    final index = row.lineNumber - 1;
+    if (identical(row.selection.rows[index], _selection)) {
+      row.selection.rows.remove(index);
+    }
+  }
+
+  /// Releases only this row's registration when its viewport child retires.
+  @override
+  void dispose() {
+    _unregister(widget);
+    _selection.removeListener(_selectionChanged);
+    _selection.dispose();
+    super.dispose();
+  }
+
+  /// Keeps line numbers outside selection while registering the source row.
   @override
   Widget build(BuildContext context) {
+    super.build(context);
     final codeStyle = markdownCodeTextStyle(
       context,
       color: const Color(0xFFD4D4D4),
@@ -131,11 +227,16 @@ class _CodeLine extends StatelessWidget {
         );
     final codeText = Padding(
       padding: const EdgeInsets.only(right: 12),
-      child: span == null
-          ? Text(text, softWrap: autoWrapEnabled, style: codeStyle)
-          : Text.rich(span!, softWrap: autoWrapEnabled, style: codeStyle),
+      child: SelectionContainer(
+        delegate: _selection,
+        child: Text.rich(
+          widget.span ?? TextSpan(text: widget.text),
+          softWrap: widget.autoWrapEnabled,
+          style: codeStyle,
+        ),
+      ),
     );
-    final codeTextChild = autoWrapEnabled
+    final codeTextChild = widget.autoWrapEnabled
         ? Expanded(child: codeText)
         : ConstrainedBox(constraints: const BoxConstraints(), child: codeText);
 
@@ -144,11 +245,11 @@ class _CodeLine extends StatelessWidget {
       children: <Widget>[
         SelectionContainer.disabled(
           child: SizedBox(
-            width: gutterWidth,
+            width: widget.gutterWidth,
             child: Padding(
               padding: const EdgeInsets.only(left: 8, right: 10),
               child: Text(
-                '$lineNumber',
+                '${widget.lineNumber}',
                 textAlign: TextAlign.end,
                 style: lineNumberStyle,
               ),

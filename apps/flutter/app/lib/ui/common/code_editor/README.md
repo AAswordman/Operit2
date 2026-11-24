@@ -32,6 +32,29 @@ horizontal extent with `CodeTextLayout`, including the platform text scale;
 callers do not estimate widths from character counts. They share the editor's
 zoom, focal anchoring, panning and inertia. Diff parsing, row decorations and fold actions remain caller-owned.
 
+Workspace Markdown previews use this same panning mode for touch and mouse
+drags, including inertial scrolling after release and interruption on pointer
+down. Vertical panning updates only the scroll position; the viewport rebuilds
+only when its horizontal offset changes. Markdown rows remain lazily mounted
+and retain their parsed content while the viewport moves. The preview's selection
+region wraps the viewport so its mouse selection recognizer does not take
+ownership of panning gestures.
+
+Editable text keeps Flutter's native touch scrolling and mouse range selection.
+Its virtual layout submits a source-origin correction only when measured row
+geometry changes the scroll offset. A zero correction would make Flutter
+restart its ballistic activity on every layout frame, even with stable text.
+
+Trackpad pan/zoom sequences initially remain ordinary scrolling gestures. The
+viewport captures a zoom anchor and disables the child's native drag only when
+the sequence reports an actual scale change. Entering a pinch after panning
+uses the latest focal point rather than replaying the accumulated pan.
+
+Editable inputs delegate native editing selectors through Flutter's text-input
+connection. Read-only inputs have no input connection, so their keyboard
+navigation remains in Flutter's shortcut/action pipeline. They must not consume
+the intents used to forward navigation keys to the platform input method.
+
 `CodeEditorText` renders a source row using the same syntax-span builder as the
 editor, with optional `CodeTextHighlight` intervals for intraline changes.
 It uses an explicit source style and the same forced line strut as the text
