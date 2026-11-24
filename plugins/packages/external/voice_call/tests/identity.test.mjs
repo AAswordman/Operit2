@@ -56,7 +56,10 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers }
       Tts: tts,
     },
   });
-  return { states, effects, calls, routes, entries, register: plugin.registerToolPkg, renderMenu: () => plugin.inputMenu(ctx), render: () => plugin.call(ctx) };
+  return { states, effects, calls, routes, entries, register: plugin.registerToolPkg, renderMenu: () => {
+    if (!states.has("presentation")) states.set("presentation", { requestId: "call-presentation", input: null });
+    return plugin.inputMenu(ctx);
+  }, render: () => plugin.call(ctx) };
 }
 
 /** Traverses actual Compose output to inspect rendered identity and invoke its start control. */
@@ -327,7 +330,7 @@ test("when taking a camera frame fails, the voice turn still sends", async () =>
 });
 
 
-test("phone menu registers a plugin row and opens full screen with camera off", async () => {
+test("phone entry registers in the plus menu and launches on load with camera off", async () => {
   const opened = [];
   const screen = callScreen(() => null, { floatingWindows: {
     async capabilities() { return { supported: true, permissionGranted: true }; },
@@ -335,13 +338,17 @@ test("phone menu registers a plugin row and opens full screen with camera off", 
     async open(options) { opened.push(plain(options)); },
   } });
   screen.register();
-  const entry = screen.entries.find(entry => entry.surface === "chat_input_menu");
+  const entry = screen.entries.find(entry => entry.surface === "chat_attachments");
   assert.equal(entry.icon, "Call");
   assert.equal(entry.title.zh, "语音/视频通话");
   assert.equal(screen.routes.find(route => route.route === entry.route).screen.name, "inputMenu");
   screen.states.set("chatId", "source-chat");
-  const row = nodes(screen.renderMenu()).find(node => node.props.key === "voice-call-input-menu");
-  await row.props.onClick();
+  const launcher = screen.renderMenu();
+  assert.deepEqual(plain(await launcher.props.onLoad()), {
+    type: "toolpkg.presentation.cancel", requestId: "call-presentation",
+  });
+  // A repeated load or a fast retry must not start a second call.
+  await launcher.props.onLoad();
   assert.deepEqual(opened, [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call", fill: true,
     state: { autoStart: true, sourceChatId: "source-chat" } }]);
 });
@@ -355,7 +362,7 @@ test("phone menu brings the existing call to full screen without starting a seco
     async update(...args) { actions.push(["update", ...plain(args)]); },
     async open() { assert.fail("must reuse the existing call"); },
   } });
-  await nodes(screen.renderMenu()).find(node => node.props.onClick).props.onClick();
+  await screen.renderMenu().props.onLoad();
   assert.deepEqual(actions, [["show", "voice-call"], ["update", "voice-call", {}, { voiceCallFullscreen: true }]]);
 });
 
@@ -365,9 +372,46 @@ test("phone menu reports denied permission without opening or recording", async 
     async requestPermission() { return false; },
     async list() { assert.fail("permission must be granted first"); },
   } });
-  await nodes(screen.renderMenu()).find(node => node.props.onClick).props.onClick();
+  await screen.renderMenu().props.onLoad();
   assert.match(screen.states.get("call-launch-error"), /Grant permission/);
   assert.deepEqual(screen.calls, []);
+});
+
+test("phone launcher retries a failed permission request and then closes its presentation", async () => {
+  let granted = false;
+  const opened = [];
+  const screen = callScreen(() => null, { floatingWindows: {
+    async capabilities() { return { supported: true, permissionGranted: granted }; },
+    async requestPermission() { return false; },
+    async list() { return []; },
+    async open(options) { opened.push(plain(options)); },
+  } });
+  assert.equal(await screen.renderMenu().props.onLoad(), null);
+  assert.match(screen.states.get("call-launch-error"), /Grant permission/);
+  granted = true;
+  const retry = screen.renderMenu();
+  assert.equal(retry.props.closeOnConfirm, false);
+  assert.deepEqual(plain(await retry.props.onConfirm()), {
+    type: "toolpkg.presentation.cancel", requestId: "call-presentation",
+  });
+  assert.equal(opened.length, 1);
+  assert.equal(screen.states.get("call-launch-error"), "");
+});
+
+test("closing the phone launcher while checking capability prevents a delayed call", async () => {
+  let finish;
+  const screen = callScreen(() => null, { floatingWindows: {
+    capabilities() { return new Promise(resolve => { finish = resolve; }); },
+    async list() { assert.fail("closed launcher must not open a call"); },
+  } });
+  const launcher = screen.renderMenu();
+  const loading = launcher.props.onLoad();
+  assert.deepEqual(plain(launcher.props.onDismiss()), {
+    type: "toolpkg.presentation.cancel", requestId: "call-presentation",
+  });
+  finish({ supported: true, permissionGranted: true });
+  assert.equal(await loading, null);
+  assert.equal(await launcher.props.onLoad(), null);
 });
 
 test("automatic call inherits the source chat without selecting or changing it", async () => {

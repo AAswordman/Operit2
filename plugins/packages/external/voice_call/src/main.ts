@@ -57,24 +57,37 @@ function report(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Contributes a phone action through the host's existing chat input menu. */
+/** Launches a call from the chat attachment menu and settles its presentation. */
 export function inputMenu(ctx: ComposeDslContext): ComposeNode {
   const [chatId] = ctx.useState<string | null>("chatId", null);
+  const [presentation] = ctx.useState<{ requestId: string } | null>("presentation", null);
+  if (!presentation || typeof presentation.requestId !== "string" || !presentation.requestId.trim()) {
+    throw new Error("Missing call launcher presentation request");
+  }
+  const requestId = presentation.requestId;
   const [error, setError] = ctx.useState("call-launch-error", "");
+  const closed = ctx.useRef("call-launch-closed", false);
   const busy = ctx.useRef("call-launch-busy", false);
   const zh = getLang().startsWith("zh");
-  const colors = ctx.MaterialTheme.colorScheme;
-  async function open(): Promise<void> {
-    if (busy.current) return;
+  function close(): ToolPkg.JsonValue {
+    closed.current = true;
+    return { type: "toolpkg.presentation.cancel", requestId };
+  }
+  async function open(): Promise<ToolPkg.JsonValue> {
+    if (busy.current || closed.current) return null;
     busy.current = true;
     setError("");
     try {
       const api = ToolPkg.ui.floatingWindows;
       const caps = await api.capabilities();
+      if (closed.current) return null;
       if (!caps.supported) throw new Error(text("unsupported"));
       if (!caps.permissionGranted && !await api.requestPermission()) throw new Error(text("permission"));
+      if (closed.current) return null;
       const existing = (await api.list()).find(window => window.id === WINDOW);
+      if (closed.current) return null;
       if (existing && existing.route !== CALL_ROUTE) await api.close(WINDOW);
+      if (closed.current) return null;
       if (existing?.route === CALL_ROUTE) {
         await api.show(WINDOW);
         await api.update(WINDOW, {}, { voiceCallFullscreen: true });
@@ -83,18 +96,19 @@ export function inputMenu(ctx: ComposeDslContext): ComposeNode {
           state: { autoStart: true, sourceChatId: chatId },
         });
       }
-    } catch (failure) { setError(report(failure)); }
-    finally { busy.current = false; }
+      return close();
+    } catch (failure) {
+      if (!closed.current) setError(report(failure));
+      return null;
+    } finally { busy.current = false; }
   }
-  return ctx.UI.Column({ fillMaxWidth: true }, [
-    ctx.UI.Row({ key: "voice-call-input-menu", fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 14,
-      spacing: 12, verticalAlignment: "center", onClick: open,
-    }, [
-      ctx.UI.Icon({ name: "Call", size: 24, tint: colors.primary }),
-      ctx.UI.Text({ text: zh ? "语音/视频通话" : "Voice / video call", style: "bodyMedium", color: colors.onSurface }),
-    ]),
-    ...(error ? [ctx.UI.Text({ text: error, color: colors.error, paddingHorizontal: 12 })] : []),
-  ]);
+  return ctx.UI.AlertDialog({
+    key: "voice-call-launcher", onLoad: open,
+    title: zh ? "语音/视频通话" : "Voice / video call",
+    text: error || (zh ? "正在打开通话…" : "Opening call…"),
+    confirmText: zh ? "重试" : "Retry", onConfirm: open, closeOnConfirm: false,
+    dismissText: zh ? "关闭" : "Close", onDismiss: close, onDismissRequest: close,
+  });
 }
 
 /** Opens or reveals the single call window and handles overlay authorization. */
@@ -569,7 +583,7 @@ export function registerToolPkg(): boolean {
   ToolPkg.registerUiRoute({ id: "call", route: CALL_ROUTE, runtime: "compose_dsl", screen: call, title });
   ToolPkg.registerUiRoute({ id: "voice-overlay", route: VOICE_OVERLAY_ROUTE, runtime: "compose_dsl", screen: call, title });
   ToolPkg.registerUiRoute({ id: "input-menu", route: MENU_ROUTE, runtime: "compose_dsl", screen: inputMenu, title });
-  ToolPkg.registerNavigationEntry({ id: "input-menu", route: MENU_ROUTE, surface: "chat_input_menu",
+  ToolPkg.registerNavigationEntry({ id: "input-menu", route: MENU_ROUTE, surface: "chat_attachments",
     title: { zh: "语音/视频通话", en: "Voice / video call" }, icon: "Call", order: 50 });
   ToolPkg.registerNavigationEntry({ id: "control", route: CONTROL_ROUTE, title, surface: "toolbox", icon: "Call" });
   return true;
