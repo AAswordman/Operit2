@@ -172,14 +172,19 @@ impl EnhancedAISharedState {
 
     /// Publishes the selected model before the background response task starts.
     fn beginTurn(&mut self, config: &ResolvedModelConfig, providerModel: String) {
+        self.setRequestModel(config, providerModel);
+        self.last_reply_content = None;
+        self.turn_token_usage = TurnTokenUsage::default();
+        self.last_turn_context_window = None;
+    }
+
+    /// Updates model identity between requests without resetting the turn's token totals.
+    fn setRequestModel(&mut self, config: &ResolvedModelConfig, providerModel: String) {
         self.last_provider_model = Some(providerModel);
         self.last_turn_model_identity = Some(TurnModelIdentity {
             providerName: config.providerName.clone(),
             modelName: config.modelId.clone(),
         });
-        self.last_reply_content = None;
-        self.turn_token_usage = TurnTokenUsage::default();
-        self.last_turn_context_window = None;
     }
 }
 
@@ -1547,6 +1552,22 @@ impl EnhancedAIService {
             .map_err(AiServiceError::RequestFailed)
     }
 
+    /// Selects the next request's model without changing an in-flight provider request.
+    async fn refreshRequestModel(
+        &mut self,
+        options: &SendMessageOptions,
+        runtime: &mut SendMessageRuntime,
+    ) -> Result<(), AiServiceError> {
+        let configuration = self.resolveChatConfigurationForOptions(options).await?;
+        if configuration.profile.modelBinding != runtime.chatConfiguration.profile.modelBinding {
+            let mut next = self.createSendMessageRuntime(options, configuration)?;
+            next.promptMetadata = std::mem::take(&mut runtime.promptMetadata);
+            next.useEnglish = runtime.useEnglish;
+            *runtime = next;
+        }
+        Ok(())
+    }
+
     /// Resumes model processing with history already synchronized on the target CoreNode.
     pub async fn resume(
         &mut self,
@@ -2445,6 +2466,20 @@ impl EnhancedAIService {
             operit_util::AppLogger::VERBOSE_LEVEL_2,
         );
 
+        self.refreshRequestModel(
+            &SendMessageOptions {
+                chatId: chatId.clone(),
+                functionType: functionType.clone(),
+                promptFunctionType: promptFunctionType.clone(),
+                executionParticipantId: Some(runtime.chatConfiguration.profile.id.clone()),
+                chatProviderIdOverride: chatProviderIdOverride.clone(),
+                chatModelIdOverride: chatModelIdOverride.clone(),
+                textOnly: runtime.textOnly,
+                ..SendMessageOptions::new()
+            },
+            runtime,
+        ).await?;
+
         let modelParameters = self.getModelParametersForFunction(
             functionType.clone(),
             chatProviderIdOverride.clone(),
@@ -2524,6 +2559,7 @@ impl EnhancedAIService {
             if !self.isExecutionContextActive(context) {
                 return Ok(false);
             }
+            self.shared_state().setRequestModel(&runtime.modelConfig, service.provider_model());
             service.reset_token_counts();
             (turnUsage, tokenRequest) = self.beginRequestTokenUsage(
                 context, runtime.aiService.clone(), functionType.clone(),
@@ -3896,6 +3932,23 @@ mod workspace_path_tests {
 mod model_identity_tests {
     use super::{EnhancedAISharedState, TurnModelIdentity, TurnTokenSnapshot};
     use operit_model::ModelConfigData::{ApiProviderType, ResolvedModelConfig};
+
+    /// Keeps earlier request accounting when a continuation uses a different model.
+    #[test]
+    fn switching_request_model_preserves_turn_accounting() {
+        let mut state = EnhancedAISharedState::default();
+        let initial = model_config("Provider A", "model-a");
+        state.beginTurn(&initial, initial.providerModelLabel());
+        let tokens = TurnTokenSnapshot { inputTokens: 100, outputTokens: 20, cachedInputTokens: 30 };
+        state.turn_token_usage.setSnapshot(tokens.clone());
+        state.last_turn_context_window = Some(120);
+        let next = model_config("Provider B", "model-b");
+        state.setRequestModel(&next, next.providerModelLabel());
+        assert_eq!(state.last_turn_model_identity.unwrap().modelName, "model-b");
+        assert_eq!(state.last_provider_model.as_deref(), Some("OPENAI_CODEX:model-b"));
+        assert_eq!(state.turn_token_usage.snapshot(), tokens);
+        assert_eq!(state.last_turn_context_window, Some(120));
+    }
 
     fn model_config(provider_name: &str, model_id: &str) -> ResolvedModelConfig {
         ResolvedModelConfig {

@@ -10,7 +10,7 @@ pub(crate) struct ChatModelBindingService;
 const OWNER: &str = "host.chat.model.selection";
 
 impl ChatModelBindingService {
-    /// Cleans obsolete selections before the existing execution lease freezes conversation metadata.
+    /// Cleans obsolete selections before reserving the conversation's execution generation.
     pub(crate) fn beginExecution(
         history: &ChatHistoryManager,
         chat_id: &str,

@@ -14,14 +14,22 @@ An empty conversation with an independent model is not reused for a new chat.
 Selecting a model before the first conversation exists creates a conversation
 before saving its selection.
 
+Model selection remains editable while the conversation is executing. A submitted
+provider request keeps its model until it finishes; the next request, including a
+tool-result continuation, resolves the latest selection. Explicit request bindings
+and plugin participants with fixed models retain their own model selection rules.
+
 `chatModelBinding` and `setChatModelBinding` route by the explicit chat ID.
 `ProviderRuntimeSupport.modelBindingForChat` uses the same stored selection for
 execution, display, message configuration and context estimates. A missing
 provider or model removes the obsolete selection from the persisted conversation
 and the conversation uses the current global model. Re-adding the same IDs does
 not restore the old selection. Cleanup uses the existing extension deletion API
-and runs before execution admission acquires its metadata lease. The existing
-persistence transactions, synchronization and execution protection are unchanged.
+and runs before execution admission reserves its generation. Conversation
+extensions remain editable during execution for every owner. Each submitted
+request holds its resolved configuration; execution leases prevent concurrent
+generations and protect exact dirty message revisions. Persistence and
+synchronization use the same transactions.
 Catalog, storage and decoding errors propagate;
 they do not change model selection. Auxiliary function bindings remain separate.
 An explicit per-request provider/model pair still has its existing semantics.

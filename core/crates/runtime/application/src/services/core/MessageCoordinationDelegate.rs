@@ -392,8 +392,6 @@ impl MessageCoordinationDelegate {
             })
             .await
             .map_err(|error| error.to_string())?;
-        let chatProviderIdOverride = Some(configuration.profile.modelBinding.providerId.clone());
-        let chatModelIdOverride = Some(configuration.profile.modelBinding.modelId.clone());
         let requestHistory = runtimeHistory[..targetRuntimeIndex].to_vec();
         let requestMessageContent = requestHistory
             .last()
@@ -437,8 +435,8 @@ impl MessageCoordinationDelegate {
                 enableThinking: true,
                 maxTokens,
                 tokenUsageThreshold: chatContextSettings.summary.tokenThresholdRatio(),
-                chatProviderIdOverride,
-                chatModelIdOverride,
+                chatProviderIdOverride: None,
+                chatModelIdOverride: None,
             })
             .await
             .map_err(|error| error.to_string())?;

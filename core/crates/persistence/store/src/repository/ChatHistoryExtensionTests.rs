@@ -455,7 +455,7 @@ fn draft_transaction_failure_leaves_no_chat_or_opening_record() {
         .is_empty());
 }
 
-/// Verifies executing conversations and dirty revisions reject owner writes/deletes while reads and completed history remain usable.
+/// Keeps every owner's conversation configuration editable while protecting exact dirty revisions.
 #[test]
 fn execution_lease_guards_direct_store_metadata_mutations() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
@@ -469,21 +469,34 @@ fn execution_lease_guards_direct_store_metadata_mutations() {
         manager.readPluginExtension("alpha", &chatTarget()).unwrap(),
         Some(json!({"identity":"original"}))
     );
-    assert!(manager
-        .writePluginExtension("alpha", &chatTarget(), json!({"identity":"changed"}))
-        .is_err());
-    assert!(manager
-        .deletePluginExtension("alpha", &chatTarget())
-        .is_err());
+    for owner in ["alpha", "beta"] {
+        manager
+            .writePluginExtension(owner, &chatTarget(), json!({"config":"first"}))
+            .unwrap();
+        let requestConfig = manager.readPluginExtension(owner, &chatTarget()).unwrap();
+        manager
+            .writePluginExtension(owner, &chatTarget(), json!({"config":"next"}))
+            .unwrap();
+        assert_eq!(requestConfig, Some(json!({"config":"first"})));
+        assert_eq!(
+            manager.readPluginExtension(owner, &chatTarget()).unwrap(),
+            Some(json!({"config":"next"}))
+        );
+        assert!(manager.deletePluginExtension(owner, &chatTarget()).unwrap());
+    }
     assert!(manager
         .writePluginExtension("alpha", &messageTarget(2), json!({"voice":"changed"}))
         .is_err());
     assert!(manager
         .deletePluginExtension("actor", &messageTarget(2))
         .is_err());
-    assert!(manager
+    manager
         .syncStore
         .mutatePluginExtension("alpha", &chatTarget(), Some(json!({})))
+        .unwrap();
+    assert!(manager
+        .syncStore
+        .mutatePluginExtension("alpha", &messageTarget(2), Some(json!({})))
         .is_err());
     manager
         .writePluginExtension("alpha", &messageTarget(1), json!({"completed":true}))
@@ -501,30 +514,32 @@ fn execution_lease_guards_direct_store_metadata_mutations() {
         .unwrap();
 }
 
-/// Ensures cancellation/error release and stale callback drops cannot unlock a subsequent generation's identity.
+/// Ensures cancellation/error release and stale callback drops cannot unlock a newer dirty revision.
 #[test]
 fn lease_drop_and_idempotent_cancel_preserve_new_generation_guard() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
     let (manager, _) = fixture("extensions-execution-drop");
     {
-        let _failedRequest = manager.beginChatExecution("extensions-chat").unwrap();
+        let failedRequest = manager.beginChatExecution("extensions-chat").unwrap();
+        failedRequest.protectRevision(42, 2).unwrap();
     }
     manager
-        .writePluginExtension("alpha", &chatTarget(), json!({"error-released":true}))
+        .writePluginExtension("alpha", &messageTarget(2), json!({"error-released":true}))
         .unwrap();
     let cancelled = manager.beginChatExecution("extensions-chat").unwrap();
     let staleCallback = cancelled.clone();
     cancelled.release().unwrap();
     let current = manager.beginChatExecution("extensions-chat").unwrap();
+    current.protectRevision(42, 2).unwrap();
     drop(staleCallback);
     drop(cancelled);
     assert!(manager
-        .writePluginExtension("alpha", &chatTarget(), json!({"must-not-write":true}))
+        .writePluginExtension("alpha", &messageTarget(2), json!({"must-not-write":true}))
         .is_err());
     current.release().unwrap();
     current.release().unwrap();
     assert!(manager
-        .deletePluginExtension("alpha", &chatTarget())
+        .deletePluginExtension("alpha", &messageTarget(2))
         .unwrap());
 }
 
@@ -534,23 +549,25 @@ fn early_request_failure_does_not_leak_a_runtime_clone_lease() {
     let _guard = DATABASE_MUTEX.lock().unwrap();
     let (manager, _) = fixture("extensions-request-handoff");
     let runtimeLease = manager.beginChatExecution("extensions-chat").unwrap();
+    runtimeLease.protectRevision(42, 2).unwrap();
     {
         let _failedRequest = runtimeLease.requestGuard();
     }
     manager
-        .writePluginExtension("alpha", &chatTarget(), json!({"released":true}))
+        .writePluginExtension("alpha", &messageTarget(2), json!({"released":true}))
         .unwrap();
     let next = manager.beginChatExecution("extensions-chat").unwrap();
+    next.protectRevision(42, 2).unwrap();
     let mut successful = next.requestGuard();
     successful.handoff();
     drop(successful);
     drop(runtimeLease);
     assert!(manager
-        .deletePluginExtension("alpha", &chatTarget())
+        .deletePluginExtension("alpha", &messageTarget(2))
         .is_err());
     next.release().unwrap();
     assert!(manager
-        .deletePluginExtension("alpha", &chatTarget())
+        .deletePluginExtension("alpha", &messageTarget(2))
         .unwrap());
 }
 

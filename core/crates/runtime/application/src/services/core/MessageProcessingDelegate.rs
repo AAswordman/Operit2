@@ -1511,8 +1511,6 @@ impl MessageProcessingDelegate {
         executionLease: &ChatExecutionLease,
         configuration: &ChatConfigurationResult,
         workspacePath: Option<String>,
-        chatProviderIdOverride: Option<String>,
-        chatModelIdOverride: Option<String>,
     ) -> Result<Option<i64>, String> {
         let mut pending = inbox.drainOrClose();
         if pending.is_empty() {
@@ -1533,8 +1531,8 @@ impl MessageProcessingDelegate {
                         replyToMessage: None,
                         chatId: chatId.to_string(),
                         participantId: configuration.profile.id.clone(),
-                        chatProviderIdOverride: chatProviderIdOverride.clone(),
-                        chatModelIdOverride: chatModelIdOverride.clone(),
+                        chatProviderIdOverride: Some(configuration.profile.modelBinding.providerId.clone()),
+                        chatModelIdOverride: Some(configuration.profile.modelBinding.modelId.clone()),
                     })
                     .await
                     .map_err(|error| error.to_string())?;
@@ -1851,7 +1849,7 @@ impl MessageProcessingDelegate {
     #[allow(non_snake_case)]
     pub async fn sendUserMessage(
         &mut self,
-        mut request: SendUserMessageProcessingRequest<'_>,
+        request: SendUserMessageProcessingRequest<'_>,
     ) -> Result<
         SendUserMessageProcessingResult,
         operit_providers::chat::llmprovider::AIService::AiServiceError,
@@ -1865,9 +1863,6 @@ impl MessageProcessingDelegate {
         configuration.validate().map_err(
             operit_providers::chat::llmprovider::AIService::AiServiceError::RequestFailed,
         )?;
-        request.chatProviderIdOverride =
-            Some(configuration.profile.modelBinding.providerId.clone());
-        request.chatModelIdOverride = Some(configuration.profile.modelBinding.modelId.clone());
         let originalMessageText = request.messageText.trim().to_string();
         ChainLogger::verbose_with_level(
             SEND_CHAIN,
@@ -1931,8 +1926,8 @@ impl MessageProcessingDelegate {
                 replyToMessage: request.replyToMessage.clone(),
                 chatId: chatId.clone(),
                 participantId: configuration.profile.id.clone(),
-                chatProviderIdOverride: request.chatProviderIdOverride.clone(),
-                chatModelIdOverride: request.chatModelIdOverride.clone(),
+                chatProviderIdOverride: Some(configuration.profile.modelBinding.providerId.clone()),
+                chatModelIdOverride: Some(configuration.profile.modelBinding.modelId.clone()),
             })
             .await
         {
@@ -2676,8 +2671,6 @@ impl MessageProcessingDelegate {
                                     &executionLease,
                                     &completionContextConfiguration,
                                     completionContextWorkspacePath.clone(),
-                                    completionContextProviderIdOverride.clone(),
-                                    completionContextModelIdOverride.clone(),
                                 )
                                 .await
                             {
@@ -2850,6 +2843,8 @@ impl MessageProcessingDelegate {
                                     history,
                                     completionContextConfiguration.clone(),
                                     completionContextPromptFunctionType.clone(),
+                                    completionContextProviderIdOverride.clone(),
+                                    completionContextModelIdOverride.clone(),
                                     options,
                                     completionChatId.clone(),
                                     completionTurnId,
@@ -3056,6 +3051,8 @@ impl MessageProcessingDelegate {
         history: ChatHistoryDelegate,
         configuration: ChatConfigurationResult,
         promptFunctionType: PromptFunctionType,
+        chatProviderIdOverride: Option<String>,
+        chatModelIdOverride: Option<String>,
         turnOptions: ChatTurnOptions,
         chatId: String,
         turnId: u64,
@@ -3072,8 +3069,8 @@ impl MessageProcessingDelegate {
                     turnId,
                     participantId: Some(configuration.profile.id.clone()),
                     promptFunctionType,
-                    chatProviderIdOverride: Some(configuration.profile.modelBinding.providerId),
-                    chatModelIdOverride: Some(configuration.profile.modelBinding.modelId),
+                    chatProviderIdOverride,
+                    chatModelIdOverride,
                     turnOptions,
                     executionLease,
                 },

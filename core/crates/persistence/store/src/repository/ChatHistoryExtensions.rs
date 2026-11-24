@@ -3,7 +3,7 @@ use operit_model::PluginExtensionTarget::PluginExtensionTarget;
 use serde_json::Value;
 
 impl ChatHistoryManager {
-    /// Freezes generic conversation identity before invoking a generation's configuration and hooks.
+    /// Reserves one execution generation without freezing persisted conversation configuration.
     pub fn beginChatExecution(
         &self,
         chatId: &str,

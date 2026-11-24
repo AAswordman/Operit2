@@ -122,7 +122,7 @@ verify(/PluginExtensionTarget::Message/.test(messageConfiguration) && /participa
 verify(/applyConfigurationIdentity\(&mut aiMessage, &configuration\)/.test(processor) && !/applyConfigurationSnapshot|storeSnapshot/.test(processor + support), "Sending persists only the author identity without a snapshot API or storage call");
 const modelSelection = source(application + "services/ChatModelBindingService.rs");
 const modelAdmission = section(modelSelection, "pub(crate) fn beginExecution(", "/// Reads a chat override");
-verify(/Self::read\(/.test(modelAdmission) && modelAdmission.indexOf("Self::read(") < modelAdmission.indexOf(".beginChatExecution("), "Obsolete model cleanup must finish before acquiring the unchanged store execution lease");
+verify(/Self::read\(/.test(modelAdmission) && modelAdmission.indexOf("Self::read(") < modelAdmission.indexOf(".beginChatExecution("), "Obsolete model cleanup must finish before reserving the execution generation");
 verify(/ChatModelBindingService::beginExecution\(/.test(coordinator) && /executionLease: Option<ChatExecutionLease>/.test(processor), "Generation protection must be acquired and retained by the real streaming runtime");
 verify(/runtime\.executionLease\.take\(\)/.test(processor) && /protectRevision/.test(processor), "Completion/cancel must release guards protecting exact dirty revisions");
 verify(/runtime\.chatConfiguration\.profile\.id/.test(enhanced) && /"executionContext"/.test(enhanced), "Prompt hooks must receive the resolved execution participant");
@@ -131,6 +131,11 @@ verify(/applyToolPromptComposeHooksToAvailableTools\([\s\S]*\)\.await/.test(comp
 for (const [start, end] of [["pub async fn estimateRequestWindowFromMemory(", "pub fn requestWindowEstimateFlow("], ["async fn executeSendMessageWithRuntime(", "async fn processToolResults("], ["async fn processToolResults(", "pub async fn processStreamCompletion("]]) {
   verify(/let availableTools = self\.composeAvailableTools\([\s\S]*?\)\.await\?;/.test(section(enhanced, start, end)), "Initial sends, subsequent tool rounds and estimates must each use shared tool composition and propagate filter errors");
 }
+const toolContinuation = section(enhanced, "async fn processToolResults(", "pub async fn processStreamCompletion(");
+verify(toolContinuation.indexOf("self.refreshRequestModel(") < toolContinuation.indexOf("self.composeAvailableTools(") && toolContinuation.indexOf("self.refreshRequestModel(") >= 0, "Tool continuations must select the latest model before composing and submitting the next request");
+const refreshModel = section(enhanced, "async fn refreshRequestModel(", "/// Resumes model processing");
+verify(/resolveChatConfigurationForOptions/.test(refreshModel) && /createSendMessageRuntime/.test(refreshModel), "Switching must use canonical participant resolution and rebuild model capabilities, parameters and provider together");
+verify(!/request\.chat(?:Provider|Model)IdOverride\s*=/.test(processor), "Resolved models must not become explicit overrides that pin subsequent requests to an obsolete selection");
 verify(/options\.executionParticipantId = Some\(configuration\.profile\.id/.test(enhanced), "Tool execution context must use the same resolved participant identity");
 verify(/getServiceBundleForModel\([\s\S]*profile\.modelBinding/.test(enhanced), "The actual provider/model service bundle must come from the resolved profile");
 verify(/let introPrompt = profile\.introPrompt/.test(enhanced) && /let userPreferencesText = profile\.userPreferencesText/.test(enhanced), "Profile prompt content must be passed to the real runtime");

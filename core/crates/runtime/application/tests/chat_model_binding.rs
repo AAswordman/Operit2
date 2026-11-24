@@ -65,7 +65,7 @@ impl HostRuntimeTaskSchedulerHost for SelectionScheduler {
     }
 }
 
-/// Exercises durable isolation, global updates, exact provider IDs, removal and execution protection.
+/// Exercises durable isolation, global updates, exact provider IDs and switching during execution.
 #[test]
 fn conversation_model_selection_is_isolated_and_removed_models_use_global() {
     let root = std::env::temp_dir().join(format!("operit-chat-model-{}", uuid::Uuid::new_v4()));
@@ -155,16 +155,21 @@ fn conversation_model_selection_is_isolated_and_removed_models_use_global() {
         .is_err());
 
     let lease = database.store().beginChatExecution("chat-a").unwrap();
-    assert!(core
-        .setChatModelBinding("chat-a".into(), Some(next.clone()))
-        .is_err());
-    lease.release().unwrap();
+    core.setChatModelBinding("chat-a".into(), Some(global.clone()))
+        .unwrap();
+    assert_eq!(core.chatModelBinding("chat-a".into()).unwrap(), global);
+    assert_eq!(core.chatModelBinding("chat-b".into()).unwrap(), next);
+    core.setChatModelBinding("chat-a".into(), None).unwrap();
+    assert_eq!(core.chatModelBinding("chat-a".into()).unwrap(), next);
+    core.setChatModelBinding("chat-a".into(), Some(fixed.clone()))
+        .unwrap();
+    assert_eq!(core.chatModelBinding("chat-a".into()).unwrap(), fixed);
+    assert!(database.store().beginChatExecution("chat-a").is_err());
+    let history = ChatHistoryManager::default().unwrap();
+    let target = PluginExtensionTarget::Chat { chatId: "chat-a".into() };
     models.deleteModel("provider-b", "shared-model").unwrap();
     assert_eq!(core.chatModelBinding("chat-a".into()).unwrap(), next);
-    let history = ChatHistoryManager::default().unwrap();
-    let target = PluginExtensionTarget::Chat {
-        chatId: "chat-a".into(),
-    };
+    lease.release().unwrap();
     assert!(history
         .readPluginExtension("host.chat.model.selection", &target)
         .unwrap()

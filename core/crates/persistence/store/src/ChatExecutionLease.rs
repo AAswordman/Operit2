@@ -117,7 +117,7 @@ impl SqliteStore {
         drop(state);
         result
     }
-    /// Acquires metadata protection before configuration resolution, releasing all locks before awaiting plugins.
+    /// Reserves one generation per conversation, releasing all locks before awaiting plugins.
     pub fn beginChatExecution(&self, chatId: &str) -> Result<ChatExecutionLease, SqliteStoreError> {
         if chatId.trim().is_empty() {
             return Err(SqliteStoreError::Message(
@@ -163,7 +163,7 @@ impl SqliteStore {
         })
     }
 
-    /// Holds the shared execution guard through one metadata transaction to prevent acquire-versus-write races.
+    /// Protects exact dirty message revisions while conversation configuration remains editable.
     pub(crate) fn withPluginExtensionMutation<T>(
         &self,
         target: &PluginExtensionTarget,
@@ -172,20 +172,16 @@ impl SqliteStore {
         let state = self.executionLeases.lock().map_err(|_| {
             SqliteStoreError::Message("Chat execution lease mutex poisoned".to_string())
         })?;
-        if let Some(execution) = state.active.get(target.chatId()) {
-            let protected = match target {
-                PluginExtensionTarget::Chat { .. } => true,
-                PluginExtensionTarget::Message {
-                    messageTimestamp,
-                    variantIndex,
-                    ..
-                } => execution
-                    .dirtyRevisions
-                    .contains(&(*messageTimestamp, *variantIndex)),
-            };
-            if protected {
+        if let PluginExtensionTarget::Message {
+            chatId,
+            messageTimestamp,
+            variantIndex,
+        } = target {
+            if state.active.get(chatId).is_some_and(|execution| {
+                execution.dirtyRevisions.contains(&(*messageTimestamp, *variantIndex))
+            }) {
                 return Err(SqliteStoreError::Message(format!(
-                    "Cannot mutate executing conversation identity or a dirty revision: {target:?}"
+                    "Cannot mutate a dirty message revision: {target:?}"
                 )));
             }
         }
@@ -195,7 +191,7 @@ impl SqliteStore {
     }
 }
 
-/// Releases metadata protection on every early error even when a runtime clone retains the lease.
+/// Releases execution protection on every early error even when a runtime clone retains the lease.
 pub struct ChatExecutionRequestGuard {
     lease: Option<ChatExecutionLease>,
 }
