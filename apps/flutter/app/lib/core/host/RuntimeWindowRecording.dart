@@ -12,7 +12,6 @@ class RuntimeWindowRecording {
   final _result = Completer<RecordedAudio?>();
   final int _maxDurationMs;
   final int? _silenceMs;
-  final bool _echoCancellation;
   late final Future<void> _started;
   Timer? _deadline;
   Future<void>? _ending;
@@ -39,7 +38,7 @@ class RuntimeWindowRecording {
     this._maxDurationMs,
     this._silenceMs, {
     bool echoCancellation = false,
-  }) : _echoCancellation = echoCancellation {
+  }) {
     _started = _recorder.start(
       onChunk: _observe,
       echoCancellation: echoCancellation,
@@ -111,11 +110,9 @@ class RuntimeWindowRecording {
         _quiet = 0;
         if (!_heardSpeech && ++_loud >= _speechFrames) {
           _heardSpeech = true;
-          if (_echoCancellation) {
-            _skipSamples =
-                math.max(0, _frames - _speechFrames - _preRollFrames) *
-                _samplesPerFrame;
-          }
+          _skipSamples =
+              math.max(0, _frames - _speechFrames - _preRollFrames) *
+              _samplesPerFrame;
         }
       } else {
         _loud = 0;

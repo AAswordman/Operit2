@@ -23,6 +23,7 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers }
   };
   const plugin = loadModule("../../external/voice_call/src/main.ts", {
     getLang: () => "en",
+    setInterval, clearInterval,
     ...timers,
     ToolPkg: {
       ui: { floatingWindows: {
@@ -32,6 +33,7 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers }
       } },
       async callDependency(packageId, method, payload) {
         assert.equal(packageId, "com.operit.character_cards");
+        if (method === "avatar.default") return "data:image/png;base64,character-default-avatar";
         assert.equal(method, "chat.identity");
         calls.push(plain(payload));
         return resolveIdentity(payload);
@@ -108,7 +110,7 @@ test("call pauses on identity failure and rereads the same chat when resumed", a
   await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
   assert.equal(screen.calls.filter(call => call === "create").length, 1);
   assert.deepEqual(screen.calls, ["create", { chatId: "actual-call" }, { chatId: "actual-call" }, "record"]);
-  assert.ok(!nodes(screen.render()).some(node => node.type === "Image"));
+  assert.equal(nodes(screen.render()).find(node => node.type === "Image").props.path, "data:image/png;base64,character-default-avatar");
 });
 
 /** Locks the copied public contract and minimum provider version to the feature actually consumed. */
@@ -124,7 +126,7 @@ test("voice call ships the current dependency client and matching version requir
 function playbackScreen({ echoCancellation = true } = {}) {
   const timers = new Set();
   const requests = [], captures = [], transcribed = [], chatInputs = [], cancelled = [];
-  let hasSpeech = false;
+  let microphoneLevel = 0;
   let settledPlayback;
   const screen = callScreen(() => null, {
     timers: {
@@ -137,7 +139,7 @@ function playbackScreen({ echoCancellation = true } = {}) {
         requests.push(plain(options));
         return new Promise(resolve => captures.push(resolve));
       },
-      async recordingHasSpeech() { return hasSpeech; },
+      async recordingLevel() { return microphoneLevel; },
       async cancelRecording() { captures.at(-1)(null); },
       async close() {},
     },
@@ -161,7 +163,7 @@ function playbackScreen({ echoCancellation = true } = {}) {
   const settle = () => new Promise(resolve => setImmediate(resolve));
   return {
     ...screen, requests, captures, transcribed, chatInputs, cancelled, button, hangup, settle,
-    tick(speech) { hasSpeech = speech; for (const callback of timers) callback(); return settle(); },
+    tick(level) { microphoneLevel = level; for (const callback of timers) callback(); return settle(); },
     finishPlayback() { settledPlayback.resolve(); },
     failPlayback() { settledPlayback.reject(new Error("TTS device unavailable")); },
     async startPlayback() {
@@ -179,12 +181,14 @@ test("speech during playback cancels the utterance and transcribes the same capt
   const screen = playbackScreen();
   await screen.startPlayback();
   assert.equal(screen.requests[1].echoCancellation, true);
-  await screen.tick(false);
+  await screen.tick(0.05);
   assert.deepEqual(screen.cancelled, []);
   screen.captures[1](null); // The bounded capture expires during a long reply.
   await screen.settle();
   assert.equal(screen.requests[2].echoCancellation, true);
-  await screen.tick(true);
+  await screen.tick(0.7);
+  assert.deepEqual(screen.cancelled, []);
+  await screen.tick(0.7);
   assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
   assert.equal(screen.states.get("phase"), "listening");
   const audio = { text: "Stop, I meant next week" };
@@ -192,6 +196,35 @@ test("speech during playback cancels the utterance and transcribes the same capt
   await screen.settle();
   assert.equal(screen.transcribed[1], audio);
   assert.deepEqual(screen.chatInputs, ["Question", "Stop, I meant next week"]);
+});
+
+test("microphone volume interrupts without echo cancellation and ignores an isolated noise spike", async () => {
+  const screen = playbackScreen({ echoCancellation: false });
+  await screen.startPlayback();
+  assert.equal(screen.requests.length, 2);
+  assert.equal(screen.requests[1].echoCancellation, undefined);
+  await screen.tick(0.8);
+  await screen.tick(0.02);
+  await screen.tick(0.02);
+  assert.deepEqual(screen.cancelled, []);
+  await screen.tick(0.8);
+  await screen.tick(0.8);
+  assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
+  screen.captures[1]({ text: "Please stop" });
+  await screen.settle();
+  assert.deepEqual(screen.chatInputs, ["Question", "Please stop"]);
+});
+
+test("missing role portraits use the character card provider's default artwork", async () => {
+  for (const identity of [null, { title: "My character", avatarUri: null }]) {
+    const screen = callScreen(() => identity);
+    screen.states.set("voiceCallNativeLayout", true);
+    screen.render();
+    screen.effects.get("call-avatar")();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(screen.render().props.avatarUri, "data:image/png;base64,character-default-avatar");
+    assert.equal(screen.render().props.avatarTitle, identity?.title ?? "Operit");
+  }
 });
 
 test("natural playback completion keeps the open microphone without cancelling playback", async () => {
@@ -210,15 +243,15 @@ test("natural playback completion keeps the open microphone without cancelling p
 test("manual interruption resumes recording on hosts without echo cancellation", async () => {
   const screen = playbackScreen({ echoCancellation: false });
   const { call } = await screen.startPlayback();
-  assert.equal(screen.requests.length, 1);
+  assert.equal(screen.requests.length, 2);
   await screen.button("Interrupt and speak").props.onClick();
   await screen.settle();
   assert.equal(screen.states.get("phase"), "listening");
   assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
   assert.equal(screen.requests[1].echoCancellation, undefined);
-  screen.captures[1](null);
+  await screen.hangup();
   await call;
-  assert.equal(screen.states.get("phase"), "idle");
+  assert.equal(screen.states.get("phase"), "closing");
 });
 
 test("playback failure releases the open microphone and pauses the call", async () => {

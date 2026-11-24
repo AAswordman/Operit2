@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:camera_platform_interface/camera_platform_interface.dart';
@@ -39,7 +40,7 @@ void main() {
         ),
       );
       final full = tester.getRect(find.byKey(window));
-      final portrait = find.byIcon(Icons.smart_toy_outlined);
+      final portrait = find.text('O');
       expect(tester.getCenter(portrait), full.center);
       expect(swap, findsNothing);
       expect(preview, findsNothing);
@@ -89,6 +90,51 @@ void main() {
       await tester.pumpAndSettle();
     });
   }
+
+  testWidgets(
+    'uses role artwork and translucent controls with the selected theme',
+    (tester) async {
+      const avatar =
+          'data:image/png;base64,'
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==';
+      final scheme = ColorScheme.fromSeed(seedColor: Colors.green).copyWith(
+        primary: const Color(0xff108640),
+        surface: const Color(0xffe1f3e7),
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(colorScheme: scheme),
+          home: VoiceCallStage(
+            avatarUri: avatar,
+            avatarTitle: 'My character',
+            controls: const Text('Call controls'),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      final portrait = tester.widget<Image>(
+        find.byKey(const ValueKey('call-role-avatar')),
+      );
+      expect(portrait.image, isA<MemoryImage>());
+      expect(
+        (portrait.image as MemoryImage).bytes,
+        base64Decode(avatar.split(',').last),
+      );
+      expect(portrait.semanticLabel, 'My character');
+      expect(find.byIcon(Icons.smart_toy_outlined), findsNothing);
+      final controls = tester.widget<Material>(
+        find.byKey(const ValueKey('call-controls-surface')),
+      );
+      expect(controls.color, scheme.surface.withValues(alpha: 0.28));
+      expect(
+        Theme.of(
+          tester.element(find.text('Call controls')),
+        ).colorScheme.primary,
+        scheme.primary,
+      );
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   test('turning off the camera discards an in-flight frame', () async {
     final directory = await Directory.systemTemp.createTemp('call-camera-');

@@ -202,7 +202,8 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 440),
                           child: Material(
-                            color: colors.surface.withValues(alpha: 0.94),
+                            key: const ValueKey('call-controls-surface'),
+                            color: colors.surface.withValues(alpha: 0.28),
                             borderRadius: BorderRadius.circular(22),
                             child: Padding(
                               padding: const EdgeInsets.symmetric(
@@ -319,13 +320,21 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                 child: Stack(
                   fit: StackFit.expand,
                   children: [
-                    Icon(
-                      Icons.smart_toy_outlined,
-                      size: size * 0.45,
-                      color: colors.onPrimaryContainer,
-                    ),
+                    if (avatar == null)
+                      Center(
+                        child: Text(
+                          (title?.isNotEmpty == true ? title! : 'Operit')
+                              .characters
+                              .first,
+                          style: TextStyle(
+                            fontSize: size * 0.35,
+                            color: colors.onPrimaryContainer,
+                          ),
+                        ),
+                      ),
                     if (avatar != null)
                       Image(
+                        key: const ValueKey('call-role-avatar'),
                         image: avatar,
                         fit: BoxFit.cover,
                         semanticLabel: title,

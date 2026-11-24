@@ -764,6 +764,71 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('voice call follows committed custom colors and dark mode', (
+    tester,
+  ) async {
+    final preferences = StreamController<Map<String, Object?>>();
+    addTearDown(preferences.close);
+    final bridge = _ToolPkgDslTestBridge(preferences: preferences.stream);
+    const route = 'toolpkg:com.operit.voice_call:ui:call';
+    final plugin = _pluginRuntime().toJson();
+    plugin['packageName'] = 'com.operit.voice_call';
+    plugin['uiRoutes'] = [
+      for (final item in plugin['uiRoutes'] as List)
+        {...(item as Map).cast<String, Object?>(), 'routeId': route},
+    ];
+    await tester.pumpWidget(
+      FloatingWindowApp(
+        clients: GeneratedCoreProxyClients(bridge),
+        launch: FloatingWindowLaunch(
+          options: const FloatingWindowOptions(),
+          fill: true,
+          payload: {
+            'plugin': plugin,
+            'route': route,
+            'state': <String, Object?>{},
+          },
+        ),
+      ),
+    );
+    const primary = 0xff108640;
+    preferences.add({
+      'theme_mode': 'dark',
+      'use_custom_colors': true,
+      'custom_primary_color': primary,
+    });
+    await tester.pumpAndSettle();
+    final launcher = find.byType(ToolPkgUiLauncherScreen);
+    final state = tester.state(launcher);
+    expect(
+      Theme.of(tester.element(launcher)).colorScheme.primary.toARGB32(),
+      primary,
+    );
+    expect(Theme.of(tester.element(launcher)).brightness, Brightness.dark);
+    final render = bridge.calls.singleWhere(
+      (call) => call.methodName == 'render',
+    );
+    final options = (render.args as Map)['runtimeOptions'] as Map;
+    expect(
+      (options['theme'] as Map)['colors'],
+      containsPair('primary', '#108640ff'),
+    );
+    preferences.add({
+      'theme_mode': 'light',
+      'use_custom_colors': true,
+      'custom_primary_color': 0xffcc3344,
+    });
+    await tester.pumpAndSettle();
+    expect(
+      Theme.of(tester.element(launcher)).colorScheme.primary.toARGB32(),
+      0xffcc3344,
+    );
+    expect(Theme.of(tester.element(launcher)).brightness, Brightness.light);
+    expect(tester.state(launcher), same(state));
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('one DSL frame builds both window content and published pixels', (
     tester,
   ) async {

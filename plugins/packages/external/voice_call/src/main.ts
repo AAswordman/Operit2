@@ -10,6 +10,8 @@ const title = { zh: "语音通话", en: "Voice Call" };
 const WAVE_SIZE = 212;
 const CENTER = WAVE_SIZE / 2;
 const RECORDING_OPTIONS = { maxDurationMs: 20000, silenceMs: 900 };
+const INTERRUPT_LEVEL = 0.35;
+const INTERRUPT_SAMPLES = 2;
 
 const labels = {
   idle: ["准备通话", "Ready to call"],
@@ -205,10 +207,19 @@ export function call(ctx: ComposeDslContext): ComposeNode {
 
   ctx.useEffect("call-lifetime", () => () => { void stopCall(); }, []);
 
+  /** Uses the same default artwork as the required character card plugin. */
+  async function readIdentity(chatId: string | null): Promise<ChatDisplayIdentity> {
+    const value = await characterCards.chat.identity({ chatId });
+    return {
+      title: value?.title ?? "Operit",
+      avatarUri: value?.avatarUri || await characterCards.defaultAvatar(),
+    };
+  }
+
   ctx.useEffect("call-avatar", () => {
     let disposed = false;
     const request = ++identityRequest.current;
-    void characterCards.chat.identity({ chatId: null }).then(value => {
+    void readIdentity(null).then(value => {
       if (!disposed && request === identityRequest.current) setIdentity(value);
     }).catch(error => {
       if (!disposed && request === identityRequest.current) setFailure(report(error));
@@ -259,13 +270,16 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   }
 
   /** Listens during playback and carries the captured interruption into the next turn. */
-  async function listenDuringPlayback(playback: Playback): Promise<ToolPkg.FloatingWindowRecording | null> {
+  async function listenDuringPlayback(playback: Playback, echoCancellation: boolean): Promise<ToolPkg.FloatingWindowRecording | null> {
     let checking = false;
+    let loudSamples = 0;
     const detector = setInterval(() => {
       if (checking || !session.active || playback.done || !session.recording || playback.cancellation) return;
       checking = true;
-      void windowApi.recordingHasSpeech(WINDOW).then(async hasSpeech => {
-        if (hasSpeech && session.active && session.playback === playback) await interruptSpeech();
+      void windowApi.recordingLevel(WINDOW).then(async level => {
+        if (!session.active || session.playback !== playback || playback.done) return;
+        loudSamples = Number.isFinite(level) && level >= INTERRUPT_LEVEL ? loudSamples + 1 : 0;
+        if (loudSamples >= INTERRUPT_SAMPLES) await interruptSpeech();
       }).catch(error => {
         clearInterval(detector);
         report(error);
@@ -275,13 +289,15 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       // The host bounds each capture. Keep listening if that limit expires during a long reply.
       while (session.active && !playback.failed) {
         const startedDuringPlayback = !playback.done;
-        const captured = await record(true);
+        loudSamples = 0;
+        const captured = await record(echoCancellation);
         if (!session.active || playback.failed) return null;
         if (captured) {
+          if (!playback.done && !playback.cancellation && loudSamples < INTERRUPT_SAMPLES) continue;
           await interruptSpeech();
           return captured;
         }
-        if (!startedDuringPlayback) break;
+        if (!startedDuringPlayback || playback.done) break;
       }
       return null;
     } finally {
@@ -289,7 +305,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     }
   }
 
-  async function speak(answer: string, sentAt: number, autoInterrupt: boolean): Promise<ToolPkg.FloatingWindowRecording | null> {
+  async function speak(answer: string, sentAt: number, echoCancellation: boolean): Promise<ToolPkg.FloatingWindowRecording | null> {
     setPhase("speaking");
     const playback: Playback = { id: `call-${session.chatId}-${sentAt}`, done: false, failed: false };
     session.playback = playback;
@@ -304,12 +320,12 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       throw error;
     }).finally(() => {
       playback.done = true;
-      if (session.active && !playback.failed && autoInterrupt && session.recording) setPhase("listening");
+      if (session.active && !playback.failed && session.recording) setPhase("listening");
     });
-    const listening = autoInterrupt ? listenDuringPlayback(playback).catch(error => {
+    const listening = listenDuringPlayback(playback, echoCancellation).catch(error => {
       report(error);
       return null;
-    }) : Promise.resolve(null);
+    });
     try {
       const [, captured] = await Promise.all([speaking, listening]);
       return captured;
@@ -335,11 +351,11 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         const chat = await Tools.Chat.createNew({ setAsCurrentChat: false });
         session.chatId = chat.chatId;
       }
-      const currentIdentity = await characterCards.chat.identity({ chatId: session.chatId });
+      const currentIdentity = await readIdentity(session.chatId);
       if (!session.active) return;
       setIdentity(currentIdentity);
       const caps = await windowApi.capabilities();
-      const autoInterrupt = caps.recordingEchoCancellation === true && typeof windowApi.recordingHasSpeech === "function";
+      const echoCancellation = caps.recordingEchoCancellation === true;
       let nextRecording: ToolPkg.FloatingWindowRecording | null = null;
       while (session.active) {
         if (!nextRecording) setPhase("listening");
@@ -385,7 +401,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         if (!answer) throw new Error(text("noReply"));
 
         setReply(answer);
-        nextRecording = await speak(answer, turn.sentAt, autoInterrupt);
+        nextRecording = await speak(answer, turn.sentAt, echoCancellation);
       }
     } catch (error) {
       if (session.active) {
