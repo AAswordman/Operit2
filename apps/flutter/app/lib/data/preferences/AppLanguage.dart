@@ -27,9 +27,8 @@ enum AppLanguage {
   );
 
   /// Decodes a stored choice, accepting regional tags such as `zh-CN`, and
-  /// falls back to the system default for unknown values. The key syncs
-  /// through Space preferences to devices running different app versions, so
-  /// startup language resolution must not depend on a peer's exact build.
+  /// uses the system default for unknown values. Flutter and Core clients
+  /// share this device-local preference and may write regional language tags.
   static AppLanguage fromPreference(Object? value) {
     if (value is! String || value.isEmpty || value == 'system') {
       return system;

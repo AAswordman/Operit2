@@ -16,10 +16,12 @@ changes and application restarts.
 chooses its own language; Space synchronization and Space merges do not change it.
 Each configured app engine on the same device loads the choice before showing its
 main UI and observes committed local changes. This setting is independent of theme
-snapshots and saved theme configurations. Invalid persisted values are reported
-as errors. The former `app_language` entry in synchronized
-`user_preferences.preferences.json` no longer controls the app language. Devices without a local
-language choice start in Follow system mode.
+snapshots and saved theme configurations. Regional tags such as `zh-CN`, `en-US`,
+and `fr-CA` resolve to the supported base language. Unknown persisted values use
+Follow system, matching the parsing behavior introduced in PR #511.
+The former `app_language` entry in synchronized `user_preferences.preferences.json`
+no longer controls the app language. Devices without a local language choice
+start in Follow system mode.
 
 The main and detached chat windows, plugin floating windows, desktop widget
 windows, application notification suffixes, and background work presentation
