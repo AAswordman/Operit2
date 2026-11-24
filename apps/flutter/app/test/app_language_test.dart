@@ -11,7 +11,7 @@ void main() {
   tearDown(() => UserPreferencesManager.appLanguage.value = AppLanguage.system);
 
   test(
-    'language choices match the available translations and reject invalid data',
+    'language choices match the available translations and map stored tags',
     () {
       expect(
         AppLanguage.values
@@ -20,8 +20,15 @@ void main() {
         unorderedEquals(AppLocalizations.supportedLocales),
       );
       expect(AppLanguage.fromPreference(null), AppLanguage.system);
-      expect(() => AppLanguage.fromPreference('de'), throwsFormatException);
-      expect(() => AppLanguage.fromPreference(1), throwsFormatException);
+      // Regional tags arrive from peers running different app versions.
+      expect(AppLanguage.fromPreference('zh-CN'), AppLanguage.chinese);
+      expect(AppLanguage.fromPreference('zh_TW'), AppLanguage.chinese);
+      expect(AppLanguage.fromPreference('en-US'), AppLanguage.english);
+      expect(AppLanguage.fromPreference('fr-CA'), AppLanguage.french);
+      // Unknown values fall back to the system default instead of failing
+      // startup language resolution.
+      expect(AppLanguage.fromPreference('de'), AppLanguage.system);
+      expect(AppLanguage.fromPreference(1), AppLanguage.system);
       expect(
         AppLanguage.system.resolveLocale(const <Locale>[Locale('fr', 'CA')]),
         const Locale('fr'),
