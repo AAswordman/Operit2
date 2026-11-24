@@ -8,6 +8,7 @@ import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLanguage.dart';
 import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxLexer.dart';
 import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxPalette.dart';
 import 'package:operit2/ui/common/code_editor/syntax/CodeSyntaxToken.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 
 enum InlineDiffKind { context, add, remove }
 
@@ -1245,8 +1246,8 @@ class _DiffLineText extends StatelessWidget {
   Widget build(BuildContext context) {
     final baseStyle = TextStyle(
       color: colors.foreground,
-      fontFamily: 'Consolas',
-      fontFamilyFallback: const <String>['Cascadia Mono', 'monospace'],
+      fontFamily: operitCodeFontFamilyOf(context),
+      fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
       fontSize: 12,
       height: 1.0,
     );
@@ -1348,8 +1349,8 @@ class _HunkHeaderBar extends StatelessWidget {
         overflow: TextOverflow.clip,
         style: TextStyle(
           color: scheme.outline.withValues(alpha: 0.9),
-          fontFamily: 'Consolas',
-          fontFamilyFallback: const <String>['Cascadia Mono', 'monospace'],
+          fontFamily: operitCodeFontFamilyOf(context),
+          fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
           fontSize: 11,
           height: 1.0,
         ),
@@ -1386,8 +1387,8 @@ class _LineNumber extends StatelessWidget {
             style: TextStyle(
               color: color ??
                   Theme.of(context).colorScheme.outline.withValues(alpha: 0.75),
-              fontFamily: 'Consolas',
-              fontFamilyFallback: const <String>['Cascadia Mono', 'monospace'],
+              fontFamily: operitCodeFontFamilyOf(context),
+              fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
               fontSize: 11,
               height: 1.0,
             ),

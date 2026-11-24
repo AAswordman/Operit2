@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 import 'package:operit_ui/operit_ui.dart'
     show operitDesignBridgeEnabled, OperitDesignSource;
 import 'package:flutter/services.dart';
@@ -102,7 +103,10 @@ class CodeContentWithLineNumbers extends StatelessWidget {
                       color: Theme.of(
                         context,
                       ).colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
-                      fontFamily: 'monospace',
+                      fontFamily: operitCodeFontFamilyOf(context),
+                      fontFamilyFallback: operitCodeFontFamilyFallbackOf(
+                        context,
+                      ),
                     ),
                   ),
                 ),
@@ -113,7 +117,10 @@ class CodeContentWithLineNumbers extends StatelessWidget {
                   softWrap: true,
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(
                     color: textColor.withValues(alpha: 0.8),
-                    fontFamily: 'monospace',
+                    fontFamily: operitCodeFontFamilyOf(context),
+                    fontFamilyFallback: operitCodeFontFamilyFallbackOf(
+                      context,
+                    ),
                   ),
                 ),
               ),

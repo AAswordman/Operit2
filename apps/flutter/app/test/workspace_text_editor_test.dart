@@ -245,6 +245,8 @@ void main() {
       scrollController: widget.scrollController,
       color: const Color(0xff123456),
       dividerColor: widget.dividerColor,
+      fontFamily: widget.fontFamily,
+      fontFamilyFallback: widget.fontFamilyFallback,
     );
     expect(
       gutter.debugCachedLabels,

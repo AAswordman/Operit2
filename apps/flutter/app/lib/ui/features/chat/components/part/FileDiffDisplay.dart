@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 
 import '../workspace/WorkspaceFileIcon.dart';
 import '../workspace/WorkspaceInlineDiff.dart';
@@ -95,7 +96,8 @@ class FileDiffDisplay extends StatelessWidget {
                                   style: theme.textTheme.labelMedium?.copyWith(
                                     color: theme.colorScheme.onSurface,
                                     fontWeight: FontWeight.w600,
-                                    fontFamily: 'monospace',
+                                    fontFamily: operitCodeFontFamilyOf(context),
+                                    fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
                                     fontSize: 12.5,
                                   ),
                                 ),
@@ -105,7 +107,8 @@ class FileDiffDisplay extends StatelessWidget {
                                     style: theme.textTheme.bodySmall?.copyWith(
                                       color: theme.colorScheme.onSurfaceVariant
                                           .withValues(alpha: 0.5),
-                                      fontFamily: 'monospace',
+                                      fontFamily: operitCodeFontFamilyOf(context),
+                                      fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
                                       fontSize: 11,
                                     ),
                                   ),
@@ -122,7 +125,8 @@ class FileDiffDisplay extends StatelessWidget {
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: const Color(0xFF4ADE80),
                               fontWeight: FontWeight.w600,
-                              fontFamily: 'monospace',
+                              fontFamily: operitCodeFontFamilyOf(context),
+                              fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
                               fontSize: 12,
                             ),
                           ),
@@ -134,7 +138,8 @@ class FileDiffDisplay extends StatelessWidget {
                             style: theme.textTheme.labelSmall?.copyWith(
                               color: const Color(0xFFF87171),
                               fontWeight: FontWeight.w600,
-                              fontFamily: 'monospace',
+                              fontFamily: operitCodeFontFamilyOf(context),
+                              fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
                               fontSize: 12,
                             ),
                           ),
@@ -146,7 +151,8 @@ class FileDiffDisplay extends StatelessWidget {
                               color: theme.colorScheme.onSurfaceVariant
                                   .withValues(alpha: 0.45),
                               fontWeight: FontWeight.w600,
-                              fontFamily: 'monospace',
+                              fontFamily: operitCodeFontFamilyOf(context),
+                              fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
                               fontSize: 12,
                             ),
                           ),

@@ -3,6 +3,7 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:flutter/services.dart';
 import 'package:operit2/core/bridge/PlatformCoreProxy.dart';
@@ -601,7 +602,7 @@ class _GeneralAttachmentViewer extends StatelessWidget {
                   Flexible(
                     child: SingleChildScrollView(
                       padding: const EdgeInsets.all(18),
-                      child: _buildGeneralContent(theme, colorScheme),
+                      child: _buildGeneralContent(context, theme, colorScheme),
                     ),
                   ),
                 ],
@@ -613,7 +614,11 @@ class _GeneralAttachmentViewer extends StatelessWidget {
     );
   }
 
-  Widget _buildGeneralContent(ThemeData theme, ColorScheme colorScheme) {
+  Widget _buildGeneralContent(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme colorScheme,
+  ) {
     if (attachment.mimeType.startsWith('audio/') ||
         attachment.mimeType.startsWith('video/')) {
       return _MediaPoolAttachmentPreview(attachment: attachment);
@@ -634,7 +639,8 @@ class _GeneralAttachmentViewer extends StatelessWidget {
           attachment.content,
           style: theme.textTheme.bodySmall?.copyWith(
             color: colorScheme.onSurface,
-            fontFamily: 'monospace',
+            fontFamily: operitCodeFontFamilyOf(context),
+            fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
             height: 1.5,
           ),
         ),

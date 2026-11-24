@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 
 import 'CodeTextLayout.dart';
 import 'CodeEditorInput.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 import 'CodeEditorLineNumbers.dart';
 import 'CodeEditorScrollController.dart';
 import 'CodeEditorZoomTransform.dart';
@@ -232,7 +233,8 @@ class CodeEditorState extends State<CodeEditor> {
     final style =
         widget.style ??
         TextStyle(
-          fontFamily: 'monospace',
+          fontFamily: operitCodeFontFamilyOf(context),
+          fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
           fontSize: 12,
           color: theme.colorScheme.onSurface,
         );
@@ -280,6 +282,8 @@ class CodeEditorState extends State<CodeEditor> {
                 text: _controller.text,
                 scrollController: _scroll,
                 color: theme.colorScheme.onSurfaceVariant,
+                fontFamily: operitCodeFontFamilyOf(context),
+                fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
                 dividerColor: theme.colorScheme.outlineVariant,
                 child: child!,
               ),

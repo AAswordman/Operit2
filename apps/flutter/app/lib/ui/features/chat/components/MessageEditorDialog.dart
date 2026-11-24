@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 
 import '../../../common/components/OperitDialog.dart';
@@ -218,7 +219,10 @@ class _RawEditorState extends State<_RawEditor> {
         maxLines: 16,
         style: Theme.of(
           context,
-        ).textTheme.bodyMedium?.copyWith(fontFamily: 'monospace'),
+        ).textTheme.bodyMedium?.copyWith(
+          fontFamily: operitCodeFontFamilyOf(context),
+          fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
+        ),
         decoration: InputDecoration(
           labelText: l10n.chatEditorPlainTextContent,
           alignLabelWithHint: true,

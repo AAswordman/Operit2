@@ -3,6 +3,8 @@
 import 'dart:collection';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart' show listEquals;
+
 import 'package:flutter/rendering.dart';
 import 'package:flutter/widgets.dart';
 
@@ -19,6 +21,8 @@ class CodeEditorLineNumbers extends SingleChildRenderObjectWidget {
     required this.scrollController,
     required this.color,
     required this.dividerColor,
+    required this.fontFamily,
+    required this.fontFamilyFallback,
     required super.child,
   });
 
@@ -28,6 +32,8 @@ class CodeEditorLineNumbers extends SingleChildRenderObjectWidget {
   final ScrollController scrollController;
   final Color color;
   final Color dividerColor;
+  final String fontFamily;
+  final List<String> fontFamilyFallback;
 
   /// Creates the gutter renderer and its document line index.
   @override
@@ -39,6 +45,8 @@ class CodeEditorLineNumbers extends SingleChildRenderObjectWidget {
         scrollController: scrollController,
         color: color,
         dividerColor: dividerColor,
+        fontFamily: fontFamily,
+        fontFamilyFallback: fontFamilyFallback,
       );
 
   /// Updates document and appearance without recreating the editable child.
@@ -53,6 +61,8 @@ class CodeEditorLineNumbers extends SingleChildRenderObjectWidget {
     scrollController: scrollController,
     color: color,
     dividerColor: dividerColor,
+    fontFamily: fontFamily,
+    fontFamilyFallback: fontFamilyFallback,
   );
 }
 
@@ -66,12 +76,16 @@ class RenderCodeEditorLineNumbers extends RenderShiftedBox {
     required ScrollController scrollController,
     required Color color,
     required Color dividerColor,
+    required String fontFamily,
+    required List<String> fontFamilyFallback,
   }) : _enabled = enabled,
        _scale = scale,
        _text = text,
        _scrollController = scrollController,
        _color = color,
        _dividerColor = dividerColor,
+       _fontFamily = fontFamily,
+       _fontFamilyFallback = fontFamilyFallback,
        _lineStarts = _indexLines(text),
        super(null);
 
@@ -81,6 +95,8 @@ class RenderCodeEditorLineNumbers extends RenderShiftedBox {
   ScrollController _scrollController;
   Color _color;
   Color _dividerColor;
+  String _fontFamily;
+  List<String> _fontFamilyFallback;
   List<int> _lineStarts;
   double _gutterWidth = 0;
   final LinkedHashMap<int, TextPainter> _labels =
@@ -121,13 +137,21 @@ class RenderCodeEditorLineNumbers extends RenderShiftedBox {
     required ScrollController scrollController,
     required Color color,
     required Color dividerColor,
+    required String fontFamily,
+    required List<String> fontFamilyFallback,
   }) {
     final textChanged = _text != text;
     final geometryChanged =
         textChanged || _enabled != enabled || _scale != scale;
     final colorChanged = _color != color;
+    final fontChanged =
+        _fontFamily != fontFamily ||
+        !listEquals(_fontFamilyFallback, fontFamilyFallback);
     final paintChanged =
-        geometryChanged || colorChanged || _dividerColor != dividerColor;
+        geometryChanged ||
+        colorChanged ||
+        _dividerColor != dividerColor ||
+        fontChanged;
     if (textChanged) {
       _text = text;
       _lineStarts = _indexLines(text);
@@ -142,6 +166,9 @@ class RenderCodeEditorLineNumbers extends RenderShiftedBox {
     _scale = scale;
     _color = color;
     _dividerColor = dividerColor;
+    if (fontChanged) _clearLabels();
+    _fontFamily = fontFamily;
+    _fontFamilyFallback = fontFamilyFallback;
     if (geometryChanged) markNeedsLayout();
     if (paintChanged) markNeedsPaint();
   }
@@ -162,7 +189,8 @@ class RenderCodeEditorLineNumbers extends RenderShiftedBox {
         text: TextSpan(
           text: '$number',
           style: TextStyle(
-            fontFamily: 'monospace',
+            fontFamily: _fontFamily,
+            fontFamilyFallback: _fontFamilyFallback,
             fontSize: 12,
             color: _color,
           ),
@@ -211,7 +239,12 @@ class RenderCodeEditorLineNumbers extends RenderShiftedBox {
   void _layoutNumber(int number) {
     _numberPainter.text = TextSpan(
       text: '$number',
-      style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: _color),
+        style: TextStyle(
+          fontFamily: _fontFamily,
+            fontFamilyFallback: _fontFamilyFallback,
+            fontSize: 12,
+            color: _color,
+          ),
     );
     _numberPainter.layout();
   }

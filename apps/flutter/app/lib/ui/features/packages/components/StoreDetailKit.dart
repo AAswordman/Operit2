@@ -1,6 +1,7 @@
 // ignore_for_file: file_names
 
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../../theme/OperitGlassSurface.dart';
@@ -533,7 +534,12 @@ class StoreListRow extends StatelessWidget {
                     title,
                     style: theme.textTheme.bodyMedium?.copyWith(
                       fontWeight: FontWeight.w600,
-                      fontFamily: monospaceTitle ? 'monospace' : null,
+                      fontFamily: monospaceTitle
+                          ? operitCodeFontFamilyOf(context)
+                          : null,
+                      fontFamilyFallback: monospaceTitle
+                          ? operitCodeFontFamilyFallbackOf(context)
+                          : null,
                     ),
                   ),
                   if (subtitle != null &&

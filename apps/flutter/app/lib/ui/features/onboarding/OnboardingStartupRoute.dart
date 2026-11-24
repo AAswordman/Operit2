@@ -6,6 +6,7 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:operit_folder_access/operit_folder_access.dart';
 import 'package:flutter/material.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 import 'package:flutter/services.dart';
 
 import '../../../core/bridge/ProxyCoreRuntimeBridge.dart';
@@ -2657,8 +2658,9 @@ class _StoragePathField extends StatelessWidget {
       enableSuggestions: false,
       keyboardType: TextInputType.text,
       textInputAction: TextInputAction.done,
-      style: const TextStyle(
-        fontFamily: 'monospace',
+      style: TextStyle(
+        fontFamily: operitCodeFontFamilyOf(context),
+        fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
         fontSize: 13,
         letterSpacing: 0,
       ),

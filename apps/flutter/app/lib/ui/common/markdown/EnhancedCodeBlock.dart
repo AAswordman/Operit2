@@ -160,9 +160,13 @@ class _EnhancedCodeBlockState extends State<EnhancedCodeBlock> {
                                           color: const Color(0xFFAAAAAA),
                                           fontSize: 11,
                                           height: 1.0,
-                                          fontFamily: markdownCodeFontFamily,
+                                          fontFamily: operitCodeFontFamilyOf(
+                                            context,
+                                          ),
                                           fontFamilyFallback:
-                                              markdownCodeFontFamilyFallback,
+                                              operitCodeFontFamilyFallbackOf(
+                                                context,
+                                              ),
                                         ),
                                   ),
                                 ),
