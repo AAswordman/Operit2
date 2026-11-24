@@ -30,6 +30,7 @@ import 'package:operit2/ui/main/components/AppContent.dart';
 import 'package:operit2/ui/main/layout/DrawerMotionScope.dart';
 import 'package:operit2/ui/main/screens/OperitScreens.dart';
 import 'package:operit2/ui/window/FloatingWindowApp.dart';
+import 'package:operit2/ui/window/MediaStage.dart';
 
 /// Verifies plugin rendering and message-menu integration through the Core bridge.
 void main() {
@@ -761,6 +762,38 @@ void main() {
       Localizations.localeOf(tester.element(launcherFinder)),
       const Locale('zh'),
     );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('an unrelated plugin declares MediaStage without host package rules', (tester) async {
+    final preferences = StreamController<Map<String, Object?>>();
+    addTearDown(preferences.close);
+    final bridge = _ToolPkgDslTestBridge(
+      preferences: preferences.stream,
+      renderResult: (_) => jsonEncode({
+        'success': true,
+        'tree': _node('MediaStage', props: {'camera': false, 'imageTitle': 'Camera monitor'}, children: [
+          _node('Text', props: {'text': 'Plugin media controls'}),
+        ]),
+        'state': <String, Object?>{}, 'memo': <String, Object?>{},
+      }),
+    );
+    await tester.pumpWidget(FloatingWindowApp(
+      clients: GeneratedCoreProxyClients(bridge),
+      launch: FloatingWindowLaunch(
+        options: const FloatingWindowOptions(), fill: true,
+        payload: {'plugin': _pluginRuntime().toJson(), 'route': 'main', 'state': <String, Object?>{}},
+      ),
+    ));
+    preferences.add({'theme_mode': 'light'});
+    await tester.pumpAndSettle();
+    expect(find.byType(MediaStage), findsOneWidget);
+    expect(find.text('Plugin media controls'), findsOneWidget);
+    expect(find.byIcon(Icons.videocam_off_outlined), findsNothing);
+    final render = bridge.calls.singleWhere((call) => call.methodName == 'render');
+    final state = ((render.args as Map)['runtimeOptions'] as Map)['state'] as Map;
+    expect(state, isNot(contains('voiceCallNativeLayout')));
+    expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

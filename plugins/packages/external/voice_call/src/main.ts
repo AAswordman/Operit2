@@ -1,4 +1,5 @@
-import type { ComposeCanvasCommand, ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
+import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
+import type { Chat } from "../../../../types/chat";
 import { characterCards, type ChatDisplayIdentity } from "./dependencies/character_cards/api.js";
 
 const PACKAGE = "com.operit.voice_call";
@@ -8,8 +9,6 @@ const CALL_ROUTE = `toolpkg:${PACKAGE}:ui:call`;
 const VOICE_OVERLAY_ROUTE = `toolpkg:${PACKAGE}:ui:voice-overlay`;
 const WINDOW = "voice-call";
 const title = { zh: "语音通话", en: "Voice Call" };
-const WAVE_SIZE = 212;
-const CENTER = WAVE_SIZE / 2;
 const RECORDING_OPTIONS = { maxDurationMs: 20000, silenceMs: 900 };
 const INTERRUPT_LEVEL = 0.35;
 const INTERRUPT_SAMPLES = 2;
@@ -79,7 +78,9 @@ export function inputMenu(ctx: ComposeDslContext): ComposeNode {
     setError("");
     try {
       const api = ToolPkg.ui.floatingWindows;
-      const caps = await api.capabilities();
+      let caps = await api.capabilities();
+      const applicationOnly = caps.cameraRequiresApplicationWindow === true;
+      if (applicationOnly) caps = await api.capabilities({ applicationOnly });
       if (closed.current) return null;
       if (!caps.supported) throw new Error(text("unsupported"));
       if (!caps.permissionGranted && !await api.requestPermission()) throw new Error(text("permission"));
@@ -90,9 +91,9 @@ export function inputMenu(ctx: ComposeDslContext): ComposeNode {
       if (closed.current) return null;
       if (existing?.route === CALL_ROUTE) {
         await api.show(WINDOW);
-        await api.update(WINDOW, {}, { voiceCallFullscreen: true });
+        await api.setFullscreen(WINDOW, true);
       } else {
-        await api.open({ id: WINDOW, route: CALL_ROUTE, fill: true,
+        await api.open({ id: WINDOW, route: CALL_ROUTE, fill: true, applicationOnly,
           state: { autoStart: true, sourceChatId: chatId },
         });
       }
@@ -111,6 +112,14 @@ export function inputMenu(ctx: ComposeDslContext): ComposeNode {
   });
 }
 
+/** Chooses camera-compatible presentation using public host capabilities. */
+async function cameraWindowCapabilities(): Promise<ToolPkg.FloatingWindowCapabilities> {
+  const api = ToolPkg.ui.floatingWindows;
+  const native = await api.capabilities();
+  return native.cameraRequiresApplicationWindow
+    ? api.capabilities({ applicationOnly: true }) : native;
+}
+
 /** Opens or reveals the single call window and handles overlay authorization. */
 export function control(ctx: ComposeDslContext): ComposeNode {
   const windowApi = ToolPkg.ui.floatingWindows;
@@ -122,7 +131,7 @@ export function control(ctx: ComposeDslContext): ComposeNode {
 
   ctx.useEffect("voice-overlay-capability", () => {
     let disposed = false;
-    void windowApi.capabilities().then(caps => {
+    void cameraWindowCapabilities().then(caps => {
       if (!disposed) setOffersVoiceOverlay(caps.scope === "application" && caps.systemOverlay === true);
     }).catch(report);
     return () => { disposed = true; };
@@ -134,7 +143,7 @@ export function control(ctx: ComposeDslContext): ComposeNode {
     inFlight.current = true;
     setBusy(true);
     try {
-      const caps = await windowApi.capabilities();
+      const caps = await cameraWindowCapabilities();
       if (!caps.supported) throw new Error(text("unsupported"));
       setNeedsPermission(!caps.permissionGranted);
       if (!caps.permissionGranted) {
@@ -152,6 +161,8 @@ export function control(ctx: ComposeDslContext): ComposeNode {
         }
         await windowApi.open({
           id: WINDOW,
+          applicationOnly: !voiceOverlay && caps.cameraRequiresApplicationWindow === true,
+          state: { cameraControls: !voiceOverlay },
           route: voiceOverlay ? VOICE_OVERLAY_ROUTE : CALL_ROUTE,
           options: { width: 340, height: voiceOverlay ? 404 : 460, draggable: true },
         });
@@ -186,44 +197,12 @@ export function control(ctx: ComposeDslContext): ComposeNode {
   ]);
 }
 
-/** Sends soft circular wavefronts out from the avatar. */
-function avatarWave(ctx: ComposeDslContext, identity: ChatDisplayIdentity | null, phase: Phase, frame: { time: number; level: number }): ComposeNode {
-  const ui = ctx.UI;
-  const colors = ctx.MaterialTheme.colorScheme;
-  const processing = phase === "waiting" || phase === "recognizing";
-  const color = processing ? colors.tertiary : colors.primary;
-  const center = { type: "Circle", cx: CENTER, cy: CENTER } as const;
-  const commands: ComposeCanvasCommand[] = [
-    { ...center, radius: 63, color: color.copy({ alpha: 0.06 }) },
-    { ...center, radius: 58, color: color.copy({ alpha: 0.10 }) },
-  ];
-  if (phase === "listening" || phase === "speaking" || processing) {
-    const strength = phase === "listening" ? 0.16 + 0.84 * frame.level : processing ? 0.24 : 0.48;
-    const period = processing ? 3000 : 2100;
-    for (let index = 0; index < 3; index++) {
-      const progress = (frame.time / period + index / 3) % 1;
-      const radius = 55 + (1 - (1 - progress) ** 1.35) * (30 + 16 * strength);
-      const fade = Math.sin(Math.PI * progress) * (1 - 0.45 * progress);
-      const opacity = (0.24 + 0.48 * strength) * fade;
-      commands.push(
-        { ...center, radius: radius - 2, strokeWidth: 8 + 5 * strength, color: color.copy({ alpha: opacity * 0.18 }) },
-        { ...center, radius, strokeWidth: 0.9 + 1.5 * strength, color: color.copy({ alpha: opacity }) },
-      );
-    }
-  }
-  return ui.Box({ width: WAVE_SIZE, height: WAVE_SIZE, contentAlignment: "center" }, [
-    ui.Canvas({ key: "avatar-wave", width: WAVE_SIZE, height: WAVE_SIZE, commands }),
-    ...(identity?.avatarUri ? [ui.Image({ key: "call-avatar", path: identity.avatarUri, width: 104, height: 104, contentScale: "crop",
-      modifier: ctx.Modifier.clip({ type: "circle" }), contentDescription: identity.title })] : []),
-  ]);
-}
-
-/** Runs a call in the floating window. */
+/** Runs the plugin-owned speech and model conversation. */
 export function call(ctx: ComposeDslContext): ComposeNode {
   const windowApi = ToolPkg.ui.floatingWindows;
   const [autoStart] = ctx.useState("autoStart", false);
   const [sourceChatId] = ctx.useState<string | null>("sourceChatId", null);
-  const [nativeLayout] = ctx.useState("voiceCallNativeLayout", false);
+  const [cameraControls] = ctx.useState("cameraControls", true);
   const [phase, setPhase] = ctx.useState<Phase>("phase", "idle");
   const [heard, setHeard] = ctx.useState("heard", "");
   const [reply, setReply] = ctx.useState("reply", "");
@@ -231,7 +210,6 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   const [cameraNotice, setCameraNotice] = ctx.useState("cameraNotice", "");
   const [identity, setIdentity] = ctx.useState<ChatDisplayIdentity | null>("identity", null);
   const identityRequest = ctx.useRef("identityRequest", 0);
-  const [frame, setFrame] = ctx.useState("frame", { time: 0, level: 0 });
   const session = ctx.useRef("session", {
     chatId: "",
     active: false,
@@ -285,38 +263,32 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     return () => { disposed = true; };
   }, []);
 
-  ctx.useEffect("call-wave", () => {
-    if (nativeLayout || (phase !== "listening" && phase !== "recognizing" && phase !== "waiting" && phase !== "speaking")) {
-      return () => {};
+  /** Retains the temporary camera selection before placing it in chat history. */
+  async function cameraAttachment(): Promise<Chat.SendAttachment | null> {
+    if (typeof windowApi.captureCameraFrame !== "function") return null;
+    const frame = await windowApi.captureCameraFrame(WINDOW);
+    if (!frame) return null;
+    let path = "";
+    let retained = false;
+    try {
+      if (!session.active) return null;
+      const directory = `${ToolPkg.getSpaceDataDir()}/camera_frames`;
+      const created = await Tools.Files.mkdir(directory, true);
+      if (!created.successful) throw new Error(created.details);
+      path = `${directory}/frame-${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+      const copied = await Tools.Files.copy(frame.path, path);
+      if (!copied.successful) throw new Error(copied.details);
+      if (!session.active) return null;
+      retained = true;
+      return {
+        vfsPath: path, filePath: path, fileName: frame.name,
+        mimeType: frame.mimeType, fileSize: frame.size, content: "",
+      };
+    } finally {
+      await Tools.Files.deleteFile(frame.path).catch(report);
+      if (path && !retained) await Tools.Files.deleteFile(path).catch(report);
     }
-    const start = Date.now();
-    let nextSample = 0;
-    let disposed = false;
-    let measuring = false;
-    let meterFailed = false;
-    let target = 0;
-    let level = 0;
-    const timer = setInterval(() => {
-      const time = Date.now() - start;
-      if (phase === "listening" && !measuring && !meterFailed && time >= nextSample) {
-        measuring = true;
-        nextSample = time + 100;
-        void windowApi.recordingLevel(WINDOW).then(value => {
-          if (!disposed) target = value;
-        }).catch(error => {
-          if (disposed) return;
-          meterFailed = true;
-          setFailure(report(error));
-        }).finally(() => { measuring = false; });
-      }
-      level += (target - level) * 0.38;
-      setFrame({ time, level });
-    }, 34);
-    return () => {
-      disposed = true;
-      clearInterval(timer);
-    };
-  }, [phase, nativeLayout]);
+  }
 
   async function record(echoCancellation = false): Promise<ToolPkg.FloatingWindowRecording | null> {
     session.recording = true;
@@ -412,7 +384,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       const currentIdentity = await readIdentity(session.chatId);
       if (!session.active) return;
       setIdentity(currentIdentity);
-      const caps = await windowApi.capabilities();
+      const caps = await cameraWindowCapabilities();
       const echoCancellation = caps.recordingEchoCancellation === true;
       let nextRecording: ToolPkg.FloatingWindowRecording | null = null;
       while (session.active) {
@@ -434,20 +406,18 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         setReply("");
         setPhase("waiting");
         setCameraNotice("");
-        const frame = typeof windowApi.captureCameraFrame === "function"
-          ? await windowApi.captureCameraFrame(WINDOW, session.chatId).catch(error => {
-              if (session.active) setCameraNotice(text("cameraFrameFailed"));
-              report(error);
-              return null;
-            })
-          : null;
+        const attachment = await cameraAttachment().catch(error => {
+          if (session.active) setCameraNotice(text("cameraFrameFailed"));
+          report(error);
+          return null;
+        });
         if (!session.active) return;
         session.sending = true;
         const turn = await Tools.Chat.sendMessage({
           kind: "submit",
           chatId: session.chatId,
           runtime: "floating",
-          input: { text: transcript, attachments: frame ? [frame] : [], replyToMessageTimestamp: null },
+          input: { text: transcript, attachments: attachment ? [attachment] : [], replyToMessageTimestamp: null },
           turn: { kind: "execute" },
           notifyReply: false,
         }).finally(() => { session.sending = false; });
@@ -548,29 +518,16 @@ export function call(ctx: ComposeDslContext): ComposeNode {
       ui.Text({ text: text("hangup"), style: "labelLarge", color: colors.onError }),
     ])]),
   ]);
-  if (nativeLayout) {
-    const portrait = { avatarUri: identity?.avatarUri, avatarTitle: identity?.title };
-    return ui.Column({ key: "voice-call-stage", ...portrait,
-      fillMaxWidth: true, horizontalAlignment: "center", spacing: 6,
-    }, [
+  return ui.MediaStage({
+    fillMaxSize: true,
+    camera: cameraControls,
+    imageUri: identity?.avatarUri ?? undefined,
+    imageTitle: identity?.title,
+    cameraReadyText: getLang().startsWith("zh") ? "每轮发言共享一张画面" : "Shares one frame per spoken turn",
+  }, [
+    ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 6 }, [
       ui.ScrollArea({ weight: 1, fillMaxWidth: true }, [
         ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 4 }, status),
-      ]),
-      actions,
-    ]);
-  }
-  return ui.Surface({ fillMaxSize: true, containerColor: colors.surface, shape: { type: "rounded", radius: 28 } }, [
-    ui.Column({ fillMaxSize: true, horizontalAlignment: "center", paddingHorizontal: 20, paddingVertical: 16, spacing: 6,
-      backgroundShape: { type: "rounded", radius: 28 },
-      backgroundBrush: { type: "VerticalGradient", colors: [colors.primaryContainer, colors.surface, colors.surface] },
-    }, [
-      ui.Text({ text: title[getLang().startsWith("zh") ? "zh" : "en"], style: "labelMedium", color: colors.onSurfaceVariant }),
-      ui.ScrollArea({ weight: 1, fillMaxWidth: true }, [
-        ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 6, paddingBottom: 8 }, [
-          avatarWave(ctx, identity, phase, frame),
-          ...(identity ? [ui.Text({ text: identity.title, style: "headlineSmall", color: colors.onSurface })] : []),
-          ...status,
-        ]),
       ]),
       actions,
     ]),

@@ -1632,7 +1632,7 @@ impl JsExecutionHost for AIToolHandler {
                 .ok_or("Floating windows require an authenticated plugin engine")?;
             let mut request = payload.as_object().cloned().ok_or("Expected a window request object")?;
             let operation = request.get("operation").and_then(|value| value.as_str()).ok_or("Missing floating window operation")?;
-            if !matches!(operation, "capabilities" | "requestPermission" | "set" | "open" | "update" | "show" | "hide" | "close" | "list" | "record" | "recordingLevel" | "recordingHasSpeech" | "finishRecording" | "cancelRecording" | "captureCameraFrame") {
+            if !matches!(operation, "capabilities" | "requestPermission" | "set" | "open" | "update" | "show" | "hide" | "close" | "list" | "record" | "recordingLevel" | "recordingHasSpeech" | "finishRecording" | "cancelRecording" | "captureCameraFrame" | "setFullscreen") {
                 return Err("Unknown floating window operation".into());
             }
             {

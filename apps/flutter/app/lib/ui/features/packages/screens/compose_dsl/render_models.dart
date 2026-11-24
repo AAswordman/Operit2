@@ -49,6 +49,7 @@ class _ComposeDslRenderResult {
 
 /// Canonical node names indexed by the Kotlin-compatible normalized token.
 const _composeNodeTypes = <String, String>{
+  'mediastage': 'MediaStage',
   'richtext': 'RichText',
   'codetext': 'CodeText',
   'codeeditor': 'CodeEditor',

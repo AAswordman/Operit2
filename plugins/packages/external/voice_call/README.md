@@ -17,3 +17,9 @@ Android 带摄像头的通话窗在 Operit 内打开。工具箱也可打开纯�
 通话通过公开客户端的 `characterCards.chat.identity({ chatId })` 获取角色名称和头像。打开窗口时预览当前选中的角色，开始或继续通话时读取通话会话实际绑定的角色；切换全局角色不会改变已经建立的通话对象。角色组使用组名和组头像。没有自定义头像或当前使用模型模式时，使用角色卡插件提供的默认头像。读取失败会显示实际错误，开始通话时读取失败会暂停通话。启用通话插件前，需要安装并启用角色卡插件 0.2.10 或更新版本。
 
 窗口由 `ToolPkg.ui.floatingWindows` 承载。录音接口见[悬浮窗文档](../../../docs/FLOATING_WINDOWS.md)。插件调用 `Tools.Stt.transcribe` 和 `Tools.Chat.sendMessage`，用 `Tools.Tts.speak` 的 `waitForCompletion` 等待全部音频分段播完。`playbackId` 仅在当前插件内有效，挂断时用 `Tools.Tts.cancel` 取消同一条朗读。
+
+## 实现边界
+
+插件通过 `ctx.UI.MediaStage` 声明媒体界面，通过 `setFullscreen` 控制窗口，通过 `captureCameraFrame` 获取通用临时文件，保存到插件共享数据目录后再自行组装本轮的聊天附件，并释放临时文件。宿主不依赖插件包名或路由，也不解释插件状态中的通话字段。摄像头底层继续使用第三方 camera 平台库。
+
+0.1.11 需要包含 `MediaStage` 和新版窗口媒体接口的宿主；测试这一版需要同时更新应用，不能只向旧宿主热更新插件。

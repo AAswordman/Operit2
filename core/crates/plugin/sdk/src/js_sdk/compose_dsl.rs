@@ -2323,6 +2323,21 @@ pub struct ComposeCommonProps {
     /// Shape that bounds and optionally clips the background paint.
     pub backgroundShape: Option<ComposeShape>,
 }
+/// Declares a floating media surface with an optional user-controlled camera.
+pub struct MediaStageProps {
+    /// Shared layout and lifecycle properties.
+    pub base_compose_common_props: ComposeCommonProps,
+    /// Plugin-defined controls displayed over the media surface.
+    pub content: Option<ComposeChildren>,
+    /// Enables camera controls; the camera stays off until the user enables it.
+    pub camera: Option<bool>,
+    /// Image shown when the camera is off and in the inset when it is on.
+    pub imageUri: Option<String>,
+    /// Accessible title for the image.
+    pub imageTitle: Option<String>,
+    /// Plugin-defined explanation shown while the camera is ready.
+    pub cameraReadyText: Option<String>,
+}
 /// Properties for laying out child nodes vertically.
 pub struct ColumnProps {
     /// Shared node layout, drawing, identity, and lifecycle properties.
@@ -3390,6 +3405,8 @@ pub struct AlertDialogProps {
 }
 /// Core component factories available through `ComposeDslContext::UI`.
 pub struct ComposeUiFactoryRegistry {
+    /// Creates a floating media surface using the host camera and window controls.
+    pub MediaStage: ComposeNodeFactory<MediaStageProps>,
     /// Paints a host-animated gradient perimeter with a transparent center.
     pub GlowBorder: ComposeNodeFactory<GlowBorderProps>,
     /// Creates one native paragraph with individually styled spans.

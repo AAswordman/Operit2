@@ -2771,6 +2771,32 @@ export interface ComposeCommonProps {
 }
 
 /**
+ * Declares a floating media surface with an optional user-controlled camera.
+ */
+export interface MediaStageProps extends ComposeCommonProps {
+  /**
+   * Plugin-defined controls displayed over the media surface.
+   */
+  content?: ComposeChildren;
+  /**
+   * Enables camera controls; the camera stays off until the user enables it.
+   */
+  camera?: boolean;
+  /**
+   * Image shown when the camera is off and in the inset when it is on.
+   */
+  imageUri?: string;
+  /**
+   * Accessible title for the image.
+   */
+  imageTitle?: string;
+  /**
+   * Plugin-defined explanation shown while the camera is ready.
+   */
+  cameraReadyText?: string;
+}
+
+/**
  * Properties for laying out child nodes vertically.
  */
 export interface ColumnProps extends ComposeCommonProps {
@@ -4487,6 +4513,10 @@ export interface AlertDialogProps extends ComposeCommonProps {
  * Core component factories available through `ComposeDslContext::UI`.
  */
 export interface ComposeUiFactoryRegistry {
+  /**
+   * Creates a floating media surface using the host camera and window controls.
+   */
+  MediaStage: ComposeNodeFactory<MediaStageProps>;
   /**
    * Paints a host-animated gradient perimeter with a transparent center.
    */

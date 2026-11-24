@@ -9,19 +9,22 @@ import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../../ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 import 'RuntimeWindowRecording.dart';
-import 'VoiceCallCamera.dart';
+import 'RuntimeWindowCamera.dart';
+import 'RuntimeWindowCameraFrameStore.dart';
 
 class _OwnedFloatingWindow {
   _OwnedFloatingWindow(
     this.window,
     this.route,
     this.fill,
+    this.applicationOnly,
     this.options,
     this.state,
   );
   final FloatingWindow window;
   final String route;
   final bool fill;
+  final bool applicationOnly;
   FloatingWindowOptions options;
   Map<String, Object?> state;
   bool visible = true;
@@ -104,8 +107,11 @@ class RuntimeFloatingWindowController {
     });
     _tail = work.then<void>((_) {}, onError: (Object _, StackTrace stack) {});
     return work.then((value) async {
-      if (value case (final _OwnedFloatingWindow window, final String chatId)) {
-        return _captureCameraFrame(window, chatId);
+      if (value case (
+        final _OwnedFloatingWindow window,
+        final _CameraCaptureRequest _,
+      )) {
+        return _captureCameraFrame(window);
       }
       if (value is! (_OwnedFloatingWindow, RuntimeWindowRecording)) {
         return value;
@@ -132,8 +138,13 @@ class RuntimeFloatingWindowController {
     if (capture != null) unawaited(capture.finish(discard: true));
   }
 
-  static bool _useApplicationWindow(String route) =>
-      route == voiceCallRoute && voiceCallCameraNeedsActivity;
+  static bool _applicationOnly(Map<String, Object?> request) {
+    final value = request['applicationOnly'];
+    if (value != null && value is! bool) {
+      throw ArgumentError('applicationOnly must be a boolean');
+    }
+    return value == true;
+  }
 
   static Future<Map<String, Object?>> _capabilities({
     required bool applicationOnly,
@@ -141,12 +152,15 @@ class RuntimeFloatingWindowController {
     final support = await FloatingWindows.capabilities(
       applicationOnly: applicationOnly,
     );
-    if (!applicationOnly) return support;
-    final native = await FloatingWindows.capabilities();
+    final native = applicationOnly
+        ? await FloatingWindows.capabilities()
+        : support;
     return {
       ...support,
       'recordingEchoCancellation': native['recordingEchoCancellation'],
       'systemOverlay': native['systemOverlay'],
+      'cameraSupported': windowCameraSupported,
+      'cameraRequiresApplicationWindow': windowCameraNeedsActivity,
     };
   }
 
@@ -158,10 +172,7 @@ class RuntimeFloatingWindowController {
     }
     final operation = request['operation'];
     if (operation == 'capabilities') {
-      return _capabilities(
-        applicationOnly:
-            owner == voiceCallPackage && voiceCallCameraNeedsActivity,
-      );
+      return _capabilities(applicationOnly: _applicationOnly(request));
     }
     if (operation == 'requestPermission') {
       return FloatingWindows.requestPermission();
@@ -199,29 +210,25 @@ class RuntimeFloatingWindowController {
         await owned.window.show();
         owned.visible = true;
       case 'hide':
-        if (owner == voiceCallPackage &&
-            owned.route == voiceCallRoute &&
-            voiceCallCameraSupported) {
-          await owned.window.contentCommand(voiceCallCameraStop);
-        }
+        owned.visible = false;
+        await owned.window.contentCommand(windowCameraStopCommand);
         await owned.window.hide();
         _discardRecording(owned);
-        owned.visible = false;
       case 'close':
         await _close(key, owned);
         return null;
+      case 'setFullscreen':
+        final fullscreen = request['fullscreen'];
+        if (fullscreen is! bool) {
+          throw ArgumentError('fullscreen must be a boolean');
+        }
+        await owned.window.contentCommand(
+          fullscreen ? 'window.fullscreen.enter' : 'window.fullscreen.exit',
+        );
+        return null;
       case 'captureCameraFrame':
-        if (!owned.visible ||
-            owned.route != voiceCallRoute ||
-            owner != voiceCallPackage ||
-            !voiceCallCameraSupported) {
-          return null;
-        }
-        final chatId = request['chatId'];
-        if (chatId is! String || chatId.isEmpty || chatId.length > 128) {
-          throw ArgumentError('A valid call chat id is required');
-        }
-        return (owned, chatId);
+        if (!owned.visible || !windowCameraSupported) return null;
+        return (owned, const _CameraCaptureRequest());
       case 'record':
         if (!owned.visible) throw StateError('The recording window is hidden');
         if (_activeRecording != null) {
@@ -261,44 +268,19 @@ class RuntimeFloatingWindowController {
     return owned.info(id);
   }
 
-  /// Imports the frame into the call chat using the regular attachment path.
+  /// Captures generic media without selecting a chat or sending a message.
   static Future<Map<String, Object?>?> _captureCameraFrame(
     _OwnedFloatingWindow owned,
-    String chatId,
   ) async {
     final bytes = await owned.window
-        .contentCommand(voiceCallCameraCapture)
+        .contentCommand(windowCameraCaptureCommand)
         .timeout(const Duration(seconds: 5));
-    if (bytes == null || !owned.visible || !_windows.containsValue(owned)) {
-      return null;
-    }
-    if (bytes is! Uint8List ||
-        bytes.isEmpty ||
-        bytes.length > voiceCallFrameLimit) {
-      throw StateError('Invalid camera frame');
-    }
-    const fileName = 'camera-frame.jpg';
-    final transfer = _clients.servicesAttachmentTransferManager;
-    final uploadId = await transfer.beginAttachmentUpload(
-      fileName: fileName,
-      expectedByteLength: bytes.length,
+    if (bytes == null) return null;
+    if (bytes is! Uint8List) throw StateError('Invalid camera frame');
+    return const RuntimeWindowCameraFrameStore().save(
+      bytes,
+      isVisible: () => owned.visible && _windows.containsValue(owned),
     );
-    await transfer.writeSelectedAttachment(
-      chatId: chatId,
-      uploadId: uploadId,
-      fileName: fileName,
-      expectedByteLength: bytes.length,
-      bytes: Stream.fromIterable([bytes, Uint8List(0)]),
-    );
-    final attachment = await transfer.completeSelectedAttachment(
-      chatId: chatId,
-      uploadId: uploadId,
-      fileName: fileName,
-      expectedByteLength: bytes.length,
-    );
-    return owned.visible && _windows.containsValue(owned)
-        ? attachment.toJson()
-        : null;
   }
 
   /// Reconciles desired content without exposing handle or permission bookkeeping to creators.
@@ -323,13 +305,15 @@ class RuntimeFloatingWindowController {
     }
     if (owned != null &&
         (owned.route != route ||
+            (request.containsKey('applicationOnly') &&
+                owned.applicationOnly != _applicationOnly(request)) ||
             (request['fill'] != null && owned.fill != request['fill']))) {
       throw StateError(
         'Close the window before changing its route or fill mode',
       );
     }
     final support = await _capabilities(
-      applicationOnly: _useApplicationWindow(route),
+      applicationOnly: owned?.applicationOnly ?? _applicationOnly(request),
     );
     final String? unavailable = support['supported'] != true
         ? 'unsupported'
@@ -370,7 +354,7 @@ class RuntimeFloatingWindowController {
     );
     final fill = (request['fill'] as bool?) ?? false;
     final route = request['route'] as String;
-    final applicationOnly = _useApplicationWindow(route);
+    final applicationOnly = _applicationOnly(request);
     final support = await _capabilities(applicationOnly: applicationOnly);
     if ((options.x != null ||
             options.y != null ||
@@ -399,6 +383,7 @@ class RuntimeFloatingWindowController {
       window,
       route,
       fill,
+      applicationOnly,
       FloatingWindowOptions.defaults.merge(options),
       Map<String, Object?>.from((request['state'] as Map?) ?? {}),
     );
@@ -425,11 +410,6 @@ class RuntimeFloatingWindowController {
     if (rawState != null && rawState is! Map) {
       throw ArgumentError('Window state must be an object');
     }
-    if (owned.route == voiceCallRoute &&
-        rawState is Map &&
-        rawState['voiceCallFullscreen'] == true) {
-      await owned.window.contentCommand('voiceCall.enterFullscreen');
-    }
     final state = rawState == null
         ? null
         : {...owned.state, ...Map<String, Object?>.from(rawState as Map)};
@@ -443,6 +423,7 @@ class RuntimeFloatingWindowController {
 
   /// Closes the native surface before releasing its plugin-local identity.
   static Future<void> _close(String key, _OwnedFloatingWindow owned) async {
+    owned.visible = false;
     final stopwatch = Stopwatch()..start();
     final identity =
         'owner=${_owners[key]} id=${_ids[key]} nativeId=${owned.window.id}';
@@ -544,4 +525,9 @@ class RuntimeFloatingWindowController {
     _audit = Timer.periodic(const Duration(seconds: 5), (_) => reconcile());
     _catalog = ToolPkgCatalogChangeBus.listen(reconcile);
   }
+}
+
+/// Marks capture work that runs outside the window lifecycle queue.
+class _CameraCaptureRequest {
+  const _CameraCaptureRequest();
 }

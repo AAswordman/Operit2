@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { loadModule, plain } from "../../../buildin/character_cards/tests/runtime.mjs";
 
 /** Supplies stateful Compose primitives while retaining the real call screen and dependency client. */
-function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers } = {}) {
+function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, files } = {}) {
   const states = new Map(), refs = new Map(), effects = new Map(), calls = [];
   const routes = [], entries = [];
   const color = { copy() { return color; } };
@@ -27,6 +27,7 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers }
     setInterval, clearInterval,
     ...timers,
     ToolPkg: {
+      getSpaceDataDir: () => "/shared/voice_call",
       registerUiRoute: route => routes.push(route),
       registerNavigationEntry: entry => entries.push(entry),
       ui: { floatingWindows: {
@@ -44,6 +45,12 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers }
       },
     },
     Tools: {
+      Files: {
+        async mkdir() { return { successful: true }; },
+        async copy() { return { successful: true }; },
+        async deleteFile() { return { successful: true }; },
+        ...files,
+      },
       Chat: {
         async createNew(options) {
           assert.deepEqual(plain(options), { setAsCurrentChat: false });
@@ -78,26 +85,26 @@ test("call renders the bound custom role and rejects a late active-role preview"
   await Promise.resolve();
   assert.deepEqual(screen.calls, [{ chatId: null }, "create", { chatId: "actual-call" }, "record"]);
   const rendered = nodes(screen.render());
-  assert.equal(rendered.find(node => node.type === "Image").props.path, "vfs://shared/avatars/bound.png");
-  assert.equal(rendered.find(node => node.type === "Image").props.contentDescription, "Bound caller");
-  assert.ok(rendered.some(node => node.type === "Text" && node.props.text === "Bound caller"));
+  assert.equal(rendered.find(node => node.type === "MediaStage").props.imageUri, "vfs://shared/avatars/bound.png");
+  assert.equal(rendered.find(node => node.type === "MediaStage").props.imageTitle, "Bound caller");
+  assert.equal(screen.render().type, "MediaStage");
 });
 
-test("native call layout uses the bound portrait and keeps the call controls", async () => {
+test("explicit MediaStage uses the bound portrait and keeps plugin-owned call controls", async () => {
   const screen = callScreen(({ chatId }) => chatId === null
     ? { title: "Active role", avatarUri: "vfs://shared/avatars/active.png" }
     : { title: "Bound role", avatarUri: "vfs://shared/avatars/bound.png" });
-  screen.states.set("voiceCallNativeLayout", true);
   screen.render();
   screen.effects.get("call-avatar")();
   await new Promise(resolve => setImmediate(resolve));
   const ready = screen.render();
-  assert.equal(ready.props.key, "voice-call-stage");
-  assert.equal(ready.props.avatarTitle, "Active role");
+  assert.equal(ready.type, "MediaStage");
+  assert.equal(ready.props.camera, true);
+  assert.equal(ready.props.imageTitle, "Active role");
   await nodes(ready).find(node => node.type === "FilledTonalButton").props.onClick();
   const call = screen.render();
-  assert.equal(call.props.avatarUri, "vfs://shared/avatars/bound.png");
-  assert.equal(call.props.avatarTitle, "Bound role");
+  assert.equal(call.props.imageUri, "vfs://shared/avatars/bound.png");
+  assert.equal(call.props.imageTitle, "Bound role");
   assert.ok(nodes(call).some(node => node.type === "Button"));
   assert.ok(!nodes(call).some(node => node.type === "Image"));
 });
@@ -117,7 +124,7 @@ test("call pauses on identity failure and rereads the same chat when resumed", a
   await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
   assert.equal(screen.calls.filter(call => call === "create").length, 1);
   assert.deepEqual(screen.calls, ["create", { chatId: "actual-call" }, { chatId: "actual-call" }, "record"]);
-  assert.equal(nodes(screen.render()).find(node => node.type === "Image").props.path, "data:image/png;base64,character-default-avatar");
+  assert.equal(screen.render().props.imageUri, "data:image/png;base64,character-default-avatar");
 });
 
 /** Locks the copied public contract and minimum provider version to the feature actually consumed. */
@@ -225,12 +232,11 @@ test("microphone volume interrupts without echo cancellation and ignores an isol
 test("missing role portraits use the character card provider's default artwork", async () => {
   for (const identity of [null, { title: "My character", avatarUri: null }]) {
     const screen = callScreen(() => identity);
-    screen.states.set("voiceCallNativeLayout", true);
-    screen.render();
+      screen.render();
     screen.effects.get("call-avatar")();
     await new Promise(resolve => setImmediate(resolve));
-    assert.equal(screen.render().props.avatarUri, "data:image/png;base64,character-default-avatar");
-    assert.equal(screen.render().props.avatarTitle, identity?.title ?? "Operit");
+    assert.equal(screen.render().props.imageUri, "data:image/png;base64,character-default-avatar");
+    assert.equal(screen.render().props.imageTitle, identity?.title ?? "Operit");
   }
 });
 
@@ -288,14 +294,17 @@ test("hanging up during playback cancels both the utterance and its capture", as
   assert.deepEqual(screen.chatInputs, ["Question"]);
 });
 test("the call sends a camera attachment with its transcribed turn", async () => {
-  const frame = { filePath: "/app/camera.jpg", fileName: "camera.jpg", mimeType: "image/jpeg", fileSize: 42, content: "" };
-  const sent = [];
+  const frame = { path: "/app/camera.jpg", name: "camera.jpg", mimeType: "image/jpeg", size: 42 };
+  const sent = [], copied = [], removed = [];
   const screen = callScreen(() => null, {
+    files: {
+      async copy(source, destination) { copied.push({source, destination}); return {successful: true}; },
+      async deleteFile(path) { removed.push(path); return {successful: true}; },
+    },
     floatingWindows: {
       async record() { return sent.length === 0 ? { text: "What am I holding?" } : null; },
-      async captureCameraFrame(id, chatId) {
-        assert.equal(id, "voice-call");
-        assert.equal(chatId, "actual-call");
+      async captureCameraFrame(...args) {
+        assert.deepEqual(args, ["voice-call"]);
         return frame;
       },
     },
@@ -307,7 +316,11 @@ test("the call sends a camera attachment with its transcribed turn", async () =>
     tts: { async speak() {} },
   });
   await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
-  assert.deepEqual(sent, [{ text: "What am I holding?", attachments: [frame], replyToMessageTimestamp: null }]);
+  assert.equal(copied.length, 1);
+  assert.equal(copied[0].source, frame.path);
+  assert.match(copied[0].destination, /^\/shared\/voice_call\/camera_frames\/frame-.*\.jpg$/);
+  assert.deepEqual(removed, [frame.path]);
+  assert.deepEqual(sent, [{ text: "What am I holding?", attachments: [{ vfsPath: copied[0].destination, filePath: copied[0].destination, fileName: frame.name, mimeType: frame.mimeType, fileSize: frame.size, content: "" }], replyToMessageTimestamp: null }]);
 });
 
 test("when taking a camera frame fails, the voice turn still sends", async () => {
@@ -349,7 +362,7 @@ test("phone entry registers in the plus menu and launches on load with camera of
   });
   // A repeated load or a fast retry must not start a second call.
   await launcher.props.onLoad();
-  assert.deepEqual(opened, [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call", fill: true,
+  assert.deepEqual(opened, [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call", fill: true, applicationOnly: false,
     state: { autoStart: true, sourceChatId: "source-chat" } }]);
 });
 
@@ -359,11 +372,11 @@ test("phone menu brings the existing call to full screen without starting a seco
     async capabilities() { return { supported: true, permissionGranted: true }; },
     async list() { return [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call" }]; },
     async show(id) { actions.push(["show", id]); },
-    async update(...args) { actions.push(["update", ...plain(args)]); },
+    async setFullscreen(...args) { actions.push(["fullscreen", ...plain(args)]); },
     async open() { assert.fail("must reuse the existing call"); },
   } });
   await screen.renderMenu().props.onLoad();
-  assert.deepEqual(actions, [["show", "voice-call"], ["update", "voice-call", {}, { voiceCallFullscreen: true }]]);
+  assert.deepEqual(actions, [["show", "voice-call"], ["fullscreen", "voice-call", true]]);
 });
 
 test("phone menu reports denied permission without opening or recording", async () => {
@@ -443,4 +456,53 @@ test("automatic call waits for window ownership and cannot start after disposal"
   ready([{ id: "voice-call" }]);
   await new Promise(resolve => setImmediate(resolve));
   assert.deepEqual(screen.calls, []);
+});
+
+
+test("phone menu explicitly requests application scope when the camera requires it", async () => {
+  const queries = [], opened = [];
+  const screen = callScreen(() => null, { floatingWindows: {
+    async capabilities(options) {
+      queries.push(plain(options ?? {}));
+      return { supported: true, permissionGranted: options?.applicationOnly === true, cameraRequiresApplicationWindow: true };
+    },
+    async list() { return []; },
+    async open(options) { opened.push(plain(options)); },
+    async requestPermission() { assert.fail("application cameras do not require system overlay permission"); },
+  } });
+  await screen.renderMenu().props.onLoad();
+  assert.deepEqual(queries, [{}, { applicationOnly: true }]);
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0].applicationOnly, true);
+});
+
+test("voice overlay declares a media surface without camera controls", () => {
+  const screen = callScreen(() => null);
+  screen.states.set("cameraControls", false);
+  const tree = screen.render();
+  assert.equal(tree.type, "MediaStage");
+  assert.equal(tree.props.camera, false);
+});
+
+
+test("camera retention failure releases the temporary file and sends the voice turn", async () => {
+  const sent = [], removed = [];
+  const screen = callScreen(() => null, {
+    floatingWindows: {
+      async record() { return sent.length === 0 ? { text: "Hello" } : null; },
+      async captureCameraFrame() { return { path: "/temp/camera.jpg", name: "camera.jpg", mimeType: "image/jpeg", size: 42 }; },
+    },
+    files: {
+      async copy() { return { successful: false, details: "Storage unavailable" }; },
+      async deleteFile(path) { removed.push(path); return { successful: true }; },
+    },
+    stt: { async transcribe(audio) { return audio; } },
+    chat: { async sendMessage(request) { sent.push(plain(request.input)); return { outcome: { type: "completed" }, aiResponse: "Hello", sentAt: 1 }; } },
+    tts: { async speak() {} },
+  });
+  await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  assert.deepEqual(sent, [{ text: "Hello", attachments: [], replyToMessageTimestamp: null }]);
+  assert.equal(removed[0], "/temp/camera.jpg");
+  assert.match(removed[1], /^\/shared\/voice_call\/camera_frames\//);
+  assert.equal(screen.states.get("cameraNotice"), "Couldn't send the camera frame for this turn.");
 });

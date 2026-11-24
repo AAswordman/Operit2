@@ -186,4 +186,74 @@ void main() {
       expect(sequence, 1);
     },
   );
+  test(
+    'any plugin can control its own media and fullscreen without chat state',
+    () async {
+      await set('alpha', content('media'));
+      Future<Object?> command(
+        String owner,
+        String operation, [
+        Map<String, Object?> extra = const {},
+      ]) => RuntimeFloatingWindowController.command({
+        'packageName': owner,
+        'id': 'approval',
+        'operation': operation,
+        ...extra,
+      });
+      await command('alpha', 'setFullscreen', {'fullscreen': true});
+      await command('alpha', 'setFullscreen', {'fullscreen': false});
+      expect(await command('alpha', 'captureCameraFrame'), isNull);
+      final media = calls
+          .where((call) => call.method == 'invoke')
+          .map((call) => call.arguments as Map)
+          .where((args) => args['method'] == 'contentCommand')
+          .map((args) => args['arguments'])
+          .toList();
+      expect(media, [
+        'window.fullscreen.enter',
+        'window.fullscreen.exit',
+        'window.camera.capture',
+      ]);
+      await expectLater(
+        command('beta', 'captureCameraFrame'),
+        throwsStateError,
+      );
+      await expectLater(
+        command('beta', 'setFullscreen', {'fullscreen': true}),
+        throwsStateError,
+      );
+      await expectLater(
+        command('alpha', 'setFullscreen', {'fullscreen': 'true'}),
+        throwsArgumentError,
+      );
+      await command('alpha', 'hide');
+      expect(await command('alpha', 'captureCameraFrame'), isNull);
+      final commands = calls
+          .where((call) => call.method == 'invoke')
+          .map((call) => call.arguments as Map)
+          .where((args) => args['method'] == 'contentCommand')
+          .map((args) => args['arguments'])
+          .toList();
+      expect(commands.last, 'window.camera.stop');
+      expect(
+        commands.where((name) => name == 'window.camera.capture'),
+        hasLength(1),
+      );
+    },
+  );
+
+  test(
+    'window scope is explicit and cannot change on an existing window',
+    () async {
+      await set('alpha', content('first'));
+      await expectLater(
+        set('alpha', {...content('changed'), 'applicationOnly': true}),
+        throwsStateError,
+      );
+      await expectLater(
+        set('beta', {...content('invalid'), 'applicationOnly': 'true'}),
+        throwsArgumentError,
+      );
+    },
+  );
 }

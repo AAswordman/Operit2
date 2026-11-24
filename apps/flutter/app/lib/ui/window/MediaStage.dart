@@ -1,4 +1,5 @@
 // ignore_for_file: file_names
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
@@ -6,39 +7,41 @@ import 'package:flutter/material.dart';
 import 'package:operit_ui/operit_ui.dart' show ResolvedThemeImage;
 
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
-import '../../core/host/VoiceCallCamera.dart';
+import '../../core/host/RuntimeWindowCamera.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../features/packages/screens/ComposeDslImageSource.dart';
 import '../theme/OperitThemeAssets.dart';
 
-class VoiceCallStage extends StatefulWidget {
-  const VoiceCallStage({
+class MediaStage extends StatefulWidget {
+  const MediaStage({
     super.key,
     this.camera,
-    this.avatarUri,
-    this.avatarTitle,
+    this.imageUri,
+    this.imageTitle,
     this.appearance,
+    this.cameraReadyText,
     this.fullscreen = false,
     this.windowControls,
     this.resizeHandle,
     required this.controls,
   });
 
-  final VoiceCallCamera? camera;
-  final String? avatarUri;
-  final String? avatarTitle;
+  final RuntimeWindowCamera? camera;
+  final String? imageUri;
+  final String? imageTitle;
   final ThemePreferenceSnapshot? appearance;
   final Widget controls;
+  final String? cameraReadyText;
   final bool fullscreen;
   final Widget? windowControls;
   final Widget? resizeHandle;
 
   @override
-  State<VoiceCallStage> createState() => _VoiceCallStageState();
+  State<MediaStage> createState() => _MediaStageState();
 }
 
-class _VoiceCallStageState extends State<VoiceCallStage> {
+class _MediaStageState extends State<MediaStage> {
   static const _clients = GeneratedCoreProxyClients(ProxyCoreRuntimeBridge());
   final _themeAssets = ThemeAssetStore();
   Future<ImageProvider>? _avatar;
@@ -53,19 +56,20 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
   }
 
   @override
-  void didUpdateWidget(covariant VoiceCallStage oldWidget) {
+  void didUpdateWidget(covariant MediaStage oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.camera != widget.camera) {
       oldWidget.camera?.removeListener(_cameraChanged);
+      unawaited(oldWidget.camera?.stop());
       widget.camera?.addListener(_cameraChanged);
       _cameraTexture = null;
       _avatarIsMain = false;
     }
-    if (oldWidget.avatarUri != widget.avatarUri) _resolveAvatar();
+    if (oldWidget.imageUri != widget.imageUri) _resolveAvatar();
   }
 
   void _resolveAvatar() {
-    final uri = widget.avatarUri;
+    final uri = widget.imageUri;
     _avatar = uri == null || uri.isEmpty
         ? null
         : resolveComposeDslImage(
@@ -87,6 +91,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
   @override
   void dispose() {
     widget.camera?.removeListener(_cameraChanged);
+    unawaited(widget.camera?.stop());
     super.dispose();
   }
 
@@ -142,7 +147,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                     _buildBackdrop(colors, avatar),
                     if (preview != null)
                       Positioned.fromRect(
-                        key: const ValueKey('call-camera-view'),
+                        key: const ValueKey('media-camera-view'),
                         rect: cameraIsMain ? full : inset,
                         child: ClipRRect(
                           borderRadius: BorderRadius.circular(
@@ -163,7 +168,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                         ),
                       ),
                     Positioned.fromRect(
-                      key: const ValueKey('call-avatar-view'),
+                      key: const ValueKey('media-image-view'),
                       rect: cameraIsMain ? inset : full,
                       child: IgnorePointer(
                         child: _buildAvatar(
@@ -193,7 +198,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                               clipBehavior: Clip.antiAlias,
                               color: Colors.transparent,
                               child: InkWell(
-                                key: const ValueKey('call-swap-views'),
+                                key: const ValueKey('media-swap-views'),
                                 onTap: () => setState(
                                   () => _avatarIsMain = !_avatarIsMain,
                                 ),
@@ -213,7 +218,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 440),
                           child: Material(
-                            key: const ValueKey('call-controls-surface'),
+                            key: const ValueKey('media-controls-surface'),
                             color: colors.surface.withValues(alpha: 0.28),
                             borderRadius: BorderRadius.circular(22),
                             child: Padding(
@@ -263,7 +268,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
   }
 
   bool _portraitCamera(BuildContext context) =>
-      voiceCallCameraNeedsActivity &&
+      windowCameraNeedsActivity &&
       MediaQuery.orientationOf(context) == Orientation.portrait;
 
   Widget _buildBackdrop(ColorScheme colors, ImageProvider? avatar) {
@@ -320,7 +325,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
     double size, {
     required bool small,
   }) {
-    final title = widget.avatarTitle;
+    final title = widget.imageTitle;
     return DecoratedBox(
       decoration: BoxDecoration(
         color: small ? colors.surfaceContainerHigh : null,
@@ -360,7 +365,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                       ),
                     if (avatar != null)
                       Image(
-                        key: const ValueKey('call-role-avatar'),
+                        key: const ValueKey('media-portrait'),
                         image: avatar,
                         fit: BoxFit.cover,
                         semanticLabel: title,
@@ -401,7 +406,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
     );
   }
 
-  Widget _buildCameraControl(VoiceCallCamera camera, bool zh) {
+  Widget _buildCameraControl(RuntimeWindowCamera camera, bool zh) {
     final label = camera.enabled
         ? (zh ? '关闭摄像头' : 'Turn camera off')
         : (zh ? '开启摄像头' : 'Turn camera on');
@@ -410,7 +415,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
               ? '摄像头不可用，请检查设备和权限'
               : 'Camera unavailable. Check the device and permissions.')
         : camera.preview != null
-        ? (zh ? '每轮发言共享一张画面' : 'Shares one frame per spoken turn')
+        ? widget.cameraReadyText
         : camera.enabled
         ? (zh ? '正在打开摄像头…' : 'Opening camera…')
         : null;

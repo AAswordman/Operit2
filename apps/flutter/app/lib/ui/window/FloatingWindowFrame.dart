@@ -4,9 +4,9 @@ import 'dart:async';
 import 'package:floating_windows/floating_windows.dart';
 import 'package:flutter/material.dart';
 
-/// Changes only the host geometry; its child keeps the live call and camera.
-class VoiceCallWindowFrame extends StatefulWidget {
-  const VoiceCallWindowFrame({
+/// Changes only the host geometry; its child keeps the live UI and camera.
+class FloatingWindowFrame extends StatefulWidget {
+  const FloatingWindowFrame({
     super.key,
     required this.launch,
     required this.builder,
@@ -16,12 +16,13 @@ class VoiceCallWindowFrame extends StatefulWidget {
   builder;
 
   @override
-  State<VoiceCallWindowFrame> createState() => VoiceCallWindowFrameState();
+  State<FloatingWindowFrame> createState() => FloatingWindowFrameState();
 }
 
-class VoiceCallWindowFrameState extends State<VoiceCallWindowFrame> {
+class FloatingWindowFrameState extends State<FloatingWindowFrame> {
   late bool _fullscreen = widget.launch.fill;
   bool _busy = false;
+  Future<void> _geometry = Future<void>.value();
   String? _error;
   FloatingWindowOptions _restore = const FloatingWindowOptions(
     x: 24,
@@ -35,8 +36,18 @@ class VoiceCallWindowFrameState extends State<VoiceCallWindowFrame> {
   bool _resizeReleased = false;
   int? _resizePointer;
 
-  Future<void> setFullscreen(bool value) async {
-    if (_busy || _resizing != null || value == _fullscreen) return;
+  /// Serializes UI and plugin requests against the same live geometry.
+  Future<void> setFullscreen(bool value) {
+    final next = _geometry.then((_) => _setFullscreen(value));
+    _geometry = next.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return next;
+  }
+
+  Future<void> _setFullscreen(bool value) async {
+    final resizing = _resizing;
+    if (resizing != null) await resizing;
+    if (!mounted) throw StateError('Window content has closed');
+    if (value == _fullscreen) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -53,8 +64,17 @@ class VoiceCallWindowFrameState extends State<VoiceCallWindowFrame> {
       if (mounted) setState(() => _fullscreen = value);
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
+      rethrow;
     } finally {
       if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _toggleFullscreen() async {
+    try {
+      await setFullscreen(!_fullscreen);
+    } catch (_) {
+      // The toolbar displays geometry errors; public callers receive them above.
     }
   }
 
@@ -117,13 +137,11 @@ class VoiceCallWindowFrameState extends State<VoiceCallWindowFrame> {
         mainAxisSize: MainAxisSize.min,
         children: [
           IconButton(
-            key: const ValueKey('call-toggle-fullscreen'),
+            key: const ValueKey('window-toggle-fullscreen'),
             tooltip: _fullscreen
                 ? (zh ? '还原小窗' : 'Restore window')
                 : (zh ? '全屏' : 'Full screen'),
-            onPressed: _busy
-                ? null
-                : () => unawaited(setFullscreen(!_fullscreen)),
+            onPressed: _busy ? null : () => unawaited(_toggleFullscreen()),
             icon: Icon(_fullscreen ? Icons.fullscreen_exit : Icons.fullscreen),
           ),
           if (!_fullscreen)
@@ -154,7 +172,7 @@ class VoiceCallWindowFrameState extends State<VoiceCallWindowFrame> {
             child: MouseRegion(
               cursor: SystemMouseCursors.resizeDownRight,
               child: GestureDetector(
-                key: const ValueKey('call-resize-handle'),
+                key: const ValueKey('window-resize-handle'),
                 behavior: HitTestBehavior.opaque,
                 onPanUpdate: (_) {},
                 child: Tooltip(

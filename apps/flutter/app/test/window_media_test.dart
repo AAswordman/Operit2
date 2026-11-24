@@ -1,16 +1,130 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:floating_windows/floating_windows.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:operit2/core/host/VoiceCallCamera.dart';
-import 'package:operit2/ui/window/VoiceCallStage.dart';
-import 'package:operit2/ui/window/VoiceCallWindowFrame.dart';
+import 'package:operit2/core/host/RuntimeWindowCamera.dart';
+import 'package:operit2/core/host/RuntimeWindowCameraFrameStore.dart';
+import 'package:operit2/core/host/ComposeDslFilePickerStorage.dart';
+import 'package:operit2/ui/window/MediaStage.dart';
+import 'package:operit2/ui/window/FloatingWindowFrame.dart';
 
 void main() {
+  test(
+    'camera files are reusable selections with bounded upload chunks',
+    () async {
+      final storage = _FrameStorage();
+      final bytes = Uint8List(150000);
+      final frame = await RuntimeWindowCameraFrameStore(
+        storage: storage,
+      ).save(bytes, isVisible: () => true);
+      expect(frame, {
+        'path': storage.path,
+        'name': 'camera-frame.jpg',
+        'mimeType': 'image/jpeg',
+        'size': bytes.length,
+      });
+      expect(storage.chunks, [65536, 65536, 18928]);
+      expect(storage.deleted, isEmpty);
+    },
+  );
+
+  test('a window hidden during publication discards its camera file', () async {
+    var visible = true;
+    final storage = _FrameStorage()..afterWrite = () => visible = false;
+    final store = RuntimeWindowCameraFrameStore(storage: storage);
+    expect(await store.save(Uint8List(10), isVisible: () => visible), isNull);
+    expect(storage.deleted, [storage.path]);
+  });
+
+  test(
+    'failed publication cleans its destination and propagates the failure',
+    () async {
+      final storage = _FrameStorage()..failWrite = true;
+      final store = RuntimeWindowCameraFrameStore(storage: storage);
+      await expectLater(
+        store.save(Uint8List(10), isVisible: () => true),
+        throwsStateError,
+      );
+      expect(storage.deleted, [storage.path]);
+    },
+  );
+
+  test(
+    'hidden windows and invalid frames allocate no selected files',
+    () async {
+      final storage = _FrameStorage();
+      final store = RuntimeWindowCameraFrameStore(storage: storage);
+      expect(await store.save(Uint8List(10), isVisible: () => false), isNull);
+      await expectLater(
+        store.save(Uint8List(0), isVisible: () => true),
+        throwsStateError,
+      );
+      await expectLater(
+        store.save(
+          Uint8List(windowCameraFrameLimit + 1),
+          isVisible: () => true,
+        ),
+        throwsStateError,
+      );
+      expect(storage.created, 0);
+    },
+  );
+
+  testWidgets('fullscreen commands serialize and propagate platform failures', (
+    tester,
+  ) async {
+    final key = GlobalKey<FloatingWindowFrameState>();
+    final updates = <bool>[];
+    var fail = false;
+    final launch = FloatingWindowLaunch(
+      payload: {},
+      options: const FloatingWindowOptions(width: 340, height: 460),
+      onWindowCommand: (method, arguments) async {
+        if (method == 'getBounds') {
+          return {'x': 24, 'y': 48, 'width': 340, 'height': 460};
+        }
+        if (method == 'update') {
+          if (fail) throw StateError('Window update failed');
+          updates.add((arguments as Map)['fill'] as bool);
+          return null;
+        }
+        throw StateError('Unexpected window command: $method');
+      },
+    );
+    await tester.pumpWidget(
+      MaterialApp(
+        home: FloatingWindowFrame(
+          key: key,
+          launch: launch,
+          builder: (fullscreen, toolbar, handle) =>
+              Column(children: [toolbar, Text('$fullscreen')]),
+        ),
+      ),
+    );
+    final enter = key.currentState!.setFullscreen(true);
+    final restore = key.currentState!.setFullscreen(false);
+    await tester.pumpAndSettle();
+    await Future.wait([enter, restore]);
+    expect(updates, [true, false]);
+    expect(find.text('false'), findsOneWidget);
+    fail = true;
+    final failed = expectLater(
+      key.currentState!.setFullscreen(true),
+      throwsStateError,
+    );
+    await tester.pumpAndSettle();
+    await failed;
+    expect(find.text('false'), findsOneWidget);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+  });
+
   for (final size in [
     const Size(340, 460),
     const Size(260, 360),
@@ -25,16 +139,16 @@ void main() {
       addTearDown(tester.view.resetPhysicalSize);
       final platform = _CameraPlatform();
       addTearDown(platform.events.close);
-      final camera = VoiceCallCamera(platform: platform);
+      final camera = RuntimeWindowCamera(platform: platform);
       addTearDown(camera.dispose);
       const window = ValueKey('call-window');
-      final preview = find.byKey(const ValueKey('call-camera-view'));
-      final avatar = find.byKey(const ValueKey('call-avatar-view'));
-      final swap = find.byKey(const ValueKey('call-swap-views'));
+      final preview = find.byKey(const ValueKey('media-camera-view'));
+      final avatar = find.byKey(const ValueKey('media-image-view'));
+      final swap = find.byKey(const ValueKey('media-swap-views'));
 
       await tester.pumpWidget(
         MaterialApp(
-          home: VoiceCallStage(
+          home: MediaStage(
             key: window,
             camera: camera,
             controls: const Center(child: Text('Hang up')),
@@ -63,7 +177,7 @@ void main() {
       expect(texture, findsOneWidget);
       final imageRect = tester.getRect(texture);
       final expectedRatio =
-          voiceCallCameraNeedsActivity && size.height > size.width
+          windowCameraNeedsActivity && size.height > size.width
           ? 480 / 640
           : 640 / 480;
       expect(
@@ -111,14 +225,14 @@ void main() {
     addTearDown(() => tester.binding.setSurfaceSize(null));
     final platform = _CameraPlatform();
     addTearDown(platform.events.close);
-    final camera = VoiceCallCamera(platform: platform);
+    final camera = RuntimeWindowCamera(platform: platform);
     addTearDown(camera.dispose);
     await tester.pumpWidget(
       FloatingWindowsHost(
         windowBuilder: (launch) => MaterialApp(
-          home: VoiceCallWindowFrame(
+          home: FloatingWindowFrame(
             launch: launch,
-            builder: (fullscreen, toolbar, resizeHandle) => VoiceCallStage(
+            builder: (fullscreen, toolbar, resizeHandle) => MediaStage(
               camera: camera,
               fullscreen: fullscreen,
               windowControls: toolbar,
@@ -136,9 +250,9 @@ void main() {
       fill: true,
     );
     await tester.pumpAndSettle();
-    final toggle = find.byKey(const ValueKey('call-toggle-fullscreen'));
-    final handle = find.byKey(const ValueKey('call-resize-handle'));
-    final stage = find.byType(VoiceCallStage);
+    final toggle = find.byKey(const ValueKey('window-toggle-fullscreen'));
+    final handle = find.byKey(const ValueKey('window-resize-handle'));
+    final stage = find.byType(MediaStage);
     expect(tester.getSize(stage), const Size(900, 700));
     expect(handle, findsNothing);
     await tester.runAsync(camera.start);
@@ -192,16 +306,16 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(colorScheme: scheme),
-          home: VoiceCallStage(
-            avatarUri: avatar,
-            avatarTitle: 'My character',
+          home: MediaStage(
+            imageUri: avatar,
+            imageTitle: 'My character',
             controls: const Text('Call controls'),
           ),
         ),
       );
       await tester.pumpAndSettle();
       final portrait = tester.widget<Image>(
-        find.byKey(const ValueKey('call-role-avatar')),
+        find.byKey(const ValueKey('media-portrait')),
       );
       expect(portrait.image, isA<MemoryImage>());
       expect(
@@ -211,7 +325,7 @@ void main() {
       expect(portrait.semanticLabel, 'My character');
       expect(find.byIcon(Icons.smart_toy_outlined), findsNothing);
       final controls = tester.widget<Material>(
-        find.byKey(const ValueKey('call-controls-surface')),
+        find.byKey(const ValueKey('media-controls-surface')),
       );
       expect(controls.color, scheme.surface.withValues(alpha: 0.28));
       expect(
@@ -230,7 +344,7 @@ void main() {
     final file = await File('${directory.path}/frame.jpg').writeAsBytes([1, 2]);
     final platform = _CameraPlatform();
     addTearDown(platform.events.close);
-    final camera = VoiceCallCamera(platform: platform);
+    final camera = RuntimeWindowCamera(platform: platform);
     addTearDown(camera.dispose);
 
     expect(await camera.capture(), isNull);
@@ -317,4 +431,36 @@ class _CameraPlatform extends CameraPlatform {
 
   @override
   Future<void> dispose(int cameraId) async => releases.add(cameraId);
+}
+
+class _FrameStorage extends Fake implements ComposeDslFilePickerStorage {
+  final path = '/operitapp/data/selected-files/test/camera-frame.jpg';
+  final chunks = <int>[];
+  final deleted = <String>[];
+  int created = 0;
+  bool failWrite = false;
+  void Function()? afterWrite;
+
+  @override
+  Future<String> createFile(String name) async {
+    expect(name, 'camera-frame.jpg');
+    created++;
+    return path;
+  }
+
+  @override
+  Future<void> writeFile(String path, int size, Stream<Uint8List> bytes) async {
+    expect(path, this.path);
+    await for (final chunk in bytes) {
+      chunks.add(chunk.length);
+    }
+    expect(chunks.fold<int>(0, (sum, length) => sum + length), size);
+    if (failWrite) throw StateError('write failed');
+    afterWrite?.call();
+  }
+
+  @override
+  Future<void> deleteFile(String path) async {
+    deleted.add(path);
+  }
 }

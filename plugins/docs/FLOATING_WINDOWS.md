@@ -117,6 +117,30 @@ if (recording !== null) {
 
 连续录音和播报的用法见 [语音通话插件](../packages/external/voice_call/README.md)。
 
+## 摄像头与媒体界面
+
+任意插件都可以在悬浮窗路由中显式使用 `ctx.UI.MediaStage`。它显示插件传入的图片、摄像头预览和子节点，并提供全屏、还原及调整窗口尺寸的控件。`camera: true` 只显示摄像头开关，采集仍需用户点击开启。组件退出、窗口隐藏、关闭或应用进入后台时会停止摄像头。
+
+```ts
+return ctx.UI.MediaStage({
+  fillMaxSize: true,
+  camera: true,
+  imageUri: portrait,
+  imageTitle: "画面监视器",
+  cameraReadyText: "点击拍照按钮保存当前画面",
+}, [controls]);
+```
+
+`MediaStage` 需要悬浮窗上下文。普通节点的 `key`、插件包名和路由名称不会触发媒体布局。一个窗口使用一个媒体界面；子节点负责插件自己的操作和状态展示。
+
+`capabilities()` 返回 `cameraSupported` 和 `cameraRequiresApplicationWindow`。需要应用内摄像头预览时，插件先查询 `capabilities({ applicationOnly: true })`，再用 `open({ ..., applicationOnly: true })` 或 `set(id, { ..., applicationOnly: true })` 创建窗口。`applicationOnly` 默认为 `false`，窗口存在期间不能切换范围。应用内窗口不需要系统悬浮窗权限；桌面插件可以继续选择系统窗口。
+
+`setFullscreen(id, true | false)` 是显式窗口操作，保留正在运行的 UI 和摄像头。它不读取或修改插件的会话状态。
+
+`captureCameraFrame(id)` 仅拍摄用户已开启的摄像头，返回 `{ path, name, mimeType, size }`。`path` 是通用文件选择临时存储中的 VFS 路径，应用退出时会清理。需要保存在聊天历史中的图片，插件应先通过 `Tools.Files.copy` 复制到 `ToolPkg.getSpaceDataDir()` 下，再组装附件；使用后通过 `Tools.Files.deleteFile` 释放临时文件。摄像头未开启、窗口隐藏或平台不支持时返回 `null`；设备或存储失败会拒绝 Promise。该接口不接收聊天 ID，不发送消息，也不创建聊天附件。插件决定是否取帧、如何解释文件元数据以及是否随某轮对话发送。发布过程中窗口隐藏或关闭时，宿主删除未交付的文件。
+
+摄像头采集和预览复用 `camera_android_camerax`、`camera_avfoundation` 与 `camera_desktop`。宿主只管理资源生命周期、窗口和通用文件发布；通话流程、角色选择、录音转写、播报打断以及发送消息由语音通话插件编排。
+
 ## 宿主实现
 
 调用通过 `ToolPkg.ui.floatingWindows`、异步原生绑定、认证后的 `JsExecutionHost` 和 `FloatingWindowHost`，由 Flutter 主引擎经 `floating_windows` 驱动当前窗口范围。

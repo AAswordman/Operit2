@@ -5,16 +5,15 @@ import 'package:floating_windows/floating_windows.dart';
 import 'package:flutter/material.dart';
 import '../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../core/errors/UnhandledErrorReporter.dart';
-import '../../core/host/VoiceCallCamera.dart';
+import '../../core/host/RuntimeWindowCamera.dart';
 import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../../l10n/generated/app_localizations.dart';
 import '../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../theme/OperitTheme.dart' show operitColorScheme;
-import 'VoiceCallCameraPanel.dart';
-import 'VoiceCallStage.dart';
-import 'VoiceCallWindowFrame.dart';
+import 'FloatingWindowFrame.dart';
+import 'FloatingWindowScope.dart';
 
 /// Hosts an ordinary live plugin UI session on a transparent, undecorated root.
 class FloatingWindowApp extends StatefulWidget {
@@ -39,64 +38,31 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
     clients: widget.clients,
   ).windowPreferencesFlow();
 
-  VoiceCallCamera? _camera;
-  final _callFrame = GlobalKey<VoiceCallWindowFrameState>();
+  RuntimeWindowCamera? _camera;
+  final _frame = GlobalKey<FloatingWindowFrameState>();
 
-  bool get _isVoiceCall =>
-      (widget.launch.payload['plugin'] as Map)['packageName'] ==
-          voiceCallPackage &&
-      const {
-        voiceCallRoute,
-        voiceCallOverlayRoute,
-      }.contains(widget.launch.payload['route']);
-
-  Widget _layoutCall(
-    ThemePreferenceSnapshot appearance,
-    BuildContext context,
-    Map<String, Object?> props,
-    Widget controls,
-  ) {
-    final camera = _camera;
-    if (props['key'] == 'voice-call-stage') {
-      return VoiceCallWindowFrame(
-        key: _callFrame,
-        launch: widget.launch,
-        builder: (fullscreen, toolbar, resizeHandle) => VoiceCallStage(
-          appearance: appearance,
-          camera: camera,
-          avatarUri: props['avatarUri'] as String?,
-          avatarTitle: props['avatarTitle'] as String?,
-          controls: controls,
-          fullscreen: fullscreen,
-          windowControls: toolbar,
-          resizeHandle: resizeHandle,
-        ),
-      );
-    }
-    // An installed plugin may predate the native layout.
-    return camera == null
-        ? controls
-        : Column(
-            children: [
-              Expanded(child: controls),
-              VoiceCallCameraPanel(camera: camera),
-            ],
-          );
-  }
-
-  Future<Object?> _cameraCommand(String name) async {
+  Future<Object?> _contentCommand(String name) async {
     switch (name) {
-      case "voiceCall.enterFullscreen":
-        await _callFrame.currentState?.setFullscreen(true);
+      case 'window.fullscreen.enter':
+        await _setFullscreen(true);
         return null;
-      case voiceCallCameraCapture:
+      case 'window.fullscreen.exit':
+        await _setFullscreen(false);
+        return null;
+      case windowCameraCaptureCommand:
         return _camera?.capture();
-      case voiceCallCameraStop:
-        unawaited(_camera?.stop());
+      case windowCameraStopCommand:
+        await _camera?.stop();
         return null;
       default:
-        throw ArgumentError('Unknown camera command: $name');
+        throw ArgumentError('Unknown window content command: $name');
     }
+  }
+
+  Future<void> _setFullscreen(bool fullscreen) async {
+    final frame = _frame.currentState;
+    if (frame == null) throw StateError('Window content is not ready');
+    await frame.setFullscreen(fullscreen);
   }
 
   @override
@@ -111,18 +77,13 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
   @override
   void initState() {
     super.initState();
-    if (voiceCallCameraSupported &&
-        (!voiceCallCameraNeedsActivity ||
-            widget.launch.onBeforeCloseChanged != null) &&
-        widget.launch.payload['route'] == voiceCallRoute &&
-        (widget.launch.payload['plugin'] as Map)['packageName'] ==
-            voiceCallPackage) {
-      _camera = VoiceCallCamera();
+    if (windowCameraSupported &&
+        (!windowCameraNeedsActivity ||
+            widget.launch.onBeforeCloseChanged != null)) {
+      _camera = RuntimeWindowCamera();
       WidgetsBinding.instance.addObserver(this);
     }
-    if (_isVoiceCall) {
-      FloatingWindows.setContentCommandHandler(widget.launch, _cameraCommand);
-    }
+    FloatingWindows.setContentCommandHandler(widget.launch, _contentCommand);
     FloatingWindows.setBeforeClose(widget.launch, () async {
       final stopping = _camera?.stop();
       await _session.close();
@@ -133,9 +94,7 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
   @override
   void dispose() {
     FloatingWindows.setBeforeClose(widget.launch, null);
-    if (_isVoiceCall) {
-      FloatingWindows.setContentCommandHandler(widget.launch, null);
-    }
+    FloatingWindows.setContentCommandHandler(widget.launch, null);
     if (_camera != null) {
       WidgetsBinding.instance.removeObserver(this);
       _camera?.dispose();
@@ -189,10 +148,7 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
       showLauncherChrome: false,
       showLoadingIndicator: false,
       sessionController: _session,
-      initialState: {
-        ...(payload['state'] as Map).cast<String, Object?>(),
-        if (_isVoiceCall) 'voiceCallNativeLayout': true,
-      },
+      initialState: (payload['state'] as Map).cast<String, Object?>(),
     );
 
     return MaterialApp(
@@ -208,13 +164,18 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
       home: UnhandledErrorHost(
         child: Material(
           type: MaterialType.transparency,
-          child: _isVoiceCall
-              ? ToolPkgUiRootLayout(
-                  builder: (context, props, controls) =>
-                      _layoutCall(appearance, context, props, controls),
-                  child: launcher,
-                )
-              : launcher,
+          child: FloatingWindowFrame(
+            key: _frame,
+            launch: widget.launch,
+            builder: (fullscreen, toolbar, resizeHandle) => FloatingWindowScope(
+              camera: _camera,
+              appearance: appearance,
+              fullscreen: fullscreen,
+              toolbar: toolbar,
+              resizeHandle: resizeHandle,
+              child: launcher,
+            ),
+          ),
         ),
       ),
     );

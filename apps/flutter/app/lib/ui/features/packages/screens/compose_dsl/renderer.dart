@@ -257,10 +257,6 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
               modifierScope: modifierScope,
             );
       _dispatchOnLoad();
-      final rootLayout = widget.onLoadHandledByHost
-          ? ToolPkgUiRootLayout.maybeOf(context)
-          : null;
-      final presented = rootLayout?.builder(context, props, content) ?? content;
       return operitDesignBridgeEnabled
           ? OperitDesignSource(source: {
               'kind': 'plugin-compose',
@@ -269,8 +265,8 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
               'composeNode': node.type,
               'composeId': node.id,
               'composeMount': nodePath,
-            }, child: presented)
-          : presented;
+            }, child: content)
+          : content;
     });
   }
 
@@ -304,6 +300,22 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
   Widget _executeInstruction(BuildContext context) {
     final type = node.type;
     switch (type) {
+      case 'MediaStage':
+        final window = FloatingWindowScope.maybeOf(context);
+        if (window == null) {
+          throw StateError('MediaStage requires a floating window');
+        }
+        return MediaStage(
+          camera: props['camera'] == true ? window.camera : null,
+          appearance: window.appearance,
+          imageUri: props['imageUri'] as String?,
+          imageTitle: props['imageTitle'] as String?,
+          cameraReadyText: props['cameraReadyText'] as String?,
+          fullscreen: window.fullscreen,
+          windowControls: window.toolbar,
+          resizeHandle: window.resizeHandle,
+          controls: _decoratorChild(),
+        );
       case 'GradientRule':
         return DecoratedBox(
           decoration: BoxDecoration(

@@ -5,14 +5,11 @@ import 'dart:io';
 import 'package:camera_platform_interface/camera_platform_interface.dart';
 import 'package:flutter/foundation.dart';
 
-const voiceCallPackage = 'com.operit.voice_call';
-const voiceCallRoute = 'toolpkg:$voiceCallPackage:ui:call';
-const voiceCallOverlayRoute = 'toolpkg:$voiceCallPackage:ui:voice-overlay';
-const voiceCallCameraCapture = 'voiceCallCameraCapture';
-const voiceCallCameraStop = 'voiceCallCameraStop';
-const voiceCallFrameLimit = 2 * 1024 * 1024;
+const windowCameraCaptureCommand = 'window.camera.capture';
+const windowCameraStopCommand = 'window.camera.stop';
+const windowCameraFrameLimit = 2 * 1024 * 1024;
 
-bool get voiceCallCameraSupported =>
+bool get windowCameraSupported =>
     !kIsWeb &&
     (Platform.isAndroid ||
         Platform.isIOS ||
@@ -20,11 +17,11 @@ bool get voiceCallCameraSupported =>
         Platform.isWindows ||
         Platform.isLinux);
 
-bool get voiceCallCameraNeedsActivity => !kIsWeb && Platform.isAndroid;
+bool get windowCameraNeedsActivity => !kIsWeb && Platform.isAndroid;
 
 /// Owns the camera in the same engine that displays its native texture.
-class VoiceCallCamera extends ChangeNotifier {
-  VoiceCallCamera({CameraPlatform? platform})
+class RuntimeWindowCamera extends ChangeNotifier {
+  RuntimeWindowCamera({CameraPlatform? platform})
     : platform = platform ?? CameraPlatform.instance;
 
   final CameraPlatform platform;
@@ -126,7 +123,7 @@ class VoiceCallCamera extends ChangeNotifier {
       try {
         if (generation != _generation) return null;
         final length = await picture.length();
-        if (length <= 0 || length > voiceCallFrameLimit) {
+        if (length <= 0 || length > windowCameraFrameLimit) {
           throw StateError('Camera frame exceeds the supported size');
         }
         final bytes = await picture.readAsBytes();
@@ -157,7 +154,7 @@ class VoiceCallCamera extends ChangeNotifier {
     try {
       await platform.dispose(id);
     } catch (error) {
-      debugPrint('Could not release call camera: $error');
+      debugPrint('Could not release window camera: $error');
     }
   }
 

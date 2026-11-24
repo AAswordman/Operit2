@@ -3119,6 +3119,8 @@ pub struct ToolPkgFloatingWindowOptions {
 }
 /// Opens a transparent live UI surface owned by the executing plugin.
 pub struct ToolPkgFloatingWindowOpenOptions {
+    /// Explicitly limits this window to the application view; defaults to false.
+    pub applicationOnly: Option<bool>,
     /// Identifies the window within this plugin; opening an existing ID fails.
     pub id: String,
     /// Selects one of this plugin's registered Compose UI routes.
@@ -3132,6 +3134,8 @@ pub struct ToolPkgFloatingWindowOpenOptions {
 }
 /// Declares the content of one managed window; route and fill stay fixed while it exists.
 pub struct ToolPkgFloatingWindowContent {
+    /// Explicitly limits this window to the application view; defaults to false.
+    pub applicationOnly: Option<bool>,
     pub route: String,
     /// Shallow-merges supplied JSON state into the live UI session.
     pub state: Option<JsObject>,
@@ -3154,6 +3158,10 @@ pub enum ToolPkgFloatingWindowSetResult {
 /// Reports the actual presentation scope and host capabilities.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ToolPkgFloatingWindowCapabilities {
+    /// Reports camera support independently of system overlay support.
+    pub cameraSupported: bool,
+    /// Requires an application window for camera preview on this host.
+    pub cameraRequiresApplicationWindow: bool,
     /// "system", "application", or "unsupported". Application scope stays inside Operit.
     pub scope: String,
     pub systemOverlay: bool,
@@ -3190,6 +3198,18 @@ pub struct ToolPkgFloatingWindowRecording {
     pub fileName: String,
     pub contentType: String,
 }
+/// Selects the presentation scope queried without opening a window.
+pub struct ToolPkgFloatingWindowCapabilityOptions {
+    pub applicationOnly: Option<bool>,
+}
+/// Describes a temporary camera selection; plugins persist files needed after app exit.
+pub struct ToolPkgFloatingWindowCameraFrame {
+    /// Temporary VFS path; copy to persistent storage before retaining in chat history.
+    pub path: String,
+    pub name: String,
+    pub mimeType: String,
+    pub size: i64,
+}
 /// Controls general floating windows independently of launcher widgets.
 pub struct ToolPkgFloatingWindowApi;
 pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
@@ -3197,7 +3217,7 @@ pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
     /// The host serializes lifecycle changes. Unavailable hosts return an explicit status; other errors reject.
     fn set(&self, id: String, content: JsNullable<ToolPkgFloatingWindowContent>) -> JsFuture<ToolPkgFloatingWindowSetResult>;
     /// Queries capabilities without opening a window or displaying a permission prompt.
-    fn capabilities(&self) -> JsFuture<ToolPkgFloatingWindowCapabilities>;
+    fn capabilities(&self, options: Option<ToolPkgFloatingWindowCapabilityOptions>) -> JsFuture<ToolPkgFloatingWindowCapabilities>;
     /// Opens the host's overlay permission settings when required; query capabilities again afterwards.
     fn requestPermission(&self) -> JsFuture<bool>;
     /// Creates a transparent live route session. IDs are local to the executing plugin.
@@ -3222,8 +3242,10 @@ pub trait ToolPkgFloatingWindowApiMethods: Send + Sync {
     fn finishRecording(&self, id: String) -> JsFuture<()>;
     /// Discards active capture without returning audio.
     fn cancelRecording(&self, id: String) -> JsFuture<()>;
-    /// Captures a user-enabled camera frame for a voice call turn; returns null if the camera is off or unsupported.
-    fn captureCameraFrame(&self, id: String, chatId: String) -> JsFuture<JsNullable<super::chat::ChatSendAttachment>>;
+    /// Changes the window geometry without resetting the live UI or camera.
+    fn setFullscreen(&self, id: String, fullscreen: bool) -> JsFuture<()>;
+    /// Captures a temporary file from a user-enabled camera; null while off, hidden or unsupported.
+    fn captureCameraFrame(&self, id: String) -> JsFuture<JsNullable<ToolPkgFloatingWindowCameraFrame>>;
 }
 /// Groups runtime presentation services for plugin-owned user interfaces.
 pub struct ToolPkgUiApi {
