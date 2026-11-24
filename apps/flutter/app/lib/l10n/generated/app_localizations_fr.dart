@@ -3714,6 +3714,17 @@ class AppLocalizationsFr extends AppLocalizations {
   String get settingsAppearanceMessageDensityCompact => 'Compact';
 
   @override
+  String get settingsAppearanceChatHorizontalPadding =>
+      'Chat content side padding';
+
+  @override
+  String get settingsAppearanceChatHorizontalPaddingEdge => 'Edge to edge';
+
+  @override
+  String get settingsAppearanceChatHorizontalPaddingDetail =>
+      'Smaller values widen the transcript; bubble and composer insets are unaffected.';
+
+  @override
   String get settingsAppearanceWideLayout =>
       'Utiliser une mise en page de chat plus large';
 
