@@ -8,6 +8,8 @@ import { resolveChatDisplay } from "./group-execution/display";
 import { requireId } from "./validation";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
+import { groupTurnApi } from "./group-execution/public-turn";
+
 const memoryQueries = new MemoryTools(dispatchDomain);
 
 /** Reads role presentation through the same selection and display rules used by chat creation. */
@@ -99,6 +101,7 @@ export async function chatConfigurationBindingDeleteApi(event: ToolPkg.PublicApi
 /** Registers chat APIs without opening storage or evaluating business reads. */
 export function registerChatConfigurationApis(): void {
   ToolPkg.registerApi({ name: "chat.identity", function: chatIdentityApi });
+  ToolPkg.registerApi({ name: "chat.groupTurn", function: groupTurnApi });
   ToolPkg.registerApi({ name: "chat.configuration.resolve", function: chatConfigurationResolveApi });
   ToolPkg.registerApi({ name: "chat.configuration.delete", function: chatConfigurationDeleteApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.find", function: chatConfigurationBindingFindApi });

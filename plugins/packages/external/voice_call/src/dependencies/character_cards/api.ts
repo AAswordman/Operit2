@@ -119,6 +119,21 @@ export interface ChatConfigurationDisplayResult {
 /** Matches the real host purpose-specific results without placing a purpose discriminator in JSON. */
 export type ChatConfigurationResult = ChatConfigurationDisplayResult | ChatConfigurationExecutionResult;
 
+/** Starts or observes a group turn without duplicating its planner in a consumer plugin. */
+export type ChatGroupTurnRequest =
+  | { action: "start"; chatId: string; requestId: string; text: string; attachments: { filePath: string; fileName: string; mimeType: string; fileSize: number; content: string; vfsPath?: string | null; nodeId?: string | null }[] }
+  | { action: "status" | "cancel"; chatId: string; requestId: string };
+/** Contains one exact completed participant reply and its configured voice. */
+export interface ChatGroupTurnReply {
+  participantId: string; name: string; avatarUri: string | null; ttsConfigId: string | null; text: string;
+}
+/** Preserves asynchronous generation, cancellation and failure independently of queued speech. */
+export interface ChatGroupTurnStatus {
+  status: "running" | "completed" | "cancelled" | "not_group" | "failed";
+  replies: ChatGroupTurnReply[];
+  error: string | null;
+}
+
 /** Defines the complete stored character record without a CLI transport. */
 export interface CharacterRecord {
   id: string; name: string; description: string; characterSetting: string; openingStatement: string;
@@ -338,6 +353,9 @@ export const characterCards = {
     ToolPkg.callDependency<EmptyParams, string>("com.operit.character_cards", "avatar.default", {}),
 
   chat: {
+    /** Runs the existing group planner; non-group chats return not_group without submitting input. */
+    groupTurn: (payload: ChatGroupTurnRequest): Promise<ChatGroupTurnStatus> =>
+      ToolPkg.callDependency<ChatGroupTurnRequest, ChatGroupTurnStatus>("com.operit.character_cards", "chat.groupTurn", payload),
     /** Reads the selected role's display identity; model-only mode has no role identity. Requires 0.2.9. */
     identity: (payload: ChatIdentityRequest): Promise<ChatDisplayIdentity | null> =>
       ToolPkg.callDependency<ChatIdentityRequest, ChatDisplayIdentity | null>("com.operit.character_cards", "chat.identity", payload),

@@ -303,6 +303,14 @@ display resolver as chat creation without reading model, speech or memory
 configuration. Model-only mode returns `null`; an unset portrait stays `null`.
 Deleted references and storage errors propagate to the caller.
 
+`characterCards.chat.groupTurn(request)` requires version 0.2.11. Start with
+`{ action: "start", chatId, requestId, text, attachments }`, then query the same
+`chatId` and `requestId` with `action: "status"` or stop it with `action: "cancel"`.
+The provider reuses the existing group planner and native turn transport. It
+returns completed member replies in speaking order, including names, portraits
+and configured TTS IDs. Non-group chats return `not_group` without submitting
+input. Status and cancellation require the original authenticated caller.
+
 `characterCards.memory.query({ participantId, query, limit, snapshotId })`
 resolves the explicit participant's actual memory binding and reuses the
 plugin's existing query implementation. Results contain complete typed

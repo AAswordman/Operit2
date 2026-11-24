@@ -807,9 +807,14 @@ void main() {
     tester,
   ) async {
     final preferences = StreamController<Map<String, Object?>>();
+    final languagePreferences = StreamController<Map<String, Object?>>();
     addTearDown(preferences.close);
-    final bridge = _ToolPkgDslTestBridge(preferences: preferences.stream);
-    const route = 'toolpkg:com.operit.voice_call:ui:call';
+    addTearDown(languagePreferences.close);
+    final bridge = _ToolPkgDslTestBridge(
+      preferences: preferences.stream,
+      languagePreferences: languagePreferences.stream,
+    );
+    const route = 'toolpkg:com.operit.voice_call:ui:control';
     final plugin = _pluginRuntime().toJson();
     plugin['packageName'] = 'com.operit.voice_call';
     plugin['uiRoutes'] = [
@@ -825,11 +830,12 @@ void main() {
           payload: {
             'plugin': plugin,
             'route': route,
-            'state': <String, Object?>{},
+            'state': <String, Object?>{'callSurface': true},
           },
         ),
       ),
     );
+    languagePreferences.add({});
     const primary = 0xff108640;
     preferences.add({
       'theme_mode': 'dark',
