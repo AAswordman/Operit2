@@ -257,6 +257,8 @@ Operit2 仍然是一项长期工程。我们欢迎代码、文档、测试、平
 
 开始前请阅读 [`CONTRIBUTING.md`](CONTRIBUTING.md)。涉及协议、持久化、Binding、Host capability 或插件契约的改动，也请同步更新对应架构文档和测试。
 
+贡献者须按 [`贡献者许可协议（CLA）`](CLA.md) 中的流程完成签署。贡献者保留版权，并授予维护者按开源或专有商业许可证再许可贡献的权利；协议同时约定专利许可及未来项目运营主体承接授权的安排。历史贡献需要相应权利人明确同意后才纳入 CLA。
+
 ## 许可证
 
 仓库根目录的 [`LICENSE`](LICENSE) 当前为 GNU Affero General Public License v3.0（AGPL-3.0）。具体 crate、插件、ToolPkg、Web bundle、vendored 代码和第三方依赖可能附带自己的许可证或元数据；使用、分发或修改具体组件前，请同时核对该组件目录中的声明。

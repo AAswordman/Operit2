@@ -260,6 +260,8 @@ If you modify cross-device capabilities, try to preserve these three boundaries:
 
 Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before getting started. For changes involving protocols, persistence, Binding, Host capabilities, or plugin contracts, also update the corresponding architecture documentation and tests.
 
+Contributors must sign the [`Contributor License Agreement (CLA)`](CLA.md) using the process described there. You retain copyright and grant the maintainer rights to sublicense your contributions under open-source or proprietary commercial licenses. The CLA also covers patent licensing and transfer of the granted rights to a future project operator. Earlier contributions require explicit consent to be covered by the CLA.
+
 ## License
 
 The [`LICENSE`](LICENSE) in the repository root is currently the GNU Affero General Public License v3.0 (AGPL-3.0). Specific crates, plugins, ToolPkgs, Web bundles, vendored code, and third-party dependencies may carry their own licenses or metadata; check the declarations in the relevant component directory before using, distributing, or modifying a specific component.
