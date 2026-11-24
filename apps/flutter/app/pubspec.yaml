@@ -220,6 +220,9 @@ flutter:
     - family: OperitTerminalMono
       fonts:
         - asset: assets/fonts/CascadiaMono.ttf
+    - family: OperitCodeMono
+      fonts:
+        - asset: assets/fonts/OperitCodeMono-Regular.otf
 
   # fonts:
   #   - family: Schyler

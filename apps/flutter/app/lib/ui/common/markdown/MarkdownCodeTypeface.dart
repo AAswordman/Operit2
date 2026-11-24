@@ -5,6 +5,13 @@ import 'package:flutter/material.dart';
 const String markdownCodeFontFamily = 'monospace';
 
 const List<String> markdownCodeFontFamilyFallback = <String>[
+  // The bundled OperitCodeMono subset (OFL Noto Sans Mono CJK SC; ASCII +
+  // GB2312 Han + CJK punctuation, ~3.2 MB) is the primary code face so code
+  // blocks render identically on every machine, including systems without
+  // JetBrains Mono, Cascadia, Consolas or any installed CJK font; rare
+  // characters outside the subset fall through to the system fonts below and
+  // the platform's per-character fallback.
+  'OperitCodeMono',
   'JetBrains Mono',
   'Cascadia Mono',
   'Consolas',
