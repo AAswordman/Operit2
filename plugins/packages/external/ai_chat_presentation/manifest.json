@@ -1,20 +1,28 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.ai_chat_presentation",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "api_version": "2.0.0",
   "main": "dist/main.js",
   "display_name": {
-    "zh": "AI 自主回复",
-    "en": "AI Reply Presentation"
+    "zh": "AI 分段对话",
+    "en": "AI Segmented Chat"
   },
   "description": {
-    "zh": "让 AI 选择本轮显示哪些内容，以及如何分成聊天气泡。",
-    "en": "Let AI choose which parts of a reply to show and group them into chat bubbles."
+    "zh": "在选定对话中由 AI 决定展示内容和消息分段，原始子对话保留完整执行记录。",
+    "en": "Let AI choose message content and segments in selected chats, with the complete original conversation in a child chat."
   },
   "enabled_by_default": false,
   "optional_requires": [
-    { "id": "com.operit.waifu", "min_version": "1.1.4" }
+    {
+      "id": "com.operit.waifu",
+      "min_version": "1.1.4"
+    }
   ],
-  "subpackages": []
+  "subpackages": [
+    {
+      "id": "ai_chat_presentation",
+      "entry": "dist/tools.js"
+    }
+  ]
 }

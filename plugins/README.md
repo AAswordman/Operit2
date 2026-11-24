@@ -23,7 +23,7 @@ are displayed as API `1.0.0`.
 - `docs/`: plugin authoring notes.
 - `tools/`: development and sync tools.
 
-`packages/external/ai_chat_presentation/` provides optional AI Reply Presentation. Users install it from the marketplace's official extensions shelf, enable the package, and turn it on for individual chats. It is not installed automatically.
+`packages/external/ai_chat_presentation/` provides optional AI Segmented Chat. Users install it from the marketplace's official extensions shelf, enable the package, and turn it on for individual chats. AI chooses message content and segments while the complete conversation remains in a child chat. It is not installed automatically.
 
 `packages/external/proactive_messages/` provides optional AI proactive messages with per-chat intervals, random delays and trigger probability. It uses the uniform typed `Tools.Chat.scheduleMessage`, `cancelScheduledMessage` and `listScheduledMessages` APIs; persistence, delivery, notifications and iOS resume reconciliation are owned by the host.
 
