@@ -434,7 +434,7 @@ export type ComposeModifierProxyOnGloballyPositionedOnGloballyPositionedOutput =
 /**
  * Completion mode returned when a composed node finishes loading.
  */
-export type ComposeCommonPropsOnLoadOutput = void | Promise<void>;
+export type ComposeCommonPropsOnLoadOutput = void | Promise<void> | ToolPkg.JsonValue | Promise<ToolPkg.JsonValue>;
 
 /**
  * Padding accepted as either one uniform inset or axis-specific insets.

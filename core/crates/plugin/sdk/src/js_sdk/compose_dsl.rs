@@ -383,6 +383,10 @@ pub enum ComposeCommonPropsOnLoadOutput {
     Variant1(()),
     /// The load handler continues asynchronously.
     Variant2(JsFuture<()>),
+    /// Returns a generic JSON result through the Compose action response.
+    Variant3(ToolPkgJsonValue),
+    /// Resolves a generic JSON result through the Compose action response.
+    Variant4(JsFuture<ToolPkgJsonValue>),
 }
 /// Padding accepted as either one uniform inset or axis-specific insets.
 pub enum ComposeCommonPropsPadding {
