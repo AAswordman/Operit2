@@ -107,6 +107,28 @@ test("full-library forms, tables and charts match direct upstream rendering", as
   }
 });
 
+/** Verifies burst updates keep the same editable DOM fields and reject stale revisions. */
+test("stream bursts render the newest revision without replacing existing fields", async function burstState() {
+  const page = await pluginPage(FORM, false);
+  const input = page.getByPlaceholder("Your name");
+  await input.fill("Kept during burst");
+  await input.evaluate(function remember(element) { window.burstInput = element; });
+  await page.evaluate(function publishBurst(program) {
+    for (let revision = 1; revision <= 100; revision++) {
+      window.OpenUiPlugin.update({ program: program + '\nunused = "' + revision + '"', isStreaming: false, revision });
+    }
+    window.OpenUiPlugin.update({ program: 'root = Card([TextContent("obsolete")])', isStreaming: false, revision: 99 });
+    window.OpenUiPlugin.update({ program: 'root = Card([TextContent("duplicate")])', isStreaming: false, revision: 100 });
+  }, FORM);
+  await page.evaluate(function waitForPaint() { return new Promise(function paint(resolve) { requestAnimationFrame(function rendered() { requestAnimationFrame(resolve); }); }); });
+  assert.equal(await input.inputValue(), "Kept during burst");
+  assert.equal(await input.evaluate(function same(element) { return element === window.burstInput; }), true);
+  assert.equal(await page.getByText("obsolete", { exact: true }).count(), 0);
+  assert.equal(await page.getByText("duplicate", { exact: true }).count(), 0);
+  assert.equal(await page.locator("#error").isVisible(), false);
+  await page.close();
+});
+
 /** Verifies a completed stream preserves live fields, bindings and action payloads. */
 test("stream completion and later revisions retain the same input element and form values", async function streamState() {
   const page = await pluginPage(FORM, true);

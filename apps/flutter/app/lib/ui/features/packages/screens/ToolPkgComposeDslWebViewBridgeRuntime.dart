@@ -2,6 +2,8 @@
 
 import 'dart:convert';
 
+import 'ComposeWebViewScrollBridge.dart';
+
 const String composeDslWebViewInternalBridgeName =
     '__ComposeDslWebViewHostBridge__';
 const String composeDslWebViewBridgeChannelName =
@@ -13,12 +15,14 @@ const String _composeDslWebViewBridgeHtmlMarker =
 String injectComposeDslWebViewBridgeRuntimeIntoHtml(
   String html, {
   required Map<String, List<String>> javascriptInterfaces,
+  bool scrollChaining = false,
 }) {
   if (html.contains(_composeDslWebViewBridgeHtmlMarker)) {
     return html;
   }
   final scriptTag = buildComposeDslWebViewBridgeRuntimeScriptTag(
     javascriptInterfaces: javascriptInterfaces,
+    scrollChaining: scrollChaining,
   );
   final headClose = RegExp('</head>', caseSensitive: false);
   if (headClose.hasMatch(html)) {
@@ -42,9 +46,11 @@ String injectComposeDslWebViewBridgeRuntimeIntoHtml(
 /// Escapes the generated runtime for use inside an HTML script element.
 String buildComposeDslWebViewBridgeRuntimeScriptTag({
   required Map<String, List<String>> javascriptInterfaces,
+  bool scrollChaining = false,
 }) {
   final scriptBody = buildComposeDslWebViewBridgeRuntimeScript(
     javascriptInterfaces: javascriptInterfaces,
+    scrollChaining: scrollChaining,
   ).replaceAll('</script>', '<\\/script>');
   return '<script $_composeDslWebViewBridgeHtmlMarker>$scriptBody</script>';
 }
@@ -52,12 +58,14 @@ String buildComposeDslWebViewBridgeRuntimeScriptTag({
 /// Creates interfaces synchronously while keeping host invocations asynchronous.
 String buildComposeDslWebViewBridgeRuntimeScript({
   required Map<String, List<String>> javascriptInterfaces,
+  bool scrollChaining = false,
 }) {
   final interfacesJson = jsonEncode(
     javascriptInterfaces,
   ).replaceAll('<', r'\u003c');
   final hiddenBridgeNameJson = jsonEncode(composeDslWebViewInternalBridgeName);
   final channelNameJson = jsonEncode(composeDslWebViewBridgeChannelName);
+  final scrollScript = scrollChaining ? composeWebViewScrollBridgeScript : '';
   return '''
     (function() {
       var hiddenBridgeName = $hiddenBridgeNameJson;
@@ -197,5 +205,6 @@ String buildComposeDslWebViewBridgeRuntimeScript({
       window.__operitInstallComposeDslJavascriptInterfaces = installInterfaces;
       installInterfaces(initialInterfaces);
     })();
+    $scrollScript
   ''';
 }

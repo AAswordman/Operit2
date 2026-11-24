@@ -25,6 +25,8 @@ export default function OpenUiScreen(ctx: ComposeDslContext): ComposeNode {
     current.current = { ...parsed, revision: current.current.revision + 1 };
   }
   const ready = ctx.useRef("openui-ready", false);
+  const publishing = ctx.useRef("openui-publishing", false);
+  const sentRevision = ctx.useRef("openui-sent-revision", -1);
   const files = ctx.useRef("openui-resource-files", new Map<string, { path: string; mime: string }>());
   const controller = ctx.createWebViewController("openui-renderer");
 
@@ -34,9 +36,19 @@ export default function OpenUiScreen(ctx: ComposeDslContext): ComposeNode {
   }
 
   /** Sends one monotonic program revision into the existing React root. */
-  function publishInput(): void {
-    if (ready.current) {
-      void controller.evaluateJavascript("window.OpenUiPlugin.update(" + JSON.stringify(current.current) + ");").catch(reportFailure);
+  async function publishInput(): Promise<void> {
+    if (!ready.current || publishing.current) return;
+    publishing.current = true;
+    try {
+      while (ready.current && sentRevision.current !== current.current.revision) {
+        const input = current.current;
+        await controller.evaluateJavascript("window.OpenUiPlugin.update(" + JSON.stringify(input) + ");");
+        sentRevision.current = input.revision;
+      }
+    } catch (failure) {
+      reportFailure(failure);
+    } finally {
+      publishing.current = false;
     }
   }
 
@@ -58,7 +70,7 @@ export default function OpenUiScreen(ctx: ComposeDslContext): ComposeNode {
 
   /** Publishes stream revisions without remounting the WebView or resetting form state. */
   function updateInput(): () => void {
-    publishInput();
+    void publishInput();
     return function releaseInputEffect(): void {};
   }
   ctx.useEffect("openui-input-revision", updateInput, [current.current.revision]);
@@ -71,6 +83,7 @@ export default function OpenUiScreen(ctx: ComposeDslContext): ComposeNode {
         bootstrap: (...args: unknown[]) => {
           browserArguments(args, 0);
           ready.current = true;
+          sentRevision.current = current.current.revision;
           return { input: current.current, formState: savedState.current, theme: ctx.Theme.getCurrent() };
         },
         /** Retains upstream form changes in this XML render instance. */

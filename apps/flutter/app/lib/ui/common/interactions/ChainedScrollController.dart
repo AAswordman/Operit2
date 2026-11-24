@@ -7,6 +7,23 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+/// Feeds embedded browser overflow through the same ancestor chain as native content.
+void chainVerticalPointerScroll(BuildContext context, double delta) {
+  final scrollable = Scrollable.maybeOf(context, axis: Axis.vertical);
+  if (scrollable == null) return;
+  final source = scrollable.position;
+  if (!source.hasContentDimensions) return;
+  final movement = axisDirectionIsReversed(source.axisDirection)
+      ? -delta
+      : delta;
+  final before = source.pixels;
+  source.pointerScroll(movement);
+  // Chained positions already forward their unused movement exactly once.
+  if (source is! _ChainedScrollPosition) {
+    _forwardScroll(scrollable, source, movement - (source.pixels - before));
+  }
+}
+
 /// Lets capped message content hand unused user scrolling to its ancestors.
 class ChainedScrollController extends ScrollController {
   ChainedScrollController({super.debugLabel});

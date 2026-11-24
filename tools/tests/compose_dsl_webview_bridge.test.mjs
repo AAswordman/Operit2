@@ -8,11 +8,12 @@ const descriptors = { ChanzhiHost: ['loadData', 'saveData'] };
 
 /** Extracts the production JavaScript with the same serialized host descriptors. */
 function runtime(interfaces = descriptors) {
-  const match = source.match(/return '''([\s\S]*?)''';/);
+  const match = source.match(/return '''([\s\S]*?)'''/);
   assert.ok(match);
   return match[1]
     .replaceAll('$hiddenBridgeNameJson', JSON.stringify('__ComposeDslWebViewHostBridge__'))
     .replaceAll('$channelNameJson', JSON.stringify('__ComposeDslWebViewHostBridgeChannel__'))
+    .replaceAll('$scrollScript', '')
     .replaceAll('$interfacesJson', JSON.stringify(interfaces));
 }
 

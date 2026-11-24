@@ -45,13 +45,18 @@ let initialFormState: Record<string, unknown> = {};
 let mode: "light" | "dark" = "light";
 let initialized = false;
 let measuredHeight = -1;
+let renderFrame: number | null = null;
+let diagnosticText = "";
 
 const diagnostics: { host: string | null; renderer: OpenUIError[] } = { host: null, renderer: [] };
 
 /** Displays the current host and renderer diagnostics without treating an empty list as an error. */
 function showDiagnostics(): void {
+  const text = JSON.stringify(diagnostics, null, 2);
+  if (text === diagnosticText) return;
+  diagnosticText = text;
   errorPanel.hidden = diagnostics.host === null && diagnostics.renderer.length === 0;
-  errorPanel.textContent = JSON.stringify(diagnostics, null, 2);
+  errorPanel.textContent = text;
 }
 
 /** Reports an explicit capability or transport failure beside the original interface. */
@@ -95,18 +100,29 @@ function render(): void {
   ));
 }
 
+/** Renders the newest input once per display frame while retaining the React root and form tree. */
+function scheduleRender(): void {
+  if (!initialized || renderFrame !== null) return;
+  renderFrame = requestAnimationFrame(function renderLatest(): void {
+    renderFrame = null;
+    render();
+  });
+}
+
 /** Accepts only monotonic input revisions, including updates received during bootstrap. */
 function update(input: ProgramInput): void {
-  if (input.revision < current.revision) return;
+  if (input.revision <= current.revision) return;
+  const changed = input.program !== current.program || input.isStreaming !== current.isStreaming;
   current = input;
-  if (initialized) render();
+  if (changed) scheduleRender();
 }
 
 /** Applies only a valid host brightness through the upstream theme API. */
 function theme(snapshot: ComposeThemeSnapshot): void {
   if (snapshot.brightness !== "light" && snapshot.brightness !== "dark") throw new Error("Invalid OpenUI host brightness");
+  if (mode === snapshot.brightness) return;
   mode = snapshot.brightness;
-  if (initialized) render();
+  scheduleRender();
 }
 window.OpenUiPlugin = { update, theme };
 

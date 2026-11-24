@@ -78,6 +78,28 @@ Future<void> _wheel(WidgetTester tester, double delta) async {
 }
 
 void main() {
+  for (final chained in [false, true]) {
+    testWidgets(
+      'embedded browser overflow is forwarded once chained=$chained',
+      (tester) async {
+        final outer = ScrollController();
+        final inner = chained ? ChainedScrollController() : ScrollController();
+        addTearDown(outer.dispose);
+        addTearDown(inner.dispose);
+        await _mount(tester, outer: outer, inner: inner);
+        inner.jumpTo(inner.position.maxScrollExtent - 10);
+        outer.jumpTo(100);
+        chainVerticalPointerScroll(
+          tester.element(find.text('Message content')),
+          50,
+        );
+        await tester.pump();
+        expect(inner.offset, inner.position.maxScrollExtent);
+        expect(outer.offset, 140);
+      },
+    );
+  }
+
   late ScrollController outer;
   late ChainedScrollController inner;
 

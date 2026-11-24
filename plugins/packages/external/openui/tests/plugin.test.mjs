@@ -164,6 +164,33 @@ test("stream updates preserve the WebView, state and resource ownership", async 
   assert.equal(harness.listeners.size, 0);
 });
 
+/** Verifies the host bounds bridge concurrency while retaining the latest stream input. */
+test("stream publication keeps one request in flight and sends only the newest queued revision", async function publication() {
+  const harness = createScreenHarness('<openui>root = Card([])');
+  await harness.render().props.onLoad();
+  harness.render();
+  harness.interfaces.get("OpenUiHost").bootstrap([]);
+  const pending = [];
+  harness.controller.evaluateJavascript = function delayPublication(script) {
+    harness.scripts.push(script);
+    return new Promise(function releaseWhenReady(resolve) { pending.push(resolve); });
+  };
+  for (let revision = 1; revision <= 100; revision++) {
+    harness.states.set("xmlContent", '<openui>root = Card([TextContent("' + revision + '")])');
+    harness.render();
+  }
+  assert.equal(harness.scripts.length, 1);
+  assert.ok(harness.scripts[0].includes('"revision":1'));
+  pending.shift()();
+  await new Promise(setImmediate);
+  assert.equal(harness.scripts.length, 2);
+  assert.ok(harness.scripts[1].includes('"revision":100'));
+  pending.shift()();
+  await new Promise(setImmediate);
+  assert.equal(harness.scripts.length, 2);
+  for (const effect of harness.effects.values()) effect.cleanup();
+});
+
 /** Verifies conversation identity, tool dispatch and unprivileged URL dialogs. */
 test("upstream actions keep the exact owning chat and original form payload", async function actions() {
   const harness = createScreenHarness("<openui>root = Card([])</openui>");

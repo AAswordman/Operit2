@@ -29,6 +29,144 @@ void main() {
     expect(WebViewPlatform.instance, isA<LinuxWebViewPlatform>());
   });
 
+  testWidgets(
+    'document identity survives callback, sizing and header order updates',
+    (tester) async {
+      final platform = _ThemeTestPlatform();
+      WebViewPlatform.instance = platform;
+      const channel = MethodChannel('operit/webview_theme');
+      tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        channel,
+        (_) async => null,
+      );
+      addTearDown(
+        () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          null,
+        ),
+      );
+      final html = '<p>${List.filled(10000, 'long document').join()}</p>';
+
+      /// Updates unrelated node inputs while preserving the page occurrence.
+      Widget screen(int revision, {String? document}) => MaterialApp(
+        home: SizedBox(
+          height: 200 + revision.toDouble(),
+          child: ComposeDslWebView(
+            key: const ValueKey('stable-page'),
+            props: {
+              'html': document ?? html,
+              'height': 200 + revision,
+              'onProgressChanged': 'callback-$revision',
+              'headers': revision.isEven
+                  ? {'a': '1', 'b': '2'}
+                  : {'b': '2', 'a': '1'},
+            },
+            onAction: (id, [payload]) async => null,
+            hostContext: null,
+          ),
+        ),
+      );
+      await tester.pumpWidget(screen(0));
+      await tester.pumpAndSettle();
+      final state = tester.state(find.byType(ComposeDslWebView));
+      final nativeView = tester.widget(find.byType(WebViewWidget));
+      for (var revision = 1; revision <= 20; revision++) {
+        await tester.pumpWidget(screen(revision));
+        await tester.pumpAndSettle();
+        expect(tester.state(find.byType(ComposeDslWebView)), same(state));
+        expect(tester.widget(find.byType(WebViewWidget)), same(nativeView));
+      }
+      expect(platform.controllerCreations, 1);
+      expect(platform.controller.htmlLoads, 1);
+      await tester.pumpWidget(screen(21, document: '<p>changed document</p>'));
+      await tester.pumpAndSettle();
+      expect(platform.controller.htmlLoads, 2);
+      expect(platform.controllerCreations, 1);
+      expect(tester.state(find.byType(ComposeDslWebView)), same(state));
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
+
+  for (final reverse in [false, true]) {
+    testWidgets(
+      'page boundary input scrolls the retained outer list reverse=$reverse',
+      (tester) async {
+        final platform = _ThemeTestPlatform();
+        WebViewPlatform.instance = platform;
+        const channel = MethodChannel('operit/webview_theme');
+        tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+          channel,
+          (_) async => null,
+        );
+        addTearDown(
+          () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+            channel,
+            null,
+          ),
+        );
+        final controller = ScrollController(initialScrollOffset: 300);
+        addTearDown(controller.dispose);
+        await tester.pumpWidget(
+          MaterialApp(
+            home: SingleChildScrollView(
+              controller: controller,
+              reverse: reverse,
+              child: Column(
+                children: [
+                  const SizedBox(height: 500),
+                  SizedBox(
+                    height: 200,
+                    child: ComposeDslWebView(
+                      props: const {'html': '<p>stable</p>', 'height': 200},
+                      onAction: (id, [payload]) async => null,
+                      hostContext: null,
+                    ),
+                  ),
+                  const SizedBox(height: 1000),
+                ],
+              ),
+            ),
+          ),
+        );
+        await tester.pumpAndSettle();
+        final bridge =
+            platform.controller.channels[composeDslWebViewBridgeChannelName]!;
+
+        /// Delivers the browser's one-way input message without issuing an action RPC.
+        void send(String phase, double delta) => bridge.onMessageReceived(
+          JavaScriptMessage(
+            message: jsonEncode({
+              'type': 'scrollBoundary',
+              'payload': {
+                'phase': phase,
+                'delta': delta,
+                'viewportHeight': 200,
+              },
+            }),
+          ),
+        );
+        final direction = reverse ? -1 : 1;
+        send('wheel', 70);
+        await tester.pump();
+        expect(controller.offset, 300 + 70 * direction);
+        send('wheel', -40);
+        await tester.pump();
+        expect(controller.offset, 300 + 30 * direction);
+        send('start', 0);
+        send('move', 30);
+        await tester.pump();
+        send('end', 0);
+        await tester.pumpAndSettle();
+        expect(controller.offset, 300 + 60 * direction);
+        expect(platform.controllerCreations, 1);
+        expect(platform.controller.htmlLoads, 1);
+        await tester.pumpWidget(const SizedBox());
+        await tester.pumpAndSettle();
+      },
+    );
+  }
+
   testWidgets('one Office quote adds exactly one draft attachment', (
     tester,
   ) async {
@@ -597,6 +735,7 @@ void main() {
         find.byType(ComposeDslWebView),
       );
       final occurrence = tester.element(find.byType(ComposeDslWebView));
+      final browserWidget = tester.widget(find.byType(WebViewWidget));
       final navigationId =
           (view.props['onShouldOverrideUrlLoading'] as Map)['__actionId']
               as String;
@@ -624,6 +763,11 @@ void main() {
             tester.element(find.byType(ComposeDslWebView)),
             same(occurrence),
           );
+          expect(
+            tester.widget(find.byType(WebViewWidget)),
+            same(browserWidget),
+          );
+          expect(platform.controllerCreations, 1);
         }
         expect(
           await navigation(
@@ -743,6 +887,7 @@ void main() {
 }
 
 class _ThemeTestPlatform extends WebViewPlatform {
+  int controllerCreations = 0;
   final controller = _ThemeTestController();
   late _ThemeTestDelegate navigation;
 
@@ -750,7 +895,10 @@ class _ThemeTestPlatform extends WebViewPlatform {
   @override
   PlatformWebViewController createPlatformWebViewController(
     PlatformWebViewControllerCreationParams params,
-  ) => controller;
+  ) {
+    controllerCreations++;
+    return controller;
+  }
 
   /// Creates a no-op delegate because this test does not emulate page events.
   @override
@@ -784,6 +932,7 @@ class _ThemeTestController extends PlatformWebViewController {
   WebViewLocalResourceHandler? resourceHandler;
   String? html;
   String? htmlBaseUrl;
+  int htmlLoads = 0;
   final channels = <String, JavaScriptChannelParams>{};
 
   /// Exposes the shared resource-handler contract without creating a native browser.
@@ -807,6 +956,7 @@ class _ThemeTestController extends PlatformWebViewController {
   /// Records inline documents and rejects blank navigation during teardown.
   @override
   Future<void> loadHtmlString(String html, {String? baseUrl}) async {
+    htmlLoads++;
     expect(html, isNot('<html></html>'));
     this.html = html;
     htmlBaseUrl = baseUrl;

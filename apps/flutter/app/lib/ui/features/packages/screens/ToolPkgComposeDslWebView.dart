@@ -20,6 +20,7 @@ import 'package:webview_all/webview_all.dart';
 import '../../../../core/bridge/ProxyCoreRuntimeBridge.dart';
 import '../../../../core/logging/ClientLogger.dart';
 import '../../../../core/proxy/generated/CoreProxyClients.g.dart';
+import '../../../common/interactions/ChainedScrollController.dart';
 import 'ToolPkgComposeDslWebViewResourceLoader.dart';
 import 'ComposeDslImageSource.dart';
 import 'ToolPkgComposeDslWebViewBridgeRuntime.dart';
@@ -476,15 +477,8 @@ class ComposeDslWebViewHostRegistry {
           final html = _string(commandPayload['html']);
           final options = _stringMap(commandPayload['options']);
           await binding.prepareDocumentStartBridge();
-          final preparedHtml = injectComposeDslWebViewBridgeRuntimeIntoHtml(
-            html,
-            javascriptInterfaces: listJavascriptInterfaces(
-              executionContextKey: executionContextKey,
-              controllerKey: controllerKey,
-            ),
-          );
           final baseUrl = _string(options['baseUrl']).trim().ifNotEmpty;
-          await binding.loadHtml(preparedHtml, baseUrl);
+          await binding.loadHtml(html, baseUrl);
           return _bridgeSuccess(null);
         case 'reload':
           await controller.reload();
@@ -626,7 +620,7 @@ class ComposeDslWebView extends StatefulWidget {
 }
 
 class _ComposeDslWebViewState extends State<ComposeDslWebView> {
-  /// Keeps embedded page gestures from being claimed by ancestor navigation.
+  /// Keeps browser interaction native; the page forwards unused vertical input to Flutter.
   static final Set<Factory<OneSequenceGestureRecognizer>>
   _pageGestureRecognizers = <Factory<OneSequenceGestureRecognizer>>{
     Factory<EagerGestureRecognizer>(EagerGestureRecognizer.new),
@@ -635,7 +629,6 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   late final WebViewController _controller;
   late final Widget _webViewWidget;
   late _ComposeDslWebViewRequest _request;
-  String? _loadKey;
   String? _settingsKey;
   String? _error;
   int _progress = 0;
@@ -656,6 +649,9 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   Future<void> _bridgeScriptUpdate = Future<void>.value();
   String? _bridgeUserScriptIdentifier;
   String? _bridgeUserScriptSource;
+  bool _scrollChaining = false;
+  ScrollHoldController? _scrollHold;
+  Drag? _outerDrag;
 
   @override
   void initState() {
@@ -727,6 +723,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _scrollChaining = Scrollable.maybeOf(context, axis: Axis.vertical) != null;
     final brightness = Theme.of(context).brightness;
     if (_brightness == brightness) return;
     final initial = _brightness == null;
@@ -770,6 +767,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         _usesResourceLoader;
   }
 
+  /// Updates callbacks and settings while retaining the page for unchanged content.
   @override
   void didUpdateWidget(covariant ComposeDslWebView oldWidget) {
     super.didUpdateWidget(oldWidget);
@@ -777,8 +775,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
       widget.props,
       allowBlank: _controllerDescriptor(widget.props) != null,
     );
-    final nextKey = _contentKey(widget.props);
-    final shouldLoad = nextKey != _loadKey;
+    final shouldLoad = !_request.hasSameContent(nextRequest);
     _request = nextRequest;
     _applyControllerSettingsIfNeeded();
     _bindControllerIfNeeded();
@@ -795,6 +792,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
   /// Unbinds this page before its browser surface unmounts.
   @override
   void dispose() {
+    _finishOuterScroll(cancel: true);
     _emitLifecycle('disposed', forceEmit: true);
     final descriptor = _boundControllerDescriptor;
     final boundExecutionContextKey = _boundExecutionContextKey;
@@ -1032,20 +1030,9 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     return _webViewUriFor(url, isMainFrame: true);
   }
 
+  /// Schedules explicit document changes without serializing the document as a key.
   void _scheduleLoad() {
-    _loadKey = _contentKey(widget.props);
     unawaited(_load());
-  }
-
-  String _contentKey(Map<String, Object?> props) {
-    return jsonEncode(<String, Object?>{
-      'url': props['url'],
-      'html': props['html'],
-      'baseUrl': props['baseUrl'],
-      'mimeType': props['mimeType'],
-      'encoding': props['encoding'],
-      'headers': props['headers'],
-    });
   }
 
   String _controllerSettingsKey(Map<String, Object?> props) {
@@ -1078,6 +1065,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
       if (!mounted || !_supportsComposeDslPageHooks) return;
       final source = buildComposeDslWebViewBridgeRuntimeScript(
         javascriptInterfaces: _javascriptInterfaces,
+        scrollChaining: _scrollChaining,
       );
       if (source == _bridgeUserScriptSource) return;
       final previous = _bridgeUserScriptIdentifier;
@@ -1196,6 +1184,11 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
 
   /// Prepares inline resources before WebView preloading, including controller loads.
   Future<void> _loadHtml(String html, String? baseUrl) async {
+    html = injectComposeDslWebViewBridgeRuntimeIntoHtml(
+      html,
+      javascriptInterfaces: _javascriptInterfaces,
+      scrollChaining: _scrollChaining,
+    );
     if (ComposeDslWebViewResourceLoader.hasLocalHtmlResources(html, baseUrl)) {
       _servingVfsFiles = true;
       final loader = await _ensureResourceLoader();
@@ -1258,13 +1251,7 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
         if (!mounted) return;
         await _controller.loadRequest(uri, headers: _request.headers);
       } else if (_request.html != null) {
-        await _loadHtml(
-          injectComposeDslWebViewBridgeRuntimeIntoHtml(
-            _request.html!,
-            javascriptInterfaces: _javascriptInterfaces,
-          ),
-          _request.baseUrl,
-        );
+        await _loadHtml(_request.html!, _request.baseUrl);
       } else {
         await _controller.loadRequest(Uri.parse('about:blank'));
       }
@@ -1449,6 +1436,10 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     }
     final requestId = _string(payload['id']).trim();
     final type = _string(payload['type']).trim();
+    if (type == 'scrollBoundary') {
+      _handleScrollBoundary(_stringMap(payload['payload']));
+      return;
+    }
     final hostContext = widget.hostContext;
     Object? data;
     try {
@@ -1470,6 +1461,66 @@ class _ComposeDslWebViewState extends State<ComposeDslWebView> {
     if (type == 'invoke' || type == 'dispatchAction') {
       hostContext?.onActionResultDelivered?.call(data);
     }
+  }
+
+  /// Applies page overflow through Flutter physics without rebuilding the DSL tree.
+  void _handleScrollBoundary(Map<String, Object?> payload) {
+    if (!mounted || !_scrollChaining) return;
+    final phase = payload['phase'];
+    if (phase == 'end' || phase == 'cancel') {
+      _finishOuterScroll(cancel: phase == 'cancel');
+      return;
+    }
+    final scrollable = Scrollable.maybeOf(context, axis: Axis.vertical);
+    if (scrollable == null) return;
+    if (phase == 'start') {
+      _finishOuterScroll(cancel: true);
+      _scrollHold = scrollable.position.hold(() => _scrollHold = null);
+      return;
+    }
+    final rawDelta = payload['delta'];
+    final rawHeight = payload['viewportHeight'];
+    final box = context.findRenderObject();
+    if (rawDelta is! num ||
+        rawHeight is! num ||
+        box is! RenderBox ||
+        !rawDelta.isFinite ||
+        !rawHeight.isFinite ||
+        rawHeight <= 0 ||
+        !box.hasSize) {
+      return;
+    }
+    final delta = rawDelta.toDouble() * box.size.height / rawHeight;
+    if (delta == 0 || !delta.isFinite) return;
+    if (phase == 'move') {
+      _outerDrag ??= scrollable.position.drag(
+        DragStartDetails(),
+        () => _outerDrag = null,
+      );
+      _scrollHold = null;
+      _outerDrag!.update(
+        DragUpdateDetails(
+          delta: Offset(0, -delta),
+          primaryDelta: -delta,
+          globalPosition: Offset.zero,
+        ),
+      );
+    } else if (phase == 'wheel') {
+      chainVerticalPointerScroll(context, delta);
+    }
+  }
+
+  /// Releases page-owned scroll activities at gesture completion and disposal.
+  void _finishOuterScroll({required bool cancel}) {
+    final drag = _outerDrag;
+    _outerDrag = null;
+    if (cancel) {
+      drag?.cancel();
+    } else {
+      drag?.end(DragEndDetails(primaryVelocity: 0));
+    }
+    _scrollHold?.cancel();
+    _scrollHold = null;
   }
 
   /// Dispatches an exact bridge operation and propagates action failures.
@@ -1635,6 +1686,16 @@ class _ComposeDslWebViewRequest {
   final String encoding;
   final Map<String, String> headers;
 
+  /// Compares navigation inputs directly so unchanged HTML never becomes a large JSON key.
+  bool hasSameContent(_ComposeDslWebViewRequest other) =>
+      url == other.url &&
+      html == other.html &&
+      baseUrl == other.baseUrl &&
+      mimeType == other.mimeType &&
+      encoding == other.encoding &&
+      mapEquals(headers, other.headers);
+
+  /// Normalizes document inputs independently of sizing and action callbacks.
   static _ComposeDslWebViewRequest build(
     Map<String, Object?> props, {
     required bool allowBlank,

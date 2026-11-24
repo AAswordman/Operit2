@@ -85,6 +85,51 @@ values before UIKit layout. Invalid geometry disables the affected native view;
 once through the existing navigation-error channel after the layout call ends.
 The failed view is no longer laid out or reused.
 
+## Embedded Compose pages
+
+Compose page identity uses its execution context and explicit key, controller key
+or retained node address. HTML and URL contents do not participate in the Flutter
+key. Size, callback, theme and surrounding DSL updates retain the existing
+`ComposeDslWebView` state, `WebViewWidget` and controller. Only changes to normalized
+document inputs navigate that controller. Document comparison uses fields and
+header-map equality, without serializing a potentially large HTML document as a
+cache key.
+
+Pages embedded inside a vertical Flutter scrollable install the shared
+document-start scroll bridge. The browser keeps taps, selection, horizontal input,
+pinch zoom and its internal scrolling. Wheel and single-touch input inspect the
+hit element's DOM scroll ancestors and report only vertical movement outside their
+available range. Flutter applies that movement to the enclosing scroll position;
+wheel input uses the existing chained-scroll coordinator, including reversed
+lists. CSS viewport coordinates are scaled to the Flutter viewport. Boundary
+input is a one-way channel notification, so it creates no action RPC, Compose
+transaction or widget rebuild. Wheel notifications are coalesced per display
+frame and the listener installs once per document.
+
+OpenUI keeps one React root through stream revisions. Its host allows one program
+publication in flight and sends the newest revision next. Browser rendering is
+coalesced per frame; duplicate revisions, unchanged brightness and unchanged
+diagnostics do not trigger extra renders or DOM writes. These checks preserve
+interactive fields while new content is produced. Native gesture composition
+still requires acceptance on each device; cross-origin iframe documents that
+cannot run the host bridge cannot report their DOM scroll boundaries.
+
+## Embedded page checks
+
+From the repository root:
+
+```powershell
+node --test tools/tests/compose_webview_scroll.browser.mjs tools/tests/compose_dsl_webview_bridge.test.mjs
+pnpm --dir plugins/packages/external/openui check
+pnpm --dir plugins/packages/external/openui test
+```
+
+From `apps/flutter/app`:
+
+```powershell
+fvm flutter test test/compose_webview_theme_test.dart test/chained_scroll_controller_test.dart test/compose_dsl_webview_bridge_runtime_test.dart test/compose_dsl_program_lifecycle_test.dart test/xml_render_registry_refresh_test.dart
+```
+
 ## Maintenance checks
 
 From `apps/flutter/app`:

@@ -26,6 +26,7 @@ Only the XML envelope belongs to this plugin. The body is passed verbatim to the
 - ToolPkg.registerXmlRenderPlugin handles the openui tag through the existing generic XML channel.
 - ToolPkg.registerSystemPromptComposeHook supplies the exact library-generated instructions while this plugin is enabled.
 - One React root and WebView survive stream updates; upstream reactive and form state remain in that instance. The Compose screen retains form state across browser-document recreation during that screen's lifetime.
+- Program publication allows one bridge request in flight and merges pending stream revisions into the newest input. The browser renders at most once per display frame and ignores duplicate revisions and unchanged theme or diagnostics.
 - Query and Mutation call the normal host tool interface. No direct platform filesystem or HTTP implementation is added.
 - Continue-conversation actions send the original action object, including form values, to the owning chat using Chat.sendMessage.
 - URL actions open a separate plugin browser dialog. That browser never receives the renderer's privileged JavaScript interface.
