@@ -6098,6 +6098,60 @@ abstract class AppLocalizations {
   /// **'Mono'**
   String get settingsAppearanceFontMonospace;
 
+  /// No description provided for @settingsAppearanceNormalFontSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Body font'**
+  String get settingsAppearanceNormalFontSection;
+
+  /// No description provided for @settingsAppearanceFontsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Fonts'**
+  String get settingsAppearanceFontsSection;
+
+  /// No description provided for @settingsAppearanceCodeFontSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Code font'**
+  String get settingsAppearanceCodeFontSection;
+
+  /// No description provided for @settingsAppearanceCodeFontDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Used by code blocks, inline code, diffs, file previews and the terminal'**
+  String get settingsAppearanceCodeFontDescription;
+
+  /// No description provided for @settingsAppearanceCodeFontBuiltin.
+  ///
+  /// In en, this message translates to:
+  /// **'Built-in mono'**
+  String get settingsAppearanceCodeFontBuiltin;
+
+  /// No description provided for @settingsAppearanceChatBodyFontSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat text font'**
+  String get settingsAppearanceChatBodyFontSection;
+
+  /// No description provided for @settingsAppearanceChatBodyFontFollow.
+  ///
+  /// In en, this message translates to:
+  /// **'Follows the body font'**
+  String get settingsAppearanceChatBodyFontFollow;
+
+  /// No description provided for @settingsAppearanceChatBodySplitSides.
+  ///
+  /// In en, this message translates to:
+  /// **'Set user and AI separately'**
+  String get settingsAppearanceChatBodySplitSides;
+
+  /// No description provided for @settingsAppearanceChatBodyAdjust.
+  ///
+  /// In en, this message translates to:
+  /// **'Adjust'**
+  String get settingsAppearanceChatBodyAdjust;
+
   /// No description provided for @settingsAppearanceInterfaceScale.
   ///
   /// In en, this message translates to:

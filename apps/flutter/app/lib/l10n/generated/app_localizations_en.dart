@@ -3389,6 +3389,35 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsAppearanceFontMonospace => 'Mono';
 
   @override
+  String get settingsAppearanceNormalFontSection => 'Body font';
+
+  @override
+  String get settingsAppearanceFontsSection => 'Fonts';
+
+  @override
+  String get settingsAppearanceCodeFontSection => 'Code font';
+
+  @override
+  String get settingsAppearanceCodeFontDescription =>
+      'Used by code blocks, inline code, diffs, file previews and the terminal';
+
+  @override
+  String get settingsAppearanceCodeFontBuiltin => 'Built-in mono';
+
+  @override
+  String get settingsAppearanceChatBodyFontSection => 'Chat text font';
+
+  @override
+  String get settingsAppearanceChatBodyFontFollow => 'Follows the body font';
+
+  @override
+  String get settingsAppearanceChatBodySplitSides =>
+      'Set user and AI separately';
+
+  @override
+  String get settingsAppearanceChatBodyAdjust => 'Adjust';
+
+  @override
   String get settingsAppearanceInterfaceScale => 'Interface scale';
 
   @override
