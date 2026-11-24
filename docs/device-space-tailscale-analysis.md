@@ -87,7 +87,9 @@ http://100.x.y.z:实际端口/link
 
 其中 `100.x.y.z` 必须替换成被连接端真实的 Tailscale IPv4。
 使用显式协议和 `/link` 路径，可以避开裸地址协议探测和显式 URL 不补路径的问题。
-双方随后完成现有配对码确认流程。已经配对的离线设备可以直接在其操作菜单中使用“更新直连地址”，填入同一形式的 Tailscale 地址，无需重新配对。该入口由 `RuntimeSettingsPanel.dart:483` 的离线判断提供，`RuntimeSettingsPanel.dart:1176` 调用 `updatePairedDeviceEndpoint()` 保存并触发探测。
+双方随后完成现有配对码确认流程。对于已经配对的离线设备，应在当初发起配对的一端使用“更新直连地址”，填入对方同一形式的 Tailscale 地址，无需重新配对。该端持有出站配对凭证和可修改的拨号地址；仅接收配对的一端持有入站凭证，由对方主动重连。Flutter 的 `RuntimeSettingsPanel._pairedActions()` 仅在设备离线且本机持有出站授权时显示该入口，`_updateDeviceEndpoint()` 调用 `updatePairedDeviceEndpoint()` 保存并触发探测。
+
+`PEER_OUTBOUND_NOT_AUTHORIZED: No current outbound authorization for node` 表示本机没有该设备的当前出站配对记录，尚未进入新地址的网络连接阶段。旧界面未检查配对方向，对仅有入站授权的离线设备也显示该操作，因此会触发此错误。更新地址只修改已有出站记录，不创建反向授权，也不改变配对凭证或空间成员资格。
 
 若手动连接也失败，优先在发起端测试真实服务端口：
 
