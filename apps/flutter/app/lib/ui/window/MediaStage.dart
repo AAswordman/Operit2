@@ -12,6 +12,9 @@ import '../../core/proxy/generated/CoreProxyClients.g.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
 import '../features/packages/screens/ComposeDslImageSource.dart';
 import '../theme/OperitThemeAssets.dart';
+import 'MediaParticipantGrid.dart';
+
+export 'MediaParticipantGrid.dart' show MediaStageParticipant;
 
 class MediaStage extends StatefulWidget {
   const MediaStage({
@@ -19,6 +22,8 @@ class MediaStage extends StatefulWidget {
     this.camera,
     this.imageUri,
     this.imageTitle,
+    this.participants = const [],
+    this.activeParticipantId,
     this.appearance,
     this.cameraReadyText,
     this.fullscreen = false,
@@ -30,6 +35,8 @@ class MediaStage extends StatefulWidget {
   final RuntimeWindowCamera? camera;
   final String? imageUri;
   final String? imageTitle;
+  final List<MediaStageParticipant> participants;
+  final String? activeParticipantId;
   final ThemePreferenceSnapshot? appearance;
   final Widget controls;
   final String? cameraReadyText;
@@ -52,6 +59,7 @@ class _MediaStageState extends State<MediaStage> {
   void initState() {
     super.initState();
     widget.camera?.addListener(_cameraChanged);
+    _avatarIsMain = widget.participants.isNotEmpty;
     _resolveAvatar();
   }
 
@@ -63,7 +71,10 @@ class _MediaStageState extends State<MediaStage> {
       unawaited(oldWidget.camera?.stop());
       widget.camera?.addListener(_cameraChanged);
       _cameraTexture = null;
-      _avatarIsMain = false;
+      _avatarIsMain = widget.participants.isNotEmpty;
+    }
+    if (oldWidget.participants.isEmpty && widget.participants.isNotEmpty) {
+      _avatarIsMain = true;
     }
     if (oldWidget.imageUri != widget.imageUri) _resolveAvatar();
   }
@@ -83,7 +94,7 @@ class _MediaStageState extends State<MediaStage> {
     setState(() {
       if (widget.camera?.preview == null) {
         _cameraTexture = null;
-        _avatarIsMain = false;
+        _avatarIsMain = widget.participants.isNotEmpty;
       }
     });
   }
@@ -141,6 +152,24 @@ class _MediaStageState extends State<MediaStage> {
                             margin * 2)
                         .clamp(math.min(80.0, size.height * 0.28), 128.0)
                         .toDouble();
+                final gridTop = top + (widget.windowControls == null ? 0 : 44);
+                final gridBottom =
+                    size.height -
+                    margin -
+                    safePadding.bottom -
+                    (widget.resizeHandle == null ? 0 : 20) -
+                    controlsHeight -
+                    cameraButtonHeight -
+                    16;
+                final gridRight = preview != null && !cameraIsMain
+                    ? inset.left - margin
+                    : size.width - margin;
+                final gridRect = Rect.fromLTRB(
+                  margin,
+                  gridTop,
+                  gridRight,
+                  math.max(gridTop + 1, gridBottom),
+                );
                 return Stack(
                   fit: StackFit.expand,
                   children: [
@@ -169,16 +198,25 @@ class _MediaStageState extends State<MediaStage> {
                       ),
                     Positioned.fromRect(
                       key: const ValueKey('media-image-view'),
-                      rect: cameraIsMain ? inset : full,
+                      rect: cameraIsMain
+                          ? inset
+                          : widget.participants.isEmpty
+                          ? full
+                          : gridRect,
                       child: IgnorePointer(
-                        child: _buildAvatar(
-                          colors,
-                          avatar,
-                          cameraIsMain
-                              ? inset.size.shortestSide * 0.66
-                              : portraitSize,
-                          small: cameraIsMain,
-                        ),
+                        child: widget.participants.isNotEmpty
+                            ? MediaParticipantGrid(
+                                participants: widget.participants,
+                                activeParticipantId: widget.activeParticipantId,
+                              )
+                            : _buildAvatar(
+                                colors,
+                                avatar,
+                                cameraIsMain
+                                    ? inset.size.shortestSide * 0.66
+                                    : portraitSize,
+                                small: cameraIsMain,
+                              ),
                       ),
                     ),
                     if (preview != null)

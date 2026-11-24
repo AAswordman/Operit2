@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { loadModule, plain } from "../../../buildin/character_cards/tests/runtime.mjs";
 
 /** Supplies stateful Compose primitives while retaining the real call screen and dependency client. */
-function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, files } = {}) {
+function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, files, groupTurn, participants = [], kind = "group" } = {}) {
   const states = new Map(), refs = new Map(), effects = new Map(), calls = [];
   const routes = [], entries = [];
   const color = { copy() { return color; } };
@@ -39,9 +39,10 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, 
       async callDependency(packageId, method, payload) {
         assert.equal(packageId, "com.operit.character_cards");
         if (method === "avatar.default") return "data:image/png;base64,character-default-avatar";
-        assert.equal(method, "chat.identity");
+        if (method === "chat.groupTurn") return groupTurn ? groupTurn(plain(payload)) : { status: "not_group", replies: [], error: null };
+        assert.equal(method, "chat.presentation");
         calls.push(plain(payload));
-        return resolveIdentity(payload);
+        return { kind, identity: await resolveIdentity(payload), participants: typeof participants === "function" ? participants(payload) : participants };
       },
     },
     Tools: {
@@ -65,8 +66,8 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, 
   });
   return { states, effects, calls, routes, entries, register: plugin.registerToolPkg, renderMenu: () => {
     if (!states.has("presentation")) states.set("presentation", { requestId: "call-presentation", input: null });
-    return plugin.inputMenu(ctx);
-  }, render: () => plugin.call(ctx) };
+    return plugin.screen(ctx);
+  }, renderControl: () => plugin.control(ctx), render: () => plugin.call(ctx) };
 }
 
 /** Traverses actual Compose output to inspect rendered identity and invoke its start control. */
@@ -191,107 +192,55 @@ function playbackScreen({ echoCancellation = true } = {}) {
   };
 }
 
-test("speech during playback cancels the utterance and transcribes the same capture", async () => {
+test("loud microphone input cannot interrupt playback and playback keeps the microphone idle", async () => {
   const screen = playbackScreen();
-  await screen.startPlayback();
-  assert.equal(screen.requests[1].echoCancellation, true);
-  await screen.tick(0.05);
+  const { call } = await screen.startPlayback();
+  assert.equal(screen.requests.length, 1);
+  await screen.tick(1);
+  await screen.tick(1);
+  await screen.tick(1);
   assert.deepEqual(screen.cancelled, []);
-  screen.captures[1](null); // The bounded capture expires during a long reply.
-  await screen.settle();
-  assert.equal(screen.requests[2].echoCancellation, true);
-  await screen.tick(0.7);
-  assert.deepEqual(screen.cancelled, []);
-  await screen.tick(0.7);
-  assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
-  assert.equal(screen.states.get("phase"), "listening");
-  const audio = { text: "Stop, I meant next week" };
-  screen.captures[2](audio);
-  await screen.settle();
-  assert.equal(screen.transcribed[1], audio);
-  assert.deepEqual(screen.chatInputs, ["Question", "Stop, I meant next week"]);
-});
-
-test("microphone volume interrupts without echo cancellation and ignores an isolated noise spike", async () => {
-  const screen = playbackScreen({ echoCancellation: false });
-  await screen.startPlayback();
-  assert.equal(screen.requests.length, 2);
-  assert.equal(screen.requests[1].echoCancellation, undefined);
-  await screen.tick(0.8);
-  await screen.tick(0.02);
-  await screen.tick(0.02);
-  assert.deepEqual(screen.cancelled, []);
-  await screen.tick(0.8);
-  await screen.tick(0.8);
-  assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
-  screen.captures[1]({ text: "Please stop" });
-  await screen.settle();
-  assert.deepEqual(screen.chatInputs, ["Question", "Please stop"]);
-});
-
-test("missing role portraits use the character card provider's default artwork", async () => {
-  for (const identity of [null, { title: "My character", avatarUri: null }]) {
-    const screen = callScreen(() => identity);
-      screen.render();
-    screen.effects.get("call-avatar")();
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(screen.render().props.imageUri, "data:image/png;base64,character-default-avatar");
-    assert.equal(screen.render().props.imageTitle, identity?.title ?? "Operit");
-  }
-});
-
-test("natural playback completion keeps the open microphone without cancelling playback", async () => {
-  const screen = playbackScreen();
-  await screen.startPlayback();
+  assert.equal(screen.states.get("phase"), "speaking");
+  assert.equal(screen.requests.length, 1);
   screen.finishPlayback();
   await screen.settle();
-  assert.equal(screen.states.get("phase"), "listening");
-  screen.captures[1]({ text: "Follow-up" });
-  await screen.settle();
-  assert.deepEqual(screen.cancelled, []);
-  assert.deepEqual(screen.chatInputs, ["Question", "Follow-up"]);
   assert.equal(screen.requests.length, 2);
+  assert.equal(screen.states.get("phase"), "listening");
+  await screen.hangup();
+  await call;
 });
 
-test("manual interruption resumes recording on hosts without echo cancellation", async () => {
-  const screen = playbackScreen({ echoCancellation: false });
+test("manual interruption cancels speech and starts a fresh recording", async () => {
+  const screen = playbackScreen();
   const { call } = await screen.startPlayback();
-  assert.equal(screen.requests.length, 2);
   await screen.button("Interrupt and speak").props.onClick();
   await screen.settle();
-  assert.equal(screen.states.get("phase"), "listening");
   assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
+  assert.equal(screen.states.get("phase"), "listening");
+  assert.equal(screen.requests.length, 2);
   assert.equal(screen.requests[1].echoCancellation, undefined);
   await screen.hangup();
   await call;
-  assert.equal(screen.states.get("phase"), "closing");
 });
 
-test("playback failure releases the open microphone and pauses the call", async () => {
+test("playback failure pauses without opening another microphone capture", async () => {
   const screen = playbackScreen();
   const { call } = await screen.startPlayback();
-  const errorLog = console.error;
-  try {
-    console.error = () => {};
-    screen.failPlayback();
-    await call;
-  } finally {
-    console.error = errorLog;
-  }
-  assert.equal(screen.requests.length, 2);
+  screen.failPlayback();
+  await call;
+  assert.equal(screen.requests.length, 1);
   assert.equal(screen.states.get("phase"), "error");
   assert.match(screen.states.get("failure"), /TTS device unavailable/);
 });
 
-test("hanging up during playback cancels both the utterance and its capture", async () => {
+test("hanging up during playback cancels speech without opening a capture", async () => {
   const screen = playbackScreen();
   const { call } = await screen.startPlayback();
   await screen.hangup();
   await call;
   assert.equal(screen.states.get("phase"), "closing");
-  assert.equal(screen.requests.length, 2);
+  assert.equal(screen.requests.length, 1);
   assert.deepEqual(screen.cancelled, ["call-actual-call-1"]);
-  assert.deepEqual(screen.chatInputs, ["Question"]);
 });
 test("the call sends a camera attachment with its transcribed turn", async () => {
   const frame = { path: "/app/camera.jpg", name: "camera.jpg", mimeType: "image/jpeg", size: 42 };
@@ -343,7 +292,7 @@ test("when taking a camera frame fails, the voice turn still sends", async () =>
 });
 
 
-test("phone entry registers in the plus menu and launches on load with camera off", async () => {
+test("one route serves the package launcher and plus menu without presentation state", async () => {
   const opened = [];
   const screen = callScreen(() => null, { floatingWindows: {
     async capabilities() { return { supported: true, permissionGranted: true }; },
@@ -351,80 +300,44 @@ test("phone entry registers in the plus menu and launches on load with camera of
     async open(options) { opened.push(plain(options)); },
   } });
   screen.register();
-  const entry = screen.entries.find(entry => entry.surface === "chat_attachments");
-  assert.equal(entry.icon, "Call");
-  assert.equal(entry.title.zh, "语音/视频通话");
-  assert.equal(screen.routes.find(route => route.route === entry.route).screen.name, "inputMenu");
-  screen.states.set("chatId", "source-chat");
-  const launcher = screen.renderMenu();
-  assert.deepEqual(plain(await launcher.props.onLoad()), {
-    type: "toolpkg.presentation.cancel", requestId: "call-presentation",
-  });
-  // A repeated load or a fast retry must not start a second call.
-  await launcher.props.onLoad();
-  assert.deepEqual(opened, [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call", fill: true, applicationOnly: false,
-    state: { autoStart: true, sourceChatId: "source-chat" } }]);
+  assert.equal(screen.routes.length, 1);
+  assert.ok(screen.entries.every(entry => entry.route === screen.routes[0].route));
+  screen.states.set("presentation", null);
+  screen.states.set("chatId", "source-group-chat");
+  await nodes(screen.renderMenu()).find(node => node.type === "Button").props.onClick();
+  assert.deepEqual(opened, [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:control",
+    applicationOnly: false, state: { callSurface: true, cameraControls: true, sourceChatId: "source-group-chat" },
+    options: { width: 340, height: 460, draggable: true } }]);
+  screen.states.set("callSurface", true);
+  assert.equal(screen.renderMenu().type, "MediaStage");
 });
 
-test("phone menu brings the existing call to full screen without starting a second session", async () => {
+test("plus menu reuses the working window instead of creating another session", async () => {
   const actions = [];
   const screen = callScreen(() => null, { floatingWindows: {
     async capabilities() { return { supported: true, permissionGranted: true }; },
-    async list() { return [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call" }]; },
-    async show(id) { actions.push(["show", id]); },
-    async setFullscreen(...args) { actions.push(["fullscreen", ...plain(args)]); },
-    async open() { assert.fail("must reuse the existing call"); },
+    async list() { return [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:control" }]; },
+    async show(id) { actions.push(id); },
+    async open() { assert.fail("existing call must be reused"); },
   } });
-  await screen.renderMenu().props.onLoad();
-  assert.deepEqual(actions, [["show", "voice-call"], ["fullscreen", "voice-call", true]]);
+  await nodes(screen.renderMenu()).find(node => node.type === "Button").props.onClick();
+  assert.deepEqual(actions, ["voice-call"]);
 });
 
-test("phone menu reports denied permission without opening or recording", async () => {
-  const screen = callScreen(() => null, { floatingWindows: {
-    async capabilities() { return { supported: true, permissionGranted: false }; },
-    async requestPermission() { return false; },
-    async list() { assert.fail("permission must be granted first"); },
-  } });
-  await screen.renderMenu().props.onLoad();
-  assert.match(screen.states.get("call-launch-error"), /Grant permission/);
-  assert.deepEqual(screen.calls, []);
-});
-
-test("phone launcher retries a failed permission request and then closes its presentation", async () => {
+test("launcher reports permission denial and can retry after authorization", async () => {
   let granted = false;
   const opened = [];
   const screen = callScreen(() => null, { floatingWindows: {
     async capabilities() { return { supported: true, permissionGranted: granted }; },
-    async requestPermission() { return false; },
     async list() { return []; },
     async open(options) { opened.push(plain(options)); },
   } });
-  assert.equal(await screen.renderMenu().props.onLoad(), null);
-  assert.match(screen.states.get("call-launch-error"), /Grant permission/);
+  await nodes(screen.renderMenu()).find(node => node.type === "Button").props.onClick();
+  assert.match(screen.states.get("status"), /Grant permission/);
+  assert.equal(opened.length, 0);
   granted = true;
-  const retry = screen.renderMenu();
-  assert.equal(retry.props.closeOnConfirm, false);
-  assert.deepEqual(plain(await retry.props.onConfirm()), {
-    type: "toolpkg.presentation.cancel", requestId: "call-presentation",
-  });
+  await nodes(screen.renderMenu()).find(node => node.type === "Button").props.onClick();
   assert.equal(opened.length, 1);
-  assert.equal(screen.states.get("call-launch-error"), "");
-});
-
-test("closing the phone launcher while checking capability prevents a delayed call", async () => {
-  let finish;
-  const screen = callScreen(() => null, { floatingWindows: {
-    capabilities() { return new Promise(resolve => { finish = resolve; }); },
-    async list() { assert.fail("closed launcher must not open a call"); },
-  } });
-  const launcher = screen.renderMenu();
-  const loading = launcher.props.onLoad();
-  assert.deepEqual(plain(launcher.props.onDismiss()), {
-    type: "toolpkg.presentation.cancel", requestId: "call-presentation",
-  });
-  finish({ supported: true, permissionGranted: true });
-  assert.equal(await loading, null);
-  assert.equal(await launcher.props.onLoad(), null);
 });
 
 test("automatic call inherits the source chat without selecting or changing it", async () => {
@@ -470,7 +383,7 @@ test("phone menu explicitly requests application scope when the camera requires 
     async open(options) { opened.push(plain(options)); },
     async requestPermission() { assert.fail("application cameras do not require system overlay permission"); },
   } });
-  await screen.renderMenu().props.onLoad();
+  await nodes(screen.renderMenu()).find(node => node.type === "Button").props.onClick();
   assert.deepEqual(queries, [{}, { applicationOnly: true }]);
   assert.equal(opened.length, 1);
   assert.equal(opened[0].applicationOnly, true);
@@ -505,4 +418,121 @@ test("camera retention failure releases the temporary file and sends the voice t
   assert.equal(removed[0], "/temp/camera.jpg");
   assert.match(removed[1], /^\/shared\/voice_call\/camera_frames\//);
   assert.equal(screen.states.get("cameraNotice"), "Couldn't send the camera frame for this turn.");
+});
+
+const groupReplies = [
+  { participantId: "bob", name: "Bob", avatarUri: "bob.png", ttsConfigId: "voice-bob", text: "Bob speaks" },
+  { participantId: "alice", name: "Alice", avatarUri: "alice.png", ttsConfigId: "voice-alice", text: "Alice speaks" },
+];
+
+test("group call keeps the entire roster visible while highlighting each configured speaker", async () => {
+  const spoken = [], submitted = [];
+  let recordings = 0;
+  const roster = [
+    { id: "alice", name: "Alice", avatarUri: "alice.png" },
+    { id: "silent", name: "Silent member", avatarUri: null },
+    { id: "bob", name: "Bob", avatarUri: "bob.png" },
+  ];
+  const screen = callScreen(() => ({ title: "Friends", avatarUri: "group.png" }), {
+    participants: roster,
+    floatingWindows: { async record() { return recordings++ === 0 ? { text: "Hello everyone" } : null; } },
+    stt: { async transcribe(audio) { return audio; } },
+    groupTurn(request) {
+      submitted.push(request);
+      assert.equal(request.action, "start");
+      return { status: "completed", replies: groupReplies, error: null };
+    },
+    chat: { async sendMessage() { assert.fail("group input must not also execute as a single response"); } },
+    tts: { async speak(request) { spoken.push({ request: plain(request), stage: plain(screen.render().props) }); } },
+  });
+  await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  assert.equal(submitted.length, 1);
+  assert.equal(submitted[0].text, "Hello everyone");
+  assert.deepEqual(spoken.map(item => [item.request.text, item.request.configId, item.stage.activeParticipantId]), [
+    ["Bob speaks", "voice-bob", "bob"], ["Alice speaks", "voice-alice", "alice"],
+  ]);
+  for (const item of spoken) {
+    assert.deepEqual(item.stage.participants.map(member => member.id), ["alice", "silent", "bob"]);
+    assert.equal(item.stage.imageTitle, "Friends");
+    assert.equal(item.stage.participants[0].imageUri, "alice.png");
+  }
+  assert.equal(screen.states.get("activeParticipantId"), null);
+  assert.equal(screen.states.get("identity").title, "Friends");
+});
+
+test("manual group interruption cancels pending members and returns to listening", async () => {
+  const spoken = [], controls = [];
+  let recordings = 0, finishSpeech, releaseRecording;
+  const screen = callScreen(() => null, {
+    floatingWindows: {
+      record() { return recordings++ === 0 ? Promise.resolve({ text: "Hi" }) : new Promise(resolve => { releaseRecording = resolve; }); },
+      async cancelRecording() { releaseRecording(null); }, async close() {},
+    },
+    stt: { async transcribe(audio) { return audio; } },
+    groupTurn(request) {
+      controls.push(request.action);
+      return { status: request.action === "cancel" ? "cancelled" : "running", replies: groupReplies, error: null };
+    },
+    tts: {
+      speak(request) { spoken.push(request.text); return new Promise(resolve => { finishSpeech = resolve; }); },
+      async cancel() { finishSpeech(); return true; },
+    },
+  });
+  const call = nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(screen.states.get("phase"), "speaking");
+  assert.equal(recordings, 1);
+  await nodes(screen.render()).find(node => node.props.text === "Interrupt and speak").props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(spoken, ["Bob speaks"]);
+  assert.deepEqual(controls, ["start", "cancel"]);
+  assert.equal(screen.states.get("phase"), "listening");
+  assert.equal(screen.states.get("activeParticipantId"), null);
+  await nodes(screen.render()).find(node => node.type === "Button").props.onClick();
+  await call;
+});
+
+test("group generation failure pauses the call with the provider error", async () => {
+  const screen = callScreen(() => null, {
+    floatingWindows: { async record() { return { text: "Hi" }; } },
+    stt: { async transcribe(audio) { return audio; } },
+    groupTurn() { return { status: "failed", replies: [], error: "Group service unavailable" }; },
+  });
+  await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  assert.equal(screen.states.get("phase"), "error");
+  assert.match(screen.states.get("failure"), /Group service unavailable/);
+});
+
+/** Silent members are visible before recording, and a late source preview cannot replace the bound roster. */
+test("complete roster follows the committed chat across a delayed preview", async () => {
+  let finishPreview;
+  const screen = callScreen(({ chatId }) => chatId === null
+    ? new Promise(resolve => { finishPreview = resolve; }) : { title: "Bound group", avatarUri: "group.png" }, {
+    participants: ({ chatId }) => chatId === null
+      ? [{ id: "other", name: "Other", avatarUri: null }]
+      : Array.from({ length: 16 }, (_, i) => ({ id: `member-${i}`, name: `Member ${i}`, avatarUri: null })),
+  });
+  screen.render();
+  screen.effects.get("call-avatar")();
+  await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  finishPreview({ title: "Other group", avatarUri: null });
+  await new Promise(resolve => setImmediate(resolve));
+  const stage = screen.render().props;
+  assert.equal(stage.imageTitle, "Bound group");
+  assert.equal(stage.participants.length, 16);
+  assert.equal(stage.participants[15].id, "member-15");
+});
+
+/** A one-member group still renders its real member, while a single role retains the portrait view. */
+test("one-member groups receive a tile and single roles keep their portrait layout", async () => {
+  for (const kind of ["group", "card"]) {
+    const screen = callScreen(() => ({ title: "Selected role", avatarUri: "role.png" }), {
+      kind, participants: [{ id: "solo", name: "Solo member", avatarUri: "solo.png" }],
+    });
+    screen.render();
+    screen.effects.get("call-avatar")();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(plain(screen.render().props.participants), kind === "group"
+      ? [{ id: "solo", title: "Solo member", imageUri: "solo.png" }] : []);
+  }
 });

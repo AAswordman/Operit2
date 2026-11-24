@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:camera_platform_interface/camera_platform_interface.dart';
@@ -11,9 +12,132 @@ import 'package:operit2/core/host/RuntimeWindowCamera.dart';
 import 'package:operit2/core/host/RuntimeWindowCameraFrameStore.dart';
 import 'package:operit2/core/host/ComposeDslFilePickerStorage.dart';
 import 'package:operit2/ui/window/MediaStage.dart';
+import 'package:operit2/ui/window/MediaParticipantGrid.dart';
 import 'package:operit2/ui/window/FloatingWindowFrame.dart';
 
 void main() {
+  for (final count in [1, 2, 3, 4, 5, 7, 9, 10, 16, 17]) {
+    for (final size in [const Size(240, 160), const Size(600, 360)]) {
+      testWidgets(
+        'media grid shares equal areas for $count participants at $size',
+        (tester) async {
+          final members = List.generate(
+            count,
+            (i) => MediaStageParticipant(id: '$i', title: 'Member $i'),
+          );
+          Widget grid(String active) => MaterialApp(
+            home: Center(
+              child: SizedBox(
+                width: size.width,
+                height: size.height,
+                child: MediaParticipantGrid(
+                  participants: members,
+                  activeParticipantId: active,
+                ),
+              ),
+            ),
+          );
+          await tester.pumpWidget(grid('0'));
+          await tester.pumpAndSettle();
+          final rects = [
+            for (var i = 0; i < count; i++)
+              tester.getRect(find.byKey(ValueKey('media-participant-$i'))),
+          ];
+          final area = rects.first.width * rects.first.height;
+          for (var i = 0; i < count; i++) {
+            expect(rects[i].width * rects[i].height, closeTo(area, 0.001));
+            for (var j = i + 1; j < count; j++) {
+              expect(rects[i].overlaps(rects[j]), isFalse);
+            }
+          }
+          final rows = rects.map((rect) => rect.top).toSet().length;
+          expect(rows, (count / math.sqrt(count).ceil()).ceil());
+          if ([1, 4, 9, 16].contains(count))
+            expect(rows, math.sqrt(count).toInt());
+          final firstElement = tester.element(
+            find.byKey(const ValueKey('media-participant-0')),
+          );
+          await tester.pumpWidget(grid('${count - 1}'));
+          await tester.pumpAndSettle();
+          expect(
+            tester.element(find.byKey(const ValueKey('media-participant-0'))),
+            same(firstElement),
+          );
+          final selected = tester
+              .widgetList<Semantics>(
+                find.byWidgetPredicate(
+                  (widget) =>
+                      widget is Semantics && widget.properties.selected == true,
+                ),
+              )
+              .toList();
+          expect(selected, hasLength(1));
+          expect(selected.single.properties.label, 'Member ${count - 1}');
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+  }
+
+  testWidgets(
+    'group media preserves all tiles and the live camera while speakers change',
+    (tester) async {
+      tester.view.devicePixelRatio = 1;
+      tester.view.physicalSize = const Size(340, 460);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.view.resetPhysicalSize);
+      final platform = _CameraPlatform();
+      addTearDown(platform.events.close);
+      final camera = RuntimeWindowCamera(platform: platform);
+      addTearDown(camera.dispose);
+      final members = List.generate(
+        16,
+        (i) => MediaStageParticipant(id: '$i', title: 'Member $i'),
+      );
+      Widget stage(String active) => MaterialApp(
+        home: MediaStage(
+          camera: camera,
+          participants: members,
+          activeParticipantId: active,
+          controls: const Center(child: Text('Hang up')),
+          windowControls: const SizedBox(height: 32),
+          resizeHandle: const SizedBox.square(dimension: 20),
+        ),
+      );
+      await tester.pumpWidget(stage('0'));
+      await tester.runAsync(camera.start);
+      await tester.pumpAndSettle();
+      final texture = find.byKey(const ValueKey('test-camera-texture'));
+      final mountedTexture = tester.element(texture);
+      final preview = tester.getRect(
+        find.byKey(const ValueKey('media-camera-view')),
+      );
+      final controls = tester.getRect(
+        find.byKey(const ValueKey('media-controls-surface')),
+      );
+      for (var i = 0; i < 16; i++) {
+        final tile = tester.getRect(
+          find.byKey(ValueKey('media-participant-$i')),
+        );
+        expect(tile.overlaps(preview), isFalse);
+        expect(tile.overlaps(controls), isFalse);
+        expect(find.text('Member $i'), findsOneWidget);
+      }
+      await tester.pumpWidget(stage('12'));
+      await tester.pumpAndSettle();
+      expect(tester.element(texture), same(mountedTexture));
+      expect(platform.previewBuilds, 1);
+      expect(platform.releases, isEmpty);
+      expect(find.text('Hang up').hitTestable(), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('media-swap-views')));
+      await tester.pumpAndSettle();
+      expect(tester.element(texture), same(mountedTexture));
+      expect(tester.takeException(), isNull);
+      await tester.runAsync(camera.stop);
+      await tester.pumpWidget(const SizedBox());
+    },
+  );
+
   test(
     'camera files are reusable selections with bounded upload chunks',
     () async {

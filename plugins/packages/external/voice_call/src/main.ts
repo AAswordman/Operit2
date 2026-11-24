@@ -1,17 +1,12 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
 import type { Chat } from "../../../../types/chat";
-import { characterCards, type ChatDisplayIdentity } from "./dependencies/character_cards/api.js";
+import { characterCards, type ChatDisplayIdentity, type ChatDisplayParticipant } from "./dependencies/character_cards/api.js";
 
 const PACKAGE = "com.operit.voice_call";
 const CONTROL_ROUTE = `toolpkg:${PACKAGE}:ui:control`;
-const MENU_ROUTE = `toolpkg:${PACKAGE}:ui:input-menu`;
-const CALL_ROUTE = `toolpkg:${PACKAGE}:ui:call`;
-const VOICE_OVERLAY_ROUTE = `toolpkg:${PACKAGE}:ui:voice-overlay`;
 const WINDOW = "voice-call";
 const title = { zh: "语音通话", en: "Voice Call" };
 const RECORDING_OPTIONS = { maxDurationMs: 20000, silenceMs: 900 };
-const INTERRUPT_LEVEL = 0.35;
-const INTERRUPT_SAMPLES = 2;
 
 const labels = {
   idle: ["准备通话", "Ready to call"],
@@ -56,60 +51,10 @@ function report(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/** Launches a call from the chat attachment menu and settles its presentation. */
-export function inputMenu(ctx: ComposeDslContext): ComposeNode {
-  const [chatId] = ctx.useState<string | null>("chatId", null);
-  const [presentation] = ctx.useState<{ requestId: string } | null>("presentation", null);
-  if (!presentation || typeof presentation.requestId !== "string" || !presentation.requestId.trim()) {
-    throw new Error("Missing call launcher presentation request");
-  }
-  const requestId = presentation.requestId;
-  const [error, setError] = ctx.useState("call-launch-error", "");
-  const closed = ctx.useRef("call-launch-closed", false);
-  const busy = ctx.useRef("call-launch-busy", false);
-  const zh = getLang().startsWith("zh");
-  function close(): ToolPkg.JsonValue {
-    closed.current = true;
-    return { type: "toolpkg.presentation.cancel", requestId };
-  }
-  async function open(): Promise<ToolPkg.JsonValue> {
-    if (busy.current || closed.current) return null;
-    busy.current = true;
-    setError("");
-    try {
-      const api = ToolPkg.ui.floatingWindows;
-      let caps = await api.capabilities();
-      const applicationOnly = caps.cameraRequiresApplicationWindow === true;
-      if (applicationOnly) caps = await api.capabilities({ applicationOnly });
-      if (closed.current) return null;
-      if (!caps.supported) throw new Error(text("unsupported"));
-      if (!caps.permissionGranted && !await api.requestPermission()) throw new Error(text("permission"));
-      if (closed.current) return null;
-      const existing = (await api.list()).find(window => window.id === WINDOW);
-      if (closed.current) return null;
-      if (existing && existing.route !== CALL_ROUTE) await api.close(WINDOW);
-      if (closed.current) return null;
-      if (existing?.route === CALL_ROUTE) {
-        await api.show(WINDOW);
-        await api.setFullscreen(WINDOW, true);
-      } else {
-        await api.open({ id: WINDOW, route: CALL_ROUTE, fill: true, applicationOnly,
-          state: { autoStart: true, sourceChatId: chatId },
-        });
-      }
-      return close();
-    } catch (failure) {
-      if (!closed.current) setError(report(failure));
-      return null;
-    } finally { busy.current = false; }
-  }
-  return ctx.UI.AlertDialog({
-    key: "voice-call-launcher", onLoad: open,
-    title: zh ? "语音/视频通话" : "Voice / video call",
-    text: error || (zh ? "正在打开通话…" : "Opening call…"),
-    confirmText: zh ? "重试" : "Retry", onConfirm: open, closeOnConfirm: false,
-    dismissText: zh ? "关闭" : "Close", onDismiss: close, onDismissRequest: close,
-  });
+/** Uses one public route for the launcher and its plugin-owned floating content. */
+export function screen(ctx: ComposeDslContext): ComposeNode {
+  const [callSurface] = ctx.useState("callSurface", false);
+  return callSurface ? call(ctx) : control(ctx);
 }
 
 /** Chooses camera-compatible presentation using public host capabilities. */
@@ -123,6 +68,7 @@ async function cameraWindowCapabilities(): Promise<ToolPkg.FloatingWindowCapabil
 /** Opens or reveals the single call window and handles overlay authorization. */
 export function control(ctx: ComposeDslContext): ComposeNode {
   const windowApi = ToolPkg.ui.floatingWindows;
+  const [chatId] = ctx.useState<string | null>("chatId", null);
   const [status, setStatus] = ctx.useState("status", "");
   const [needsPermission, setNeedsPermission] = ctx.useState("needsPermission", false);
   const [busy, setBusy] = ctx.useState("busy", false);
@@ -162,12 +108,12 @@ export function control(ctx: ComposeDslContext): ComposeNode {
         await windowApi.open({
           id: WINDOW,
           applicationOnly: !voiceOverlay && caps.cameraRequiresApplicationWindow === true,
-          state: { cameraControls: !voiceOverlay },
-          route: voiceOverlay ? VOICE_OVERLAY_ROUTE : CALL_ROUTE,
+          state: { callSurface: true, cameraControls: !voiceOverlay, sourceChatId: chatId },
+          route: CONTROL_ROUTE,
           options: { width: 340, height: voiceOverlay ? 404 : 460, draggable: true },
         });
       }
-      const system = caps.scope === "system" || (existing ? existing.route === VOICE_OVERLAY_ROUTE : voiceOverlay);
+      const system = caps.scope === "system" || voiceOverlay;
       setStatus(text(system ? "system" : "application"));
     } catch (error) {
       setStatus(report(error));
@@ -209,6 +155,8 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   const [failure, setFailure] = ctx.useState("failure", "");
   const [cameraNotice, setCameraNotice] = ctx.useState("cameraNotice", "");
   const [identity, setIdentity] = ctx.useState<ChatDisplayIdentity | null>("identity", null);
+  const [participants, setParticipants] = ctx.useState<ChatDisplayParticipant[]>("participants", []);
+  const [activeParticipantId, setActiveParticipantId] = ctx.useState<string | null>("activeParticipantId", null);
   const identityRequest = ctx.useRef("identityRequest", 0);
   const session = ctx.useRef("session", {
     chatId: "",
@@ -217,9 +165,12 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     sending: false,
     playback: null as Playback | null,
     recording: false,
+    groupRequest: "",
+    skipReplies: false,
   }).current;
 
   async function interruptSpeech(): Promise<void> {
+    session.skipReplies = true;
     const playback = session.playback;
     if (playback && !playback.done) {
       const cancellation = playback.cancellation ??= Tools.Tts.cancel(playback.id).catch(error => {
@@ -234,8 +185,9 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   /** Prevents another turn and releases resources already in use. */
   async function stopCall(): Promise<void> {
     session.active = false;
-    await Promise.all([
-      ...(session.sending ? [Tools.Chat.cancel(session.chatId).catch(report)] : []),
+    await Promise.all<unknown>([
+      ...(session.groupRequest ? [characterCards.chat.groupTurn({ action: "cancel", chatId: session.chatId, requestId: session.groupRequest }).catch(report)]
+        : session.sending ? [Tools.Chat.cancel(session.chatId).catch(report)] : []),
       interruptSpeech(),
       ...(session.recording ? [windowApi.cancelRecording(WINDOW).catch(report)] : []),
     ]);
@@ -244,19 +196,23 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   ctx.useEffect("call-lifetime", () => () => { void stopCall(); }, []);
 
   /** Uses the same default artwork as the required character card plugin. */
-  async function readIdentity(chatId: string | null): Promise<ChatDisplayIdentity> {
-    const value = await characterCards.chat.identity({ chatId });
+  async function readPresentation(chatId: string | null) {
+    const value = await characterCards.chat.presentation({ chatId });
     return {
-      title: value?.title ?? "Operit",
-      avatarUri: value?.avatarUri || await characterCards.defaultAvatar(),
+      identity: { title: value.identity?.title ?? "Operit",
+        avatarUri: value.identity?.avatarUri || await characterCards.defaultAvatar() },
+      participants: value.kind === "group" ? value.participants : [],
     };
   }
 
   ctx.useEffect("call-avatar", () => {
     let disposed = false;
     const request = ++identityRequest.current;
-    void readIdentity(sourceChatId).then(value => {
-      if (!disposed && request === identityRequest.current) setIdentity(value);
+    void readPresentation(sourceChatId).then(value => {
+      if (!disposed && request === identityRequest.current) {
+        setIdentity(value.identity);
+        setParticipants(value.participants);
+      }
     }).catch(error => {
       if (!disposed && request === identityRequest.current) setFailure(report(error));
     });
@@ -290,82 +246,71 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     }
   }
 
-  async function record(echoCancellation = false): Promise<ToolPkg.FloatingWindowRecording | null> {
+  async function record(): Promise<ToolPkg.FloatingWindowRecording | null> {
     session.recording = true;
-    try {
-      return await windowApi.record(WINDOW, { ...RECORDING_OPTIONS, ...(echoCancellation ? { echoCancellation } : {}) });
-    } finally {
-      session.recording = false;
-    }
+    try { return await windowApi.record(WINDOW, RECORDING_OPTIONS); }
+    finally { session.recording = false; }
   }
 
-  /** Listens during playback and carries the captured interruption into the next turn. */
-  async function listenDuringPlayback(playback: Playback, echoCancellation: boolean): Promise<ToolPkg.FloatingWindowRecording | null> {
-    let checking = false;
-    let loudSamples = 0;
-    const detector = setInterval(() => {
-      if (checking || !session.active || playback.done || !session.recording || playback.cancellation) return;
-      checking = true;
-      void windowApi.recordingLevel(WINDOW).then(async level => {
-        if (!session.active || session.playback !== playback || playback.done) return;
-        loudSamples = Number.isFinite(level) && level >= INTERRUPT_LEVEL ? loudSamples + 1 : 0;
-        if (loudSamples >= INTERRUPT_SAMPLES) await interruptSpeech();
-      }).catch(error => {
-        clearInterval(detector);
-        report(error);
-      }).finally(() => { checking = false; });
-    }, 100);
-    try {
-      // The host bounds each capture. Keep listening if that limit expires during a long reply.
-      while (session.active && !playback.failed) {
-        const startedDuringPlayback = !playback.done;
-        loudSamples = 0;
-        const captured = await record(echoCancellation);
-        if (!session.active || playback.failed) return null;
-        if (captured) {
-          if (!playback.done && !playback.cancellation && loudSamples < INTERRUPT_SAMPLES) continue;
-          await interruptSpeech();
-          return captured;
-        }
-        if (!startedDuringPlayback || playback.done) break;
-      }
-      return null;
-    } finally {
-      clearInterval(detector);
-    }
-  }
-
-  async function speak(answer: string, sentAt: number, echoCancellation: boolean): Promise<ToolPkg.FloatingWindowRecording | null> {
+  /** Leaves the microphone idle until playback finishes or the user presses interrupt. */
+  async function speak(answer: string, id: string, configId?: string): Promise<void> {
     setPhase("speaking");
-    const playback: Playback = { id: `call-${session.chatId}-${sentAt}`, done: false, failed: false };
+    const playback: Playback = { id, done: false, failed: false };
     session.playback = playback;
-    const speaking = Tools.Tts.speak({
-      text: answer,
-      interrupt: false,
-      waitForCompletion: true,
-      playbackId: playback.id,
-    }).catch(async error => {
-      if (await playback.cancellation) return;
-      playback.failed = true;
-      throw error;
-    }).finally(() => {
-      playback.done = true;
-      if (session.active && !playback.failed && session.recording) setPhase("listening");
-    });
-    const listening = listenDuringPlayback(playback, echoCancellation).catch(error => {
-      report(error);
-      return null;
-    });
     try {
-      const [, captured] = await Promise.all([speaking, listening]);
-      return captured;
-    } catch (error) {
-      if (session.recording) await windowApi.cancelRecording(WINDOW).catch(report);
-      await listening;
-      throw error;
+      await Tools.Tts.speak({ text: answer, interrupt: false, waitForCompletion: true,
+        playbackId: playback.id, ...(configId ? { configId } : {}),
+      }).catch(async error => {
+        if (await playback.cancellation) return;
+        playback.failed = true;
+        throw error;
+      });
     } finally {
+      playback.done = true;
       session.playback = null;
     }
+  }
+
+  /** Reuses the character package's group planner and exact committed replies. */
+  async function groupTurn(transcript: string, attachments: Chat.SendAttachment[]): Promise<boolean> {
+    const requestId = `call-${session.chatId}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    session.groupRequest = requestId;
+    session.skipReplies = false;
+    let spoken = 0;
+    try {
+      let progress = await characterCards.chat.groupTurn({ action: "start", chatId: session.chatId,
+        requestId, text: transcript, attachments });
+      while (session.active) {
+        if (progress.status === "not_group") return false;
+        for (; spoken < progress.replies.length && session.active && !session.skipReplies; spoken++) {
+          const reply = progress.replies[spoken];
+          setActiveParticipantId(reply.participantId);
+          setReply(reply.text);
+          try {
+            await speak(reply.text, `${requestId}-${spoken}`, reply.ttsConfigId ?? undefined);
+          } finally { setActiveParticipantId(null); }
+        }
+        if (!session.active || session.skipReplies) {
+          await characterCards.chat.groupTurn({ action: "cancel", chatId: session.chatId, requestId });
+          return true;
+        }
+        if (progress.status === "failed") throw new Error(progress.error || text("noReply"));
+        if (progress.status === "completed") {
+          if (spoken === 0) throw new Error(text("noReply"));
+          return true;
+        }
+        if (progress.status === "cancelled") return true;
+        setPhase("waiting");
+        await new Promise<void>(resolve => setTimeout(resolve, 200));
+        if (!session.active) break;
+        progress = await characterCards.chat.groupTurn({ action: "status", chatId: session.chatId, requestId });
+      }
+      await characterCards.chat.groupTurn({ action: "cancel", chatId: session.chatId, requestId });
+      return true;
+    } catch (failure) {
+      await characterCards.chat.groupTurn({ action: "cancel", chatId: session.chatId, requestId }).catch(report);
+      throw failure;
+    } finally { session.groupRequest = ""; }
   }
 
   /** Records each turn, persists it in chat, and plays the reply. */
@@ -381,16 +326,14 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         const chat = await Tools.Chat.createNew({ setAsCurrentChat: false, ...(sourceChatId ? { sourceChatId } : {}) });
         session.chatId = chat.chatId;
       }
-      const currentIdentity = await readIdentity(session.chatId);
+      const presentation = await readPresentation(session.chatId);
       if (!session.active) return;
-      setIdentity(currentIdentity);
-      const caps = await cameraWindowCapabilities();
-      const echoCancellation = caps.recordingEchoCancellation === true;
-      let nextRecording: ToolPkg.FloatingWindowRecording | null = null;
+      setIdentity(presentation.identity);
+      setParticipants(presentation.participants);
       while (session.active) {
-        if (!nextRecording) setPhase("listening");
-        const recording = nextRecording ?? await record();
-        nextRecording = null;
+        setActiveParticipantId(null);
+        setPhase("listening");
+        const recording = await record();
         if (!session.active) return;
         if (!recording) {
           setPhase("idle");
@@ -412,6 +355,8 @@ export function call(ctx: ComposeDslContext): ComposeNode {
           return null;
         });
         if (!session.active) return;
+        if (await groupTurn(transcript, attachment ? [attachment] : [])) continue;
+        if (!session.active) return;
         session.sending = true;
         const turn = await Tools.Chat.sendMessage({
           kind: "submit",
@@ -429,7 +374,8 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         if (!answer) throw new Error(text("noReply"));
 
         setReply(answer);
-        nextRecording = await speak(answer, turn.sentAt, echoCancellation);
+        session.skipReplies = false;
+        await speak(answer, `call-${session.chatId}-${turn.sentAt}`);
       }
     } catch (error) {
       if (session.active) {
@@ -523,6 +469,10 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     camera: cameraControls,
     imageUri: identity?.avatarUri ?? undefined,
     imageTitle: identity?.title,
+    participants: participants.map(member => ({
+      id: member.id, title: member.name, imageUri: member.avatarUri ?? undefined,
+    })),
+    activeParticipantId: activeParticipantId ?? undefined,
     cameraReadyText: getLang().startsWith("zh") ? "每轮发言共享一张画面" : "Shares one frame per spoken turn",
   }, [
     ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 6 }, [
@@ -534,13 +484,10 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   ]);
 }
 
-/** Registers the toolbox launcher and the standalone call surface. */
+/** Publishes one launcher, shared by the toolbox and chat attachment menu. */
 export function registerToolPkg(): boolean {
-  ToolPkg.registerUiRoute({ id: "control", route: CONTROL_ROUTE, runtime: "compose_dsl", screen: control, title });
-  ToolPkg.registerUiRoute({ id: "call", route: CALL_ROUTE, runtime: "compose_dsl", screen: call, title });
-  ToolPkg.registerUiRoute({ id: "voice-overlay", route: VOICE_OVERLAY_ROUTE, runtime: "compose_dsl", screen: call, title });
-  ToolPkg.registerUiRoute({ id: "input-menu", route: MENU_ROUTE, runtime: "compose_dsl", screen: inputMenu, title });
-  ToolPkg.registerNavigationEntry({ id: "input-menu", route: MENU_ROUTE, surface: "chat_attachments",
+  ToolPkg.registerUiRoute({ id: "control", route: CONTROL_ROUTE, runtime: "compose_dsl", screen, title });
+  ToolPkg.registerNavigationEntry({ id: "input-menu", route: CONTROL_ROUTE, surface: "chat_attachments",
     title: { zh: "语音/视频通话", en: "Voice / video call" }, icon: "Call", order: 50 });
   ToolPkg.registerNavigationEntry({ id: "control", route: CONTROL_ROUTE, title, surface: "toolbox", icon: "Call" });
   return true;

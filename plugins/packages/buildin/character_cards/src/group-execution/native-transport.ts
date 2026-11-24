@@ -27,6 +27,8 @@ async function verifyAuthor(chatId: string, selected: GroupSelectedTurn, assista
 
 /** Uses only sendMessage and cancel; no native execution handle or separate finalization API reaches this plugin. */
 export class NativeGroupTurnTransport implements GroupTurnTransport {
+  constructor(private readonly onReply?: (turn: GroupContinuationTurn, text: string) => Promise<void>) {}
+
   private readonly sequences = new Map<string, Sequence>();
   private readonly attempts = new Map<string, Attempt>();
 
@@ -114,6 +116,9 @@ export class NativeGroupTurnTransport implements GroupTurnTransport {
         if (!("kind" in input) && decision.receipt.assistant !== null) {
           sequence.assistants.push({ ...decision.receipt.assistant });
           await verifyAuthor(sequence.chatId, input.turn, decision.receipt.assistant);
+          if (decision.receipt.status === "completed" && actual.aiResponse?.trim() && this.onReply) {
+            await this.onReply(input, actual.aiResponse.trim());
+          }
         }
       }
       return actual;

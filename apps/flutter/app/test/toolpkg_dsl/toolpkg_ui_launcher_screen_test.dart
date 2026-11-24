@@ -774,11 +774,16 @@ void main() {
   testWidgets('an unrelated plugin declares MediaStage without host package rules', (tester) async {
     final preferences = StreamController<Map<String, Object?>>();
     addTearDown(preferences.close);
+    final languagePreferences = StreamController<Map<String, Object?>>();
+    addTearDown(languagePreferences.close);
     final bridge = _ToolPkgDslTestBridge(
       preferences: preferences.stream,
+      languagePreferences: languagePreferences.stream,
       renderResult: (_) => jsonEncode({
         'success': true,
-        'tree': _node('MediaStage', props: {'camera': false, 'imageTitle': 'Camera monitor'}, children: [
+        'tree': _node('MediaStage', props: {'camera': false, 'imageTitle': 'Camera monitor', 'participants': [
+          {'id': 'one', 'title': 'First member'}, {'id': 'two', 'title': 'Second member'},
+        ], 'activeParticipantId': 'two'}, children: [
           _node('Text', props: {'text': 'Plugin media controls'}),
         ]),
         'state': <String, Object?>{}, 'memo': <String, Object?>{},
@@ -792,8 +797,12 @@ void main() {
       ),
     ));
     preferences.add({'theme_mode': 'light'});
+    languagePreferences.add({});
     await tester.pumpAndSettle();
     expect(find.byType(MediaStage), findsOneWidget);
+    expect(find.text('First member'), findsOneWidget);
+    expect(find.text('Second member'), findsOneWidget);
+    expect(tester.widget<MediaStage>(find.byType(MediaStage)).activeParticipantId, 'two');
     expect(find.text('Plugin media controls'), findsOneWidget);
     expect(find.byIcon(Icons.videocam_off_outlined), findsNothing);
     final render = bridge.calls.singleWhere((call) => call.methodName == 'render');
@@ -807,9 +816,14 @@ void main() {
     tester,
   ) async {
     final preferences = StreamController<Map<String, Object?>>();
+    final languagePreferences = StreamController<Map<String, Object?>>();
     addTearDown(preferences.close);
-    final bridge = _ToolPkgDslTestBridge(preferences: preferences.stream);
-    const route = 'toolpkg:com.operit.voice_call:ui:call';
+    addTearDown(languagePreferences.close);
+    final bridge = _ToolPkgDslTestBridge(
+      preferences: preferences.stream,
+      languagePreferences: languagePreferences.stream,
+    );
+    const route = 'toolpkg:com.operit.voice_call:ui:control';
     final plugin = _pluginRuntime().toJson();
     plugin['packageName'] = 'com.operit.voice_call';
     plugin['uiRoutes'] = [
@@ -825,11 +839,12 @@ void main() {
           payload: {
             'plugin': plugin,
             'route': route,
-            'state': <String, Object?>{},
+            'state': <String, Object?>{'callSurface': true},
           },
         ),
       ),
     );
+    languagePreferences.add({});
     const primary = 0xff108640;
     preferences.add({
       'theme_mode': 'dark',

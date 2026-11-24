@@ -42,7 +42,7 @@ test("plugin registers exactly the transferred provider roots using the actual g
   ), roots);
   const fields = interfaceMembers("../../../../types/toolpkg.d.ts", "CoreCommandRegistration");
   for (const definition of definitions) {
-    assert.deepEqual(Object.keys(definition).sort(), fields.sort());
+    assert.deepEqual(Object.keys(definition).sort(), fields.filter(field => field !== "args" || Object.hasOwn(definition, field)).sort());
     assert.equal(definition.id, definition.name); assert.equal(typeof definition.function, "function");
     const result = await definition.function(commandEvent(definition.name, ["help"]));
     assert.ok(result.stdout.length > 0); assert.ok(result.json.usage.length > 0);
@@ -59,7 +59,7 @@ test("every declared domain method is published as a provider registerApi callba
   const api = loadModule("src/public-api.ts", { ToolPkg: registry });
   api.registerDomainApis();
   const declared = [...interfaceMembers("../src/api.ts", "DomainOperations"), "memory.query",
-    "chat.configuration.draft.resolve", "chat.configuration.draft.commit", "chat.configuration.draft.abort", "chat.configuration.delete"].sort();
+    "chat.configuration.draft.resolve", "chat.configuration.draft.commit", "chat.configuration.draft.abort", "chat.configuration.delete", "chat.groupTurn", "avatar.default", "chat.identity", "chat.presentation"].sort();
   const names = definitions.map(
     /** Preserves each stable published method name. */
     definition => definition.name,

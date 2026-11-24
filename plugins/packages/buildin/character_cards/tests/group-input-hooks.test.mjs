@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { selectorEnvironment } from "./selector-environment.mjs";
 import { mountRegisteredComposeRoute, keyedNode } from "./selector-render.mjs";
-import { plain } from "./runtime.mjs";
+import { plain, runtimeConsole } from "./runtime.mjs";
 
 /** Holds only an explicit controlled host ABI operation, never a production execution implementation. */
 function barrier() {
@@ -25,7 +25,7 @@ function event(change = {}) {
 /** Opens the real main registrations and file service with explicitly controlled Chat/AI ABI inputs. */
 async function environment(t) {
   const failures = [], diagnostics = [], timers = { created: 0, cleared: 0 };
-  const runtime = await selectorEnvironment(t, {}, { console: { ...console,
+  const runtime = await selectorEnvironment(t, {}, { console: { ...runtimeConsole,
     /** Captures production lifecycle logs for pending and failed native admission boundaries. */
     log(message) { diagnostics.push(message); },
     /** Records actual asynchronous plugin failures without implementing another error handler. */

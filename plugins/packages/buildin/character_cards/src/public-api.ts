@@ -1,4 +1,4 @@
-import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, ChatConfigurationResult, ChatIdentityRequest, ChatDisplayIdentity, DomainInput, DomainOutput, EmptyParams } from "./api";
+import type { MemoryQueryRequest, MemoryQueryResult, ChatConfigurationRequest, ChatConfigurationResult, ChatIdentityRequest, ChatDisplayIdentity, ChatPresentation, DomainInput, DomainOutput, EmptyParams } from "./api";
 import { parseDomainPayload, parseMemoryQueryRequest } from "./domain";
 import { MemoryTools } from "./runtime-tools/memory";
 import { dispatchDomain, getService } from "./service-runtime";
@@ -8,25 +8,37 @@ import { resolveChatDisplay } from "./group-execution/display";
 import { requireId } from "./validation";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
+import { groupTurnApi } from "./group-execution/public-turn";
+
 const memoryQueries = new MemoryTools(dispatchDomain);
 
 /** Reads role presentation through the same selection and display rules used by chat creation. */
-export async function chatIdentityApi(event: ToolPkg.PublicApiEvent<ChatIdentityRequest>): Promise<ChatDisplayIdentity | null> {
-  const input = event.payload;
+async function readChatPresentation(input: ChatIdentityRequest, method: string): Promise<ChatPresentation> {
   if (!input || typeof input !== "object" || Array.isArray(input) || Object.keys(input).length !== 1 || !("chatId" in input)) {
-    throw new Error("chat.identity requires exactly chatId");
+    throw new Error(method + " requires exactly chatId");
   }
-  if (input.chatId !== null) requireId(input.chatId, "chat.identity.chatId");
+  if (input.chatId !== null) requireId(input.chatId, method + ".chatId");
   const selection = input.chatId === null
     ? selectionForActive(await dispatchDomain("activePrompt.get", {}))
     : await chatSelection(input.chatId);
-  if (parseChatSelection(selection).kind === "model") return null;
+  const kind = parseChatSelection(selection).kind;
+  if (kind === "model") return { kind, identity: null, participants: [] };
   const result = await resolveChatDisplay({
     purpose: "display", chatId: input.chatId, chatExtension: { version: 1, selection },
     participantId: null, promptFunctionType: "VOICE",
     defaultModelBinding: { providerId: "", modelId: "" }, defaultTtsConfigId: "",
   }, await getService());
-  return result.identity;
+  return { kind, identity: result.identity, participants: result.participants };
+}
+
+/** Reads the role portrait while retaining the existing identity-only contract. */
+export async function chatIdentityApi(event: ToolPkg.PublicApiEvent<ChatIdentityRequest>): Promise<ChatDisplayIdentity | null> {
+  return (await readChatPresentation(event.payload, "chat.identity")).identity;
+}
+
+/** Exposes the complete saved roster without requiring host execution defaults. */
+export function chatPresentationApi(event: ToolPkg.PublicApiEvent<ChatIdentityRequest>): Promise<ChatPresentation> {
+  return readChatPresentation(event.payload, "chat.presentation");
 }
 
 /** Resolves the provider's default avatar for dependency UIs. */
@@ -99,6 +111,8 @@ export async function chatConfigurationBindingDeleteApi(event: ToolPkg.PublicApi
 /** Registers chat APIs without opening storage or evaluating business reads. */
 export function registerChatConfigurationApis(): void {
   ToolPkg.registerApi({ name: "chat.identity", function: chatIdentityApi });
+  ToolPkg.registerApi({ name: "chat.presentation", function: chatPresentationApi });
+  ToolPkg.registerApi({ name: "chat.groupTurn", function: groupTurnApi });
   ToolPkg.registerApi({ name: "chat.configuration.resolve", function: chatConfigurationResolveApi });
   ToolPkg.registerApi({ name: "chat.configuration.delete", function: chatConfigurationDeleteApi });
   ToolPkg.registerApi({ name: "chat.configuration.binding.find", function: chatConfigurationBindingFindApi });

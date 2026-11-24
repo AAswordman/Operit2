@@ -107,6 +107,8 @@ export interface ChatDisplayIdentity { title: string; avatarUri: string | null }
 export interface ChatIdentityRequest { chatId: string | null }
 /** Preserves the plugin-declared presentation order and real participant identity. */
 export interface ChatDisplayParticipant { id: string; name: string; avatarUri: string | null }
+/** Returns the selected role and its complete ordered roster without execution settings. */
+export interface ChatPresentation { kind: "model" | "card" | "group"; identity: ChatDisplayIdentity | null; participants: ChatDisplayParticipant[] }
 /** Supplies an explicitly authored initial message and its complete immutable participant snapshot. */
 export interface ChatInitialMessage { content: string; displayName: string; participantId: string }
 /** Returns presentation data only; an empty initial-message array does not select an executor. */
@@ -118,6 +120,21 @@ export interface ChatConfigurationDisplayResult {
 }
 /** Matches the real host purpose-specific results without placing a purpose discriminator in JSON. */
 export type ChatConfigurationResult = ChatConfigurationDisplayResult | ChatConfigurationExecutionResult;
+
+/** Starts or observes a group turn without duplicating its planner in a consumer plugin. */
+export type ChatGroupTurnRequest =
+  | { action: "start"; chatId: string; requestId: string; text: string; attachments: { filePath: string; fileName: string; mimeType: string; fileSize: number; content: string; vfsPath?: string | null; nodeId?: string | null }[] }
+  | { action: "status" | "cancel"; chatId: string; requestId: string };
+/** Contains one exact completed participant reply and its configured voice. */
+export interface ChatGroupTurnReply {
+  participantId: string; name: string; avatarUri: string | null; ttsConfigId: string | null; text: string;
+}
+/** Preserves asynchronous generation, cancellation and failure independently of queued speech. */
+export interface ChatGroupTurnStatus {
+  status: "running" | "completed" | "cancelled" | "not_group" | "failed";
+  replies: ChatGroupTurnReply[];
+  error: string | null;
+}
 
 /** Defines the complete stored character record without a CLI transport. */
 export interface CharacterRecord {
@@ -338,6 +355,12 @@ export const characterCards = {
     ToolPkg.callDependency<EmptyParams, string>("com.operit.character_cards", "avatar.default", {}),
 
   chat: {
+    /** Reads the complete presentation roster, including silent members. Requires 0.2.12. */
+    presentation: (payload: ChatIdentityRequest): Promise<ChatPresentation> =>
+      ToolPkg.callDependency<ChatIdentityRequest, ChatPresentation>("com.operit.character_cards", "chat.presentation", payload),
+    /** Runs the existing group planner; non-group chats return not_group without submitting input. */
+    groupTurn: (payload: ChatGroupTurnRequest): Promise<ChatGroupTurnStatus> =>
+      ToolPkg.callDependency<ChatGroupTurnRequest, ChatGroupTurnStatus>("com.operit.character_cards", "chat.groupTurn", payload),
     /** Reads the selected role's display identity; model-only mode has no role identity. Requires 0.2.9. */
     identity: (payload: ChatIdentityRequest): Promise<ChatDisplayIdentity | null> =>
       ToolPkg.callDependency<ChatIdentityRequest, ChatDisplayIdentity | null>("com.operit.character_cards", "chat.identity", payload),

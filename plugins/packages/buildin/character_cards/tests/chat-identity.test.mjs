@@ -56,3 +56,36 @@ test("dependency identity rejects malformed inputs and propagates deleted-role e
   disk.replaceState(state);
   await assert.rejects(() => identity(openPlugin(disk), { chatId: "stale-call" }));
 });
+
+/** The dependency display boundary includes every saved member, including those with no reply. */
+test("dependency presentation returns the persisted ordered roster independently of active selection", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), plugin = openPlugin(disk);
+  const alice = await plugin.api("character.create", { values: { name: "Alice", avatarUri: "alice.png" } });
+  const bob = await plugin.api("character.create", { values: { name: "Bob" } });
+  const group = await plugin.api("group.create", { values: { name: "Call group", avatarUri: "group.png", members: [
+    { characterCardId: alice.id, orderIndex: 2 }, { characterCardId: "default", orderIndex: 1 }, { characterCardId: bob.id, orderIndex: 0 },
+  ] } });
+  await bind(plugin, "roster-call", "group:" + group.id);
+  const presentation = payload => plugin.apis.get("chat.presentation").function({ callerPackage: "com.operit.voice_call", payload });
+  assert.deepEqual(plain(await presentation({ chatId: "roster-call" })), {
+    kind: "group", identity: { title: group.name, avatarUri: group.avatarUri },
+    participants: [
+      { id: bob.id, name: "Bob", avatarUri: null },
+      { id: "default", name: "Operit", avatarUri: null },
+      { id: alice.id, name: "Alice", avatarUri: "alice.png" },
+    ],
+  });
+  await bind(plugin, "model-roster", "model:chat");
+  assert.deepEqual(plain(await presentation({ chatId: "model-roster" })), { kind: "model", identity: null, participants: [] });
+  const active = plain(await presentation({ chatId: null }));
+  assert.equal(active.kind, "card");
+  assert.equal(active.participants.length, 1);
+  assert.equal(active.participants[0].id, "default");
+  for (const payload of [null, {}, { chatId: "" }, { chatId: null, purpose: "execution" }]) {
+    await assert.rejects(() => presentation(payload));
+  }
+  const state = disk.readState();
+  state.cards = state.cards.filter(record => record.id !== bob.id);
+  disk.replaceState(state);
+  await assert.rejects(() => plugin.apis.get("chat.presentation").function({ callerPackage: "com.operit.voice_call", payload: { chatId: "roster-call" } }));
+});
