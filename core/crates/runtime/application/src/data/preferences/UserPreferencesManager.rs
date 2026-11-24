@@ -2,7 +2,8 @@ use super::ThemeConfigManager::{validateConfig, ThemeConfig, THEME_CONFIG_PREFIX
 use super::ThemePreferenceSnapshot::{migrateLegacyThemePreferences, migrateLegacyThemeSnapshot};
 use operit_host_api::RuntimeStorageHost;
 use operit_store::PreferencesDataStore::{
-    stringPreferencesKey, Flow, Preferences, PreferencesDataStore, PreferencesDataStoreError,
+    stringPreferencesKey, CoreNodeStateStore, Flow, Preferences, PreferencesDataStore,
+    PreferencesDataStoreError,
 };
 use operit_store::RuntimeStorageHost::defaultRuntimeStorageHost;
 use operit_util::LocaleUtils::LanguageCodes;
@@ -12,7 +13,7 @@ use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct UserPreferencesManager {
-    dataStore: PreferencesDataStore,
+    dataStore: CoreNodeStateStore,
 }
 
 #[derive(Clone)]
@@ -23,11 +24,19 @@ pub struct PreferencesManager {
 impl UserPreferencesManager {
     pub const DEFAULT_LANGUAGE: &'static str = LanguageCodes::AUTO;
 
-    /// Opens user preferences from the default runtime preference path.
+    /// Opens application language from this device's runtime preference path.
     pub fn getInstance() -> Self {
         Self {
-            dataStore: Self::store(defaultRuntimeStorageHost()),
+            dataStore: Self::languageStore(defaultRuntimeStorageHost()),
         }
+    }
+
+    /// Opens device-local language storage without creating Space sync operations.
+    pub(crate) fn languageStore(storage: Arc<dyn RuntimeStorageHost>) -> CoreNodeStateStore {
+        CoreNodeStateStore::newWithStorage(
+            storage,
+            operit_util::RuntimeStorageLayout::APP_LANGUAGE_PREFERENCES_PATH,
+        )
     }
 
     /// Opens the single versioned owner of global user and appearance preferences.

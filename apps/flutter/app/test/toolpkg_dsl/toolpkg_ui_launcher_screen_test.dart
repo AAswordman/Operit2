@@ -673,7 +673,12 @@ void main() {
   ) async {
     final preferences = StreamController<Map<String, Object?>>();
     addTearDown(preferences.close);
-    final bridge = _ToolPkgDslTestBridge(preferences: preferences.stream);
+    final languagePreferences = StreamController<Map<String, Object?>>();
+    addTearDown(languagePreferences.close);
+    final bridge = _ToolPkgDslTestBridge(
+      preferences: preferences.stream,
+      languagePreferences: languagePreferences.stream,
+    );
     tester.platformDispatcher.platformBrightnessTestValue = Brightness.light;
     addTearDown(tester.platformDispatcher.clearPlatformBrightnessTestValue);
     tester.platformDispatcher.localesTestValue = const [Locale('en')];
@@ -702,6 +707,7 @@ void main() {
       'use_custom_colors': true,
       'custom_primary_color': primary,
     });
+    languagePreferences.add({});
     await tester.pumpAndSettle();
     final launcherFinder = find.byType(ToolPkgUiLauncherScreen);
     final launcher = tester.state(launcherFinder);
@@ -734,7 +740,7 @@ void main() {
       bridge.calls.where((call) => call.methodName == 'render'),
       hasLength(1),
     );
-    preferences.add({'theme_mode': 'system', 'app_language': 'fr'});
+    languagePreferences.add({'app_language': 'fr'});
     await tester.pumpAndSettle();
     expect(
       Localizations.localeOf(tester.element(launcherFinder)),
@@ -755,7 +761,7 @@ void main() {
       Localizations.localeOf(tester.element(launcherFinder)),
       const Locale('fr'),
     );
-    preferences.add({'theme_mode': 'system', 'app_language': 'system'});
+    languagePreferences.add({'app_language': 'system'});
     await tester.pumpAndSettle();
     expect(
       Localizations.localeOf(tester.element(launcherFinder)),
@@ -3098,6 +3104,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   _ToolPkgDslTestBridge({
     String Function(int count)? renderResult,
     this.preferences,
+    this.languagePreferences,
     this.holdActionCompletion = false,
     this.closeBeforeActionComplete = false,
     this.attachmentError,
@@ -3106,6 +3113,7 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
 
   final List<CoreCallRequest> calls = <CoreCallRequest>[];
   final Stream<Map<String, Object?>>? preferences;
+  final Stream<Map<String, Object?>>? languagePreferences;
   final String Function(int count) _renderResult;
   final bool holdActionCompletion;
   final bool closeBeforeActionComplete;
@@ -3344,7 +3352,12 @@ class _ToolPkgDslTestBridge extends OperitRuntimeBridge {
   @override
   Stream<CoreEvent> watchStream(CoreWatchRequest request) {
     if (request.propertyName == 'preferencesFlow' && preferences != null) {
-      return preferences!.map(
+      final stream = switch ((request.args as Map)['fileName']) {
+        'user_preferences.preferences.json' => preferences!,
+        'app_language.preferences.json' => languagePreferences!,
+        final file => throw StateError('Unexpected preference file: $file'),
+      };
+      return stream.map(
         (values) => CoreEvent.raw(
           requestId: request.requestId,
           target: request.target,

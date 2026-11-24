@@ -133,10 +133,16 @@ impl PreferenceStorageManager {
     }
 }
 
-/// Opens the shared host-backed store for one validated custom preference file.
+/// Opens each preference file through its declared synchronized or device-local owner.
 fn preferencesDataStore(fileName: &str) -> Result<PreferencesDataStore, PreferencesDataStoreError> {
     let path = OperitPaths::customPreferenceStoragePath(fileName)
         .map_err(PreferencesDataStoreError::Message)?;
+    if path == operit_util::RuntimeStorageLayout::APP_LANGUAGE_PREFERENCES_PATH {
+        let store = super::UserPreferencesManager::UserPreferencesManager::languageStore(
+            defaultRuntimeStorageHost(),
+        );
+        return Ok((*store).clone());
+    }
     super::PreferenceSpaceMerge::open(defaultRuntimeStorageHost(), &path)
 }
 
