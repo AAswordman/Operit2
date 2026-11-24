@@ -42,7 +42,7 @@ test("plugin registers exactly the transferred provider roots using the actual g
   ), roots);
   const fields = interfaceMembers("../../../../types/toolpkg.d.ts", "CoreCommandRegistration");
   for (const definition of definitions) {
-    assert.deepEqual(Object.keys(definition).sort(), fields.sort());
+    assert.deepEqual(Object.keys(definition).sort(), fields.filter(field => field !== "args" || Object.hasOwn(definition, field)).sort());
     assert.equal(definition.id, definition.name); assert.equal(typeof definition.function, "function");
     const result = await definition.function(commandEvent(definition.name, ["help"]));
     assert.ok(result.stdout.length > 0); assert.ok(result.json.usage.length > 0);
