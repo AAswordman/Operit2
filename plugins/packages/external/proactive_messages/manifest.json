@@ -1,12 +1,23 @@
 {
   "schema_version": 1,
   "toolpkg_id": "com.operit.proactive_messages",
-  "version": "0.1.3",
+  "version": "0.2.0",
   "api_version": "2.0.0",
   "main": "dist/main.js",
-  "display_name": { "zh": "AI 主动消息", "en": "AI Proactive Messages" },
-  "description": { "zh": "按对话设置主动消息、固定或随机间隔及触发概率。在前台准备消息，iOS 提前安排系统定时通知。", "en": "Prepare proactive chat messages in the foreground with intervals, optional random delays and probability; pre-schedule iOS notifications." },
+  "display_name": {
+    "zh": "AI 自主回复",
+    "en": "AI Autonomous Replies"
+  },
+  "description": {
+    "zh": "在选定对话中由 AI 决定展示内容和消息分段，原始子对话保留完整执行记录。",
+    "en": "Let AI choose message content and segments in selected chats, with the complete original conversation in a child chat."
+  },
   "installation_scope": "device",
   "enabled_by_default": false,
-  "subpackages": []
+  "subpackages": [
+    {
+      "id": "proactive_messages",
+      "entry": "dist/tools.js"
+    }
+  ]
 }
