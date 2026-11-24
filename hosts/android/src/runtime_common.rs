@@ -99,6 +99,8 @@ pub(crate) fn buildAndroidProotCommandWithRootfs(executable: &str, cwd: Option<&
         "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     );
     command.arg("-0");
+    // Emulate hard links for package databases on Android filesystems restricted by SELinux.
+    command.arg("--link2symlink");
     command.arg("-r").arg(&rootfsDir);
     command.arg("-b").arg("/proc");
     command.arg("-b").arg("/dev");

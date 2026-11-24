@@ -16,6 +16,13 @@ so freshly installed PRoot environments can resolve domains for terminal command
 and MCP processes. This configuration is generated with the rootfs; no migration
 is applied to existing environments.
 
+The Android Host starts PRoot with `--link2symlink` for both terminal sessions
+and managed processes, including profiles with a custom rootfs. This enables
+PRoot's existing hard-link emulation on Android systems whose SELinux policy
+denies real hard links, supporting operations such as dpkg database backups.
+The option takes effect when a new PRoot process starts; existing sessions must
+be restarted. It does not require rebuilding PRoot or reinstalling the rootfs.
+
 PRoot edits live in:
 
 ```text
