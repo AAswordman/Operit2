@@ -7,6 +7,7 @@ import android.graphics.Point;
 import android.graphics.Rect;
 import android.hardware.input.InputManager;
 import android.graphics.PixelFormat;
+import android.media.audiofx.AcousticEchoCanceler;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
@@ -139,6 +140,10 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
     /** Applies surface options while Android owns the bounds of a fill window. */
     private void apply(Surface surface, Map<?, ?> args) {
         if (!flag(args,"alwaysOnTop",true)) throw new UnsupportedOperationException("Android overlays are always above applications");
+        if (args.containsKey("fill")) {
+            surface.fill = flag(args, "fill", surface.fill);
+            surface.screenBounded = false;
+        }
         surface.draggable = flag(args, "draggable", surface.draggable);
         if (!surface.draggable) { surface.pointerDown = false; surface.dragging = false; }
         float density = density(surface);
@@ -241,6 +246,7 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
                 caps.put("supported",engineConfigurer != null); caps.put("permissionGranted",permitted());
                 caps.put("positioning",true); caps.put("alwaysOnTop",false);
                 caps.put("clickThrough",true); caps.put("focusable",true);
+                caps.put("recordingEchoCancellation", AcousticEchoCanceler.isAvailable());
                 result.success(caps); return;
             }
             case "requestPermission":

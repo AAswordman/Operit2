@@ -3,6 +3,8 @@
 import 'dart:async';
 import '../../../../core/compose/compose_program_buffer.dart' as compose_buffer;
 import 'ComposeDslImageSource.dart';
+import '../../../window/FloatingWindowScope.dart';
+import '../../../window/MediaStage.dart';
 import '../../../../core/application/PluginHotReload.dart';
 import 'dart:math' as math;
 

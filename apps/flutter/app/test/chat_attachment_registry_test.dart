@@ -57,6 +57,71 @@ void main() {
   });
 
   testWidgets(
+    'phone entry in the plus menu auto-launches once and closes without attaching',
+    (tester) async {
+      const owner = 'com.operit.voice_call';
+      final launches = <Map<String, Object?>>[];
+      final bridge = _AttachmentRegistryBridge(
+        entries: [
+          core_proxy.ToolPkgNavigationEntry(
+            containerPackageName: owner,
+            toolPkgId: owner,
+            entryId: 'input-menu',
+            routeId: 'picker-route',
+            params: const {},
+            surface: 'chat_attachments',
+            title: '语音/视频通话',
+            description: '',
+            action: null,
+            icon: 'Call',
+            order: 50,
+          ),
+        ],
+        routes: [_route(owner)],
+        render: (_) => {
+          'type': 'AlertDialog',
+          'props': {
+            'title': 'Opening call',
+            'text': 'Opening call…',
+            'onLoad': {'__actionId': 'launch-call'},
+          },
+          'children': <Object?>[],
+          'slots': <String, Object?>{},
+        },
+        action: (state, action) async {
+          expect(action, 'launch-call');
+          launches.add(state);
+          return {
+            'type': ContributionPresentationResult.cancelType,
+            'requestId': (state['presentation'] as Map)['requestId'],
+          };
+        },
+      );
+      var attached = false;
+      await tester.pumpWidget(
+        _menu(bridge, onResult: (_, _) async => attached = true),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('语音/视频通话'), findsOneWidget);
+      expect(find.byIcon(Icons.call), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('$owner::input-menu')));
+      await tester.pumpAndSettle();
+      expect(launches, hasLength(1));
+      expect(launches.single['chatId'], 'chat-a');
+      expect((launches.single['presentation'] as Map)['input'], isEmpty);
+      expect(
+        (launches.single['presentation'] as Map)['requestId'],
+        isA<String>().having((value) => value.isNotEmpty, 'not empty', isTrue),
+      );
+      expect(find.byType(ToolPkgUiLauncherScreen), findsNothing);
+      expect(attached, isFalse);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+      await bridge.compose.close();
+    },
+  );
+
+  testWidgets(
     'empty registry retains native actions without an attach confirmation',
     (tester) async {
       final bridge = _AttachmentRegistryBridge(entries: const []);
@@ -603,6 +668,8 @@ class _AttachmentRegistryBridge extends OperitRuntimeBridge {
   _AttachmentRegistryBridge({
     List<core_proxy.ToolPkgNavigationEntry>? entries,
     List<core_proxy.ToolPkgUiRoute>? routes,
+    this.render,
+    this.action,
   }) : entries =
            entries ??
            [
@@ -615,10 +682,13 @@ class _AttachmentRegistryBridge extends OperitRuntimeBridge {
   final List<core_proxy.ToolPkgNavigationEntry> entries;
   final List<core_proxy.ToolPkgUiRoute> routes;
   final List<CoreCallRequest> calls = [];
+  final Map<String, Object?> Function(Map<String, Object?> state)? render;
+  final Future<Object?> Function(Map<String, Object?> state, String action)?
+  action;
 
   late final compose = ComposeSessionFixture(
-    render: (_) => _attachmentTree(),
-    action: _action,
+    render: render ?? (_) => _attachmentTree(),
+    action: action ?? _action,
   );
 
   /// Encodes actual registry and render responses through the generated proxy codec.
@@ -795,6 +865,7 @@ core_proxy.ToolPkgContainerRuntime _runtime(String owner) =>
       chatRuntimeHooks: const [],
       hostEventHooks: const [],
       toolLifecycleHooks: const [],
+      toolPermissionHooks: const [],
       promptInputHooks: const [],
       promptHistoryHooks: const [],
       promptEstimateHistoryHooks: const [],

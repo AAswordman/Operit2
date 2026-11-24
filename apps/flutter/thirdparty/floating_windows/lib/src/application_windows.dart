@@ -19,8 +19,9 @@ class _ApplicationWindow {
   _ApplicationWindow(this.payload, this.options, {required this.fill});
   Map<String, Object?> payload;
   FloatingWindowOptions options;
-  final bool fill;
+  bool fill;
   Future<void> Function()? beforeClose;
+  Future<Object?> Function(String name)? onContentCommand;
   bool visible = true;
   bool closing = false;
 }
@@ -58,6 +59,8 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
     switch (method) {
       case 'ready':
         return true;
+      case 'contentCommand':
+        return window.onContentCommand?.call(arguments as String);
       case 'getBounds':
         final bounds = _bounds(window);
         return {
@@ -69,12 +72,14 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
       case 'update':
         final args = Map<String, Object?>.from(arguments as Map);
         final payload = args.remove('payload') as Map?;
+        final fill = args.remove('fill') as bool?;
         final patch = FloatingWindowOptions.fromMap(args);
         if (patch.alwaysOnTop == false)
           throw UnsupportedError(
             'Application surfaces remain above application content',
           );
         setState(() {
+          if (fill != null) window.fill = fill;
           window.options = window.options.merge(patch);
           if (payload != null)
             window.payload = {
@@ -204,8 +209,13 @@ class _FloatingWindowsHostState extends State<FloatingWindowsHost> {
                     payload: window.payload,
                     options: options,
                     fill: window.fill,
+                    onWindowCommand: (method, args) =>
+                        command(id, method, args),
                     onBeforeCloseChanged: (callback) {
                       window.beforeClose = callback;
+                    },
+                    onContentCommandChanged: (callback) {
+                      window.onContentCommand = callback;
                     },
                   ),
                 ),

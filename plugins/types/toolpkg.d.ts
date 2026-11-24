@@ -4098,6 +4098,10 @@ export namespace ToolPkg {
    */
   export interface FloatingWindowOpenOptions {
     /**
+     * Explicitly limits this window to the application view; defaults to false.
+     */
+    applicationOnly?: boolean;
+    /**
      * Identifies the window within this plugin; opening an existing ID fails.
      */
     id: string;
@@ -4123,6 +4127,10 @@ export namespace ToolPkg {
    * Declares the content of one managed window; route and fill stay fixed while it exists.
    */
   export interface FloatingWindowContent {
+    /**
+     * Explicitly limits this window to the application view; defaults to false.
+     */
+    applicationOnly?: boolean;
     route: string;
     /**
      * Shallow-merges supplied JSON state into the live UI session.
@@ -4145,6 +4153,14 @@ export namespace ToolPkg {
    */
   export interface FloatingWindowCapabilities {
     /**
+     * Reports camera support independently of system overlay support.
+     */
+    cameraSupported: boolean;
+    /**
+     * Requires an application window for camera preview on this host.
+     */
+    cameraRequiresApplicationWindow: boolean;
+    /**
      * "system", "application", or "unsupported". Application scope stays inside Operit.
      */
     scope: string;
@@ -4156,6 +4172,10 @@ export namespace ToolPkg {
     alwaysOnTop: boolean;
     clickThrough: boolean;
     focusable: boolean;
+    /**
+     * Indicates support for echo cancellation in microphone capture.
+     */
+    recordingEchoCancellation?: boolean;
   }
 
   /**
@@ -4180,6 +4200,10 @@ export namespace ToolPkg {
      * Stops after this much trailing silence (300–3000 ms) once speech is detected.
      */
     silenceMs?: number;
+    /**
+     * Requests echo cancellation and keeps a short lead-in before detected speech.
+     */
+    echoCancellation?: boolean;
   }
 
   /**
@@ -4189,6 +4213,26 @@ export namespace ToolPkg {
     audio: number[];
     fileName: string;
     contentType: string;
+  }
+
+  /**
+   * Selects the presentation scope queried without opening a window.
+   */
+  export interface FloatingWindowCapabilityOptions {
+    applicationOnly?: boolean;
+  }
+
+  /**
+   * Describes a temporary camera selection; plugins persist files needed after app exit.
+   */
+  export interface FloatingWindowCameraFrame {
+    /**
+     * Temporary VFS path; copy to persistent storage before retaining in chat history.
+     */
+    path: string;
+    name: string;
+    mimeType: string;
+    size: number;
   }
 
   /**
@@ -4203,7 +4247,7 @@ export namespace ToolPkg {
     /**
      * Queries capabilities without opening a window or displaying a permission prompt.
      */
-    capabilities(): Promise<FloatingWindowCapabilities>;
+    capabilities(options?: FloatingWindowCapabilityOptions): Promise<FloatingWindowCapabilities>;
     /**
      * Opens the host's overlay permission settings when required; query capabilities again afterwards.
      */
@@ -4241,6 +4285,10 @@ export namespace ToolPkg {
      */
     recordingLevel(id: string): Promise<number>;
     /**
+     * Reports whether the current recording has detected speech.
+     */
+    recordingHasSpeech(id: string): Promise<boolean>;
+    /**
      * Ends active capture and delivers its WAV to the pending record call.
      */
     finishRecording(id: string): Promise<void>;
@@ -4248,6 +4296,14 @@ export namespace ToolPkg {
      * Discards active capture without returning audio.
      */
     cancelRecording(id: string): Promise<void>;
+    /**
+     * Changes the window geometry without resetting the live UI or camera.
+     */
+    setFullscreen(id: string, fullscreen: boolean): Promise<void>;
+    /**
+     * Captures a temporary file from a user-enabled camera; null while off, hidden or unsupported.
+     */
+    captureCameraFrame(id: string): Promise<FloatingWindowCameraFrame | null>;
   }
 
   /**

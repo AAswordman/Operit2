@@ -22,6 +22,9 @@ class RuntimeWindowRecording {
       LocalSpeechRecorder.sampleRate * _frameMs ~/ 1000;
   static const _threshold = 360;
   static const _speechFrames = 8;
+  static const _preRollFrames = 12;
+  int _frames = 0;
+  int _skipSamples = 0;
   int? _lowByte;
   int _energy = 0;
   int _samples = 0;
@@ -31,15 +34,22 @@ class RuntimeWindowRecording {
   double _level = 0;
 
   /// Starts capture on the owner engine and arms its deadline after authorization.
-  RuntimeWindowRecording(this._maxDurationMs, this._silenceMs) {
-    _started = _recorder.start(onChunk: _observe);
+  RuntimeWindowRecording(
+    this._maxDurationMs,
+    this._silenceMs, {
+    bool echoCancellation = false,
+  }) {
+    _started = _recorder.start(
+      onChunk: _observe,
+      echoCancellation: echoCancellation,
+    );
     unawaited(
       _started.then<void>((_) {
         if (_ending != null) return;
         _deadline = Timer(Duration(milliseconds: _maxDurationMs), () {
           unawaited(finish(discard: _silenceMs != null && !_heardSpeech));
         });
-      }, onError: (Object _, StackTrace _) => finish()),
+      }, onError: (Object _, StackTrace stack) => finish()),
     );
   }
 
@@ -48,6 +58,8 @@ class RuntimeWindowRecording {
 
   /// Reports the smoothed microphone level from zero to one during capture.
   double get level => _ending == null ? _level : 0;
+
+  bool get hasSpeech => _heardSpeech && !_discard;
 
   /// Coalesces manual stop, silence, timeout and window teardown.
   Future<void> finish({bool discard = false}) {
@@ -62,7 +74,7 @@ class RuntimeWindowRecording {
     try {
       try {
         await _started;
-        if (!_discard) audio = await _recorder.stop();
+        if (!_discard) audio = await _recorder.stop(skipSamples: _skipSamples);
       } finally {
         await _recorder.dispose();
       }
@@ -93,13 +105,20 @@ class RuntimeWindowRecording {
       _level += (level - _level) * (level > _level ? 0.55 : 0.16);
       _energy = 0;
       _samples = 0;
-      if (silenceMs == null) continue;
+      _frames++;
       if (audible) {
         _quiet = 0;
-        if (++_loud >= _speechFrames) _heardSpeech = true;
+        if (!_heardSpeech && ++_loud >= _speechFrames) {
+          _heardSpeech = true;
+          _skipSamples =
+              math.max(0, _frames - _speechFrames - _preRollFrames) *
+              _samplesPerFrame;
+        }
       } else {
         _loud = 0;
-        if (_heardSpeech && ++_quiet * _frameMs >= silenceMs) {
+        if (silenceMs != null &&
+            _heardSpeech &&
+            ++_quiet * _frameMs >= silenceMs) {
           unawaited(finish());
           return;
         }

@@ -70,8 +70,28 @@ test('window state rejects lossy JSON serialization before sending a host reques
 
 test('registration never creates windows or prompts for overlay permission', () => {
   const {context, calls} = setup(true);
-  for (const expression of ['open({id:"pet",route:"pet"})','set("pet", {route:"pet"})','set("pet", null)','capabilities()','requestPermission()']) {
+  for (const expression of ['open({id:"pet",route:"pet"})','set("pet", {route:"pet"})','set("pet", null)','capabilities()','requestPermission()','setFullscreen("pet", true)','captureCameraFrame("pet")']) {
     assert.throws(() => vm.runInContext(`ToolPkg.ui.floatingWindows.${expression}`, context), /during registration/);
   }
   assert.deepEqual(calls, []);
+});
+
+
+test('media commands expose window capabilities and generic files without chat routing', async () => {
+  const {context, calls} = setup(false);
+  await vm.runInContext(`(async () => {
+    const api = ToolPkg.ui.floatingWindows;
+    await api.capabilities({applicationOnly:true, operation:'forged'});
+    await api.open({id:'monitor', route:'monitor-route', applicationOnly:true});
+    await api.setFullscreen('monitor', true);
+    await api.setFullscreen('monitor', false);
+    await api.captureCameraFrame('monitor');
+  })()`, context);
+  assert.deepEqual(calls, [
+    {applicationOnly:true, operation:'capabilities'},
+    {id:'monitor', route:'monitor-route', applicationOnly:true, operation:'open'},
+    {id:'monitor', fullscreen:true, operation:'setFullscreen'},
+    {id:'monitor', fullscreen:false, operation:'setFullscreen'},
+    {id:'monitor', operation:'captureCameraFrame'},
+  ]);
 });

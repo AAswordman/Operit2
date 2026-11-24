@@ -87,7 +87,10 @@ class LocalSpeechRecorder {
   StackTrace? _streamErrorStackTrace;
 
   /// Starts a 16 kHz mono PCM16 microphone stream.
-  Future<void> start({void Function(Uint8List)? onChunk}) async {
+  Future<void> start({
+    void Function(Uint8List)? onChunk,
+    bool echoCancellation = false,
+  }) async {
     if (_pcmBuilder != null) {
       throw StateError('A speech recording is already active');
     }
@@ -114,6 +117,14 @@ class LocalSpeechRecorder {
         numChannels: _channelCount,
         streamBufferSize: _streamBufferSize,
         device: inputDevice,
+        echoCancel: echoCancellation,
+        noiseSuppress: echoCancellation,
+        androidConfig: echoCancellation
+            ? const AndroidRecordConfig(
+                audioSource: AndroidAudioSource.voiceCommunication,
+                audioManagerMode: AudioManagerMode.modeInCommunication,
+              )
+            : const AndroidRecordConfig(),
       ),
     );
     _pcmBuilder = pcmBuilder;
@@ -155,7 +166,7 @@ class LocalSpeechRecorder {
   }
 
   /// Stops the microphone stream and returns a complete WAV payload.
-  Future<RecordedAudio> stop() async {
+  Future<RecordedAudio> stop({int skipSamples = 0}) async {
     final pcmBuilder = _pcmBuilder;
     final streamDone = _streamDone;
     final diagnostics = _pcmDiagnostics;
@@ -182,7 +193,11 @@ class LocalSpeechRecorder {
       );
     }
 
-    final pcmBytes = pcmBuilder.takeBytes();
+    final captured = pcmBuilder.takeBytes();
+    final pcmBytes = Uint8List.sublistView(
+      captured,
+      math.min(skipSamples * (_bitsPerSample ~/ 8), captured.length),
+    );
     if (pcmBytes.isEmpty) {
       throw StateError('The recorded PCM stream is empty');
     }

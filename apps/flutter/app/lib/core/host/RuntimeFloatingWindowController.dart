@@ -9,18 +9,22 @@ import '../logging/ClientLogger.dart';
 import '../proxy/generated/CoreProxyClients.g.dart';
 import '../../ui/main/navigation/ToolPkgCatalogChangeBus.dart';
 import 'RuntimeWindowRecording.dart';
+import 'RuntimeWindowCamera.dart';
+import 'RuntimeWindowCameraFrameStore.dart';
 
 class _OwnedFloatingWindow {
   _OwnedFloatingWindow(
     this.window,
     this.route,
     this.fill,
+    this.applicationOnly,
     this.options,
     this.state,
   );
   final FloatingWindow window;
   final String route;
   final bool fill;
+  final bool applicationOnly;
   FloatingWindowOptions options;
   Map<String, Object?> state;
   bool visible = true;
@@ -103,6 +107,12 @@ class RuntimeFloatingWindowController {
     });
     _tail = work.then<void>((_) {}, onError: (Object _, StackTrace stack) {});
     return work.then((value) async {
+      if (value case (
+        final _OwnedFloatingWindow window,
+        final _CameraCaptureRequest _,
+      )) {
+        return _captureCameraFrame(window);
+      }
       if (value is! (_OwnedFloatingWindow, RuntimeWindowRecording)) {
         return value;
       }
@@ -128,6 +138,32 @@ class RuntimeFloatingWindowController {
     if (capture != null) unawaited(capture.finish(discard: true));
   }
 
+  static bool _applicationOnly(Map<String, Object?> request) {
+    final value = request['applicationOnly'];
+    if (value != null && value is! bool) {
+      throw ArgumentError('applicationOnly must be a boolean');
+    }
+    return value == true;
+  }
+
+  static Future<Map<String, Object?>> _capabilities({
+    required bool applicationOnly,
+  }) async {
+    final support = await FloatingWindows.capabilities(
+      applicationOnly: applicationOnly,
+    );
+    final native = applicationOnly
+        ? await FloatingWindows.capabilities()
+        : support;
+    return {
+      ...support,
+      'recordingEchoCancellation': native['recordingEchoCancellation'],
+      'systemOverlay': native['systemOverlay'],
+      'cameraSupported': windowCameraSupported,
+      'cameraRequiresApplicationWindow': windowCameraNeedsActivity,
+    };
+  }
+
   /// Applies one authenticated plugin command in host arrival order.
   static Future<Object?> _command(Map<String, Object?> request) async {
     final owner = request['packageName'];
@@ -135,7 +171,9 @@ class RuntimeFloatingWindowController {
       throw ArgumentError('Missing authenticated window owner');
     }
     final operation = request['operation'];
-    if (operation == 'capabilities') return FloatingWindows.capabilities();
+    if (operation == 'capabilities') {
+      return _capabilities(applicationOnly: _applicationOnly(request));
+    }
     if (operation == 'requestPermission') {
       return FloatingWindows.requestPermission();
     }
@@ -172,12 +210,25 @@ class RuntimeFloatingWindowController {
         await owned.window.show();
         owned.visible = true;
       case 'hide':
+        owned.visible = false;
+        await owned.window.contentCommand(windowCameraStopCommand);
         await owned.window.hide();
         _discardRecording(owned);
-        owned.visible = false;
       case 'close':
         await _close(key, owned);
         return null;
+      case 'setFullscreen':
+        final fullscreen = request['fullscreen'];
+        if (fullscreen is! bool) {
+          throw ArgumentError('fullscreen must be a boolean');
+        }
+        await owned.window.contentCommand(
+          fullscreen ? 'window.fullscreen.enter' : 'window.fullscreen.exit',
+        );
+        return null;
+      case 'captureCameraFrame':
+        if (!owned.visible || !windowCameraSupported) return null;
+        return (owned, const _CameraCaptureRequest());
       case 'record':
         if (!owned.visible) throw StateError('The recording window is hidden');
         if (_activeRecording != null) {
@@ -186,12 +237,24 @@ class RuntimeFloatingWindowController {
         final maxDuration =
             _duration(request, 'maxDurationMs', 1000, 20000) ?? 15000;
         final silence = _duration(request, 'silenceMs', 300, 3000);
-        final capture = RuntimeWindowRecording(maxDuration, silence);
+        final echoCancellation = request['echoCancellation'] == true;
+        if (echoCancellation &&
+            (await FloatingWindows.capabilities())['recordingEchoCancellation'] !=
+                true) {
+          throw UnsupportedError('Recording echo cancellation is unavailable');
+        }
+        final capture = RuntimeWindowRecording(
+          maxDuration,
+          silence,
+          echoCancellation: echoCancellation,
+        );
         _activeRecording = capture;
         owned.recording = capture;
         return (owned, capture);
       case 'recordingLevel':
         return owned.recording?.level ?? 0.0;
+      case 'recordingHasSpeech':
+        return owned.recording?.hasSpeech ?? false;
       case 'finishRecording':
       case 'cancelRecording':
         final capture = owned.recording;
@@ -203,6 +266,21 @@ class RuntimeFloatingWindowController {
         throw ArgumentError('Unknown floating window operation: $operation');
     }
     return owned.info(id);
+  }
+
+  /// Captures generic media without selecting a chat or sending a message.
+  static Future<Map<String, Object?>?> _captureCameraFrame(
+    _OwnedFloatingWindow owned,
+  ) async {
+    final bytes = await owned.window
+        .contentCommand(windowCameraCaptureCommand)
+        .timeout(const Duration(seconds: 5));
+    if (bytes == null) return null;
+    if (bytes is! Uint8List) throw StateError('Invalid camera frame');
+    return const RuntimeWindowCameraFrameStore().save(
+      bytes,
+      isVisible: () => owned.visible && _windows.containsValue(owned),
+    );
   }
 
   /// Reconciles desired content without exposing handle or permission bookkeeping to creators.
@@ -227,12 +305,16 @@ class RuntimeFloatingWindowController {
     }
     if (owned != null &&
         (owned.route != route ||
+            (request.containsKey('applicationOnly') &&
+                owned.applicationOnly != _applicationOnly(request)) ||
             (request['fill'] != null && owned.fill != request['fill']))) {
       throw StateError(
         'Close the window before changing its route or fill mode',
       );
     }
-    final support = await FloatingWindows.capabilities();
+    final support = await _capabilities(
+      applicationOnly: owned?.applicationOnly ?? _applicationOnly(request),
+    );
     final String? unavailable = support['supported'] != true
         ? 'unsupported'
         : support['permissionGranted'] != true
@@ -271,7 +353,9 @@ class RuntimeFloatingWindowController {
       ((request['options'] as Map?) ?? {}).cast<String, Object?>(),
     );
     final fill = (request['fill'] as bool?) ?? false;
-    final support = await FloatingWindows.capabilities();
+    final route = request['route'] as String;
+    final applicationOnly = _applicationOnly(request);
+    final support = await _capabilities(applicationOnly: applicationOnly);
     if ((options.x != null ||
             options.y != null ||
             options.screenBounds != null) &&
@@ -283,8 +367,8 @@ class RuntimeFloatingWindowController {
     if (request['state'] != null && request['state'] is! Map) {
       throw ArgumentError('Window state must be an object');
     }
-    final route = request['route'] as String;
     final window = await FloatingWindows.open(
+      applicationOnly: applicationOnly,
       payload: {
         'plugin': request['plugin'],
         'route': route,
@@ -299,6 +383,7 @@ class RuntimeFloatingWindowController {
       window,
       route,
       fill,
+      applicationOnly,
       FloatingWindowOptions.defaults.merge(options),
       Map<String, Object?>.from((request['state'] as Map?) ?? {}),
     );
@@ -338,6 +423,7 @@ class RuntimeFloatingWindowController {
 
   /// Closes the native surface before releasing its plugin-local identity.
   static Future<void> _close(String key, _OwnedFloatingWindow owned) async {
+    owned.visible = false;
     final stopwatch = Stopwatch()..start();
     final identity =
         'owner=${_owners[key]} id=${_ids[key]} nativeId=${owned.window.id}';
@@ -439,4 +525,9 @@ class RuntimeFloatingWindowController {
     _audit = Timer.periodic(const Duration(seconds: 5), (_) => reconcile());
     _catalog = ToolPkgCatalogChangeBus.listen(reconcile);
   }
+}
+
+/// Marks capture work that runs outside the window lifecycle queue.
+class _CameraCaptureRequest {
+  const _CameraCaptureRequest();
 }

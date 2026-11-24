@@ -545,7 +545,7 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                     }
                     return windowCommand('set', Object.assign({}, content, {id:id, visible:content !== null}));
                 },
-                capabilities: function() { return windowCommand('capabilities', {}); },
+                capabilities: function(options) { return windowCommand('capabilities', options); },
                 requestPermission: function() { return windowCommand('requestPermission', {}); },
                 open: function(options) { return windowCommand('open', options); },
                 update: function(id, options, state) { var request = {id:id, options:options}; if (state !== undefined) request.state = state; return windowCommand('update', request); },
@@ -557,8 +557,11 @@ pub fn buildToolPkgRegistrationBridgeScript(restrictHostCapabilities: bool) -> S
                     return windowCommand('record', Object.assign({}, options, {id:id}));
                 },
                 recordingLevel: function(id) { return windowCommand('recordingLevel', {id:id}); },
+                recordingHasSpeech: function(id) { return windowCommand('recordingHasSpeech', {id:id}); },
                 finishRecording: function(id) { return windowCommand('finishRecording', {id:id}); },
-                cancelRecording: function(id) { return windowCommand('cancelRecording', {id:id}); }
+                cancelRecording: function(id) { return windowCommand('cancelRecording', {id:id}); },
+                setFullscreen: function(id, fullscreen) { return windowCommand('setFullscreen', {id:id, fullscreen:fullscreen}); },
+                captureCameraFrame: function(id) { return windowCommand('captureCameraFrame', {id:id}); }
               }
             },
             registerToolboxUiModule: registerScreen('toolboxUiModules', 'ToolPkg.registerToolboxUiModule'),

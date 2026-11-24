@@ -67,6 +67,11 @@ public final class FloatingWindowsPlugin: NSObject, FlutterPlugin {
 
     /// Applies input and appearance flags and resolves the chosen geometry.
     private func apply(_ values: [String: Any], to window: NSWindow) throws {
+        if let value = values["fill"] {
+            guard let value = value as? Bool else { throw failure() }
+            fill = value
+            screenBounds = nil
+        }
         var size = window.contentLayoutRect.size
         for key in ["width", "height", "x", "y"] {
             if let number = values[key] as? NSNumber {
