@@ -23,6 +23,8 @@ are displayed as API `1.0.0`.
 - `docs/`: plugin authoring notes.
 - `tools/`: development and sync tools.
 
+`packages/external/ai_chat_presentation/` provides optional AI Reply Presentation. Users install it from the marketplace's official extensions shelf, enable the package, and turn it on for individual chats. It is not installed automatically.
+
 `packages/external/proactive_messages/` provides optional AI proactive messages with per-chat intervals, random delays and trigger probability. It uses the uniform typed `Tools.Chat.scheduleMessage`, `cancelScheduledMessage` and `listScheduledMessages` APIs; persistence, delivery, notifications and iOS resume reconciliation are owned by the host.
 
 `packages/external/image_workbench/` provides the optional official Image Workbench, available from "more plugins" and disabled by default. It owns the unified image-generation tools and six internal provider adapters.
