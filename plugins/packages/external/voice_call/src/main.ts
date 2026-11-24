@@ -1,6 +1,6 @@
 import type { ComposeDslContext, ComposeNode } from "../../../../types/compose-dsl";
 import type { Chat } from "../../../../types/chat";
-import { characterCards, type ChatDisplayIdentity } from "./dependencies/character_cards/api.js";
+import { characterCards, type ChatDisplayIdentity, type ChatDisplayParticipant } from "./dependencies/character_cards/api.js";
 
 const PACKAGE = "com.operit.voice_call";
 const CONTROL_ROUTE = `toolpkg:${PACKAGE}:ui:control`;
@@ -155,6 +155,8 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   const [failure, setFailure] = ctx.useState("failure", "");
   const [cameraNotice, setCameraNotice] = ctx.useState("cameraNotice", "");
   const [identity, setIdentity] = ctx.useState<ChatDisplayIdentity | null>("identity", null);
+  const [participants, setParticipants] = ctx.useState<ChatDisplayParticipant[]>("participants", []);
+  const [activeParticipantId, setActiveParticipantId] = ctx.useState<string | null>("activeParticipantId", null);
   const identityRequest = ctx.useRef("identityRequest", 0);
   const session = ctx.useRef("session", {
     chatId: "",
@@ -194,19 +196,23 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   ctx.useEffect("call-lifetime", () => () => { void stopCall(); }, []);
 
   /** Uses the same default artwork as the required character card plugin. */
-  async function readIdentity(chatId: string | null): Promise<ChatDisplayIdentity> {
-    const value = await characterCards.chat.identity({ chatId });
+  async function readPresentation(chatId: string | null) {
+    const value = await characterCards.chat.presentation({ chatId });
     return {
-      title: value?.title ?? "Operit",
-      avatarUri: value?.avatarUri || await characterCards.defaultAvatar(),
+      identity: { title: value.identity?.title ?? "Operit",
+        avatarUri: value.identity?.avatarUri || await characterCards.defaultAvatar() },
+      participants: value.kind === "group" ? value.participants : [],
     };
   }
 
   ctx.useEffect("call-avatar", () => {
     let disposed = false;
     const request = ++identityRequest.current;
-    void readIdentity(sourceChatId).then(value => {
-      if (!disposed && request === identityRequest.current) setIdentity(value);
+    void readPresentation(sourceChatId).then(value => {
+      if (!disposed && request === identityRequest.current) {
+        setIdentity(value.identity);
+        setParticipants(value.participants);
+      }
     }).catch(error => {
       if (!disposed && request === identityRequest.current) setFailure(report(error));
     });
@@ -278,9 +284,11 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         if (progress.status === "not_group") return false;
         for (; spoken < progress.replies.length && session.active && !session.skipReplies; spoken++) {
           const reply = progress.replies[spoken];
-          setIdentity({ title: reply.name, avatarUri: reply.avatarUri || await characterCards.defaultAvatar() });
+          setActiveParticipantId(reply.participantId);
           setReply(reply.text);
-          await speak(reply.text, `${requestId}-${spoken}`, reply.ttsConfigId ?? undefined);
+          try {
+            await speak(reply.text, `${requestId}-${spoken}`, reply.ttsConfigId ?? undefined);
+          } finally { setActiveParticipantId(null); }
         }
         if (!session.active || session.skipReplies) {
           await characterCards.chat.groupTurn({ action: "cancel", chatId: session.chatId, requestId });
@@ -318,11 +326,12 @@ export function call(ctx: ComposeDslContext): ComposeNode {
         const chat = await Tools.Chat.createNew({ setAsCurrentChat: false, ...(sourceChatId ? { sourceChatId } : {}) });
         session.chatId = chat.chatId;
       }
-      const currentIdentity = await readIdentity(session.chatId);
+      const presentation = await readPresentation(session.chatId);
       if (!session.active) return;
-      setIdentity(currentIdentity);
+      setIdentity(presentation.identity);
+      setParticipants(presentation.participants);
       while (session.active) {
-        setIdentity(currentIdentity);
+        setActiveParticipantId(null);
         setPhase("listening");
         const recording = await record();
         if (!session.active) return;
@@ -460,6 +469,10 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     camera: cameraControls,
     imageUri: identity?.avatarUri ?? undefined,
     imageTitle: identity?.title,
+    participants: participants.map(member => ({
+      id: member.id, title: member.name, imageUri: member.avatarUri ?? undefined,
+    })),
+    activeParticipantId: activeParticipantId ?? undefined,
     cameraReadyText: getLang().startsWith("zh") ? "每轮发言共享一张画面" : "Shares one frame per spoken turn",
   }, [
     ui.Column({ fillMaxWidth: true, horizontalAlignment: "center", spacing: 6 }, [

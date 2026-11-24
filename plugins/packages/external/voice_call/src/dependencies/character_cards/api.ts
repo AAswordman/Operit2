@@ -107,6 +107,8 @@ export interface ChatDisplayIdentity { title: string; avatarUri: string | null }
 export interface ChatIdentityRequest { chatId: string | null }
 /** Preserves the plugin-declared presentation order and real participant identity. */
 export interface ChatDisplayParticipant { id: string; name: string; avatarUri: string | null }
+/** Returns the selected role and its complete ordered roster without execution settings. */
+export interface ChatPresentation { kind: "model" | "card" | "group"; identity: ChatDisplayIdentity | null; participants: ChatDisplayParticipant[] }
 /** Supplies an explicitly authored initial message and its complete immutable participant snapshot. */
 export interface ChatInitialMessage { content: string; displayName: string; participantId: string }
 /** Returns presentation data only; an empty initial-message array does not select an executor. */
@@ -353,6 +355,9 @@ export const characterCards = {
     ToolPkg.callDependency<EmptyParams, string>("com.operit.character_cards", "avatar.default", {}),
 
   chat: {
+    /** Reads the complete presentation roster, including silent members. Requires 0.2.12. */
+    presentation: (payload: ChatIdentityRequest): Promise<ChatPresentation> =>
+      ToolPkg.callDependency<ChatIdentityRequest, ChatPresentation>("com.operit.character_cards", "chat.presentation", payload),
     /** Runs the existing group planner; non-group chats return not_group without submitting input. */
     groupTurn: (payload: ChatGroupTurnRequest): Promise<ChatGroupTurnStatus> =>
       ToolPkg.callDependency<ChatGroupTurnRequest, ChatGroupTurnStatus>("com.operit.character_cards", "chat.groupTurn", payload),

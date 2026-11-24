@@ -310,6 +310,15 @@ class _ComposeProgramExecutorState extends State<_ComposeProgramExecutor> {
           appearance: window.appearance,
           imageUri: props['imageUri'] as String?,
           imageTitle: props['imageTitle'] as String?,
+          participants: [
+            for (final member in (props['participants'] as List? ?? const []))
+              MediaStageParticipant(
+                id: (member as Map)['id'] as String,
+                title: member['title'] as String,
+                imageUri: member['imageUri'] as String?,
+              ),
+          ],
+          activeParticipantId: props['activeParticipantId'] as String?,
           cameraReadyText: props['cameraReadyText'] as String?,
           fullscreen: window.fullscreen,
           windowControls: window.toolbar,

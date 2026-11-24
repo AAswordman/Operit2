@@ -131,6 +131,8 @@ return ctx.UI.MediaStage({
 }, [controls]);
 ```
 
+`participants: [{ id, title, imageUri? }]` 可以同时显示多个媒体图片，`activeParticipantId` 高亮其中一个。成员按传入顺序排列，满员时扩展为 1×1、2×2、3×3 等网格；不足一行时调整行高，让每格面积相同。摄像头默认位于网格右侧，点击小窗仍可交换主画面。图片资源和高亮互相独立，切换高亮保留已挂载的摄像头预览。
+
 `MediaStage` 需要悬浮窗上下文。普通节点的 `key`、插件包名和路由名称不会触发媒体布局。一个窗口使用一个媒体界面；子节点负责插件自己的操作和状态展示。
 
 `capabilities()` 返回 `cameraSupported` 和 `cameraRequiresApplicationWindow`。需要应用内摄像头预览时，插件先查询 `capabilities({ applicationOnly: true })`，再用 `open({ ..., applicationOnly: true })` 或 `set(id, { ..., applicationOnly: true })` 创建窗口。`applicationOnly` 默认为 `false`，窗口存在期间不能切换范围。应用内窗口不需要系统悬浮窗权限；桌面插件可以继续选择系统窗口。

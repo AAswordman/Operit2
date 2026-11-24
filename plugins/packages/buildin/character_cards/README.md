@@ -303,6 +303,14 @@ display resolver as chat creation without reading model, speech or memory
 configuration. Model-only mode returns `null`; an unset portrait stays `null`.
 Deleted references and storage errors propagate to the caller.
 
+`characterCards.chat.presentation({ chatId })` requires version 0.2.12 and returns
+`{ kind, identity, participants }`. `kind` is `model`, `card` or `group`;
+`participants` contains every saved member in presentation order, including
+members who have not spoken. Each entry has its actual `id`, `name` and nullable
+`avatarUri`. The same `null`/existing-chat binding rules apply as for `identity`.
+Model-only mode returns a null identity and an empty roster. This read does not
+resolve execution settings or select a group speaker.
+
 `characterCards.chat.groupTurn(request)` requires version 0.2.11. Start with
 `{ action: "start", chatId, requestId, text, attachments }`, then query the same
 `chatId` and `requestId` with `action: "status"` or stop it with `action: "cancel"`.

@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { loadModule, plain } from "../../../buildin/character_cards/tests/runtime.mjs";
 
 /** Supplies stateful Compose primitives while retaining the real call screen and dependency client. */
-function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, files, groupTurn } = {}) {
+function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, files, groupTurn, participants = [], kind = "group" } = {}) {
   const states = new Map(), refs = new Map(), effects = new Map(), calls = [];
   const routes = [], entries = [];
   const color = { copy() { return color; } };
@@ -40,9 +40,9 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, 
         assert.equal(packageId, "com.operit.character_cards");
         if (method === "avatar.default") return "data:image/png;base64,character-default-avatar";
         if (method === "chat.groupTurn") return groupTurn ? groupTurn(plain(payload)) : { status: "not_group", replies: [], error: null };
-        assert.equal(method, "chat.identity");
+        assert.equal(method, "chat.presentation");
         calls.push(plain(payload));
-        return resolveIdentity(payload);
+        return { kind, identity: await resolveIdentity(payload), participants: typeof participants === "function" ? participants(payload) : participants };
       },
     },
     Tools: {
@@ -425,10 +425,16 @@ const groupReplies = [
   { participantId: "alice", name: "Alice", avatarUri: "alice.png", ttsConfigId: "voice-alice", text: "Alice speaks" },
 ];
 
-test("group call speaks ordered member replies with their portraits and configured voices", async () => {
+test("group call keeps the entire roster visible while highlighting each configured speaker", async () => {
   const spoken = [], submitted = [];
   let recordings = 0;
+  const roster = [
+    { id: "alice", name: "Alice", avatarUri: "alice.png" },
+    { id: "silent", name: "Silent member", avatarUri: null },
+    { id: "bob", name: "Bob", avatarUri: "bob.png" },
+  ];
   const screen = callScreen(() => ({ title: "Friends", avatarUri: "group.png" }), {
+    participants: roster,
     floatingWindows: { async record() { return recordings++ === 0 ? { text: "Hello everyone" } : null; } },
     stt: { async transcribe(audio) { return audio; } },
     groupTurn(request) {
@@ -437,15 +443,20 @@ test("group call speaks ordered member replies with their portraits and configur
       return { status: "completed", replies: groupReplies, error: null };
     },
     chat: { async sendMessage() { assert.fail("group input must not also execute as a single response"); } },
-    tts: { async speak(request) { spoken.push({ request: plain(request), identity: plain(screen.states.get("identity")) }); } },
+    tts: { async speak(request) { spoken.push({ request: plain(request), stage: plain(screen.render().props) }); } },
   });
   await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
   assert.equal(submitted.length, 1);
   assert.equal(submitted[0].text, "Hello everyone");
-  assert.deepEqual(spoken.map(item => [item.request.text, item.request.configId, item.identity.title]), [
-    ["Bob speaks", "voice-bob", "Bob"], ["Alice speaks", "voice-alice", "Alice"],
+  assert.deepEqual(spoken.map(item => [item.request.text, item.request.configId, item.stage.activeParticipantId]), [
+    ["Bob speaks", "voice-bob", "bob"], ["Alice speaks", "voice-alice", "alice"],
   ]);
-  assert.deepEqual(spoken.map(item => item.identity.avatarUri), ["bob.png", "alice.png"]);
+  for (const item of spoken) {
+    assert.deepEqual(item.stage.participants.map(member => member.id), ["alice", "silent", "bob"]);
+    assert.equal(item.stage.imageTitle, "Friends");
+    assert.equal(item.stage.participants[0].imageUri, "alice.png");
+  }
+  assert.equal(screen.states.get("activeParticipantId"), null);
   assert.equal(screen.states.get("identity").title, "Friends");
 });
 
@@ -476,6 +487,7 @@ test("manual group interruption cancels pending members and returns to listening
   assert.deepEqual(spoken, ["Bob speaks"]);
   assert.deepEqual(controls, ["start", "cancel"]);
   assert.equal(screen.states.get("phase"), "listening");
+  assert.equal(screen.states.get("activeParticipantId"), null);
   await nodes(screen.render()).find(node => node.type === "Button").props.onClick();
   await call;
 });
@@ -489,4 +501,38 @@ test("group generation failure pauses the call with the provider error", async (
   await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
   assert.equal(screen.states.get("phase"), "error");
   assert.match(screen.states.get("failure"), /Group service unavailable/);
+});
+
+/** Silent members are visible before recording, and a late source preview cannot replace the bound roster. */
+test("complete roster follows the committed chat across a delayed preview", async () => {
+  let finishPreview;
+  const screen = callScreen(({ chatId }) => chatId === null
+    ? new Promise(resolve => { finishPreview = resolve; }) : { title: "Bound group", avatarUri: "group.png" }, {
+    participants: ({ chatId }) => chatId === null
+      ? [{ id: "other", name: "Other", avatarUri: null }]
+      : Array.from({ length: 16 }, (_, i) => ({ id: `member-${i}`, name: `Member ${i}`, avatarUri: null })),
+  });
+  screen.render();
+  screen.effects.get("call-avatar")();
+  await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
+  finishPreview({ title: "Other group", avatarUri: null });
+  await new Promise(resolve => setImmediate(resolve));
+  const stage = screen.render().props;
+  assert.equal(stage.imageTitle, "Bound group");
+  assert.equal(stage.participants.length, 16);
+  assert.equal(stage.participants[15].id, "member-15");
+});
+
+/** A one-member group still renders its real member, while a single role retains the portrait view. */
+test("one-member groups receive a tile and single roles keep their portrait layout", async () => {
+  for (const kind of ["group", "card"]) {
+    const screen = callScreen(() => ({ title: "Selected role", avatarUri: "role.png" }), {
+      kind, participants: [{ id: "solo", name: "Solo member", avatarUri: "solo.png" }],
+    });
+    screen.render();
+    screen.effects.get("call-avatar")();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.deepEqual(plain(screen.render().props.participants), kind === "group"
+      ? [{ id: "solo", title: "Solo member", imageUri: "solo.png" }] : []);
+  }
 });
