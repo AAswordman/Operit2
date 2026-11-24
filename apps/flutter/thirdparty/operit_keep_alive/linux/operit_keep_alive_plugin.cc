@@ -73,11 +73,42 @@ class Residency {
     g_application_quit(G_APPLICATION(self->application_));
   }
 
+  /// Finds the icon bundled next to the executable so the tray shows the app mark
+  /// instead of the generic executable glyph every StatusNotifier host falls back to.
+  static gchar* BundledTrayIcon() {
+    GError* link_error = nullptr;
+    g_autofree gchar* executable = g_file_read_link("/proc/self/exe", &link_error);
+    if (executable == nullptr) {
+      if (link_error != nullptr) g_error_free(link_error);
+      return nullptr;
+    }
+    g_autofree gchar* directory = g_path_get_dirname(executable);
+    // The launcher icon is already declared as a Flutter asset, so it ships in
+    // every bundle without adding a second copy of the same artwork.
+    g_autofree gchar* path = g_build_filename(directory, "data", "flutter_assets",
+        "android", "app", "src", "main", "res", "mipmap-xxxhdpi", "ic_launcher.png", nullptr);
+    return g_file_test(path, G_FILE_TEST_IS_REGULAR) ? g_strdup(path) : nullptr;
+  }
+
+  /// Applies the bundled icon, keeping the generic name when no bundle icon exists.
+  void ApplyIcon() {
+    g_autofree gchar* icon = BundledTrayIcon();
+    if (icon == nullptr) return;
+    g_autofree gchar* icon_directory = g_path_get_dirname(icon);
+    g_autofree gchar* icon_name = g_path_get_basename(icon);
+    gchar* extension = g_strrstr(icon_name, ".png");
+    if (extension != nullptr) *extension = '\0';
+    app_indicator_set_icon_theme_path(indicator_, icon_directory);
+    app_indicator_set_icon_full(indicator_, icon_name, "Operit2");
+  }
+
   /// Hides the window only when a visible tray supplies a route back into the app.
   static gboolean Close(GtkWidget*, GdkEvent*, gpointer data) {
     auto* self = static_cast<Residency*>(data);
     try {
       RequireTrayHost();
+      // The tray host can exist while this process' indicator is still not
+      // acknowledged; hiding then would leave no route back into the app.
       if (!self->available_) throw std::runtime_error("The tray has not acknowledged the application icon");
       gtk_widget_hide(GTK_WIDGET(self->window_));
     } catch (const std::exception& error) {
@@ -89,6 +120,8 @@ class Residency {
       gtk_dialog_run(GTK_DIALOG(dialog));
       gtk_widget_destroy(dialog);
     }
+    // The engine's close handler was removed so this policy owns the outcome;
+    // returning TRUE keeps the retained window alive when the tray is unusable.
     return TRUE;
   }
 
@@ -131,7 +164,18 @@ class Residency {
     g_signal_connect(indicator_, "connection-changed", G_CALLBACK(ConnectionChanged), this);
     app_indicator_set_title(indicator_, title.c_str());
     app_indicator_set_menu(indicator_, GTK_MENU(menu_));
+    ApplyIcon();
     app_indicator_set_status(indicator_, APP_INDICATOR_STATUS_ACTIVE);
+    // The Flutter engine installs its own delete-event handler on the main
+    // window that quits the whole application; because it was connected first
+    // and returns TRUE, the close policy below never runs. desktop_multi_window
+    // only removes it for child windows, so the main window must do the same
+    // before the tray can own the close policy.
+    guint engine_handler = 0;
+    while ((engine_handler = g_signal_handler_find(window_,
+        G_SIGNAL_MATCH_DATA, 0, 0, nullptr, nullptr, view_)) > 0) {
+      g_signal_handler_disconnect(window_, engine_handler);
+    }
     g_signal_connect(window_, "delete-event", G_CALLBACK(Close), this);
   }
 
