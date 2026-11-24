@@ -210,6 +210,9 @@ class UserPreferencesManager {
     'systemFontName': 'system_font_name',
     'customFontPath': 'custom_font_path',
     'fontScale': 'font_scale',
+    'codeFontType': 'code_font_type',
+    'codeFontSystemName': 'code_font_system_name',
+    'codeFontPath': 'code_font_path',
     'bubbleUserUseCustomFont': 'bubble_user_use_custom_font',
     'bubbleUserFontType': 'bubble_user_font_type',
     'bubbleUserSystemFontName': 'bubble_user_system_font_name',
@@ -597,6 +600,9 @@ class UserPreferencesManager {
     String? systemFontName,
     String? customFontPath,
     double? fontScale,
+    String? codeFontType,
+    String? codeFontSystemName,
+    String? codeFontPath,
     bool? bubbleUserUseCustomFont,
     String? bubbleUserFontType,
     String? bubbleUserSystemFontName,
@@ -725,6 +731,10 @@ class UserPreferencesManager {
       if (systemFontName != null) 'systemFontName': systemFontName,
       if (customFontPath != null) 'customFontPath': customFontPath,
       if (fontScale != null) 'fontScale': fontScale,
+      if (codeFontType != null) 'codeFontType': codeFontType,
+      if (codeFontSystemName != null)
+        'codeFontSystemName': codeFontSystemName,
+      if (codeFontPath != null) 'codeFontPath': codeFontPath,
       if (changesGlobalFont || bubbleUserUseCustomFont != null)
         'bubbleUserUseCustomFont': changesGlobalFont
             ? false

@@ -9,6 +9,7 @@ import 'package:xterm/xterm.dart';
 
 import '../../../../../theme/OperitGlassSurface.dart';
 import '../../../../../theme/OperitTheme.dart';
+import 'package:operit2/ui/common/markdown/MarkdownCodeTypeface.dart';
 import 'WorkspacePtyProcess.dart';
 import 'TerminalPinchZoom.dart';
 
@@ -184,6 +185,7 @@ class _WorkspaceTerminalContentState extends State<WorkspaceTerminalContent> {
                       theme: _workspaceTerminalTheme,
                       backgroundOpacity: 0,
                       textStyle: _terminalStyleFromTheme(
+                        context,
                         Theme.of(context).textTheme.bodySmall!.copyWith(
                           fontSize:
                               (Theme.of(
@@ -601,11 +603,25 @@ class _TerminalShortcutButtonState extends State<_TerminalShortcutButton> {
   }
 }
 
-TerminalStyle _terminalStyleFromTheme(TextStyle style) {
+TerminalStyle _terminalStyleFromTheme(BuildContext context, TextStyle style) {
+  var fontFamily = _terminalMonospaceFontFamily;
+  var fontFamilyFallback = _terminalMonospaceFontFamilies;
+  final snapshot = OperitTheme.maybeOf(context)?.themePreferenceSnapshot;
+  if (snapshot != null &&
+      (snapshot.codeFontType == 'file' || snapshot.codeFontType == 'device')) {
+    final family = operitCodeFontFamily(snapshot);
+    if (family != markdownCodeFontFamily) {
+      fontFamily = family;
+      fontFamilyFallback = <String>[
+        family,
+        ..._terminalMonospaceFontFamilies,
+      ];
+    }
+  }
   return TerminalStyle.fromTextStyle(
     style.copyWith(
-      fontFamily: _terminalMonospaceFontFamily,
-      fontFamilyFallback: _terminalMonospaceFontFamilies,
+      fontFamily: fontFamily,
+      fontFamilyFallback: fontFamilyFallback,
       fontFeatures: const <FontFeature>[FontFeature.tabularFigures()],
       letterSpacing: 0,
       height: 1.25,

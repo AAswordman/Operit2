@@ -90,6 +90,9 @@ class ThemePreferenceSnapshot {
     required this.systemFontName,
     required this.customFontPath,
     required this.fontScale,
+    this.codeFontType = 'system',
+    this.codeFontSystemName,
+    this.codeFontPath,
     required this.bubbleUserUseCustomFont,
     required this.bubbleUserFontType,
     required this.bubbleUserSystemFontName,
@@ -196,6 +199,15 @@ class ThemePreferenceSnapshot {
   final String? systemFontName;
   final String? customFontPath;
   final double fontScale;
+
+  /// Font slot shared by code blocks, inline code, diffs, previews and editors.
+  ///
+  /// Uses the same type values as [fontType]: `system` selects the bundled
+  /// OperitCodeMono face, `file` and `device` select a runtime-registered
+  /// asset referenced by [codeFontPath].
+  final String codeFontType;
+  final String? codeFontSystemName;
+  final String? codeFontPath;
   final bool bubbleUserUseCustomFont;
   final String bubbleUserFontType;
   final String? bubbleUserSystemFontName;
@@ -304,6 +316,9 @@ class ThemePreferenceSnapshot {
       'systemFontName': systemFontName,
       'customFontPath': customFontPath,
       'fontScale': fontScale,
+      'codeFontType': codeFontType,
+      'codeFontSystemName': codeFontSystemName,
+      'codeFontPath': codeFontPath,
       'bubbleUserUseCustomFont': bubbleUserUseCustomFont,
       'bubbleUserFontType': bubbleUserFontType,
       'bubbleUserSystemFontName': bubbleUserSystemFontName,
@@ -456,6 +471,9 @@ class ThemePreferenceSnapshot {
       systemFontName: optionalString('systemFontName'),
       customFontPath: optionalString('customFontPath'),
       fontScale: requiredDouble('fontScale'),
+      codeFontType: (json['codeFontType'] as String?) ?? 'system',
+      codeFontSystemName: optionalString('codeFontSystemName'),
+      codeFontPath: optionalString('codeFontPath'),
       bubbleUserUseCustomFont: requiredBool('bubbleUserUseCustomFont'),
       bubbleUserFontType: requiredString('bubbleUserFontType'),
       bubbleUserSystemFontName: optionalString('bubbleUserSystemFontName'),

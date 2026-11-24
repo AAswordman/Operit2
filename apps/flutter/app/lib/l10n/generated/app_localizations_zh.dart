@@ -3252,6 +3252,33 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceFontMonospace => '等宽';
 
   @override
+  String get settingsAppearanceNormalFontSection => '普通字体';
+
+  @override
+  String get settingsAppearanceFontsSection => '字体';
+
+  @override
+  String get settingsAppearanceCodeFontSection => '代码字体';
+
+  @override
+  String get settingsAppearanceCodeFontDescription => '用于代码块、行内代码、diff、文件预览与终端';
+
+  @override
+  String get settingsAppearanceCodeFontBuiltin => '内置等宽';
+
+  @override
+  String get settingsAppearanceChatBodyFontSection => '聊天正文字体';
+
+  @override
+  String get settingsAppearanceChatBodyFontFollow => '跟随普通字体';
+
+  @override
+  String get settingsAppearanceChatBodySplitSides => '用户/AI 分开设置';
+
+  @override
+  String get settingsAppearanceChatBodyAdjust => '调整';
+
+  @override
   String get settingsAppearanceInterfaceScale => '界面缩放';
 
   @override

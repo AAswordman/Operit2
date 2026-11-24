@@ -59,6 +59,13 @@ class OperitTheme extends StatefulWidget {
     return scope.controller;
   }
 
+  /// Returns the controller without throwing outside the theme scope.
+  static OperitThemeController? maybeOf(BuildContext context) {
+    final scope = context
+        .dependOnInheritedWidgetOfExactType<_OperitThemeScope>();
+    return scope?.controller;
+  }
+
   @override
   State<OperitTheme> createState() => _OperitThemeState();
 }
@@ -918,6 +925,9 @@ class OperitThemeController {
     String? bubbleAiFontType,
     String? bubbleAiSystemFontName,
     String? bubbleAiCustomFontPath,
+    String? codeFontType,
+    String? codeFontSystemName,
+    String? codeFontPath,
   }) async {
     await _preferencesManager.saveThemeSettings(
       inputStyle: inputStyle,
@@ -996,6 +1006,9 @@ class OperitThemeController {
       bubbleAiFontType: bubbleAiFontType,
       bubbleAiSystemFontName: bubbleAiSystemFontName,
       bubbleAiCustomFontPath: bubbleAiCustomFontPath,
+      codeFontType: codeFontType,
+      codeFontSystemName: codeFontSystemName,
+      codeFontPath: codeFontPath,
     );
     await _reloadThemePreferenceSnapshot();
   }
@@ -1202,7 +1215,8 @@ class _OperitThemePreviewState extends State<OperitThemePreview> {
         (snapshot.bubbleUserUseCustomFont &&
             _usesFontAsset(snapshot.bubbleUserFontType)) ||
         (snapshot.bubbleAiUseCustomFont &&
-            _usesFontAsset(snapshot.bubbleAiFontType))) {
+            _usesFontAsset(snapshot.bubbleAiFontType)) ||
+        _usesFontAsset(snapshot.codeFontType)) {
       if (prepareFonts) {
         _preparation = _prepareCustomFonts(snapshot).then((families) {
           _loadedCustomFontFamilies.addAll(families);
@@ -1855,6 +1869,7 @@ List<String?> _themeFontReferences(ThemePreferenceSnapshot snapshot) =>
       if (snapshot.bubbleAiUseCustomFont &&
           _usesFontAsset(snapshot.bubbleAiFontType))
         snapshot.bubbleAiCustomFontPath,
+      if (_usesFontAsset(snapshot.codeFontType)) snapshot.codeFontPath,
     ];
 
 String _customFontFamilyForPath(String path) {
@@ -1863,6 +1878,15 @@ String _customFontFamilyForPath(String path) {
     throw StateError('Theme font has not completed byte preparation: $path');
   }
   return family;
+}
+
+/// Resolves a persisted font asset reference to its registered family name,
+/// returning null when the reference is absent or not yet prepared.
+String? loadedCustomFontFamilyOrNull(String? reference) {
+  if (reference == null || reference.isEmpty) {
+    return null;
+  }
+  return _loadedCustomFontFamilies[reference];
 }
 
 /// Identifies persisted faces that must be registered before publishing a theme.

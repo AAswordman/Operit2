@@ -108,8 +108,8 @@ InlineSpan _inlineSpan(
           .copyWith(
             // Keep the surrounding line height when reducing the glyph size.
             height: (style.height ?? markdownLineHeight) / fontSizeFactor,
-            fontFamily: markdownCodeFontFamily,
-            fontFamilyFallback: markdownCodeFontFamilyFallback,
+            fontFamily: operitCodeFontFamilyOf(context),
+            fontFamilyFallback: operitCodeFontFamilyFallbackOf(context),
             backgroundColor: color.withValues(
               alpha: color.computeLuminance() > .5 ? .18 : .12,
             ),
