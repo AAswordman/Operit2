@@ -14,6 +14,7 @@ import '../features/packages/screens/ToolPkgUiLauncherScreen.dart';
 import '../theme/OperitTheme.dart' show operitColorScheme;
 import 'VoiceCallCameraPanel.dart';
 import 'VoiceCallStage.dart';
+import 'VoiceCallWindowFrame.dart';
 
 /// Hosts an ordinary live plugin UI session on a transparent, undecorated root.
 class FloatingWindowApp extends StatefulWidget {
@@ -39,6 +40,7 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
   ).windowPreferencesFlow();
 
   VoiceCallCamera? _camera;
+  final _callFrame = GlobalKey<VoiceCallWindowFrameState>();
 
   bool get _isVoiceCall =>
       (widget.launch.payload['plugin'] as Map)['packageName'] ==
@@ -56,12 +58,19 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
   ) {
     final camera = _camera;
     if (props['key'] == 'voice-call-stage') {
-      return VoiceCallStage(
-        appearance: appearance,
-        camera: camera,
-        avatarUri: props['avatarUri'] as String?,
-        avatarTitle: props['avatarTitle'] as String?,
-        controls: controls,
+      return VoiceCallWindowFrame(
+        key: _callFrame,
+        launch: widget.launch,
+        builder: (fullscreen, toolbar, resizeHandle) => VoiceCallStage(
+          appearance: appearance,
+          camera: camera,
+          avatarUri: props['avatarUri'] as String?,
+          avatarTitle: props['avatarTitle'] as String?,
+          controls: controls,
+          fullscreen: fullscreen,
+          windowControls: toolbar,
+          resizeHandle: resizeHandle,
+        ),
       );
     }
     // An installed plugin may predate the native layout.
@@ -77,6 +86,9 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
 
   Future<Object?> _cameraCommand(String name) async {
     switch (name) {
+      case "voiceCall.enterFullscreen":
+        await _callFrame.currentState?.setFullscreen(true);
+        return null;
       case voiceCallCameraCapture:
         return _camera?.capture();
       case voiceCallCameraStop:
@@ -106,8 +118,10 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
         (widget.launch.payload['plugin'] as Map)['packageName'] ==
             voiceCallPackage) {
       _camera = VoiceCallCamera();
-      FloatingWindows.setContentCommandHandler(widget.launch, _cameraCommand);
       WidgetsBinding.instance.addObserver(this);
+    }
+    if (_isVoiceCall) {
+      FloatingWindows.setContentCommandHandler(widget.launch, _cameraCommand);
     }
     FloatingWindows.setBeforeClose(widget.launch, () async {
       final stopping = _camera?.stop();
@@ -119,9 +133,11 @@ class _FloatingWindowAppState extends State<FloatingWindowApp>
   @override
   void dispose() {
     FloatingWindows.setBeforeClose(widget.launch, null);
+    if (_isVoiceCall) {
+      FloatingWindows.setContentCommandHandler(widget.launch, null);
+    }
     if (_camera != null) {
       WidgetsBinding.instance.removeObserver(this);
-      FloatingWindows.setContentCommandHandler(widget.launch, null);
       _camera?.dispose();
     }
     super.dispose();

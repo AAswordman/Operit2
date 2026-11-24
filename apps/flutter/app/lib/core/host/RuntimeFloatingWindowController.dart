@@ -1,7 +1,6 @@
 // ignore_for_file: file_names
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'package:floating_windows/floating_windows.dart';
 import 'package:flutter/foundation.dart';
 import '../../data/preferences/UserPreferencesManager.dart';
@@ -425,6 +424,11 @@ class RuntimeFloatingWindowController {
     final rawState = request['state'];
     if (rawState != null && rawState is! Map) {
       throw ArgumentError('Window state must be an object');
+    }
+    if (owned.route == voiceCallRoute &&
+        rawState is Map &&
+        rawState['voiceCallFullscreen'] == true) {
+      await owned.window.contentCommand('voiceCall.enterFullscreen');
     }
     final state = rawState == null
         ? null

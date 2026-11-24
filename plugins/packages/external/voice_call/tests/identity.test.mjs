@@ -6,6 +6,7 @@ import { loadModule, plain } from "../../../buildin/character_cards/tests/runtim
 /** Supplies stateful Compose primitives while retaining the real call screen and dependency client. */
 function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers } = {}) {
   const states = new Map(), refs = new Map(), effects = new Map(), calls = [];
+  const routes = [], entries = [];
   const color = { copy() { return color; } };
   const ctx = {
     useState(key, initial) {
@@ -26,8 +27,11 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers }
     setInterval, clearInterval,
     ...timers,
     ToolPkg: {
+      registerUiRoute: route => routes.push(route),
+      registerNavigationEntry: entry => entries.push(entry),
       ui: { floatingWindows: {
         async capabilities() { return {}; },
+        async list() { return [{ id: "voice-call" }]; },
         async record() { calls.push("record"); return null; },
         ...floatingWindows,
       } },
@@ -52,7 +56,7 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers }
       Tts: tts,
     },
   });
-  return { states, effects, calls, render: () => plugin.call(ctx) };
+  return { states, effects, calls, routes, entries, register: plugin.registerToolPkg, renderMenu: () => plugin.inputMenu(ctx), render: () => plugin.call(ctx) };
 }
 
 /** Traverses actual Compose output to inspect rendered identity and invoke its start control. */
@@ -320,4 +324,79 @@ test("when taking a camera frame fails, the voice turn still sends", async () =>
   await nodes(screen.render()).find(node => node.type === "FilledTonalButton").props.onClick();
   assert.deepEqual(sent, [{ text: "Hello", attachments: [], replyToMessageTimestamp: null }]);
   assert.equal(screen.states.get("cameraNotice"), "Couldn't send the camera frame for this turn.");
+});
+
+
+test("phone menu registers a plugin row and opens full screen with camera off", async () => {
+  const opened = [];
+  const screen = callScreen(() => null, { floatingWindows: {
+    async capabilities() { return { supported: true, permissionGranted: true }; },
+    async list() { return []; },
+    async open(options) { opened.push(plain(options)); },
+  } });
+  screen.register();
+  const entry = screen.entries.find(entry => entry.surface === "chat_input_menu");
+  assert.equal(entry.icon, "Call");
+  assert.equal(entry.title.zh, "语音/视频通话");
+  assert.equal(screen.routes.find(route => route.route === entry.route).screen.name, "inputMenu");
+  screen.states.set("chatId", "source-chat");
+  const row = nodes(screen.renderMenu()).find(node => node.props.key === "voice-call-input-menu");
+  await row.props.onClick();
+  assert.deepEqual(opened, [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call", fill: true,
+    state: { autoStart: true, sourceChatId: "source-chat" } }]);
+});
+
+test("phone menu brings the existing call to full screen without starting a second session", async () => {
+  const actions = [];
+  const screen = callScreen(() => null, { floatingWindows: {
+    async capabilities() { return { supported: true, permissionGranted: true }; },
+    async list() { return [{ id: "voice-call", route: "toolpkg:com.operit.voice_call:ui:call" }]; },
+    async show(id) { actions.push(["show", id]); },
+    async update(...args) { actions.push(["update", ...plain(args)]); },
+    async open() { assert.fail("must reuse the existing call"); },
+  } });
+  await nodes(screen.renderMenu()).find(node => node.props.onClick).props.onClick();
+  assert.deepEqual(actions, [["show", "voice-call"], ["update", "voice-call", {}, { voiceCallFullscreen: true }]]);
+});
+
+test("phone menu reports denied permission without opening or recording", async () => {
+  const screen = callScreen(() => null, { floatingWindows: {
+    async capabilities() { return { supported: true, permissionGranted: false }; },
+    async requestPermission() { return false; },
+    async list() { assert.fail("permission must be granted first"); },
+  } });
+  await nodes(screen.renderMenu()).find(node => node.props.onClick).props.onClick();
+  assert.match(screen.states.get("call-launch-error"), /Grant permission/);
+  assert.deepEqual(screen.calls, []);
+});
+
+test("automatic call inherits the source chat without selecting or changing it", async () => {
+  const created = [];
+  const screen = callScreen(() => ({ title: "Source role", avatarUri: "role.png" }), { chat: {
+    async createNew(options) { created.push(plain(options)); return { chatId: "actual-call" }; },
+  } });
+  screen.states.set("autoStart", true);
+  screen.states.set("sourceChatId", "source-chat");
+  screen.render();
+  screen.effects.get("call-avatar")();
+  screen.effects.get("call-auto-start")();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(created, [{ setAsCurrentChat: false, sourceChatId: "source-chat" }]);
+  assert.deepEqual(screen.calls, [{ chatId: "source-chat" }, { chatId: "actual-call" }, "record"]);
+});
+
+
+test("automatic call waits for window ownership and cannot start after disposal", async () => {
+  let ready;
+  const screen = callScreen(() => null, { floatingWindows: {
+    list() { return new Promise(resolve => { ready = resolve; }); },
+  } });
+  screen.states.set("autoStart", true);
+  screen.render();
+  const dispose = screen.effects.get("call-auto-start")();
+  assert.deepEqual(screen.calls, []);
+  dispose();
+  ready([{ id: "voice-call" }]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(screen.calls, []);
 });

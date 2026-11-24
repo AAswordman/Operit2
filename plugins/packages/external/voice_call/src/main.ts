@@ -3,6 +3,7 @@ import { characterCards, type ChatDisplayIdentity } from "./dependencies/charact
 
 const PACKAGE = "com.operit.voice_call";
 const CONTROL_ROUTE = `toolpkg:${PACKAGE}:ui:control`;
+const MENU_ROUTE = `toolpkg:${PACKAGE}:ui:input-menu`;
 const CALL_ROUTE = `toolpkg:${PACKAGE}:ui:call`;
 const VOICE_OVERLAY_ROUTE = `toolpkg:${PACKAGE}:ui:voice-overlay`;
 const WINDOW = "voice-call";
@@ -30,6 +31,7 @@ const labels = {
   open: ["打开通话窗", "Open call window"],
   voiceOverlay: ["打开系统语音悬浮窗", "Open system voice overlay"],
   grant: ["授予悬浮窗权限", "Grant overlay permission"],
+  windowNotReady: ["通话窗口尚未就绪，请重试。", "Call window is not ready. Please try again."],
   unsupported: ["当前宿主不支持悬浮窗。", "Floating windows are unavailable on this host."],
   permission: ["在系统设置授权后，再打开通话窗。", "Grant permission in system settings, then open the call window."],
   setup: ["使用应用当前的语音识别和朗读配置。每个通话窗使用一个独立会话。", "Uses the selected speech recognition and voice settings. Each call window gets its own conversation."],
@@ -53,6 +55,46 @@ function text(label: Label): string {
 function report(error: unknown): string {
   console.error("[voice_call]", error);
   return error instanceof Error ? error.message : String(error);
+}
+
+/** Contributes a phone action through the host's existing chat input menu. */
+export function inputMenu(ctx: ComposeDslContext): ComposeNode {
+  const [chatId] = ctx.useState<string | null>("chatId", null);
+  const [error, setError] = ctx.useState("call-launch-error", "");
+  const busy = ctx.useRef("call-launch-busy", false);
+  const zh = getLang().startsWith("zh");
+  const colors = ctx.MaterialTheme.colorScheme;
+  async function open(): Promise<void> {
+    if (busy.current) return;
+    busy.current = true;
+    setError("");
+    try {
+      const api = ToolPkg.ui.floatingWindows;
+      const caps = await api.capabilities();
+      if (!caps.supported) throw new Error(text("unsupported"));
+      if (!caps.permissionGranted && !await api.requestPermission()) throw new Error(text("permission"));
+      const existing = (await api.list()).find(window => window.id === WINDOW);
+      if (existing && existing.route !== CALL_ROUTE) await api.close(WINDOW);
+      if (existing?.route === CALL_ROUTE) {
+        await api.show(WINDOW);
+        await api.update(WINDOW, {}, { voiceCallFullscreen: true });
+      } else {
+        await api.open({ id: WINDOW, route: CALL_ROUTE, fill: true,
+          state: { autoStart: true, sourceChatId: chatId },
+        });
+      }
+    } catch (failure) { setError(report(failure)); }
+    finally { busy.current = false; }
+  }
+  return ctx.UI.Column({ fillMaxWidth: true }, [
+    ctx.UI.Row({ key: "voice-call-input-menu", fillMaxWidth: true, paddingHorizontal: 12, paddingVertical: 14,
+      spacing: 12, verticalAlignment: "center", onClick: open,
+    }, [
+      ctx.UI.Icon({ name: "Call", size: 24, tint: colors.primary }),
+      ctx.UI.Text({ text: zh ? "语音/视频通话" : "Voice / video call", style: "bodyMedium", color: colors.onSurface }),
+    ]),
+    ...(error ? [ctx.UI.Text({ text: error, color: colors.error, paddingHorizontal: 12 })] : []),
+  ]);
 }
 
 /** Opens or reveals the single call window and handles overlay authorization. */
@@ -165,6 +207,8 @@ function avatarWave(ctx: ComposeDslContext, identity: ChatDisplayIdentity | null
 /** Runs a call in the floating window. */
 export function call(ctx: ComposeDslContext): ComposeNode {
   const windowApi = ToolPkg.ui.floatingWindows;
+  const [autoStart] = ctx.useState("autoStart", false);
+  const [sourceChatId] = ctx.useState<string | null>("sourceChatId", null);
   const [nativeLayout] = ctx.useState("voiceCallNativeLayout", false);
   const [phase, setPhase] = ctx.useState<Phase>("phase", "idle");
   const [heard, setHeard] = ctx.useState("heard", "");
@@ -219,7 +263,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
   ctx.useEffect("call-avatar", () => {
     let disposed = false;
     const request = ++identityRequest.current;
-    void readIdentity(null).then(value => {
+    void readIdentity(sourceChatId).then(value => {
       if (!disposed && request === identityRequest.current) setIdentity(value);
     }).catch(error => {
       if (!disposed && request === identityRequest.current) setFailure(report(error));
@@ -348,7 +392,7 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     try {
       setPhase("connecting");
       if (!session.chatId) {
-        const chat = await Tools.Chat.createNew({ setAsCurrentChat: false });
+        const chat = await Tools.Chat.createNew({ setAsCurrentChat: false, ...(sourceChatId ? { sourceChatId } : {}) });
         session.chatId = chat.chatId;
       }
       const currentIdentity = await readIdentity(session.chatId);
@@ -437,6 +481,26 @@ export function call(ctx: ComposeDslContext): ComposeNode {
     }
   }
 
+  ctx.useEffect("call-auto-start", () => {
+    let disposed = false;
+    if (autoStart) void (async () => {
+      // A native child can render before its owner finishes registering the window.
+      for (let attempt = 0; attempt < 100 && !disposed; attempt++) {
+        const windows = await windowApi.list();
+        if (disposed) return;
+        if (windows.some(window => window.id === WINDOW)) {
+          await run();
+          return;
+        }
+        await new Promise<void>(resolve => setTimeout(resolve, 50));
+      }
+      if (!disposed) throw new Error(text("windowNotReady"));
+    })().catch(error => {
+      if (!disposed) { setFailure(report(error)); setPhase("error"); }
+    });
+    return () => { disposed = true; };
+  }, []);
+
   const ui = ctx.UI;
   const colors = ctx.MaterialTheme.colorScheme;
   const canStart = phase === "idle" || phase === "error";
@@ -504,6 +568,9 @@ export function registerToolPkg(): boolean {
   ToolPkg.registerUiRoute({ id: "control", route: CONTROL_ROUTE, runtime: "compose_dsl", screen: control, title });
   ToolPkg.registerUiRoute({ id: "call", route: CALL_ROUTE, runtime: "compose_dsl", screen: call, title });
   ToolPkg.registerUiRoute({ id: "voice-overlay", route: VOICE_OVERLAY_ROUTE, runtime: "compose_dsl", screen: call, title });
+  ToolPkg.registerUiRoute({ id: "input-menu", route: MENU_ROUTE, runtime: "compose_dsl", screen: inputMenu, title });
+  ToolPkg.registerNavigationEntry({ id: "input-menu", route: MENU_ROUTE, surface: "chat_input_menu",
+    title: { zh: "语音/视频通话", en: "Voice / video call" }, icon: "Call", order: 50 });
   ToolPkg.registerNavigationEntry({ id: "control", route: CONTROL_ROUTE, title, surface: "toolbox", icon: "Call" });
   return true;
 }

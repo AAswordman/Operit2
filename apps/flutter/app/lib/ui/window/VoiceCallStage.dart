@@ -19,6 +19,9 @@ class VoiceCallStage extends StatefulWidget {
     this.avatarUri,
     this.avatarTitle,
     this.appearance,
+    this.fullscreen = false,
+    this.windowControls,
+    this.resizeHandle,
     required this.controls,
   });
 
@@ -27,6 +30,9 @@ class VoiceCallStage extends StatefulWidget {
   final String? avatarTitle;
   final ThemePreferenceSnapshot? appearance;
   final Widget controls;
+  final bool fullscreen;
+  final Widget? windowControls;
+  final Widget? resizeHandle;
 
   @override
   State<VoiceCallStage> createState() => _VoiceCallStageState();
@@ -96,7 +102,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
     final cameraIsMain = preview != null && !_avatarIsMain;
     final swapLabel = zh ? '交换大小窗' : 'Swap main view and inset';
     return ClipRRect(
-      borderRadius: BorderRadius.circular(28),
+      borderRadius: BorderRadius.circular(widget.fullscreen ? 0 : 28),
       child: ColoredBox(
         color: colors.surface,
         child: FutureBuilder<ImageProvider>(
@@ -112,10 +118,12 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                 final portraitSize = math.min(shortSide * 0.40, 152.0);
                 final insetWidth = math.min(shortSide * 0.29, 140.0);
                 final margin = math.min(shortSide * 0.05, 16.0);
+                final safePadding = MediaQuery.paddingOf(context);
+                final top = margin + safePadding.top;
                 final full = Offset.zero & size;
                 final inset = Rect.fromLTWH(
                   size.width - insetWidth - margin,
-                  margin,
+                  top,
                   insetWidth,
                   math.min(insetWidth * 1.25, size.height * 0.38),
                 );
@@ -131,7 +139,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                 return Stack(
                   fit: StackFit.expand,
                   children: [
-                    if (!cameraIsMain) _buildBackdrop(colors, avatar),
+                    _buildBackdrop(colors, avatar),
                     if (preview != null)
                       Positioned.fromRect(
                         key: const ValueKey('call-camera-view'),
@@ -141,7 +149,7 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                             cameraIsMain ? 0 : 18,
                           ),
                           child: FittedBox(
-                            fit: BoxFit.cover,
+                            fit: BoxFit.contain,
                             child: SizedBox(
                               width: portraitCamera
                                   ? preview.previewHeight
@@ -197,7 +205,10 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                     Positioned(
                       left: margin,
                       right: margin,
-                      bottom: margin,
+                      bottom:
+                          margin +
+                          safePadding.bottom +
+                          (widget.resizeHandle == null ? 0 : 20),
                       child: Center(
                         child: ConstrainedBox(
                           constraints: const BoxConstraints(maxWidth: 440),
@@ -229,6 +240,18 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
                         ),
                       ),
                     ),
+                    if (widget.windowControls != null)
+                      Positioned(
+                        left: margin + safePadding.left,
+                        top: top,
+                        child: widget.windowControls!,
+                      ),
+                    if (widget.resizeHandle != null)
+                      Positioned(
+                        right: 0,
+                        bottom: safePadding.bottom,
+                        child: widget.resizeHandle!,
+                      ),
                   ],
                 );
               },
@@ -277,10 +300,13 @@ class _VoiceCallStageState extends State<VoiceCallStage> {
             ),
           ),
         if (background != null && background.isNotEmpty)
-          ResolvedThemeImage(
-            resolver: _themeAssets,
-            reference: background,
-            fit: BoxFit.cover,
+          ImageFiltered(
+            imageFilter: ui.ImageFilter.blur(sigmaX: 28, sigmaY: 28),
+            child: ResolvedThemeImage(
+              resolver: _themeAssets,
+              reference: background,
+              fit: BoxFit.cover,
+            ),
           ),
         if (avatar != null || background != null)
           const ColoredBox(color: Color(0x66000000)),
