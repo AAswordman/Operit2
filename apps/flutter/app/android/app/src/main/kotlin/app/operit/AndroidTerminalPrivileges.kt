@@ -162,17 +162,14 @@ class AndroidTerminalPrivileges private constructor(private val context: Context
         }
     }
 
-    /** Runs one noninteractive command through the same identity-enforcing service as terminals. */
+    /** Preserves Android's runtime environment for commands through the identity-enforcing service. */
     fun executePiped(command: String, timeoutMillis: Long): AndroidPrivilegedCommandResult {
         val deadline = AndroidCommandDeadline(timeoutMillis)
         val request = JSONObject()
             .put("operation", "exec")
             .put("argv", JSONArray(listOf("/system/bin/sh", "-c", command)))
-            .put("env", JSONArray(listOf(
-                "PATH=/system/bin:/system/xbin",
-                "HOME=/sdcard",
-                "TMPDIR=/data/local/tmp",
-            )))
+            .put("env", JSONArray((System.getenv() + mapOf("HOME" to "/sdcard", "TMPDIR" to "/data/local/tmp"))
+                .map { (key, value) -> "$key=$value" }))
             .put("cwd", "/")
         val response = remoteOperation(request)
         if (response.has("error")) throw IllegalStateException(response.getString("error"))
