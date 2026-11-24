@@ -10,7 +10,7 @@
 | --- | --- | --- |
 | Windows | 主窗口关闭进入托盘；打开操作恢复原窗口；Explorer 重启后重新注册图标 | 强制结束、注销、关机和睡眠仍由系统控制 |
 | macOS | 主窗口关闭进入菜单栏；保留原 Flutter 引擎；持有 lease 时通过 ProcessInfo activity 防止 App Nap | 系统睡眠、强制退出仍结束或暂停执行 |
-| Linux | GTK 主窗口关闭进入 StatusNotifier 托盘；保留窗口和 application hold | 需要 libayatana-appindicator3 和提供 StatusNotifier host 的桌面会话；不满足条件时初始化明确失败 |
+| Linux | GTK 主窗口关闭进入 StatusNotifier 托盘；保留窗口和 application hold；托盘图标使用随应用打包的启动图标 | 需要 libayatana-appindicator3 和提供 StatusNotifier host 的桌面会话；不满足条件时初始化明确失败 |
 | Android | 复用应用声明的 Core 前台服务；服务持有持久通知和 PARTIAL_WAKE_LOCK，AI 工作期间额外挂载 1×1 像素保活悬浮窗 | 通知和悬浮窗需要各自的系统授权；Doze、用户停止前台服务、强行停止和厂商进程策略仍由系统控制 |
 | iOS | 为持有的 lease 请求 UIApplication 有限后台执行预算；到期发送 protectionChanged | 普通应用不能无限运行通用 Core；到期明确报告 unavailable |
 | OHOS | 2-in-1 设备通过 TASK_KEEPING 计算类连续任务和系统通知持有执行保护；接收系统取消事件 | 项目使用 API 18；普通手机/平板的通用计算驻留报告 unavailable，不申请无关任务类型 |
@@ -40,7 +40,7 @@ OHOS EntryAbility 声明 `backgroundModes: ["taskKeeping"]` 和 `ohos.permission
 
 iOS 预算到期后保留真实 lease 计数并报告 unavailable，不在后台反复申请预算。用户实际回到前台后才能重新申请。
 
-Linux 构建依赖 Debian/Ubuntu 的 `libayatana-appindicator3-dev`；桌面会话必须实际运行 StatusNotifier host。初始化或关闭检查失败时会报告原始错误，窗口保持可见。
+Linux 构建依赖 Debian/Ubuntu 的 `libayatana-appindicator3-dev`；桌面会话必须实际运行 StatusNotifier host。初始化或关闭检查失败时会报告原始错误，窗口保持可见。Linux 主窗口的关闭策略由本包接管：Flutter 引擎自带的 delete-event 处理器会直接退出整个进程，而 `desktop_multi_window` 只在子窗口上移除它，因此本包在初始化时移除主窗口上的该处理器，再安装托盘策略。
 
 ## 有限任务 API
 
