@@ -2494,6 +2494,7 @@ dependencies = [
  "operit-link",
  "operit-model",
  "operit-node-runtime",
+ "operit-plugin-sdk",
  "operit-providers",
  "operit-proxy-edge",
  "operit-proxy-local",

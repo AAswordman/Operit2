@@ -1,3 +1,5 @@
+use operit_plugin_sdk::js_sdk::tool_types::BuiltinToolName;
+use operit_tools::tools::climode::CliToolModeSupport::{PROXY_TOOL_NAME, SEARCH_TOOL_NAME};
 use operit_util::streamnative::NativeMarkdownSplitter::{
     MarkdownNodeStable, MarkdownProcessorType,
 };
@@ -1198,102 +1200,14 @@ fn render_media_link_xml(content: &str, lines: &mut Vec<Line<'static>>) {
     ]));
 }
 
-/// Maps generic tool categories and qualified plugin calls to compact transcript symbols.
+/// Classifies the canonical built-in catalog exhaustively, plus CLI and historical tools.
 fn tool_leading_symbol(tool_name: &str) -> &'static str {
     if tool_name.split_once(':').is_some() {
         return "→";
     }
     match tool_name {
-        "list_files"
-        | "read_file"
-        | "read_file_part"
-        | "read_file_full"
-        | "read_file_binary"
-        | "write_file"
-        | "write_file_binary"
-        | "delete_file"
-        | "file_exists"
-        | "move_file"
-        | "copy_file"
-        | "file_info"
-        | "create_file"
-        | "edit_file"
-        | "zip_files"
-        | "unzip_files"
-        | "open_file"
-        | "share_file"
-        | "download_file"
-        | "apply_file"
-        | "browser_file_upload"
-        | "read_environment_variable"
-        | "write_environment_variable" => "▣",
-        "search_tools" | "find_chat" => "⌕",
-        "get_terminal_info"
-        | "create_terminal_session"
-        | "execute_in_terminal_session"
-        | "execute_in_terminal_session_streaming"
-        | "execute_hidden_terminal_command"
-        | "close_terminal_session"
-        | "input_in_terminal_session"
-        | "get_terminal_session_screen"
-        | "execute_cli_command" => ">",
-        "browser_run_code" | "grep_code" => "{}",
-        "visit_web" | "http_request" => "◎",
-        "sleep"
-        | "use_package"
-        | "proxy"
-        | "package_proxy"
-        | "start_chat_service"
-        | "stop_chat_service"
-        | "create_new_chat"
-        | "list_chats"
-        | "agent_status"
-        | "list_core_nodes"
-        | "switch_core"
-        | "switch_chat"
-        | "update_chat_title"
-        | "delete_chat"
-        | "send_message_to_ai"
-        | "send_message_to_ai_streaming"
-        | "get_chat_messages"
-        | "toast"
-        | "send_notification"
-        | "modify_system_setting"
-        | "get_system_setting"
-        | "install_app"
-        | "uninstall_app"
-        | "list_installed_apps"
-        | "start_app"
-        | "stop_app"
-        | "get_notifications"
-        | "get_app_usage_time"
-        | "get_device_location"
-        | "device_info"
-        | "make_directory"
-        | "find_files"
-        | "grep_context"
-        | "multipart_request"
-        | "manage_cookies"
-        | "browser_click"
-        | "browser_close"
-        | "browser_close_all"
-        | "browser_console_messages"
-        | "browser_drag"
-        | "browser_evaluate"
-        | "browser_fill_form"
-        | "browser_handle_dialog"
-        | "browser_hover"
-        | "browser_navigate"
-        | "browser_navigate_back"
-        | "browser_network_requests"
-        | "browser_press_key"
-        | "browser_resize"
-        | "browser_select_option"
-        | "browser_snapshot"
-        | "browser_tabs"
-        | "browser_take_screenshot"
-        | "browser_type"
-        | "browser_wait_for"
+        SEARCH_TOOL_NAME | "search_tools" => return "⌕",
+        PROXY_TOOL_NAME
         | "get_memory_by_title"
         | "create_memory"
         | "update_memory"
@@ -1302,8 +1216,176 @@ fn tool_leading_symbol(tool_name: &str) -> &'static str {
         | "update_user_preferences"
         | "link_memories"
         | "update_memory_link"
-        | "delete_memory_link" => "→",
-        _ => panic!("unclassified tool for tui display: {tool_name}"),
+        | "delete_memory_link" => return "→",
+        _ => {}
+    }
+    let tool = BuiltinToolName::from_name(tool_name)
+        .unwrap_or_else(|| panic!("unclassified tool for tui display: {tool_name}"));
+    // New built-in tools must receive a symbol here before the CLI can compile.
+    match tool {
+        BuiltinToolName::ListFiles
+        | BuiltinToolName::ReadFile
+        | BuiltinToolName::ReadFilePart
+        | BuiltinToolName::ReadFileFull
+        | BuiltinToolName::ReadFileBinary
+        | BuiltinToolName::WriteFile
+        | BuiltinToolName::WriteFileBinary
+        | BuiltinToolName::DeleteFile
+        | BuiltinToolName::FileExists
+        | BuiltinToolName::MoveFile
+        | BuiltinToolName::CopyFile
+        | BuiltinToolName::FileInfo
+        | BuiltinToolName::ZipFiles
+        | BuiltinToolName::UnzipFiles
+        | BuiltinToolName::OpenFile
+        | BuiltinToolName::ShareFile
+        | BuiltinToolName::DownloadFile
+        | BuiltinToolName::ApplyFile
+        | BuiltinToolName::CreateFile
+        | BuiltinToolName::EditFile
+        | BuiltinToolName::StorageRequest
+        | BuiltinToolName::BrowserFileUpload
+        | BuiltinToolName::ReadEnvironmentVariable
+        | BuiltinToolName::WriteEnvironmentVariable => "▣",
+        BuiltinToolName::FindChat => "⌕",
+        BuiltinToolName::ExecuteCliCommand
+        | BuiltinToolName::GetTerminalInfo
+        | BuiltinToolName::ExecuteInTerminalSession
+        | BuiltinToolName::ExecuteInTerminalSessionStreaming
+        | BuiltinToolName::TerminalObserve
+        | BuiltinToolName::ExecuteHiddenTerminalCommand
+        | BuiltinToolName::CreateTerminalSession
+        | BuiltinToolName::CloseTerminalSession
+        | BuiltinToolName::InputInTerminalSession
+        | BuiltinToolName::GetTerminalSessionScreen => ">",
+        BuiltinToolName::GrepCode | BuiltinToolName::BrowserRunCode => "{}",
+        BuiltinToolName::WebSocket | BuiltinToolName::HttpRequest | BuiltinToolName::VisitWeb => {
+            "◎"
+        }
+        BuiltinToolName::ListWindows
+        | BuiltinToolName::FocusWindow
+        | BuiltinToolName::GetPageInfo
+        | BuiltinToolName::Tap
+        | BuiltinToolName::LongPress
+        | BuiltinToolName::ClickElement
+        | BuiltinToolName::SetInputText
+        | BuiltinToolName::PressKey
+        | BuiltinToolName::Swipe
+        | BuiltinToolName::EdgeExecute
+        | BuiltinToolName::IoExecute
+        | BuiltinToolName::MakeDirectory
+        | BuiltinToolName::FindFiles
+        | BuiltinToolName::GrepContext
+        | BuiltinToolName::BrowserClick
+        | BuiltinToolName::BrowserClose
+        | BuiltinToolName::BrowserCloseAll
+        | BuiltinToolName::BrowserConsoleMessages
+        | BuiltinToolName::BrowserDrag
+        | BuiltinToolName::BrowserEvaluate
+        | BuiltinToolName::BrowserFillForm
+        | BuiltinToolName::BrowserHandleDialog
+        | BuiltinToolName::BrowserHover
+        | BuiltinToolName::BrowserNavigate
+        | BuiltinToolName::BrowserNavigateBack
+        | BuiltinToolName::BrowserNetworkRequests
+        | BuiltinToolName::BrowserPressKey
+        | BuiltinToolName::BrowserResize
+        | BuiltinToolName::BrowserSelectOption
+        | BuiltinToolName::BrowserWaitFor
+        | BuiltinToolName::BrowserSnapshot
+        | BuiltinToolName::BrowserTakeScreenshot
+        | BuiltinToolName::BrowserType
+        | BuiltinToolName::BrowserTabs
+        | BuiltinToolName::MultipartRequest
+        | BuiltinToolName::ManageCookies
+        | BuiltinToolName::Sleep
+        | BuiltinToolName::GetSystemSetting
+        | BuiltinToolName::ModifySystemSetting
+        | BuiltinToolName::Toast
+        | BuiltinToolName::SetClipboardText
+        | BuiltinToolName::SendNotification
+        | BuiltinToolName::InstallApp
+        | BuiltinToolName::UninstallApp
+        | BuiltinToolName::ListInstalledApps
+        | BuiltinToolName::StartApp
+        | BuiltinToolName::StopApp
+        | BuiltinToolName::DeviceInfo
+        | BuiltinToolName::GetNotifications
+        | BuiltinToolName::GetAppUsageTime
+        | BuiltinToolName::GetDeviceLocation
+        | BuiltinToolName::CaptureScreenshot
+        | BuiltinToolName::RequestBluetoothPermission
+        | BuiltinToolName::GetBluetoothState
+        | BuiltinToolName::RequestEnableBluetooth
+        | BuiltinToolName::ListBluetoothBondedDevices
+        | BuiltinToolName::ScanBluetoothDevices
+        | BuiltinToolName::BluetoothConnect
+        | BuiltinToolName::BluetoothListen
+        | BuiltinToolName::BluetoothAccept
+        | BuiltinToolName::BluetoothSend
+        | BuiltinToolName::BluetoothRead
+        | BuiltinToolName::BluetoothSendAndRead
+        | BuiltinToolName::BluetoothClose
+        | BuiltinToolName::BluetoothBleConnect
+        | BuiltinToolName::BluetoothBleDiscoverServices
+        | BuiltinToolName::BluetoothBleReadCharacteristic
+        | BuiltinToolName::BluetoothBleWriteCharacteristic
+        | BuiltinToolName::BluetoothBleWriteAndReadCharacteristic
+        | BuiltinToolName::BluetoothBleSubscribeCharacteristic
+        | BuiltinToolName::BluetoothBleReadNotifications
+        | BuiltinToolName::ModelsListSummaries
+        | BuiltinToolName::TtsSynthesize
+        | BuiltinToolName::TtsSpeak
+        | BuiltinToolName::TtsCancel
+        | BuiltinToolName::SttTranscribe
+        | BuiltinToolName::TtsListConfigs
+        | BuiltinToolName::TtsGetCurrentConfigId
+        | BuiltinToolName::TtsSetCurrentConfigId
+        | BuiltinToolName::MediaRegister
+        | BuiltinToolName::MediaRegisterFromPath
+        | BuiltinToolName::ThemeListConfigs
+        | BuiltinToolName::ThemeApplyConfig
+        | BuiltinToolName::UsePackage
+        | BuiltinToolName::CatalogReadToolSources
+        | BuiltinToolName::ListCoreNodes
+        | BuiltinToolName::SwitchCore
+        | BuiltinToolName::PackageProxy
+        | BuiltinToolName::PackageWait
+        | BuiltinToolName::MusicPlay
+        | BuiltinToolName::MusicPause
+        | BuiltinToolName::MusicResume
+        | BuiltinToolName::MusicStop
+        | BuiltinToolName::MusicSeek
+        | BuiltinToolName::MusicSetVolume
+        | BuiltinToolName::MusicStatus
+        | BuiltinToolName::StartChatService
+        | BuiltinToolName::StopChatService
+        | BuiltinToolName::CreateNewChat
+        | BuiltinToolName::ListChats
+        | BuiltinToolName::AgentStatus
+        | BuiltinToolName::SwitchChat
+        | BuiltinToolName::UpdateChatTitle
+        | BuiltinToolName::UpdateChatGroup
+        | BuiltinToolName::UpdateChatPinned
+        | BuiltinToolName::UpdateChatLocked
+        | BuiltinToolName::PromoteChatToRoot
+        | BuiltinToolName::ReorderChats
+        | BuiltinToolName::DeleteChat
+        | BuiltinToolName::SendMessageToAi
+        | BuiltinToolName::SendMessageToAiStreaming
+        | BuiltinToolName::ChatSendMessage
+        | BuiltinToolName::ChatObserve
+        | BuiltinToolName::ChatDeliverPrepared
+        | BuiltinToolName::ChatListScheduledMessages
+        | BuiltinToolName::ChatScheduleMessage
+        | BuiltinToolName::ChatCancelScheduledMessage
+        | BuiltinToolName::ChatCancel
+        | BuiltinToolName::ChatReadExtension
+        | BuiltinToolName::ChatWriteExtension
+        | BuiltinToolName::ChatDeleteExtension
+        | BuiltinToolName::CallChatModel
+        | BuiltinToolName::GetChatMessages
+        | BuiltinToolName::GetChatMessagesRange => "→",
     }
 }
 
@@ -1904,6 +1986,64 @@ mod tests {
             assert_eq!(params["path"], "/tmp/demo.py");
             assert_eq!(params["content"], content);
         }
+    }
+
+    /// Covers direct and proxied wait calls in both pending and completed transcript rows.
+    #[test]
+    fn renders_package_wait_in_all_tool_rows() {
+        let wait_params = vec![("execution_id".to_string(), "execution-test".to_string())];
+        let proxy_params = vec![
+            ("tool_name".to_string(), "package_wait".to_string()),
+            (
+                "params".to_string(),
+                serde_json::json!({"execution_id": "execution-test"}).to_string(),
+            ),
+        ];
+        for (name, params) in [
+            ("package_wait", &wait_params),
+            ("\n package_wait \r\n", &wait_params),
+            ("proxy", &proxy_params),
+            ("package_proxy", &proxy_params),
+        ] {
+            let lines = render_tool_call_part(name, params, 120);
+            assert_eq!(lines.len(), 1);
+            let text = lines[0].to_string();
+            assert!(text.starts_with("→ package_wait "), "{text}");
+            assert!(text.contains("execution_id=execution-test"), "{text}");
+            for (success, status) in [(true, "✓"), (false, "×")] {
+                let text =
+                    render_merged_tool_call_result_line(name, params, success, 120).to_string();
+                assert!(text.starts_with("→ package_wait "), "{text}");
+                assert!(text.contains("execution_id=execution-test"), "{text}");
+                assert!(text.ends_with(status), "{text}");
+            }
+        }
+    }
+
+    /// Ensures every canonical built-in and both CLI public tools can render tool rows.
+    #[test]
+    fn renders_complete_builtin_and_cli_tool_catalogs() {
+        use operit_tools::tools::climode::CliToolModeSupport::CliToolModeSupport;
+
+        let mut names = BuiltinToolName::ALL
+            .iter()
+            .map(|tool| tool.as_str().to_string())
+            .collect::<Vec<_>>();
+        for english in [true, false] {
+            names.extend(
+                CliToolModeSupport::buildCliPublicToolPrompts(english)
+                    .into_iter()
+                    .map(|tool| tool.name),
+            );
+        }
+        for name in names {
+            let lines = render_tool_call_part(&name, &[], 120);
+            assert_eq!(lines.len(), 1, "{name}");
+            assert!(lines[0].to_string().contains(&name), "{name}");
+            let completed = render_merged_tool_call_result_line(&name, &[], true, 120);
+            assert!(completed.to_string().ends_with('✓'), "{name}");
+        }
+        assert_eq!(tool_leading_symbol(SEARCH_TOOL_NAME), "⌕");
     }
 
     /// Verifies that a generated switch_core tool card renders successfully.

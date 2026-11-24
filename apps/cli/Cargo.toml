@@ -31,6 +31,7 @@ mdns-sd = "0.12"
 operit-proxy-edge = { path = "../../edge/sdk/proxy" }
 operit-proxy-local = { path = "../../core/crates/proxy/local" }
 operit-node-runtime = { path = "../../core/crates/node/runtime" }
+operit-plugin-sdk = { path = "../../core/crates/plugin/sdk" }
 operit-core-application = { path = "../../core/crates/application/core" }
 operit-command-core = { path = "../../core/crates/command/core" }
 operit-host-api = { path = "../../core/crates/foundation/host-api" }

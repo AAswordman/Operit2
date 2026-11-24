@@ -57,6 +57,12 @@ delivered. Later invocations do not join an outstanding wait. An empty snapshot
 returns immediately. CLI models call it through `proxy` with
 `tool_name: "package_wait"`.
 
+The CLI TUI renders `package_wait` as an ordinary tool row (`→`) for direct
+calls and calls through either proxy, including merged call/result rows. Its
+built-in symbols use an exhaustive match on the canonical `BuiltinToolName`
+catalog: adding a built-in requires assigning its TUI symbol at compile time.
+The CLI public `search` tool uses the search symbol (`⌕`).
+
 Wait returns on new intermediate output, completion of any selected invocation,
 or expiry of its single total budget. Each response collects one ready execution;
 `pending_execution_count` reports how many selected executions still need reads.
