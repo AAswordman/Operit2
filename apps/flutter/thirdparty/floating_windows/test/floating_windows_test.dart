@@ -39,6 +39,59 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  for (final platform in [
+    TargetPlatform.android,
+    TargetPlatform.windows,
+    TargetPlatform.macOS,
+    TargetPlatform.linux,
+  ]) {
+    test(
+      'current native surface changes presentation without another engine on $platform',
+      () async {
+        debugDefaultTargetPlatformOverride = platform;
+        const launch = FloatingWindowLaunch(
+          payload: {},
+          options: FloatingWindowOptions(width: 340, height: 460),
+        );
+        await FloatingWindows.updateCurrent(
+          launch,
+          const FloatingWindowOptions(draggable: false),
+          fill: true,
+        );
+        await FloatingWindows.updateCurrent(
+          launch,
+          const FloatingWindowOptions(
+            x: 30,
+            y: 40,
+            width: 340,
+            height: 460,
+            draggable: true,
+          ),
+          fill: false,
+        );
+        expect(calls.map((call) => call.method), ['update', 'update']);
+        expect(calls.first.arguments, {'fill': true, 'draggable': false});
+        expect(calls.last.arguments, {
+          'fill': false,
+          'x': 30.0,
+          'y': 40.0,
+          'width': 340.0,
+          'height': 460.0,
+          'draggable': true,
+        });
+        await expectLater(
+          FloatingWindows.updateCurrent(
+            launch,
+            const FloatingWindowOptions(width: 300),
+            fill: true,
+          ),
+          throwsArgumentError,
+        );
+        expect(calls.length, 2);
+      },
+    );
+  }
+
   test(
     'partial geometry preserves input flags and rejects non-finite or invalid sizes',
     () {

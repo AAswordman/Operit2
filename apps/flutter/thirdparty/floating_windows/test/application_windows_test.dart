@@ -5,6 +5,71 @@ import 'package:flutter_test/flutter_test.dart';
 // This suite also runs in a real browser: flutter test --platform chrome
 // test/application_windows_test.dart. It needs no native method-channel mocks.
 void main() {
+  testWidgets('content can restore and fill the same application surface', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(820, 540));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    late FloatingWindowLaunch launch;
+    const surface = ValueKey('presentation-surface');
+    await tester.pumpWidget(
+      FloatingWindowsHost(
+        windowBuilder: (value) {
+          launch = value;
+          return const SizedBox.expand(key: surface);
+        },
+        child: const SizedBox.expand(),
+      ),
+    );
+    final window = await FloatingWindows.open(
+      applicationOnly: true,
+      payload: {},
+      fill: true,
+    );
+    await tester.pump();
+    expect(launch.fill, isTrue);
+    await expectLater(
+      FloatingWindows.updateCurrent(
+        launch,
+        const FloatingWindowOptions(width: 200),
+        fill: true,
+      ),
+      throwsArgumentError,
+    );
+    await FloatingWindows.updateCurrent(
+      launch,
+      const FloatingWindowOptions(
+        x: 30,
+        y: 40,
+        width: 260,
+        height: 360,
+        draggable: true,
+      ),
+      fill: false,
+    );
+    await tester.pump();
+    expect(launch.fill, isFalse);
+    expect(
+      tester.getRect(find.byKey(surface)),
+      const Rect.fromLTWH(30, 40, 260, 360),
+    );
+    expect((await FloatingWindows.currentBounds(launch)).width, 260);
+    await FloatingWindows.updateCurrent(
+      launch,
+      const FloatingWindowOptions(draggable: false),
+      fill: true,
+    );
+    await tester.pump();
+    expect(launch.fill, isTrue);
+    expect(
+      tester.getRect(find.byKey(surface)),
+      const Rect.fromLTWH(0, 0, 820, 540),
+    );
+    await window.close();
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets(
     'fill covers the resized viewport and passes input through at the edges',
     (tester) async {

@@ -140,6 +140,10 @@ public final class FloatingWindowsPlugin implements FlutterPlugin, MethodChannel
     /** Applies surface options while Android owns the bounds of a fill window. */
     private void apply(Surface surface, Map<?, ?> args) {
         if (!flag(args,"alwaysOnTop",true)) throw new UnsupportedOperationException("Android overlays are always above applications");
+        if (args.containsKey("fill")) {
+            surface.fill = flag(args, "fill", surface.fill);
+            surface.screenBounded = false;
+        }
         surface.draggable = flag(args, "draggable", surface.draggable);
         if (!surface.draggable) { surface.pointerDown = false; surface.dragging = false; }
         float density = density(surface);

@@ -136,6 +136,11 @@ void ApplyBounds(GtkWindow* window, FlValue* args) {
 /// Applies geometry and input policy to this GTK surface.
 void Apply(WidgetHost* host, GtkWindow* window, FlValue* args) {
   if (!args || fl_value_get_type(args) != FL_VALUE_TYPE_MAP) throw std::invalid_argument("Expected window options");
+  if (FlValue* value = fl_value_lookup_string(args, "fill")) {
+    if (fl_value_get_type(value) != FL_VALUE_TYPE_BOOL) throw std::invalid_argument("fill must be boolean");
+    host->fill = fl_value_get_bool(value);
+    host->screen_bounded = false;
+  }
   if (FlValue* value = fl_value_lookup_string(args, "draggable")) {
     if (fl_value_get_type(value) != FL_VALUE_TYPE_BOOL) throw std::invalid_argument("draggable must be boolean");
     host->draggable = fl_value_get_bool(value);

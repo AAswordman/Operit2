@@ -169,6 +169,8 @@ void Apply(WidgetWindow& owner, const Map& args) {
   int height = has("height") ? Dimension(args, "height", owner.window) : rect.bottom - rect.top;
   owner.topmost = flag("alwaysOnTop", owner.topmost);
   owner.focusable = flag("focusable", owner.focusable);
+  owner.fill = flag("fill", owner.fill);
+  if (has("fill")) owner.screen_bounded = false;
   owner.draggable = flag("draggable", owner.draggable);
   if (!owner.draggable) { owner.pointer_down = false; owner.dragging = false; }
   auto style = GetWindowLongPtr(owner.window, GWL_EXSTYLE);

@@ -177,12 +177,17 @@ class FloatingWindowLaunch {
     this.fill = false,
     this.onBeforeCloseChanged,
     this.onContentCommandChanged,
+    this.onWindowCommand,
   });
 
   /// The application host keeps one close hook per surface.
   final void Function(Future<void> Function()? callback)? onBeforeCloseChanged;
   final void Function(Future<Object?> Function(String name)? callback)?
   onContentCommandChanged;
+
+  /// Routes commands from content to its application surface.
+  final Future<Object?> Function(String method, Object? arguments)?
+  onWindowCommand;
   final Map<String, Object?> payload;
   final FloatingWindowOptions options;
   final bool fill;
@@ -270,6 +275,41 @@ class FloatingWindows {
     } else {
       onContentCommand = callback;
     }
+  }
+
+  /// Changes the current surface without replacing its content or UI session.
+  /// Bounds and fill are mutually exclusive in a single update.
+  static Future<void> updateCurrent(
+    FloatingWindowLaunch launch,
+    FloatingWindowOptions options, {
+    bool? fill,
+  }) async {
+    if (fill == true && (options.hasBounds || options.draggable == true)) {
+      throw ArgumentError('A fill window cannot set bounds or enable dragging');
+    }
+    if (launch.onWindowCommand != null && options.screenBounds != null) {
+      throw UnsupportedError('Native screen bounds require a system surface');
+    }
+    final args = {...options.toMap(), if (fill != null) 'fill': fill};
+    final command = launch.onWindowCommand;
+    if (command != null) {
+      await command('update', args);
+    } else {
+      await channel.invokeMethod<void>('update', args);
+    }
+  }
+
+  /// Reads the actual geometry, including moves made by the native host.
+  static Future<FloatingWindowOptions> currentBounds(
+    FloatingWindowLaunch launch,
+  ) async {
+    final command = launch.onWindowCommand;
+    final bounds = command != null
+        ? await command('getBounds', null)
+        : await channel.invokeMethod<Object?>('getBounds');
+    return FloatingWindowOptions.fromMap(
+      Map<String, Object?>.from(bounds as Map),
+    );
   }
 
   static Future<Map<String, Object?>> capabilities({

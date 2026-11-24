@@ -50,6 +50,12 @@ still requires that frame. Set `FloatingWindows.onDiagnostic` to retain startup
 stages, native IDs, periodic readiness waits, failures and reclamation in the
 embedding application's logger. Diagnostics omit application payload contents.
 
+Window content can use `FloatingWindows.currentBounds(launch)` and
+`FloatingWindows.updateCurrent(launch, options, fill: true)` to enter full screen.
+Restore with `fill: false` and the saved bounds. This changes the existing native
+or application surface without replacing its engine, content, or session.
+A full-screen update cannot include bounds or enable dragging.
+
 Geometry uses logical pixels. Width/height must be 16–4096. Updates are partial.
 Defaults: 240×240, always on top, pointer input enabled, keyboard focus disabled.
 `clickThrough` passes input through the whole rectangle, not alpha-shaped regions.
