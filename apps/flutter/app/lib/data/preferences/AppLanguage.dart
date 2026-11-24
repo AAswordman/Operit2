@@ -26,12 +26,21 @@ enum AppLanguage {
     AppLocalizations.supportedLocales,
   );
 
-  /// Decodes the initial system choice and rejects unsupported stored values.
-  static AppLanguage fromPreference(Object? value) => switch (value) {
-    null || 'system' => system,
-    'zh' => chinese,
-    'en' => english,
-    'fr' => french,
-    _ => throw FormatException('Invalid application language: $value'),
-  };
+  /// Decodes a stored choice, accepting regional tags such as `zh-CN`, and
+  /// falls back to the system default for unknown values. The key syncs
+  /// through Space preferences to devices running different app versions, so
+  /// startup language resolution must not depend on a peer's exact build.
+  static AppLanguage fromPreference(Object? value) {
+    if (value is! String || value.isEmpty || value == 'system') {
+      return system;
+    }
+    final tag = value.toLowerCase().replaceAll('_', '-');
+    for (final language in AppLanguage.values) {
+      final code = language.code;
+      if (code != null && (tag == code || tag.startsWith('$code-'))) {
+        return language;
+      }
+    }
+    return system;
+  }
 }

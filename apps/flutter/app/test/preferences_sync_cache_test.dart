@@ -62,6 +62,9 @@ void main() {
       });
       bridge.applyPeerPreferences(_userFile, <String, Object?>{});
       bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'app_language': 'zh-CN',
+      });
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
         'app_language': 'invalid',
       });
       await _drainEvents();
@@ -69,9 +72,11 @@ void main() {
         AppLanguage.system,
         AppLanguage.english,
         AppLanguage.system,
+        AppLanguage.chinese,
+        AppLanguage.system,
       ]);
-      expect(errors.single, isA<FormatException>());
-      await expectLater(preferences.loadAppLanguage(), throwsFormatException);
+      expect(errors, isEmpty);
+      expect(await preferences.loadAppLanguage(), AppLanguage.system);
       await subscription.cancel();
       expect(bridge.activeWatches, 0);
     },
