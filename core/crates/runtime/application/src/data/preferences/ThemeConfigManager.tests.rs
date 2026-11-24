@@ -233,6 +233,7 @@ fn invalid_types_enums_and_ranges_are_rejected() {
 fn device_fonts_require_the_selected_family_and_persisted_face() {
     for (font_type, name, path) in [
         ("fontType", "systemFontName", "customFontPath"),
+        ("codeFontType", "codeFontSystemName", "codeFontPath"),
         ("bubbleUserFontType", "bubbleUserSystemFontName", "bubbleUserCustomFontPath"),
         ("bubbleAiFontType", "bubbleAiSystemFontName", "bubbleAiCustomFontPath"),
     ] {
