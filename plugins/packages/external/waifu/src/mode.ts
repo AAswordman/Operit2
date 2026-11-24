@@ -24,9 +24,10 @@ function characters<I, O>(method: string, input: I): Promise<O> {
   return ToolPkg.callDependency<I, O>("com.operit.character_cards", method, input);
 }
 
-/** Resolves the exact selection already persisted on an actual conversation. */
-export async function chatTarget(chatId: string): Promise<string> {
-  const binding = await characters<{ chatId: string }, { chatId: string; selection: string }>("chat.configuration.binding.read", { chatId: identifier(chatId, "chatId") });
+/** Finds an explicit role selection; conversations created without the character plugin remain unbound. */
+export async function chatTarget(chatId: string): Promise<string | null> {
+  const binding = await characters<{ chatId: string }, { chatId: string; selection: string } | null>("chat.configuration.binding.find", { chatId: identifier(chatId, "chatId") });
+  if (binding === null) return null;
   return identifier(binding.selection, "character selection");
 }
 
@@ -58,7 +59,9 @@ export async function ensureMode(selection: string): Promise<Mode> {
 
 /** Reads an enabled role mode without creating a binding during ordinary model execution. */
 export async function modeForChat(chatId: string): Promise<Mode | null> {
-  const selection = await chatTarget(chatId), config = await loadModes();
+  const selection = await chatTarget(chatId);
+  if (selection === null) return null;
+  const config = await loadModes();
   const mode = config.bindings[selection];
   if (mode === undefined || !mode.enabled) return null;
   return JSON.parse(JSON.stringify(mode)) as Mode;
@@ -87,7 +90,9 @@ export async function inputMenu(event: ToolPkg.InputMenuToggleHookEvent): Promis
   const { action, chatId, toggleId } = event.eventPayload;
   if (chatId === undefined || (action !== "create" && action !== "toggle")) return;
   if (action === "toggle" && toggleId !== "waifu.mode") return;
-  const selection = await chatTarget(chatId), mode = await ensureMode(selection);
+  const selection = await chatTarget(chatId);
+  if (selection === null) return;
+  const mode = await ensureMode(selection);
   if (action === "toggle") await saveMode(selection, { ...mode, enabled: !mode.enabled });
   else return { toggles: [{ id: "waifu.mode", title: "Waifu 模式", description: "按句子发送气泡，模拟自然聊天节奏", icon: "Face", isChecked: mode.enabled }] };
 }

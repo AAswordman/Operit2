@@ -22,7 +22,7 @@ export function provider(globals = {}) {
     async use(name, defaults) { if (!configs.has(name)) configs.set(name, defaults); return configs.get(name); },
     async flush() { flushes++; },
   };
-  const service = load("service", { PluginConfig, ToolPkg: { async callDependency(_owner, method, input) { if (method === "chat.configuration.binding.read") return { chatId: input.chatId, selection: "card:alice" }; throw new Error(`Unexpected dependency method: ${method}`); }, async readResource(key) { resources.push(key); return `/host/resources/${key}.jpg`; } }, ...globals });
+  const service = load("service", { PluginConfig, ToolPkg: { async callDependency(_owner, method, input) { if (method === "chat.configuration.binding.find") return { chatId: input.chatId, selection: "card:alice" }; throw new Error(`Unexpected dependency method: ${method}`); }, async readResource(key) { resources.push(key); return `/host/resources/${key}.jpg`; } }, ...globals });
   const handlers = { "settings.get": service.settingsGet, "settings.set": service.settingsSet, "session.open": service.sessionOpen, "session.feed": service.sessionFeed, "session.close": service.sessionClose };
   /** Invokes a real declared public handler as a specified dependency owner. */
   async function call(method, payload, callerPackage = "consumer") {

@@ -5,7 +5,7 @@ import { load, plain, clock, settle } from "./harness.mjs";
 /** Boots the actual plugin once with isolated SDK ports and real cross-module handlers. */
 function runtime(options = {}) {
   const time = clock(), configs = new Map(), handlers = {}, apis = {}, channels = new Map(), requests = [], toasts = [];
-  const bindings = { alice: "card:alice", bob: "card:bob" };
+  const bindings = { alice: "card:alice", bob: "card:bob", ...options.bindings };
   const ToolPkg = {
     ipc: { on(name, handler) { channels.set(name, handler); }, async call(name, payload) { return channels.get(name)(payload); } },
     async callDependency(owner, method, input) {
@@ -13,7 +13,11 @@ function runtime(options = {}) {
       switch (method) {
         case "activePrompt.get": return { CharacterCard: { id: "alice" } };
         case "character.get": return { id: input.id, name: "Alice" };
-        case "chat.configuration.binding.read": return { chatId: input.chatId, selection: bindings[input.chatId] };
+        case "chat.configuration.binding.find": {
+          if (options.bindingError) throw options.bindingError;
+          const selection = bindings[input.chatId];
+          return selection === undefined ? null : { chatId: input.chatId, selection };
+        }
         default: throw new Error(`Unexpected dependency: ${method}`);
       }
     },
@@ -34,7 +38,7 @@ function runtime(options = {}) {
   } }, System: { async toast(message) { toasts.push(message); } } };
   const PluginConfig = { async use(name, defaults) { if (!configs.has(name)) configs.set(name, defaults); return configs.get(name); }, async flush() {} };
   load("main", { ToolPkg, Tools, PluginConfig, ...time }).registerToolPkg();
-  return { handlers, apis, time, configs, requests, toasts,
+  return { handlers, apis, time, configs, requests, toasts, bindings,
     admin: request => channels.get("waifu.settings")(request),
     async enable(changes = {}) {
       const context = await channels.get("waifu.settings")({ action: "mode.get" });
@@ -71,6 +75,47 @@ test("ordinary Waifu starts disabled and its switch is bound to the actual chara
   assert.equal(await r.handlers.response(response("started", "", "bob")), false);
   const menu = await r.handlers.menu({ eventPayload: { action: "create", chatId: "alice" } });
   assert.equal(menu.toggles[0].isChecked, true);
+});
+
+test("enabling character cards after chat creation leaves unbound conversations untouched", async () => {
+  const r = runtime(); await r.enable({ mergeSend: true });
+  const chatId = "created-without-character-plugin";
+  const attachments = [{ path: "/host/image.jpg", name: "image.jpg", type: "image/jpeg" }];
+  const event = input("这是什么", { chatId, attachments, attachmentCount: 1, hasAttachments: true });
+  assert.equal(await r.handlers.input(event), undefined);
+  assert.deepEqual(event.eventPayload.attachments, attachments);
+  assert.equal(await r.handlers.input(input("普通文字", { chatId })), undefined);
+  assert.equal(await r.handlers.input(input("引用回复", { chatId, replyToMessageTimestamp: 42 })), undefined);
+  assert.equal(await r.handlers.menu({ eventPayload: { action: "create", chatId } }), undefined);
+  assert.equal(await r.handlers.menu({ eventPayload: { action: "toggle", chatId, toggleId: "waifu.mode" } }), undefined);
+  assert.deepEqual(plain(await r.apis["mode.status"]({ payload: { chatId } })), { enabled: false });
+  assert.equal(await r.handlers.prompt({ event: "after_compose_system_prompt", eventPayload: { chatId, systemPrompt: "Original prompt" } }), undefined);
+  assert.equal(await r.handlers.response(response("started", "", chatId)), false);
+  r.time.advance(15000); await settle();
+  assert.deepEqual(r.requests, []);
+  assert.deepEqual(Object.keys(r.configs.get("mode").bindings), ["card:alice"]);
+
+  // An explicit later binding activates the selected role's existing settings.
+  r.bindings[chatId] = "card:alice";
+  assert.deepEqual(plain(await r.apis["mode.status"]({ payload: { chatId } })), { enabled: true });
+  assert.equal(await r.handlers.response(response("started", "", chatId)), true);
+});
+
+test("an explicitly bound model chat keeps its own Waifu settings separate from unbound chats", async () => {
+  const r = runtime({ bindings: { model: "model:chat" } });
+  await r.handlers.menu({ eventPayload: { action: "toggle", chatId: "model", toggleId: "waifu.mode" } });
+  assert.deepEqual(plain(await r.apis["mode.status"]({ payload: { chatId: "model" } })), { enabled: true });
+  assert.deepEqual(plain(await r.apis["mode.status"]({ payload: { chatId: "unbound" } })), { enabled: false });
+  assert.deepEqual(plain(await r.apis["mode.status"]({ payload: { chatId: "alice" } })), { enabled: false });
+  assert.deepEqual(Object.keys(r.configs.get("mode").bindings), ["model:chat"]);
+});
+
+test("binding storage errors still stop hooks instead of being treated as an unbound chat", async () => {
+  const r = runtime({ bindingError: new Error("Character storage read failed") });
+  await assert.rejects(r.handlers.input(input("hello")), /Character storage read failed/);
+  await assert.rejects(r.handlers.menu({ eventPayload: { action: "create", chatId: "alice" } }), /Character storage read failed/);
+  await assert.rejects(r.handlers.prompt({ event: "after_compose_system_prompt", eventPayload: { chatId: "alice", systemPrompt: "Original prompt" } }), /Character storage read failed/);
+  await assert.rejects(r.handlers.response(response("started")), /Character storage read failed/);
 });
 
 test("ordinary chat receives prompt rules, stable sentences and real emotion images without QQBot", async () => {
