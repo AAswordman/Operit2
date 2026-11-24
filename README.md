@@ -165,6 +165,8 @@ See [`BUILDING.md`](BUILDING.md) for complete environment, signing, release, and
 
 Terminal profiles and other application settings can be managed from the CLI.
 See [CLI settings and UI parity](docs/cli-settings.md) for commands and Windows WSL examples.
+See [CLI workspaces](docs/cli-workspaces.md) to create a workspace, mount the current
+folder, and bind chats by workspace ID.
 
 Run from the repository root:
 

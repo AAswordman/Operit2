@@ -46,6 +46,7 @@ Compose 的执行模型与二进制协议维护在 [Compose runtime](../core/cra
 | 主题 | 内容 |
 | --- | --- |
 | [CLI 网络控制](cli-network-control.md) | 配对、角色、成员与审批命令 |
+| [CLI 工作区](cli-workspaces.md) | 独立工作区 ID、目录挂载、聊天绑定与原生路径入口 |
 | [TUI 无头管理](tui-headless-management.md) | 配置面板与后台 daemon |
 | [版本与发布](release-versioning.md) | 版本、渠道、产物与更新 |
 | [应用更新与应用管理](application-updates-and-package-tools.md) | App/CLI 共享更新、原生安装状态与各平台能力 |

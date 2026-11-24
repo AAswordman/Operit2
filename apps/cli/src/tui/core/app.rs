@@ -2587,17 +2587,21 @@ impl OperitTui {
         Ok(())
     }
 
+    /// Mounts the native caller directory through the shared chat workspace binding flow.
     async fn accept_startup_workspace_prompt(&mut self) -> Result<(), String> {
         let Some(prompt) = self.startup_workspace_prompt.clone() else {
             return Ok(());
         };
         let chat_id = self.current_chat_id()?;
-        let bind_result = self
-            .core
-            .chat_runtime_holder_main()
-            .bindChatToWorkspace(chat_id.clone(), prompt.path.clone())
-            .await
-            .map_err(|error| error.to_string());
+        let bind_result = async {
+            let folder_path = operit_vfs::VfsPath::nativePathToVfs(&prompt.path)?;
+            self.core
+                .chat_runtime_holder_main()
+                .bindChatToWorkspace(chat_id.clone(), folder_path)
+                .await
+                .map_err(|error| error.to_string())
+        }
+        .await;
         if let Err(error) = bind_result {
             self.set_status_message(error);
             return Ok(());

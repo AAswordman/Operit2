@@ -184,7 +184,7 @@ test('editor command examples include current required arguments', async () => {
     ['prefs.show', 2], ['prefs.thinking', 3], ['prefs.stream', 3], ['prefs.media-history', 4], ['prefs.mcp-timeout', 3],
     ['log.show', 2], ['log.package', 2], ['log.path', 2], ['log.clear', 2],
     ['tool', 1], ['tool.list', 3], ['tool.show', 3], ['tool.exec', 4],
-    ['workspace', 1], ['workspace.list', 2], ['workspace.commands', 3], ['workspace.run', 4], ['workspace.bind-default', 3],
+    ['workspace', 1], ['workspace.list', 2], ['workspace.commands', 3], ['workspace.run', 4], ['workspace.create', 3], ['workspace.bind', 4],
   ]);
   assert.ok(listed.length > 10);
   for (const args of listed) {

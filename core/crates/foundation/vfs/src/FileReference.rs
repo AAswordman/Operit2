@@ -34,6 +34,14 @@ impl VfsPath {
     pub fn normalizeWorkspaceBindingPath(path: &str) -> Result<String, String> {
         PathMapper::normalizeWorkspaceBindingPath(path)
     }
+    /// Converts an explicitly native absolute path into the owning host's VFS mount.
+    pub fn nativePathToVfs(path: &str) -> Result<String, String> {
+        PathMapper::nativePathToVfs(path)
+    }
+    /// Validates explicit workspace VFS ingress without native path inference.
+    pub fn normalizeWorkspaceVfsPath(path: &str) -> Result<String, String> {
+        PathMapper::normalizeWorkspaceVfsPath(path)
+    }
     /// Resolves a workspace resource into the virtual namespace.
     pub fn resolveWorkspaceResourcePath(base: &str, path: &str) -> Result<String, String> {
         PathMapper::resolveWorkspaceResourcePath(base, path)

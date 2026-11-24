@@ -1558,6 +1558,35 @@ impl ChatHistoryManager {
         Ok(self.workspaceStore.upsert(workspace)?)
     }
 
+    /// Selects the first working directory without changing folder identities or mounts.
+    pub fn setPrimaryWorkspaceFolder(
+        &self,
+        workspaceId: String,
+        folderName: String,
+    ) -> ChatHistoryManagerResult<Workspace> {
+        let mut workspace = self.workspaceStore.getById(&workspaceId)?.ok_or_else(|| {
+            ChatHistoryManagerError::IllegalArgument(format!(
+                "workspace does not exist: {workspaceId}"
+            ))
+        })?;
+        let index = workspace
+            .folders
+            .iter()
+            .position(|folder| folder.name == folderName)
+            .ok_or_else(|| {
+                ChatHistoryManagerError::IllegalArgument(format!(
+                    "workspace folder not found: {folderName}"
+                ))
+            })?;
+        if index == 0 {
+            return Ok(workspace);
+        }
+        let folder = workspace.folders.remove(index);
+        workspace.folders.insert(0, folder);
+        workspace.updatedAt = currentTimeMillis();
+        self.upsertWorkspace(workspace)
+    }
+
     /// Deletes a workspace that is not bound to any chat.
     pub fn deleteWorkspace(&self, workspaceId: String) -> ChatHistoryManagerResult<()> {
         let bound = self

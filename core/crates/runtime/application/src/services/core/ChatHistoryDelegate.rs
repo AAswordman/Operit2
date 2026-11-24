@@ -1987,11 +1987,16 @@ impl ChatHistoryDelegate {
 
     #[allow(non_snake_case)]
     /// Removes the workspace binding from a chat.
-    pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
+    pub fn unbindChatFromWorkspace(&mut self, chatId: String) -> Result<(), String> {
+        self.chatHistoryManager
+            .loadChatHistory(chatId.clone())
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Chat does not exist: {chatId}"))?;
         self.chatHistoryManager
             .updateChatWorkspaceId(chatId.clone(), None)
-            .expect("ChatHistoryManager.updateChatWorkspaceId must succeed");
+            .map_err(|error| error.to_string())?;
         self.notifyChatWorkspaceChanged(&chatId);
+        Ok(())
     }
 
     #[allow(non_snake_case)]

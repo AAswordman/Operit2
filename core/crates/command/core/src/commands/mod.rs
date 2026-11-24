@@ -29,6 +29,8 @@ mod workspace;
 mod package_tests;
 #[cfg(test)]
 mod settings_tests;
+#[cfg(test)]
+mod workspace_tests;
 
 use crate::output::CoreCommandOutput;
 use operit_runtime::core::application::OperitApplication::OperitApplication;
@@ -148,7 +150,7 @@ fn print_core_usage(
         "operit2 plugin exec <registered-command> [args...]  Explicitly invoke a registered plugin command.",
         "operit2 model <codex-login|provider-type-list|provider-list|provider-show|provider-create|provider-set-key|provider-set-endpoint|provider-model-available-list|provider-model-add|provider-model-create|list|show|use|params|parameters|context-show|context-set|summary-show|summary-set|thinking|function-list|function-show|function-set|function-reset|function-follow-chat|spec-reset|profile-save|provider-save|provider-delete|delete|providers-export|providers-import|test|provider-test-key|codex-status|codex-logout>",
         "operit2 chat <new|list|show|current|switch|delete|delete-message|clear|rollback|branch|branches|lock|pin|stats|send>",
-        "operit2 workspace <default-path|create-default|bind-default|bind|unbind|list|summary|delete-unbound|chats|commands|commands-path|run|run-path>",
+        "operit2 workspace <create|show|list|mount|unmount|primary|bind|unbind|delete|summary|delete-unbound|chats|commands|run|exec|resolve-path|open-path>",
         "operit2 storage <paths|migrate>",
         "operit2 sync <reset-transactions>",
         "operit2 update <run|check|target>",

@@ -1215,7 +1215,7 @@ fn rewrite_cli_usage_message(message: String) -> String {
 /// Carries the caller's current directory across local and daemon command dispatch.
 fn cli_core_command_args(args: &[String]) -> Result<Vec<String>, String> {
     let directory = std::env::current_dir().map_err(|error| error.to_string())?;
-    let directory = operit_vfs::VfsPath::normalizeWorkspaceBindingPath(&directory.to_string_lossy())?;
+    let directory = operit_vfs::VfsPath::nativePathToVfs(&directory.to_string_lossy())?;
     let mut command = vec!["--cwd".into(), directory];
     command.extend_from_slice(args);
     Ok(command)
@@ -1581,7 +1581,7 @@ const CLI_COMMANDS: &[(&str, &str)] = &[
     ("stt", "Configure speech-to-text and transcribe"),
     ("model", "Manage providers, models, and parameters"),
     ("local-models", "Manage local model files"),
-    ("workspace", "Bind workspaces to chats and run commands"),
+    ("workspace", "Create workspaces, mount folders and bind chats by ID"),
     ("tool", "List, show, or execute tools"),
     ("approval", "Manage AI permission mode and tool approval"),
     ("skill", "Manage skills"),

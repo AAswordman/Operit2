@@ -3,13 +3,19 @@ use std::collections::BTreeMap;
 use crate::output::CoreCommandOutput;
 use operit_host_api::HostManager::HostManager;
 use operit_host_api::{ManagedRuntimeProgram, RuntimePathAction, RuntimeProcessRequest};
+use operit_model::Workspace::{Workspace, WorkspaceFolder};
 use operit_runtime::core::application::OperitApplication::OperitApplication;
 use operit_runtime::core::chat::ChatRuntimeSlot::ChatRuntimeSlot;
 use operit_runtime::services::ChatServiceCore::ChatServiceCore;
 use operit_runtime::ui::features::chat::webview::workspace::WorkspaceUtils;
+use operit_store::repository::ChatHistoryManager::{
+    ChatHistoryManager, ChatHistoryManagerError, ChatHistoryManagerResult,
+};
 use operit_tools::tools::AIToolHandler::AIToolHandler;
+use operit_tools::tools::ToolResultDataClasses::ToolResultData;
 use operit_tools::ConversationMarkupManager::ToolResult;
 use operit_tools::ToolExecutionManager::{AITool, ToolParameter};
+use operit_util::FileUtils::FileUtils;
 use operit_vfs::VfsPath;
 use operit_vfs::VisualFileSystem::VisualFileSystem;
 use serde::{Deserialize, Serialize};
@@ -27,24 +33,27 @@ fn with_main_chat_core<R>(
     Ok(action(holder.getCore(ChatRuntimeSlot::MAIN)))
 }
 
-/// Runs workspace path, binding, shortcut, and workspace tool commands.
+/// Runs workspace identity, folder mounting, binding and execution commands.
 pub async fn run_workspace_command(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    if args.is_empty() {
+    if args.is_empty() || matches!(args, [flag] if flag == "help" || flag == "--help") {
         print_workspace_usage(output);
         return Ok(());
     }
 
     match args[0].as_str() {
-        "default-path" => default_workspace_path(application, &args[1..], output),
-        "create-default" => create_default_workspace(application, &args[1..], output),
-        "bind-default" => bind_default_workspace(application, &args[1..], output),
+        "create" => create_workspace(application, &args[1..], output).await,
+        "show" => show_workspace(application, &args[1..], output),
+        "mount" => mount_workspace(application, &args[1..], output).await,
+        "unmount" => unmount_workspace(application, &args[1..], output),
+        "primary" => set_primary_folder(application, &args[1..], output),
+        "delete" => delete_workspace(application, &args[1..], output),
         "bind" => bind_workspace(application, &args[1..], output),
         "unbind" => unbind_workspace(application, &args[1..], output),
-        "list" => list_workspaces(application, output),
+        "list" if args.len() == 1 => list_workspaces(application, output),
         "summary" if args.len() == 1 => {
             let summary = application.workspaceService().workspaceManagementSummary()?;
             output.push_stdout_line(serde_json::to_string_pretty(&summary).map_err(|error| error.to_string())?);
@@ -63,16 +72,11 @@ pub async fn run_workspace_command(
         }
         "chats" => list_workspace_chats(application, &args[1..], output),
         "commands" => list_workspace_commands(application, &args[1..], output),
-        "commands-path" => list_workspace_commands_path(application, &args[1..], output),
         "run" => run_workspace_shortcut(application, &args[1..], output).await,
-        "run-path" => run_workspace_shortcut_path(application, &args[1..], output).await,
         "exec" => execute_workspace_program(application, &args[1..], output),
         "resolve-path" => resolve_workspace_path(application, &args[1..], output),
         "open-path" => open_workspace_path(application, &args[1..], output),
-        _ => {
-            print_workspace_usage(output);
-            Ok(())
-        }
+        _ => Err(format!("Unknown workspace command or invalid arguments: {}. Run operit2 cli workspace for usage.", args[0])),
     }
 }
 
@@ -89,7 +93,7 @@ fn open_workspace_path(
             (path, RuntimePathAction::Application { program: program.clone(), args: arguments.to_vec() }),
         _ => return Err("usage: operit2 workspace open-path <vfs-path> <reveal|terminal|program <name> [args...]>".to_string()),
     };
-    let vfs = vfsForWorkspace(&application.hostManager)?;
+    let vfs = application.hostManager.vfs()?;
     let file = vfs.file(path)?;
     let host = application
         .hostManager
@@ -110,7 +114,7 @@ fn resolve_workspace_path(
 ) -> Result<(), String> {
     let path = match args {
         [path] => VfsPath::canonicalizeVfsPath(path)?,
-        [flag, path] if flag == "--native" => VfsPath::normalizeWorkspaceBindingPath(path)?,
+        [flag, path] if flag == "--native" => VfsPath::nativePathToVfs(path)?,
         [flag, base, path] if flag == "--from" => {
             VfsPath::resolveWorkspaceResourcePath(base, path)?
         }
@@ -121,7 +125,7 @@ fn resolve_workspace_path(
             )
         }
     };
-    let vfs = vfsForWorkspace(&application.hostManager)?;
+    let vfs = application.hostManager.vfs()?;
     vfs.validatePath(&path, "path")?;
     output.push_stdout_line(&path);
     output.setJsonStdout(json!({ "vfsPath": path }));
@@ -137,14 +141,16 @@ fn execute_workspace_program(
     let workspace = args
         .first()
         .filter(|value| !value.is_empty())
-        .ok_or("usage: operit2 workspace exec <workspace-path> <program> [args...]")?;
+        .ok_or("usage: operit2 workspace exec <workspace-id> <program> [args...]")?;
     let program = args
         .get(1)
         .filter(|value| !value.is_empty())
         .ok_or("workspace exec requires a program")?;
+    let workspaceRecord = get_workspace(application, workspace)?;
+    let workspacePath = workspaceRecord.primaryFolder().path.clone();
     let context = &application.hostManager;
-    let vfs = vfsForWorkspace(context)?;
-    let cwd = vfs.file(workspace)?;
+    let vfs = context.vfs()?;
+    let cwd = vfs.file(&local_workspace_path(&workspacePath)?)?;
     let host = context
         .managedRuntimeHost
         .as_ref()
@@ -164,8 +170,9 @@ fn execute_workspace_program(
     output.push_stdout(&result.stdout);
     output.push_stderr(&result.stderr);
     output.setJsonStdout(json!({
-        "workspacePath": workspace,
-        "workingDirectory": workspace,
+        "workspaceId": workspace,
+        "workspacePath": workspacePath,
+        "workingDirectory": workspacePath,
         "exitCode": result.exitCode,
         "stdout": result.stdout,
         "stderr": result.stderr,
@@ -173,96 +180,293 @@ fn execute_workspace_program(
     Ok(())
 }
 
-/// Prints the default workspace path for one chat id.
-fn default_workspace_path(
-    _application: &mut OperitApplication,
+/// Creates an independent workspace with an app-owned folder or one explicit mount.
+async fn create_workspace(
+    application: &OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 workspace default-path <chat-id>".to_string())?;
-    let path = VfsPath::workspacePath(chatId)?;
-    output.push_stdout_line(format!("Default workspace path: {path}"));
-    output.setJsonStdout(json!({
-        "chatId": chatId,
-        "workspacePath": path
-    }));
-    Ok(())
-}
-
-/// Creates the default workspace directory for one chat id.
-fn create_default_workspace(
-    application: &mut OperitApplication,
-    args: &[String],
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let (chatId, projectType) = parse_default_workspace_args(
-        args,
-        "operit2 workspace create-default <chat-id> [project-type]",
-    )?;
-    let _ = application;
-    let workspacePath =
-        WorkspaceUtils::createAndGetDefaultWorkspace(chatId.clone(), projectType.clone())?;
-    output.push_stdout_line(format!("Created default workspace for {chatId}"));
-    output.push_stdout_line(format!("Workspace: {workspacePath}"));
-    output.setJsonStdout(json!({
-        "chatId": chatId,
-        "projectType": projectType,
-        "workspacePath": workspacePath,
-        "created": true
-    }));
-    Ok(())
-}
-
-/// Creates and binds the default workspace for one chat id.
-fn bind_default_workspace(
-    application: &mut OperitApplication,
-    args: &[String],
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let (chatId, projectType) = parse_default_workspace_args(
-        args,
-        "operit2 workspace bind-default <chat-id> [project-type]",
-    )?;
-    let workspacePath = WorkspaceUtils::createAndGetDefaultWorkspace(chatId.clone(), projectType)?;
-    with_main_chat_core(application, |core| {
-        core.bindChatToWorkspace(chatId.clone(), workspacePath.clone())
+    let (name, source) =
+        match args {
+            [name] => (name, None),
+            [name, kind, path] if matches!(kind.as_str(), "--native" | "--vfs") => {
+                (name, Some((kind.as_str(), path.as_str())))
+            }
+            _ => return Err(
+                "usage: operit2 workspace create <name> [--native <directory> | --vfs <directory>]"
+                    .into(),
+            ),
+        };
+    if name.trim().is_empty() {
+        return Err("workspace name is required".into());
+    }
+    let path = match source {
+        Some((kind, path)) => {
+            let path = folder_source_path(kind, path)?;
+            validate_folder(application, &path).await?;
+            path
+        }
+        None => WorkspaceUtils::createNewDefaultWorkspace()?,
+    };
+    let folder = WorkspaceFolder {
+        name: "default".into(),
+        path: qualify_folder_path(application, &path)?,
+    };
+    let workspace = with_main_chat_core(application, |core| {
+        core.chatHistoryDelegate
+            .chatHistoryManager
+            .createWorkspace(name.clone(), vec![folder])
+            .map_err(|error| error.to_string())
     })??;
-    output.push_stdout_line(format!("Bound workspace for {chatId}"));
-    output.push_stdout_line(format!("Workspace: {workspacePath}"));
-    output.setJsonStdout(json!({
-        "chatId": chatId,
-        "workspacePath": workspacePath,
-        "bound": true
-    }));
+    print_workspace(&workspace, output);
     Ok(())
 }
 
-/// Binds one chat id to an explicit workspace path.
+/// Loads one persisted workspace by identity rather than interpreting its id as a path.
+fn get_workspace(application: &OperitApplication, workspaceId: &str) -> Result<Workspace, String> {
+    with_main_chat_core(application, |core| {
+        core.chatHistoryDelegate
+            .chatHistoryManager
+            .getWorkspace(workspaceId)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("workspace does not exist: {workspaceId}"))
+    })?
+}
+
+/// Prints a workspace record and its stable id for subsequent CLI operations.
+fn print_workspace(workspace: &Workspace, output: &mut CoreCommandOutput) {
+    output.push_stdout_line(format!("Workspace: {} | {}", workspace.id, workspace.name));
+    for (index, folder) in workspace.folders.iter().enumerate() {
+        output.push_stdout_line(format!(
+            "- {} | {}{}",
+            folder.name,
+            folder.path,
+            if index == 0 { " | primary" } else { "" }
+        ));
+    }
+    output.setJsonStdout(json!({"workspaceId": workspace.id, "workspace": workspace}));
+}
+
+/// Shows one workspace including its ordered mounted folders.
+fn show_workspace(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let [workspaceId] = args else {
+        return Err("usage: operit2 workspace show <workspace-id>".into());
+    };
+    print_workspace(&get_workspace(application, workspaceId)?, output);
+    Ok(())
+}
+
+/// Separates explicit native ingress from already virtual, optionally node-qualified paths.
+fn folder_source_path(kind: &str, path: &str) -> Result<String, String> {
+    match kind {
+        "--native" => VfsPath::nativePathToVfs(path),
+        "--vfs" => match FileUtils::splitQualifiedVfsPath(path) {
+            Some((node, path)) => Ok(FileUtils::qualifyVfsPath(
+                node,
+                &VfsPath::normalizeWorkspaceVfsPath(path)?,
+            )),
+            None => VfsPath::normalizeWorkspaceVfsPath(path),
+        },
+        _ => Err("folder source requires --native or --vfs".into()),
+    }
+}
+
+/// Gives local mounts the same node ownership persisted by the graphical workspace picker.
+fn qualify_folder_path(application: &OperitApplication, path: &str) -> Result<String, String> {
+    if FileUtils::splitQualifiedVfsPath(path).is_some() {
+        return Ok(path.to_owned());
+    }
+    let storage = application
+        .hostManager
+        .runtimeStorageHost
+        .clone()
+        .ok_or("RuntimeStorageHost is not registered")?;
+    let node = operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage)
+        .identity()?
+        .nodeId;
+    Ok(FileUtils::qualifyVfsPath(&node, path))
+}
+
+/// Verifies directory existence through the owning node's file tool before persisting a mount.
+async fn validate_folder(application: &OperitApplication, path: &str) -> Result<(), String> {
+    let result = application
+        .toolHandler
+        .clone()
+        .executeTool(AITool {
+            name: "file_exists".into(),
+            parameters: vec![ToolParameter {
+                name: "path".into(),
+                value: path.into(),
+            }],
+        })
+        .await;
+    if !result.success {
+        return Err(result
+            .error
+            .ok_or("folder validation failed without an error message")?);
+    }
+    match result.result {
+        ToolResultData::FileExistsData(info) if info.exists && info.isDirectory => Ok(()),
+        ToolResultData::FileExistsData(_) => Err(format!(
+            "workspace mount must reference an existing directory: {path}"
+        )),
+        _ => Err("file_exists returned invalid folder metadata".into()),
+    }
+}
+
+/// Applies a manager-owned folder edit and refreshes every chat sharing the workspace.
+fn edit_workspace(
+    application: &OperitApplication,
+    edit: impl FnOnce(&ChatHistoryManager) -> ChatHistoryManagerResult<Workspace>,
+) -> Result<Workspace, String> {
+    with_main_chat_core(application, |core| {
+        let workspace = edit(&core.chatHistoryDelegate.chatHistoryManager)
+            .map_err(|error| error.to_string())?;
+        let chats = core
+            .chatHistoryDelegate
+            .chatHistoryManager
+            .loadChatHistories()
+            .map_err(|error| error.to_string())?;
+        for chat in chats
+            .iter()
+            .filter(|chat| chat.workspaceId.as_deref() == Some(workspace.id.as_str()))
+        {
+            core.chatHistoryDelegate
+                .notifyChatWorkspaceChanged(&chat.id);
+        }
+        Ok(workspace)
+    })?
+}
+
+/// Mounts a named directory without changing the identity or chat bindings of the workspace.
+async fn mount_workspace(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let (workspaceId, name, kind, path, primary) = match args {
+        [id, name, kind, path] => (id, name, kind, path, false),
+        [id, name, kind, path, flag] if flag == "--primary" => (id, name, kind, path, true),
+        _ => return Err("usage: operit2 workspace mount <workspace-id> <folder-name> <--native|--vfs> <directory> [--primary]".into()),
+    };
+    let path = qualify_folder_path(application, &folder_source_path(kind, path)?)?;
+    validate_folder(application, &path).await?;
+    let workspace = edit_workspace(application, |manager| {
+        let workspace = manager.addWorkspaceFolder(
+            workspaceId.clone(),
+            WorkspaceFolder {
+                name: name.clone(),
+                path: path.clone(),
+            },
+        )?;
+        if primary {
+            // An already mounted path retains its existing name in the shared mount model.
+            let folder = workspace
+                .folders
+                .iter()
+                .find(|folder| folder.path == path)
+                .ok_or_else(|| {
+                    ChatHistoryManagerError::IllegalArgument(format!(
+                        "workspace folder not found: {path}"
+                    ))
+                })?;
+            manager.setPrimaryWorkspaceFolder(workspaceId.clone(), folder.name.clone())
+        } else {
+            Ok(workspace)
+        }
+    })?;
+    print_workspace(&workspace, output);
+    Ok(())
+}
+
+/// Unmounts a folder while preserving its files and requiring one remaining working directory.
+fn unmount_workspace(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let [workspaceId, name] = args else {
+        return Err("usage: operit2 workspace unmount <workspace-id> <folder-name>".into());
+    };
+    let workspace = edit_workspace(application, |manager| {
+        manager.removeWorkspaceFolder(workspaceId.clone(), name.clone())
+    })?;
+    print_workspace(&workspace, output);
+    Ok(())
+}
+
+/// Selects the primary working directory without remounting folders or rebinding chats.
+fn set_primary_folder(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let [workspaceId, name] = args else {
+        return Err("usage: operit2 workspace primary <workspace-id> <folder-name>".into());
+    };
+    let workspace = edit_workspace(application, |manager| {
+        manager.setPrimaryWorkspaceFolder(workspaceId.clone(), name.clone())
+    })?;
+    print_workspace(&workspace, output);
+    Ok(())
+}
+
+/// Deletes a workspace through the shared lifecycle while preserving mounted host files.
+fn delete_workspace(
+    application: &OperitApplication,
+    args: &[String],
+    output: &mut CoreCommandOutput,
+) -> Result<(), String> {
+    let [flag, workspaceId] = args else {
+        return Err("usage: operit2 workspace delete --yes <workspace-id>".into());
+    };
+    if flag != "--yes" {
+        return Err("usage: operit2 workspace delete --yes <workspace-id>".into());
+    }
+    with_main_chat_core(application, |core| {
+        core.deleteWorkspace(workspaceId.clone())
+    })??;
+    output.push_stdout_line(format!("Deleted workspace: {workspaceId}"));
+    output.setJsonStdout(json!({"workspaceId": workspaceId, "deleted": true}));
+    Ok(())
+}
+
+/// Restricts local process execution and config reads to folders owned by this node.
+fn local_workspace_path(path: &str) -> Result<String, String> {
+    match FileUtils::splitQualifiedVfsPath(path) {
+        Some((node, path))
+            if Some(node)
+                == operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore::localNodeId()
+                    .as_deref() =>
+        {
+            Ok(path.to_owned())
+        }
+        Some(_) => Err("workspace execution requires a folder owned by the current node".into()),
+        None => Ok(path.to_owned()),
+    }
+}
+
+/// Binds one chat to an existing workspace id without creating or mounting folders.
 fn bind_workspace(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 workspace bind <chat-id> <workspace>".to_string())?
-        .clone();
-    let workspace = args
-        .get(1)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| "usage: operit2 workspace bind <chat-id> <workspace>".to_string())?;
-    let workspace = VfsPath::normalizeWorkspaceBindingPath(&workspace)?;
+    let [chatId, workspaceId] = args else {
+        return Err("usage: operit2 workspace bind <chat-id> <workspace-id>".into());
+    };
     with_main_chat_core(application, |core| {
-        core.bindChatToWorkspace(chatId.clone(), workspace.clone())
+        core.moveChatToWorkspace(chatId.clone(), workspaceId.clone())
     })??;
     output.push_stdout_line(format!("Bound workspace for {chatId}"));
-    output.push_stdout_line(format!("Workspace: {workspace}"));
+    output.push_stdout_line(format!("Workspace: {workspaceId}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
-        "workspacePath": workspace,
+        "workspaceId": workspaceId,
         "bound": true
     }));
     Ok(())
@@ -274,13 +478,12 @@ fn unbind_workspace(
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 workspace unbind <chat-id>".to_string())?
-        .clone();
+    let [chatId] = args else {
+        return Err("usage: operit2 workspace unbind <chat-id>".into());
+    };
     with_main_chat_core(application, |core| {
         core.unbindChatFromWorkspace(chatId.clone())
-    })?;
+    })??;
     output.push_stdout_line(format!("Unbound workspace for {chatId}"));
     output.setJsonStdout(json!({
         "chatId": chatId,
@@ -289,156 +492,123 @@ fn unbind_workspace(
     Ok(())
 }
 
-/// Lists all workspace bindings grouped by workspace path.
+/// Lists persisted workspaces, including those without any bound chat.
 fn list_workspaces(
     application: &mut OperitApplication,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let mut workspaces = BTreeMap::<String, usize>::new();
+    let workspaces = application.workspaceService().listWorkspaces()?;
     let chats = with_main_chat_core(application, |core| core.chatHistoriesFlow().value())?;
-    for chat in chats {
-        let Some(workspaceId) = chat.workspaceId else {
-            continue;
-        };
-        let entry = workspaces.entry(workspaceId).or_insert(0);
-        *entry += 1;
-    }
+    let chatCounts = workspaces
+        .iter()
+        .map(|workspace| {
+            (
+                workspace.id.clone(),
+                chats
+                    .iter()
+                    .filter(|chat| chat.workspaceId.as_deref() == Some(workspace.id.as_str()))
+                    .count(),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
     output.push_stdout_line(format!("Workspaces: {}", workspaces.len()));
-    for (workspace, chatCount) in &workspaces {
-        output.push_stdout_line(format!("- {workspace} | chats: {chatCount}"));
+    for workspace in &workspaces {
+        let chatCount = chatCounts[&workspace.id];
+        output.push_stdout_line(format!(
+            "- {} | {} | folders: {} | chats: {chatCount}",
+            workspace.id,
+            workspace.name,
+            workspace.folders.len()
+        ));
     }
-    output.setJsonStdout(json!({ "workspaces": workspaces }));
+    output.setJsonStdout(json!({ "workspaces": workspaces, "chatCounts": chatCounts }));
     Ok(())
 }
 
-/// Lists chats bound to one workspace path.
+/// Lists chats bound to one existing workspace id.
 fn list_workspace_chats(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let workspace = args
-        .get(0)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| "usage: operit2 workspace chats <workspace>".to_string())?;
+    let [workspaceId] = args else {
+        return Err("usage: operit2 workspace chats <workspace-id>".into());
+    };
+    get_workspace(application, workspaceId)?;
     let chats = with_main_chat_core(application, |core| core.chatHistoriesFlow().value())?
         .into_iter()
-        .filter(|chat| {
-            chat.workspaceId.as_deref() == Some(workspace.as_str())
-                || chat.workspacePrimaryPath.as_deref() == Some(workspace.as_str())
-        })
+        .filter(|chat| chat.workspaceId.as_deref() == Some(workspaceId.as_str()))
         .collect::<Vec<_>>();
     output.push_stdout_line(format!("Chats in workspace: {}", chats.len()));
-    output.push_stdout_line(format!("Workspace: {workspace}"));
+    output.push_stdout_line(format!("Workspace: {workspaceId}"));
     for chat in &chats {
         output.push_stdout_line(format!("- {} | {}", chat.id, chat.title));
     }
     output.setJsonStdout(json!({
-        "workspacePath": workspace,
+        "workspaceId": workspaceId,
         "chats": chats
     }));
     Ok(())
 }
 
-/// Lists workspace commands configured for a chat workspace.
+/// Lists commands configured in the primary folder of an existing workspace.
 fn list_workspace_commands(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 workspace commands <chat-id>".to_string())?;
-    let workspacePath = workspace_path_for_chat(application, chatId)?;
+    let [workspaceId] = args else {
+        return Err("usage: operit2 workspace commands <workspace-id>".into());
+    };
+    let workspace = get_workspace(application, workspaceId)?;
+    let workspacePath = local_workspace_path(&workspace.primaryFolder().path)?;
     list_commands_at_path(
         &application.hostManager,
-        Some(chatId),
+        workspaceId,
         &workspacePath,
         output,
     )
 }
 
-/// Lists workspace commands configured at an explicit workspace path.
-fn list_workspace_commands_path(
-    application: &mut OperitApplication,
-    args: &[String],
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let workspacePath = args
-        .get(0)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| "usage: operit2 workspace commands-path <workspace>".to_string())?;
-    let workspacePath = VfsPath::normalizeWorkspaceBindingPath(&workspacePath)?;
-    list_commands_at_path(&application.hostManager, None, &workspacePath, output)
-}
-
-/// Runs a configured workspace shortcut for a chat workspace.
+/// Runs a shortcut within the selected workspace's complete folder context.
 async fn run_workspace_shortcut(
     application: &mut OperitApplication,
     args: &[String],
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let chatId = args
-        .get(0)
-        .ok_or_else(|| "usage: operit2 workspace run <chat-id> <command-id>".to_string())?;
-    let commandId = args
-        .get(1)
-        .ok_or_else(|| "usage: operit2 workspace run <chat-id> <command-id>".to_string())?;
-    let workspacePath = workspace_path_for_chat(application, chatId)?;
-    run_command_at_path(application, Some(chatId), &workspacePath, commandId, output).await
-}
-
-/// Runs a configured workspace shortcut at an explicit workspace path.
-async fn run_workspace_shortcut_path(
-    application: &mut OperitApplication,
-    args: &[String],
-    output: &mut CoreCommandOutput,
-) -> Result<(), String> {
-    let workspacePath = args
-        .get(0)
-        .cloned()
-        .and_then(nonBlankString)
-        .ok_or_else(|| "usage: operit2 workspace run-path <workspace> <command-id>".to_string())?;
-    let workspacePath = VfsPath::normalizeWorkspaceBindingPath(&workspacePath)?;
-    let commandId = args
-        .get(1)
-        .ok_or_else(|| "usage: operit2 workspace run-path <workspace> <command-id>".to_string())?;
-    run_command_at_path(application, None, &workspacePath, commandId, output).await
-}
-
-/// Resolves the workspace path currently bound to one chat.
-fn workspace_path_for_chat(
-    application: &mut OperitApplication,
-    chatId: &str,
-) -> Result<String, String> {
-    let chat = with_main_chat_core(application, |core| {
-        core.chatHistoriesFlow()
-            .value()
-            .into_iter()
-            .find(|chat| chat.id == chatId)
-            .ok_or_else(|| format!("chat not found: {chatId}"))
-    })??;
-    chat.workspacePrimaryPath
-        .and_then(nonBlankString)
-        .ok_or_else(|| format!("chat has no workspace: {chatId}"))
-}
-
-#[allow(non_snake_case)]
-/// Creates a visual filesystem rooted in the configured runtime and workspace storage.
-fn vfsForWorkspace(context: &HostManager) -> Result<VisualFileSystem, String> {
-    context.vfs()
+    let [workspaceId, commandId] = args else {
+        return Err("usage: operit2 workspace run <workspace-id> <command-id>".into());
+    };
+    let workspace = get_workspace(application, workspaceId)?;
+    let workspacePath = local_workspace_path(&workspace.primaryFolder().path)?;
+    use operit_tools::ToolExecutionManager::{
+        ToolExecutionManager, ToolExposureMode, ToolRuntimeContext,
+    };
+    let context = ToolRuntimeContext {
+        callerName: None,
+        callerChatId: None,
+        callerParticipantId: None,
+        workspacePath: Some(workspacePath.clone()),
+        workspaceFolders: workspace.folderPaths(),
+        toolExposureMode: ToolExposureMode::CLI,
+        extensionOwner: "core:cli".into(),
+        executionData: serde_json::Map::new(),
+    };
+    ToolExecutionManager::scopeToolRuntimeContext(
+        context,
+        run_command_at_path(application, workspaceId, &workspacePath, commandId, output),
+    )
+    .await
 }
 
 /// Lists commands from one workspace configuration file.
 fn list_commands_at_path(
     context: &HostManager,
-    chatId: Option<&str>,
+    workspaceId: &str,
     workspacePath: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
-    let vfs = vfsForWorkspace(context)?;
+    let vfs = context.vfs()?;
     let config = WorkspaceConfigReader::readConfig(&vfs, workspacePath)?;
     output.push_stdout_line(format!("Workspace commands: {}", config.commands.len()));
     output.push_stdout_line(format!("Workspace: {workspacePath}"));
@@ -454,7 +624,7 @@ fn list_commands_at_path(
         ));
     }
     output.setJsonStdout(json!({
-        "chatId": chatId,
+        "workspaceId": workspaceId,
         "workspacePath": workspacePath,
         "commands": config.commands
     }));
@@ -464,13 +634,13 @@ fn list_commands_at_path(
 /// Runs one command from a workspace configuration file.
 async fn run_command_at_path(
     application: &OperitApplication,
-    chatId: Option<&str>,
+    workspaceId: &str,
     workspacePath: &str,
     commandId: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
     let context = application.hostManager.clone();
-    let vfs = vfsForWorkspace(&context)?;
+    let vfs = context.vfs()?;
     let config = WorkspaceConfigReader::readConfig(&vfs, workspacePath)?;
     let command = config
         .commands
@@ -483,7 +653,7 @@ async fn run_command_at_path(
         return execute_workspace_tool(
             application.toolHandler.clone(),
             &command,
-            chatId,
+            workspaceId,
             workspacePath,
             &toolName,
             output,
@@ -498,7 +668,7 @@ async fn run_command_at_path(
         .ok_or_else(|| "No command/tool configured".to_string())?;
     execute_workspace_shell_command(
         &context,
-        chatId,
+        workspaceId,
         workspacePath,
         &command,
         &commandText,
@@ -510,7 +680,7 @@ async fn run_command_at_path(
 async fn execute_workspace_tool(
     mut handler: AIToolHandler,
     command: &CommandConfig,
-    chatId: Option<&str>,
+    workspaceId: &str,
     workspacePath: &str,
     toolName: &str,
     output: &mut CoreCommandOutput,
@@ -529,13 +699,13 @@ async fn execute_workspace_tool(
             parameters,
         })
         .await;
-    print_tool_execution_result(&result, command, chatId, workspacePath, output)
+    print_tool_execution_result(&result, command, workspaceId, workspacePath, output)
 }
 
 /// Executes one workspace command via the terminal host.
 fn execute_workspace_shell_command(
     context: &HostManager,
-    chatId: Option<&str>,
+    workspaceId: &str,
     workspacePath: &str,
     command: &CommandConfig,
     commandText: &str,
@@ -545,7 +715,7 @@ fn execute_workspace_shell_command(
         .terminalHost
         .clone()
         .ok_or_else(|| "TerminalHost is not registered for this runtime.".to_string())?;
-    let vfs = vfsForWorkspace(context)?;
+    let vfs = context.vfs()?;
     let workingDir = workspace_command_working_dir(workspacePath, &command.workingDir)?;
     let directory = operit_host_api::TerminalWorkingDirectory::resolveSessionDirectory(
         terminalHost.as_ref(),
@@ -590,7 +760,7 @@ fn execute_workspace_shell_command(
     }
     output.push_stdout_line(format!("Exit code: {}", commandOutput.exitCode));
     output.setJsonStdout(json!({
-        "chatId": chatId,
+        "workspaceId": workspaceId,
         "workspacePath": workspacePath,
         "commandId": &command.id,
         "label": &command.label,
@@ -687,7 +857,7 @@ fn startsWithHostDrivePath(value: &str) -> bool {
 fn print_tool_execution_result(
     result: &ToolResult,
     command: &CommandConfig,
-    chatId: Option<&str>,
+    workspaceId: &str,
     workspacePath: &str,
     output: &mut CoreCommandOutput,
 ) -> Result<(), String> {
@@ -695,7 +865,7 @@ fn print_tool_execution_result(
     output.push_stdout_line(format!("Success: {}", result.success));
     let resultText = result.result.toString();
     output.setJsonStdout(json!({
-        "chatId": chatId,
+        "workspaceId": workspaceId,
         "workspacePath": workspacePath,
         "commandId": &command.id,
         "label": &command.label,
@@ -757,16 +927,6 @@ fn workspace_command_session_name(workspacePath: &str, command: &CommandConfig) 
     }
 }
 
-/// Parses arguments shared by default workspace commands.
-fn parse_default_workspace_args(
-    args: &[String],
-    usage: &str,
-) -> Result<(String, Option<String>), String> {
-    let chatId = args.get(0).cloned().ok_or_else(|| usage.to_string())?;
-    let projectType = args.get(1).cloned().and_then(nonBlankString);
-    Ok((chatId, projectType))
-}
-
 /// Converts non-empty text to an owned string.
 fn nonBlankString(value: String) -> Option<String> {
     let trimmed = value.trim();
@@ -780,27 +940,37 @@ fn nonBlankString(value: String) -> Option<String> {
 /// Prints workspace command usage.
 fn print_workspace_usage(output: &mut CoreCommandOutput) {
     let lines = [
-        "operit2 workspace default-path <chat-id>",
-        "operit2 workspace create-default <chat-id> [project-type]",
-        "operit2 workspace bind-default <chat-id> [project-type]",
-        "operit2 workspace bind <chat-id> <workspace>",
+        "operit2 workspace create <name> [--native <directory> | --vfs <directory>]",
+        "operit2 workspace show <workspace-id>",
+        "operit2 workspace mount <workspace-id> <folder-name> <--native|--vfs> <directory> [--primary]",
+        "operit2 workspace unmount <workspace-id> <folder-name>",
+        "operit2 workspace primary <workspace-id> <folder-name>",
+        "operit2 workspace bind <chat-id> <workspace-id>",
         "operit2 workspace unbind <chat-id>",
         "operit2 workspace list",
         "operit2 workspace summary",
         "operit2 workspace delete-unbound --yes <workspace-name> [names...]",
-        "operit2 workspace chats <workspace>",
-        "operit2 workspace commands <chat-id>",
-        "operit2 workspace commands-path <workspace>",
-        "operit2 workspace run <chat-id> <command-id>",
-        "operit2 workspace run-path <workspace> <command-id>",
-        "operit2 workspace exec <workspace-path> <program> [args...]",
+        "operit2 workspace delete --yes <workspace-id>",
+        "operit2 workspace chats <workspace-id>",
+        "operit2 workspace commands <workspace-id>",
+        "operit2 workspace run <workspace-id> <command-id>",
+        "operit2 workspace exec <workspace-id> <program> [args...]",
         "operit2 workspace resolve-path [--native | --from <workspace>] <path>",
         "operit2 workspace open-path <vfs-path> <reveal|terminal|program <name> [args...]>",
     ];
     for line in lines {
         output.push_stdout_line(line);
     }
-    output.setJsonStdout(json!({ "usage": lines }));
+    let examples = [
+        "operit2 workspace create project --native <absolute-directory>",
+        "operit2 chat new --workspace <workspace-id>",
+        "operit2 workspace mount <workspace-id> assets --vfs <vfs-directory> --primary",
+    ];
+    output.push_stdout_line(
+        "Create a workspace, mount its folders, then bind chats by workspace ID.",
+    );
+    output.push_stdout_line("The first folder is the primary working directory. Use --primary when mounting to select it.");
+    output.setJsonStdout(json!({ "usage": lines, "examples": examples }));
 }
 
 #[allow(non_snake_case)]

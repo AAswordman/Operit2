@@ -20,6 +20,12 @@ enum ProjectType {
 }
 
 #[allow(non_snake_case)]
+/// Creates a blank app-owned directory independent of chat ids and display names.
+pub fn createNewDefaultWorkspace() -> Result<String, String> {
+    createAndGetDefaultWorkspace(uuid::Uuid::new_v4().to_string(), Some("blank".into()))
+}
+
+#[allow(non_snake_case)]
 pub fn createAndGetDefaultWorkspace(
     chatId: String,
     projectType: Option<String>,

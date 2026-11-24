@@ -1892,8 +1892,8 @@ impl ChatServiceCore {
 
     /// Removes the workspace binding from a chat without deleting workspace files.
     #[allow(non_snake_case)]
-    pub fn unbindChatFromWorkspace(&mut self, chatId: String) {
-        self.chatHistoryDelegate.unbindChatFromWorkspace(chatId);
+    pub fn unbindChatFromWorkspace(&mut self, chatId: String) -> Result<(), String> {
+        self.chatHistoryDelegate.unbindChatFromWorkspace(chatId)
     }
 
     /// Renames the workspace binding and chat title together.
