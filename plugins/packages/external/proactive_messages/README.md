@@ -1,79 +1,52 @@
-# AI 主动消息
+# AI 自主回复
 
-可选的设备本地插件，默认关闭。在工具箱的“AI 主动消息”中为对话设置固定间隔、可选随机追加间隔、每次触发概率、提前准备次数和提示词。
+在工具箱的“AI 自主回复”中选择对话并启用。用户继续在主对话发送消息；AI 在其“原始对话”子对话中正常运行，自主决定展示哪些内容、如何分段以及每段前等待多久。主对话只显示用户输入和 AI 明确发布的消息。插件无需 QQ Bot 或 Waifu 依赖。
 
-- 每次间隔为固定分钟数加上独立抽取的 `0～随机追加分钟数`。
-- 每次检查独立抽取触发概率；0% 不调用 AI，100% 每次都准备。
-- 支持最多 8 个对话，每个对话一条规则，每条提前准备 1～8 次，所有对话最多 32 条待处理计划。
-- 默认新规则关闭，间隔 60 分钟、随机追加 0 分钟、概率 50%、提前准备 4 次。
+## 使用
 
-## 插件与宿主的分工
+1. 选择已有对话，打开“启用自主回复”。
+2. 填写展示提示词，并设置默认每字延迟。保存后自动创建原始子对话、复制已有消息记录。
+3. 返回主对话正常聊天。AI 可以分多次展示消息，也可以选择不展示。
+4. 展开主对话下的“原始对话”，或在设置页点击“查看原始子对话”，查看正常模型回复、思考和工具执行记录。
 
-插件在前台计算时间、抽取概率，通过 `Tools.Chat.scheduleMessage` 提交生成指令。宿主复用正式聊天的输入处理、角色配置、提示词、模型请求与用量统计流程准备消息，随后持久化预约。插件不自行拼接历史、不直接调用功能模型，没有平台分支或发送定时器。
+每段支持 Markdown。默认首段立即展示，后续按每字延迟等待，最多 3 秒；AI 可以为每段指定独立等待时间。设置页提供停止回复、最近任务状态和错误信息。移除配置会停止该对话当前及排队中的回复，保留两个对话。
 
-准备使用目标对话实际绑定的角色、模型、记忆输入处理和摘要后的正式历史，保留角色头像、发言者身份、模型、token 与生成耗时。准备消耗正常模型调用额度，未命中概率不调用模型。生成过程不写入用户发言、不切换当前对话，不执行工具。
+## 执行与展示
 
-当前规则未提供多人群聊的发言者选择；需要明确参与者的对话会停止准备并显示错误。角色配置解析失败同样停止准备，避免发送其他身份的内容。
+插件通过现有输入钩子接收选定主对话的输入，先用 `Tools.Chat.sendMessage` 的 `record_only` 保存用户发言，再通过 `Tools.Chat.sendMessageStreaming` 在原始子对话执行正式聊天。附件和原生运行区域随原始输入转发；用户引用已展示消息时，插件将引用映射到对应的原始消息。
 
-应用前台启动、恢复、打开设置页和分钟时钟会补充计划。宿主定期及投递前检查对话和角色配置；变化后撤销旧计划并返回 `invalidated`，插件在前台按原预约时间重新准备，已过期的计划跳过。准备过程中对话变化会拒绝该结果。升级时先撤销旧版纯文本预约。后台无法调用模型时，需要回到前台补充。
+原始子对话通过 `Tools.Chat.createNew({ sourceChatId, parentChatId, setAsCurrentChat: false })` 创建，复用现有的对话创建和配置流程。其实际生成、工具、摘要及用量记录由宿主管理。普通输出留在子对话中，插件不解析或截断模型原文来猜测消息边界。
 
-## 统一正式接口
+在插件启动的原始对话执行期间，系统提示词提供当前展示会话 ID，并引导 AI 调用插件工具 `proactive_messages:show_messages`：
 
-所有平台使用同一套 SDK 接口、参数和结果。TypeScript 声明由 Rust SDK 定义生成，经统一工具注册、参数校验和插件身份认证。
-
-```ts
-await Tools.Chat.scheduleMessage({
-  id: "unique-message-id",
-  chatId,
-  title: "Operit",
-  text: "",
-  generation: { instruction: "根据最近对话自然地延续话题，只输出主动消息正文。" },
-  timestamp: dueAt, // Unix 毫秒，未来 1 秒至 30 天
-});
-
-const { messages } = await Tools.Chat.listScheduledMessages();
-await Tools.Chat.cancelScheduledMessage("unique-message-id");
+```json
+{
+  "session_id": "系统提示词给出的当前会话 ID",
+  "message_id": "本次展示调用的唯一标识",
+  "segments_json": "[{\"text\":\"我想到一个办法\"},{\"text\":\"要不要试试？\",\"delayMs\":600}]"
+}
 ```
 
-`scheduleMessage` 返回 `{ message: { id, chatId, timestamp, status, error, text } }`，`text` 是宿主实际准备的正文。传入 `generation` 时要求 `text` 为空；已有纯文本调用仍使用非空 `text`。`listScheduledMessages` 只列出调用插件自己的预约及结果。终态包括 `delivered`、`cancelled`、`skipped`、`invalidated` 和 `failed`，`error` 为字符串或 `null`。`cancelScheduledMessage` 返回 `{ id, cancelled: true }`，重复撤销安全。
+工具通过现有插件 IPC 回到主运行环境，并逐段调用 `Tools.Chat.deliverPrepared`。不新增宿主或 SDK 接口。没有活动会话的调用会被拒绝；会话结束或用户停止后不能继续发布。相同 `message_id` 和内容可安全重试；相同标识对应不同内容时拒绝。已受理但响应丢失的单段使用原时间戳重试，复用宿主去重。
 
-ID 自动按已认证的插件身份隔离。相同 ID 和相同参数可安全重试，即使调用响应丢失或预约已到期；相同 ID 与不同内容冲突时拒绝。需要新计划时使用新 ID。宿主保留最多 60 条待处理消息和最近 256 条结果。
+每个对话的输入按接收顺序执行；一个失败不会丢弃后续已接受的输入。AI 可以在调用其他工具前后多次发布消息。直接在原始子对话中发起的普通聊天保持正常行为，不会自动向主对话发布。
 
-宿主还提供跨平台的 `Tools.Chat.deliverPrepared({ chatId, text, timestamp, notify })`，供需要立即提交已生成 AI 文本的其他插件使用。本插件的发送完全使用预约接口。即时提交以对话 ID 和毫秒时间戳去重，返回通知错误与消息写入结果。
+## 配置与恢复
 
-## 宿主内部的平台适配
+- 插件默认关闭，新建配置也默认关闭，最多选择 8 个主对话。
+- 每个主对话最多排队 16 条输入；每次展示工具调用最多 32 段，整个回复最多 128 段。
+- 每段最多 12000 字，每次调用正文总长最多 48000 字；单次调用的等待总长最多 30 秒，较长批次可拆成多次调用。
+- 配置、对话关联和最近任务保存在设备本地 DataStore。修改配置不替换已经创建的子对话。
+- 应用或插件重启后保留对话关联，将未完成的任务标记为已停止。查看原始记录后可重新发送，插件不会自动重复模型执行。
+- 从旧版“AI 主动消息”升级时，先撤销本插件原有预约，再保留原先选择的对话并关闭配置。旧定时提示词、间隔与概率不会用于新模式；启用前可重新编辑。
 
-Android、HarmonyOS、Windows、macOS、Linux、Web 使用宿主调度器，在可执行时将内容写入指定对话，并通过已有的平台通知实现展示通知。对话忙时宿主自动延后；恢复后同一对话的多条过期消息仅投递最近一条，超过一天的旧消息跳过。
-
-iOS 在预约时将已生成内容提交系统本地通知，到点由系统展示。宿主在应用恢复前台后检查上下文并同步有效消息，不再次通知。应用挂起期间不能更新或撤回已经展示的系统通知，恢复后检测到上下文变化的正文不会再写入对话。iOS 的通知权限交互和实际展示仍受系统设置约束。
-
-所有平台的预约均保存在宿主设备本地存储中，宿主重启后自动恢复。应用退出、设备休眠、浏览器后台节流等会影响非 iOS 的实际投递时间；iOS 的系统通知不会唤醒插件调用 AI。接口不承诺绕过操作系统的执行限制。
-
-关闭或删除规则会通过统一接口撤销待发消息。停用或卸载插件前，请先在设置页关闭规则：预约由宿主持有，插件停止运行本身不会撤销已经提交的计划。更改规则会先撤销旧计划，再重新抽取和准备。
-
-## 持久化与错误处理
-
-插件的规则和准备记录通过 `Tools.Storage.dataStore` 保存。宿主的已接受预约单独保存在设备本地 `runtime/scheduled_chat_messages.json` 中，不要求插件运行时保持存活。插件不跨设备同步发送状态。
-
-`DataStore.data().get("state")` 返回深度只读快照。插件校验后复制为自己持有的可修改运行状态，再通过 `DataStore.edit` 显式保存。0.1.3 修复了旧版直接修改只读快照导致的重启、重新打开设置、旧数据升级和计划恢复报错；保留原有规则和预约 ID，无需清除插件数据。
-
-插件写入成功后才提交预约；宿主先原子保存预约身份，再调用系统。iOS 预约结果未知时保留身份，宿主在前台使用相同 ID 重试。撤销意图先持久化，失败可恢复。聊天文本提交使用真实数据库的完成消息，重试不会重复写入；通知失败在结果中单独记录。
-
-## 构建与测试
-
-该插件需要包含这些正式 SDK 和宿主实现的应用版本，不能单独安装到旧应用中。由仓库既有的 `plugins/tools/sync_plugin_packages.py` 编译和打包，无额外前端依赖。
+## 构建与验证
 
 ```sh
 node plugins/packages/buildin/workflow/node_modules/typescript/bin/tsc --project plugins/packages/external/proactive_messages/tsconfig.json --noEmit
 node --test plugins/packages/external/proactive_messages/tests/*.test.mjs
-node --test core/crates/plugin/javascript-bridge/tests/storage-preferences.test.mjs
-node --test core/crates/plugin/javascript-bridge/tests/chat-prepared-delivery.test.mjs
-cargo test --manifest-path core/Cargo.toml -p operit-plugin-sdk prepared_delivery_tests
-cargo test --manifest-path core/Cargo.toml -p operit-runtime --test prepared_chat_delivery --features operit-host-native-scheduler/javascript
-cargo check --manifest-path core/Cargo.toml -p operit-runtime --target aarch64-apple-ios
-cargo check --manifest-path core/Cargo.toml -p operit-runtime --target wasm32-unknown-unknown
 ```
 
-插件测试直接读取当前 TypeScript 源码，在内存中转译执行，无需预先生成 `dist`。存储使用生产 SDK 的 DataStore facade，保留深度只读快照和显式编辑语义；仅模拟宿主持久化和聊天预约。设置页测试运行实际 Compose 渲染、动作分发和 `withContext`，覆盖重启后的页面加载、编辑保存、删除及预约撤销。其他用例验证概率与间隔、存储失败、预约响应丢失、前后台切换、撤销、升级、重启和计划上限。
+插件沿用 `plugins/tools/sync_plugin_packages.py` 的 TypeScript 编译和 ToolPkg 打包流程，无额外前端依赖。
 
-SDK 测试验证实际生成绑定和错误传播；原生集成测试验证真实数据库、去重、预约持久化、隔离、恢复投递和撤销。iOS 实际通知展示、权限交互与点击跳转需真机验证。
+测试直接执行当前 TypeScript 源码，模拟宿主聊天与持久化边界，覆盖主子对话路由、AI 分段及静默选择、段间延迟、重复和丢失响应、附件与引用、初始历史复制、排队与失败恢复、停止和过期会话、旧版迁移及存储错误。设置页测试使用生产 Compose 渲染、动作分发和 `withContext` 运行时，验证选择对话、保存配置和原始子对话入口。
