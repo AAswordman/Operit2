@@ -244,6 +244,11 @@ class _ChatAreaState extends State<ChatArea>
 
   /// Prepares nearby rows while keeping distant history unmounted.
   Widget _buildTranscript(BuildContext context) {
+    // 消息列表两侧留白来自主题设置（默认 16dp），两段 sliver 用同一个值，
+    // 保证向上滚动时左右边界不跳变。
+    final horizontalInset = OperitTheme.of(
+      context,
+    ).themePreferenceSnapshot.chatContentHorizontalPadding;
     final showLoadingIndicator = _shouldShowLoadingIndicator();
     final itemCount =
         widget.messages.length +
@@ -328,7 +333,12 @@ class _ChatAreaState extends State<ChatArea>
                   slivers: [
                     if (centerIndex > 0)
                       SliverPadding(
-                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                        padding: EdgeInsets.fromLTRB(
+                      horizontalInset,
+                      16,
+                      horizontalInset,
+                      0,
+                    ),
                         sliver: ChatMessageSliverList(
                           extents: rowExtents
                               .take(centerIndex)
@@ -344,11 +354,11 @@ class _ChatAreaState extends State<ChatArea>
                     SliverPadding(
                       key: _centerSliverKey,
                       padding: EdgeInsets.fromLTRB(
-                        16,
-                        _layoutOriginTopPadding,
-                        16,
-                        16 + widget.bottomContentInset,
-                      ),
+            horizontalInset,
+            _layoutOriginTopPadding,
+            horizontalInset,
+            16 + widget.bottomContentInset,
+          ),
                       sliver: ChatMessageSliverList(
                         extents: rowExtents.skip(centerIndex).toList(),
                         preserveViewport: _shouldPreserveManualViewport,

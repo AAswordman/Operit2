@@ -82,6 +82,7 @@ class ThemePreferenceSnapshot {
     required this.bubbleUserContentPaddingRight,
     required this.bubbleAiContentPaddingLeft,
     required this.bubbleAiContentPaddingRight,
+    required this.chatContentHorizontalPadding,
     required this.customUserAvatarUri,
     required this.avatarShape,
     required this.avatarCornerRadius,
@@ -191,6 +192,9 @@ class ThemePreferenceSnapshot {
   final double bubbleUserContentPaddingRight;
   final double bubbleAiContentPaddingLeft;
   final double bubbleAiContentPaddingRight;
+
+  /// 聊天正文两侧留白；0 让正文贴边，气泡内留白不受影响。
+  final double chatContentHorizontalPadding;
   final String? customUserAvatarUri;
   final String avatarShape;
   final double avatarCornerRadius;
@@ -308,6 +312,7 @@ class ThemePreferenceSnapshot {
       'bubbleUserContentPaddingRight': bubbleUserContentPaddingRight,
       'bubbleAiContentPaddingLeft': bubbleAiContentPaddingLeft,
       'bubbleAiContentPaddingRight': bubbleAiContentPaddingRight,
+      'chatContentHorizontalPadding': chatContentHorizontalPadding,
       'customUserAvatarUri': customUserAvatarUri,
       'avatarShape': avatarShape,
       'avatarCornerRadius': avatarCornerRadius,
@@ -462,6 +467,9 @@ class ThemePreferenceSnapshot {
       bubbleAiContentPaddingLeft: requiredDouble('bubbleAiContentPaddingLeft'),
       bubbleAiContentPaddingRight: requiredDouble(
         'bubbleAiContentPaddingRight',
+      ),
+      chatContentHorizontalPadding: requiredDouble(
+        'chatContentHorizontalPadding',
       ),
       customUserAvatarUri: optionalString('customUserAvatarUri'),
       avatarShape: requiredString('avatarShape'),

@@ -3497,6 +3497,16 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsAppearanceMessageDensityCompact => '紧凑';
 
   @override
+  String get settingsAppearanceChatHorizontalPadding => '聊天正文左右留白';
+
+  @override
+  String get settingsAppearanceChatHorizontalPaddingEdge => '贴边';
+
+  @override
+  String get settingsAppearanceChatHorizontalPaddingDetail =>
+      '调小后正文更宽；气泡与输入框自身的留白不受影响。';
+
+  @override
   String get settingsAppearanceWideLayout => '使用更宽的聊天布局';
 
   @override

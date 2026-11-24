@@ -104,6 +104,9 @@ class ThemePreferenceDefaults {
     bubbleUserContentPaddingRight: 8,
     bubbleAiContentPaddingLeft: 8,
     bubbleAiContentPaddingRight: 8,
+  // 聊天正文两侧留白。16 是历史默认值；调到 0 让正文贴边，
+  // 气泡与输入框自身的内留白不受影响。
+  chatContentHorizontalPadding: 16,
     customUserAvatarUri: null,
     avatarShape: AVATAR_SHAPE_CIRCLE,
     avatarCornerRadius: 8,

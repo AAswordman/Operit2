@@ -6578,6 +6578,24 @@ abstract class AppLocalizations {
   /// **'Compact'**
   String get settingsAppearanceMessageDensityCompact;
 
+  /// No description provided for @settingsAppearanceChatHorizontalPadding.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat content side padding'**
+  String get settingsAppearanceChatHorizontalPadding;
+
+  /// No description provided for @settingsAppearanceChatHorizontalPaddingEdge.
+  ///
+  /// In en, this message translates to:
+  /// **'Edge to edge'**
+  String get settingsAppearanceChatHorizontalPaddingEdge;
+
+  /// No description provided for @settingsAppearanceChatHorizontalPaddingDetail.
+  ///
+  /// In en, this message translates to:
+  /// **'Smaller values widen the transcript; bubble and composer insets are unaffected.'**
+  String get settingsAppearanceChatHorizontalPaddingDetail;
+
   /// No description provided for @settingsAppearanceWideLayout.
   ///
   /// In en, this message translates to:

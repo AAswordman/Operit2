@@ -584,6 +584,7 @@ class UserPreferencesManager {
     double? bubbleUserContentPaddingRight,
     double? bubbleAiContentPaddingLeft,
     double? bubbleAiContentPaddingRight,
+    double? chatContentHorizontalPadding,
     bool? showThinkingProcess,
     bool? showModelProvider,
     bool? showModelName,
@@ -710,6 +711,8 @@ class UserPreferencesManager {
         'bubbleAiContentPaddingLeft': bubbleAiContentPaddingLeft,
       if (bubbleAiContentPaddingRight != null)
         'bubbleAiContentPaddingRight': bubbleAiContentPaddingRight,
+      if (chatContentHorizontalPadding != null)
+        'chatContentHorizontalPadding': chatContentHorizontalPadding,
       if (showThinkingProcess != null)
         'showThinkingProcess': showThinkingProcess,
       if (showModelProvider != null) 'showModelProvider': showModelProvider,

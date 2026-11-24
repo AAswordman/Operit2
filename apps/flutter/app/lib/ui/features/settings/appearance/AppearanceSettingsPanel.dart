@@ -523,6 +523,36 @@ class _AppearanceThemeEditor extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 10),
+            _AppearanceFieldBlock(
+              label: l10n.settingsAppearanceChatHorizontalPadding,
+              badge: snapshot.chatContentHorizontalPadding <= 0
+                  ? l10n.settingsAppearanceChatHorizontalPaddingEdge
+                  : snapshot.chatContentHorizontalPadding.round().toString(),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: <Widget>[
+                  Slider(
+                    value: snapshot.chatContentHorizontalPadding.clamp(0, 32),
+                    min: 0,
+                    max: 32,
+                    divisions: 16,
+                    label: snapshot.chatContentHorizontalPadding.round().toString(),
+                    onChanged: (value) {
+                      unawaited(
+                        themeController.saveThemeSettings(
+                          chatContentHorizontalPadding: value,
+                        ),
+                      );
+                    },
+                  ),
+                  Text(
+                    l10n.settingsAppearanceChatHorizontalPaddingDetail,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
             Wrap(
               spacing: 8,
               runSpacing: 8,
