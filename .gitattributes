@@ -6,3 +6,4 @@ plugins/types-v1/*.d.ts -text
 plugins/types-v1/LICENSE -text
 
 hosts/android/src/terminal_chroot.sh text eol=lf
+hosts/android/src/system_shell_init.sh text eol=lf

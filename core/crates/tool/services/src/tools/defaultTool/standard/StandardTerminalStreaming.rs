@@ -5,7 +5,7 @@ use super::StandardTerminalTools::{terminalCommandResultData, StandardTerminalTo
 use super::ToolArguments::decodeArguments;
 use crate::tools::ToolInvocation::prepareInvocation;
 use crate::ToolExecutionManager::{
-    PreparedToolInvocation, SharedToolExecutor, ToolCall, ToolEffect, ToolInvocationContext,
+    PreparedToolInvocation, SharedToolExecutor, ToolCall, ToolEffect, ToolInvocationContext, ToolExecutionManager,
 };
 use operit_host_api::{HostError, HostResult, HostRuntimeTaskSchedulerHost, TerminalHost};
 use operit_plugin_sdk::js_sdk::results::{
@@ -58,8 +58,8 @@ struct Arguments {
 
 pub(crate) struct TerminalStreamExecutor {
     tools: StandardTerminalTools,
-    managedAdmission: tokio::sync::Mutex<()>,
-    selfRef: std::sync::OnceLock<std::sync::Weak<TerminalStreamExecutor>>,
+    managedAdmission: Arc<tokio::sync::Mutex<()>>,
+    selfRef: std::sync::Weak<TerminalStreamExecutor>,
     host: Option<Arc<dyn TerminalHost>>,
     scheduler: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>,
     observations: Mutex<HashMap<String, Arc<Observation>>>,
@@ -136,13 +136,12 @@ impl TerminalStreamExecutor {
     /// Reuses admission and observations whenever tool handlers share one terminal host.
     pub(crate) fn shared(tools: StandardTerminalTools, scheduler: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>) -> Arc<Self> {
         static EXECUTORS: std::sync::OnceLock<Mutex<HashMap<usize, std::sync::Weak<TerminalStreamExecutor>>>> = std::sync::OnceLock::new();
-        let Some(host) = tools.terminalHost.as_ref() else { return Arc::new(Self::new(tools, scheduler)); };
+        let Some(host) = tools.terminalHost.as_ref() else { return Self::new(tools, scheduler); };
         let key = Arc::as_ptr(host) as *const () as usize;
         let mut executors = EXECUTORS.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         executors.retain(|_, executor| executor.strong_count() > 0);
         if let Some(existing) = executors.get(&key).and_then(std::sync::Weak::upgrade) { return existing; }
-        let executor = Arc::new(Self::new(tools, scheduler));
-        let _ = executor.selfRef.set(Arc::downgrade(&executor));
+        let executor = Self::new(tools, scheduler);
         executors.insert(key, Arc::downgrade(&executor));
         executor
     }
@@ -151,16 +150,16 @@ impl TerminalStreamExecutor {
     pub(crate) fn new(
         tools: StandardTerminalTools,
         scheduler: Option<Arc<dyn HostRuntimeTaskSchedulerHost>>,
-    ) -> Self {
-        Self {
+    ) -> Arc<Self> {
+        Arc::new_cyclic(|selfRef| Self {
             host: tools.terminalHost.clone(),
             tools,
-            managedAdmission: tokio::sync::Mutex::new(()),
-            selfRef: std::sync::OnceLock::new(),
+            managedAdmission: Arc::new(tokio::sync::Mutex::new(())),
+            selfRef: selfRef.clone(),
             scheduler,
             observations: Mutex::new(HashMap::new()),
             workers: Arc::new(AtomicUsize::new(0)),
-        }
+        })
     }
     /// Validates one observation and schedules its command through the registered host.
     fn open(&self, owner: String, request: TerminalExecRequest) -> Result<String, String> {
@@ -259,14 +258,12 @@ impl TerminalStreamExecutor {
             self.workers.fetch_add(1, Ordering::AcqRel);
             WorkerPermit(self.workers.clone())
         };
-        let outputRequest = request.clone();
-        let outputObservation = observation.clone();
         let onOutput = {
             let mut decoder = OutputDecoder::default();
             let mut chunkIndex = 0;
             let mut receivedChars = 0;
-            let request = outputRequest;
-            let observation = outputObservation;
+            let request = request.clone();
+            let observation = observation.clone();
             Box::new(move |data: &[u8], finalFrame: bool| -> HostResult<()> {
                 let text = decoder.feed(data, finalFrame)?;
                 if !text.is_empty() {
@@ -287,11 +284,18 @@ impl TerminalStreamExecutor {
                     if receiptOnly || observation.detached.load(Ordering::Acquire) {
                         return Ok(());
                     }
-                    let cost = std::mem::size_of::<TerminalExecEvent>()
-                        + request.sessionId.len()
-                        + request.command.len()
-                        + session.platform.len()
-                        + text.len();
+                    receivedChars += text.encode_utf16().count() as u64;
+                    let event = TerminalExecEvent::Chunk {
+                        sessionId: request.sessionId.clone(),
+                        command: request.command.clone(),
+                        platform: session.platform.clone(),
+                        terminal: terminal.clone(),
+                        terminalType: terminalType.clone(),
+                        chunk: text,
+                        chunkIndex,
+                        receivedChars,
+                    };
+                    let cost = chunkCost(&event);
                     while inner.queuedBytes + cost > MAX_QUEUED_BYTES {
                         let index = inner
                             .events
@@ -303,18 +307,8 @@ impl TerminalStreamExecutor {
                         let event = inner.events.remove(index).unwrap();
                         inner.queuedBytes -= chunkCost(&event);
                     }
-                    receivedChars += text.encode_utf16().count() as u64;
                     inner.queuedBytes += cost;
-                    inner.events.push_back(TerminalExecEvent::Chunk {
-                        sessionId: request.sessionId.clone(),
-                        command: request.command.clone(),
-                        platform: session.platform.clone(),
-                        terminal: terminal.clone(),
-                        terminalType: terminalType.clone(),
-                        chunk: text,
-                        chunkIndex,
-                        receivedChars,
-                    });
+                    inner.events.push_back(event);
                     chunkIndex += 1;
                     observation.ready.notify_one();
                 }
@@ -323,7 +317,7 @@ impl TerminalStreamExecutor {
         };
         // A queued host task must retain the shared admission state even if its
         // originating tool handler is destroyed before the worker starts.
-        let executorLease = self.selfRef.get().and_then(std::sync::Weak::upgrade);
+        let executorLease = self.selfRef.upgrade();
         let scheduled = host.scheduleInSessionStreaming(
             scheduler.clone(),
             request.sessionId,
@@ -379,7 +373,7 @@ impl TerminalStreamExecutor {
             .await
     }
 
-    /// Reserves pending and running commands before releasing admission to the next caller.
+    /// Isolates synchronous session preparation from owner event collection on coordination workers.
     async fn startNamed(
         &self,
         owner: String,
@@ -391,55 +385,41 @@ impl TerminalStreamExecutor {
         receiptOnly: bool,
         continuous: bool,
     ) -> Result<String, String> {
-        let _admission = self.managedAdmission.lock().await;
-        let tools = &self.tools;
-        let mut reserved = std::collections::BTreeSet::new();
-        for value in self
-            .observations
-            .lock()
-            .map_err(|_| "Terminal observation registry is poisoned")?
-            .values()
-        {
-            // A foreground timeout does not reserve a session after its command completes.
-            if value
-                .inner
-                .lock()
-                .map_err(|_| "Terminal observation is poisoned")?
-                .result
-                .is_none()
-            {
-                reserved.insert(value.sessionId.clone());
-            }
-        }
-        let session = tools
-            .availableSelectedSession(&name, terminalType.as_deref(), profileId.as_deref(), &reserved)
-            .map_err(|error| error.message)?;
-        let opened = self.openExecution(
-            owner.clone(),
-            TerminalExecRequest {
-                sessionId: session.sessionId.clone(),
-                command,
-                timeoutMs: Some(waitMs),
-            },
-            receiptOnly,
-            continuous,
-        );
-        let handle = match opened {
-            Ok(handle) => handle,
-            Err(error) => {
-                if session.isNewSession {
-                    self.host
-                        .as_ref()
-                        .ok_or("Terminal host is unavailable")?
-                        .closeSession(&session.sessionId)
-                        .map_err(|close| {
-                            format!("{error}; closing unused session failed: {}", close.message)
-                        })?;
+        let executor = self.selfRef.upgrade().ok_or("Terminal executor was released")?;
+        let context = ToolExecutionManager::currentToolInvocationContext();
+        let admission = self.managedAdmission.clone().lock_owned().await;
+        let scheduler = self.scheduler.clone().ok_or("Runtime task scheduler host is unavailable")?;
+        operit_host_api::TerminalCommand::runTerminalBlocking(scheduler, "terminal-start", move || {
+            let _admission = admission;
+            let prepare = || {
+                let reserved = executor.observations.lock().map_err(|_| "Terminal observation registry is poisoned")?
+                    .values().filter_map(|value| match value.inner.lock() {
+                        Ok(inner) if inner.result.is_none() => Some(Ok(value.sessionId.clone())),
+                        Ok(_) => None,
+                        Err(_) => Some(Err("Terminal observation is poisoned")),
+                    }).collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+                let session = executor.tools
+                    .availableSelectedSession(&name, terminalType.as_deref(), profileId.as_deref(), &reserved)
+                    .map_err(|error| error.message)?;
+                let opened = executor.openExecution(
+                    owner,
+                    TerminalExecRequest {
+                        sessionId: session.sessionId.clone(), command, timeoutMs: Some(waitMs),
+                    },
+                    receiptOnly,
+                    continuous,
+                );
+                if let Err(error) = &opened {
+                    if session.isNewSession {
+                        executor.host.as_ref().ok_or("Terminal host is unavailable")?
+                            .closeSession(&session.sessionId)
+                            .map_err(|close| format!("{error}; closing unused session failed: {}", close.message))?;
+                    }
                 }
-                return Err(error);
-            }
-        };
-        Ok(handle)
+                opened
+            };
+            match context { Some(context) => context.scopeSync(prepare), None => prepare() }.map_err(HostError::new)
+        }).await.map_err(|error| error.message)
     }
 
     /// Runs an existing session through the same managed admission and generation rules.
@@ -855,6 +835,7 @@ mod tests {
     struct QueuedScheduler {
         clock: operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost,
         jobs: Mutex<Vec<operit_host_api::HostRuntimeTask>>,
+        holdStartup: AtomicBool,
     }
     impl HostRuntimeTaskSchedulerHost for QueuedScheduler {
         /// Reads the production Host clock.
@@ -864,9 +845,12 @@ mod tests {
         /// Models a saturated blocking pool without starting its queued commands.
         fn scheduleHostRuntimeTask(
             &self,
-            _: &str,
+            name: &str,
             task: operit_host_api::HostRuntimeTask,
         ) -> HostResult<()> {
+            if name == "terminal-start" && !self.holdStartup.load(Ordering::Acquire) {
+                return self.clock.scheduleHostRuntimeTask(name, task);
+            }
             self.jobs.lock().unwrap().push(task);
             Ok(())
         }
@@ -878,14 +862,15 @@ mod tests {
         ) -> HostResult<()> {
             self.clock.scheduleHostRuntimeAsyncTask(name, task)
         }
-        /// Keeps cooperative coordination on its normal executor.
+        /// Holds command submission before its observer owns any running work.
         fn scheduleHostRuntimeCooperativeAsyncTask(
             &self,
             name: &str,
             task: operit_host_api::HostRuntimeAsyncTask,
         ) -> HostResult<()> {
-            self.clock
-                .scheduleHostRuntimeCooperativeAsyncTask(name, task)
+            let (clock, name) = (self.clock, name.to_owned());
+            self.jobs.lock().unwrap().push(Box::new(move || { clock.scheduleHostRuntimeCooperativeAsyncTask(&name, task).unwrap(); }));
+            Ok(())
         }
         /// Preserves production delayed task behavior.
         fn scheduleDelayedHostRuntimeTask(
@@ -902,6 +887,7 @@ mod tests {
         }
     }
 
+    /// Startup must yield to its blocking worker while shared admission retains queued sessions.
     #[tokio::test]
     async fn handlers_sharing_a_host_share_terminal_admission() {
         let host = Arc::new(NativePtyTerminalHost::default());
@@ -910,7 +896,13 @@ mod tests {
         let second = TerminalStreamExecutor::shared(StandardTerminalTools::new(Some(host.clone())), Some(scheduler.clone()));
         assert!(Arc::ptr_eq(&first, &second));
         let name = uuid::Uuid::new_v4().to_string();
-        let handle = first.startNamed("owner".into(), name.clone(), Some("bash".into()), None, "printf queued".into(), 1000, true, false).await.unwrap();
+        scheduler.holdStartup.store(true, Ordering::Release);
+        let mut opening = Box::pin(first.startNamed("owner".into(), name.clone(), Some("bash".into()), None, "printf queued".into(), 1000, true, false));
+        assert!(futures_util::FutureExt::now_or_never(opening.as_mut()).is_none());
+        assert!(host.listSessions().unwrap().is_empty(), "session creation ran before its blocking worker");
+        let start = scheduler.jobs.lock().unwrap().pop().unwrap();
+        start();
+        let handle = opening.await.unwrap();
         let session = first.owned("owner", &handle).unwrap().sessionId.clone();
         drop(first);
         drop(second);
@@ -1031,7 +1023,7 @@ mod tests {
         assert!(decoder.pending.is_empty() && decoder.utf8.is_empty());
     }
     /// Opens a native terminal with the same host-owned scheduler used in production.
-    fn fixture() -> (Arc<NativePtyTerminalHost>, TerminalStreamExecutor, String) {
+    fn fixture() -> (Arc<NativePtyTerminalHost>, Arc<TerminalStreamExecutor>, String) {
         let host = Arc::new(NativePtyTerminalHost::default());
         let session = host
             .createOrGetSession(&uuid::Uuid::new_v4().to_string())
