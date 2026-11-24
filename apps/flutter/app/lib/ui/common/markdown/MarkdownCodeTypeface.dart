@@ -12,6 +12,17 @@ const List<String> markdownCodeFontFamilyFallback = <String>[
   'Menlo',
   'Roboto Mono',
   'monospace',
+  // Without an explicit CJK family, the engine's per-character fallback
+  // resolves through fontconfig coverage ranking and lands on serif Windows
+  // fonts (SimSun/NSimSun) or Japanese gothic faces, which look like Song
+  // type inside code blocks. Listing sans CJK families keeps Han glyphs on
+  // the same sans face as body text on every platform.
+  'Microsoft YaHei UI',
+  'Microsoft YaHei',
+  'PingFang SC',
+  'Hiragino Sans GB',
+  'Noto Sans CJK SC',
+  'Source Han Sans SC',
 ];
 
 TextStyle? markdownCodeTextStyle(BuildContext context, {Color? color}) {
