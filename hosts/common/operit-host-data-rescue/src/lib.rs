@@ -11,6 +11,7 @@ use fs2::FileExt;
 use operit_data_rescue::{DataRescue, RescueFile, RescueHost, RescueManifest, payload_bytes, validate_path};
 use operit_host_api::{HostSecretStore, RuntimeStorageHost};
 use operit_host_native_storage::{ARCHIVE_STAGING_DIRECTORY_NAME, NativeArchiveStagingHost, NativeFileSecretStore, NativeRuntimeStorageHost};
+use operit_host_native_storage::snapshot_policy::{host_private_runtime_roots, is_host_private_runtime_path};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -256,6 +257,11 @@ impl NativeRescueHost {
             || path.starts_with(self.roots["runtime"].join("identities").join(ARCHIVE_STAGING_DIRECTORY_NAME))
     }
 
+    /// Classifies native execution storage before validating or traversing guest filenames.
+    fn is_host_private_path(&self, path: &Path) -> bool {
+        path.strip_prefix(&self.roots["runtime"]).is_ok_and(is_host_private_runtime_path)
+    }
+
     /// Enumerates complete filesystem structure without decoding any business records.
     fn inventory(&self) -> Result<(Vec<RescueFile>, Vec<StorageNode>), String> {
         let mut files = Vec::new();
@@ -380,6 +386,7 @@ impl NativeRescueHost {
         let root = self.roots.get(role).ok_or("Unknown rescue namespace")?;
         let path = checked_descendant(root, relative)?;
         if self.is_archive_staging_path(&path) { return Err("Archive addresses temporary archive staging".into()); }
+        if self.is_host_private_path(&path) { return Err("Archive addresses Host-private storage".into()); }
         Ok(path)
     }
 
@@ -491,7 +498,6 @@ impl NativeRescueHost {
             if plan.phase == "prepared" {
                 if plan.had_original && !plan.retained.exists() {
                     durable_rename(&plan.target, &plan.retained)?;
-                    sync_directory(plan.target.parent().ok_or("Publication target has no parent")?)?;
                 }
                 journal.publications[index].phase = "originalRetained".into();
                 self.save_journal(&journal)?;
@@ -502,8 +508,8 @@ impl NativeRescueHost {
                     if plan.staged.exists() { return Err(format!("Unexpected staged data for removal: {}", plan.staged.display())); }
                 } else {
                     if plan.staged.exists() {
+                        self.preserve_host_storage(&plan)?;
                         durable_rename(&plan.staged, &plan.target)?;
-                        sync_directory(plan.target.parent().ok_or("Publication target has no parent")?)?;
                     }
                     if !plan.target.exists() { return Err(format!("Import destination is missing: {}", plan.target.display())); }
                 }
@@ -524,10 +530,34 @@ impl NativeRescueHost {
         }
         let retained = self.application.join("data-rescue").join(&journal.id).join("completed.json");
         durable_rename(&self.application.join("data-rescue/commit.json"), &retained)?;
-        sync_directory(&self.application.join("data-rescue"))?;
-        sync_directory(retained.parent().ok_or("Retained catalog has no parent")?)?;
         progress.advance(self, 1);
         Ok(json!({"restored": true, "retainedData": journal.publications.iter().filter(|plan| plan.had_original).map(|plan| &plan.retained).collect::<Vec<_>>(), "retainedCatalog": retained}))
+    }
+
+    /// Moves target-device execution storage into the replacement without reading guest contents.
+    /// Retained-to-staged moves are resumable before the staged root is published.
+    fn preserve_host_storage(&self, plan: &Publication) -> Result<(), String> {
+        let Ok(relative) = self.roots["runtime"].strip_prefix(&plan.target) else { return Ok(()); };
+        let retained_runtime = plan.retained.join(relative);
+        let staged_runtime = plan.staged.join(relative);
+        for source in host_private_runtime_roots(&retained_runtime).map_err(text)? {
+            let destination = staged_runtime.join(source.strip_prefix(&retained_runtime).map_err(text)?);
+            reject_linked_descendants(&plan.retained, source.parent().ok_or("Host storage source has no parent")?)?;
+            reject_linked_descendants(&plan.staged, &destination)?;
+            match fs::symlink_metadata(&destination) {
+                Ok(_) => return Err("Imported data conflicts with Host-private storage".into()),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+                Err(error) => return Err(text(error)),
+            }
+            let parent = destination.parent().ok_or("Host storage destination has no parent")?;
+            fs::create_dir_all(parent).map_err(text)?;
+            for path in parent.ancestors() {
+                sync_directory(path)?;
+                if path == plan.staged { break; }
+            }
+            durable_rename(&source, &destination)?;
+        }
+        Ok(())
     }
 
     /// Rechecks every staged or already published payload before advancing a durable journal.
@@ -585,6 +615,22 @@ impl NativeRescueHost {
 }
 
 impl RescueHost for NativeRescueHost {
+    /// Ignores archived execution storage consistently across payloads, metadata, and publication.
+    fn filter_import_manifest(&self, manifest: &mut RescueManifest) -> Result<(), String> {
+        let excluded = |path: &str| {
+            path.split_once('/').is_some_and(|(role, relative)| {
+                let root = if role == "application" { Some(&self.application) } else { self.roots.get(role) };
+                root.is_some_and(|root| self.is_host_private_path(&root.join(relative)))
+            })
+        };
+        let mut nodes: Vec<StorageNode> = serde_json::from_value(manifest.metadata["storageNodes"].clone()).map_err(text)?;
+        for node in &nodes { validate_path(&node.path)?; }
+        nodes.retain(|node| !excluded(&node.path));
+        manifest.files.retain(|file| !excluded(&file.path));
+        manifest.metadata["storageNodes"] = serde_json::to_value(nodes).map_err(text)?;
+        Ok(())
+    }
+
     /// Updates a short-lived counter lock independently of storage operations.
     fn report_progress(&self, progress: RescueProgress) {
         *self.progress.lock().expect("Rescue progress lock poisoned") = Some(progress);
@@ -870,7 +916,7 @@ impl RescueHost for NativeRescueHost {
 
 /// Enumerates raw regular files without opening SQLite, plugins, or application preferences.
 fn collect_files(path: &Path, logical: &str, output: &mut Vec<RescueFile>, nodes: &mut Vec<StorageNode>, host: &NativeRescueHost) -> Result<(), String> {
-    if host.is_archive_staging_path(path) { return Ok(()); }
+    if host.is_archive_staging_path(path) || host.is_host_private_path(path) { return Ok(()); }
     validate_path(logical)?;
     let metadata = fs::symlink_metadata(path).map_err(text)?;
     if is_storage_link(&metadata) { return Err(format!("Filesystem links require an explicit archival policy: {}", path.display())); }

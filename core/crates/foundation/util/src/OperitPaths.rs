@@ -167,11 +167,6 @@ pub fn webSessionBrowserDownloadFilesDir() -> Result<PathBuf, String> {
 }
 
 #[allow(non_snake_case)]
-pub fn rawSnapshotExcludedFilesTopLevelDirNames() -> Vec<String> {
-    Vec::new()
-}
-
-#[allow(non_snake_case)]
 pub fn userPreferencesPath() -> Result<PathBuf, String> {
     relativeFile(USER_PREFERENCES_PATH)
 }

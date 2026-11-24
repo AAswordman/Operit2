@@ -78,6 +78,8 @@ pub trait RescueHost: Send + Sync {
     fn read_file(&self, path: &str, offset: u64, length: usize) -> Result<Vec<u8>, String>;
     /// Supplies plaintext preferences for export through the Host storage contract.
     fn export_preferences(&self, path: &str) -> Result<Option<Vec<u8>>, String>;
+    /// Selects portable payloads and matching Host metadata after archive integrity validation.
+    fn filter_import_manifest(&self, _manifest: &mut RescueManifest) -> Result<(), String> { Ok(()) }
     /// Creates an isolated destination owned by this import identifier.
     fn begin_restore(&self, id: &str, manifest: &RescueManifest) -> Result<(), String>;
     /// Appends a verified payload chunk to its isolated destination.
@@ -194,7 +196,9 @@ impl DataRescue {
     pub fn inspect(&self, id: &str) -> Result<RescueManifest, String> {
         let length = self.archives.sealArchive(id).map_err(text)?;
         let mut zip = ZipArchive::new(ArchiveIo::new(self.archives.clone(), id, length)).map_err(text)?;
-        archive::inspect_archive(&mut zip, self.host.layout(), |progress| self.host.report_progress(progress))
+        let mut manifest = archive::inspect_archive(&mut zip, self.host.layout(), |progress| self.host.report_progress(progress))?;
+        self.host.filter_import_manifest(&mut manifest)?;
+        Ok(manifest)
     }
 
     /// Verifies the entire archive, stages complete files, then publishes one explicit restore.

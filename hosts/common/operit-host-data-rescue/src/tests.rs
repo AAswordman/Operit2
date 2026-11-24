@@ -155,6 +155,83 @@ fn export_excludes_host_archive_namespaces_from_the_complete_runtime_tree() {
     drop(active);
 }
 
+/// Excludes every Host runtime owner and keeps target-device environments through publication.
+#[test]
+fn rescue_excludes_host_storage_and_preserves_destination_environments() {
+    let source = Fixture::new();
+    let private = [
+        "runtime/terminal/rootfs/image/bin/sh",
+        "runtime/identities/a/terminal/rootfs/image/sdcard/record",
+        "runtime/ohos-vroot/rootfs/bin/sh",
+        "runtime/identities/a/config/preferences/terminal_profiles.json",
+    ];
+    for path in private { source.write(path, b"source Host bytes"); }
+    #[cfg(unix)]
+    {
+        let rootfs = source.0.join("runtime/terminal/rootfs/image");
+        fs::write(rootfs.join("systemd\\x2dcryptsetup.slice"), b"nonportable name").unwrap();
+        std::os::unix::fs::symlink("/missing-guest-mount", rootfs.join("sdcard")).unwrap();
+    }
+    source.write("runtime/data/record", b"portable data");
+    source.write("runtime/terminal/rootfs-notes/record", b"portable sibling");
+    source.write("workspaces/project/terminal/rootfs/record", b"workspace data");
+    let mut exporting = source.session(None);
+    let archive = exporting.execute(json!({"operation":"export"})).unwrap();
+    let manifest = exporting.execute(json!({"operation":"inspect", "archiveId":archive["archiveId"]})).unwrap();
+    for path in manifest["files"].as_array().unwrap().iter().map(|file| file["path"].as_str().unwrap())
+        .chain(manifest["metadata"]["storageNodes"].as_array().unwrap().iter().map(|node| node["path"].as_str().unwrap())) {
+        assert!(!Path::new(path).strip_prefix("runtime").is_ok_and(is_host_private_runtime_path), "{path}");
+    }
+    for (runtime, workspaces) in [("runtime", "workspaces"), ("storage/runtime", "storage")] {
+        let target = Fixture::new();
+        let target_private: Vec<_> = private.iter().map(|path| path.replacen("runtime", runtime, 1)).collect();
+        for path in &target_private { target.write(path, b"target Host bytes"); }
+        let mut importing = target.session_for(target.layout(runtime, workspaces), None);
+        let id = transfer(&archive, &mut importing);
+        importing.execute(json!({"operation":"restore", "archiveId":id})).unwrap();
+        for path in &target_private { assert_eq!(fs::read(target.0.join(path)).unwrap(), b"target Host bytes"); }
+        assert_eq!(fs::read(target.0.join(runtime).join("data/record")).unwrap(), b"portable data");
+        assert_eq!(fs::read(target.0.join(workspaces).join("project/terminal/rootfs/record")).unwrap(), b"workspace data");
+    }
+}
+
+/// Imports an old archive with guest files while preserving target-device execution storage.
+#[test]
+fn rescue_import_ignores_archived_host_storage_and_nodes() {
+    let source = Fixture::new();
+    source.write("runtime/data/record", b"portable data");
+    source.write("runtime/identities/a/terminal/rootfs/source/bin/sh", b"source environment");
+    source.write("runtime/config/preferences/terminal_profiles.json", b"source profiles");
+    // A separate owning root lets the fixture collect the historical, unfiltered archive layout.
+    let legacy = NativeRescueHost::new(&source.0.join("runtime"), source.layout("unused", "workspaces"), None).unwrap();
+    let (mut files, mut nodes) = (Vec::new(), Vec::new());
+    collect_files(&source.0.join("runtime"), "runtime", &mut files, &mut nodes, &legacy).unwrap();
+    files.push(RescueFile { path: SYSTEM_SECRETS.into(), byte_length: 2, sha256: String::new() });
+    let archive_path = source.0.join("legacy.zip");
+    operit_data_rescue::archive::write_archive(File::create(&archive_path).unwrap(), "operit.files.v1",
+        json!({"storageNodes": nodes}), files,
+        |path, offset, length| {
+            let bytes = if path == SYSTEM_SECRETS { b"{}".to_vec() } else { fs::read(source.0.join(path)).map_err(text)? };
+            let start = (offset as usize).min(bytes.len());
+            Ok(bytes[start..start.saturating_add(length).min(bytes.len())].to_vec())
+        }, |_| Ok(None), |_| {}).unwrap();
+    let target = Fixture::new();
+    let private = "runtime/identities/a/terminal/rootfs/target/bin/sh";
+    target.write(private, b"target environment");
+    let mut importing = target.session(None);
+    let id = transfer(&json!({"fileReference": archive_path}), &mut importing);
+    let manifest = importing.execute(json!({"operation":"inspect", "archiveId":id})).unwrap();
+    assert_eq!(manifest["files"].as_array().unwrap().len(), 2);
+    assert!(manifest["metadata"]["storageNodes"].as_array().unwrap().iter().all(|node| {
+        !Path::new(node["path"].as_str().unwrap()).strip_prefix("runtime").is_ok_and(is_host_private_runtime_path)
+    }));
+    importing.execute(json!({"operation":"restore", "archiveId":id})).unwrap();
+    assert_eq!(fs::read(target.0.join("runtime/data/record")).unwrap(), b"portable data");
+    assert_eq!(fs::read(target.0.join(private)).unwrap(), b"target environment");
+    assert!(!target.0.join("runtime/identities/a/terminal/rootfs/source").exists());
+    assert!(!target.0.join("runtime/config/preferences/terminal_profiles.json").exists());
+}
+
 /// Finds legacy staging beside a selected runtime outside the default application layout.
 #[test]
 fn maintenance_collects_staging_beside_selected_runtime() {
@@ -517,6 +594,8 @@ fn overlapping_roots_resume_interrupted_publication() {
     ] {
         let target = Fixture::new();
         target.write(&format!("{runtime}/original"), b"original payload");
+        target.write(&format!("{runtime}/terminal/rootfs/local/sdcard/record"), b"local Host environment");
+        target.write(&format!("{runtime}/identities/local/config/preferences/terminal_profiles.json"), b"local Host profiles");
         let roots = target.layout(runtime, workspaces);
         let secrets = Arc::new(Secrets::default());
         secrets.fail_writes.store(true, Ordering::SeqCst);
@@ -534,6 +613,8 @@ fn overlapping_roots_resume_interrupted_publication() {
         assert_eq!(configured["roots"]["workspaces"], json!(roots.workspace_root));
         let restored = importing.execute(json!({"operation": "resumeRestore"})).unwrap();
         assert_eq!(fs::read(roots.runtime_root.join("new")).unwrap(), b"runtime payload");
+        assert_eq!(fs::read(roots.runtime_root.join("terminal/rootfs/local/sdcard/record")).unwrap(), b"local Host environment");
+        assert_eq!(fs::read(roots.runtime_root.join("identities/local/config/preferences/terminal_profiles.json")).unwrap(), b"local Host profiles");
         assert_eq!(fs::read(roots.workspace_root.join("project/file")).unwrap(), b"workspace payload");
         assert!(restored["retainedData"].as_array().unwrap().iter().any(|path| {
             let retained = PathBuf::from(path.as_str().unwrap());

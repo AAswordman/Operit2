@@ -1,4 +1,5 @@
 mod secrets;
+pub mod snapshot_policy;
 pub use secrets::NativeFileSecretStore;
 
 use std::collections::{BTreeSet, HashMap};
@@ -624,6 +625,12 @@ impl RuntimeStorageWriteHost for NativeRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for NativeRuntimeStorageHost {
+    /// Keeps native execution payloads and launch paths out of portable application data.
+    fn isSnapshotExcludedPath(&self, path: &str) -> bool {
+        Path::new(path).strip_prefix("runtime")
+            .is_ok_and(snapshot_policy::is_host_private_runtime_path)
+    }
+
     fn openWriteSession(&self, path: &str) -> HostResult<Option<Box<dyn operit_host_contract::RuntimeStorageWriteSession>>> {
         Ok(Some(self.createWriteSessionInternal(path, false)?))
     }

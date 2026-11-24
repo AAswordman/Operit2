@@ -191,9 +191,7 @@ impl RawSnapshotBackupManager {
         let imported: PortableSecrets =
             serde_json::from_slice(&bytes).map_err(|error| error.to_string())?;
         secrets::validate_destination(&imported, self.secretStore.as_deref())?;
-        self.storageHost
-            .delete(RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH, true)
-            .map_err(|error| error.to_string())?;
+        self.clearSnapshotDirectory(RuntimeStorageLayout::RUNTIME_ROOT_DIR_PATH)?;
         for file in manifest
             .files
             .iter()
@@ -246,7 +244,7 @@ impl RawSnapshotBackupManager {
     ) -> Result<(ZipArchive<ArchiveSourceReader>, RescueManifest), String> {
         let mut zip =
             ZipArchive::new(ArchiveSourceReader::new(source)).map_err(|error| error.to_string())?;
-        let manifest = archive::inspect_archive(&mut zip, SNAPSHOT_LAYOUT, |_| {})?;
+        let mut manifest = archive::inspect_archive(&mut zip, SNAPSHOT_LAYOUT, |_| {})?;
         if !manifest
             .files
             .iter()
@@ -259,6 +257,7 @@ impl RawSnapshotBackupManager {
                 return Err(format!("invalid snapshot runtime path: {}", file.path));
             }
         }
+        manifest.files.retain(|file| !self.storageHost.isSnapshotExcludedPath(&file.path));
         Ok((zip, manifest))
     }
 
@@ -275,7 +274,8 @@ impl RawSnapshotBackupManager {
             .list(prefix)
             .map_err(|error| error.to_string())?
         {
-            if staging.files.contains_key(&entry.path)
+            if self.storageHost.isSnapshotExcludedPath(&entry.path)
+                || staging.files.contains_key(&entry.path)
                 || LIVE_ONLY_PATHS.iter().any(|path| *path == entry.path)
             {
                 continue;
@@ -294,6 +294,21 @@ impl RawSnapshotBackupManager {
             }
         }
         Ok(files)
+    }
+
+    /// Removes replaced application data while retaining Host-owned entries and their ancestors.
+    fn clearSnapshotDirectory(&self, prefix: &str) -> Result<bool, String> {
+        let mut retained = false;
+        for entry in self.storageHost.list(prefix).map_err(|error| error.to_string())? {
+            if self.storageHost.isSnapshotExcludedPath(&entry.path)
+                || (entry.isDirectory && self.clearSnapshotDirectory(&entry.path)?)
+            {
+                retained = true;
+                continue;
+            }
+            self.storageHost.delete(&entry.path, true).map_err(|error| error.to_string())?;
+        }
+        Ok(retained)
     }
 
     /// Uses the common plaintext preference contract without changing the source storage.
@@ -455,6 +470,82 @@ mod tests {
         }
     }
 
+    /// Exports portable data and preserves destination Host environments during replacement.
+    #[test]
+    fn snapshot_excludes_host_storage_and_preserves_destination_environment() {
+        let source = Fixture::new();
+        for path in [
+            "runtime/terminal/rootfs/image/usr/lib/systemd/system/file",
+            "runtime/identities/a/terminal/rootfs/image/sdcard/file",
+            "runtime/ohos-vroot/rootfs/bin/sh",
+            "runtime/config/preferences/terminal_profiles.json",
+        ] {
+            source.host.writeBytes(path, b"source Host bytes").unwrap();
+        }
+        #[cfg(unix)]
+        {
+            let rootfs = source.root.join("runtime/terminal/rootfs/image");
+            std::fs::write(rootfs.join("systemd\\x2dcryptsetup.slice"), b"nonportable filename").unwrap();
+            std::os::unix::fs::symlink("/missing-guest-mount", rootfs.join("sdcard")).unwrap();
+        }
+        for path in [
+            "runtime/data/record", "runtime/terminal/rootfs-notes/record",
+            "runtime/data/terminal/rootfs/record",
+        ] {
+            source.host.writeBytes(path, b"portable data").unwrap();
+        }
+        let bytes = source.export();
+        let manifest = source.manager().inspectSnapshotSource(Arc::new(BytesSource(bytes.clone()))).unwrap();
+        assert_eq!(manifest.includes.len(), 3);
+        assert!(manifest.includes.iter().all(|path| !source.host.isSnapshotExcludedPath(path)));
+
+        let target = Fixture::new();
+        let private = [
+            "runtime/terminal/rootfs/local/sdcard/record",
+            "runtime/identities/local/terminal/rootfs/local/bin/sh",
+            "runtime/ohos-vroot/rootfs/bin/sh",
+            "runtime/config/preferences/terminal_profiles.json",
+        ];
+        for path in private { target.host.writeBytes(path, b"target Host bytes").unwrap(); }
+        target.host.writeBytes("runtime/data/stale", b"stale data").unwrap();
+        target.manager().restoreSnapshotSource(Arc::new(BytesSource(bytes))).unwrap();
+        assert!(!target.host.exists("runtime/data/stale").unwrap());
+        assert!(!target.host.exists("runtime/terminal/rootfs/image").unwrap());
+        assert_eq!(target.host.readBytes("runtime/data/record").unwrap(), b"portable data");
+        for path in private { assert_eq!(target.host.readBytes(path).unwrap(), b"target Host bytes"); }
+    }
+
+    /// Restores old snapshots while ignoring source-device environments and launch profiles.
+    #[test]
+    fn snapshot_import_ignores_archived_host_storage() {
+        let payloads = [
+            ("runtime/data/record", b"portable data".as_slice()),
+            ("runtime/terminal/rootfs/source/bin/sh", b"source environment".as_slice()),
+            ("runtime/config/preferences/terminal_profiles.json", b"source profiles".as_slice()),
+            (SYSTEM_SECRETS, b"{}".as_slice()),
+        ];
+        let mut output = Cursor::new(Vec::new());
+        archive::write_archive(&mut output, SNAPSHOT_LAYOUT, json!({"createdAt":1}),
+            payloads.iter().map(|(path, bytes)| RescueFile {
+                path: (*path).into(), byte_length: bytes.len() as u64, sha256: String::new(),
+            }).collect(),
+            |path, offset, length| {
+                let bytes = payloads.iter().find(|(name, _)| *name == path).unwrap().1;
+                let start = (offset as usize).min(bytes.len());
+                Ok(bytes[start..start.saturating_add(length).min(bytes.len())].to_vec())
+            }, |_| Ok(None), |_| {}).unwrap();
+        let target = Fixture::new();
+        let profiles = "runtime/config/preferences/terminal_profiles.json";
+        target.host.writeBytes(profiles, b"target profiles").unwrap();
+        let source = Arc::new(BytesSource(output.into_inner()));
+        assert_eq!(target.manager().inspectSnapshotSource(source.clone()).unwrap().includes, vec!["runtime/data/record"]);
+        target.manager().restoreSnapshotSource(source).unwrap();
+        assert_eq!(target.host.readBytes("runtime/data/record").unwrap(), b"portable data");
+        assert_eq!(target.host.readBytes(profiles).unwrap(), b"target profiles");
+        assert!(!target.host.exists("runtime/terminal/rootfs/source").unwrap());
+    }
+
+    /// Keeps live logs out of exports and captures sync state before compression starts.
     #[test]
     fn snapshot_excludes_live_logs_and_captures_sync_files_before_compression() {
         struct MutatingOutput<'a> {

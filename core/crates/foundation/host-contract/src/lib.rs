@@ -2076,6 +2076,10 @@ pub struct RuntimeStorageEntry {
 }
 
 pub trait RuntimeStorageHost: Send + Sync {
+    /// Excludes Host-private storage from portable snapshots before traversal or replacement.
+    /// Paths use the logical runtime namespace; exclusions include the entire addressed subtree.
+    fn isSnapshotExcludedPath(&self, _path: &str) -> bool { false }
+
     /// Opens a private sequential writer; commit publishes the complete file atomically.
     /// Returning None allows small legacy hosts to use their ordinary bounded write path.
     fn openWriteSession(&self, _path: &str) -> HostResult<Option<Box<dyn RuntimeStorageWriteSession>>> {
@@ -2152,6 +2156,10 @@ pub trait RuntimeStorageHost: Send + Sync {
 macro_rules! delegate_runtime_storage {
     ($host:ty, $field:ident) => {
         impl $crate::RuntimeStorageHost for $host {
+            /// Delegates portable snapshot ownership to the underlying storage Host.
+            fn isSnapshotExcludedPath(&self, path: &str) -> bool {
+                $crate::RuntimeStorageHost::isSnapshotExcludedPath(&self.$field, path)
+            }
             fn openWriteSession(&self, path: &str) -> $crate::HostResult<Option<Box<dyn $crate::RuntimeStorageWriteSession>>> {
                 $crate::RuntimeStorageHost::openWriteSession(&self.$field, path)
             }

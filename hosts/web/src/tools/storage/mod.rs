@@ -38,6 +38,11 @@ impl WebRuntimeStorageHost {
 }
 
 impl RuntimeStorageHost for WebRuntimeStorageHost {
+    /// Keeps device-specific terminal launch profiles outside portable application snapshots.
+    fn isSnapshotExcludedPath(&self, path: &str) -> bool {
+        path == operit_host_api::RuntimeStorageLayout::TERMINAL_PROFILES_PATH
+    }
+
     fn openWriteSession(&self, path: &str) -> HostResult<Option<Box<dyn operit_host_api::RuntimeStorageWriteSession>>> {
         Ok(Some(operit_host_api::RuntimeStorageWriteHost::createWriteSession(self, path)?))
     }
