@@ -9,6 +9,7 @@ const RUNTIME_WORKER_COUNT: usize = 16;
 const BLOCKING_WORKER_COUNT: usize = 16;
 const NETWORK_WORKER_COUNT: usize = 4;
 const SERVICE_WORKER_COUNT: usize = 16;
+const JAVASCRIPT_WORKER_COUNT: usize = 4;
 const TASK_QUEUE_CAPACITY: usize = 4096;
 
 thread_local! {
@@ -831,10 +832,10 @@ impl NativeHostRuntimeTaskSchedulerHost {
         static COMPILERS: OnceLock<Result<RuntimeTaskQueue, String>> = OnceLock::new();
         let queue = match kind {
             operit_host_api::HostJavaScriptRuntimeStateKind::Execution => {
-                ENGINES.get_or_init(|| spawnTaskPool("operit-js", 4))
+                ENGINES.get_or_init(|| spawnTaskPool("operit-js", JAVASCRIPT_WORKER_COUNT))
             }
             operit_host_api::HostJavaScriptRuntimeStateKind::Compilation => {
-                COMPILERS.get_or_init(|| spawnTaskPool("operit-jsc", 1))
+                COMPILERS.get_or_init(|| spawnTaskPool("operit-jsc", JAVASCRIPT_WORKER_COUNT))
             }
         }
         .as_ref()
@@ -1432,6 +1433,31 @@ mod javascript_dependency_tests {
     use operit_host_api::HostJavaScriptRuntimeStateKind;
     use std::sync::mpsc;
     use std::time::Duration;
+
+    /// Independent compiler tasks must enter four distinct workers before any task can finish.
+    #[test]
+    fn compilation_tasks_execute_on_all_workers_in_parallel() {
+        let scheduler = NativeHostRuntimeTaskSchedulerHost::new();
+        let (entered, started) = mpsc::channel();
+        let mut releases = Vec::new();
+        for _ in 0..JAVASCRIPT_WORKER_COUNT {
+            let (release, waiting) = mpsc::channel::<()>();
+            releases.push(release);
+            let entered = entered.clone();
+            scheduler.scheduleJavaScriptStateTask(
+                "compiler-parallel-probe", HostJavaScriptRuntimeStateKind::Compilation,
+                Box::new(move || Box::pin(async move {
+                    entered.send(std::thread::current().id()).unwrap();
+                    let _ = waiting.recv();
+                })),
+            ).unwrap();
+        }
+        let owners = (0..JAVASCRIPT_WORKER_COUNT)
+            .map(|_| started.recv_timeout(Duration::from_secs(5)))
+            .collect::<Result<std::collections::HashSet<_>, _>>();
+        drop(releases);
+        assert_eq!(owners.expect("Compiler tasks serialized on fewer workers").len(), JAVASCRIPT_WORKER_COUNT);
+    }
 
     /// Compiles source while every script worker synchronously waits for compilation capacity.
     #[test]

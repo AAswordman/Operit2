@@ -4,11 +4,11 @@ use std::sync::{Arc, Mutex};
 use operit_host_api::HostRuntimeTask;
 use tokio::sync::oneshot;
 
-const READY_ENGINE_COUNT: usize = 2;
+const READY_ENGINE_COUNT: usize = 4;
 type Schedule = Arc<dyn Fn(HostRuntimeTask) -> Result<(), String> + Send + Sync>;
 type Create<T> = Arc<dyn Fn() -> Result<T, String> + Send + Sync>;
 
-/// Keeps two pristine resources ready using bounded Host-scheduled creation tasks.
+/// Keeps one execution wave of pristine resources ready using bounded Host tasks.
 pub(super) struct PreparedEnginePool<T> {
     state: Mutex<PoolState<T>>,
     create: Create<T>,
@@ -177,19 +177,20 @@ mod tests {
         }
     }
 
-    /// Startup prepares two engines and consuming one schedules exactly one replacement.
+    /// Startup fills the ready target and consuming one schedules exactly one replacement.
     #[test]
-    fn prepares_two_and_replenishes_after_consumption() {
+    fn prepares_ready_wave_and_replenishes_after_consumption() {
         let fixture = Fixture::new();
-        assert_eq!(fixture.tasks.lock().unwrap().len(), 2);
-        fixture.run();
-        fixture.run();
+        assert_eq!(fixture.tasks.lock().unwrap().len(), READY_ENGINE_COUNT);
+        for _ in 0..READY_ENGINE_COUNT {
+            fixture.run();
+        }
         let mut request = fixture.pool.request();
         assert_eq!(request.try_recv().unwrap().unwrap(), 0);
         assert_eq!(fixture.tasks.lock().unwrap().len(), 1);
         fixture.run();
         let state = fixture.pool.state.lock().unwrap();
-        assert_eq!(state.ready.len(), 2);
+        assert_eq!(state.ready.len(), READY_ENGINE_COUNT);
         assert_eq!(state.creating, 0);
     }
 
@@ -201,15 +202,16 @@ mod tests {
         let mut first = fixture.pool.request();
         let mut second = fixture.pool.request();
         drop(cancelled);
-        assert_eq!(fixture.tasks.lock().unwrap().len(), 2);
+        assert_eq!(fixture.tasks.lock().unwrap().len(), READY_ENGINE_COUNT);
         fixture.run();
         fixture.run();
         assert_eq!(first.try_recv().unwrap().unwrap(), 0);
         assert_eq!(second.try_recv().unwrap().unwrap(), 1);
-        fixture.run();
-        fixture.run();
-        assert_eq!(fixture.creations.load(Ordering::SeqCst), 4);
-        assert_eq!(fixture.pool.state.lock().unwrap().ready.len(), 2);
+        for _ in 0..READY_ENGINE_COUNT {
+            fixture.run();
+        }
+        assert_eq!(fixture.creations.load(Ordering::SeqCst), READY_ENGINE_COUNT + 2);
+        assert_eq!(fixture.pool.state.lock().unwrap().ready.len(), READY_ENGINE_COUNT);
     }
 
     /// Preparation failures reject current and future requests without hidden retries.
@@ -232,8 +234,9 @@ mod tests {
             pool.request().try_recv().unwrap().unwrap_err(),
             "bootstrap failed"
         );
-        let task = tasks.lock().unwrap().pop_front().unwrap();
-        task();
+        while let Some(task) = { tasks.lock().unwrap().pop_front() } {
+            task();
+        }
         assert!(tasks.lock().unwrap().is_empty());
         assert_eq!(pool.state.lock().unwrap().creating, 0);
     }
@@ -275,17 +278,17 @@ mod tests {
                 Ok(())
             }),
         );
-        for _ in 0..2 {
+        for _ in 0..READY_ENGINE_COUNT {
             let task = tasks.lock().unwrap().pop_front().unwrap();
             task();
         }
         drop(pool.request());
         assert_eq!(destroyed.load(Ordering::SeqCst), 1);
         drop(pool);
-        assert_eq!(destroyed.load(Ordering::SeqCst), 2);
+        assert_eq!(destroyed.load(Ordering::SeqCst), READY_ENGINE_COUNT);
         let task = tasks.lock().unwrap().pop_front().unwrap();
         task();
-        assert_eq!(destroyed.load(Ordering::SeqCst), 2);
+        assert_eq!(destroyed.load(Ordering::SeqCst), READY_ENGINE_COUNT);
     }
 
     /// Provider shutdown releases ready resources and queued tasks do not create new ones.

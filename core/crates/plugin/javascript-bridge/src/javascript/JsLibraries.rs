@@ -461,8 +461,9 @@ fn assembleRuntimeBootstrapScript() -> String {
             return __operitNativeCompileModuleFactory(__operitNativePrepareJavaScript(source));
         }}
 
-        function __operitGetFactory(kind, identity, source, composeCompilation) {{
-            var key = __operitBuildFactoryKey(kind, identity, source) + ":compose=" + composeCompilation;
+        /** Keeps shared compiler identities stable and realm-local source revisions distinct. */
+        function __operitGetFactory(kind, identity, source, composeCompilation, sourceIdentity) {{
+            var key = __operitBuildFactoryKey(kind, identity, source) + ":compose=" + composeCompilation + ':source=' + sourceIdentity;
             var cache = __operitGetFactoryCache();
             if (typeof cache[key] === 'function') {{
                 return cache[key];
@@ -898,7 +899,7 @@ fn assembleRuntimeBootstrapScript() -> String {
                     moduleCache[mainModuleKey] = module;
                     exports = module.exports;
                     markStage('compile_main_script');
-                    var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath + ':' + sourceId, scriptText, structuredResult);
+                    var mainFactory = __operitGetFactory('main', packageTarget + ':' + screenPath + ':main', scriptText, structuredResult, sourceId);
                     markStage('execute_main_script');
                     var previousActiveModule = globalThis.__operitActiveModule;
                     globalThis.__operitActiveModule = module;

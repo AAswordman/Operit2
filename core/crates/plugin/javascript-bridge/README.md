@@ -56,7 +56,7 @@ Native execution uses the four existing affine workers, with one shared V8 isola
 Each plugin owns a separate context, host bindings and microtask queue; cancellation targets only
 its active execution. Preparing a page creates a context rather than another isolate.
 
-Creating `HostJsExecutionProvider` schedules preparation of two pristine engines through
+Creating `HostJsExecutionProvider` schedules preparation of four pristine engines through
 `HostRuntimeTaskSchedulerHost`. Preparation creates the Host-owned runtime, registers native
 interfaces and executes the common SDK bootstrap without binding a package or executing its code.
 The embedding application must install its JavaScript runtime Host and task scheduler first.
@@ -65,7 +65,7 @@ Page acquisition uses `JsExecutionProvider::acquire_toolpkg_execution_engine` th
 `ToolPkgExecutionEngineFactory::acquireToolPkgExecutionEngine`. It asynchronously awaits a ready
 engine, authenticates its real package owner and installs a single immutable context on the Host
 executor. IPC and dependency callbacks read that same bound context. Each consumption immediately
-schedules preparation to restore two ready or currently preparing engines. Burst requests queue
+schedules preparation to restore four ready or currently preparing engines. Burst requests queue
 in order; preparation and scheduling failures are returned explicitly.
 
 A page's final lease destroys its used engine. Used engines never reenter the prepared pool.
@@ -77,3 +77,35 @@ Successful engine preparation, acquisition, resource reads, compilation and IPC 
 routine timing logs. Engine preparation failures and IPC failures retain error diagnostics. IPC timing
 is disabled by `TOOLPKG_IPC_TIMING_ENABLED` in `ToolJsRuntime.rs`. Flutter page timing is disabled by
 default and can be enabled explicitly with `--dart-define=OPERIT_PROFILE_PLUGIN_UI=true`.
+
+## Asynchronous Compose Preparation
+
+Page requests prepare their immutable source snapshot before entering the page's affine execution
+queue. Four isolated compiler contexts use the Host's four compilation workers, separate from the
+four plugin execution workers. Identical source/identity requests share one in-flight result;
+independent misses select the least loaded compiler. A short shared LRU lookup serves warm results
+without entering any compiler queue. The cache retains at most 128 entries and 16 MiB, including
+exact parser errors; mounted pages retain their own immutable results across cache eviction.
+
+Dependency discovery uses the parsed CommonJS call structure. Literal imports prepare their
+transitive resource graph with the loader's path normalization and candidate ordering. Computed or
+aliased loaders declare the whole resource snapshot as their preparation scope. JSON stays on its
+existing loader path. Preparation does not evaluate plugin code, and an unused module's syntax
+error is reported only when that exact module is required. Dependency analysis is cached with the
+lowered source and runs on compilation workers.
+
+Synchronous `require()` reads only the owning call's prepared results. It never waits on another
+runtime or starts compilation. Suspended actions retain their original prepared snapshot through
+page refreshes. Shared preparation outlives an individual cancelled waiter; dropped Host tasks
+complete all remaining waiters with an explicit error. Compiler initialization uses Host blocking
+capacity and asynchronous completion, without platform branches in shared code.
+
+The pool permits parallel independent pages and asynchronous Host work. A page's mutable realm and
+Flutter rendering still preserve their own ordering; synchronous JavaScript running on the same
+affine worker shares that worker's CPU time. Web Hosts retain their existing browser execution
+model; four compiler contexts do not imply four browser worker threads.
+
+Focused validation: `cargo test -p operit-js-bridge JsComposeCompiler` covers cache ownership,
+coalescing, cancellation, dependency scope and blocked-worker isolation; `PreparedEnginePool`
+tests cover the four-engine ready target and shutdown. The JS bridge and Compose session suites
+cover CommonJS loading, source replacement, live state and callback ownership.

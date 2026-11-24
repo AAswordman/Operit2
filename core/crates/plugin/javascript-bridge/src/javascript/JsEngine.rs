@@ -15,6 +15,7 @@ use crate::javascript::JsJavaBridgeDelegates::{
     javaCallInstance, javaCallStatic, javaClassExists, javaGetApplicationContext, javaNewInstance,
 };
 use crate::javascript::JsLibraries::{buildRuntimeBootstrapScript, loadBootstrapLibrary};
+use crate::javascript::JsComposeCompiler::{normalizeModulePath, prepareComposeSources, PreparedComposeSources};
 use operit_host_api::HostManager::{
     defaultHostJavaScriptRuntimeHost, defaultHostRuntimeTaskSchedulerHost,
 };
@@ -77,6 +78,7 @@ struct JsEngineOwner {
     runtimeHost: Arc<dyn HostJavaScriptRuntimeHost>,
     stateHandle: HostJavaScriptRuntimeStateHandle,
     alive: Arc<AtomicBool>,
+    preparedSources: Mutex<Option<Arc<PreparedComposeSources>>>,
 }
 
 impl std::ops::Deref for JsEngineWorker {
@@ -111,6 +113,7 @@ type JsBackgroundWake = Arc<dyn Fn() + Send + Sync>;
 #[derive(Clone)]
 enum JsTextResourceSource {
     Snapshot(Arc<ToolPkgTextResources>),
+    PreparedSnapshot(Arc<PreparedComposeSources>),
     Package(Arc<dyn ToolPkgTextResourceHost>),
     ExecutionHost,
 }
@@ -239,7 +242,7 @@ struct JsScriptRequest {
     timeout: Option<Duration>,
     interrupt: HostJavaScriptExecutionInterrupt,
     executionListener: Option<JsExecutionListenerRef>,
-    textResources: Option<Arc<ToolPkgTextResources>>,
+    textResources: Option<Arc<PreparedComposeSources>>,
     useComposeDslTextResources: bool,
     completion: JsScriptCompletion,
     cancelled: Arc<AtomicBool>,
@@ -286,7 +289,7 @@ struct JsEngineState {
     backgroundWake: Arc<Mutex<Option<JsBackgroundWake>>>,
     executionHost: Option<Arc<dyn JsExecutionHost>>,
     toolPkgContext: Option<ToolPkgExecutionContext>,
-    composeDslTextResources: Option<Arc<ToolPkgTextResources>>,
+    composeDslTextResources: Option<Arc<PreparedComposeSources>>,
     detachedCallContexts: BTreeMap<String, JsCallContext>,
     pendingScriptExecutions: BTreeMap<String, JsPendingScriptExecution>,
     registeredScriptSources: BTreeMap<String, String>,
@@ -389,7 +392,8 @@ impl JsEngineWorker {
             .lock()
             .expect("background wake mutex poisoned") = Some(wake);
         Ok(Self {
-            owner: Arc::new(JsEngineOwner { lifetimeInterrupt, runtimeHost, stateHandle, alive }),
+            owner: Arc::new(JsEngineOwner { lifetimeInterrupt, runtimeHost, stateHandle, alive,
+                preparedSources: Mutex::new(None) }),
             executionHost: workerExecutionHost,
         })
     }
@@ -465,6 +469,33 @@ impl JsEngineWorker {
                     "JavaScript runtime was destroyed",
                 ));
             }
+            // Prepare immutable modules before entering the affine page queue. A suspended
+            // compiler wait therefore cannot hold the page state or its JS worker.
+            let textResources = match textResources {
+                Some(resources) if useComposeDslTextResources => {
+                    let package = params.get("__operit_ui_package_name").and_then(Value::as_str)
+                        .filter(|value| !value.is_empty())
+                        .or_else(|| params.get("toolPkgId").and_then(Value::as_str)).unwrap_or_default();
+                    let screen = params.get("__operit_script_screen").and_then(Value::as_str)
+                        .or_else(|| params.get("moduleSpec").and_then(|module| module.get("screen")).and_then(Value::as_str))
+                        .unwrap_or_default();
+                    let screen = normalizeModulePath(screen);
+                    let cached = worker.preparedSources.lock().expect("Prepared Compose sources poisoned")
+                        .as_ref().filter(|sources| sources.matches(&resources, &script, package, &screen)).cloned();
+                    let sources = match cached {
+                        Some(sources) => sources,
+                        None => prepareComposeSources(resources, script.clone(), package.to_string(), screen).await
+                            .map_err(javaScriptExecutionErrorFromHost)?,
+                    };
+                    if !worker.alive.load(Ordering::Acquire) {
+                        return Err(JsExecutionError::worker_unavailable("JavaScript runtime was destroyed during module preparation"));
+                    }
+                    *worker.preparedSources.lock().expect("Prepared Compose sources poisoned") = Some(sources.clone());
+                    Some(sources)
+                }
+                Some(_) => return Err(JsExecutionError::invalid_request("Module snapshot requires Compose execution")),
+                None => None,
+            };
             let deadlineMillis = timeout.map(scriptRequestDeadline).transpose()?;
             let interrupt = match timeout {
                 Some(duration) => HostJavaScriptExecutionInterrupt::new(
@@ -624,6 +655,7 @@ impl JsEngineOwner {
         if !self.alive.swap(false, Ordering::AcqRel) {
             return;
         }
+        self.preparedSources.lock().expect("Prepared Compose sources poisoned").take();
         if let Err(error) = self.runtimeHost.destroyHostJavaScriptRuntimeState(self.stateHandle) {
             AppLogger::e(TAG, &format!("JavaScript runtime cleanup failed: {error}"));
         }
@@ -1302,7 +1334,7 @@ impl JsEngineState {
             None
         };
         let textResourceSource = if useComposeDslTextResources {
-            JsTextResourceSource::Snapshot(
+            JsTextResourceSource::PreparedSnapshot(
                 textResources.expect("Compose page snapshot was validated"),
             )
         } else {
@@ -3080,9 +3112,16 @@ fn executeHostOperation(name: &str, arguments: Vec<impl Into<operit_host_api::Ho
         }
         "__operitNativePrepareComposeModule" => {
             let [source, identity] = exactHostJavaScriptJsonArguments(name, arguments)?;
-            crate::javascript::JsComposeCompiler::prepareComposeModule(
-                hostJavaScriptStringArgument(source)?, hostJavaScriptStringArgument(identity)?,
-            ).map(Value::String)
+            let source = hostJavaScriptStringArgument(source)?;
+            let identity = hostJavaScriptStringArgument(identity)?;
+            CURRENT_CALL_CONTEXT.with(|current| {
+                let context = current.borrow();
+                let context = context.as_ref().ok_or_else(|| HostError::new("Compose compilation requires an owning call"))?;
+                let JsTextResourceSource::PreparedSnapshot(prepared) = &context.textResourceSource else {
+                    return Err(HostError::new("Compose compilation requires prepared page resources"));
+                };
+                prepared.read(&source, &identity).map(Value::String)
+            })
         }
         "__operitNativeReadBootstrapLibrary" => {
             let [library] = exactHostJavaScriptJsonArguments(name, arguments)?;
@@ -3104,6 +3143,9 @@ fn executeHostOperation(name: &str, arguments: Vec<impl Into<operit_host_api::Ho
                 .ok_or_else(|| HostError::new("Module read requires an active resource owner"))?;
             let text = match source {
                 JsTextResourceSource::Snapshot(resources) => Ok(resources
+                    .get(&normalizeToolPkgTextResourcePath(&path))
+                    .cloned()),
+                JsTextResourceSource::PreparedSnapshot(resources) => Ok(resources.resources
                     .get(&normalizeToolPkgTextResourcePath(&path))
                     .cloned()),
                 JsTextResourceSource::Package(provider) => {

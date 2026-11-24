@@ -18,7 +18,7 @@ pub struct HostJsExecutionProvider {
 }
 
 impl HostJsExecutionProvider {
-    /// Starts preparing two unbound engines through the application's Host scheduler.
+    /// Prepares one execution wave of unbound engines through the application's Host scheduler.
     pub fn new() -> Self {
         let scheduler = defaultHostRuntimeTaskSchedulerHost();
         let prepared_engines = PreparedEnginePool::new(
