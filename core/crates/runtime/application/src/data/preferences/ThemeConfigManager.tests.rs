@@ -153,7 +153,7 @@ fn complete_snapshot_round_trips_all_ordinary_keys() {
         "untouched".to_string(),
     );
     let value = snapshot();
-    assert_eq!(value.len(), 77);
+    assert_eq!(value.len(), 78);
     validateThemePreferenceSnapshot(&value).unwrap();
     writeThemePreferenceSnapshot(&mut preferences, &value).unwrap();
     assertThemePreferenceSnapshot(&preferences, &value).unwrap();
@@ -1010,7 +1010,9 @@ fn released_named_theme_clears_previous_template_input_preferences() {
     use super::super::ThemePreferenceSnapshot::{EXTENDED_SNAPSHOT_FIELDS, FieldKind};
     let fixture = StoreFixture::new();
     let manager = fixture.manager();
-    let released = manager.create("Released appearance".into(), snapshot()).unwrap();
+    let mut released_snapshot = snapshot();
+    released_snapshot.remove("chatContentHorizontalPadding");
+    let released = manager.create("Released appearance".into(), released_snapshot).unwrap();
     let visual: Value = serde_json::from_slice(&operit_plugin_theme::normalize_draft(b"{}").unwrap().canonical_bytes()).unwrap();
     let mut extended_values = BTreeMap::new();
     for field in EXTENDED_SNAPSHOT_FIELDS {

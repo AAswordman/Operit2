@@ -487,6 +487,11 @@ pub(crate) const SNAPSHOT_FIELDS: &[SnapshotField] = &[
 /// Older saved configurations do not own fields they never declared.
 pub(crate) const EXTENDED_SNAPSHOT_FIELDS: &[SnapshotField] = &[
     SnapshotField {
+        json_key: "chatContentHorizontalPadding",
+        preference_key: "chat_content_horizontal_padding",
+        kind: FieldKind::Number { min: 0.0, max: 32.0 },
+    },
+    SnapshotField {
         json_key: "codeFontType",
         preference_key: "code_font_type",
         kind: FieldKind::Enum(&["system", "file", "device"]),
@@ -781,6 +786,7 @@ pub(crate) fn migrationThemeDefaults() -> Result<BTreeMap<String, Value>, Prefer
   "bubbleUserContentPaddingRight": 12,
   "bubbleAiContentPaddingLeft": 12,
   "bubbleAiContentPaddingRight": 12,
+  "chatContentHorizontalPadding": 16,
   "customUserAvatarUri": null,
   "avatarShape": "circle",
   "avatarCornerRadius": 8,

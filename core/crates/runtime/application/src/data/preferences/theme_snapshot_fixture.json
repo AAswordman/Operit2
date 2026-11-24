@@ -51,6 +51,7 @@
   "bubbleUserContentPaddingRight": 12,
   "bubbleAiContentPaddingLeft": 12,
   "bubbleAiContentPaddingRight": 12,
+  "chatContentHorizontalPadding": 16,
   "customUserAvatarUri": null,
   "avatarShape": "circle",
   "avatarCornerRadius": 8,

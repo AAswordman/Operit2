@@ -82,7 +82,7 @@ class ThemePreferenceSnapshot {
     required this.bubbleUserContentPaddingRight,
     required this.bubbleAiContentPaddingLeft,
     required this.bubbleAiContentPaddingRight,
-    required this.chatContentHorizontalPadding,
+    this.chatContentHorizontalPadding = 16,
     required this.customUserAvatarUri,
     required this.avatarShape,
     required this.avatarCornerRadius,
@@ -468,9 +468,8 @@ class ThemePreferenceSnapshot {
       bubbleAiContentPaddingRight: requiredDouble(
         'bubbleAiContentPaddingRight',
       ),
-      chatContentHorizontalPadding: requiredDouble(
-        'chatContentHorizontalPadding',
-      ),
+      chatContentHorizontalPadding:
+          (json['chatContentHorizontalPadding'] as num?)?.toDouble() ?? 16,
       customUserAvatarUri: optionalString('customUserAvatarUri'),
       avatarShape: requiredString('avatarShape'),
       avatarCornerRadius: requiredDouble('avatarCornerRadius'),
