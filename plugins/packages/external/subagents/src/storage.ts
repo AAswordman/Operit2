@@ -1,11 +1,15 @@
 import type { Storage } from "../../../../types/storage";
-import { parseAgent, requireText, summary, type Agent, type AgentSummary, type ParentSnapshot } from "./model.js";
+import { concurrencyLimit, DEFAULT_SETTINGS, MAX_ACTIVE_AGENTS, parseAgent, parseSettings, requireText, summary, type Agent, type AgentSettings, type AgentSummary, type ParentSnapshot } from "./model.js";
 
 export interface AgentRepository {
   /** Loads durable agents once into the owning manager. */
   load(): Promise<Agent[]>;
   /** Atomically publishes the detailed record and its parent status list. */
   save(agent: Agent): Promise<void>;
+  loadLimit(): Promise<number>;
+  saveLimit(limit: number): Promise<void>;
+  loadSettings(): Promise<AgentSettings>;
+  saveSettings(settings: AgentSettings): Promise<void>;
 }
 
 let database: Promise<Storage.ObjectDatabase> | null = null;
@@ -20,6 +24,29 @@ function openDatabase(): Promise<Storage.ObjectDatabase> {
 export class Repository implements AgentRepository {
   private readonly committed = new Map<string, AgentSummary>();
   private writes: Promise<void> = Promise.resolve();
+
+  /** Reads the persisted space-wide limit, retaining the original limit for existing installations. */
+  async loadLimit(): Promise<number> {
+    const entry = await (await openDatabase()).collection<unknown>("settings").get("concurrency");
+    return entry === null ? MAX_ACTIVE_AGENTS : concurrencyLimit(entry.value);
+  }
+
+  /** Stores an explicitly validated concurrency setting. */
+  async saveLimit(limit: number): Promise<void> {
+    await (await openDatabase()).commit([{ op: "put", collection: "settings", key: "concurrency", value: concurrencyLimit(limit) }]);
+  }
+
+  /** Loads optional settings introduced after the original concurrency preference. */
+  async loadSettings(): Promise<AgentSettings> {
+    const entry = await (await openDatabase()).collection<unknown>("settings").get("behavior");
+    return entry === null ? { ...DEFAULT_SETTINGS } : parseSettings(entry.value);
+  }
+
+  /** Persists validated behavior preferences as one atomic value. */
+  async saveSettings(settings: AgentSettings): Promise<void> {
+    const value = parseSettings(settings);
+    await (await openDatabase()).commit([{ op: "put", collection: "settings", key: "behavior", value: { ...value } }]);
+  }
 
   /** Reads every bounded storage page and rejects corrupt or duplicated identities. */
   async load(): Promise<Agent[]> {

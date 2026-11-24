@@ -2,6 +2,49 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { copy, flush, harness, part } from "./runtime.mjs";
 
+/** Disabling nested delegation blocks descendants without stopping existing children. */
+test("nested delegation preference applies to new tasks and persists", async () => {
+  const h = harness(); const parent = await h.spawn();
+  await h.manager.setSettings({defaultWaitMs: 10000, allowNested: false, expandPanel: true});
+  await assert.rejects(h.spawn({}, parent.id), /Nested subagents are disabled/);
+  assert.equal((await h.manager.capacity()).active, 1);
+  const root = await h.spawn({}, "another-root");
+  assert.equal(root.status, "starting");
+  assert.deepEqual(h.repository.settings, {defaultWaitMs: 10000, allowNested: false, expandPanel: true});
+  await assert.rejects(h.manager.setSettings({defaultWaitMs: 31000, allowNested: true, expandPanel: false}), /Invalid/);
+});
+
+/** Concurrent admissions share one persisted limit across parent conversations. */
+test("configured concurrency controls simultaneous starts, lowering, and subsequent turns", async () => {
+  const h = harness();
+  await h.manager.setLimit(2);
+  const attempts = await Promise.allSettled([h.spawn(), h.spawn({}, "other"), h.spawn()]);
+  assert.equal(attempts.filter(value => value.status === "fulfilled").length, 2);
+  assert.match(attempts.find(value => value.status === "rejected").reason.message, /concurrency limit/);
+  assert.deepEqual(copy(await h.manager.capacity()), {limit: 2, active: 2, available: 0});
+  await h.manager.setLimit(1);
+  const ids = attempts.filter(value => value.status === "fulfilled").map(value => value.value.id);
+  h.chat.complete(ids[0]); await flush();
+  await assert.rejects(h.spawn(), /concurrency limit/);
+  h.chat.complete(ids[1]); await flush();
+  assert.equal((await h.manager.capacity()).available, 1);
+  assert.equal(h.repository.limit, 1);
+  await assert.rejects(h.manager.setLimit(0), /integer/);
+  await assert.rejects(h.manager.setLimit(9), /integer/);
+  assert.equal(h.repository.limit, 1);
+});
+
+/** A restarted manager retains capacity for native turns it can no longer observe. */
+test("recovered running turns reserve slots until the host reports idle", async () => {
+  const first = harness(); const agent = await first.spawn();
+  const h = harness([first.repository.records.get(agent.id)]);
+  h.repository.limit = 1; h.chat.processing.add(agent.id);
+  assert.deepEqual(copy(await h.manager.capacity()), {limit: 1, active: 1, available: 0});
+  await assert.rejects(h.spawn(), /concurrency limit/);
+  h.chat.processing.delete(agent.id);
+  assert.equal((await h.manager.capacity()).available, 1);
+});
+
 /** Starts several independent sends without waiting for any model response. */
 test("spawn returns immediately and preserves the source, original task and actual participant", async () => {
   const h = harness();
@@ -228,13 +271,13 @@ test("concurrent creation and follow-up turns share the eight-agent capacity lim
   h.chat.createGate = new Promise(resolve => { release = resolve; });
   const pending = Array.from({ length: 8 }, () => h.spawn());
   await flush();
-  await assert.rejects(h.spawn(), /At most 8/);
+  await assert.rejects(h.spawn(), /concurrency limit reached \(8\)/);
   assert.equal(h.chat.created.length, 8);
   release(); const agents = await Promise.all(pending);
   h.chat.complete(agents[0].id); await flush();
   const extra = await h.spawn();
   assert.equal(extra.id, "child-9");
-  await assert.rejects(h.request("send", { agentId: agents[0].id, message: "new turn", interrupt: false }), /At most 8/);
+  await assert.rejects(h.request("send", { agentId: agents[0].id, message: "new turn", interrupt: false }), /concurrency limit reached \(8\)/);
   assert.equal(h.chat.sends.length, 9);
 });
 

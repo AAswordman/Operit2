@@ -20,6 +20,7 @@ function objectDatabase() {
     /** Reads ordered pages and exact-key subscriptions through the declared SDK surface. */
     collection(name) {
       return {
+        async get(key) { const value = records(name).get(key); return value === undefined ? null : { value: copy(value), version: "1" }; },
         /** Returns a primary-key-ordered bounded storage page. */
         async list(after, limit) {
           return [...records(name)].sort(([left], [right]) => left.localeCompare(right))
@@ -99,6 +100,24 @@ test("real Repository atomically publishes sibling summaries and details", async
   assert.equal([...storage.observers.values()].reduce((count, observers) => count + observers.size, 0), 0);
 });
 
+/** A new repository instance reads the same validated space setting. */
+test("concurrency settings survive repository recreation", async () => {
+  const storage = objectDatabase();
+  const runtime = modules({
+    ToolPkg: { getSpaceDataDir: () => "/space/subagents" },
+    Tools: { Storage: { objects: { async open() { return storage.database; } } } },
+  });
+  const { Repository } = runtime.load("./storage");
+  const first = new Repository();
+  assert.equal(await first.loadLimit(), 8);
+  await first.saveLimit(3);
+  assert.equal(await new Repository().loadLimit(), 3);
+  await first.saveSettings({defaultWaitMs: 10000, allowNested: false, expandPanel: true});
+  assert.deepEqual(copy(await new Repository().loadSettings()), {defaultWaitMs: 10000, allowNested: false, expandPanel: true});
+  await assert.rejects(first.saveLimit(0), /integer/);
+  assert.equal(await first.loadLimit(), 3);
+});
+
 /** Loads the real tool exports and their actual IPC client while recording authenticated execution context. */
 test("tool entry captures host origin before IPC and uses the current participant", async () => {
   const requests = [];
@@ -106,7 +125,7 @@ test("tool entry captures host origin before IPC and uses the current participan
   const runtime = modules({
     getChatId: () => chatId,
     getCallerParticipantId: () => "actual-participant",
-    ToolPkg: { ipc: { async call(channel, payload, options) { requests.push(copy({ channel, payload, options })); return payload; } } },
+    ToolPkg: { ipc: { async call(channel, payload, options) { requests.push(copy({ channel, payload, options })); return channel === "subagents.capacity" ? {defaultWaitMs: 15000} : payload; } } },
   });
   const tools = runtime.load("./tools");
   const result = tools.spawn_agent({ name: "Inspect", task: "source task", parentChatId: "spoofed" });
@@ -117,25 +136,26 @@ test("tool entry captures host origin before IPC and uses the current participan
     payload: { action: "spawn", parentChatId: "actual-parent", name: "Inspect", task: "source task", participantId: "actual-participant" },
   });
   await tools.wait_agent({ agent_ids: ["child"] });
-  assert.equal(requests[1].payload.timeoutMs, 30000);
+  assert.equal(requests[2].payload.timeoutMs, 15000);
   await tools.send_input({ agent_id: "child", message: "hello" });
-  assert.equal(requests[2].payload.interrupt, false);
+  assert.equal(requests[3].payload.interrupt, false);
   chatId = undefined;
   await assert.rejects(tools.list_agents(), /authenticated chatId/);
-  assert.equal(requests.length, 3);
+  assert.equal(requests.length, 4);
 });
 
 /** Exercises real main registration while denying accidental storage reads and model sends. */
 test("main evaluation registers IPC and the composer slot without opening a business store", () => {
   const handlers = [];
-  const slots = [], routes = [], entries = [];
+  const slots = [], routes = [], entries = [], settings = [];
   const runtime = modules({
-    ToolPkg: { ipc: { on(channel, handler) { handlers.push({ channel, handler }); } }, registerChatComposerSlot(slot) { slots.push(slot); }, registerUiRoute(route) { routes.push(route); }, registerNavigationEntry(entry) { entries.push(entry); }, registerApi() {} },
+    ToolPkg: { ipc: { on(channel, handler) { handlers.push({ channel, handler }); } }, registerChatComposerSlot(slot) { slots.push(slot); }, registerUiRoute(route) { routes.push(route); }, registerNavigationEntry(entry) { entries.push(entry); }, registerToolboxUiModule(entry) { settings.push(entry); }, registerApi() {} },
     Tools: new Proxy({}, { get() { throw new Error("registration must not call host tools"); } }),
   });
   const main = runtime.load("./main");
-  assert.equal(handlers.length, 1);
+  assert.equal(handlers.length, 2);
   assert.equal(handlers[0].channel, "subagents.control");
+  assert.equal(handlers[1].channel, "subagents.capacity");
   assert.equal(main.registerToolPkg(), true);
   assert.equal(slots.length, 1);
   assert.equal(slots[0].slot, "above_input");
@@ -147,6 +167,8 @@ test("main evaluation registers IPC and the composer slot without opening a busi
   assert.equal(entries.length, 1);
   assert.equal(entries[0].surface, "workspace");
   assert.equal(entries[0].route, routes[0].route);
+  assert.equal(settings.length, 1);
+  assert.equal(typeof settings[0].screen, "function");
   assert.equal(main.test_connection().passed, true);
 });
 
@@ -213,12 +235,35 @@ function composition(screen, initialState = {}) {
   return { state, errors, navigations, render, find, dispose };
 }
 
+/** Settings controls call the actual owner and reflect the committed result on one screen. */
+test("settings page commits behavior controls through the owner", async () => {
+  const h = harness();
+  const runtime = modules({ToolPkg: {ipc: {async call(_channel, request) {
+    if (request.action === "get") return h.manager.capacity();
+    if (request.action === "get_settings") return h.manager.getSettings();
+    if (request.action === "set_settings") return h.manager.setSettings(request.settings);
+    if (request.action === "set") return h.manager.setLimit(request.limit);
+    throw new Error("unexpected request");
+  }}}});
+  const ui = composition(runtime.load("./ui/settings.ui").default);
+  ui.render(); await flush();
+  const tree = ui.render();
+  /** Collects rendered controls without depending on visual positioning. */
+  function nodes(node, type) { return [...(node.type === type ? [node] : []), ...node.children.flatMap(child => nodes(child, type))]; }
+  const switches = nodes(tree, "Switch");
+  assert.equal(switches.length, 2);
+  switches[0].props.onCheckedChange(false); await flush();
+  assert.equal((await h.manager.getSettings()).allowNested, false);
+  assert.equal(ui.errors.length, 0);
+  ui.dispose();
+});
+
 /** Exercises real task identities and workspace navigation without a manual creation or modal path. */
 test("composer opens stable per-agent workspace identities without dialogs or creation controls", async () => {
   const h = harness(); const child = await h.spawn(); const other = await h.spawn({ name: "Other child" });
   const storage = objectDatabase();
   const runtime = modules({
-    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(_channel, request) { return h.manager.request(request); } } },
+    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(channel, request) { return channel === "subagents.capacity" ? h.manager.getSettings() : h.manager.request(request); } } },
     Tools: { Storage: { objects: { async open() { return storage.database; } } } },
   });
   const { Repository } = runtime.load("./storage"); const repository = new Repository(); await repository.load();
@@ -326,7 +371,7 @@ test("running agents can be collapsed while waiting without cancelling their exe
   const h = harness(); const child = await h.spawn();
   const storage = objectDatabase();
   const runtime = modules({
-    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(_channel, request) { return h.manager.request(request); } } },
+    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(channel, request) { return channel === "subagents.capacity" ? h.manager.getSettings() : h.manager.request(request); } } },
     Tools: { Storage: { objects: { async open() { return storage.database; } } } },
   });
   const { Repository } = runtime.load("./storage"); const repository = new Repository(); await repository.load();
@@ -358,7 +403,7 @@ test("real Compose hides idle history and updates across active and terminal sta
   const h = harness();
   const storage = objectDatabase();
   const runtime = modules({
-    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(_channel, request) { return h.manager.request(request); } } },
+    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(channel, request) { return channel === "subagents.capacity" ? h.manager.getSettings() : h.manager.request(request); } } },
     Tools: { Storage: { objects: { async open() { return storage.database; } } } },
   },
   /** Applies the same artifact transformation the host uses for the authored screen. */
@@ -428,7 +473,7 @@ test("real Compose hides idle history and updates across active and terminal sta
 test("composer reports a failed initial read and disposes without opening a storage observer", async () => {
   const storage = objectDatabase();
   const runtime = modules({
-    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call() { throw new Error("initial read failed"); } } },
+    ToolPkg: { getSpaceDataDir: () => "/space/subagents", ipc: { async call(channel) { if (channel === "subagents.capacity") return {expandPanel:false}; throw new Error("initial read failed"); } } },
     Tools: { Storage: { objects: { async open() { return storage.database; } } } },
   });
   const ui = composition(runtime.load("./ui/panel.ui").default, { chatId: "parent" });

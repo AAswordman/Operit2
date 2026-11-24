@@ -76,7 +76,19 @@ export async function receive(value: unknown): Promise<Response> {
   return owner().request(decodeRequest(value));
 }
 
+/** Handles settings and occupancy in the same retained owner as execution admission. */
+export async function capacityRequest(value: unknown) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid capacity request");
+  const input = value as Record<string, unknown>;
+  if (input.action === "get") return owner().capacity();
+  if (input.action === "set") return owner().setLimit(input.limit);
+  if (input.action === "get_settings") return owner().getSettings();
+  if (input.action === "set_settings") return owner().setSettings(input.settings);
+  throw new Error("Unknown capacity operation");
+}
+
 /** Declares handlers during module evaluation so targeted main-runtime IPC can initialize the service. */
 export function registerService(): void {
   ToolPkg.ipc.on<unknown, Response>(CHANNEL, receive);
+  ToolPkg.ipc.on("subagents.capacity", capacityRequest);
 }

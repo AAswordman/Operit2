@@ -66,25 +66,24 @@ class _ToolPkgDetails extends _KindDetails {
   final List<core_proxy.ToolPkgContainerRuntime> runtimes;
 
   /// Excludes routes that are exposed only through a workspace surface.
-  String? get standaloneRouteId {
+  List<core_proxy.ToolPkgUiRouteRuntime> get standaloneRoutes {
     final workspaceRoutes = <String>{};
-    final standaloneRoutes = <String>{};
+    final standaloneRouteIds = <String>{};
     for (final entry in runtime.navigationEntries) {
       switch (entry.surface) {
         case 'workspace' || 'workspace_file' || 'workspace_home':
           workspaceRoutes.add(entry.routeId);
         case 'toolbox' || 'main_sidebar_plugins' || 'app_bar':
-          if (entry.action == null) standaloneRoutes.add(entry.routeId);
+          if (entry.action == null) standaloneRouteIds.add(entry.routeId);
       }
     }
     return runtime.uiRoutes
         .where(
           (route) =>
               !workspaceRoutes.contains(route.routeId) ||
-              standaloneRoutes.contains(route.routeId),
+              standaloneRouteIds.contains(route.routeId),
         )
-        .firstOrNull
-        ?.routeId;
+        .toList();
   }
 }
 
@@ -337,7 +336,7 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
     final hasUpdate = _controller.hasUpdate(entry);
     final details = _details;
     final toolPkg = details is _ToolPkgDetails ? details : null;
-    final standaloneRouteId = toolPkg?.standaloneRouteId;
+    final standaloneRoutes = toolPkg?.standaloneRoutes ?? const [];
     final subtitle = <String>[
       if (entry.authors.isNotEmpty) entry.authors.join('、'),
       storeSourceLabel(entry.source),
@@ -375,14 +374,14 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
               busy: busy,
               onPressed: () => _run(() => _controller.update(entry)),
             )
-          else if (toolPkg != null && standaloneRouteId != null)
+          else if (toolPkg != null && standaloneRoutes.isNotEmpty)
             StoreGetButton(
               label: '打开',
               icon: Icons.open_in_new_rounded,
               prominent: true,
               large: true,
               onPressed: enabled
-                  ? () => _openUi(toolPkg.runtime, standaloneRouteId)
+                  ? () => _chooseUi(toolPkg.runtime, standaloneRoutes)
                   : null,
             ),
           _EnableToggle(
@@ -938,6 +937,36 @@ class _ExtensionDetailScreenState extends State<ExtensionDetailScreen>
         setState(() => _togglingSubpackages.remove(subpackage.packageName));
       }
     }
+  }
+
+  /// Opens the only standalone route directly or asks the user to select one.
+  Future<void> _chooseUi(
+    core_proxy.ToolPkgContainerRuntime runtime,
+    List<core_proxy.ToolPkgUiRouteRuntime> routes,
+  ) async {
+    if (routes.length == 1) {
+      _openUi(runtime, routes.single.routeId);
+      return;
+    }
+    final selected = await showDialog<String>(
+      context: context,
+      builder: (context) => SimpleDialog(
+        title: const Text('选择要打开的界面'),
+        children: [
+          for (final route in routes)
+            SimpleDialogOption(
+              onPressed: () => Navigator.of(context).pop(route.routeId),
+              child: Text(
+                localizedText(route.title).trim().isEmpty
+                    ? route.id
+                    : localizedText(route.title),
+              ),
+            ),
+        ],
+      ),
+    );
+    if (!mounted || selected == null) return;
+    _openUi(runtime, selected);
   }
 
   /// Launches the exact route selected by the detail page.

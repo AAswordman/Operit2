@@ -2,8 +2,8 @@ import type { Chat } from "../../../../types/chat.js";
 import type { AgentRepository } from "./storage.js";
 import { ownedForegroundTerminals } from "./terminal-cleanup.js";
 import {
-  MAX_ACTIVE_AGENTS, errorText, isActive, requireText, summary,
-  type Agent, type AgentSummary, type ParentSnapshot, type Request, type Response, type WaitResult, type TerminalCleanupResult,
+  DEFAULT_SETTINGS, MAX_ACTIVE_AGENTS, concurrencyLimit, errorText, isActive, parseSettings, requireText, summary,
+  type Agent, type AgentSettings, type AgentSummary, type Capacity, type ParentSnapshot, type Request, type Response, type WaitResult, type TerminalCleanupResult,
 } from "./model.js";
 
 /** Supplies only current public Chat capabilities; tests control the actual admission and terminal boundaries. */
@@ -56,6 +56,10 @@ export class AgentManager {
   private readonly commands = new Set<string>();
   private readonly waiters = new Set<Waiter>();
   private pendingStarts = 0;
+  private readonly unobserved = new Set<string>();
+  private limit = MAX_ACTIVE_AGENTS;
+  private settings: AgentSettings = { ...DEFAULT_SETTINGS };
+  private settingsWrites: Promise<void> = Promise.resolve();
   private readonly creatingChildren = new Map<string, number>();
 
   /** Binds durable storage, native Chat operations, clocks and explicit background diagnostics. */
@@ -74,14 +78,58 @@ export class AgentManager {
 
   /** Preserves history while exposing lost ownership instead of claiming that a native turn finished. */
   private async initialize(): Promise<void> {
+    this.limit = concurrencyLimit(await this.repository.loadLimit());
+    this.settings = parseSettings(await this.repository.loadSettings());
     for (const saved of await this.repository.load()) {
       if (this.agents.has(saved.id)) throw new Error("Duplicate subagent identity");
       const agent: Agent = isActive(saved.status)
         ? { ...saved, status: "interrupted", updatedAt: this.clock.now(), error: "Plugin runtime restarted; the previous turn's observation was lost. Native execution may still be active." }
         : saved;
       this.agents.set(agent.id, agent);
+      if (isActive(saved.status) || saved.status === "interrupted") this.unobserved.add(saved.chatId);
       if (agent !== saved) await this.repository.save(agent);
     }
+  }
+
+  /** Reports space-wide occupancy, including starts reserved before native creation. */
+  async capacity(): Promise<Capacity> {
+    await this.ready();
+    await this.refreshUnobserved();
+    const active = this.activeCount();
+    return { limit: this.limit, active, available: Math.max(0, this.limit - active) };
+  }
+
+  /** Counts live observations, in-flight admissions, and still-running turns from a previous runtime. */
+  private activeCount(): number {
+    return [...this.executions.values()].filter(execution => !execution.settled).length + this.pendingStarts + this.unobserved.size;
+  }
+
+  /** Releases a recovered reservation only after the host reports its conversation idle. */
+  private async refreshUnobserved(): Promise<void> {
+    for (const chatId of [...this.unobserved]) if (!await this.chat.isProcessing(chatId)) this.unobserved.delete(chatId);
+  }
+
+  /** Serializes settings changes and applies each only after its durable write succeeds. */
+  async setLimit(value: unknown): Promise<Capacity> {
+    const limit = concurrencyLimit(value);
+    await this.ready();
+    const write = this.settingsWrites.then(async () => { await this.repository.saveLimit(limit); this.limit = limit; });
+    this.settingsWrites = write.catch(() => {});
+    await write;
+    return this.capacity();
+  }
+
+  /** Returns the durable behavior preferences used by tools and UI. */
+  async getSettings(): Promise<AgentSettings> { await this.ready(); return { ...this.settings }; }
+
+  /** Serializes preference writes with the concurrency setting. */
+  async setSettings(value: unknown): Promise<AgentSettings> {
+    const settings = parseSettings(value);
+    await this.ready();
+    const write = this.settingsWrites.then(async () => { await this.repository.saveSettings(settings); this.settings = settings; });
+    this.settingsWrites = write.catch(() => {});
+    await write;
+    return { ...settings };
   }
 
   /** Dispatches the same explicit operations for model tools and composer controls. */
@@ -132,9 +180,16 @@ export class AgentManager {
     requireText(request.task, "task");
     requireText(request.name, "name");
     if (request.participantId !== null) requireText(request.participantId, "participantId");
+    await this.reserveStart();
     const managedParent = this.agents.get(request.parentChatId);
-    if (managedParent !== undefined && (managedParent.status === "closing" || managedParent.recoveryFence === true || this.commands.has(managedParent.id))) throw new Error("The parent subagent is closing or has a control operation in progress");
-    this.reserveStart();
+    if (managedParent !== undefined && !this.settings.allowNested) {
+      this.pendingStarts--;
+      throw new Error("Nested subagents are disabled in subagent settings");
+    }
+    if (managedParent !== undefined && (managedParent.status === "closing" || managedParent.recoveryFence === true || this.commands.has(managedParent.id))) {
+      this.pendingStarts--;
+      throw new Error("The parent subagent is closing or has a control operation in progress");
+    }
     const creating = this.creatingChildren.get(request.parentChatId);
     this.creatingChildren.set(request.parentChatId, creating === undefined ? 1 : creating + 1);
     try {
@@ -160,8 +215,9 @@ export class AgentManager {
   }
 
   /** Reserves global capacity for both creation and follow-up sends before their first await. */
-  private reserveStart(): void {
-    if ([...this.executions.values()].filter(execution => !execution.settled).length + this.pendingStarts >= MAX_ACTIVE_AGENTS) throw new Error("At most " + MAX_ACTIVE_AGENTS + " subagents may run at once");
+  private async reserveStart(): Promise<void> {
+    await this.refreshUnobserved();
+    if (this.activeCount() >= this.limit) throw new Error("Subagent concurrency limit reached (" + this.limit + "); wait for a running agent to finish before starting another");
     this.pendingStarts++;
   }
 
@@ -301,7 +357,7 @@ export class AgentManager {
       if (!request.interrupt) throw new Error("Subagent is running; set interrupt=true to replace its current turn");
       await this.cancelExecution(execution);
     }
-    this.reserveStart();
+    await this.reserveStart();
     try {
       if (await this.chat.isProcessing(current.chatId)) throw new Error("The native conversation still has an active execution; a new turn cannot start");
       const latest = this.current(current.id);

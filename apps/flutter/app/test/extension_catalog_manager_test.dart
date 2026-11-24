@@ -409,6 +409,59 @@ void main() {
     });
   }
 
+  testWidgets('detail asks which standalone interface to open', (tester) async {
+    final bridge = _CatalogBridge()
+      ..enabled = true
+      ..runtime = _toolpkgRuntime(
+        uiRoutes: [
+          for (final id in ['first', 'second', 'conversation'])
+            core_proxy.ToolPkgUiRouteRuntime(
+              id: id,
+              routeId: 'toolpkg:toolpkg:ui:$id',
+              runtime: 'compose_dsl',
+              screen: '$id.ui.js',
+              screenExport: null,
+              title: core_proxy.LocalizedText(values: {'zh': '界面 $id'}),
+              keepAlive: false,
+            ),
+        ],
+        navigationEntries: [
+          core_proxy.ToolPkgNavigationEntryRuntime(
+            id: 'conversation',
+            routeId: 'toolpkg:toolpkg:ui:conversation',
+            surface: 'workspace',
+            params: null,
+            title: const core_proxy.LocalizedText(values: {'zh': '会话'}),
+            icon: null,
+            action: null,
+            order: 0,
+          ),
+        ],
+      );
+    await tester.pumpWidget(
+      _manager(
+        bridge,
+        child: ExtensionDetailScreen(
+          kind: 'toolpkg',
+          id: 'toolpkg',
+          clients: GeneratedCoreProxyClients(bridge),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('打开'));
+    await tester.pumpAndSettle();
+    expect(find.text('选择要打开的界面'), findsOneWidget);
+    expect(find.text('界面 first'), findsOneWidget);
+    expect(find.text('界面 second'), findsOneWidget);
+    expect(find.text('界面 conversation'), findsNothing);
+    expect(bridge.requestedUiModules, isEmpty);
+    await tester.tap(find.text('界面 second'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(bridge.requestedUiModules, ['second']);
+  });
+
   for (final hasRequired in <bool>[true, false]) {
     testWidgets('detail shows optional dependencies (required: $hasRequired)', (
       tester,
@@ -1735,6 +1788,7 @@ core_proxy.ToolPkgContainerRuntime _toolpkgRuntime({
   chatResponseHooks: [],
   hostEventHooks: [],
   toolLifecycleHooks: [],
+  toolPermissionHooks: [],
   promptInputHooks: [],
   promptHistoryHooks: [],
   promptEstimateHistoryHooks: [],

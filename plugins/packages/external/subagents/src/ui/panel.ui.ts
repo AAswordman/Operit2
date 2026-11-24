@@ -34,6 +34,13 @@ export default function Screen(ctx: ComposeDslContext): ComposeNode {
     return () => { controller.abort(); };
   }, [chatId]);
 
+  /** Applies the saved initial display preference when the composer mounts. */
+  ctx.useEffect("subagents.panel-preference", () => {
+    let disposed = false;
+    void Agents.settings().then(settings => { if (!disposed) setExpanded(settings.expandPanel); }).catch(failure => { if (!disposed) ctx.reportError(failure); });
+    return () => { disposed = true; };
+  }, []);
+
   /** Runs a concrete control action and keeps its actual error visible in the composer. */
   async function act(operation: () => Promise<void>): Promise<void> {
     setBusy(true);

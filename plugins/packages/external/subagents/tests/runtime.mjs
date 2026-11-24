@@ -163,6 +163,12 @@ export class TestChat {
 export class TestRepository {
   records = new Map();
   writes = [];
+  limit = 8;
+  settings = { defaultWaitMs: 30000, allowNested: true, expandPanel: false };
+  async loadLimit() { return this.limit; }
+  async saveLimit(limit) { this.limit = limit; }
+  async loadSettings() { return copy(this.settings); }
+  async saveSettings(settings) { this.settings = copy(settings); }
   /** Reads explicitly seeded durable records. */
   async load() { return [...this.records.values()].map(copy); }
   /** Saves immutable snapshots exactly once per requested transition. */

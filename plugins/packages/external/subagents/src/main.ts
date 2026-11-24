@@ -1,5 +1,6 @@
 import Screen from "./ui/panel.ui.js";
 import Conversation from "./ui/conversation.ui.js";
+import Settings from "./ui/settings.ui.js";
 import { CONVERSATION_ROUTE } from "./ui/shared.js";
 import { receive, registerService } from "./service.js";
 
@@ -16,6 +17,7 @@ export function registerToolPkg(): boolean {
   ToolPkg.registerNavigationEntry({ id: "conversation", route: CONVERSATION_ROUTE, surface: "workspace",
     title: { zh: "子代理会话", en: "Subagent conversation" }, icon: "account_tree" });
   ToolPkg.registerChatComposerSlot({ id: "subagents", slot: "above_input", screen: Screen, order: 20, keepAlive: true });
+  ToolPkg.registerToolboxUiModule({ id: "subagents_settings", runtime: "compose_dsl", screen: Settings, params: {}, title: { zh: "子代理设置", en: "Subagent Settings" } });
   return true;
 }
 

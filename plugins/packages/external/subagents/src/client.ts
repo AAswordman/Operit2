@@ -1,4 +1,4 @@
-import { CHANNEL, type Agent, type AgentSummary, type ParentSnapshot, type Request, type Response, type WaitResult } from "./model.js";
+import { CHANNEL, type Agent, type AgentSettings, type AgentSummary, type Capacity, type ParentSnapshot, type Request, type Response, type WaitResult } from "./model.js";
 import { watchAgent, watchParent } from "./storage.js";
 
 /** Calls the retained owner instead of storing task control inside a tool or mounted screen. */
@@ -8,6 +8,14 @@ function call(request: Request): Promise<Response> {
 
 /** Provides typed operations for tools and UI over one explicit IPC protocol. */
 export const Agents = {
+  /** Reads shared execution slots from the owner. */
+  async capacity(): Promise<Capacity> { return ToolPkg.ipc.call("subagents.capacity", { action: "get" }, { targetRuntime: "main" }); },
+  /** Persists the shared execution limit through the owner. */
+  async setLimit(limit: number): Promise<Capacity> { return ToolPkg.ipc.call("subagents.capacity", { action: "set", limit }, { targetRuntime: "main" }); },
+  /** Reads behavior preferences shared by the current space. */
+  async settings(): Promise<AgentSettings> { return ToolPkg.ipc.call("subagents.capacity", { action: "get_settings" }, { targetRuntime: "main" }); },
+  /** Applies a complete, validated preference snapshot. */
+  async setSettings(settings: AgentSettings): Promise<AgentSettings> { return ToolPkg.ipc.call("subagents.capacity", { action: "set_settings", settings }, { targetRuntime: "main" }); },
   /** Creates a child using an explicit source chat and execution participant. */
   async spawn(parentChatId: string, name: string, task: string, participantId: string | null): Promise<AgentSummary> {
     return await call({ action: "spawn", parentChatId, name, task, participantId }) as AgentSummary;

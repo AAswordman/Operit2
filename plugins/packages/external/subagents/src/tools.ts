@@ -5,24 +5,29 @@
   "enabled_by_default": true,
   "display_name": { "zh": "子代理", "en": "Subagents" },
   "description": {
-    "zh": "把独立任务交给子代理并行执行。创建后返回 agent ID，使用 wait_agent 等待，超时可继续等待同一任务。子代理继承源聊天的执行配置，任务说明应当自包含。",
-    "en": "Delegate self-contained tasks to independent agents. Spawn returns immediately; wait_agent observes the same task across 30-second waits. Child chats inherit source configuration, not its message history."
+    "zh": "子代理支持并发：独立任务可连续创建多个代理，不必每创建一个就等待。先用 get_capacity 查询空间共享上限与空位，按空位分批创建，再用 wait_agent 等待任一完成；任务应自包含，子代理不继承聊天历史。",
+    "en": "Subagents run concurrently: spawn independent tasks before waiting. Use get_capacity to check shared slots, dispatch within the limit, then wait for any completion. Children inherit configuration, not chat history; give each a self-contained task. Nested delegation can be disabled in settings."
   },
   "tools": [
     {
       "name": "spawn_agent",
-      "description": "创建并启动独立子代理，立即返回 agent ID。name 是短名称，task 应提供完整目标和必要背景。空间内最多同时运行 8 个子代理。",
+      "description": "创建并启动独立子代理，立即返回 agent ID，不等待完成。独立任务可同时运行；先用 get_capacity 查看当前空间的并发上限和可用名额。达到上限时等待已有代理完成再创建。task 应自包含。",
       "parameters": [
         { "name": "name", "type": "string", "required": true, "description": "显示在输入框上方的简短任务名称" },
         { "name": "task", "type": "string", "required": true, "description": "自包含的任务指令和必要背景" }
       ]
     },
     {
+      "name": "get_capacity",
+      "description": "查询整个空间共享的子代理并发上限、正在运行或启动的数量及可用名额。可用名额只是查询时的快照，其他会话可能同时启动任务。",
+      "parameters": []
+    },
+    {
       "name": "wait_agent",
-      "description": "等待指定子代理的当前轮次，任一结束即返回。默认等待 30 秒；超时只结束本次等待，任务继续执行，可继续调用 wait_agent。返回真实状态、结果和错误。",
+      "description": "等待指定子代理的当前轮次，任一结束即返回。未指定超时时使用用户设置的默认等待时间；超时只结束本次等待，任务继续执行。",
       "parameters": [
         { "name": "agent_ids", "type": "array", "required": true, "description": "1..16 个不重复的本聊天子代理 ID" },
-        { "name": "timeout_ms", "type": "integer", "required": false, "description": "等待毫秒数，1..30000，默认 30000" }
+        { "name": "timeout_ms", "type": "integer", "required": false, "description": "等待毫秒数，1..30000；省略时使用设置页的默认值" }
       ]
     },
     {
@@ -48,7 +53,7 @@
 }
 */
 import { Agents } from "./client.js";
-import { DEFAULT_WAIT_MS, requireText, type AgentSummary, type ParentSnapshot, type WaitResult } from "./model.js";
+import { requireText, type AgentSummary, type Capacity, type ParentSnapshot, type WaitResult } from "./model.js";
 
 /** Captures the real tool origin before any IPC await; caller-authored parent IDs are never accepted. */
 function parentChat(): string {
@@ -62,10 +67,14 @@ export async function spawn_agent(params: { name: string; task: string }): Promi
   return Agents.spawn(parentChatId, params.name, params.task, participant === undefined ? null : requireText(participant, "authenticated participantId"));
 }
 
+/** Exposes the same shared admission counters used by the manager. */
+export async function get_capacity(): Promise<Capacity> { return Agents.capacity(); }
+
 /** Observes a bounded wait without replacing, resubmitting or cancelling the selected tasks. */
 export async function wait_agent(params: { agent_ids: string[]; timeout_ms?: number }): Promise<WaitResult> {
-  const { timeout_ms = DEFAULT_WAIT_MS } = params;
-  return Agents.wait(parentChat(), params.agent_ids, timeout_ms);
+  const parentChatId = parentChat();
+  const timeout_ms = params.timeout_ms === undefined ? (await Agents.settings()).defaultWaitMs : params.timeout_ms;
+  return Agents.wait(parentChatId, params.agent_ids, timeout_ms);
 }
 
 /** Sends one follow-up with an explicit interruption policy. */

@@ -7,6 +7,26 @@ export const SCHEMA_VERSION = 1;
 export const DEFAULT_WAIT_MS = 30_000;
 export const MAX_ACTIVE_AGENTS = 8;
 
+/** Describes the shared admission limit and the currently reserved execution slots. */
+export interface Capacity { limit: number; active: number; available: number }
+
+export interface AgentSettings { defaultWaitMs: number; allowNested: boolean; expandPanel: boolean }
+export const DEFAULT_SETTINGS: AgentSettings = { defaultWaitMs: DEFAULT_WAIT_MS, allowNested: true, expandPanel: false };
+
+/** Validates all user-configurable execution and display preferences. */
+export function parseSettings(value: unknown): AgentSettings {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) throw new Error("Invalid subagent settings");
+  const input = value as Record<string, unknown>;
+  if (!Number.isSafeInteger(input.defaultWaitMs) || (input.defaultWaitMs as number) < 1000 || (input.defaultWaitMs as number) > 30000 || typeof input.allowNested !== "boolean" || typeof input.expandPanel !== "boolean") throw new Error("Invalid subagent settings");
+  return { defaultWaitMs: input.defaultWaitMs as number, allowNested: input.allowNested, expandPanel: input.expandPanel };
+}
+
+/** Rejects invalid concurrency settings before they reach storage or admission. */
+export function concurrencyLimit(value: unknown): number {
+  if (!Number.isSafeInteger(value) || (value as number) < 1 || (value as number) > MAX_ACTIVE_AGENTS) throw new Error("Concurrency limit must be an integer from 1 to " + MAX_ACTIVE_AGENTS);
+  return value as number;
+}
+
 export type AgentStatus = "starting" | "running" | "completed" | "cancelled" | "failed" | "closing" | "closed" | "interrupted";
 
 /** Keeps the exact native outcome while excluding host result methods from durable records. */
