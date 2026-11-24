@@ -79,11 +79,17 @@ impl FileSystemHost for FaultFileSystem {
     }
 }
 
+/// Builds an authenticated archive from the fixture's marketplace.
 fn archive(version: &str, publisher: &str) -> Vec<u8> {
+    archive_from_market(version, publisher, "https://market.example")
+}
+
+/// Builds authenticated provenance with an explicit market identity.
+fn archive_from_market(version: &str, publisher: &str, market: &str) -> Vec<u8> {
     let manifest = json!({
         "schema_version": 1, "toolpkg_id": "dev.test.market-update", "api_version": "2.0.0",
         "version": version, "author": [publisher], "display_name": {"en":"Market update test"},
-        "market_origin": {"market":"https://market.example", "toolpkgId":"dev.test.market-update", "version":version, "author":[publisher]},
+        "market_origin": {"market":market, "toolpkgId":"dev.test.market-update", "version":version, "author":[publisher]},
         "subpackages": []
     });
     let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
@@ -209,7 +215,7 @@ async fn verify_market_update(legacy: bool) {
     storage.writeBytes(&config, br#"{"value":"keep"}"#).unwrap();
     let before = store.record("package", name).unwrap();
     let old_runtime = packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap();
-    let next = archive("2.0.0", "publisher");
+    let next = archive("2.0.0", "contributor");
     let result = import_artifact(&packages,
         next.clone(),
         "plugin.toolpkg".into(),
@@ -218,6 +224,7 @@ async fn verify_market_update(legacy: bool) {
     assert!(result.starts_with("Successfully"), "{result}");
     let runtime = packages.lock().unwrap().getToolPkgContainerRuntime(name).unwrap();
     assert_eq!(runtime.version, "2.0.0");
+    assert_eq!(runtime.marketOrigin.as_ref().unwrap().author, ["contributor"]);
     assert_eq!(runtime.sourceType, ToolPkgSourceType::MARKET);
     assert_eq!(runtime.sourcePath, old_runtime.sourcePath);
     let after = store.record("package", name).unwrap();
@@ -257,9 +264,9 @@ async fn verify_market_update(legacy: bool) {
         assert_eq!(storage.readBytes(&config).unwrap(), br#"{"value":"keep"}"#);
         assert!(packages.lock().unwrap().getEnabledPackageNames().contains(&name.into()));
     }
-    // Another publisher with the same ID cannot replace the owned installation.
+    // A different market with the same package ID cannot replace this installation.
     let before_archive = packages.lock().unwrap().readToolPkgArchiveBytes(name).unwrap();
-    let rejected = archive("3.0.0", "other-publisher");
+    let rejected = archive_from_market("3.0.0", "contributor", "https://other-market.example");
     let result = import_artifact(&packages,
         rejected.clone(),
         "plugin.toolpkg".into(),
@@ -290,13 +297,19 @@ async fn verify_market_update(legacy: bool) {
     assert_eq!(storage.readBytes(&config).unwrap(), br#"{"value":"keep"}"#);
 }
 
+/// Builds a standalone script from the fixture's marketplace.
 fn script(version: &str, publisher: &str) -> Vec<u8> {
+    script_from_market(version, publisher, "Operit")
+}
+
+/// Builds a standalone script with explicit marketplace provenance.
+fn script_from_market(version: &str, publisher: &str, market: &str) -> Vec<u8> {
     let metadata = json!({"name":"dev.test.market-script", "description":version,
         "tools":[{"name":"probe", "description":"probe"}]});
     let source =
         format!("/* METADATA {metadata} */\nexports.probe = function() {{ return '{version}'; }};");
     let origin = operit_plugin_sdk::toolpkg::ToolPkgParser::ToolPkgMarketOrigin {
-        market: "Operit".into(),
+        market: market.into(),
         toolpkgId: "dev.test.market-script".into(),
         version: version.into(),
         author: vec![publisher.into()],
@@ -343,7 +356,7 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
                 ExtensionStore::root("package", &record.scope).unwrap(),
                 record.sourceName
             ));
-        let next = script("2.0.0", "publisher");
+        let next = script("2.0.0", "contributor");
         let result = import_artifact(&packages,
             next.clone(),
             format!("new.{extension}"),
@@ -388,7 +401,7 @@ async fn standalone_market_scripts_update_without_uninstalling_or_resetting_conf
             assert_eq!(storage.readBytes(&config).unwrap(), b"keep-script-settings");
             assert!(packages.lock().unwrap().getEnabledPackageNames().contains(&name.into()));
         }
-        let incoming = script("3.0.0", "other-publisher");
+        let incoming = script_from_market("3.0.0", "contributor", "Other market");
         let result = import_artifact(&packages,
             incoming.clone(),
             format!("new.{extension}"),

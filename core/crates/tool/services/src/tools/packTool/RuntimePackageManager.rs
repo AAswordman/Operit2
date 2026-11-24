@@ -5988,20 +5988,25 @@ mod package_registration_tests {
         assert!(packages.contains_key("other"));
     }
 
+    /// Rejects identity changes while allowing another contributor to publish a version.
     #[test]
-    fn market_update_requires_the_same_market_id_and_publishers() {
+    fn market_update_requires_the_same_market_and_package_id() {
         let old = market_package("1");
-        for change in 0..5 {
+        for change in 0..6 {
             let mut incoming = market_package("2");
             match change {
                 0 => incoming.containerRuntime.sourceType = ToolPkgSourceType::EXTERNAL,
                 1 => incoming.containerRuntime.marketOrigin = None,
                 2 => incoming.containerRuntime.marketOrigin.as_mut().unwrap().market = "other".into(),
-                3 => incoming.containerRuntime.marketOrigin.as_mut().unwrap().author = vec!["other".into()],
-                _ => incoming.containerRuntime.marketOrigin.as_mut().unwrap().toolpkgId = "other".into(),
+                3 => incoming.containerRuntime.marketOrigin.as_mut().unwrap().toolpkgId = "other".into(),
+                4 => incoming.containerRuntime.marketOrigin.as_mut().unwrap().author.clear(),
+                _ => incoming.containerRuntime.marketOrigin.as_mut().unwrap().author = vec![" ".into()],
             }
             assert!(!isSameMarketToolPkg(&old.containerRuntime, &incoming));
         }
+        let mut incoming = market_package("2");
+        incoming.containerRuntime.marketOrigin.as_mut().unwrap().author = vec!["contributor".into()];
+        assert!(isSameMarketToolPkg(&old.containerRuntime, &incoming));
     }
 
     /// Verifies duplicate diagnostics identify the actual conflicting member and preserve the original registry.
@@ -6059,15 +6064,12 @@ fn isSameMarketToolPkg(existing: &ToolPkgContainerRuntime, incoming: &ToolPkgLoa
     sameMarketOrigin(old, new, &existing.packageName)
 }
 
+/// Matches installation identity; publisher attribution belongs to each version.
 fn sameMarketOrigin(old: &ToolPkgMarketOrigin, new: &ToolPkgMarketOrigin, packageName: &str) -> bool {
-    let mut oldAuthors = old.author.clone();
-    let mut newAuthors = new.author.clone();
-    oldAuthors.sort(); oldAuthors.dedup();
-    newAuthors.sort(); newAuthors.dedup();
     !old.market.trim().is_empty() && old.market == new.market
         && old.toolpkgId == packageName && old.toolpkgId == new.toolpkgId
-        && !oldAuthors.is_empty() && oldAuthors.iter().all(|author| !author.trim().is_empty())
-        && oldAuthors == newAuthors
+        && [&old.author, &new.author].into_iter().all(|authors|
+            !authors.is_empty() && authors.iter().all(|author| !author.trim().is_empty()))
 }
 
 /// Applies the package manager's context cache policy independently of transport attachment.

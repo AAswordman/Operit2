@@ -1680,6 +1680,7 @@ fn decryptDetached(
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use crate::toolpkg::ToolPkgParser::ToolPkgSourceType;
 
     /// Reads the published provenance encoding while ignoring quoted and commented lookalikes.
     #[test]
@@ -1695,6 +1696,31 @@ mod tests {
         assert!(readMainScriptMarketOrigin("exports.registerToolPkg = function() {};", "catalog.market").unwrap().is_none());
     }
     use std::io::{Read, Write};
+
+    /// Preserves legacy marketplace provenance in disabled external catalogs without executing code.
+    #[test]
+    fn external_catalog_preserves_market_provenance_without_registration() {
+        let invocation = buildMarketOriginInvocation("catalog.market", "1.2.3", &["Publisher".into()]).unwrap();
+        let mut archive = zip::ZipWriter::new(Cursor::new(Vec::new()));
+        archive.start_file("manifest.json", SimpleFileOptions::default()).unwrap();
+        archive.write_all(br#"{
+            "schema_version": 1, "toolpkg_id": "catalog.market", "api_version": "2.0.0",
+            "version": "1.2.3", "author": ["Author"], "main": "main.js"
+        }"#).unwrap();
+        archive.start_file("main.js", SimpleFileOptions::default()).unwrap();
+        archive.write_all(format!("throw new Error('must not execute');\n{invocation}").as_bytes()).unwrap();
+        let bytes = archive.finish().unwrap().into_inner();
+        for source_type in [ToolPkgSourceType::EXTERNAL, ToolPkgSourceType::MARKET] {
+            let catalog = ToolPkgArchiveParser::readToolPkgCatalog(
+                &bytes, source_type.clone(), "catalog.toolpkg", false,
+            ).unwrap();
+            let origin = catalog.marketOrigin.unwrap();
+            assert_eq!(origin.toolpkgId, "catalog.market");
+            assert_eq!(origin.author, ["Publisher"]);
+            assert_eq!(catalog.containerRuntime.marketOrigin, Some(origin));
+            assert_eq!(catalog.containerRuntime.sourceType, source_type);
+        }
+    }
 
     #[test]
     #[cfg(not(operit_private_toolpkg_protection))]

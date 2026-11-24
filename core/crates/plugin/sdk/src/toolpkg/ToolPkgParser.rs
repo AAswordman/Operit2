@@ -950,7 +950,7 @@ impl ToolPkgArchiveParser {
             manifest.extensionFields.get("market_origin")
                 .map(|value| serde_json::from_value::<ToolPkgMarketOrigin>(value.clone()))
                 .transpose().map_err(|error| error.to_string())?
-        } else if sourceType == ToolPkgSourceType::MARKET {
+        } else if matches!(sourceType, ToolPkgSourceType::MARKET | ToolPkgSourceType::EXTERNAL) {
             let source = Self::readZipEntryText(&mut archive, &index, &mainEntry)
                 .ok_or("Cannot read marketplace provenance from main entry")?;
             crate::toolpkg::ToolPkgProtection::readMainScriptMarketOrigin(&source, &manifest.toolpkgId)?
