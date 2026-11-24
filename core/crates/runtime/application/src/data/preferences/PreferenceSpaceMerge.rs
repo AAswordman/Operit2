@@ -291,6 +291,53 @@ mod tests {
         }
     }
 
+    /// Keeps language persistent per device while accepting historical shared language writes.
+    #[test]
+    fn app_language_stays_local_across_space_replay() {
+        use super::super::UserPreferencesManager::UserPreferencesManager;
+        use operit_store::PreferenceMerge::applyOperations;
+
+        let devices = [Fixture::new(), Fixture::new()];
+        let key = stringPreferencesKey("app_language");
+        let path = RuntimeStorageLayout::APP_LANGUAGE_PREFERENCES_PATH;
+        assert!(!schema().stores.iter().any(|store| store.path == path));
+        for (device, language) in devices.iter().zip(["fr", "en"]) {
+            let manager = UserPreferencesManager::languageStore(device.host.clone());
+            manager.edit(|values| values.set(&key, language)).unwrap();
+            assert!(!device
+                .host
+                .exists(RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH)
+                .unwrap());
+
+            let incoming = [
+                historical(
+                    RuntimeStorageLayout::USER_PREFERENCES_PATH,
+                    "app_language",
+                    json!("zh"),
+                    5,
+                    false,
+                    10,
+                ),
+                historical(path, "app_language", json!("zh"), 0, false, 11),
+            ];
+            applyOperations(device.host.clone(), &schema(), &[], &incoming, |_, _| true)
+                .unwrap();
+            assert_eq!(
+                UserPreferencesManager::languageStore(device.host.clone())
+                    .data()
+                    .unwrap()
+                    .get(&key),
+                Some(&json!(language)),
+            );
+            assert!(operit_store::RuntimeFileSyncStore::RuntimeFileSyncStore::new(
+                device.host.clone(),
+                RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH,
+            )
+            .writeBytes(path, b"remote language")
+            .is_err());
+        }
+    }
+
     /// Upgrades existing layouts and acknowledges shared selection history without changing either device.
     #[test]
     fn current_chat_selection_stays_local_while_legacy_transactions_complete() {

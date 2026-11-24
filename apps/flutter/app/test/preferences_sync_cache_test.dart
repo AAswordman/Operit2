@@ -16,6 +16,7 @@ import 'package:operit2/ui/main/navigation/AppNavigationModels.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
 
 const _userFile = 'user_preferences.preferences.json';
+const _languageFile = 'app_language.preferences.json';
 const _zoomFile = 'application_zoom.preferences.json';
 const _dockFile = 'sidebar_dock.preferences.json';
 
@@ -25,12 +26,15 @@ void main() {
   setUp(ClientLogger.initialize);
 
   test(
-    'app language persists, restores system mode and observes peer choices',
+    'app language persists locally and ignores synchronized language choices',
     () async {
       final bridge = _PreferenceBridge();
       final preferences = UserPreferencesManager(
         clients: GeneratedCoreProxyClients(bridge),
       );
+      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'app_language': 'fr',
+      });
       addTearDown(
         () => UserPreferencesManager.appLanguage.value = AppLanguage.system,
       );
@@ -41,9 +45,10 @@ void main() {
         expect(await preferences.loadAppLanguage(), language);
         expect(UserPreferencesManager.appLanguage.value, language);
       }
-      expect(bridge._values[_userFile]!['app_language'], 'fr');
+      expect(bridge._values[_languageFile]!['app_language'], 'fr');
       await preferences.saveAppLanguage(AppLanguage.system);
-      expect(bridge._values[_userFile]!['app_language'], 'system');
+      expect(bridge._values[_languageFile]!['app_language'], 'system');
+      expect(bridge._values[_userFile]!['app_language'], 'fr');
       expect(await preferences.loadAppLanguage(), AppLanguage.system);
 
       final values = <AppLanguage>[];
@@ -54,14 +59,20 @@ void main() {
       );
       await _drainEvents();
       bridge.applyPeerPreferences(_userFile, <String, Object?>{
+        'app_language': 'invalid',
+      });
+      await _drainEvents();
+      expect(values, <AppLanguage>[AppLanguage.system]);
+      expect(await preferences.loadAppLanguage(), AppLanguage.system);
+      bridge.applyPeerPreferences(_languageFile, <String, Object?>{
         'app_language': 'en',
       });
-      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+      bridge.applyPeerPreferences(_languageFile, <String, Object?>{
         'app_language': 'en',
         'theme_mode': 'dark',
       });
-      bridge.applyPeerPreferences(_userFile, <String, Object?>{});
-      bridge.applyPeerPreferences(_userFile, <String, Object?>{
+      bridge.applyPeerPreferences(_languageFile, <String, Object?>{});
+      bridge.applyPeerPreferences(_languageFile, <String, Object?>{
         'app_language': 'invalid',
       });
       await _drainEvents();
@@ -72,6 +83,45 @@ void main() {
       ]);
       expect(errors.single, isA<FormatException>());
       await expectLater(preferences.loadAppLanguage(), throwsFormatException);
+      await subscription.cancel();
+      expect(bridge.activeWatches, 0);
+    },
+  );
+
+  test(
+    'window preferences combine shared themes with local language',
+    () async {
+      final bridge = _PreferenceBridge();
+      final preferences = UserPreferencesManager(
+        clients: GeneratedCoreProxyClients(bridge),
+      );
+      final values =
+          <({ThemePreferenceSnapshot appearance, AppLanguage language})>[];
+      final subscription = preferences.windowPreferencesFlow().listen(
+        values.add,
+      );
+      await _drainEvents();
+      expect(values.single.language, AppLanguage.system);
+      expect(bridge.activeWatches, 2);
+
+      bridge.applyPeerPreferences(_languageFile, {'app_language': 'fr'});
+      await _drainEvents();
+      expect(values.last.language, AppLanguage.french);
+      bridge.applyPeerPreferences(_userFile, {
+        'theme_mode': 'dark',
+        'app_language': 'en',
+      });
+      await _drainEvents();
+      expect(values.last.appearance.themeMode, ThemeMode.dark);
+      expect(values.last.language, AppLanguage.french);
+      final emissions = values.length;
+      bridge.applyPeerPreferences(_userFile, {
+        'theme_mode': 'dark',
+        'app_language': 'invalid',
+      });
+      await _drainEvents();
+      expect(values, hasLength(emissions));
+
       await subscription.cancel();
       expect(bridge.activeWatches, 0);
     },
@@ -627,6 +677,7 @@ class _PreferenceBridge extends OperitRuntimeBridge {
   final Map<String, Map<String, Object?>> _values =
       <String, Map<String, Object?>>{
         _userFile: <String, Object?>{},
+        _languageFile: <String, Object?>{},
         _zoomFile: <String, Object?>{},
         _dockFile: <String, Object?>{},
       };

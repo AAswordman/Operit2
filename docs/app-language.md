@@ -12,11 +12,14 @@ device language changes. An explicit choice stays active across system language
 changes and application restarts.
 
 `UserPreferencesManager` stores `app_language` (`system`, `zh`, `en`, or `fr`) in
-`user_preferences.preferences.json`, using the existing synchronized personal
-preference store. Each configured app engine loads the choice before showing its
-main UI and observes committed changes. This setting is independent of theme
+`app_language.preferences.json`, using CoreNode-owned local storage. Each device
+chooses its own language; Space synchronization and Space merges do not change it.
+Each configured app engine on the same device loads the choice before showing its
+main UI and observes committed local changes. This setting is independent of theme
 snapshots and saved theme configurations. Invalid persisted values are reported
-as errors.
+as errors. The former `app_language` entry in synchronized
+`user_preferences.preferences.json` no longer controls the app language. Devices without a local
+language choice start in Follow system mode.
 
 The main and detached chat windows, plugin floating windows, desktop widget
 windows, application notification suffixes, and background work presentation
