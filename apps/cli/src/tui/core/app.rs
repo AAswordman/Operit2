@@ -434,8 +434,8 @@ pub(super) enum DeviceManagerMode {
 pub(super) struct DeviceManagerModal {
     pub(super) topology: RuntimeDeviceSpaceTopology,
     pub(super) blocked: BTreeSet<String>,
-    /// Devices this node already holds a pairing (edge) for.
-    pub(super) paired: BTreeSet<String>,
+    /// Local pairing records, including the direction that owns each dial address.
+    pub(super) paired: BTreeMap<String, RuntimePairedDevice>,
     pub(super) requests: Vec<SpaceJoinRequest>,
     pub(super) roles: BTreeMap<String, NetworkControlRole>,
     pub(super) initialized: bool,
@@ -494,12 +494,11 @@ impl DeviceManagerModal {
             return Vec::new();
         }
         let mut actions = Vec::new();
-        if !self.blocked.contains(device_id) && !self.paired.contains(device_id) {
+        if !self.blocked.contains(device_id) && !self.paired.contains_key(device_id) {
             actions.push(DeviceManagerAction::Pair);
         }
-        // Rewriting the dial address only makes sense for a device this node
-        // already holds a pairing record for; the runtime rejects it otherwise.
-        if self.paired.contains(device_id) {
+        // Only an outbound pairing record owns an address this node can dial.
+        if self.paired.get(device_id).is_some_and(|peer| peer.outbound) {
             actions.push(DeviceManagerAction::UpdateEndpoint);
         }
         if self.blocked.contains(device_id) {
@@ -2947,6 +2946,7 @@ impl OperitTui {
             }
             Some("endpoint") if (2..=3).contains(&args.len()) => {
                 let (device_id, label) = self.resolve_paired_device_argument(&args[1]).await?;
+                self.require_endpoint_pairing(&device_id, &label)?;
                 if args.len() == 3 {
                     self.networkControl
                         .updatePairedDeviceEndpoint(device_id, args[2].clone(), None)
@@ -3598,10 +3598,23 @@ impl OperitTui {
         }
     }
 
-    /// Opens the direct-address editor for one paired device. The address is
+    /// Requires a local outbound pairing before offering a dial-address edit.
+    fn require_endpoint_pairing(&self, device_id: &str, label: &str) -> Result<(), String> {
+        if self.networkControl.pairedDevicesSnapshot()?.get(device_id).is_some_and(|peer| peer.outbound) {
+            Ok(())
+        } else {
+            Err(self.text().network_endpoint_no_outbound_pairing(label))
+        }
+    }
+
+    /// Opens the direct-address editor for one outbound paired device. The address is
     /// deliberately empty: the runtime stores the dial record but does not
     /// expose it, so the operator types the replacement (same as desktop).
     fn open_endpoint_edit(&mut self, device_id: String, label: String, return_to_hub: bool) {
+        if let Err(error) = self.require_endpoint_pairing(&device_id, &label) {
+            self.status_message = error;
+            return;
+        }
         self.network_hub = None;
         self.device_manager = None;
         self.endpoint_edit = Some(EndpointEditModal {
@@ -4233,20 +4246,7 @@ impl OperitTui {
                     deviceId, label, ..
                 }) => self.open_endpoint_edit(deviceId, label, true),
                 Some(NetworkHubRow::Member(device)) => {
-                    let paired = self
-                        .network_hub
-                        .as_ref()
-                        .is_some_and(|hub| hub.paired.contains_key(&device.deviceId));
-                    if paired {
-                        self.open_endpoint_edit(
-                            device.deviceId.clone(),
-                            device.deviceName.clone(),
-                            true,
-                        );
-                    } else {
-                        self.status_message =
-                            self.text().network_endpoint_no_pairing(&device.deviceName);
-                    }
+                    self.open_endpoint_edit(device.deviceId, device.deviceName, true);
                 }
                 None => {}
             },
@@ -4605,7 +4605,7 @@ impl OperitTui {
             initialized: state.initialized,
             topology,
             blocked: state.disconnectedNodeIds,
-            paired: self.paired_device_ids(),
+            paired: self.networkControl.pairedDevicesSnapshot().unwrap_or_default(),
             requests: requests
                 .into_iter()
                 .filter(|request| request.canApprove)
@@ -4616,14 +4616,6 @@ impl OperitTui {
             menu_device_id: None,
             menu_index: 0,
         });
-    }
-
-    /// Node ids this device currently holds a pairing (edge) for.
-    fn paired_device_ids(&self) -> BTreeSet<String> {
-        self.networkControl
-            .pairedDevicesSnapshot()
-            .map(|snapshot| snapshot.into_keys().collect())
-            .unwrap_or_default()
     }
 
     /// Persists a human-friendly device model so headless servers appear as a
@@ -4709,7 +4701,7 @@ impl OperitTui {
         let Ok(topology) = self.networkControl.deviceSpaceTopology() else {
             return;
         };
-        let paired = self.paired_device_ids();
+        let paired = self.networkControl.pairedDevicesSnapshot().unwrap_or_default();
         let Some(modal) = self.device_manager.as_mut() else {
             return;
         };
@@ -8120,7 +8112,7 @@ mod tests {
                 connections: Vec::new(),
             },
             blocked: ["tablet".to_string()].into_iter().collect(),
-            paired: BTreeSet::new(),
+            paired: BTreeMap::new(),
             requests: vec![SpaceJoinRequest {
                 requestId: "req-1".to_string(),
                 targetDeviceId: "self".to_string(),
@@ -8922,19 +8914,32 @@ mod tests {
         assert!(error.contains("1-65535"), "unexpected error: {error}");
     }
 
-    /// Updating a dial address is only possible for a device this node holds
-    /// a pairing for, and never for the local device.
+    /// Only outbound pairing grants an editable dial address, including dual direction records.
     #[test]
-    fn endpoint_action_requires_a_pairing_record() {
+    fn endpoint_action_requires_an_outbound_pairing_record() {
         let mut modal = device_manager_fixture();
         assert!(!modal
             .menu_actions("phone")
             .contains(&DeviceManagerAction::UpdateEndpoint));
-        modal.paired = ["phone".to_string()].into_iter().collect();
+        modal.paired = hub_paired_fixture();
+        modal.paired.get_mut("phone").unwrap().outbound = false;
+        assert!(!modal
+            .menu_actions("phone")
+            .contains(&DeviceManagerAction::UpdateEndpoint));
+        assert!(!modal.menu_actions("phone").contains(&DeviceManagerAction::Pair));
+        let peer = modal.paired.get_mut("phone").unwrap();
+        peer.inbound = false;
+        peer.outbound = true;
         assert!(modal
             .menu_actions("phone")
             .contains(&DeviceManagerAction::UpdateEndpoint));
-        modal.paired.insert("self".to_string());
+        modal.paired.get_mut("phone").unwrap().inbound = true;
+        assert!(modal
+            .menu_actions("phone")
+            .contains(&DeviceManagerAction::UpdateEndpoint));
+        let mut local = modal.paired["phone"].clone();
+        local.deviceId = "self".to_string();
+        modal.paired.insert("self".to_string(), local);
         assert!(modal.menu_actions("self").is_empty());
     }
 
