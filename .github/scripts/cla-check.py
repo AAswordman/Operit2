@@ -49,7 +49,7 @@ def api(method, path, data=None, params=None):
         body = json.dumps(data).encode()
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, data=body) as resp:
             raw = resp.read()
             return json.loads(raw) if raw else None
     except urllib.error.HTTPError as exc:
