@@ -16,6 +16,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import app.operit.embeddedshizuku.R
 import moe.shizuku.manager.adb.AdbMdns
 import moe.shizuku.manager.adb.AdbInvalidPairingCodeException
@@ -24,7 +25,7 @@ import java.net.ConnectException
 
 @TargetApi(Build.VERSION_CODES.R)
 class EmbeddedShizukuPairingService : Service() {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     companion object {
 
@@ -56,14 +57,20 @@ class EmbeddedShizukuPairingService : Service() {
     }
 
     private var adbMdns: AdbMdns? = null
+    private var replyPendingIntent: PendingIntent? = null
+    private var pairing = false
+    private var pairingPort = -1
 
     private val observer = Observer<Int> { port ->
+        if (pairing || port == pairingPort) return@Observer
+        pairingPort = port
         Log.i(tag, "Pairing service port: $port")
-        if (port <= 0) return@Observer
+        replyPendingIntent?.cancel()
+        replyPendingIntent = null
 
         // Since the service could be killed before user finishing input,
         // we need to put the port into Intent
-        val notification = createInputNotification(port)
+        val notification = if (port > 0) createInputNotification(port) else searchingNotification
 
         getSystemService(NotificationManager::class.java).notify(notificationId, notification)
     }
@@ -136,28 +143,47 @@ class EmbeddedShizukuPairingService : Service() {
         adbMdns?.stop()
     }
 
+    /** Cancels discovery, obsolete notification replies and pending pairing work. */
     override fun onDestroy() {
         super.onDestroy()
         stopSearch()
+        replyPendingIntent?.cancel()
         scope.cancel()
     }
 
+    /** Preserves an active pairing attempt when the guide is opened again. */
     private fun onStart(): Notification {
+        if (pairing) return workingNotification
+        replyPendingIntent?.cancel()
+        replyPendingIntent = null
+        pairingPort = -1
+        stopSearch()
         startSearch()
         return searchingNotification
     }
 
+    /** Consumes one notification reply and freezes discovery during the pairing exchange. */
     private fun onInput(code: String, port: Int): Notification {
+        if (pairing) return workingNotification
+        pairing = true
+        replyPendingIntent?.cancel()
+        replyPendingIntent = null
+        stopSearch()
         scope.launch {
-            runCatching { EmbeddedShizuku.pair(this@EmbeddedShizukuPairingService, port, code) }
-                .onFailure { handleResult(false, it) }
-                .onSuccess { handleResult(true, null) }
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    EmbeddedShizuku.pair(this@EmbeddedShizukuPairingService, port, code)
+                }
+            }
+                .onFailure { handleResult(false, it, port) }
+                .onSuccess { handleResult(true, null, port) }
         }
 
         return workingNotification
     }
 
-    private fun handleResult(success: Boolean, exception: Throwable?) {
+    /** Reports the connection destination and original error without exposing the pairing code. */
+    private fun handleResult(success: Boolean, exception: Throwable?, port: Int) {
         if (!scope.isActive) return
         stopForeground(STOP_FOREGROUND_REMOVE)
 
@@ -176,7 +202,7 @@ class EmbeddedShizukuPairingService : Service() {
 
             text = when (exception) {
                 is ConnectException -> {
-                    getString(R.string.cannot_connect_port)
+                    getString(R.string.cannot_connect_port) + "\n" + exception.toString()
                 }
                 is AdbInvalidPairingCodeException -> {
                     getString(R.string.paring_code_is_wrong)
@@ -187,7 +213,7 @@ class EmbeddedShizukuPairingService : Service() {
             }
 
             if (exception != null) {
-                Log.w(tag, "Pair failed", exception)
+                Log.w(tag, "Pair failed (127.0.0.1:$port)", exception)
             } else {
                 Log.w(tag, "Pair failed")
             }
@@ -200,6 +226,7 @@ class EmbeddedShizukuPairingService : Service() {
                 .setSmallIcon(R.drawable.ic_system_icon)
                 .setContentTitle(title)
                 .setContentText(text)
+                .setStyle(Notification.BigTextStyle().bigText(text))
                 /*.apply {
                     if (!success) {
                         addAction(retryNotificationAction)
@@ -248,7 +275,8 @@ class EmbeddedShizukuPairingService : Service() {
             .build()
     }
 
-    private val replyNotificationAction by unsafeLazy {
+    /** Gives each discovered port a fresh reply token so old notifications cannot change targets. */
+    private fun replyNotificationAction(port: Int): Notification.Action {
         val remoteInput = RemoteInput.Builder(remoteInputResultKey).run {
             setLabel(getString(R.string.dialog_adb_pairing_paring_code))
             build()
@@ -257,37 +285,21 @@ class EmbeddedShizukuPairingService : Service() {
         val pendingIntent = PendingIntent.getForegroundService(
             this,
             replyRequestId,
-            replyIntent(this, -1),
+            replyIntent(this, port),
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_CANCEL_CURRENT
             else
-                PendingIntent.FLAG_UPDATE_CURRENT
+                PendingIntent.FLAG_CANCEL_CURRENT
         )
+        replyPendingIntent = pendingIntent
 
-        Notification.Action.Builder(
+        return Notification.Action.Builder(
             null,
             getString(R.string.notification_adb_pairing_input_paring_code),
             pendingIntent
         )
             .addRemoteInput(remoteInput)
             .build()
-    }
-
-    private fun replyNotificationAction(port: Int): Notification.Action {
-        // Ensure pending intent is created
-        val action = replyNotificationAction
-
-        PendingIntent.getForegroundService(
-            this,
-            replyRequestId,
-            replyIntent(this, port),
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S)
-                PendingIntent.FLAG_MUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-            else
-                PendingIntent.FLAG_UPDATE_CURRENT
-        )
-
-        return action
     }
 
     private val searchingNotification by unsafeLazy {

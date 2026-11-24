@@ -1,4 +1,4 @@
-// Modified by Operit: stop discovery even when cancellation precedes registration.
+// Modified by Operit: stop discovery across registration races and invalidate lost local services.
 package moe.shizuku.manager.adb
 
 import android.content.Context
@@ -54,8 +54,12 @@ class AdbMdns(
         if (running) nsdManager.resolveService(info, ResolveListener(this))
     }
 
+    /** Invalidates only the current local endpoint while discovery is active. */
     private fun onServiceLost(info: NsdServiceInfo) {
-        if (info.serviceName == serviceName) observer.onChanged(-1)
+        if (running && info.serviceName == serviceName) {
+            serviceName = null
+            observer.onChanged(-1)
+        }
     }
 
     private fun onServiceResolved(resolvedService: NsdServiceInfo) {
