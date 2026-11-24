@@ -7,6 +7,12 @@ const String markdownCodeFontFamily = 'monospace';
 const List<String> markdownCodeFontFamilyFallback = <String>[
   'JetBrains Mono',
   'Cascadia Mono',
+  // The bundled OperitCodeMono subset (OFL Noto Sans Mono CJK SC; ASCII +
+  // GB2312 Han + CJK punctuation, ~3.2 MB) renders code deterministically on
+  // machines without JetBrains Mono, Cascadia or any system CJK font; rare
+  // characters outside the subset fall through to the remaining families and
+  // the platform's per-character fallback.
+  'OperitCodeMono',
   'Consolas',
   'SF Mono',
   'Menlo',
