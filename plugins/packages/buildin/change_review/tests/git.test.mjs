@@ -40,6 +40,59 @@ test('machine numstat retains tabs and rename destinations without trimming file
   assert.equal(stats.get('new.ts').additions, 3);
 });
 
+test('qualified workspaces execute and resolve native roots on their owning device', async () => {
+  const calls = [];
+  context.Tools = {
+    SoftwareSettings: { exec: async () => { throw new Error('Unexpected local execution'); } },
+    device(node) {
+      assert.equal(node, 'core-linux');
+      return { SoftwareSettings: { exec: async args => {
+        calls.push(Array.from(args));
+        if (args[2] === 'resolve-path') return JSON.stringify({ vfsPath: '/virtual/linux/home/repo/new.ts' });
+        return JSON.stringify({ exitCode: 0, stdout: '', stderr: '', workingDirectory: '/virtual/linux/home/repo' });
+      } } };
+    },
+  };
+  for (const workspace of ['core-linux://virtual/linux/home/repo', 'core-linux:/virtual/linux/home/repo']) {
+    await api.runCommand(workspace, 'git', ['status', '--porcelain=v1', '-z']);
+    assert.deepEqual(calls.at(-1), ['--json', 'workspace', 'exec', '/virtual/linux/home/repo', 'git', 'status', '--porcelain=v1', '-z']);
+  }
+  const resolved = await api.resolvePath('/home/repo/new.ts', true, 'core-linux://virtual/linux/home/repo');
+  assert.equal(resolved.vfsPath, 'core-linux://virtual/linux/home/repo/new.ts');
+  assert.deepEqual(calls.at(-1), ['--json', 'workspace', 'resolve-path', '--native', '/home/repo/new.ts']);
+  await api.openPath(resolved.vfsPath, 'program', ['code', '-g']);
+  assert.deepEqual(calls.at(-1), ['--json', 'workspace', 'open-path', '/virtual/linux/home/repo/new.ts', 'program', 'code', '-g']);
+  await api.resolveResource('core-linux://virtual/linux/home/repo', 'src/a.ts');
+  assert.deepEqual(calls.at(-1), ['--json', 'workspace', 'resolve-path', '--from', '/virtual/linux/home/repo', 'src/a.ts']);
+  await api.resolveResource('core-other://virtual/windows/d/repo', resolved.vfsPath);
+  assert.deepEqual(calls.at(-1), ['--json', 'workspace', 'resolve-path', '--from', '', '/virtual/linux/home/repo/new.ts']);
+});
+
+test('native Windows drive paths and colons inside VFS filenames remain local', async () => {
+  const calls = [];
+  context.Tools = {
+    device() { throw new Error('Unexpected device dispatch'); },
+    SoftwareSettings: { exec: async args => {
+      calls.push(Array.from(args));
+      return JSON.stringify({ vfsPath: '/virtual/windows/d/repo/a.ts' });
+    } },
+  };
+  await api.resolvePath('D:\\repo\\a.ts', true);
+  assert.deepEqual(calls.at(-1), ['--json', 'workspace', 'resolve-path', '--native', 'D:\\repo\\a.ts']);
+  await api.resolvePath('/virtual/linux/home/repo/name:part.ts');
+  assert.equal(calls.at(-1).at(-1), '/virtual/linux/home/repo/name:part.ts');
+});
+
+test('an unavailable workspace owner propagates its error without local execution', async () => {
+  let localCalls = 0;
+  context.Tools = {
+    SoftwareSettings: { exec: async () => { localCalls++; } },
+    device: () => ({ SoftwareSettings: { exec: async () => { throw new Error('Device is currently unreachable'); } } }),
+  };
+  await assert.rejects(api.runCommand('core-linux://virtual/linux/home/repo', 'git', ['status']), /currently unreachable/);
+  assert.equal(localCalls, 0);
+});
+
 test('real repository preserves branch comparison when lazily selecting a diff', async () => {
   const root = await mkdtemp(path.join(tmpdir(), 'operit-review-'));
   try {

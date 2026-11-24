@@ -6,24 +6,48 @@ export type RunCommand = (workspace: string, program: string, args: string[]) =>
 export interface ResolvedPath { vfsPath: string; nativePath: string }
 export interface GitFile extends ReviewFile { root: string; workspace: string; status: string; untracked: boolean; originalPath: string | null; base: string | null; unborn: boolean; loaded?: boolean }
 
-/** Runs through the existing authenticated core-command transport, never a local UI subprocess. */
-export async function runCommand(workspace: string, program: string, args: string[]): Promise<CommandOutput> {
-  return JSON.parse(await Tools.SoftwareSettings.exec(['--json', 'workspace', 'exec', workspace, program, ...args])) as CommandOutput;
+/** Splits the shared node-qualified address syntax while preserving native drive paths. */
+function address(value: string): { node: string | null; path: string } {
+  const path = value.trim(), match = /^([^:/\\]{2,}):([\s\S]*)$/.exec(path);
+  if (match === null) return { node: null, path };
+  return { node: match[1], path: match[2].startsWith('//') ? match[2].slice(1) : match[2] };
 }
 
-/** Resolves locator types explicitly through the runtime mapper, including registered mounts. */
-export async function resolvePath(path: string, native = false): Promise<ResolvedPath> {
-  return JSON.parse(await Tools.SoftwareSettings.exec(['--json', 'workspace', 'resolve-path', ...(native ? ['--native'] : []), path])) as ResolvedPath;
+/** Keeps resolved VFS resources attached to the device that owns their mounts. */
+function ownedPath(node: string | null, path: string): string {
+  return node === null ? path : `${node}://${path.replace(/^\/+/, '')}`;
+}
+
+/** Executes a Core command on its explicitly selected device through the SDK transport. */
+async function command(node: string | null, args: string[]): Promise<string> {
+  return (node === null ? Tools : Tools.device(node)).SoftwareSettings.exec(['--json', 'workspace', ...args]);
+}
+
+/** Runs through the workspace owner's authenticated core-command transport. */
+export async function runCommand(workspace: string, program: string, args: string[]): Promise<CommandOutput> {
+  const target = address(workspace);
+  return JSON.parse(await command(target.node, ['exec', target.path, program, ...args])) as CommandOutput;
+}
+
+/** Resolves locators through the owning runtime mapper, including Git's native roots. */
+export async function resolvePath(path: string, native = false, workspace = ''): Promise<ResolvedPath> {
+  const target = address(path), node = target.node ?? address(workspace).node;
+  const result = JSON.parse(await command(node, ['resolve-path', ...(native ? ['--native'] : []), target.path])) as ResolvedPath;
+  return { ...result, vfsPath: ownedPath(node, result.vfsPath) };
 }
 
 /** Resolves tool-result resource locators at the runtime boundary, including relative and native paths. */
 export async function resolveResource(workspace: string, path: string): Promise<ResolvedPath> {
-  return JSON.parse(await Tools.SoftwareSettings.exec(['--json', 'workspace', 'resolve-path', '--from', workspace, path])) as ResolvedPath;
+  const base = address(workspace), target = address(path), node = target.node ?? base.node;
+  const directory = target.node !== null && target.node !== base.node ? '' : base.path;
+  const result = JSON.parse(await command(node, ['resolve-path', '--from', directory, target.path])) as ResolvedPath;
+  return { ...result, vfsPath: ownedPath(node, result.vfsPath) };
 }
 
 /** Delivers a platform-neutral external-open intent to the runtime's registered host. */
 export async function openPath(path: string, action: 'reveal' | 'terminal' | 'program', programArgs: string[] = []): Promise<void> {
-  await Tools.SoftwareSettings.exec(['--json', 'workspace', 'open-path', path, action, ...programArgs]);
+  const target = address(path);
+  await command(target.node, ['open-path', target.path, action, ...programArgs]);
 }
 
 /** Rejects unsuccessful commands without swallowing diagnostics or trying another executable. */
@@ -139,7 +163,7 @@ export async function loadWorkspaceChanges(workspace: string, source: 'git' | 'b
   const seen = new Set<string>();
   return repositories.flatMap(files => {
     if (files.length === 0) return [];
-    const root = files[0].root;
+    const root = JSON.stringify([address(files[0].workspace).node, files[0].root]);
     if (seen.has(root)) return [];
     seen.add(root);
     return files;

@@ -90,6 +90,59 @@ test('equal filenames from different mounts retain distinct selections and branc
   assert.ok(diffs.at(-1).includes('refs/heads/main...HEAD'));
 });
 
+test('a node-qualified Linux workspace loads Git, untracked content and external opens on its owner', async () => {
+  const workspace = 'core-linux://virtual/linux/home/harmoon/projects/Operit2', calls = [], reads = [];
+  const native = host();
+  const tools = {
+    Files: {
+      list: async path => {
+        assert.equal(path, workspace);
+        return { entries: [{ name: '.git', isDirectory: true }] };
+      },
+      read: async path => {
+        reads.push(path);
+        assert.equal(path, `${workspace}/new.ts`);
+        return { content: 'owner-content\n' };
+      },
+    },
+    SoftwareSettings: { exec: async () => { throw new Error('Unexpected local execution'); } },
+    device(node) {
+      assert.equal(node, 'core-linux');
+      return { SoftwareSettings: { exec: async args => {
+        calls.push(Array.from(args));
+        if (args[2] === 'resolve-path') {
+          assert.equal(args.at(-1), args.includes('--native')
+            ? '/home/harmoon/projects/Operit2/new.ts' : '/virtual/linux/home/harmoon/projects/Operit2/new.ts');
+          return JSON.stringify({ vfsPath: '/virtual/linux/home/harmoon/projects/Operit2/new.ts' });
+        }
+        if (args[2] === 'open-path') return JSON.stringify({ opened: true });
+        assert.equal(args[3], '/virtual/linux/home/harmoon/projects/Operit2');
+        if (args.includes('--show-toplevel')) return JSON.stringify({ exitCode: 0, stdout: '/home/harmoon/projects/Operit2\n', stderr: '' });
+        if (args.includes('status')) return JSON.stringify({ exitCode: 0, stdout: '?? new.ts\0', stderr: '' });
+        return native.tools.SoftwareSettings.exec(args);
+      } } };
+    },
+  };
+  const page = await screen('../src/ui/workspace.ui.ts', { workspacePath: workspace, input: { files: [] } }, { tools });
+  await page.settle();
+  assert.ok(page.nodes().some(node => node.type === 'CodeText' && node.props.text === 'owner-content'));
+  assert.equal(reads.length, 1);
+  assert.ok(!page.nodes().some(node => node.props.text === '无法加载文件变更'));
+  await dispatch(page, page.nodes().find(node => node.type === 'MenuAnchor' && node.props.tooltip === '选择打开方式'), 'onSelect', 2);
+  assert.deepEqual(calls.at(-1), ['--json', 'workspace', 'open-path', '/virtual/linux/home/harmoon/projects/Operit2/new.ts', 'program', 'code', '-g']);
+  assert.deepEqual(page.errors, []);
+});
+
+test('a catalog failure is shown as a load failure instead of an empty Git catalog', async () => {
+  const native = host();
+  native.tools.SoftwareSettings.exec = async () => { throw new Error('Device is currently unreachable'); };
+  const page = await screen('../src/ui/workspace.ui.ts', { workspacePath: '/workspace', input: { files: [] } }, { tools: native.tools });
+  await page.settle();
+  assert.ok(page.nodes().some(node => node.props.text === '无法加载文件变更'));
+  assert.ok(page.nodes().some(node => node.type === 'Text' && node.props.text.includes('Device is currently unreachable')));
+  assert.ok(!page.nodes().some(node => node.props.text === '尚无文件变更'));
+});
+
 test('late selected-file replies cannot replace a newer selection', async () => {
   let release;
   const native = host({ deferredDiff: async workspace => {

@@ -114,7 +114,8 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
   async function filePath(file: ReviewFile): Promise<string> {
     if (source === 'lastTurn') return (await resolveResource(workspace ?? '', file.path)).vfsPath;
     if (workspace === null || workspace === '') throw new Error('当前对话未绑定工作区');
-    return (await resolvePath(join((file as GitFile).root, file.path), true)).vfsPath;
+    const gitFile = file as GitFile;
+    return (await resolvePath(join(gitFile.root, file.path), true, gitFile.workspace)).vfsPath;
   }
 
   /** Loads only the selected file, without letting a late request overwrite a later selection. */
@@ -313,10 +314,10 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
   }
 
   /** Renders an empty/error/loading state without hiding execution failures. */
-  function empty(message: string): ComposeNode {
+  function empty(message: string, failed = false): ComposeNode {
     return UI.Box({ fillMaxSize: true, contentAlignment: 'center' }, UI.Column({ horizontalAlignment: 'center' }, [
       UI.Box({ width: 32, height: 32, contentAlignment: 'center', modifier: M.border(1.2, c.outline.copy({ alpha: dark ? 0.35 : 0.5 }), { cornerRadius: 6 }) }, UI.Icon({ name: 'add', size: 16, tint: c.outline.copy({ alpha: dark ? 0.65 : 0.8 }) })),
-      UI.Spacer({ height: 12 }), text({ text: '尚无文件变更', fontSize: 13, fontWeight: '600', color: c.onSurface.copy({ alpha: dark ? 0.88 : 0.92 }) }),
+      UI.Spacer({ height: 12 }), text({ text: failed ? '无法加载文件变更' : '尚无文件变更', fontSize: 13, fontWeight: '600', color: c.onSurface.copy({ alpha: dark ? 0.88 : 0.92 }) }),
       UI.Spacer({ height: 4 }), text({ text: message, fontSize: 11.5, color: c.outline.copy({ alpha: dark ? 0.65 : 0.8 }) }),
     ]));
   }
@@ -417,14 +418,14 @@ export default function Workspace(ctx: ComposeDslContext): ComposeNode {
 
   const noChanges = error || (!workspace ? '项目变更将显示在此处' : source === 'git' ? '当前分支工作区无未提交的 Git 改动'
     : source === 'branch' ? '当前分支与基准分支无差异或未检测到上游基准' : '项目变更将显示在此处');
-  const body = preview !== null ? filePreview() : effective === null ? empty(noChanges)
+  const body = preview !== null ? filePreview() : effective === null ? empty(noChanges, error !== '')
     : loadingDiff ? UI.Box({ fillMaxSize: true, contentAlignment: 'center' }, UI.CircularProgressIndicator({ width: 22, height: 22, strokeWidth: 2 }))
-    : error !== '' ? empty(error) : diffBody(effective);
+    : error !== '' ? empty(error, true) : diffBody(effective);
   const sidebar = pane === 'tree' ? treeError !== '' ? UI.Box({ modifier: M.padding(12) }, text({ text: treeError }))
     : treeLoading ? UI.Box({ fillMaxSize: true, contentAlignment: 'center' }, UI.CircularProgressIndicator({ width: 18, height: 18, strokeWidth: 2 }))
     : workspace === null || (tree[workspace] ?? []).length === 0 ? empty('工作区暂无目录或文件')
     : UI.LazyColumn({ contentPadding: { vertical: 4 } }, treeRows(workspace))
-    : rows.length === 0 ? empty(error || ('没有匹配的改动文件')) : UI.ScrollArea({ axis: 'horizontal', thumbVisibility: true }, UI.LazyColumn({
+    : rows.length === 0 ? empty(error || ('没有匹配的改动文件'), error !== '') : UI.ScrollArea({ axis: 'horizontal', thumbVisibility: true }, UI.LazyColumn({
       width: visibleChanges.reduce((width, { node, depth }) => Math.max(width, 70 + depth * 14 + node.name.length * 12 + (node.kind === 'file' ? 24 + String(node.file.additions).length * 7 + String(node.file.deletions).length * 7 : 0)), sidebarWidth),
       height: Math.max(1, size.height - 80), contentPadding: { vertical: 2 },
     }, visibleChanges.map(changeRow)));
