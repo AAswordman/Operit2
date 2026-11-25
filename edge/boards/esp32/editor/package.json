@@ -5,6 +5,7 @@
   "scripts": {
     "start": "node --experimental-strip-types src/server.mts",
     "build": "node --experimental-strip-types src/build.mts",
+    "check:firmware": "node --experimental-strip-types src/build.mts --firmware-check",
     "build:firmware": "node --experimental-strip-types src/build.mts --firmware",
     "test": "node --test --experimental-strip-types tests/*.test.mjs",
     "test:device-space": "node --test --experimental-strip-types tests/integration/simulator-device-space.test.mjs",

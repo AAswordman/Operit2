@@ -1,3 +1,4 @@
+import type {FirmwareCheck} from '../src/firmware-check.mts';
 export interface CoreAccessState {
     pairing?: {pairingId: string; peerNodeId: string} | null;
     request?: {requestId: string; status: string; spaceName: string; error?: string | null} | null;
@@ -113,6 +114,7 @@ export function simulatorConnectionLabel(device?: DeviceState | null): string {
 }
 
 export interface SimulatorStatus {
+    firmwareCheck?: FirmwareCheck;
     ready?: boolean;
     running?: boolean;
     output?: string;
@@ -120,7 +122,19 @@ export interface SimulatorStatus {
 }
 
 export function simulatorStatusLabel(state: SimulatorStatus): string {
+    if (state.firmwareCheck?.status === 'checking') return '正在校验 ESP32 固件…';
+    if (!state.ready && state.firmwareCheck?.status === 'failed') return '固件检查失败：' + state.firmwareCheck.error;
     if (!state.ready) return state.running ? '正在启动模拟设备…' : '模拟设备已停止';
     const connection = simulatorConnectionLabel(state.device);
     return state.device?.error ? `${connection} · ${state.device.error}` : connection;
+}
+
+/** Firmware checks describe this startup, separately from simulated behavior. */
+export function firmwareStatusLabel(check?: FirmwareCheck): string {
+    if (check?.status === 'checking') return '正在检查真实固件的编译、ABI 与 Flash 分区…';
+    if (check?.status === 'passed') return `编译、ABI、分区检查通过 · ${check.imageBytes} / ${check.partitionBytes} 字节`;
+    if (check?.status === 'failed') return check.overflowBytes
+        ? `应用分区超出 ${check.overflowBytes} 字节 · ${check.imageBytes} / ${check.partitionBytes} 字节`
+        : check.error ?? '固件检查失败';
+    return '未验证固件，仅用于模拟行为';
 }

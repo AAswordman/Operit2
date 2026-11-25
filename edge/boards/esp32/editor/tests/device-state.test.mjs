@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {simulatorConnectionLabel, simulatorStatusLabel, simulatorViewState} from '../web/device-state.ts';
+import {firmwareStatusLabel, simulatorConnectionLabel, simulatorStatusLabel, simulatorViewState} from '../web/device-state.ts';
 
 test('simulator status distinguishes pairing, approval and chat readiness', () => {
   assert.equal(simulatorConnectionLabel(null), '等待配对');
@@ -34,4 +34,13 @@ test('active device projection preserves approval busy state and reports its rea
   assert.equal(view.spaceJoinRequestId, 'current-request');
   assert.equal(view.spaceJoinAssignmentVersion, 7);
   assert.equal(simulatorStatusLabel({ready: true, running: true, device}), '等待设备空间审批 · Core 不可达');
+});
+
+test('firmware checks cannot be confused with desktop simulation', () => {
+  assert.match(firmwareStatusLabel({status: 'not-checked'}), /未验证固件/);
+  assert.match(firmwareStatusLabel({status: 'checking'}), /真实固件/);
+  assert.match(firmwareStatusLabel({status: 'failed', imageBytes: 3998208, partitionBytes: 3997696, overflowBytes: 512}), /超出 512 字节/);
+  assert.match(simulatorStatusLabel({running: true, firmwareCheck: {status: 'checking'}}), /校验 ESP32 固件/);
+  assert.match(simulatorStatusLabel({ready: false, firmwareCheck: {status: 'failed', error: '镜像超出分区'}}), /镜像超出分区/);
+  assert.match(firmwareStatusLabel({status: 'passed', imageBytes: 1000, partitionBytes: 2000}), /1000 \/ 2000/);
 });

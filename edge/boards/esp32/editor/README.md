@@ -89,14 +89,15 @@ npm run test:standalone --prefix edge/boards/esp32/editor
 
 ```powershell
 npm run test:device-budget --prefix edge/boards/esp32/editor
-npm run test:device-budget --prefix edge/boards/esp32/editor -- --firmware
+npm run test:device-budget --prefix edge/boards/esp32/editor -- --runtime-only
 ```
 
 入口复用上游的 256 KiB Rust 堆、16/24/20 KiB 主/异步/阻塞任务栈及 7,000 字节
 持久化预算。它先运行厂商 SDK workspace 的全功能测试及所有功能组合的依赖审计，
 再构建预览、检查 TypeScript、运行共享固件模块和编辑器测试，
 同步已有插件包并构建当前 Core CLI，然后验证配对入空间、独立聊天、额外十二轮对话及重启。
-`--firmware` 还先构建 ESP32 固件并检查 Xtensa ABI；两种入口均不会烧录设备。
+默认入口先检查真实 ESP32 固件的编译、Xtensa ABI 和应用分区容量，再运行模拟场景。
+`--runtime-only` 只检查行为与模拟预算，其结果不包含固件验证；原 `--firmware` 参数仍兼容。两种入口均不会烧录设备。
 堆探针直接占用同一个固定分配区，制造隔开的 8 KiB 空洞，检查总空闲足够时
 12 KiB 连续分配仍会失败，释放相邻块后又能成功。栈越界在独立子进程中由保护页检测。
 构建、编辑器启动和探针共用同一份锁定的 release 模拟器产物。
@@ -170,6 +171,27 @@ ESP-IDF 前置文件，无需先手动执行一次 Cargo。
 
 构建产物复用固定路径：`generated/`、`edge/boards/esp32/dist/` 和当前盘根目录的 `esp32/`，
 不是每次新建一份固件历史。Rust 的增量缓存是电脑磁盘数据，不在设备 NVS 中。
+
+### 启动前的真实固件检查
+
+页面默认先用板卡的 Xtensa 工具链编译当前固件，检查 ABI，再由 `espflash` 按
+`partitions.csv` 生成应用镜像。任何一步失败都阻止默认模拟器启动，页面显示失败原因
+和实际镜像／分区字节数。每次启动都执行检查，编译复用 Cargo 的依赖缓存；不会因为
+模拟器可以运行、旧镜像存在或旧报告通过就判定当前固件有效。
+
+只检查固件时无需 Emscripten、串口或连接设备：
+
+```powershell
+npm run check:firmware --prefix edge/boards/esp32/editor
+```
+
+检查结果写入 `generated/firmware-check.json`，命令失败返回非零退出码。
+`/api/simulator/state` 的 `firmwareCheck` 报告本次启动的结果。缺少工具链同样属于失败。
+页面的「仅运行行为模拟」或启动 API 的 `{"mode":"runtime-only"}` 可单独调试协议与交互，
+页面会持续标明「未验证固件」。自动化行为测试显式使用此模式，完整预算检查默认包含真固件检查。
+
+通过编译、ABI 和分区检查表示本次固件可生成符合容量限制的镜像。桌面 Host 仍不执行
+Xtensa 指令，也不复现 ESP-IDF、无线、TLS、驱动的完整运行开销；对应行为仍需真机验证。
 
 ### 模拟器的资源限制与真实遥测边界
 

@@ -6,7 +6,7 @@ import path from 'node:path';
 // Reuse the upstream allocator, guarded stacks and integration scenarios.
 const directory = fileURLToPath(new URL('../', import.meta.url));
 const root = path.resolve(directory, '../../../..');
-const firmware = process.argv.slice(2).includes('--firmware');
+const firmware = !process.argv.slice(2).includes('--runtime-only');
 const npmCli = process.env.npm_execpath;
 if (!npmCli) throw new Error('Run npm run test:device-budget --prefix edge/boards/esp32/editor');
 const env: NodeJS.ProcessEnv = {...process.env};
@@ -25,13 +25,14 @@ async function run(label: string, executable: string, args: string[],
   });
   if (code !== 0) throw new Error(`${label} failed (${code}); budget verification did not pass`);
 }
+if (firmware) await run('Xtensa firmware, ABI and application partition', process.execPath, [npmCli, 'run', 'check:firmware']);
+else console.log('Scope: runtime-only; firmware compilation, ABI and Flash capacity are not verified.');
 await run('manufacturer SDK workspace tests', 'cargo', ['test', '--locked', '--manifest-path',
   path.join(root, 'edge/sdk/Cargo.toml'), '--workspace', '--all-features']);
 await run('manufacturer SDK dependency boundaries', path.join(root, '.venv',
   process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'),
   ['-X', 'utf8', path.join(root, 'edge/tools/check-sdk-dependencies.py')]);
-await run(firmware ? 'firmware build and C/Wasm preview' : 'C/Wasm preview', process.execPath,
-  [npmCli, 'run', firmware ? 'build:firmware' : 'build']);
+await run('C/Wasm preview', process.execPath, [npmCli, 'run', 'build']);
 await run('TypeScript checks', process.execPath, [npmCli, 'run', 'check']);
 await run('prepare upstream bounded desktop dependencies', path.join(root, '.venv',
   process.platform === 'win32' ? 'Scripts/python.exe' : 'bin/python'), ['-X', 'utf8', 'prepare-simulator.py']);

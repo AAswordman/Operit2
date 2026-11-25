@@ -35,10 +35,11 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
     }
     throw Error(`Simulator did not become ready: ${JSON.stringify(current)}`);
   }
-  assert.equal((await fetch(base + '/api/simulator/start', {method: 'POST'})).status, 202);
+  assert.equal((await fetch(base + '/api/simulator/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode: 'runtime-only'})})).status, 202);
   // Startup creates persistent files asynchronously before the child is spawned.
   await new Promise(resolve => setTimeout(resolve, 100));
   const first = await ready();
+  assert.equal(first.firmwareCheck.status, 'not-checked', 'desktop behavior tests must not claim firmware validation');
   assert.equal(first.device.chat.connected, false);
   const voice = await fetch(base + '/api/simulator/speech', {method:'POST',
     headers:{'Content-Type':'application/json'}, body:JSON.stringify({operation:'begin'})});
@@ -144,7 +145,7 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
     socket.once('error', resolve);
     socket.once('connect', () => {socket.destroy(); reject(Error('stopped device still listens'));});
   });
-  await fetch(base + '/api/simulator/start', {method: 'POST'});
+  await fetch(base + '/api/simulator/start', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({mode: 'runtime-only'})});
   await new Promise(resolve => setTimeout(resolve, 100));
   const restarted = await ready();
   assert.equal(Object.hasOwn(restarted, 'token'), false);

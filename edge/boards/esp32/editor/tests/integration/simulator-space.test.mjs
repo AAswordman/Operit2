@@ -247,7 +247,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
       assert.fail(`${description} timed out: ${JSON.stringify(current.device)}; Core: ${core.output}; Simulator: ${current.output}`);
     };
     const startEdge = async () => {
-      await post('/api/simulator/start');
+      await post('/api/simulator/start', {mode: 'runtime-only'});
       const deadline = Date.now() + 180000;
       while (Date.now() < deadline) {
         const value = await state();
