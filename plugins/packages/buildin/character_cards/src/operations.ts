@@ -1,9 +1,7 @@
 import { readCharacter, createCharacterDraft, createGroupDraft, createTagDraft } from "./drafts";
-import { groupAvatarUri } from "./group-avatar-image";
 import { characterModelBindingMode, sameCharacterModelBinding } from "./model-binding";
 import type { DomainInput, DomainOperation, DomainOutput } from "./api";
-import type { ChatConfigurationService } from "./domain";
-import { parseDomainPayload, resolveChatConfiguration } from "./domain";
+import { parseDomainPayload } from "./domain";
 import { combineCharacterPrompt } from "./character-prompt";
 import { listBindableChats } from "./chat-binding-catalog";
 import { parseChatSelection } from "./chat-bindings";
@@ -861,7 +859,14 @@ export async function dispatch(
 
 
 
-type DomainHandlers = { [K in DomainOperation]: (input: DomainInput<K>, host: CharacterRepository) => Promise<DomainOutput<K>> };
+/** Keeps runtime-owned conversation resolution outside repository-only operations. */
+type RepositoryDomainOperation = Exclude<DomainOperation, "chat.configuration.resolve">;
+type DomainHandlers = { [K in RepositoryDomainOperation]: (input: DomainInput<K>, host: CharacterRepository) => Promise<DomainOutput<K>> };
+
+/** Narrows dispatch to operations whose complete dependencies belong to the repository. */
+export function isRepositoryDomainOperation<K extends DomainOperation>(operation: K): operation is K & RepositoryDomainOperation {
+  return operation !== "chat.configuration.resolve";
+}
 
 /** Converts canonical deletion lifecycle completion to the public activation-independent result. */
 async function deleteCharacter(id: string, host: CharacterRepository): Promise<{ id: string; deleted: boolean }> {
@@ -895,21 +900,7 @@ async function activateForChat(input: DomainInput<"activePrompt.activateForChat"
   return { characterCardName: input.characterCardName, characterGroupId: input.characterGroupId, updated: true };
 }
 
-/** Applies live privacy preferences to current and historical configuration reads. */
-export async function resolveConfiguration(
-  input: DomainInput<"chat.configuration.resolve">,
-  service: ChatConfigurationService,
-): Promise<DomainOutput<"chat.configuration.resolve">> {
-  const result = await resolveChatConfiguration(input, service);
-  if (!("profile" in result) || (await service.readGlobalMemoryPreferences()).userDescriptionEnabled) return result;
-  return {
-    ...result,
-    profile: { ...result.profile, userPreferencesText: "" },
-    participants: result.participants.map(profile => ({ ...profile, userPreferencesText: "" })),
-  };
-}
-
-/** Implements every published domain operation with typed handlers sharing the editor's actual business service. */
+/** Implements repository-owned domain operations through the editor's actual business service. */
 const handlers: DomainHandlers = {
   /** Ranks persisted document source vectors without writing during retrieval. */
   "memory.chunks": (input, repository) => repository.searchMemoryChunks(input.ownerKey, input.memoryId, input.query, input.count, input.start),
@@ -939,24 +930,6 @@ const handlers: DomainHandlers = {
   "memory.candidates.retryFailed": async (input, repository) => ({ retried: await repository.recoverFailedCandidates(input.ownerKey, await memoryJobProducer()) }),
   /** Removes genuine terminal failures from the owner queue. */
   "memory.candidates.clearFailed": async (input, repository) => ({ cleared: await repository.recoverFailedCandidates(input.ownerKey, null) }),
-  /** Resolves chat configuration using this operation's existing repository snapshot. */
-  "chat.configuration.resolve": (input, repository) => resolveConfiguration(input, {
-    groupAvatar: groupAvatarUri,
-    /** Reads only the requested character. */
-    getCharacter: (id) => repository.getCharacter(id),
-    /** Reads only the requested group. */
-    getGroup: (id) => repository.getGroup(id),
-    /** Reads only a referenced tag. */
-    getTag: (id) => repository.getTag(id),
-    /** Reads only a referenced shared library. */
-    getStore: (id) => repository.getStore(id),
-    /** Reads only the model directory. */
-    listModels: () => repository.listModels(),
-    /** Reads only the speech directory. */
-    listTtsConfigs: () => repository.listTtsConfigs(),
-    readGlobalMemoryPreferences: () => repository.readGlobalMemoryPreferences(),
-    dispatchDomain: <K extends DomainOperation>(operation: K, payload: DomainInput<K>) => executeDomain(operation, payload, repository),
-  }),
   /** Requires the chat's persisted selection rather than global active state. */
   "chat.configuration.binding.find": (input, repository) => repository.chatBindings.findChatBinding(input.chatId),
   "chat.configuration.binding.read": (input, repository) => repository.chatBindings.readChatBinding(input.chatId),
@@ -1149,6 +1122,8 @@ const handlers: DomainHandlers = {
 };
 
 /** Validates and invokes one exact typed handler without a CLI, tool alias, or alternate dispatch transport. */
-export function executeDomain<K extends DomainOperation>(operation: K, input: DomainInput<K>, host: CharacterRepository): Promise<DomainOutput<K>> {
+export function executeDomain<K extends DomainOperation>(operation: K & RepositoryDomainOperation, input: DomainInput<K>, host: CharacterRepository): Promise<DomainOutput<K>>;
+/** Preserves the handler's input and output correlation for repository-owned operations. */
+export function executeDomain<K extends RepositoryDomainOperation>(operation: K, input: DomainInput<K>, host: CharacterRepository): Promise<DomainOutput<K>> {
   return handlers[operation](parseDomainPayload(operation, input), host);
 }

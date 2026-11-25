@@ -2,6 +2,8 @@
 pub mod ConversationRoundManager;
 #[path = "ConversationService.rs"]
 pub mod ConversationService;
+#[path = "ConversationContext.rs"]
+pub mod ConversationContext;
 #[path = "FileBindingService.rs"]
 pub mod FileBindingService;
 #[path = "InputProcessor.rs"]

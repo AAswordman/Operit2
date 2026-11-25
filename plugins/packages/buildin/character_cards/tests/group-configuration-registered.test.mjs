@@ -66,6 +66,23 @@ async function committedConfiguration(plugin, selection, participantId = null, c
   return plain(await plugin.api("chat.configuration.resolve", { ...request("execution", selection, participantId), chatId }));
 }
 
+/** Exercises retained USER.md through the actual registered resolver and discards it on a fresh plugin runtime. */
+test("registered configuration: conversation profiles survive file updates until the plugin runtime restarts", async t => {
+  const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directories), plugin = openPlugin(settings.harness);
+  const ownerKey = "character:default", selection = "card:default", chatId = "profile-snapshot-chat";
+  await plugin.api("memory.user.write", { ownerKey, content: "Before first execution" });
+  await resolveDraft(plugin, { ...request("display", selection), chatId });
+  await plugin.api("memory.user.write", { ownerKey, content: "First execution profile" });
+  await plugin.api("chat.configuration.draft.commit", { chatId });
+  const input = { ...request("execution", selection), chatId };
+  assert.equal((await plugin.api("chat.configuration.resolve", input)).profile.userPreferencesText, "First execution profile");
+  await plugin.api("memory.user.write", { ownerKey, content: "Latest persisted profile" });
+  assert.equal((await plugin.api("chat.configuration.resolve", input)).profile.userPreferencesText, "First execution profile");
+  assert.equal((await plugin.api("memory.user.read", { ownerKey })).content, "Latest persisted profile");
+  const reopened = openPlugin(settings.harness);
+  assert.equal((await reopened.api("chat.configuration.resolve", input)).profile.userPreferencesText, "Latest persisted profile");
+});
+
 /** The actual registered resolver authors group constraints before native storage freezes the execution snapshot. */
 test("registered configuration: group prompts preserve each speaker and saved member order across historical execution", async t => {
   const disk = await createDiskHarness(t, { legacyIdentity: "default" }), settings = createHostDirectoriesFixture(disk, directories), plugin = openPlugin(settings.harness);

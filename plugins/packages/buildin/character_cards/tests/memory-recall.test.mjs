@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createDiskHarness } from "./disk-files.mjs";
-import { loadModule, plain } from "./runtime.mjs";
+import { loadModule, plain, runtimeConsole } from "./runtime.mjs";
 
 /** Connects the canonical public client to actual registered provider handlers and real SQLite storage. */
 async function environment(t) {
@@ -189,7 +189,7 @@ test("recall without searchable tokens returns no attachment and logs no error",
   const env = await environment(t);
   await env.client.memory.create({ ownerKey: "character:default", values: { title: "Stable fact", content: "Known durable knowledge" } });
   const errors = [];
-  const hook = loadModule("src/memory-recall.ts", { ...env.disk.globals, console: { ...console, error(...values) { errors.push(values); } } }).onMemoryRecallPromptInput;
+  const hook = loadModule("src/memory-recall.ts", { ...env.disk.globals, console: { ...runtimeConsole, error(...values) { errors.push(values); } } }).onMemoryRecallPromptInput;
   for (const processedInput of ["!!!", "……", "😊", '<attachment type="image/png">image</attachment>！']) {
     assert.equal(await hook(inputEvent({ ...RECALL_EVENT, processedInput })), null);
   }

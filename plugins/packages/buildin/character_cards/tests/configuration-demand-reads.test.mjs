@@ -16,13 +16,16 @@ async function environment(t) {
     /** Records tool reads so execution tests can reject unnecessary catalog loads. */
     async readToolCatalog() { calls.push("tools"); return plain(directories.toolCatalog); },
   });
-  const service = loadModule("src/service-runtime.ts", disk.globals).createCharacterCardsService(repository);
+  let service = loadModule("src/service-runtime.ts", disk.globals).createCharacterCardsService(repository);
   /** Discards setup reads while retaining the actual database and all service state. */
   function reset() { disk.clearCalls(); calls.length = 0; }
   /** Resolves through the real service dispatcher and its live privacy check. */
   function resolve(input) { return service.dispatchDomain("chat.configuration.resolve", input); }
   reset();
-  return { disk, service, directories, calls, reset, resolve };
+  return { disk, service, directories, calls, reset, resolve,
+    /** Recreates the runtime service against the same authoritative persisted data. */
+    restart() { service = loadModule("src/service-runtime.ts", disk.globals).createCharacterCardsService(repository); },
+  };
 }
 
 /** Supplies the exact public execution contract with explicit model and speech defaults. */
@@ -127,6 +130,69 @@ test("configuration reads: the next request observes edits to its character and 
   assert.equal(reads(h.disk, "tags").length, 1);
 });
 
+/** Keeps one conversation's exact profile stable while new conversations and a restarted runtime read current bytes. */
+test("conversation USER.md stays stable after profile writes and refreshes for a new chat or runtime", async t => {
+  const h = await environment(t), ownerKey = "character:default", input = request("card:default", { chatId: "retained-chat" });
+  await h.service.dispatchDomain("memory.user.write", { ownerKey, content: "# User\nOriginal profile\r\n" });
+  const first = plain(await h.resolve(input));
+  assert.equal(first.profile.userPreferencesText, "# User\nOriginal profile\r\n");
+  await h.service.dispatchDomain("memory.user.write", { ownerKey, content: "# User\nUpdated by memory extraction\n" });
+  await h.service.dispatchDomain("character.update", { id: "default", changes: { characterSetting: "Current role prompt" } });
+  h.reset(); const before = h.disk.stateBytes();
+  const next = plain(await h.resolve(input));
+  assert.equal(next.profile.userPreferencesText, first.profile.userPreferencesText);
+  assert.equal(next.executionData.profile.userPreferencesText, first.profile.userPreferencesText);
+  assert.match(next.profile.introPrompt, /Current role prompt/u);
+  assert.deepEqual(h.disk.stateBytes(), before, "Conversation snapshots must not write persistent state");
+  assert.equal(h.disk.calls.some(call => call.method === "read" && String(call.args[0]).endsWith("/USER.md")), false);
+  assert.equal((await h.resolve(request("card:default", { chatId: "new-chat" }))).profile.userPreferencesText, "# User\nUpdated by memory extraction\n");
+  h.restart();
+  assert.equal((await h.resolve(input)).profile.userPreferencesText, "# User\nUpdated by memory extraction\n");
+});
+
+/** Isolates each role and library snapshot while keeping intentional profile suppression immediate. */
+test("conversation USER.md isolates participants and owners and honors the live privacy flag", async t => {
+  const h = await environment(t), chatId = "shared-conversation";
+  const other = await h.service.dispatchDomain("character.create", { values: { name: "Other participant" } });
+  await h.service.dispatchDomain("memory.user.write", { ownerKey: "character:default", content: "First role" });
+  await h.service.dispatchDomain("memory.user.write", { ownerKey: "character:" + other.id, content: "Other role" });
+  const input = request("card:default", { chatId });
+  assert.equal((await h.resolve(input)).profile.userPreferencesText, "First role");
+  assert.equal((await h.resolve(request("card:" + other.id, { chatId }))).profile.userPreferencesText, "Other role");
+  const store = await h.service.dispatchDomain("memory.shared.create", { name: "New primary owner" });
+  await h.service.dispatchDomain("memory.user.write", { ownerKey: "shared:" + store.id, content: "Shared owner" });
+  await h.service.dispatchDomain("character.update", { id: "default", changes: { memoryBindingMode: "SHARED", sharedMemoryId: store.id } });
+  assert.equal((await h.resolve(input)).profile.userPreferencesText, "Shared owner");
+  await h.service.dispatchDomain("memory.user.write", { ownerKey: "shared:" + store.id, content: "Changed shared owner" });
+  await h.service.dispatch({ action: "writeGlobalMemoryPreference", key: "userDescriptionEnabled", value: false });
+  const disabled = plain(await h.resolve(input));
+  assert.equal(disabled.profile.userPreferencesText, "");
+  assert.equal(disabled.participants[0].userPreferencesText, "");
+  await h.service.dispatch({ action: "writeGlobalMemoryPreference", key: "userDescriptionEnabled", value: true });
+  assert.equal((await h.resolve(input)).profile.userPreferencesText, "Shared owner");
+});
+
+/** Retains an empty initial document and shares one pending read across concurrent execution resolutions. */
+test("conversation USER.md retains empty snapshots and concurrent requests use identical profile bytes", async t => {
+  const h = await environment(t), ownerKey = "character:default", input = request("card:default", { chatId: "empty-profile-chat" });
+  const results = await Promise.all([h.resolve(input), h.resolve(input)]);
+  assert.equal(results[0].profile.userPreferencesText, "");
+  assert.equal(results[1].profile.userPreferencesText, "");
+  assert.equal(h.disk.calls.filter(call => call.method === "read" && String(call.args[0]).endsWith("/USER.md")).length, 1);
+  await h.service.dispatchDomain("memory.user.write", { ownerKey, content: "Populated later" });
+  assert.equal((await h.resolve(input)).profile.userPreferencesText, "");
+  assert.equal((await h.resolve(request("card:default"))).profile.userPreferencesText, "Populated later");
+  assert.equal((await h.resolve(request("card:default", { chatId: "populated-profile-chat" }))).profile.userPreferencesText, "Populated later");
+});
+
+/** Propagates file IO failure without retaining an unusable promise as a conversation profile. */
+test("conversation USER.md read failures propagate and leave the next explicit request able to read", async t => {
+  const h = await environment(t), failure = new Error("Controlled USER.md read failure");
+  h.disk.failNext("read", failure);
+  await assert.rejects(h.service.readConversationUserPreferences("failed-read-chat", "default", "character:default"), failure);
+  assert.equal(await h.service.readConversationUserPreferences("failed-read-chat", "default", "character:default"), "");
+});
+
 /** Missing and ambiguous dependencies remain hard errors after removing the aggregate snapshot. */
 test("configuration reads: exact model, speech, tag and shared-library validation is retained", async t => {
   const h = await environment(t), input = request("card:default");
@@ -167,15 +233,13 @@ test("configuration reads: the final privacy check observes a flag changed durin
   const port = {
     ...h.service,
     /** Changes the live preference after the exact document read begins. */
-    async dispatchDomain(operation, input) {
-      const result = await h.service.dispatchDomain(operation, input);
-      if (operation === "memory.user.read") {
-        await h.service.dispatch({ action: "writeGlobalMemoryPreference", key: "userDescriptionEnabled", value: false });
-      }
+    async readConversationUserPreferences(chatId, participantId, ownerKey) {
+      const result = await h.service.readConversationUserPreferences(chatId, participantId, ownerKey);
+      await h.service.dispatch({ action: "writeGlobalMemoryPreference", key: "userDescriptionEnabled", value: false });
       return result;
     },
   };
-  const result = plain(await loadModule("src/operations.ts", h.disk.globals).resolveConfiguration(request("card:default"), port));
+  const result = plain(await loadModule("src/domain.ts", h.disk.globals).resolveChatConfiguration(request("card:default"), port));
   assert.equal(result.profile.userPreferencesText, "");
   assert.equal(result.participants[0].userPreferencesText, "");
 });

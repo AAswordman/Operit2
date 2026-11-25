@@ -1604,6 +1604,16 @@ impl ChatServiceCore {
             }
         };
         // Generation must not persist a summary boundary before valid content exists.
+        let chat = match self.chatHistoryDelegate.chatHistoryManager.loadChatHistory(currentChatId.clone()) {
+            Ok(Some(chat)) => chat,
+            Ok(None) => return self.summaryInsertionFailed(Some(currentChatId), "对话不存在".into()),
+            Err(error) => return self.summaryInsertionFailed(Some(currentChatId), error.to_string()),
+        };
+        let summaryOptions = operit_providers::chat::EnhancedAIService::SummaryConversationOptions {
+            workspacePath: self.chatHistoryDelegate.primaryWorkspacePathForChat(&chat),
+            workspaceFolders: self.chatHistoryDelegate.workspaceFolderPathsForChat(&chat),
+            promptFunctionType: PromptFunctionType::CHAT,
+        };
         let summaryToast = self.messageProcessingDelegate.toastEventFlow.clone();
         let summaryMessage = match AIMessageManager::summarizeMemory(
             &mut enhancedAiService,
@@ -1611,6 +1621,7 @@ impl ChatServiceCore {
             false,
             currentChatId.clone(),
             &configuration,
+            summaryOptions,
             None,
             None,
             std::sync::Arc::new(move |error| {

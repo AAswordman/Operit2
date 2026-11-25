@@ -24,6 +24,8 @@ export function configurationReadScope(service: ChatConfigurationService): ChatC
   let tts: ReturnType<ChatConfigurationService["listTtsConfigs"]> | undefined;
   let preferences: ReturnType<ChatConfigurationService["readGlobalMemoryPreferences"]> | undefined;
   return {
+    /** Keeps conversation profile snapshots in the runtime service rather than this request-local scope. */
+    readConversationUserPreferences: (chatId, participantId, ownerKey) => service.readConversationUserPreferences(chatId, participantId, ownerKey),
     /** Keeps image IO in the owning runtime while sharing the already-read member records. */
     groupAvatar: (group, cards) => service.groupAvatar(group, cards),
     /** Reads each requested character once. */

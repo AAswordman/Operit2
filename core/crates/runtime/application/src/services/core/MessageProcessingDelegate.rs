@@ -2080,6 +2080,14 @@ impl MessageProcessingDelegate {
 
         let participantName = configuration.profile.name.clone();
         let requestMessageContent = finalMessageContent;
+        let summaryContextBase = {
+            let mut source = request.chatHistory.clone();
+            if shouldAddUserMessageToChat && userMessage.displayMode != ChatMessageDisplayMode::HIDDEN_PLACEHOLDER {
+                source.push(userMessage.clone());
+            }
+            let source = AIMessageManager::getMemoryFromMessages(source, &configuration)?;
+            operit_providers::chat::enhance::ConversationContext::sourceFingerprint(&source)
+        };
         let assistantMessageTimestamp = ChatMessageTimestampAllocator::next();
         let mut aiMessage = ChatMessage {
             sender: "ai".to_string(), timestamp: assistantMessageTimestamp,
@@ -2637,6 +2645,25 @@ impl MessageProcessingDelegate {
                             completionMessageProcessingDelegate.lock()
                                 .expect("worker message processing delegate mutex poisoned")
                                 .recordCommittedAssistant(&completionChatId, completionTurnId, &completedMessage, 0);
+                            // Bind the cached provider prefix only to history that actually committed.
+                            match AIMessageManager::committedConversationContextSource(
+                                workerChatHistoryDelegate.getRuntimeChatHistory(completionChatId.clone()),
+                                &completionContextConfiguration, assistantMessageTimestamp, summaryContextBase,
+                            ) {
+                                Ok(Some(source)) => workerService.commitConversationContext(
+                                    &completionChatId, &completionContextConfiguration.profile.id, source,
+                                ),
+                                Ok(None) => {
+                                    AppLogger::v_with_level("ChatSummary",
+                                        "History changed while the response was running; its prepared context is not committed",
+                                        operit_util::AppLogger::VERBOSE_LEVEL_2);
+                                }
+                                Err(error) => {
+                                    AppLogger::e("ChatSummary", &format!(
+                                        "Failed to bind completed conversation context: {error}",
+                                    ));
+                                }
+                            }
                         }
                         drop(workerChatHistoryDelegate);
                         let guidanceContinuationTimestamp = if let Some(inbox) = workerGuidanceInbox.as_ref() {

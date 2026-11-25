@@ -1052,9 +1052,17 @@ impl MessageCoordinationDelegate {
         let afterTimestamp = messages
             .get(insertPosition)
             .map(|message| message.timestamp);
+        let chat = self.chatHistoryDelegate.chatHistoryManager
+            .loadChatHistory(request.chatId.clone()).map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("Chat does not exist: {}", request.chatId))?;
+        let summaryOptions = operit_providers::chat::EnhancedAIService::SummaryConversationOptions {
+            workspacePath: self.chatHistoryDelegate.primaryWorkspacePathForChat(&chat),
+            workspaceFolders: self.chatHistoryDelegate.workspaceFolderPathsForChat(&chat),
+            promptFunctionType: request.promptFunctionType.clone(),
+        };
         let summary =
             AIMessageManager::summarizeMemory(
-                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, progress, request.trigger, onNonFatalError,
+                enhancedAiService, messages, request.autoContinue, request.chatId.clone(), &request.configuration, summaryOptions, progress, request.trigger, onNonFatalError,
             )
                 .await
                 .map_err(|error| error.to_string())?

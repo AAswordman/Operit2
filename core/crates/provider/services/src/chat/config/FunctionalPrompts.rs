@@ -8,8 +8,8 @@ pub const SUMMARY_PROMPT: &str = r#"你是负责生成对话摘要的AI助手。
 
 【核心任务状态】
 [先交代用户最新需求的内容与情境类型（真实执行/角色扮演/故事/假设等），再说明当前所处步骤、已完成的动作、正在处理的事项以及下一步。]
-[明确任务状态（已完成/进行中/等待中），列出未完成的依赖或所需信息；如在等待用户输入，说明原因与所需材料。]
-[显式覆盖信息搜集、任务执行、代码编写或其他关键环节的状态，哪怕某环节尚未启动也要说明原因。]
+[明确任务状态（已完成/进行中/等待中），只列出对话已确认的依赖与阻塞；仅在确实需要用户输入时说明所需材料。]
+[根据已有证据说明信息搜集、任务执行、代码编写等关键环节的状态；尚未启动且原因未记录时，不猜测原因。]
 [最后补充最近一次任务的进度拆解：哪些已完成、哪些进行中、哪些待处理。]
 
 【互动情节与设定】
@@ -26,7 +26,7 @@ pub const SUMMARY_PROMPT: &str = r#"你是负责生成对话摘要的AI助手。
 - [信息点2：技术或剧本结构中的关键元素（函数、配置、日志、人物动机等）及其意义。]
 - [信息点3：问题或创意的探索路径、验证结果与当前状态。]
 - [信息点4：影响后续决策的因素，如优先级、情绪基调、角色约束、外部依赖、时间节点。]
-- [信息点5+：补充其他必要细节，覆盖现实与虚构信息。每条至少两句：先述事实，再讲影响或后续计划。]
+- [信息点5+：补充接续任务所需的其他事实，覆盖现实与虚构信息；仅记录对话已提出的后续计划。]
 
 ============================
 
@@ -40,11 +40,11 @@ pub const SUMMARY_PROMPT: &str = r#"你是负责生成对话摘要的AI助手。
 
 **内容要求：**
 1. 语言风格：专业、清晰、客观.
-2. 内容长度：不要限制字数，根据对话内容的复杂程度和重要性，自行决定合适的长度。可以写得详细一些，确保重要信息不丢失。宁可内容多一点，也不要因为过度精简导致关键信息丢失或失真。每个部分都要具备充分篇幅，绝不能以一句话敷衍.
-3. 信息完整性：优先保证信息的完整性和准确性，技术与非技术内容都需提供必要证据或引用.
+2. 内容长度：以准确接续任务为准，重要细节不要过度精简，同一事实避免反复铺陈。信息不足的部分如实说明，不为满足篇幅而补造内容.
+3. 信息完整性：区分用户要求、助手自述、计划与实际验证结果。明确证据与结论冲突时保留差异；未执行、未记录不等于缺乏能力、凭据或授权，不能据此新增阻塞、审批或要求用户补充材料。不得补造方案、原因和结论.
 4. 内容还原：摘要既要说明“过程如何推进”，也要写清“实际产出/讨论内容是什么”，必要时引用结果文本、结论、代码片段或参数，确保在没有原始对话的情况下依然能完全还原信息本身.
 5. 目标：生成的摘要必须是自包含的。即使AI完全忘记了之前的对话，仅凭这份摘要也能够准确理解历史背景、当前状态、具体进度和下一步行动.
-6. 时序重点：请先聚焦于最新一段对话（约占输入的最后30%），明确最新指令、问题和进展，再回顾更早的内容。若新消息与旧内容冲突或更新，应以最新对话为准，并解释差异."#;
+6. 时序重点：先写被总结对话中的最新真实用户需求、问题和进展，再继承已有摘要中仍有效的约束、决策与未完成事项。用户明确纠正取代旧内容时应说明差异。本条摘要生成说明不属于任务历史，不能被记成用户需求、任务进度、暂停原因或下一步，也不改变原任务状态."#;
 
 pub const SUMMARY_PROMPT_EN: &str = r#"You are an AI assistant responsible for generating a conversation summary. Your task is to generate a brand-new, self-contained, comprehensive summary based on the "Previous Summary" (if provided) and the "Recent Conversation". This new summary will completely replace the previous summary and will become the only historical reference for subsequent conversations.
 
@@ -54,8 +54,8 @@ pub const SUMMARY_PROMPT_EN: &str = r#"You are an AI assistant responsible for g
 
 [Core Task Status]
 [First describe the user's latest request and the scenario type (real execution / roleplay / story / hypothetical, etc.), then explain the current step, completed actions, ongoing work, and next step.]
-[Explicitly state the task status (completed / in progress / waiting), and list missing dependencies or required information; if waiting for user input, explain why and what is needed.]
-[Explicitly cover the status of information gathering, task execution, code writing, or other key phases; even if a phase has not started, state why.]
+[State the task status (completed / in progress / waiting), listing only dependencies and blockers established in the conversation; request user information only when it is actually needed.]
+[Describe the evidence for information gathering, execution, code writing, and other key phases; do not guess why an unstarted phase has not begun when no reason was recorded.]
 [Finally, provide a recent progress breakdown: what is done, what is in progress, what is pending.]
 
 [Interaction & Scenario]
@@ -72,7 +72,7 @@ pub const SUMMARY_PROMPT_EN: &str = r#"You are an AI assistant responsible for g
 - [Info point 2: key elements in the technical/script structure (functions, configs, logs, motivations, etc.) and their meaning.]
 - [Info point 3: exploration path, verification results, and current status.]
 - [Info point 4: factors affecting future decisions, such as priorities, emotional tone, role constraints, external dependencies, deadlines.]
-- [Info point 5+: any other necessary details covering both real and fictional information. Each point must have at least two sentences: state the fact, then explain its impact or next plan.]
+- [Info point 5+: other facts needed to resume, covering real and fictional information; include only next plans actually proposed in the conversation.]
 
 =======================================
 
@@ -86,11 +86,11 @@ pub const SUMMARY_PROMPT_EN: &str = r#"You are an AI assistant responsible for g
 
 **Content requirements:**
 1. Style: professional, clear, objective.
-2. Length: do not limit length. Decide an appropriate length based on complexity and importance. Prefer being detailed to avoid missing key information.
-3. Completeness: prioritize completeness and accuracy. Provide evidence/quotes when needed.
+2. Length: include enough detail to resume accurately, without repeatedly restating the same facts. State when information is absent; do not invent content to fill space.
+3. Completeness: distinguish user requirements, assistant claims, plans, and observed verification results. Preserve discrepancies between claims and explicit evidence. Not executed or not recorded does not imply missing capability, credentials, or authorization; do not invent blockers, approvals, requests for user information, solutions, causes, or conclusions.
 4. Reconstruction: the summary must describe both “how the process progressed” and “what the actual outputs/discussion were”. Quote resulting text, conclusions, code snippets, or parameters when needed.
 5. Goal: the summary must be self-contained so that even if the AI forgets the original conversation, it can fully reconstruct context, current status, progress, and next actions.
-6. Recency: focus first on the most recent part of the conversation (about the last 30% of input), then review earlier content. If new messages conflict with old content, use the latest messages and explain the differences."#;
+6. Recency: start with the latest real user request, questions, and progress in the conversation being summarized, then inherit still-valid constraints, decisions, and unfinished work from the existing checkpoint. Explain explicit corrections to older content. This summary-generation directive is not task history: do not record it as a user request, progress, reason to pause, or next step, and do not let it change the underlying task state."#;
 
 /// Wrapper text prepended to a persisted compact-boundary message when it is
 /// replayed into the active context as the opening user turn.
@@ -154,28 +154,6 @@ impl FunctionalPrompts {
         }
     }
 
-    /// Builds the summary prompt and includes the previous summary, matching the Kotlin implementation.
-    #[allow(non_snake_case)]
-    pub fn buildSummarySystemPrompt(
-        previous_summary: Option<&str>,
-        use_english: bool,
-    ) -> String {
-        let mut prompt = Self::summaryPrompt(use_english).trim().to_string();
-        if let Some(previous) = previous_summary.map(str::trim).filter(|summary| !summary.is_empty()) {
-            prompt.push_str("\n\n");
-            if use_english {
-                prompt.push_str("Previous Summary (to inherit context):\n");
-                prompt.push_str(previous);
-                prompt.push_str("\nPlease merge the key information from the previous summary with the new conversation and generate a brand-new, more complete summary.");
-            } else {
-                prompt.push_str("上一次的摘要（用于继承上下文）：\n");
-                prompt.push_str(previous);
-                prompt.push_str("\n请将以上摘要中的关键信息，与本次新的对话内容相融合，生成一份全新的、更完整的摘要。");
-            }
-        }
-        prompt
-    }
-
     /// Wrapper text that frames a persisted boundary message as historical
     /// context when it is replayed into the active conversation.
     #[allow(non_snake_case)]
@@ -216,13 +194,15 @@ impl FunctionalPrompts {
         }
     }
 
+    /// Appends compaction instructions without rewriting the conversation's cached prefix.
     #[allow(non_snake_case)]
-    pub fn summaryUserMessage(use_english: bool) -> &'static str {
-        if use_english {
-            "Please summarize the conversation as instructed."
+    pub fn summaryContinuationInstruction(use_english: bool) -> String {
+        let continuation = if use_english {
+            "Summarize the conversation before this message according to the requirements below. This message is a summary-generation directive, not task history. Output only the summary; do not continue the task or call tools."
         } else {
-            "请按照要求总结对话内容"
-        }
+            "请按下方要求总结本条消息之前的对话；本条仅为摘要生成说明，不属于任务历史。只输出摘要，不继续原任务，不调用工具。"
+        };
+        format!("{continuation}\n\n{}", Self::summaryPrompt(use_english))
     }
 
     /// Builds system instructions for an AI-generated conversation title.
