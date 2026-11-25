@@ -4,7 +4,9 @@ target = "xtensa-esp32-espidf"
 [target.xtensa-esp32-espidf]
 linker = "ldproxy"
 runner = "espflash flash --monitor --chip esp32"
-rustflags = ["--cfg", "espidf_time64", "--cfg", "mio_unsupported_force_poll_poll"]
+# Resolve available symbols from the matching ELF on the host. Embedded Rust
+# caller file/line records are omitted to fit the fixed Flash partition.
+rustflags = ["--cfg", "espidf_time64", "--cfg", "mio_unsupported_force_poll_poll", "-Z", "location-detail=none"]
 
 [unstable]
 build-std = ["std", "panic_abort"]

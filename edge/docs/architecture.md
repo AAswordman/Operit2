@@ -56,6 +56,24 @@ Edge 和 Core 共享 Peer、Space、路由和权限语义。每个节点根据�
 聊天展示契约和模拟器限制。设备只保留运行所需的节点状态、原生资源与有界展示窗口。
 完整聊天、工具参数、工具结果和执行状态留在 Core；投影通过中立契约交换普通展示文字。
 
+## 代码归属与产品预算
+
+共享实现按其职责归属，不因调用方是 Edge 就在固件里复制一份：
+
+| 内容 | 代码位置 |
+| --- | --- |
+| Link 编解码与报文语义 | `core/crates/foundation/link` |
+| 身份、配对、认证会话、Space 与权限 | `core/crates/node/runtime` |
+| 节点状态、密钥、空间控制记录及存储后端选择 | `core/crates/persistence/store` |
+| Edge 原生端点和共享节点服务的装配入口 | `edge/sdk/node` |
+| 通用场景格式、配置校验和设备本地渲染 | `edge/sdk/scene` |
+| 板卡的资源预算、Host、显示与存储载体 | `edge/boards/<product>` |
+| 宿主任务订阅、状态选择、动画素材与抽帧 | `plugins/packages` 中对应 ToolPkg |
+
+共享服务提供可注入的限制，产品装配选择实际预算。ESP32 的物理帧和场景缓存预算
+集中在 `edge/boards/esp32/src/runtime_profile.rs`，真机与模拟器使用同一份配置。
+这些预算不改变其他 Edge 产品使用的共享默认值，也不引入独立的配对或权限规则。
+
 ## 本地数据与配置交换
 
 Edge 可以保存身份、密钥、配对、必要的成员/权限/审批状态，以及设备原生配置和资源。

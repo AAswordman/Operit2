@@ -50,6 +50,7 @@ test('editor starts real TCP device, serves firmware UI, pairs by code and stops
   assert.equal(first.device.memory.profile, 'esp32-2432s028');
   assert.equal(first.device.memory.kind, 'enforced-budgets');
   assert.equal(first.device.memory.maxPeerMessageBytes, 8192);
+  assert.equal(first.device.memory.maxPeerFrameBytes, 2048);
   assert.equal(first.device.memory.liveTelemetry, true);
   assert.equal(first.device.memory.freeHeap, undefined);
   assert.equal(first.device.memory.largest8BitBlock, undefined);

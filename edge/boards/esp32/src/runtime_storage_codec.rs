@@ -1,11 +1,13 @@
 //! Bounded NVS snapshot encoding. Shared runtime record bytes stay unchanged.
 //! Only compact ONV3 records in compressed 2-KiB chunks are supported,
-//! with commit-last recovery and a 7 KB logical bound.
+//! with commit-last recovery and a 12 KiB logical bound.
 use super::runtime_storage_pack as pack;
 use operit_host_api::{HostError, HostResult};
 use std::io::{self, Write};
 
-pub const STORAGE_BUDGET: usize = 7000;
+// Logical record envelope limit; the Host separately admits only snapshots
+// that fit the currently free physical NVS entries before writing either bank.
+pub const STORAGE_BUDGET: usize = 12 * 1024;
 /// Small sorted index with fallible growth. Values are owned once; transactions
 /// borrow unchanged records instead of cloning a second tree of paths and Arcs.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -309,7 +311,7 @@ pub fn commit_snapshot_transaction(
     backend: &mut impl SnapshotBackend,
 ) -> HostResult<u8> {
     // Preflight the exact compressed chunk layout, without allocating the
-    // whole database or changing the expanded/logical 7-KiB limit.
+    // whole database or changing the expanded/logical limit.
     let required = snapshot_required_entries(files)?;
     let bank = active.map_or(0, |bank| bank ^ 1);
     clear_bank(backend, bank)?;
@@ -756,7 +758,9 @@ pub(crate) mod tests {
         let mut nvs = PhysicalNvs::default();
         commit_snapshot_transaction(&files, None, &mut nvs).unwrap();
         // Simulate an interrupted write to every chunk in the inactive bank.
-        for index in 0..SNAPSHOT_CHUNKS {
+        // An interrupted writer can fill only the physically available entries;
+        // the larger logical allowance does not add NVS pages.
+        for index in 0..SNAPSHOT_CHUNKS.min(4) {
             nvs.chunks.insert((1, index), vec![9; SNAPSHOT_CHUNK_SIZE]);
         }
         assert!(nvs.used() <= nvs.capacity);

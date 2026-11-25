@@ -95,10 +95,17 @@ physical voice I/O.
   a compact sorted index. They do not clone the full index during Space admission.
   Index growth is reserved before writing; the in-memory change becomes visible
   only after the alternate bank is published. Failed writes preserve the old
-  snapshot. The ONV3 envelope and 7000-byte logical storage limit are unchanged.
+  snapshot. The ONV3 envelope remains readable. The logical envelope limit is 12 KiB,
+  allowing existing Space records and generic scene resources to coexist. This
+  does not enlarge the fixed NVS partition: every transaction still checks its
+  compressed physical entry requirement before writing and preserves the old
+  bank on capacity failure. A 12 KiB logical allowance is not a physical capacity
+  guarantee for incompressible records.
   Packed records now use format 2, with an immutable 847-byte dictionary of
   public JSON field names stored in firmware Flash. The dictionary does not
-  consume a separate heap buffer. Legacy raw (0) and LZSS (1) records remain
+  consume a separate heap buffer. Compression uses a bounded hash chain (up to
+  4 KiB of temporary heap; small records use the allocation-free scan) and retains the exact legacy byte representation;
+  exhaustive candidate comparisons cover overlapping matches and window wraps. Legacy raw (0) and LZSS (1) records remain
   readable. Opening storage compacts legacy records one at a time in memory;
   the next successful ordinary transaction publishes the new representation.
   A failed transaction keeps the previous bank authoritative. Decoded record
@@ -154,6 +161,15 @@ physical voice I/O.
   rejected. Obsolete Space policy caches are validated record by record before
   any deletion; current Space authority is retained, including on retry after
   a failed deletion.
+- The board profile in `src/runtime_profile.rs` selects 2 KiB physical frames;
+  other products retain the shared 8 KiB constrained preset. Larger logical
+  messages keep the existing authenticated fragmentation protocol. Encryption
+  fragment buffers allocate fallibly, so exhausted heap closes the channel with
+  an error instead of aborting the device.
+- Endpoint control operations use the shared `nodeId:sequence` transaction
+  identity. The node identity file reserves `controlSequence` before publishing
+  each operation, so pruning policy or leaving a Space cannot reuse identities.
+  A later Core journal imports that allocation floor without inventing history.
 - Constrained receiving endpoints retain the source membership, profiles and
   topology needed for live consent and approval recovery. After first receiving
   and observing source departures, they omit the duplicate source command log
@@ -454,9 +470,10 @@ with `npm run flash` preserves NVS and the reserved layout partition.
 
 ## Xtensa build overlays
 
-The firmware build prepares checksum-pinned Tokio 1.53.1 and ring 0.17.14
-sources under the ignored `.embuild/` directory. The scripts are
-`edge/boards/esp32/editor/prepare-tokio.py` and `prepare-ring.py`; they never modify
+The firmware build prepares checksum-pinned Tokio 1.53.1, ring 0.17.14 and
+rmp-serde 1.3.1 sources under the ignored `.embuild/` directory. The scripts are
+`edge/boards/esp32/editor/prepare-tokio.py`, `prepare-ring.py` and
+`prepare-msgpack.py`; they never modify
 Cargo's shared registry cache. The original dependency licenses and copyright
 notices stay in the extracted sources.
 
@@ -469,12 +486,24 @@ These are dependency-source overlays, not an unmodified upstream build, and
 must be reviewed when updating the pinned versions or compiler. Desktop
 builds do not use them.
 
+The MessagePack overlay shares the sequence visitor between arrays and binary
+byte sequences. This avoids duplicate recursive decoder instantiations per
+message type under LTO. It retains the upstream markers, depth limits, exact u8
+visitor behavior and array consumption checks. Its pinned decoder/encoder tests
+and the shared Link integration tests must pass when updating the overlay.
+
 The firmware release uses Fat LTO and size optimization across its Rust packages
 to fit the existing 4 MB board and application partition. ESP32 console timestamps use direct UTC clock fields;
 desktop logs retain their local-time formatter. A single codegen unit keeps the
 Windows linker command within its length limit. UUID retains `opt-level = 1`
 for the Xtensa hex-parser workaround. Tokio now uses `opt-level = "z"`, with
 its pinned alignment overlay and final ELF ABI checks still required.
+The Xtensa build omits embedded Rust caller-location file/line tables with
+`-Z location-detail=none`. Panic messages and raw backtrace addresses remain;
+resolve available function symbols on the host with the matching ELF. Embedded
+caller locations are unavailable, and source file/line lookup requires separately
+retained debug information (the default release build strips it). This
+requires the pinned ESP nightly toolchain, as do the existing build-std settings.
 
 Peer transport decoding selects the existing Call / Watch / Push envelope with
 the shared constant-stack field scanner, then decodes its typed body. Owned
@@ -683,3 +712,17 @@ C error logs, UI errors, allocation evidence and USB diagnostics remain availabl
 
 Recorded build, simulator and hardware results are maintained in
 [Verification and current limitations](#verification-and-current-limitations).
+
+### Shared Link firmware updates
+
+This board uses the shared `operit-node-runtime` pairing engine and Link
+protocol identity. Rebuild the generic firmware from the same revision as the
+controller when it reports `PEER_PROTOCOL_UPGRADE_REQUIRED`; the compatibility
+check stays enabled. ToolPkg scripts run on the controller and use native
+services such as `edge.scene` for display content.
+
+The 4 MB target uses `operit-store/node-state` without `sqlite-journal`.
+Endpoint Space writers and schema migrations retain their local storage scope
+through the shared runtime so the linker can discard Core's SQL journal and
+preference replay paths. Keep the fixed partition layout, firmware image size
+validation and Xtensa ABI checks when updating this build.

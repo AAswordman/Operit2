@@ -19,7 +19,8 @@ async function scene(nodeId, method, fields = {}) {
 |---|---|---|
 | capabilities | 无 | 屏幕、区域、输入、格式、容量、缓存和持久化能力 |
 | config.read | 无 | enabled、background、layers |
-| config.apply | enabled、background、layers | configured、persistent、revision |
+| config.apply | enabled、background、layers | 原子保存并展示；configured、persistent、revision |
+| config.show | enabled、background、layers | 仅更新当前内存显示；persistent 为 false |
 | config.clear | 无 | 保存默认关闭配置并恢复系统 UI |
 | state | 无 | 本地 active、taps、revision 诊断状态 |
 | pack.begin | packId、bytes、sha256 | upload、chunkBytes |
@@ -30,7 +31,11 @@ async function scene(nodeId, method, fields = {}) {
 
 显示配置和引用的原始资源作为单个快照原子保存。保存失败不改变当前配置。设备重启恢复配置及资源；动画帧和点击计数属于本次设备运行。配置包可以在保存完成后关闭或卸载。设备上的系统退出只停止当前显示，保存配置仍保留；`config.clear` 清除保存配置。
 
-当前实现请求最多 1024 字节、响应最多 4096 字节，单包 4096 字节，缓存 8192 字节，最多 2 包、每包 4 素材、4 图层、256 字节上传块。设备的可用持久化空间可能进一步限制保存，失败返回 SCENE_STORAGE。
+`capabilities.configuration.transient == true` 表示支持 `config.show`。它使用与 `config.apply` 相同的配置和资源校验，但不写存储，也不覆盖之前保存的场景；重启恢复之前的持久配置。任务状态等频繁变化使用此方法。临时上传资源在重启后需要重新上传。
+
+当前实现请求最多 1024 字节、响应最多 4096 字节，默认单包 4096 字节、缓存 8192 字节，最多 2 包、每包 4 素材、4 图层、256 字节上传块。
+产品可在装配时通过 `SceneLimits` 选择容量（单包最多 8192 字节、总缓存最多 16384 字节）；
+插件必须以 `capabilities.limits` 的实际值为准。ESP32 的较大预算由板卡配置选择。设备的可用持久化空间可能进一步限制保存，失败返回 SCENE_STORAGE。
 
 ## 坐标、锚点、叠加与动画
 
@@ -43,13 +48,13 @@ async function scene(nodeId, method, fields = {}) {
   - center：左上 `(x-floor(W/2),y-floor(H/2))`；
   - bc：左上 `(x-floor(W/2),y-H)`。
 - `scale` 默认 1，最近邻整数缩放；`asset` 为 `packId:assetId`。
-- `background` 是 0–65535 的 RGB565 整数，默认黑色，填满租赁区域。
+- `background` 是 0–65535 的 RGB565 整数，默认黑色，填满显示区域。
   如要图片背景，在 `layers` 首层放背景素材。后续宠物、道具按数组顺序从后到前叠加。
 - alpha 为 **straight alpha**，0 完全透明、255 不透明；各 RGB565 通道以
   `floor((foreground*alpha + background*(255-alpha) + 127)/255)` 混合。
 - `frame` 默认 0，必须是素材内有效帧；`play` 默认 false；`loop` 默认 true。
   播放从 `frame` 开始，按素材 `frameMs` 推进，循环时取模，不循环时停在最后一帧。
-- 每次 `config.apply` 从保存配置重新开始当前动画。
+- 每次 `config.apply` 或 `config.show` 都按新配置重新开始当前动画。
   绘制条带在整帧开始冻结时间戳，避免同一帧不同条带使用不同动画帧。
   本地动画不依赖 Core 每帧 RPC；图层变更仍可能在正在绘制的帧结束前生效。
 
@@ -67,7 +72,7 @@ repeat assetCount:
   u8       idLength (1..24)
   bytes    ASCII assetId（包内不能重名）
   u16 LE   assetLength
-  bytes    ESI1 素材（精确 assetLength）
+  bytes    ESI1 或设备声明支持的 ESR1 素材（精确 assetLength）
 ```
 
 `ESI1` 素材：
@@ -76,7 +81,7 @@ repeat assetCount:
 4 bytes  magic ASCII "ESI1"
 u8       width (1..96)
 u8       height (1..96)
-u8       frameCount (1..8)
+u8       frameCount (1..16)
 u8       paletteCount (1..16)
 u16 LE   frameMs (50..2000，即使静态图也须有效)
 repeat paletteCount:
@@ -87,6 +92,17 @@ bytes    frameCount * width * height 个 u8 调色板索引
 
 每帧按行存放，先上后下、先左后右；每个索引必须小于 paletteCount。
 所有帧共用同一调色板、尺寸和帧间隔。SHA-256 覆盖整个 ESP1 包，包括头与 ID。
+
+`ESR1` 是可选的通用扫描行压缩格式，支持时声明
+`capabilities.formats.compressedAsset == "ESR1"`。它沿用 ESI1 的头部，
+magic 改为 `ESR1`，调色板上限为 64；调色板后为 `frameCount * height`
+个小端 u16 行偏移，偏移相对于素材起点，必须位于完整行表之后。
+不同帧可以引用同一条扫描行，资源保持压缩，不展开完整帧缓存。
+
+每个运行段首字节的高 4 位加 1 是长度（1–16），低 4 位是调色板索引。
+低 4 位为 15 时，后接一个 u8 作为实际索引。每行的运行段必须恰好覆盖
+`width` 个像素，索引必须小于调色板大小；缺失、越界或过长运行段均被拒绝。
+格式不包含任务状态、猫或其他业务含义，旧 ESI1 资源继续受支持。
 
 ## 本地输入与集成
 

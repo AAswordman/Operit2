@@ -505,7 +505,7 @@ test(process.env.OPERIT_SIM_TEST_STANDALONE_ONLY === '1'
     assert.equal(request.status, 'pending');
     // Exercise storage faults through the real pairing/approval path.
     const pressureBefore = (await state()).device.storage;
-    assert.equal(pressureBefore.logicalBudgetBytes, 7000);
+    assert.equal(pressureBefore.logicalBudgetBytes, 12 * 1024);
     for (const [configuration, error] of [
       [{otherNamespaceEntries: 630}, /NVS capacity exhausted/],
       [{otherNamespaceEntries: 213, failAfterMutations: 0}, /Injected NVS write failure/],

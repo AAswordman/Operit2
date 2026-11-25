@@ -14,6 +14,8 @@ mod wav;
 mod edge_chat;
 mod ipc;
 mod memory;
+#[path = "../../../src/runtime_profile.rs"]
+mod runtime_profile;
 #[path = "../../../src/runtime_storage_codec.rs"]
 mod runtime_storage_codec;
 #[path = "../../../src/runtime_storage_host.rs"]
@@ -158,23 +160,19 @@ fn initialize(
     let storage = storage::DeviceStorage::open(backend)?;
     let discoveryEnabled = std::env::var("OPERIT_SIM_DISCOVERY")
         .map_or(true, |value| value != "false" && value != "0");
-    let discovery = if discoveryEnabled {
+    let mut hostManager = operit_host_api::HostManager::HostManager::default()
+        .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
+        .withHttpHost(Arc::new(operit_host_native_common::NativeHttpHost::default()))
+        .withRuntimeStorageHost(storage.clone())
+        .withHostRuntimeTaskSchedulerHost(scheduler.clone());
+    if discoveryEnabled {
         let address = std::env::var("OPERIT_SIM_DISCOVERY_IP")?.parse::<std::net::IpAddr>()?;
         if address.is_unspecified() {
             return Err("Simulator discovery requires one explicit interface IP".into());
         }
-        operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::forInterface(address)
-    } else {
-        operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::default()
-    };
-    let hostManager = operit_host_api::HostManager::HostManager::default()
-        .withTcpHost(Arc::new(operit_host_native_common::NativeTcpHost))
-        .withHttpHost(Arc::new(
-            operit_host_native_common::NativeHttpHost::default(),
-        ))
-        .withServiceDiscoveryHost(Arc::new(discovery))
-        .withRuntimeStorageHost(storage.clone())
-        .withHostRuntimeTaskSchedulerHost(scheduler.clone());
+        hostManager = hostManager.withServiceDiscoveryHost(Arc::new(
+            operit_host_native_common::ServiceDiscovery::ServiceDiscoveryProvider::forInterface(address)));
+    }
     let identityStore =
         operit_edge_sdk::storage::CoreNodeIdentityStore::CoreNodeIdentityStore::new(storage.clone());
     let nodeId =
@@ -187,9 +185,9 @@ fn initialize(
         pairingIncarnation: None,
     };
     let edgeRouter = EdgePeerRouter::new(nodeId.clone());
-    let sceneService = Arc::new(
-        operit_edge_sdk::scene::SceneService::new(320, 240, 24, true).with_storage(storage.clone())?,
-    );
+    let sceneService = Arc::new(operit_edge_sdk::scene::SceneService::new_with_limits(
+        320, 240, 24, true, runtime_profile::SCENE_LIMITS,
+    )?.with_storage(storage.clone())?);
     let speech = Arc::new(device_speech::DeviceSpeech::default());
     let (speechOutput, speechInput) = speech.handlers();
     let mut edgeNode = operit_edge_sdk::device::EdgeNode::fromHostManager(hostManager.clone())
@@ -201,11 +199,11 @@ fn initialize(
         ))
         .withStreamHandlers(speechOutput, speechInput);
     let services = {
-        let peers = operit_edge_sdk::device::peer::createPeerService(
+        let peers = operit_edge_sdk::device::peer::createEndpointPeerService(
             Arc::new(hostManager.clone()),
             &edgeRouter,
             deviceInfo.clone(),
-            operit_edge_sdk::runtime::HostRuntimePeerService::PeerRuntimeLimits::constrained(),
+            runtime_profile::peer_limits(),
         )?;
         let portMode = if configuredAddress.ends_with(":0") {
             PeerHostPortMode::Automatic

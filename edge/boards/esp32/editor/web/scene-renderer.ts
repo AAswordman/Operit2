@@ -52,13 +52,28 @@ export function decodePacks(packs: SceneView['packs']): Map<string, Asset> {
             const size = data.getUint16(at, true);
             at += 2;
             const end = at + size;
+            const start = at;
+            const rle = bytes[at + 2] === 82; // ESR1; ESI1 remains compatible.
             const [w, h, frames, count] = bytes.subarray(at + 4, at + 8);
             const ms = data.getUint16(at + 8, true);
             at += 10;
             const palette: Asset['palette'] = [];
             for (let p = 0; p < count; p++, at += 3)
                 palette.push([data.getUint16(at, true), bytes[at + 2]]);
-            result.set(`${pack.id}:${id}`, { w, h, frames, ms, palette, indices: bytes.subarray(at, end) });
+            let indices = bytes.subarray(at, end);
+            if (rle) {
+                indices = new Uint8Array(w * h * frames);
+                for (let row = 0; row < h * frames; row++) {
+                    let source = start + data.getUint16(at + row * 2, true), x = 0;
+                    while (x < w) {
+                        const token = bytes[source++], length = (token >> 4) + 1;
+                        const color = (token & 15) === 15 ? bytes[source++] : token & 15;
+                        indices.fill(color, row * w + x, row * w + x + length);
+                        x += length;
+                    }
+                }
+            }
+            result.set(`${pack.id}:${id}`, { w, h, frames, ms, palette, indices });
             at = end;
         }
     }

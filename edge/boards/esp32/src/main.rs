@@ -1,6 +1,7 @@
 #![allow(non_snake_case)]
 
 mod config;
+mod runtime_profile;
 mod edge_chat;
 mod standalone_chat;
 mod device_preferences;
@@ -177,8 +178,9 @@ fn runFirmware(
         Arc::new(operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost::new()?);
     operit_host_api::HostManager::setDefaultHostRuntimeTaskSchedulerHost(scheduler.clone());
     let runtimeStorage = Esp32RuntimeStorageHost::new(nvsPartition.clone())?;
-    let sceneService = Arc::new(operit_edge_sdk::scene::SceneService::new(320, 240, 24, true)
-        .with_storage(runtimeStorage.clone()).map_err(HostError::new)?);
+    let sceneService = Arc::new(operit_edge_sdk::scene::SceneService::new_with_limits(
+        320, 240, 24, true, runtime_profile::SCENE_LIMITS,
+    ).map_err(HostError::new)?.with_storage(runtimeStorage.clone()).map_err(HostError::new)?);
     ui.attachScene(Arc::clone(&sceneService));
     let identity = CoreNodeIdentityStore::new(runtimeStorage.clone())
         .initialize()
@@ -274,11 +276,11 @@ fn runFirmware(
     let injectedServices = nodeServices;
     let peerService = match injectedServices.as_ref() {
         Some(services) => services.peers(),
-        None => operit_edge_sdk::device::peer::createPeerService(
+        None => operit_edge_sdk::device::peer::createEndpointPeerService(
             Arc::new(hostManager.clone()),
             &edgeRouter,
             deviceInfo.clone(),
-                operit_edge_sdk::runtime::HostRuntimePeerService::PeerRuntimeLimits::constrained(),
+                runtime_profile::peer_limits(),
         )
         .map_err(HostError::new)?,
     };

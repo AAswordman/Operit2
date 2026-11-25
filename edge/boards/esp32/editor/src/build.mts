@@ -213,7 +213,7 @@ function builtAt(): string {
 /** Bootstrap IDF/self-drawn UI on a clean machine before compiling the shared preview. */
 async function buildFirmware(): Promise<string> {
   await mkdir(out, {recursive: true});
-  for (const library of ['tokio', 'ring']) {
+  for (const library of ['tokio', 'ring', 'msgpack']) {
     const prepare = await run(['python', path.join(here, `prepare-${library}.py`)]);
     if (prepare.code !== 0) throw new Error(`ESP32 ${library} preparation failed: ${prepare.stdout}${prepare.stderr}`);
   }

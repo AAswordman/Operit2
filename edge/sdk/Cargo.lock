@@ -779,7 +779,16 @@ dependencies = [
 name = "operit-host-api"
 version = "0.1.0"
 dependencies = [
+ "operit-host-contract",
+ "operit-vfs",
+]
+
+[[package]]
+name = "operit-host-contract"
+version = "0.1.0"
+dependencies = [
  "async-trait",
+ "base64",
  "bytes",
  "chrono",
  "http",
@@ -824,7 +833,10 @@ version = "0.1.0"
 dependencies = [
  "async-trait",
  "base64",
+ "bytes",
  "futures-util",
+ "http",
+ "http-body-util",
  "operit-host-api",
  "operit-link",
  "operit-peer-link",
@@ -900,13 +912,26 @@ version = "2.0.0-preview.17"
 dependencies = [
  "base64",
  "chrono",
+ "flate2",
+ "futures-util",
  "heic-rs",
  "image",
  "operit-host-api",
+ "operit-vfs",
  "serde",
  "serde_json",
  "sha2",
  "tokio",
+ "uuid",
+]
+
+[[package]]
+name = "operit-vfs"
+version = "0.1.0"
+dependencies = [
+ "operit-host-contract",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
