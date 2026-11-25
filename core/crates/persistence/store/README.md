@@ -5,6 +5,24 @@ It centralizes host-backed storage access, preference state flows, SQLite
 helpers, ObjectBox-style repositories, DAO code, repository code, encryption
 helpers, and sync operation logs.
 
+## Build features
+
+The default `full` build includes `sqlite-journal` and the application stores.
+Hosts that use business replication must provide a transaction database and
+can select `node-state,sqlite-journal` without the application stores.
+
+Endpoint builds select `node-state` with default features disabled. Their
+pairing records, Space projection and device preferences remain node-local;
+opening a business transaction journal returns an explicit feature error.
+`CoreNodeStateStore` and `CoreNodeSecretStore` run ordinary schema callbacks
+without constructing a transaction replay context. Replicated preference
+schemas retain the transaction migration checks.
+
+Endpoint control commands use canonical transaction IDs and reserve their author
+sequence in the persistent node identity before publication. Space exit only
+prunes the projection. If the Host later opens a Core journal, it imports the
+reserved sequence floor before allocating any new transaction IDs.
+
 ## Responsibilities
 
 - Hold runtime storage and SQLite host registrations.

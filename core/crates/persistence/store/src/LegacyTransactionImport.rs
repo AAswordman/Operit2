@@ -222,7 +222,7 @@ impl<'de> DeserializeSeed<'de> for ValidateOperationPayload {
 }
 
 fn string_field(raw: Option<&RawValue>) -> Option<String> {
-    raw.and_then(|value| serde_json::from_str(value.get()).ok())
+    raw.and_then(|value| serde_json::from_slice(value.get().as_bytes()).ok())
 }
 
 struct MergeEntries;
@@ -239,7 +239,7 @@ impl<'de> DeserializeSeed<'de> for MergeEntries {
                 let mut found = false;
                 while let Some(raw) = entries.next_element::<&RawValue>()? {
                     let fields =
-                        serde_json::from_str::<RouteFields<'_>>(raw.get()).unwrap_or_default();
+                        serde_json::from_slice::<RouteFields<'_>>(raw.get().as_bytes()).unwrap_or_default();
                     found |=
                         string_field(fields.key).as_deref().is_some_and(|key| [PLUGIN_MERGE_DECLARATION_KEY,crate::PluginPreferenceSchema::KEY].contains(&key));
                 }
@@ -252,11 +252,11 @@ impl<'de> DeserializeSeed<'de> for MergeEntries {
 
 impl PayloadRoute {
     fn parse(raw: &RawValue) -> Self {
-        let fields = serde_json::from_str::<RouteFields<'_>>(raw.get()).unwrap_or_default();
+        let fields = serde_json::from_slice::<RouteFields<'_>>(raw.get().as_bytes()).unwrap_or_default();
         let encrypted = string_field(fields.format).as_deref() == Some(ENCRYPTED_FORMAT);
         let merge_entries = fields.entries.is_some_and(|entries| {
             MergeEntries
-                .deserialize(&mut serde_json::Deserializer::from_str(entries.get()))
+                .deserialize(&mut serde_json::Deserializer::from_slice(entries.get().as_bytes()))
                 .unwrap_or(false)
         });
         Self {
@@ -266,10 +266,10 @@ impl PayloadRoute {
                 || merge_entries,
             contract_version: fields
                 .contract_version
-                .and_then(|v| serde_json::from_str(v.get()).ok()),
+                .and_then(|v| serde_json::from_slice(v.get().as_bytes()).ok()),
             logical_time: fields
                 .logical_time
-                .and_then(|v| serde_json::from_str(v.get()).ok()),
+                .and_then(|v| serde_json::from_slice(v.get().as_bytes()).ok()),
             initial: fields.initial.is_some_and(|v| v.get() == "true"),
         }
     }

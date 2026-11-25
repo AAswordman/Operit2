@@ -49,9 +49,12 @@ struct PreferencesJsonBuffer {
     measured: usize,
     countOnly: bool,
     bounded: bool,
+    compact: bool,
+    inString: bool,
+    escaped: bool,
 }
-impl std::io::Write for PreferencesJsonBuffer {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+impl PreferencesJsonBuffer {
+    fn writeBytes(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         if self.countOnly {
             self.measured = self.measured.checked_add(bytes.len())
                 .ok_or(std::io::ErrorKind::OutOfMemory)?;
@@ -60,6 +63,26 @@ impl std::io::Write for PreferencesJsonBuffer {
                 return Err(std::io::ErrorKind::OutOfMemory.into());
             }
             self.bytes.extend_from_slice(bytes);
+        }
+        Ok(bytes.len())
+    }
+}
+impl std::io::Write for PreferencesJsonBuffer {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if !self.compact { return self.writeBytes(bytes); }
+        // RawValue bypasses the formatter. Filter only JSON whitespace outside
+        // strings; keep one serializer type for compact and ordinary writes.
+        for &byte in bytes {
+            if self.inString {
+                if self.escaped { self.escaped = false; }
+                else if byte == b'\\' { self.escaped = true; }
+                else if byte == b'"' { self.inString = false; }
+            } else if byte == b'"' {
+                self.inString = true;
+            } else if matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
+                continue;
+            }
+            self.writeBytes(&[byte])?;
         }
         Ok(bytes.len())
     }
@@ -1919,7 +1942,51 @@ pub struct CoreNodeStateStore {
     inner: PreferencesDataStore,
 }
 
+// Both local state and credentials use the same cache/publication contract.
+// These entry points keep preference replication out of endpoint-only binaries.
+macro_rules! node_local_preferences_api {
+    () => {
+        /// Read node-local state without linking the replicated preference recovery path.
+        pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
+            self.inner.dataWithScope::<true>()
+        }
+
+        pub fn schemaVersion(&self) -> Result<u32, PreferencesDataStoreError> {
+            PreferencesDataStore::readSchemaVersion(&self.data()?)
+        }
+
+        pub fn edit<F: FnOnce(&mut Preferences)>(&self, transform: F) -> Result<(), PreferencesDataStoreError> {
+            self.try_edit_result(|preferences| { transform(preferences); Ok(()) })
+        }
+
+        pub fn edit_result<F: FnOnce(&mut Preferences) -> T, T>(&self, transform: F) -> Result<T, PreferencesDataStoreError> {
+            self.try_edit_result(|preferences| Ok(transform(preferences)))
+        }
+
+        pub fn try_edit_result<F, T, E>(&self, transform: F) -> Result<T, E>
+        where F: FnOnce(&mut Preferences) -> Result<T, E>, E: From<PreferencesDataStoreError> {
+            self.inner.try_edit_result_internal::<true, _, _, _>(transform, false)
+        }
+
+        pub fn migrate<F, T, E>(&self, transform: F) -> Result<T, E>
+        where F: FnOnce(&mut Preferences) -> Result<T, E>, E: From<PreferencesDataStoreError> {
+            self.try_edit_result(transform)
+        }
+
+        pub fn replace(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+            self.inner.replaceWithScope::<true>(preferences)
+        }
+
+        pub fn replaceRecoverably(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+            self.replace(preferences)
+        }
+
+    };
+}
+
 impl CoreNodeStateStore {
+    node_local_preferences_api!();
+
     /// Returns the process-local publication revision shared by all handles to this record.
     pub(crate) fn revision(&self) -> u64 {
         *self.inner.changeSignal.version.lock()
@@ -2089,12 +2156,12 @@ impl CoreNodeStateStore {
                 BTreeMap::new()
             } else { serde_json::from_slice(&bytes)? };
             let version = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
-                .map(|version| serde_json::from_str(version.get())).transpose()?;
+                .map(|version| serde_json::from_slice((version.get()).as_bytes())).transpose()?;
             if self.nodeSchemaIsCurrent(version)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
                 let mut added = BTreeMap::new();
                 for &(key, value) in incoming {
                     if let Some(old) = entries.get(key) {
-                        let old: T = serde_json::from_str(old.get())?;
+                        let old: T = serde_json::from_slice((old.get()).as_bytes())?;
                         if &old != value { return Err(conflict()); }
                     } else if let Some(old) = added.insert(key, value) {
                         if old != value { return Err(conflict()); }
@@ -2102,7 +2169,7 @@ impl CoreNodeStateStore {
                 }
                 if added.is_empty() { return Ok(()); }
                 let merged = NodeEntryBatch { entries: &entries, added: &added };
-                let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
+                let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true, compact: false, inString: false, escaped: false };
                 let encode = |output: &mut PreferencesJsonBuffer| merged.serialize(&mut serde_json::Serializer::with_formatter(
                     output, serde_json::ser::CompactFormatter));
                 encode(&mut content)?;
@@ -2155,17 +2222,13 @@ impl CoreNodeStateStore {
                 BTreeMap::new()
             } else { serde_json::from_slice(&bytes)? };
             let version = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME)
-                .map(|version| serde_json::from_str(version.get())).transpose()?;
+                .map(|version| serde_json::from_slice((version.get()).as_bytes())).transpose()?;
             if self.nodeSchemaIsCurrent(version)? && !entries.contains_key(PREFERENCES_REPLICATION_KEY) {
                 let replacement = NodeEntryReplacement { entries: &entries, key, value };
-                let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
+                let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true, compact: false, inString: false, escaped: false };
+                content.compact = compactEntries;
                 let encode = |output: &mut PreferencesJsonBuffer| {
-                    if compactEntries {
-                        replacement.serialize(&mut serde_json::Serializer::with_formatter(
-                            CompactJsonWriter { output, inString: false, escaped: false }, serde_json::ser::CompactFormatter))
-                    } else {
-                        replacement.serialize(&mut serde_json::Serializer::with_formatter(output, serde_json::ser::CompactFormatter))
-                    }
+                    replacement.serialize(&mut serde_json::Serializer::with_formatter(output, serde_json::ser::CompactFormatter))
                 };
                 encode(&mut content)?;
                 content.bytes.try_reserve_exact(content.measured)
@@ -2218,7 +2281,7 @@ impl CoreNodeStateStore {
     pub fn withSchema<F>(mut self, currentVersion: u32, migrate: F) -> Self
     where F: Fn(u32, &mut Preferences) -> Result<(), PreferencesDataStoreError> + Send + Sync + 'static {
         self.inner.schema = Some(PreferencesSchema { currentVersion,
-            migrate: Arc::new(crate::Transaction::migration::Definition::from_preferences(migrate)) });
+            migrate: Arc::new(crate::Transaction::migration::Definition::from_node_preferences(migrate)) });
         self
     }
 
@@ -2288,33 +2351,6 @@ impl<'de, F: FnMut(&str, &serde_json::value::RawValue) -> Result<(), String>> se
         }
         Ok(())
     }
-}
-
-/// RawValue bypasses serde's formatter. Filter only JSON whitespace outside
-/// strings, preserving every token, escape, number spelling and key order.
-/// State spans write calls; input has already passed serde's JSON validation.
-struct CompactJsonWriter<W> {
-    output: W,
-    inString: bool,
-    escaped: bool,
-}
-impl<W: std::io::Write> std::io::Write for CompactJsonWriter<W> {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        for &byte in bytes {
-            if self.inString {
-                if self.escaped { self.escaped = false; }
-                else if byte == b'\\' { self.escaped = true; }
-                else if byte == b'"' { self.inString = false; }
-            } else if byte == b'"' {
-                self.inString = true;
-            } else if matches!(byte, b' ' | b'\n' | b'\r' | b'\t') {
-                continue;
-            }
-            self.output.write_all(&[byte])?;
-        }
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> { self.output.flush() }
 }
 
 /// Borrow old JSON payloads and serialize only the replaced typed value.
@@ -2406,6 +2442,8 @@ pub struct CoreNodeSecretStore {
 }
 
 impl CoreNodeSecretStore {
+    node_local_preferences_api!();
+
     /// Declares the owning secret module's versioned migration.
     pub fn withSchema<F>(mut self, currentVersion: u32, migrate: F) -> Self
     where
@@ -2414,7 +2452,8 @@ impl CoreNodeSecretStore {
             + Sync
             + 'static,
     {
-        self.inner = self.inner.withSchema(currentVersion, migrate);
+        self.inner.schema = Some(PreferencesSchema { currentVersion,
+            migrate: Arc::new(crate::Transaction::migration::Definition::from_node_preferences(migrate)) });
         self
     }
 
@@ -2762,7 +2801,7 @@ impl PreferencesSyncedEntry {
             return Err(PreferencesDataStoreError::Message("Not a preference operation".into()));
         }
         let path = operation.payload["storagePath"].as_str().filter(|path| !path.is_empty()).map(str::to_owned).or_else(|| {
-            let (path, key) = serde_json::from_str::<(String, String)>(&operation.entityId).ok()?;
+            let (path, key) = serde_json::from_slice::<(String, String)>(operation.entityId.as_bytes()).ok()?;
             (operation.payload["key"].as_str() == Some(key.as_str())).then_some(path)
         }).or_else(|| {
             // Blob transport replaces large initialization payloads with a reference
@@ -3110,6 +3149,12 @@ impl PreferencesDataStore {
 
     /// Reads the current preferences snapshot.
     pub fn data(&self) -> Result<Preferences, PreferencesDataStoreError> {
+        self.dataWithScope::<false>()
+    }
+
+    // Node-local owners cannot carry a preference journal. Specialize at the
+    // owner boundary so constrained builds can discard unreachable replication.
+    fn dataWithScope<const NODE_LOCAL: bool>(&self) -> Result<Preferences, PreferencesDataStoreError> {
         let retain = self.syncDescriptor.is_some() || self.storageHost.retainPreferencesCache();
         if retain {
             if let Some(preferences) = self.loadedPreferences() {
@@ -3120,7 +3165,7 @@ impl PreferencesDataStore {
         }
         let _transaction = self.lockTransaction();
         self.loadUnlocked()?;
-        self.migrateSchemaUnlocked()?;
+        self.migrateSchemaUnlocked::<NODE_LOCAL>()?;
         let preferences = self.loadedPreferences()
             .expect("PreferencesDataStore must be loaded after a successful load");
         self.releaseNodeLocalCacheUnlocked();
@@ -3203,12 +3248,12 @@ impl PreferencesDataStore {
 
     #[allow(non_snake_case)]
     /// Migrates the loaded snapshot to the declared schema while the transaction lock is held.
-    fn migrateSchemaUnlocked(&self) -> Result<(), PreferencesDataStoreError> {
+    fn migrateSchemaUnlocked<const NODE_LOCAL: bool>(&self) -> Result<(), PreferencesDataStoreError> {
         let currentPreferences = self
             .loadedPreferences()
             .expect("PreferencesDataStore must be loaded before schema migration");
         let mut preferences = currentPreferences.clone();
-        if self.syncDescriptor.is_some() { crate::Transaction::preference::recover(self, &mut preferences)?; }
+        if !NODE_LOCAL && self.syncDescriptor.is_some() { crate::Transaction::preference::recover(self, &mut preferences)?; }
 
         if !self.migratePreferencesToCurrentSchema(&mut preferences)? {
             return Ok(());
@@ -3392,7 +3437,7 @@ impl PreferencesDataStore {
         F: FnOnce(&mut Preferences) -> Result<T, E>,
         E: From<PreferencesDataStoreError>,
     {
-        self.try_edit_result_internal(transform, true)
+        self.try_edit_result_internal::<false, _, _, _>(transform, true)
     }
 
     /// Applies a local migration or repair without emitting synchronization operations.
@@ -3401,11 +3446,11 @@ impl PreferencesDataStore {
         F: FnOnce(&mut Preferences) -> Result<T, E>,
         E: From<PreferencesDataStoreError>,
     {
-        self.try_edit_result_internal(transform, false)
+        self.try_edit_result_internal::<false, _, _, _>(transform, false)
     }
 
     /// Applies one preference mutation with explicit synchronization behavior.
-    fn try_edit_result_internal<F, T, E>(
+    pub(crate) fn try_edit_result_internal<const NODE_LOCAL: bool, F, T, E>(
         &self,
         transform: F,
         recordSyncOperations: bool,
@@ -3438,7 +3483,7 @@ impl PreferencesDataStore {
         let mut currentPreferences = self
             .loadedPreferences()
             .expect("PreferencesDataStore must be loaded before editing");
-        if self.syncDescriptor.is_some() {
+        if !NODE_LOCAL && self.syncDescriptor.is_some() {
             crate::Transaction::preference::recover(self, &mut currentPreferences).map_err(E::from)?;
         }
         // Stage schema changes with the edit. A failed first write must not
@@ -3452,7 +3497,7 @@ impl PreferencesDataStore {
             self.releaseNodeLocalCacheUnlocked();
             return Ok(result);
         }
-        if recordSyncOperations {
+        if !NODE_LOCAL && recordSyncOperations {
             self.persistEditUnlocked(currentPreferences, &mut preferences)
                 .map_err(E::from)?;
         } else {
@@ -3475,7 +3520,11 @@ impl PreferencesDataStore {
     }
 
     /// Replaces the full preferences snapshot and notifies observers.
-    pub fn replace(&self, mut preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+    pub fn replace(&self, preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
+        self.replaceWithScope::<false>(preferences)
+    }
+
+    pub(crate) fn replaceWithScope<const NODE_LOCAL: bool>(&self, mut preferences: Preferences) -> Result<(), PreferencesDataStoreError> {
         let _transaction = self.lockTransaction();
         if self.syncDescriptor.is_none() && self.encryption.is_none() && !self.storageHost.retainPreferencesCache() {
             self.releaseNodeLocalCacheUnlocked();
@@ -3488,7 +3537,7 @@ impl PreferencesDataStore {
             } else { serde_json::from_slice(&plaintext)? };
             let mut probe = emptyPreferences();
             if let Some(version) = entries.get(PREFERENCES_SCHEMA_VERSION_KEY_NAME) {
-                probe.set(&Self::schemaVersionKey(), serde_json::from_str::<Value>(version.get())?);
+                probe.set(&Self::schemaVersionKey(), serde_json::from_slice::<Value>((version.get()).as_bytes())?);
             }
             if self.schemaIsCurrent(&probe)? {
                 if let Some(schema) = &self.schema {
@@ -3518,7 +3567,7 @@ impl PreferencesDataStore {
             self.releaseNodeLocalCacheUnlocked();
             return Ok(());
         }
-        self.persistEditUnlocked(currentPreferences, &mut preferences)?;
+        self.persistEditWithScope::<NODE_LOCAL>(currentPreferences, &mut preferences)?;
         let mut loaded = self
             .sharedState
             .preferences
@@ -3570,7 +3619,7 @@ impl PreferencesDataStore {
         }
 
         let bounded = self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache();
-        let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: bounded, bounded };
+        let mut content = PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: bounded, bounded, compact: false, inString: false, escaped: false };
         // PrettyFormatter with an empty indent still emits newlines and spaces.
         // Node-local constrained storage needs compact JSON; retained Core and
         // replicated datasets keep their existing human-readable encoding.
@@ -3600,6 +3649,12 @@ impl PreferencesDataStore {
         previous: Preferences,
         preferences: &mut Preferences,
     ) -> Result<(), PreferencesDataStoreError> {
+        self.persistEditWithScope::<false>(previous, preferences)
+    }
+
+    fn persistEditWithScope<const NODE_LOCAL: bool>(
+        &self, previous: Preferences, preferences: &mut Preferences,
+    ) -> Result<(), PreferencesDataStoreError> {
         if self.syncDescriptor.is_none() && !self.storageHost.retainPreferencesCache() {
             preferences.commit = previous.commit.clone();
             {
@@ -3608,6 +3663,8 @@ impl PreferencesDataStore {
                 loaded.preferences = emptyPreferences();
             }
             drop(previous);
+            self.writeStoredPreferencesUnlocked(preferences)
+        } else if NODE_LOCAL {
             self.writeStoredPreferencesUnlocked(preferences)
         } else {
             self.persistUnlocked(&previous, preferences)

@@ -143,47 +143,62 @@ pub fn encodeLinkInto(
     appendLink(value, output)
 }
 
+struct LinkOutput<'a> {
+    output: &'a mut Vec<u8>,
+    count: Option<usize>,
+}
+impl std::io::Write for LinkOutput<'_> {
+    /// Grows fallibly in bounded blocks across small serializer writes.
+    /// Counts encoded bytes without retaining payload data.
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        if let Some(count) = self.count.as_mut() {
+            *count = count.checked_add(bytes.len())
+                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+            return Ok(bytes.len());
+        }
+        let memory = || std::io::Error::from(std::io::ErrorKind::OutOfMemory);
+        if !cfg!(target_os = "espidf") {
+            self.output.try_reserve(bytes.len()).map_err(|_| memory())?;
+            self.output.extend_from_slice(bytes);
+            return Ok(bytes.len());
+        }
+        let required = self.output.len().checked_add(bytes.len()).ok_or_else(memory)?;
+        if required > self.output.capacity() {
+            // Keep growth bounded while the complete source tree is still
+            // alive. Doubling a multi-KiB buffer needs two large blocks at
+            // once on small fragmented heaps. Serialize only once so stream
+            // source capture and attachment registration remain unchanged.
+            let growth = self.output.capacity().clamp(256, 512);
+            let capacity = required.max(self.output.capacity().saturating_add(growth));
+            self.output
+                .try_reserve_exact(capacity - self.output.len())
+                .map_err(|_| memory())?;
+        }
+        self.output.extend_from_slice(bytes);
+        Ok(bytes.len())
+    }
+    /// Completes an in-memory write without flushing an external destination.
+    /// Completes a counting writer without allocating storage.
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+// The same serializer specialization counts plain data and emits real frames.
+// Keep serialization single-pass, including source/attachment capture.
+#[cfg_attr(target_os = "espidf", inline(never))]
+fn serializeLinkOutput(value: impl Serialize, output: &mut LinkOutput<'_>) -> Result<(), CoreLinkCodecError> {
+    value.serialize(&mut rmp_serde::Serializer::new(output).with_struct_map())
+        .map_err(|error| CoreLinkCodecError::Encode(error.to_string()))
+}
+
 /// Appends one value after an existing frame header without copying the payload.
 /// Serialization runs once; failure clears the entire incomplete frame.
 #[allow(non_snake_case)]
 pub fn appendLink(value: impl Serialize, output: &mut Vec<u8>) -> Result<(), CoreLinkCodecError> {
-    struct Output<'a>(&'a mut Vec<u8>);
-    impl std::io::Write for Output<'_> {
-        /// Grows fallibly in bounded blocks across small serializer writes.
-        /// Counts encoded bytes without retaining payload data.
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            let memory = || std::io::Error::from(std::io::ErrorKind::OutOfMemory);
-            if !cfg!(target_os = "espidf") {
-                self.0.try_reserve(bytes.len()).map_err(|_| memory())?;
-                self.0.extend_from_slice(bytes);
-                return Ok(bytes.len());
-            }
-            let required = self.0.len().checked_add(bytes.len()).ok_or_else(memory)?;
-            if required > self.0.capacity() {
-                // Keep growth bounded while the complete source tree is still
-                // alive. Doubling a multi-KiB buffer needs two large blocks at
-                // once on small fragmented heaps. Serialize only once so stream
-                // source capture and attachment registration remain unchanged.
-                let growth = self.0.capacity().clamp(256, 512);
-                let capacity = required.max(self.0.capacity().saturating_add(growth));
-                self.0
-                    .try_reserve_exact(capacity - self.0.len())
-                    .map_err(|_| memory())?;
-            }
-            self.0.extend_from_slice(bytes);
-            Ok(bytes.len())
-        }
-        /// Completes an in-memory write without flushing an external destination.
-        /// Completes a counting writer without allocating storage.
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
     // Serialize exactly once: stream serializers can capture source handles.
     // Fallible bounded growth avoids reallocating for every scalar or map key.
-    let result = value
-        .serialize(&mut rmp_serde::Serializer::new(Output(output)).with_struct_map())
-        .map_err(|error| CoreLinkCodecError::Encode(error.to_string()));
+    let result = serializeLinkOutput(value, &mut LinkOutput { output, count: None });
     if result.is_err() {
         output.clear();
     }
@@ -194,26 +209,10 @@ pub fn appendLink(value: impl Serialize, output: &mut Vec<u8>) -> Result<(), Cor
 /// serializer still runs once; do not use this with consuming replies or streams.
 #[allow(non_snake_case)]
 pub fn encodedLinkSize(value: impl Serialize) -> Result<usize, CoreLinkCodecError> {
-    struct Counter(usize);
-    impl std::io::Write for Counter {
-        /// Counts encoded bytes without retaining payload data.
-        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            self.0 = self
-                .0
-                .checked_add(bytes.len())
-                .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
-            Ok(bytes.len())
-        }
-        /// Completes a counting writer without allocating storage.
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
-    }
-    let mut count = Counter(0);
-    value
-        .serialize(&mut rmp_serde::Serializer::new(&mut count).with_struct_map())
-        .map_err(|error| CoreLinkCodecError::Encode(error.to_string()))?;
-    Ok(count.0)
+    let mut unused = Vec::new();
+    let mut output = LinkOutput { output: &mut unused, count: Some(0) };
+    serializeLinkOutput(value, &mut output)?;
+    Ok(output.count.expect("counting Link output"))
 }
 
 /// Decodes a value from the single Link MessagePack representation.

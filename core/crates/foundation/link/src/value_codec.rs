@@ -305,15 +305,12 @@ impl<'de> Deserializer<'de> for CoreValue {
             CoreValue::String(v) => visitor.visit_string(v),
             CoreValue::Bytes(v) => visitor.visit_bytes(&v),
             CoreValue::List(v) => {
-                let mut seq = de::value::SeqDeserializer::new(v.into_iter());
-                let result = visitor.visit_seq(&mut seq)?;
-                seq.end()?;
-                Ok(result)
+                visit_value_sequence(ValueSequence::Values(v.into_iter()), visitor)
             }
             CoreValue::Map(v) => {
-                let mut map = de::value::MapDeserializer::new(v.into_iter());
+                let mut map = ValueMap(de::value::MapDeserializer::new(v.into_iter()));
                 let result = visitor.visit_map(&mut map)?;
-                map.end()?;
+                map.0.end()?;
                 Ok(result)
             }
         }
@@ -381,10 +378,7 @@ impl<'de> Deserializer<'de> for CoreValue {
     fn deserialize_seq<V: Visitor<'de>>(self, visitor: V) -> Result<V::Value, Error> {
         match self {
             CoreValue::Bytes(v) => {
-                let mut seq = de::value::SeqDeserializer::new(v.iter().copied());
-                let result = visitor.visit_seq(&mut seq)?;
-                seq.end()?;
-                Ok(result)
+                visit_value_sequence(ValueSequence::Bytes { bytes: v, index: 0 }, visitor)
             }
             v => v.deserialize_any(visitor),
         }
@@ -410,6 +404,70 @@ impl<'de> Deserializer<'de> for CoreValue {
     }
     serde::forward_to_deserialize_any! { bool i8 i16 i32 i64 u8 u16 u32 u64 f32 f64 char str string bytes byte_buf unit map identifier ignored_any }
 }
+// One visitor instantiation handles both list elements and binary-as-sequence.
+// Keep byte elements as u8 deserializers, matching Serde's original semantics.
+enum ValueSequence {
+    Values(std::vec::IntoIter<CoreValue>),
+    Bytes { bytes: crate::CoreBytes, index: usize },
+}
+impl ValueSequence {
+    fn remaining(&self) -> usize {
+        match self {
+            Self::Values(values) => values.len(),
+            Self::Bytes { bytes, index } => bytes.len() - index,
+        }
+    }
+}
+impl<'de> de::SeqAccess<'de> for ValueSequence {
+    type Error = Error;
+    #[cfg_attr(target_os = "espidf", inline(never))]
+    fn next_element_seed<T: de::DeserializeSeed<'de>>(
+        &mut self, seed: T,
+    ) -> Result<Option<T::Value>, Error> {
+        match self {
+            Self::Values(values) => values.next().map(|value| seed.deserialize(value)).transpose(),
+            Self::Bytes { bytes, index } => {
+                let Some(&byte) = bytes.get(*index) else { return Ok(None); };
+                *index += 1;
+                seed.deserialize(de::value::U8Deserializer::<Error>::new(byte)).map(Some)
+            }
+        }
+    }
+    fn size_hint(&self) -> Option<usize> { Some(self.remaining()) }
+}
+#[cfg_attr(target_os = "espidf", inline(never))]
+fn visit_value_sequence<'de, V: Visitor<'de>>(
+    mut sequence: ValueSequence, visitor: V,
+) -> Result<V::Value, Error> {
+    let result = visitor.visit_seq(&mut sequence)?;
+    if sequence.remaining() != 0 {
+        return Err(error("sequence has unconsumed elements"));
+    }
+    Ok(result)
+}
+
+// Preserve Serde's map validation while sharing each field decoder across
+// typed messages instead of inlining it into every map visitor under LTO.
+struct ValueMap<'de>(de::value::MapDeserializer<
+    'de, std::collections::btree_map::IntoIter<String, CoreValue>, Error,
+>);
+impl<'de> de::MapAccess<'de> for ValueMap<'de> {
+    type Error = Error;
+    #[cfg_attr(target_os = "espidf", inline(never))]
+    fn next_key_seed<K: de::DeserializeSeed<'de>>(
+        &mut self, seed: K,
+    ) -> Result<Option<K::Value>, Error> {
+        de::MapAccess::next_key_seed(&mut self.0, seed)
+    }
+    #[cfg_attr(target_os = "espidf", inline(never))]
+    fn next_value_seed<V: de::DeserializeSeed<'de>>(
+        &mut self, seed: V,
+    ) -> Result<V::Value, Error> {
+        de::MapAccess::next_value_seed(&mut self.0, seed)
+    }
+    fn size_hint(&self) -> Option<usize> { de::MapAccess::size_hint(&self.0) }
+}
+
 struct ValueEnum(String, CoreValue);
 impl<'de> de::EnumAccess<'de> for ValueEnum {
     type Error = Error;

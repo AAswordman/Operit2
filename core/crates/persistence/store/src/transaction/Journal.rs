@@ -40,6 +40,25 @@ impl Journal {
         connection.executeBatch("CREATE TABLE IF NOT EXISTS preference_compaction_policy(path TEXT PRIMARY KEY,format INTEGER NOT NULL,safe INTEGER NOT NULL)")?;
         #[cfg(feature = "full")]
         connection.executeBatch(super::file_index::SCHEMA)?;
+        // An endpoint may already have published author identities before a
+        // SQL journal exists. Keep its reservation when promoting this Host.
+        let path = operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_IDENTITY_PATH;
+        if host.exists(path)? {
+            #[derive(Deserialize)]
+            struct AuthorIdentity {
+                #[serde(rename = "controlSequence")] sequence: Option<i64>,
+                #[serde(default)] record: serde_json::Value,
+            }
+            let identity: AuthorIdentity = serde_json::from_slice(&host.readBytes(path)?)?;
+            if let Some(sequence) = identity.sequence {
+                let origin = identity.record.get("deviceId").and_then(serde_json::Value::as_str)
+                    .filter(|origin| !origin.is_empty()).ok_or_else(|| Error::Message("Missing endpoint author identity".into()))?;
+                if sequence < 0 { return Err(Error::Message("Invalid endpoint author sequence".into())); }
+                connection.execute("INSERT INTO transaction_authors(origin,sequence,logical_time) VALUES(?1,?2,0)
+                    ON CONFLICT(origin) DO UPDATE SET sequence=MAX(sequence,excluded.sequence)",
+                    vec![text(origin), SqliteValue::Integer(sequence)])?;
+            }
+        }
         Ok(Self(connection))
     }
 

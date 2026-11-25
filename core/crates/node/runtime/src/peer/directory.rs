@@ -10,6 +10,22 @@ use std::{
 };
 use tokio::sync::oneshot;
 
+pub(super) type StartDirectory = for<'a> fn(&'a HostRuntimePeerService) ->
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CoreLinkError>> + Send + 'a>>;
+
+pub(super) fn startServer(service: &HostRuntimePeerService) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CoreLinkError>> + Send + '_>> {
+    Box::pin(service.startDirectoryServer())
+}
+
+pub(super) fn startEndpoint(service: &HostRuntimePeerService) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), CoreLinkError>> + Send + '_>> {
+    Box::pin(async move {
+        if service.directoryConfig()?.is_some_and(|config| config.directoryUrl.is_empty()) {
+            return Err(error("Directory requires an HTTP server Host"));
+        }
+        Ok(())
+    })
+}
+
 const PATH: &str = "/operit/discovery/v1";
 pub(super) const LEASE_MS: u64 = 45_000;
 pub(super) const MAX_PEERS: usize = 64;
@@ -172,6 +188,10 @@ impl HostRuntimePeerService {
     }
 
     pub(super) async fn startDirectory(&self) -> Result<(), CoreLinkError> {
+        (self.state.directoryStart)(self).await
+    }
+
+    async fn startDirectoryServer(&self) -> Result<(), CoreLinkError> {
         let Some(config) = self.directoryConfig()?.filter(|config| config.directoryUrl.is_empty()) else {
             return Ok(());
         };

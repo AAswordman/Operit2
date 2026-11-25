@@ -97,9 +97,9 @@ fn expire(request: &mut SpaceJoinRequest, targetSpaceId: &str, now: i64, spaceId
 #[inline(never)]
 fn load(service: &dyn NodeSpaceContext, path: &str, id: &str) -> Result<Box<Record>, String> {
     let encoded: Box<serde_json::value::RawValue> = store(service).record(path, id)?.ok_or("Join request not found")?;
-    let record: Record<Box<serde_json::value::RawValue>> = serde_json::from_str(encoded.get()).map_err(|error| error.to_string())?;
+    let record: Record<Box<serde_json::value::RawValue>> = serde_json::from_slice(encoded.get().as_bytes()).map_err(|error| error.to_string())?;
     drop(encoded);
-    let source = serde_json::from_str(record.source.get()).map_err(|error| error.to_string())?;
+    let source = serde_json::from_slice(record.source.get().as_bytes()).map_err(|error| error.to_string())?;
     Ok(Box::new(record.withSource(source)))
 }
 /// Persists evidence only for live consent; accepted policy remains in the shared control log.

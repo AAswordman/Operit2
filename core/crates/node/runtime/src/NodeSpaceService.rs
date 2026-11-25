@@ -490,7 +490,7 @@ pub(crate) fn observePeerSpaceSnapshot(service: &dyn NodeSpaceContext, peerNodeI
             service.networkControlStore().applyBootstrapOperation(&operation)?;
         }
         for json in encoded {
-            let operation = serde_json::from_str(&json).map_err(|error| error.to_string())?;
+            let operation = serde_json::from_slice(json.as_bytes()).map_err(|error| error.to_string())?;
             drop(json);
             service.networkControlStore().applyBootstrapOperation(&operation)?;
         }

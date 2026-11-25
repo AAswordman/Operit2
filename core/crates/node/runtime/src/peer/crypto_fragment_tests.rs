@@ -74,7 +74,7 @@ fn message(size: usize, response: bool) -> PeerMessage {
 /// Large requests and replies in either key direction arrive once, unchanged, with bounded frames.
 #[tokio::test]
 async fn messages_above_four_mib_are_transparent_in_both_directions() {
-    for limit in [8 * 1024, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES] {
+    for limit in [2 * 1024, 8 * 1024, operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES] {
         for clientSends in [true, false] {
             for response in [false, true] {
                 let (raw, sender, receiver) = channels(limit, clientSends);

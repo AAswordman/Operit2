@@ -233,18 +233,21 @@ pub struct PeerRuntimeLimits {
     pub incomingSessions: usize,
     pub pendingPairings: usize,
     pub concurrentProbes: usize,
-    /// Bounds physical encoded frames; authenticated logical messages are transparently fragmented.
+    /// Bounds logical payloads assembled by Space projection callers.
     pub maxMessageBytes: usize,
+    /// Bounds physical encoded frames negotiated by the authenticated session.
+    pub maxFrameBytes: usize,
 }
 impl Default for PeerRuntimeLimits {
-    fn default() -> Self { Self { incomingSessions: 64, pendingPairings: 32, concurrentProbes: 4, maxMessageBytes: operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES } }
+    fn default() -> Self { Self { incomingSessions: 64, pendingPairings: 32, concurrentProbes: 4, maxMessageBytes: operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES, maxFrameBytes: operit_peer_link::DEFAULT_MAX_PEER_MESSAGE_BYTES } }
 }
 impl PeerRuntimeLimits {
-    pub fn constrained() -> Self { Self { incomingSessions: 2, pendingPairings: 2, concurrentProbes: 1, maxMessageBytes: 8 * 1024 } }
+    pub fn constrained() -> Self { Self { incomingSessions: 2, pendingPairings: 2, concurrentProbes: 1, maxMessageBytes: 8 * 1024, maxFrameBytes: 8 * 1024 } }
 }
 
 struct State {
     limits: PeerRuntimeLimits,
+    directoryStart: directory::StartDirectory,
     host: Arc<HostManager>,
     link: HostPeerLink,
     store: PeerStateStore,
@@ -292,10 +295,25 @@ impl HostRuntimePeerService {
     pub fn newWithLimits<R: PeerRouter + 'static>(
         host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
     ) -> Result<Arc<Self>, String> {
+        Self::newWithDirectory(host, router, info, limits, directory::startServer)
+    }
+
+    /// Creates a receiver that browses/registers with directories but does not
+    /// host one. Its Host need not provide an HTTP server implementation.
+    pub fn newEndpointWithLimits<R: PeerRouter + 'static>(
+        host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
+    ) -> Result<Arc<Self>, String> {
+        Self::newWithDirectory(host, router, info, limits, directory::startEndpoint)
+    }
+
+    fn newWithDirectory<R: PeerRouter + 'static>(
+        host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
+        directoryStart: directory::StartDirectory,
+    ) -> Result<Arc<Self>, String> {
         if limits.incomingSessions == 0 || limits.pendingPairings == 0 || limits.concurrentProbes == 0 {
             return Err("Peer runtime limits must be positive".into());
         }
-        let link = HostPeerLink::withMaxMessageBytes(limits.maxMessageBytes)?;
+        let link = HostPeerLink::withMaxMessageBytes(limits.maxFrameBytes)?;
         let storage = host
             .runtimeStorageHost
             .clone()
@@ -303,6 +321,7 @@ impl HostRuntimePeerService {
         let service = Arc::new(Self {
             state: Arc::new(State {
                 limits,
+                directoryStart,
                 host,
                 link,
                 store: PeerStateStore::new(storage),
@@ -517,7 +536,7 @@ impl HostRuntimePeerService {
     ) -> Result<(Arc<Channel>, String, LinkDeviceInfo, Vec<u8>, String), CoreLinkError> {
         let (private, public) = crypto::ephemeral()?;
         let hello = Hello { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, nodeId: self.state.nodeId.clone(),
-            maxFrameBytes: self.state.limits.maxMessageBytes,
+            maxFrameBytes: self.state.limits.maxFrameBytes,
             expectedNodeId: raw.target().nodeId.clone(),
             info: self.state.store.announcedDeviceInfo(&self.state.info), public: public.clone(),
             purpose: purpose.into(), sessionId: sessionId.into(), duplex: true,
@@ -539,7 +558,7 @@ impl HostRuntimePeerService {
         let t = &reply.transcript;
         crate::PeerProtocol::PeerProtocol::requireAdvertised(t.protocol.as_ref(), "received hello reply")?;
         if t.version != PAIRING_SERVICE_VERSION || t.clientNodeId != self.state.nodeId || t.clientPublic != public
-            || t.clientMaxFrameBytes != self.state.limits.maxMessageBytes || t.serverMaxFrameBytes == 0
+            || t.clientMaxFrameBytes != self.state.limits.maxFrameBytes || t.serverMaxFrameBytes == 0
             || (!raw.target().nodeId.is_empty() && t.serverNodeId != raw.target().nodeId)
             || t.serverNodeId == self.state.nodeId || t.serverPublic.len() != 32 || t.challenge.len() != 32
             || (!sessionId.is_empty() && t.sessionId != sessionId) {
@@ -885,7 +904,7 @@ impl HostRuntimePeerService {
         let (private, public) = crypto::ephemeral()?;
         let id = if hello.purpose == "start" { uuid::Uuid::new_v4().to_string() } else { hello.sessionId.clone() };
         let transcript = crypto::Transcript { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, sessionId: id.clone(),
-            clientMaxFrameBytes: hello.maxFrameBytes, serverMaxFrameBytes: self.state.limits.maxMessageBytes,
+            clientMaxFrameBytes: hello.maxFrameBytes, serverMaxFrameBytes: self.state.limits.maxFrameBytes,
             clientNodeId: hello.nodeId.clone(), serverNodeId: self.state.nodeId.clone(),
             clientPublic: hello.public, serverPublic: public, challenge: crypto::random()?.to_vec() };
         let context = crypto::transcript(&transcript)?;
@@ -959,7 +978,7 @@ impl HostRuntimePeerService {
         // and transcript, not by the X25519 root an active relay could learn.
         let channelKey = sessionSecret.unwrap_or(key);
         let channel = Channel::new(raw.clone(), &channelKey, &context, false,
-            hello.maxFrameBytes.min(self.state.limits.maxMessageBytes))?;
+            hello.maxFrameBytes.min(self.state.limits.maxFrameBytes))?;
         if hello.purpose == "finish" {
             let Some(PeerMessage::Request(CoreLinkRequest::Call(request))) = channel.receive().await? else { return Err(error("Encrypted confirmation Call required")); };
             if request.target != HANDSHAKE || request.methodName != "finish" { return Err(error("Confirmation required before business")); }
@@ -1632,6 +1651,7 @@ mod single_channel_tests {
         let _ = operit_store::CoreSpaceStore::CoreSpaceStore::newNodeLocal(storage.clone()).initialize();
         HostRuntimePeerService { state: Arc::new(State {
             limits: PeerRuntimeLimits::default(),
+            directoryStart: directory::startServer,
             host: Arc::new(HostManager {
                 runtimeStorageHost: Some(storage.clone()),
                 hostRuntimeTaskSchedulerHost: Some(scheduler),

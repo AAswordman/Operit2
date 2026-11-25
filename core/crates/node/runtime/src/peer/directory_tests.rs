@@ -461,3 +461,21 @@ async fn directory_cache_expires_and_retains_hints_during_a_temporary_outage() {
     assert!(client.discoveryRecords().is_empty());
     assert!(client.discoverPeers(100).await.is_err());
 }
+
+#[tokio::test]
+async fn endpoint_directory_mode_rejects_hosting_and_keeps_client_discovery() {
+    let (directory, url, _) = directory().await;
+    let mut client = service("endpoint-client");
+    Arc::get_mut(&mut client.state).unwrap().directoryStart = startEndpoint;
+    client.startDirectory().await.unwrap();
+    saveConfig(&client, PeerDiscoveryConfig { groupKey: GROUP.into(), ..Default::default() });
+    assert!(client.startDirectory().await.unwrap_err().message.contains("HTTP server Host"));
+    assert!(client.state.discovery.directory.worker.lock().unwrap().is_none());
+    configure(&client, &url, GROUP);
+    Arc::get_mut(&mut Arc::get_mut(&mut client.state).unwrap().host).unwrap().httpServerHost = None;
+    client.startListening(&[PeerTransport::Tcp]).await.unwrap();
+    assert!(!client.discoverPeers(2000).await.unwrap().is_empty());
+    assert!(client.state.discovery.directory.worker.lock().unwrap().is_none());
+    client.stop().await.unwrap();
+    directory.stop().await.unwrap();
+}

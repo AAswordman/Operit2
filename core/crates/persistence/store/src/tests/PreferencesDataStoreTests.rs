@@ -2869,7 +2869,7 @@ fn bounded_json_buffer_measures_utf8_escapes_and_fails_without_growing() {
             value.serialize(&mut serde_json::Serializer::with_formatter(writer,
                 serde_json::ser::PrettyFormatter::with_indent(indent)))
         };
-        let mut writer = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true };
+        let mut writer = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: true, bounded: true, compact: false, inString: false, escaped: false };
         encode(&mut writer).unwrap();
         let measured = writer.measured;
         writer.bytes.try_reserve_exact(measured).unwrap();
@@ -2882,7 +2882,7 @@ fn bounded_json_buffer_measures_utf8_escapes_and_fails_without_growing() {
         value.serialize(&mut serde_json::Serializer::with_formatter(&mut expected,
             serde_json::ser::PrettyFormatter::with_indent(indent))).unwrap();
         assert_eq!(writer.bytes, expected);
-        let mut tooSmall = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: false, bounded: true };
+        let mut tooSmall = super::PreferencesJsonBuffer { bytes: Vec::new(), measured: 0, countOnly: false, bounded: true, compact: false, inString: false, escaped: false };
         assert!(encode(&mut tooSmall).is_err());
         assert_eq!(tooSmall.bytes.capacity(), 0);
     }
@@ -3546,4 +3546,29 @@ fn replay_skips_remigration_when_owner_state_covers_history() {
     let value = PreferencesDataStore::newWithStorage(host.clone(), path).withSchema(9, counted_migrations)
         .data().unwrap().get(&stringPreferencesKey("provider_p")).cloned();
     assert_eq!(value, Some(json!({"name":"Current"})));
+}
+
+#[test]
+fn node_local_schema_codec_keeps_state_atomic_without_a_transaction_view() {
+    let key = stringPreferencesKey("record");
+    let mut values = Preferences::default();
+    values.set(&key, json!({"old": 7}));
+    let failed = crate::Transaction::migration::Definition::from_node_preferences(|_, staged| {
+        staged.set(&stringPreferencesKey("partial"), true);
+        Err(PreferencesDataStoreError::Message("codec failed".into()))
+    });
+    let before = values.clone();
+    assert!(failed.state(0, &mut values).is_err());
+    assert_eq!(values, before);
+    assert!(values.view.is_none());
+    let migration = crate::Transaction::migration::Definition::from_node_preferences(|_, staged| {
+        let key = stringPreferencesKey("record");
+        let old = staged.get(&key).unwrap()["old"].clone();
+        staged.set(&key, json!({"new": old}));
+        Ok(())
+    });
+    migration.state(0, &mut values).unwrap();
+    assert_eq!(values.get(&key), Some(&json!({"new":7})));
+    assert!(values.view.is_none());
+    assert!(values.commit.is_none());
 }

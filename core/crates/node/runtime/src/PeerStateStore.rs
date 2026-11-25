@@ -152,7 +152,7 @@ impl PeerStateStore {
                             continue;
                         }
                         let encoded = serde_json::from_value::<String>(value)?;
-                        let record: Value = serde_json::from_str(&encoded)?;
+                        let record: Value = serde_json::from_slice((&encoded).as_bytes())?;
                         preferences.set(&stringPreferencesKey(&key), record);
                     }
                     Ok(())
@@ -206,7 +206,7 @@ impl PeerStateStore {
                             key.name
                         ))
                     })?;
-                    preferences.set(&key, serde_json::from_str::<Value>(&encoded)?);
+                    preferences.set(&key, serde_json::from_slice::<Value>((&encoded).as_bytes())?);
                 }
                 decodeHostConfig(preferences).map_err(PreferencesDataStoreError::Message)?;
                 Ok(())
@@ -251,7 +251,7 @@ impl PeerStateStore {
                         continue;
                     }
                     let encoded = serde_json::from_value::<String>(value)?;
-                    let record: Value = serde_json::from_str(&encoded)?;
+                    let record: Value = serde_json::from_slice((&encoded).as_bytes())?;
                     serde_json::from_value::<StoredOutbound>(record.clone())?;
                     preferences.set(&stringPreferencesKey(&key), record);
                 }
@@ -270,7 +270,7 @@ impl PeerStateStore {
                 continue;
             }
             let mut record: Value =
-                serde_json::from_str(&serde_json::from_value::<String>(encoded)?)?;
+                serde_json::from_slice((&serde_json::from_value::<String>(encoded)?).as_bytes())?;
             let fields = record.as_object_mut().ok_or_else(|| {
                 PreferencesDataStoreError::Message(format!("Invalid outbound record: {name}"))
             })?;
@@ -319,7 +319,7 @@ impl PeerStateStore {
     pub(crate) fn independentRecords<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
         let mut records = BTreeMap::new();
         self.store(path).visitEncodedEntries(|name, encoded| {
-            match serde_json::from_str(encoded.get()) {
+            match serde_json::from_slice((encoded.get()).as_bytes()) {
                 Ok(record) => { records.insert(name.to_owned(), record); },
                 Err(error) => { operit_util::AppLogger::AppLogger::w("PeerStateStore",
                     &format!("Invalid peer state record at {path}, key {name}: {error}")); },

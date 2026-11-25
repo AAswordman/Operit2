@@ -261,14 +261,20 @@ impl NetworkControlStore {
     /// Constructs the handle without reading or replaying Space data.
     #[allow(non_snake_case)]
     pub fn withLocalNodeId(storage: Arc<dyn RuntimeStorageHost>, localNodeId: String) -> Self {
+        let spaceStore = CoreSpaceStore::new(storage.clone());
+        Self::withSpaceStore(storage, localNodeId, spaceStore, false)
+    }
+
+    fn withSpaceStore(storage: Arc<dyn RuntimeStorageHost>, localNodeId: String,
+        spaceStore: CoreSpaceStore, nodeLocalOnly: bool) -> Self {
         let syncOperationStore = SyncOperationStore::new(storage.clone(), RUNTIME_SYNC_DIR_PATH);
         Self {
-            spaceStore: CoreSpaceStore::new(storage.clone()),
+            spaceStore,
             syncOperationStore,
             controlProjection: Self::projectionStore(storage.clone()),
             boundedStorage: !storage.retainPreferencesCache(),
             storage,
-            nodeLocalOnly: false,
+            nodeLocalOnly,
             localNodeId,
         }
     }
@@ -282,7 +288,7 @@ impl NetworkControlStore {
                     for (key, value) in preferences.entries() {
                         if key == crate::PreferencesDataStore::PREFERENCES_SCHEMA_VERSION_KEY_NAME { continue; }
                         let encoded = serde_json::from_value::<String>(value)?;
-                        let operation: SyncOperation = serde_json::from_str(&encoded)?;
+                        let operation: SyncOperation = serde_json::from_slice((&encoded).as_bytes())?;
                         preferences.set(&stringPreferencesKey(&key), serde_json::to_value(operation)?);
                     }
                     Ok(())
@@ -304,10 +310,9 @@ impl NetworkControlStore {
     /// replication journal. No sync clocks/device indices are created here.
     #[allow(non_snake_case)]
     pub fn newNodeLocal(storage: Arc<dyn RuntimeStorageHost>) -> Result<Self, String> {
-        let mut store = Self::new(storage.clone())?;
-        store.spaceStore = CoreSpaceStore::newNodeLocal(storage);
-        store.nodeLocalOnly = true;
-        Ok(store)
+        let localNodeId = CoreNodeIdentityStore::new(storage.clone()).initialize()?.nodeId;
+        let spaceStore = CoreSpaceStore::newNodeLocal(storage.clone());
+        Ok(Self::withSpaceStore(storage, localNodeId, spaceStore, true))
     }
 
     /// Opens the Space control store over the process-wide runtime storage host.
@@ -612,7 +617,7 @@ impl NetworkControlStore {
         self.visitEncodedCommands(spaceId, |json| {
             let (operation, _, _) = decodeEncodedControlOperation(json)?;
             if found.is_none() && operation.entityId == commandId && operation.originDeviceId == issuer {
-                found = Some(serde_json::from_str(json.get()).map_err(|error| error.to_string())?);
+                found = Some(serde_json::from_slice((json.get()).as_bytes()).map_err(|error| error.to_string())?);
             }
             Ok(())
         })?;
@@ -631,7 +636,7 @@ impl NetworkControlStore {
         &self, spaceId: &str, revision: Option<&str>, after: Option<&str>,
     ) -> Result<SpaceControlExport, String> {
         let (manifest, encoded) = self.readSpaceControlProjection(spaceId, ControlExportQuery::Page { revision, after })?;
-        let operation = encoded.map(|json| serde_json::from_str(json.get()))
+        let operation = encoded.map(|json| serde_json::from_slice((json.get()).as_bytes()))
             .transpose().map_err(|error| error.to_string())?;
         Ok(SpaceControlExport { revision: manifest.revision, count: manifest.count, operation })
     }
@@ -663,8 +668,8 @@ impl NetworkControlStore {
         let mut records: BTreeMap<String, Box<serde_json::value::RawValue>> = BTreeMap::new();
         for (id, json) in entries {
             if let Some(old) = records.get(&id) {
-                let old: SyncOperation = serde_json::from_str(old.get()).map_err(|error| error.to_string())?;
-                let incoming: SyncOperation = serde_json::from_str(json.get()).map_err(|error| error.to_string())?;
+                let old: SyncOperation = serde_json::from_slice((old.get()).as_bytes()).map_err(|error| error.to_string())?;
+                let incoming: SyncOperation = serde_json::from_slice((json.get()).as_bytes()).map_err(|error| error.to_string())?;
                 if old != incoming { return Err("Conflicting immutable Space control operation".into()); }
             } else { records.insert(id, json); }
         }
@@ -808,7 +813,7 @@ impl NetworkControlStore {
                 for encoded in entries.values() {
                     let (envelope, record, _) = decodeEncodedControlOperation(encoded)?;
                     if record.spaceId != spaceId || !operations.iter().any(|operation| operation.opId == envelope.opId) { continue; }
-                    let old: SyncOperation = serde_json::from_str(encoded.get()).map_err(|error| error.to_string())?;
+                    let old: SyncOperation = serde_json::from_slice((encoded.get()).as_bytes()).map_err(|error| error.to_string())?;
                     for (index, incoming) in operations.iter().enumerate() {
                         repeated[index] |= old == *incoming;
                     }
@@ -875,7 +880,7 @@ impl NetworkControlStore {
                 let bytes = storage.readBytes(&entry.path).map_err(|error| error.to_string())?;
                 let raw = std::str::from_utf8(&bytes).map_err(|error| error.to_string())?;
                 for line in raw.lines().filter(|line| !line.trim().is_empty()) {
-                    let operation: SyncOperation = serde_json::from_str(line).map_err(|error| error.to_string())?;
+                    let operation: SyncOperation = serde_json::from_slice((line).as_bytes()).map_err(|error| error.to_string())?;
                     if operation.domain == NETWORK_CONTROL_SYNC_DOMAIN {
                         validateControlOperation(&operation)?;
                         let key = stringPreferencesKey(&operation.opId);
@@ -1034,15 +1039,26 @@ impl NetworkControlStore {
         // fails and permanently breaks this Space's control-plane materialization.
         validateCommandRecord(&record)?;
         if self.nodeLocalOnly {
-            let mut sequence = 0;
+            // Reserve the author's identity before publication. The projection
+            // is pruned on Space exit; the node identity survives that pruning.
+            let author = CoreNodeStateStore::newWithStorage(self.storage.clone(),
+                operit_util::RuntimeStorageLayout::RUNTIME_LINK_ACCESS_IDENTITY_PATH);
+            let mut sequence = match author.typedEntry::<serde_json::Value>("controlSequence")
+                .map_err(|error| error.to_string())? {
+                Some(value) => value.as_i64().filter(|sequence| *sequence >= 0)
+                    .ok_or("Invalid endpoint author sequence")?,
+                None => 0,
+            };
             self.visitEncodedCommands(spaceId, |json| {
                 let (operation, _, _) = decodeEncodedControlOperation(json)?;
                 if operation.originDeviceId == self.localNodeId { sequence = sequence.max(operation.sequence); }
                 Ok(())
             })?;
             let sequence = sequence.checked_add(1).ok_or("Space control sequence exhausted")?;
+            author.setTypedEntry("controlSequence", &serde_json::Value::from(sequence))
+                .map_err(|error| error.to_string())?;
             let operation = SyncOperation {
-                opId: record.commandId.clone(), originDeviceId: self.localNodeId.clone(), sequence,
+                opId: format!("{}:{}", self.localNodeId, sequence), originDeviceId: self.localNodeId.clone(), sequence,
                 domain: NETWORK_CONTROL_SYNC_DOMAIN.into(), entityType: NETWORK_CONTROL_ENTITY_TYPE.into(),
                 entityId: record.commandId.clone(), operation: NETWORK_CONTROL_OPERATION.into(),
                 semantics: SyncOperationSemantics::Transaction,
@@ -1105,8 +1121,8 @@ impl NetworkControlStore {
                 let encoded = compact(json)?;
                 if let Some(old) = commands.iter().find(|old| old.id == encoded.id) {
                     // Compare the full envelope and unknown payload fields.
-                    let old: SyncOperation = serde_json::from_str(old.json.get()).map_err(|error| error.to_string())?;
-                    let new: SyncOperation = serde_json::from_str(encoded.json.get()).map_err(|error| error.to_string())?;
+                    let old: SyncOperation = serde_json::from_slice((old.json.get()).as_bytes()).map_err(|error| error.to_string())?;
+                    let new: SyncOperation = serde_json::from_slice((encoded.json.get()).as_bytes()).map_err(|error| error.to_string())?;
                     if old != new { return Err("Conflicting immutable Space control operation".into()); }
                 } else { commands.push(encoded); }
             }
@@ -1357,12 +1373,12 @@ struct EncodedControlOperation<'a> {
 #[allow(non_snake_case)]
 fn decodeEncodedControlOperation(json: &serde_json::value::RawValue)
     -> Result<(EncodedControlOperation<'_>, NetworkControlCommandRecord, bool), String> {
-    let operation: EncodedControlOperation<'_> = serde_json::from_str(json.get()).map_err(|error| error.to_string())?;
+    let operation: EncodedControlOperation<'_> = serde_json::from_slice((json.get()).as_bytes()).map_err(|error| error.to_string())?;
     if operation.domain != NETWORK_CONTROL_SYNC_DOMAIN || operation.entityType != NETWORK_CONTROL_ENTITY_TYPE
         || operation.operation != NETWORK_CONTROL_OPERATION || operation.semantics != SyncOperationSemantics::Transaction {
         return Err("operation is not a network control command".into());
     }
-    let record: NetworkControlCommandRecord = serde_json::from_str(operation.payload.get()).map_err(|error| error.to_string())?;
+    let record: NetworkControlCommandRecord = serde_json::from_slice((operation.payload.get()).as_bytes()).map_err(|error| error.to_string())?;
     validateCommandRecord(&record)?;
     if record.commandId != operation.entityId { return Err("network control command id does not match its operation entity".into()); }
     #[derive(Deserialize)]
@@ -1374,7 +1390,7 @@ fn decodeEncodedControlOperation(json: &serde_json::value::RawValue)
     // Unit commands such as LeaveSpace use a string tag, not an object.
     // Only admissions can carry the historical nodeIds representation.
     let legacy = if matches!(&record.command, NetworkControlCommand::AdmitSpace { .. }) {
-        let compatibility: Compatibility = serde_json::from_str(operation.payload.get()).map_err(|error| error.to_string())?;
+        let compatibility: Compatibility = serde_json::from_slice((operation.payload.get()).as_bytes()).map_err(|error| error.to_string())?;
         compatibility.command.admit_space.is_some_and(|admission| admission.nodes.is_some())
     } else { false };
     Ok((operation, record, legacy))

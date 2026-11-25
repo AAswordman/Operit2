@@ -204,6 +204,37 @@ fn endpoint_control_reads_do_not_open_sql_and_core_can_load_afterwards() {
     assert!(core.currentState().unwrap().memberNodeIds.contains("other-node"));
 }
 
+/// Endpoint authority can enter a Core journal, and identities survive a
+/// projection reset/Space exit and reopening the endpoint store.
+#[test]
+fn endpoint_control_operations_import_into_core_and_do_not_reuse_sequences() {
+    use crate::NetworkControlStore::NetworkControlStore;
+    use crate::CoreSpaceStore::CoreSpaceStore;
+    use operit_util::RuntimeStorageLayout::RUNTIME_SYNC_DIR_PATH;
+    let host = Arc::new(MemoryStorageHost::default());
+    let endpoint = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+    endpoint.initializeCurrentSpace().unwrap();
+    let mut operations = endpoint.currentSpaceOperations().unwrap();
+    operations.push(endpoint.admitMember("other-node".into()).unwrap());
+    let prior_sequence = operations.last().unwrap().sequence;
+    CoreSpaceStore::newNodeLocal(host.clone()).leave().unwrap();
+    endpoint.resetLocalProjection().unwrap();
+    drop(endpoint);
+    let reopened = NetworkControlStore::newNodeLocal(host.clone()).unwrap();
+    reopened.initializeCurrentSpace().unwrap();
+    let next = reopened.currentSpaceOperations().unwrap().pop().unwrap();
+    assert!(next.sequence > prior_sequence);
+    operations.push(next);
+    assert_eq!(host.journalOpenCount.load(Ordering::SeqCst), 0);
+    let core_host = Arc::new(MemoryStorageHost::default());
+    let journal = SyncOperationStore::new(core_host, RUNTIME_SYNC_DIR_PATH);
+    for operation in &operations {
+        assert_eq!(operation.opId, format!("{}:{}", operation.originDeviceId, operation.sequence));
+        journal.appendUnobservedOperations(std::slice::from_ref(operation)).unwrap();
+    }
+    assert_eq!(journal.operationsSince(&SyncClock::empty(), &[], 100).unwrap().len(), operations.len());
+}
+
 /// Builds one sync operation fixture with explicit compaction semantics.
 fn operation(
     sequence: i64,
@@ -2761,4 +2792,18 @@ fn owned_wire_envelope_preserves_fields_and_moves_large_payloads() {
     let moved = original.intoValue().unwrap();
     assert_eq!(moved, expected);
     assert_eq!(moved["payload"]["text"].as_str().unwrap().as_ptr(), pointer);
+}
+
+#[cfg(not(feature = "sqlite-journal"))]
+#[test]
+fn endpoint_build_refuses_sql_journals_without_opening_or_mutating_storage() {
+    let storage = Arc::new(MemoryStorageHost::default());
+    let store = SyncOperationStore::new(storage.clone(), "runtime/sync");
+    assert!(store.receipt().unwrap_err().to_string().contains("sqlite-journal feature"));
+    let mut item = operation(1, "preferences", "probe", "set", SyncOperationSemantics::Transaction, json!({}));
+    item.payload = json!({"encrypted": true, "value": "invalid ciphertext"});
+    assert!(store.appendUnobservedOperations(&[item.clone()]).unwrap_err().to_string().contains("sqlite-journal feature"));
+    assert!(store.receiveOperations(&[item.clone()]).unwrap_err().to_string().contains("sqlite-journal feature"));
+    assert!(store.recoverAppendedOperation(&item).unwrap_err().to_string().contains("sqlite-journal feature"));
+    assert_eq!(storage.writeCount(), 0);
 }

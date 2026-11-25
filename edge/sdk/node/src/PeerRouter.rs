@@ -85,6 +85,12 @@ impl EdgePeerRouter {
 impl PeerRouter for EdgePeerRouter {
     /// Edge permission reads use the node-local authority installed by NodeSpaceService.
     fn nodeLocalControlProjection(&self) -> bool { true }
+    fn peerConnectionRevoked(
+        &self, _storage: Arc<dyn operit_host_api::RuntimeStorageHost>, node: &str,
+    ) -> Result<bool, String> {
+        self.space.get().ok_or("Edge Space services are not installed")?
+            .networkControlStore().nodeIsDisconnected(node)
+    }
     fn localNodeId(&self) -> String {
         self.nodeId.clone()
     }
