@@ -21,6 +21,12 @@
 
 <!-- 列出实际运行过的命令及结果。没有运行的检查请明确说明原因。 -->
 
+内置包解析为必需检查，覆盖 `buildin` 和 `external`，包括默认关闭的插件。任何包解析或 `registerToolPkg` 注册失败，构建失败，PR 不予合并。请记录以下命令的结果及 `Package parsing` 检查状态：
+
+```sh
+python plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload
+```
+
 ```text
 在此填写验证命令和结果
 ```
@@ -31,6 +37,7 @@
 
 ## 提交者确认
 
+- [ ] 全部内置及官方扩展包通过生产解析器和注册引擎校验，PR 的 `Package parsing` 检查通过。
 - [ ] 我已阅读 [CONTRIBUTING.md](https://github.com/AAswordman/Operit2/blob/main/CONTRIBUTING.md)。
 - [ ] 我已按 [CLA.md](https://github.com/AAswordman/Operit2/blob/main/CLA.md) 的流程签署协议，或提供了覆盖本次贡献的既有签署记录；所有共同贡献者均有相应签署记录。
 - [ ] 我拥有本次提交内容的版权或必要授权。

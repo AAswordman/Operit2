@@ -22,6 +22,38 @@ SPEC.loader.exec_module(SYNC)
 
 
 class PluginPackageSyncTests(unittest.TestCase):
+    # Requires both runtime sources to pass the gate before publishing hot-reload notifications.
+    def test_runtime_parse_failure_stops_sync_before_hot_reload(self):
+        with patch.object(SYNC.sys, "argv", ["sync_plugin_packages.py", "--source", "runtime"]), \
+                patch.object(SYNC, "_generate_plugin_sdk_types"), \
+                patch.object(SYNC, "_sync", return_value=(0, 1, 0)) as sync, \
+                patch.object(SYNC, "_validate_plugin_packages", side_effect=RuntimeError("registration rejected")) as gate, \
+                patch.object(SYNC, "_maybe_hot_reload_output") as reload:
+            with self.assertRaisesRegex(RuntimeError, "registration rejected"):
+                SYNC.main()
+            self.assertEqual(sync.call_count, 2)
+            self.assertEqual([source.name for source, output in gate.call_args.args[1]], ["buildin", "external"])
+            reload.assert_not_called()
+
+    # Invokes the real loader test on every sync, including runs that reuse compiler caches.
+    def test_parse_gate_has_explicit_outputs_and_no_activation_or_cache_skip(self):
+        jobs = [(Path("plugins/packages/buildin"), Path("assets/buildin")),
+                (Path("plugins/packages/external"), Path("assets/external"))]
+        with patch.object(SYNC, "_host_cargo_environment", return_value={"CARGO_BUILD_TARGET": "aarch64-linux-android"}), \
+                patch.object(SYNC, "_platform_command", return_value="cargo"), \
+                patch.object(SYNC, "_run_checked_command") as run:
+            for _ in range(2):
+                SYNC._validate_plugin_packages(REPO_ROOT, jobs, dry_run=False)
+            self.assertEqual(run.call_count, 2)
+            command = run.call_args.args[0]
+            self.assertIn("operit-js-bridge", command)
+            self.assertIn("plugin_parse_gate", command)
+            self.assertIn("--include-ignored", command)
+            environment = run.call_args.kwargs["env"]
+            self.assertNotIn("CARGO_BUILD_TARGET", environment)
+            self.assertEqual(json.loads(environment["OPERIT_PLUGIN_PARSE_INPUTS"]),
+                             {source.name: str(output.resolve()) for source, output in jobs})
+
     # Rebuilds cleaned, partial, or modified outputs while reusing an intact build.
     def test_child_prebuild_cache_requires_the_complete_generated_tree(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -9,6 +9,7 @@ import { requireId } from "./validation";
 export { onMemoryMessagePersisted, onMemoryInterval, registerMemoryJobHooks } from "./memory-jobs/hooks";
 
 import { groupTurnApi } from "./group-execution/public-turn";
+export { groupTurnApi } from "./group-execution/public-turn";
 
 const memoryQueries = new MemoryTools(dispatchDomain);
 

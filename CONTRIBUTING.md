@@ -25,6 +25,12 @@
 
 根据改动范围运行相关检查，并在 PR 描述中记录实际运行过的命令及结果。
 
+所有 PR 必须通过 `Package parsing` 检查。它同步并解析全部 `buildin` 和 `external` 包，包含默认关闭的插件，使用应用的 `ToolPkgLoader` 和注册专用 JavaScript 引擎执行 `registerToolPkg`。解析、子包或注册回调错误会使检查和正常构建失败；检查未通过的 PR 不予合并。
+
+```sh
+python plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload
+```
+
 Rust CLI：
 
 ```powershell

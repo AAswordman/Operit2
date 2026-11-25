@@ -351,6 +351,20 @@ def _generate_plugin_sdk_types(repo_root: Path, *, dry_run: bool) -> None:
     )
 
 
+# Requires the production loader and registration engine to accept every synchronized artifact.
+def _validate_plugin_packages(repo_root: Path, jobs: list[tuple[Path, Path]], *, dry_run: bool) -> None:
+    environment = _host_cargo_environment()
+    environment.pop("CARGO_BUILD_TARGET", None)
+    environment["OPERIT_PLUGIN_PARSE_INPUTS"] = json.dumps(
+        {source.name: str(output.resolve()) for source, output in jobs}
+    )
+    _run_checked_command(
+        [_platform_command("cargo"), "test", "--locked", "-p", "operit-js-bridge", "--lib",
+         "plugin_parse_gate", "--", "--include-ignored", "--nocapture", "--test-threads=1"],
+        repo_root / "core", dry_run=dry_run, env=environment,
+    )
+
+
 def _iter_signature_files(paths: list[Path]) -> list[Path]:
     seen: set[Path] = set()
     files: list[Path] = []
@@ -826,6 +840,8 @@ def main() -> int:
         total_copied += copied
         total_packed += packed
         total_deleted += deleted
+
+    _validate_plugin_packages(repo_root, jobs, dry_run=args.dry_run)
 
     if args.source in {"buildin", "runtime", "all"}:
         _maybe_hot_reload_output(
