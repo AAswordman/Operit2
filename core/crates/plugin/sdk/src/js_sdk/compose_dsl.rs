@@ -2323,10 +2323,23 @@ pub struct ComposeCommonProps {
     /// Shape that bounds and optionally clips the background paint.
     pub backgroundShape: Option<ComposeShape>,
 }
+/// One image tile in an adaptive media grid. IDs remain stable when the active tile changes.
+pub struct MediaStageParticipant {
+    /// Stable participant identifier.
+    pub id: String,
+    /// Accessible title for the tile.
+    pub title: String,
+    /// Image shown inside the tile.
+    pub imageUri: Option<String>,
+}
 /// Declares a floating media surface with an optional user-controlled camera.
 pub struct MediaStageProps {
     /// Shared layout and lifecycle properties.
     pub base_compose_common_props: ComposeCommonProps,
+    /// Images displayed together in equal-area tiles instead of the single portrait.
+    pub participants: Option<Vec<MediaStageParticipant>>,
+    /// Highlights this participant without changing the roster or its ordering.
+    pub activeParticipantId: Option<String>,
     /// Plugin-defined controls displayed over the media surface.
     pub content: Option<ComposeChildren>,
     /// Enables camera controls; the camera stays off until the user enables it.
