@@ -212,9 +212,28 @@ planner or response failure preserves the already recorded original input and
 propagates the original error.
 Native sends with `source: "Sequence"` do not recursively enter group planning.
 Package-local execution controls retain the exact chat/submission identity for
-status, cancellation, and explicit resumption. This registration is covered by
+status, cancellation, and explicit resumption.
+After cancellation has settled, a new input replaces the cancelled plan and
+releases its plugin-local transport state before persisting the new input.
+The replaced plan can no longer resume; until replacement, explicit resume keeps
+its original input and participant cursor. A still-running submission continues
+to block competing input and preserves the composer, including while cancellation
+is still awaiting its native receipt. These paths are covered by
 controlled-boundary tests; it is not a claim of live model or cross-platform
 integration acceptance.
+
+Rollback and edit/resend await the generic `before_history_truncate` chat lifecycle
+before restoring the workspace or removing messages. Its payload contains only
+`eventName`, `chatId` and the exact `firstDeletedMessageTimestamp`; each registered
+owner must finish its disposal and return `{ extension: null }`. Errors and the
+shared configured pre-hook deadline abort the mutation. The character plugin
+cancels and awaits the retained group plan, releases its local transport and
+invalidates its resume cursor. Waifu removes unsent batches and queued deliveries
+and awaits its active send cancellation. Core then cancels remaining native work
+without retaining partial output, settling the originating cancellation receipt
+before releasing execution ownership. Only after these steps may history be
+truncated and edited content submitted as a new turn. Host and plugin updates must
+be installed together for this lifecycle contract.
 
 ## Verification scope
 

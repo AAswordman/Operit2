@@ -1712,7 +1712,14 @@ impl MessageProcessingDelegate {
     /// Cancels an active message turn before destructive history mutation.
     #[allow(non_snake_case)]
     pub async fn cancelMessageForDestructiveMutation(&mut self, chatId: String) -> Result<(), String> {
-        self.cancelMessageInternal(chatId, false).await.map(|_| ())
+        let processing = self.clone_for_core();
+        self.cancelMessageInternalForTurn(chatId.clone(), false, None, move |result| {
+            match &result {
+                Ok(_) => processing.completeCancelledTurnReceipt(&chatId, None),
+                Err(error) => processing.failTurnReceipt(&chatId, error.clone()),
+            }
+            result
+        }).await.map(|_| ())
     }
 
     /// Returns the observable set of chat ids with active streaming turns.

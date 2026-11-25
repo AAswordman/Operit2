@@ -1,26 +1,54 @@
 import { modeForChat } from "./mode.js";
+import { identifier } from "./settings.js";
 
 type Request = Parameters<typeof Tools.Chat.sendMessage>[0];
 interface Batch { chatId: string; runtime: Request["runtime"]; notifyReply: boolean; text: string[]; timer: number; deadline: number; size: number }
+interface Delivery { cancelled: boolean; completion: Promise<void> }
 const MAX_BATCH_WAIT_MS = 15000;
 const MAX_BATCH_MESSAGES = 20;
 const MAX_BATCH_CHARS = 16000;
 const batches = new Map<string, Batch>();
 const operations = new Map<string, Promise<unknown>>();
-const deliveries = new Map<string, Promise<void>>();
+const deliveries = new Map<string, Delivery>();
 
 /** Executes accepted requests in chat order outside the synchronous input-hook deadline. */
 async function deliver(request: Request): Promise<void> {
-  const previous = deliveries.get(request.chatId);
+  const delivery = deliveries.get(request.chatId) ?? { cancelled: false, completion: Promise.resolve() };
+  const previous = delivery.completion;
   const operation = (async () => {
     // A failed earlier send must not discard a later accepted user message.
-    if (previous !== undefined) { try { await previous; } catch { /* prior failure was already reported */ } }
+    try { await previous; } catch { /* prior failure was already reported */ }
+    if (delivery.cancelled) return;
     const receipt = await Tools.Chat.sendMessage(request);
+    if (delivery.cancelled && receipt.outcome.type === "committed" && receipt.outcome.status === "cancelled") return;
     if (receipt.outcome.type !== "committed" || receipt.outcome.status !== "completed") throw new Error(`Waifu queued send did not complete: ${JSON.stringify(receipt.outcome)}`);
   })();
-  deliveries.set(request.chatId, operation);
+  delivery.completion = operation;
+  deliveries.set(request.chatId, delivery);
   try { await operation; }
-  finally { if (deliveries.get(request.chatId) === operation) deliveries.delete(request.chatId); }
+  finally { if (delivery.completion === operation && deliveries.get(request.chatId) === delivery) deliveries.delete(request.chatId); }
+}
+
+/** Drops unsent batches and awaits cancellation of accepted delivery work before native history truncation. */
+export async function beforeHistoryTruncate(event: ToolPkg.ChatLifecycleHookEvent): Promise<ToolPkg.ChatLifecycleHookResult> {
+  if (event.eventName === "before_create") return { extension: null };
+  const payload = event.eventPayload;
+  if (event.eventName !== "before_history_truncate" || !("chatId" in payload) || payload.eventName !== "before_history_truncate") throw new Error("Invalid Waifu history truncation event");
+  if (!Number.isSafeInteger(payload.firstDeletedMessageTimestamp) || payload.firstDeletedMessageTimestamp < 1) throw new Error("History truncation requires a positive message timestamp");
+  const chatId = identifier(payload.chatId, "history truncation chatId");
+  const operation = operations.get(chatId);
+  if (operation !== undefined) await operation;
+  const batch = batches.get(chatId);
+  if (batch !== undefined) {
+    batches.delete(chatId); clearTimeout(batch.timer); clearTimeout(batch.deadline);
+  }
+  const delivery = deliveries.get(chatId);
+  if (delivery !== undefined) {
+    delivery.cancelled = true;
+    await Tools.Chat.cancel(chatId);
+    await delivery.completion;
+  }
+  return { extension: null };
 }
 
 /** Reports the actual native error for one accepted delivery without retrying model execution. */

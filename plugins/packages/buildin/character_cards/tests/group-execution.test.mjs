@@ -129,6 +129,68 @@ test("executor: planning cancellation resumes the already persisted input", asyn
   assert.deepEqual(env.calls.map(call => call.method), ["submit", "continue", "finish"]);
 });
 
+/** Replaces a settled cancelled cursor only after release and rejects stale resumption during the next turn. */
+test("executor: new input releases a cancelled sequence before persistence and invalidates its resume", async t => {
+  const planning = deferred(), releasing = deferred(), releaseStarted = deferred();
+  const env = await groupEnvironment(t, {
+    /** Acknowledges each separately submitted input. */
+    async submit(input) { return recorded(input); },
+    /** Empty plans never invoke a participant. */
+    async continue() { forbidden("continue"); },
+    /** Planning cancellation has no active native send. */
+    async cancel() { forbidden("cancel"); },
+    /** Acknowledges completion of the second user-only sequence. */
+    async finish() {},
+    /** Holds release to verify that the next input cannot persist prematurely. */
+    async abandon() { releaseStarted.resolve(); await releasing.promise; },
+  });
+  env.setRawPlan(planning.promise);
+  const input = env.input(), run = env.controller.submit(input); await env.planningStarted;
+  await env.controller.cancel(env.chatId, input.submissionId);
+  planning.resolve({ text: JSON.stringify({ rounds: [[]] }) });
+  assert.equal((await run).status, "cancelled");
+  env.setPlan({ rounds: [[]] });
+  const next = { ...input, submissionId: "next-input", text: "New user input" };
+  const replacement = env.controller.submit(next); await releaseStarted.promise;
+  assert.equal(env.calls.filter(call => call.method === "submit").length, 1);
+  assert.throws(() => env.controller.resume(env.chatId, input.submissionId), /settled cancelled/);
+  assert.throws(() => env.controller.submit({ ...next, submissionId: "competing" }), /already owns/);
+  releasing.resolve();
+  assert.equal((await replacement).status, "completed");
+  assert.deepEqual(env.calls.map(call => call.method), ["submit", "abandon", "submit", "finish"]);
+  assert.equal(env.modelCalls.length, 2);
+  assert.throws(() => env.controller.resume(env.chatId, input.submissionId), /settled cancelled/);
+});
+
+/** A failed cancelled-plan release keeps the next input unpersisted and propagates its original error. */
+test("executor: cancelled sequence release failure rejects new input before admission", async t => {
+  const planning = deferred(), failure = new Error("Original cancelled sequence release failure");
+  const env = await groupEnvironment(t, {
+    /** Records only the first original user input. */
+    async submit(input) { return recorded(input); },
+    /** No participant is selected by the controlled empty plan. */
+    async continue() { forbidden("continue"); },
+    /** No native send is active during planning cancellation. */
+    async cancel() { forbidden("cancel"); },
+    /** A release failure cannot complete either sequence. */
+    async finish() { forbidden("finish"); },
+    /** Propagates the exact local sequence release error. */
+    async abandon() { throw failure; },
+  });
+  env.setRawPlan(planning.promise);
+  const input = env.input(), run = env.controller.submit(input); await env.planningStarted;
+  await env.controller.cancel(env.chatId, input.submissionId);
+  planning.resolve({ text: JSON.stringify({ rounds: [[]] }) }); await run;
+  const next = { ...input, submissionId: "next-input", text: "Next unsaved input" };
+  const replacement = env.controller.submit(next), admission = env.controller.waitForInput(env.chatId, next.submissionId);
+  await Promise.all([
+    assert.rejects(replacement, error => error === failure),
+    assert.rejects(admission, error => error === failure),
+  ]);
+  assert.deepEqual(env.calls.map(call => call.method), ["submit", "abandon"]);
+  assert.equal(env.modelCalls.length, 1);
+});
+
 /** Active cancellation keeps its exact cursor and partial reply while explicit resume retries only that member. */
 test("executor: active cancellation and resume retain exact participant cursor and summary policy", async t => {
   const started = deferred(), sending = deferred(); let replies = 0, active;

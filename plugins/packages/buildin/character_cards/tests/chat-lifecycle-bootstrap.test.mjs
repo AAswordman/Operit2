@@ -46,7 +46,7 @@ function sdkRegistration(plugin) {
 
 /** Checks registration and export edges on the real main without opening directories or running initialization. */
 test("actual openPlugin uniquely registers chat initialization, policies and memory hooks without business IO", async t => {
-  const disk = await createDiskHarness(t), plugin = openPlugin(disk);
+  const disk = await createDiskHarness(t), initialEntries = await disk.entries(), plugin = openPlugin(disk);
   assert.equal(importedCallCount("../src/main.ts", "./chat-lifecycle", "registerChatInitialization"), 1);
   assert.equal(importedCallCount("../src/main.ts", "./runtime-tools/policy", "registerToolPolicies"), 1);
   assert.equal(importedCallCount("../src/main.ts", "./memory-jobs/hooks", "registerMemoryJobHooks"), 1);
@@ -73,7 +73,7 @@ test("actual openPlugin uniquely registers chat initialization, policies and mem
   }
   assert.deepEqual(Object.keys(plugin.chatLifecycleHooks[0]).sort(), ["function", "id"]);
   assert.equal(disk.calls.length, 0, "Main registration must not access files or initialize the service");
-  assert.deepEqual(await disk.entries(), ["local"], "No store or job state may be created during registration");
+  assert.deepEqual(await disk.entries(), initialEntries, "No store or job state may be created during registration");
   assert.deepEqual((await disk.files.list(disk.directory + "/local")).entries, []);
 });
 

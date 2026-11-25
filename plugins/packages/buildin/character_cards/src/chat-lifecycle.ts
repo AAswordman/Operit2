@@ -4,6 +4,7 @@ import { markerObject, decodeChatMarker, encodeChatMarker } from "./chat-markers
 import { record } from "./domain";
 import { dispatchDomain } from "./service-runtime";
 import { findChatBinding, prepareChatBinding } from "./chat-storage";
+import { stopGroupForHistoryTruncate } from "./group-execution/hooks";
 
 /** Describes the sole plugin-owned opaque creation input and initial namespace marker. */
 export interface ChatSelectionMarker { version: 1; selection: string }
@@ -113,9 +114,17 @@ async function requireSelection(selection: string): Promise<void> {
     await Promise.all(group.members.map(member => dispatchDomain("character.get", { id: member.characterCardId })));
   }
 }
-/** Handles the SDK's existing hook envelope and returns only this package's initialized namespace before native commit. */
+/** Stops retained work before history truncation or initializes this package's namespace before creation. */
 export async function beforeChatCreate(event: ToolPkgTypes.ChatLifecycleHookEvent): Promise<ChatInitializationResult> {
+  if (event.eventName === "before_history_truncate") {
+    const payload = event.eventPayload;
+    if (!("chatId" in payload) || payload.eventName !== "before_history_truncate") throw new Error("Invalid history truncation lifecycle payload");
+    if (!Number.isSafeInteger(payload.firstDeletedMessageTimestamp) || payload.firstDeletedMessageTimestamp < 1) throw new Error("History truncation requires a positive message timestamp");
+    await stopGroupForHistoryTruncate(identity(payload.chatId, "history truncation chatId"));
+    return { extension: null };
+  }
   if (event.eventName !== "before_create") throw new Error("Character chat lifecycle requires before_create");
+  if (!("chat" in event.eventPayload)) throw new Error("Chat creation requires a creation draft");
   const payload = { ...event.eventPayload };
   if (payload.sourceChatId !== null) {
     const binding = await findChatBinding(payload.sourceChatId);
@@ -127,7 +136,7 @@ export async function beforeChatCreate(event: ToolPkgTypes.ChatLifecycleHookEven
   return { extension: { recordId: payload.chat.id, schemaVersion: 1 } };
 }
 
-/** Registers this package's sole pre-create hook by genuine exported function reference for durable SDK capture. */
+/** Registers the package's awaited chat lifecycle handler by genuine exported function reference. */
 export function registerChatInitialization(): void {
   ToolPkg.registerChatLifecycleHook({ id: "chat-initialization", function: beforeChatCreate });
 }
