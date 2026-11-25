@@ -15,12 +15,11 @@ on:
       macos_distribution:
         description: "macOS app distribution (ignored for CLI-only builds)"
         required: false
-        default: "all"
+        default: "sandbox"
         type: choice
         options:
           - "sandbox"
           - "unsandbox"
-          - "all"
       include_ios:
         description: "Build unsigned iOS app"
         required: false

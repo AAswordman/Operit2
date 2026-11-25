@@ -15,12 +15,11 @@ on:
       distribution:
         description: "macOS app distribution (ignored for CLI-only builds)"
         required: false
-        default: "all"
+        default: "sandbox"
         type: choice
         options:
           - "sandbox"
           - "unsandbox"
-          - "all"
   workflow_call:
     inputs:
       products:
@@ -29,9 +28,9 @@ on:
         default: "app"
         type: string
       distribution:
-        description: "macOS app distribution: sandbox, unsandbox, or all"
+        description: "macOS app distribution: sandbox or unsandbox"
         required: false
-        default: "all"
+        default: "sandbox"
         type: string
 jobs:
   build-arm64-rootfs:
@@ -82,7 +81,7 @@ jobs:
       - name: Validate app distribution
         run: |
           case "$MACOS_DISTRIBUTION" in
-            sandbox|unsandbox|all) ;;
+            sandbox|unsandbox) ;;
             *) echo "Unsupported macOS distribution: $MACOS_DISTRIBUTION" >&2; exit 1 ;;
           esac
 
@@ -198,11 +197,11 @@ jobs:
           test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyModels.g.dart
 
       - name: Build and package sandbox macOS app
-        if: inputs.products != 'cli' && (inputs.distribution == 'sandbox' || inputs.distribution == 'all')
+        if: inputs.products != 'cli' && inputs.distribution == 'sandbox'
         run: python3 tools/build_scripts/build_flutter_macos.py --type sandbox
 
       - name: Build and package unsandbox macOS app
-        if: inputs.products != 'cli' && (inputs.distribution == 'unsandbox' || inputs.distribution == 'all')
+        if: inputs.products != 'cli' && inputs.distribution == 'unsandbox'
         run: python3 tools/build_scripts/build_flutter_macos.py --type unsandbox
 
       - name: Build and package macOS CLI
