@@ -2770,16 +2770,35 @@ export interface ComposeCommonProps {
   backgroundShape?: ComposeShape;
 }
 
-/** One image tile in an adaptive media grid. IDs remain stable when the active tile changes. */
-export interface MediaStageParticipant { id: string; title: string; imageUri?: string }
+/**
+ * One image tile in an adaptive media grid with a stable participant identity.
+ */
+export interface MediaStageParticipant {
+  /**
+   * Stable identity retained when the active tile changes.
+   */
+  id: string;
+  /**
+   * Accessible title for the participant image.
+   */
+  title: string;
+  /**
+   * Image displayed in the participant tile.
+   */
+  imageUri?: string;
+}
 
 /**
  * Declares a floating media surface with an optional user-controlled camera.
  */
 export interface MediaStageProps extends ComposeCommonProps {
-  /** Images displayed together in equal-area tiles instead of the single portrait. */
+  /**
+   * Images displayed together in equal-area tiles instead of the single portrait.
+   */
   participants?: MediaStageParticipant[];
-  /** Highlights this participant without changing the roster or its ordering. */
+  /**
+   * Highlights this participant without changing the roster or its ordering.
+   */
   activeParticipantId?: string;
   /**
    * Plugin-defined controls displayed over the media surface.
