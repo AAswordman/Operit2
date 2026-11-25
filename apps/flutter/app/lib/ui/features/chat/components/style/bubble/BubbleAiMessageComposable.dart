@@ -650,7 +650,6 @@ class _AiImageOnlyBubble extends StatelessWidget {
       child: MarkdownImageRenderer(
         imageMarkdown: imageMarkdown,
         textColor: textColor,
-        maxImageHeight: 320,
         enablePreview: enablePreview,
       ),
     );

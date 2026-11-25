@@ -434,6 +434,44 @@ void main() {
   });
 
   for (final wide in [false, true]) {
+    for (final dimensions in [
+      (width: 1000, height: 1000),
+      (width: 2000, height: 100),
+      (width: 100, height: 2000),
+    ]) {
+      testWidgets(
+        'AI image thumbnail respects both bounds: $dimensions, wide=$wide',
+        (tester) async {
+          final svg =
+              '<svg xmlns="http://www.w3.org/2000/svg" '
+              'width="${dimensions.width}" height="${dimensions.height}" '
+              'viewBox="0 0 ${dimensions.width} ${dimensions.height}">'
+              '<rect width="100%" height="100%" fill="#4488cc"/></svg>';
+          final source = Uri.dataFromString(
+            svg,
+            mimeType: 'image/svg+xml',
+            encoding: utf8,
+            base64: true,
+          );
+          await _pumpBubble(
+            tester,
+            sender: 'ai',
+            wide: wide,
+            content: '![like_you]($source)',
+          );
+          final size = tester.getSize(find.byType(SvgPicture));
+          final blockSize = tester.getSize(find.byType(MarkdownImageRenderer));
+          expect(size.width, lessThanOrEqualTo(blockSize.width));
+          expect(size.height, lessThanOrEqualTo(140));
+          expect(
+            size.width / size.height,
+            closeTo(dimensions.width / dimensions.height, 0.001),
+          );
+          expect(tester.takeException(), isNull);
+        },
+      );
+    }
+
     for (final sender in ['ai', 'user']) {
       testWidgets('$sender pure image bypasses bubble surface, wide=$wide', (
         tester,
