@@ -12,6 +12,14 @@ on:
           - "app"
           - "cli"
           - "all"
+      distribution:
+        description: "macOS app distribution (ignored for CLI-only builds)"
+        required: false
+        default: "sandbox"
+        type: choice
+        options:
+          - "sandbox"
+          - "unsandbox"
   workflow_call:
     inputs:
       products:
@@ -19,22 +27,78 @@ on:
         required: false
         default: "app"
         type: string
+      distribution:
+        description: "macOS app distribution: sandbox or unsandbox"
+        required: false
+        default: "sandbox"
+        type: string
 jobs:
+  build-arm64-rootfs:
+    if: inputs.products != 'cli'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ARM64 rootfs build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ca-certificates curl python3 qemu-user-static binfmt-support
+
+      - name: Build Alpine ARM64 rootfs
+        run: sudo bash tools/ios-runtime/arm64/build_rootfs_linux.sh
+
+      - name: Upload Alpine ARM64 rootfs
+        uses: actions/upload-artifact@v4
+        with:
+          name: operit2-macos-arm64-rootfs-${{ github.sha }}
+          path: |
+            apps/flutter/app/ios/Runner/arm64-rootfs.tar.gz
+            apps/flutter/app/ios/Runner/arm64-rootfs.tar.gz.sha256
+          if-no-files-found: error
+          retention-days: 1
+
   build-macos:
+    needs: build-arm64-rootfs
+    if: ${{ !cancelled() && (needs.build-arm64-rootfs.result == 'success' || (inputs.products == 'cli' && needs.build-arm64-rootfs.result == 'skipped')) }}
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
       FVM_VERSION: 4.3.0
+      MACOS_DISTRIBUTION: ${{ inputs.distribution }}
 
     defaults:
       run:
         shell: bash
 
     steps:
+      - name: Validate app distribution
+        run: |
+          case "$MACOS_DISTRIBUTION" in
+            sandbox|unsandbox) ;;
+            *) echo "Unsupported macOS distribution: $MACOS_DISTRIBUTION" >&2; exit 1 ;;
+          esac
+
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Download Alpine ARM64 rootfs
+        if: inputs.products != 'cli'
+        uses: actions/download-artifact@v4
+        with:
+          name: operit2-macos-arm64-rootfs-${{ github.sha }}
+          path: apps/flutter/app/ios/Runner
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
 
       - name: Install bootstrap Dart
         uses: dart-lang/setup-dart@v1
@@ -50,6 +114,41 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 24
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.10
+          actions-cache-folder: emsdk-cache
+
+      - name: Install plugin build tools
+        run: |
+          npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+          corepack enable
+
+      - name: Install macOS native build tools
+        run: |
+          brew install cmake ninja llvm@23 lld@23
+          echo "$(brew --prefix llvm@23)/bin" >> "$GITHUB_PATH"
+          echo "$(brew --prefix lld@23)/bin" >> "$GITHUB_PATH"
+          echo "OPERIT_WASM_TOOL_PATH=$(brew --prefix llvm@23)/bin:$(brew --prefix lld@23)/bin" >> "$GITHUB_ENV"
+
+      - name: Verify WebAssembly plugin toolchain
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+          sys.path.insert(0, 'plugins/tools')
+          from sync_plugin_packages import _plugin_build_environment
+          os.environ.pop('OPERIT_WASM_TOOL_PATH', None)
+          os.environ['PATH'] = '/usr/bin:/bin:' + os.environ['PATH']
+          subprocess.run(
+              ['corepack', 'pnpm', 'run', 'build:dsp'],
+              cwd='plugins/packages/external/music_studio',
+              env=_plugin_build_environment(), check=True,
+          )
+          PY
 
       - name: Cache project Flutter SDK
         uses: actions/cache@v4
@@ -93,15 +192,17 @@ jobs:
       - name: Generate Dart proxy artifacts
         run: |
           cargo clean --manifest-path core/crates/proxy/local/Cargo.toml -p operit-proxy-local
-          cargo check --manifest-path core/crates/proxy/local/Cargo.toml --quiet
+          python3 tools/build_scripts/cargo_build.py cargo check --manifest-path core/crates/proxy/local/Cargo.toml --quiet
           test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyClients.g.dart
           test -f apps/flutter/app/lib/core/proxy/generated/CoreProxyModels.g.dart
 
-      - name: Build and package macOS app
-        if: inputs.products != 'cli'
-        run: |
-          python3 tools/build_scripts/build_flutter_macos.py --type sandbox
-          python3 tools/build_scripts/build_flutter_macos.py --type unsandbox
+      - name: Build and package sandbox macOS app
+        if: inputs.products != 'cli' && inputs.distribution == 'sandbox'
+        run: python3 tools/build_scripts/build_flutter_macos.py --type sandbox
+
+      - name: Build and package unsandbox macOS app
+        if: inputs.products != 'cli' && inputs.distribution == 'unsandbox'
+        run: python3 tools/build_scripts/build_flutter_macos.py --type unsandbox
 
       - name: Build and package macOS CLI
         if: inputs.products != 'app'

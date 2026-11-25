@@ -1,6 +1,12 @@
 #!/bin/sh
 set -eu
 
+# Xcode supplies its own PATH; preserve the CI-selected WebAssembly tools for
+# plugin packaging, which runs again within this build phase.
+if [ -n "${OPERIT_WASM_TOOL_PATH:-}" ]; then
+  export PATH="$OPERIT_WASM_TOOL_PATH:$PATH"
+fi
+
 repo_root="$PROJECT_DIR/../../../.."
 crate_dir="$repo_root/apps/flutter/native/operit-flutter-bridge"
 out_dir="$PROJECT_DIR/Flutter/ephemeral/rust"

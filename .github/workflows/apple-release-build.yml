@@ -12,6 +12,14 @@ on:
           - "app"
           - "cli"
           - "all"
+      macos_distribution:
+        description: "macOS app distribution (ignored for CLI-only builds)"
+        required: false
+        default: "sandbox"
+        type: choice
+        options:
+          - "sandbox"
+          - "unsandbox"
       include_ios:
         description: "Build unsigned iOS app"
         required: false
@@ -26,6 +34,7 @@ jobs:
     uses: ./.github/workflows/macos-flutter-build.yml
     with:
       products: ${{ inputs.products }}
+      distribution: ${{ inputs.macos_distribution }}
 
   ios:
     if: inputs.include_ios == 'true' && inputs.products != 'cli'
