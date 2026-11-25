@@ -2,6 +2,8 @@ PODS:
   - audioplayers_darwin (0.0.1):
     - Flutter
     - FlutterMacOS
+  - camera_avfoundation (0.0.1):
+    - Flutter
   - file_selector_ios (0.0.1):
     - Flutter
   - Flutter (1.0.0)
@@ -44,6 +46,7 @@ PODS:
 
 DEPENDENCIES:
   - audioplayers_darwin (from `.symlinks/plugins/audioplayers_darwin/darwin`)
+  - camera_avfoundation (from `.symlinks/plugins/camera_avfoundation/darwin`)
   - file_selector_ios (from `.symlinks/plugins/file_selector_ios/ios`)
   - Flutter (from `Flutter`)
   - fvp (from `.symlinks/plugins/fvp/darwin`)
@@ -68,6 +71,8 @@ SPEC REPOS:
 EXTERNAL SOURCES:
   audioplayers_darwin:
     :path: ".symlinks/plugins/audioplayers_darwin/darwin"
+  camera_avfoundation:
+    :path: ".symlinks/plugins/camera_avfoundation/darwin"
   file_selector_ios:
     :path: ".symlinks/plugins/file_selector_ios/ios"
   Flutter:
@@ -103,6 +108,7 @@ EXTERNAL SOURCES:
 
 SPEC CHECKSUMS:
   audioplayers_darwin: f15e209a3e856d1a7edcf98dc029f484fead2242
+  camera_avfoundation: 769d252259fa21e39ada7399c9dc9c0921af8165
   file_selector_ios: 80c12e90ad3f2045ed6819d03742f1a4c5ec3f93
   Flutter: cabc95a1d2626b1b06e7179b784ebcf0c0cde467
   fvp: 0394396e293caeee0602df3eed0b050de4f1124d
