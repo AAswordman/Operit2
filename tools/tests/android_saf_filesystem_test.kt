@@ -23,12 +23,17 @@ private class FakeDocuments : DocumentTreeAccess {
     var readGrant = true
     var writeGrant = true
     var failWrites = false
+    val listedDirectories = mutableListOf<String>()
     fun metadata(item: Item) = DocumentMetadata(item.id, item.name, item.directory, item.data.size.toLong(), "123", writeGrant)
     fun get(id: String) = items[id] ?: throw FileNotFoundException("Missing opaque ID")
     override fun hasReadGrant(tree: String) = tree == this.tree && readGrant
     override fun hasWriteGrant(tree: String) = tree == this.tree && writeGrant
     override fun rootId(tree: String) = "opaque-root"
-    override fun children(tree: String, parentId: String) = items.values.filter { it.parent == parentId }.map(::metadata)
+    /** Records provider directory queries so bounded searches can assert actual traversal stops. */
+    override fun children(tree: String, parentId: String): List<DocumentMetadata> {
+        listedDirectories.add(parentId)
+        return items.values.filter { it.parent == parentId }.map(::metadata)
+    }
     override fun describe(tree: String, documentId: String) = metadata(get(documentId))
     override fun create(tree: String, parentId: String, name: String, directory: Boolean): String {
         check(writeGrant && get(parentId).directory)
@@ -103,12 +108,12 @@ fun main() {
         docs.readGrant = false
         failure("openFile", "path" to docs.target("src/项目 file.py"))
         docs.readGrant = true
-        val native = File(temporary, "中文 & 100%.txt").also { it.writeText("native file") }
-        success("openFile", "path" to native.path)
-        verify(opened.last() == Triple(native, null, null), "Native files reach the same platform opener")
+        val openedNative = File(temporary, "中文 & 100%.txt").also { it.writeText("native file") }
+        success("openFile", "path" to openedNative.path)
+        verify(opened.last() == Triple(openedNative, null, null), "Native files reach the same platform opener")
         failure("openFile", "path" to temporary.path)
         openFailure = true
-        verify(failure("openFile", "path" to native.path).contains("Viewer denied"), "Viewer failures are returned")
+        verify(failure("openFile", "path" to openedNative.path) == "IllegalStateException: File could not be presented", "Viewer failures are returned without private details")
         openFailure = false
         val listing = success("listFiles", "path" to docs.target("src")) as JSONArray
         verify(listing.getJSONObject(0).getString("name") == "项目 file.py", "Child display names")
@@ -141,6 +146,17 @@ fun main() {
         verify(grep.getInt("totalMatches") == 1, "Grep result limit")
         val line = grep.getJSONArray("matches").getJSONObject(0).getJSONArray("lineMatches").getJSONObject(0)
         verify(line.getInt("lineNumber") == 2 && line.getString("matchContext").contains("第一行"), "Grep context and line numbers")
+
+        write(docs.target("bounded/first.txt"), "needle\n".toByteArray())
+        write(docs.target("bounded/later/deeper.txt"), "needle\n".toByteArray())
+        val laterDirectory = docs.items.values.single { it.name == "later" }.id
+        docs.listedDirectories.clear()
+        val bounded = success("grepCode", "path" to docs.target("bounded"), "pattern" to "needle", "maxResults" to 1) as JSONObject
+        verify(bounded.getInt("totalMatches") == 1 && bounded.getInt("filesSearched") == 1, "Grep budget is global across documents")
+        verify(laterDirectory !in docs.listedDirectories, "Grep does not enumerate later subdirectories after its budget is full")
+        docs.listedDirectories.clear()
+        val emptyGrep = success("grepCode", "path" to docs.target("bounded"), "pattern" to "needle", "maxResults" to 0) as JSONObject
+        verify(emptyGrep.getInt("filesSearched") == 0 && docs.listedDirectories.isEmpty(), "Zero-budget grep does not enumerate documents")
 
         val native = File(temporary, "copy.py")
         success("copyFile", "source" to docs.target("src/项目 file.py"), "destination" to native.path, "recursive" to false)
