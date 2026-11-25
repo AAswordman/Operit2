@@ -67,7 +67,7 @@ jobs:
     needs: build-arm64-rootfs
     if: ${{ !cancelled() && (needs.build-arm64-rootfs.result == 'success' || (inputs.products == 'cli' && needs.build-arm64-rootfs.result == 'skipped')) }}
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 180
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
