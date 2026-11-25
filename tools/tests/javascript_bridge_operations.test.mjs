@@ -5,6 +5,11 @@ import { productionBootstrap, bootstrapLibrarySource, prepareTestJavaScript, ins
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import vm from 'node:vm';
+import { createRequire } from 'node:module';
+import { composeStreamFixture } from './support/compose_stream_fixture.mjs';
+import { readComposeBuffer } from './support/compose_buffer_fixture.mjs';
+
+const ts = createRequire(new URL('../../plugins/packages/buildin/workflow/package.json', import.meta.url))('typescript');
 
 const root = new URL('../../', import.meta.url);
 const bridge = 'core/crates/plugin/javascript-bridge/src/javascript/';
@@ -26,7 +31,7 @@ function runtime(operations = {}) {
   const outputs = new Map();
   const failures = new Map();
   const timers = new Map();
-  const context = vm.createContext({});
+  const context = vm.createContext({ structuredClone });
   vm.runInContext(source('hosts/web/src/javascript_promises.js'), context);
   const registry = context.__operitHostPromiseRegistry;
   const builtins = {
@@ -457,3 +462,77 @@ test('page bootstrap owns no compiler and precompiled factories use shared prepa
   assert.equal(preparations, 1);
   assert.throws(() => context.__operitGetFactory('main', 'pkg:bad', '// @operit-compose-artifact 999\n', true), /Unsupported Compose artifact/);
 });
+
+for (const [folder, bucket, screen, text] of [
+  ['voice_call', 'uiRoutes', 'dist/call.ui.js', 'Uses the selected speech recognition and voice settings. Each call window gets its own conversation.'],
+  ['ai_chat_presentation', 'toolboxUiModules', 'dist/settings.ui.js', '正在加载对话配置…'],
+]) {
+  /** Exercises registration and rendering with separate CommonJS modules in the production loader. */
+  test(`${folder} registers an isolated default UI entry and renders its first frame`, async () => {
+    const base = new URL(`../../plugins/packages/external/${folder}/`, import.meta.url);
+    const manifest = JSON.parse(readFileSync(new URL('manifest.json', base), 'utf8'));
+    const resources = new Map();
+    /** Transpiles current package sources in memory while preserving their CommonJS boundaries. */
+    function resource(modulePath) {
+      if (resources.has(modulePath)) return resources.get(modulePath);
+      if (!modulePath.startsWith('dist/') || !modulePath.endsWith('.js')) return null;
+      const filename = new URL('src/' + modulePath.slice(5, -3) + '.ts', base);
+      let input;
+      try { input = readFileSync(filename, 'utf8'); }
+      catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+      const output = ts.transpileModule(input, { fileName: filename.pathname,
+        compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 },
+      }).outputText;
+      resources.set(modulePath, output);
+      return output;
+    }
+    const params = { __operit_toolpkg_api_version: '2.0.0', toolPkgId: manifest.toolpkg_id,
+      __operit_ui_package_name: manifest.toolpkg_id, __operit_script_screen: manifest.main };
+    const registration = runtime({
+      /** Reads only resources owned by this plugin during actual registration. */
+      __operitNativeReadToolPkgTextResource(owner, modulePath) {
+        assert.equal(owner, manifest.toolpkg_id);
+        return resource(modulePath);
+      },
+    });
+    executeScript(registration.context, 'register-ui', { ...params, __operit_registration_mode: true },
+      resource(manifest.main), 'registerToolPkg');
+    await flush();
+    assert.equal(registration.failures.size, 0, JSON.stringify([...registration.failures]));
+    const entries = registration.context.__operitToolPkgRegistrationCapture[bucket].map(JSON.parse);
+    assert.equal(entries.length, 1);
+    const entry = entries[0];
+    assert.equal(entry.screen, screen);
+    assert.equal(entry.screenExport, 'default');
+    assert.equal(resources.has(screen), false, 'Registration must not execute UI dependencies');
+
+    let stream;
+    const rendering = runtime({
+      /** Loads the real dependency client and model module for the selected UI resource. */
+      __operitNativeReadToolPkgTextResource(owner, modulePath) {
+        assert.equal(owner, manifest.toolpkg_id);
+        return resource(modulePath);
+      },
+      /** Supplies the window capability queried by the launcher effect. */
+      __operitNativeCallToolStructured() { return { supported: true, permissionGranted: true, scope: 'application' }; },
+    });
+    const registry = rendering.context.__operitHostPromiseRegistry;
+    // The engine installs these structured sinks separately from its ordinary sync bindings.
+    rendering.context.__operitNativeSendStructuredIntermediate = registry.syncBinding(
+      /** Projects each actual binary frame at the production native sink. */
+      (_id, frame) => stream.accept(readComposeBuffer(frame).phase, frame),
+    );
+    rendering.context.__operitNativeSetCallStructuredResult = registry.syncBinding(
+      /** Captures command completion on the structured execution path. */
+      (id, value) => rendering.outputs.set(id, value),
+    );
+    stream = composeStreamFixture(rendering.context);
+    executeScript(rendering.context, 'render-ui', { ...params, __operit_script_screen: entry.screen, moduleSpec: entry },
+      resource(entry.screen), '__operit_render_compose_dsl', true);
+    await flush();
+    assert.equal(rendering.failures.size, 0, JSON.stringify([...rendering.failures]));
+    assert.ok(stream.latest, 'The registered entry must publish a complete frame');
+    assert.ok([...stream.nodes.values()].some(node => node.props.text === text));
+    assert.equal(rendering.context.__operit_compose_entry.__operit_toolpkg_export_name, 'default');
+  });
+}

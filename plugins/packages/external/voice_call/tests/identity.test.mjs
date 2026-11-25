@@ -22,7 +22,7 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, 
     Modifier: { clip: shape => shape },
     MaterialTheme: { colorScheme: new Proxy({}, { get: () => color }) },
   };
-  const plugin = loadModule("../../external/voice_call/src/main.ts", {
+  const globals = {
     getLang: () => "en",
     setInterval, clearInterval,
     ...timers,
@@ -63,10 +63,12 @@ function callScreen(resolveIdentity, { floatingWindows, chat, stt, tts, timers, 
       Stt: stt,
       Tts: tts,
     },
-  });
-  return { states, effects, calls, routes, entries, register: plugin.registerToolPkg, renderMenu: () => {
+  };
+  const plugin = loadModule("../../external/voice_call/src/call.ui.ts", globals);
+  const registration = loadModule("../../external/voice_call/src/main.ts", globals);
+  return { states, effects, calls, routes, entries, register: registration.registerToolPkg, renderMenu: () => {
     if (!states.has("presentation")) states.set("presentation", { requestId: "call-presentation", input: null });
-    return plugin.screen(ctx);
+    return plugin.default(ctx);
   }, renderControl: () => plugin.control(ctx), render: () => plugin.call(ctx) };
 }
 
@@ -134,7 +136,9 @@ test("voice call ships the current dependency client and matching version requir
   assert.equal(client, readFileSync(new URL("../../../buildin/character_cards/src/api.ts", import.meta.url), "utf8"));
   const provider = JSON.parse(readFileSync(new URL("../../../buildin/character_cards/manifest.json", import.meta.url), "utf8"));
   const consumer = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
-  assert.equal(consumer.requires.find(item => item.id === provider.toolpkg_id).min_version, provider.version);
+  const minimum = consumer.requires.find(item => item.id === provider.toolpkg_id).min_version;
+  assert.equal(minimum, "0.2.12", "The group-call public API was introduced in character_cards 0.2.12");
+  assert.ok(provider.version.localeCompare(minimum, "en", { numeric: true }) >= 0);
 });
 
 

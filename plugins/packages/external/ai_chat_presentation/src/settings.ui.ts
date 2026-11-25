@@ -10,6 +10,7 @@ declare function cancelChat(chatId: string): Promise<void>;
 interface View { data: Snapshot | null; draft: Rule | null; query: string; busy: boolean; error: string; confirmDelete: boolean }
 const status = { queued: "等待回复", running: "正在回复", completed: "已完成", failed: "失败", interrupted: "已停止" };
 
+/** Renders the independently loaded conversation presentation settings. */
 export default function screen(ctx: ComposeDslContext): ComposeNode {
   const UI = ctx.UI, colors = ctx.MaterialTheme.colorScheme;
   const [view, setView] = ctx.useState<View>("autonomous-reply-settings", { data: null, draft: null, query: "", busy: false, error: "", confirmDelete: false });
