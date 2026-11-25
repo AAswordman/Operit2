@@ -183,7 +183,7 @@ run_guest() {
 # apk verifies Alpine signatures, resolves dependencies and runs package triggers.
 run_guest /sbin/apk --arch "$alpine_arch" --no-cache add "${packages[@]}"
 run_guest /bin/busybox --install -s
-run_guest /bin/sh /usr/sbin/update-ca-certificates
+run_guest /usr/sbin/update-ca-certificates
 python3 "$repo_dir/tools/runtime/verify_alpine_node24.py" "$root_dir/lib/apk/db/installed"
 install -m 644 "$repo_dir/tools/runtime/node24_smoke.cjs" "$root_dir/tmp/node24_smoke.cjs"
 run_guest /usr/bin/node /tmp/node24_smoke.cjs

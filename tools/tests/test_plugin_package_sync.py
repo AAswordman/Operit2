@@ -183,12 +183,20 @@ class PluginPackageSyncTests(unittest.TestCase):
                 entry.write_bytes(contents)
 
     def test_macos_prebuild_adds_homebrew_without_overriding_caller_tools(self):
-        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.dict(os.environ, {"PATH": "/custom/bin:/usr/bin:/bin"}, clear=True):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", return_value=False), patch.dict(os.environ, {"PATH": "/custom/bin:/usr/bin:/bin"}, clear=True):
             environment = SYNC._plugin_build_environment()
             self.assertEqual(environment["PATH"], "/custom/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin")
             self.assertEqual(os.environ["PATH"], "/custom/bin:/usr/bin:/bin")
-        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.dict(os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin:/usr/local/bin"}, clear=True):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", return_value=False), patch.dict(os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin:/usr/local/bin"}, clear=True):
             self.assertEqual(SYNC._plugin_build_environment()["PATH"], os.environ["PATH"])
+
+    def test_macos_prebuild_uses_selected_wasm_tools_after_xcode_resets_path(self):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "OPERIT_WASM_TOOL_PATH": "/llvm/bin:/lld/bin"}, clear=True):
+            self.assertTrue(SYNC._plugin_build_environment()["PATH"].startswith("/llvm/bin:/lld/bin:/usr/bin"))
+
+    def test_macos_prebuild_finds_homebrew_llvm_if_override_is_missing(self):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", autospec=True, side_effect=lambda path: str(path) in ("/opt/homebrew/opt/llvm/bin", "/opt/homebrew/opt/lld/bin")), patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=True):
+            self.assertTrue(SYNC._plugin_build_environment()["PATH"].startswith("/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:/usr/bin"))
 
     def test_other_platforms_keep_the_existing_build_environment(self):
         for platform in ("linux", "win32"):

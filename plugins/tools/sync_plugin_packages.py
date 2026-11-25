@@ -152,6 +152,17 @@ def _plugin_build_environment() -> dict[str, str]:
     environment = os.environ.copy()
     if sys.platform == "darwin":
         paths = environment.get("PATH", os.defpath).split(os.pathsep)
+        selected = environment.get("OPERIT_WASM_TOOL_PATH", "")
+        if selected:
+            paths = [path for path in selected.split(os.pathsep) if path] + paths
+        else:
+            # Flutter's native-asset hook can discard environment overrides.
+            # Prefer Homebrew LLVM when present, as Apple clang lacks wasm32.
+            for prefix in ("/opt/homebrew/opt", "/usr/local/opt"):
+                for tool in ("lld", "llvm"):
+                    directory = f"{prefix}/{tool}/bin"
+                    if Path(directory).is_dir() and directory not in paths:
+                        paths.insert(0, directory)
         for directory in ("/opt/homebrew/bin", "/usr/local/bin"):
             if directory not in paths:
                 paths.append(directory)
