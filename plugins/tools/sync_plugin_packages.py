@@ -161,7 +161,8 @@ def _plugin_build_environment() -> dict[str, str]:
             for prefix in ("/opt/homebrew/opt", "/usr/local/opt"):
                 for tool in ("lld", "llvm"):
                     directory = f"{prefix}/{tool}/bin"
-                    if Path(directory).is_dir() and directory not in paths:
+                    if Path(directory).is_dir():
+                        paths = [path for path in paths if path != directory]
                         paths.insert(0, directory)
         for directory in ("/opt/homebrew/bin", "/usr/local/bin"):
             if directory not in paths:

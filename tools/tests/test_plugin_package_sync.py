@@ -195,7 +195,7 @@ class PluginPackageSyncTests(unittest.TestCase):
             self.assertTrue(SYNC._plugin_build_environment()["PATH"].startswith("/llvm/bin:/lld/bin:/usr/bin"))
 
     def test_macos_prebuild_finds_homebrew_llvm_if_override_is_missing(self):
-        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", autospec=True, side_effect=lambda path: str(path) in ("/opt/homebrew/opt/llvm/bin", "/opt/homebrew/opt/lld/bin")), patch.dict(os.environ, {"PATH": "/usr/bin:/bin"}, clear=True):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", autospec=True, side_effect=lambda path: str(path) in ("/opt/homebrew/opt/llvm/bin", "/opt/homebrew/opt/lld/bin")), patch.dict(os.environ, {"PATH": "/usr/bin:/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:/bin"}, clear=True):
             self.assertTrue(SYNC._plugin_build_environment()["PATH"].startswith("/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:/usr/bin"))
 
     def test_other_platforms_keep_the_existing_build_environment(self):

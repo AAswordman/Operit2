@@ -134,6 +134,23 @@ jobs:
           echo "$(brew --prefix lld@23)/bin" >> "$GITHUB_PATH"
           echo "OPERIT_WASM_TOOL_PATH=$(brew --prefix llvm@23)/bin:$(brew --prefix lld@23)/bin" >> "$GITHUB_ENV"
 
+      - name: Verify WebAssembly plugin toolchain
+        run: |
+          python3 - <<'PY'
+          import os
+          import subprocess
+          import sys
+          sys.path.insert(0, 'plugins/tools')
+          from sync_plugin_packages import _plugin_build_environment
+          os.environ.pop('OPERIT_WASM_TOOL_PATH', None)
+          os.environ['PATH'] = '/usr/bin:/bin:' + os.environ['PATH']
+          subprocess.run(
+              ['corepack', 'pnpm', 'run', 'build:dsp'],
+              cwd='plugins/packages/external/music_studio',
+              env=_plugin_build_environment(), check=True,
+          )
+          PY
+
       - name: Cache project Flutter SDK
         uses: actions/cache@v4
         with:
