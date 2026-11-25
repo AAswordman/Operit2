@@ -155,7 +155,24 @@ for await (const event of Tools.System.terminal.runStream({
 | 定义 | 存储键 | 所有权 |
 | --- | --- | --- |
 | `TERMINAL_PROFILES` / `TERMINAL_PROFILES_PATH` | `runtime/config/preferences/terminal_profiles.json` | CoreNode |
-| `TERMINAL_ROOTFS` / `TERMINAL_ROOTFS_DIR_PATH` | `runtime/terminal/rootfs` | CoreNode |
+| `TERMINAL_ROOTFS` / `TERMINAL_ROOTFS_DIR_PATH` | `runtime/terminal/rootfs` | CoreNode；OpenHarmony 使用，也保留旧安装的归属 |
+
+Android 下载的发行版由 Host 固定保存在私有 `files/android-runtime/distributions` 下，不使用
+用户选择的数据 runtime 目录，也不按身份或 ABI 切换位置。下载缓存和锁位于其中的
+`.downloads`，解压暂存为 `.<实例 ID>.installing`，完成后发布到 `<实例 ID>`。
+安装与注册失败后的实例回收使用同一个私有目录入口。内置 Alpine 继续使用
+`files/android-runtime/<abi>/rootfs`，更新内置环境不会替换下载的发行版。
+两者均位于数据救援已排除的宿主专用 `android-runtime` 目录，不进入应用数据归档。
+终端配置保存安装器返回的 rootfs 绝对路径，启动时直接使用该路径；工作区和
+应用数据通过 Host 挂载进入 Linux，不决定 Linux 系统的安装位置。
+
+iOS 内置 ARM64 Linux 使用沙箱的
+`Library/Application Support/operit-arm64/rootfs-arm64`，与应用数据的
+`Library/Application Support/Operit2/runtime` 分开；安装锁与导入暂存也由前者管理。
+
+Android 旧版本已安装的发行版及已有自定义 rootfs 保留配置中的原路径，不自动迁移或
+删除。新安装使用固定私有目录。原 `runtime/terminal/rootfs` 的设备归属和备份排除规则
+继续保留，避免旧系统文件进入同步、快照或数据救援归档。
 
 这些配置包含设备路径，不能作为 Space 数据同步。完整注册表包含 `revision`，
 验证后原子写入；旧版本保存请求会返回冲突，防止覆盖其他编辑或安装新增的

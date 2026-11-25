@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{ToolInvocationContext, ToolRuntimeContext};
+use crate::tools::ToolResultDataClasses::{stringResultData, JsonResultData, ToolResultData};
 
 pub const DEFAULT_WAIT_MS: u64 = 20_000;
 const MAX_OUTPUT_JSON_BYTES: usize = 20_000;
@@ -95,7 +96,7 @@ impl PackageExecutionManager {
     pub async fn wait(
         &self, executions: &[Arc<PackageExecution>], scheduler: &dyn HostRuntimeTaskSchedulerHost,
         waitMs: u64, includeOutput: bool,
-    ) -> Result<Value, String> {
+    ) -> Result<ToolResult, String> {
         let deadline = scheduler.monotonicTimeMillis().map_err(|error| error.to_string())?
             .checked_add(waitMs).ok_or("Package wait deadline overflow")?;
         loop {
@@ -106,11 +107,21 @@ impl PackageExecutionManager {
             let now = scheduler.monotonicTimeMillis().map_err(|error| error.to_string())?;
             if executions.is_empty() || ready.is_some() || now >= deadline {
                 let selected = match ready { Some(execution) => Some(execution), None => executions.first() };
-                let entries = selected.into_iter().map(|execution| execution.receipt()).collect::<Vec<_>>();
+                let mut result = match selected {
+                    Some(execution) => execution.receipt(includeOutput),
+                    None => ToolResult { toolName: "package_wait".into(), success: true,
+                        result: ToolResultData::JsonResultData(JsonResultData { value: json!({"status": "idle"}) }), error: None },
+                };
                 let pending = executions.iter().filter(|execution|
                     !execution.state.lock().expect("Package execution is poisoned").finalDelivered).count();
-                return Ok(json!({"executions": entries, "pending_execution_count": pending,
-                    "timed_out": !executions.is_empty() && ready.is_none() && now >= deadline}));
+                let currentPending = selected.is_some_and(|execution|
+                    !execution.state.lock().expect("Package execution is poisoned").finalDelivered);
+                if pending > usize::from(currentPending) {
+                    if let ToolResultData::JsonResultData(data) = &mut result.result {
+                        data.value["pending_execution_count"] = json!(pending);
+                    }
+                }
+                return Ok(result);
             }
             tokio::select! {
                 _ = &mut changed => {},
@@ -123,7 +134,11 @@ impl PackageExecutionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::ToolResultDataClasses::stringResultData;
+
+    /// Reads the public JSON payload rather than the retained execution state.
+    fn payload(result: ToolResult) -> Value {
+        serde_json::from_str(&result.result.toString()).unwrap()
+    }
 
     /// Creates one authenticated scope without consulting runtime storage or package metadata.
     fn owner(chat: &str) -> ExecutionOwner {
@@ -151,21 +166,18 @@ mod tests {
         let manager = PackageExecutionManager::default();
         let execution = execution(&manager, "one", "chat");
         let scheduler = operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new();
-        let first = manager.wait(&[execution.clone()], &scheduler, 5, false).await.unwrap();
-        assert_eq!(first["timed_out"], true);
-        assert_eq!(first["executions"][0]["status"], "running");
+        let first = payload(manager.wait(&[execution.clone()], &scheduler, 5, false).await.unwrap());
+        assert_eq!(first, json!({"execution_id":"one", "tool_name":"fixture:slow", "status":"running"}));
         execution.clone().scope(async {
             PackageExecution::outputCallback().unwrap()("first".into());
         }).await;
-        let next = manager.wait(&[execution.clone()], &scheduler, 20_000, true).await.unwrap();
-        assert_eq!(next["executions"][0]["output"][0]["value"], "first");
-        assert_eq!(next["executions"][0]["cursor"], 1);
-        let empty = manager.wait(&[execution.clone()], &scheduler, 0, true).await.unwrap();
-        assert_eq!(empty["executions"][0]["output"], json!([]));
+        let next = payload(manager.wait(&[execution.clone()], &scheduler, 20_000, true).await.unwrap());
+        assert_eq!(next["output"][0]["value"], "first");
+        let empty = payload(manager.wait(&[execution.clone()], &scheduler, 0, true).await.unwrap());
+        assert_eq!(empty, first);
         execution.finish(result());
-        let completed = manager.wait(&[execution], &scheduler, 20_000, true).await.unwrap();
-        assert_eq!(completed["executions"][0]["status"], "completed");
-        assert_eq!(completed["executions"][0]["results"][0]["result"], "done");
+        let completed = payload(manager.wait(&[execution], &scheduler, 20_000, true).await.unwrap());
+        assert_eq!(completed, json!({"execution_id":"one", "tool_name":"fixture:slow", "status":"completed", "result":"done"}));
         assert!(manager.selectOwned(&owner("chat"), None).unwrap().is_empty());
         assert_eq!(manager.selectOwned(&owner("chat"), Some("one")).unwrap().len(), 1);
     }
@@ -193,9 +205,8 @@ mod tests {
         execution(&manager, "later", "chat");
         assert_eq!(selected.len(), 2);
         let scheduler = operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new();
-        let output = manager.wait(&selected, &scheduler, 20_000, true).await.unwrap();
-        assert_eq!(output["timed_out"], false);
-        assert_eq!(output["executions"].as_array().unwrap().len(), 1);
+        let output = payload(manager.wait(&selected, &scheduler, 20_000, true).await.unwrap());
+        assert_eq!(output["execution_id"], "done");
         assert_eq!(output["pending_execution_count"], 1);
         assert!(running.state.lock().unwrap().result.is_none());
         assert_eq!(manager.selectOwned(&owner("chat"), None).unwrap().len(), 2);
@@ -207,8 +218,12 @@ mod tests {
         let manager = PackageExecutionManager::default();
         let failed = execution(&manager, "failed", "chat");
         failed.finish(Err("actual error".into()));
-        assert_eq!(failed.receipt()["error"], "actual error");
-        assert_eq!(failed.receipt()["status"], "failed");
+        let result = failed.receipt(false);
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("actual error"));
+        let observed = payload(failed.receipt(true));
+        assert_eq!(observed["error"], "actual error");
+        assert_eq!(observed["status"], "failed");
         assert_eq!(waitBudget(None).unwrap(), 20_000);
         assert_eq!(waitBudget(Some(&json!("0"))).unwrap(), 0);
         for value in [json!(-1), json!(20_001), json!(0.5), json!("invalid")] {
@@ -226,18 +241,101 @@ mod tests {
         execution.finish(result());
         let mut received = String::new();
         loop {
-            let page = execution.receipt();
+            let page = payload(execution.receipt(true));
             assert!(serde_json::to_vec(&page["output"]).unwrap().len() <= MAX_OUTPUT_JSON_BYTES + 2);
             for output in page["output"].as_array().unwrap() {
                 assert_eq!(output["sequence"], 1);
                 assert_eq!(output["offset"].as_u64().unwrap() as usize, received.len());
                 received.push_str(output["value"].as_str().unwrap());
             }
-            if page["has_more_output"] == false { break; }
+            if page["has_more_output"] != true { break; }
             assert_eq!(manager.selectOwned(&owner("chat"), None).unwrap().len(), 1);
         }
         assert_eq!(received, original);
         assert!(manager.selectOwned(&owner("chat"), None).unwrap().is_empty());
+    }
+
+    /// Returns completed business data directly without reinterpreting package-owned keys or strings.
+    #[test]
+    fn ordinary_completion_preserves_business_json_and_reports_errors_once() {
+        use crate::ConversationMarkupManager::ConversationMarkupManager;
+        let manager = PackageExecutionManager::default();
+        let execution = execution(&manager, "json", "chat");
+        let value = json!({"__type":"PackageOwnedType", "nested":[null,false], "text":"{\"x\":1}"});
+        execution.finish(Ok(vec![ToolResult { toolName: "fixture:slow".into(), success: true,
+            result: ToolResultData::JsonResultData(JsonResultData { value: value.clone() }), error: None }]));
+        assert_eq!(payload(execution.receipt(false)), value);
+        assert_eq!(payload(execution.receipt(true))["result"], value);
+        execution.finish(Ok(vec![ToolResult { toolName: "fixture:slow".into(), success: false,
+            result: stringResultData(""), error: Some("setting does not exist".into()) }]));
+        let failed = execution.receipt(false);
+        let message = ConversationMarkupManager::formatToolResultForMessage(&failed);
+        assert!(!failed.success);
+        assert_eq!(message.matches("setting does not exist").count(), 1);
+        assert!(!message.contains("execution_id"));
+    }
+
+    /// Keeps native UI data for ordinary completions and structured, untagged values in wait receipts.
+    #[test]
+    fn native_result_retains_renderer_data_and_wait_does_not_encode_json_twice() {
+        use crate::tools::ToolResultDataClasses::DirectoryListingData;
+        let manager = PackageExecutionManager::default();
+        let execution = execution(&manager, "native", "chat");
+        execution.finish(Ok(vec![ToolResult { toolName: "fixture:slow".into(), success: true,
+            result: ToolResultData::DirectoryListingData(DirectoryListingData { path: "/files".into(), entries: vec![] }), error: None }]));
+        assert!(matches!(execution.receipt(false).result, ToolResultData::DirectoryListingData(_)));
+        assert_eq!(payload(execution.receipt(true))["result"], json!({"path":"/files", "entries":[]}));
+    }
+
+    /// Keeps intermediate output on failures while reporting the actual error exactly once.
+    #[test]
+    fn failed_completion_with_output_preserves_foreground_and_wait_error_contracts() {
+        use crate::ConversationMarkupManager::ConversationMarkupManager;
+        let manager = PackageExecutionManager::default();
+        let execution = execution(&manager, "failed-output", "chat");
+        execution.state.lock().unwrap().output.push("progress before failure".into());
+        execution.finish(Ok(vec![ToolResult { toolName: "fixture:slow".into(), success: false,
+            result: stringResultData(""), error: Some("actual failure".into()) }]));
+        let foreground = execution.receipt(false);
+        assert!(!foreground.success);
+        let message = ConversationMarkupManager::formatToolResultForMessage(&foreground);
+        assert_eq!(message.matches("actual failure").count(), 1);
+        assert!(message.contains("progress before failure"));
+        let observed = execution.receipt(true);
+        assert!(observed.success, "Observing a failed operation is a successful read");
+        assert_eq!(payload(observed), json!({"execution_id":"failed-output", "tool_name":"fixture:slow",
+            "status":"failed", "error":"actual failure"}));
+    }
+
+    /// Preserves identity, structured business values and individual failures in multi-result calls.
+    #[test]
+    fn multiple_results_keep_their_names_values_and_errors() {
+        let manager = PackageExecutionManager::default();
+        let execution = execution(&manager, "multiple", "chat");
+        execution.finish(Ok(vec![
+            ToolResult { toolName: "fixture:first".into(), success: true,
+                result: ToolResultData::JsonResultData(JsonResultData { value: json!({"items":[null,false]}) }), error: None },
+            ToolResult { toolName: "fixture:second".into(), success: false,
+                result: stringResultData("details"), error: Some("second failed".into()) },
+        ]));
+        let observed = payload(execution.receipt(true));
+        assert_eq!(observed["status"], "failed");
+        assert_eq!(observed["results"], json!([
+            {"tool_name":"fixture:first", "success":true, "result":{"items":[null,false]}},
+            {"tool_name":"fixture:second", "success":false, "result":"details", "error":"second failed"},
+        ]));
+        assert!(observed.get("result").is_none());
+    }
+
+    /// Observes an empty selection immediately without emitting empty arrays or zero counters.
+    #[tokio::test]
+    async fn empty_wait_reports_idle() {
+        let manager = PackageExecutionManager::default();
+        let scheduler = operit_host_native_scheduler::NativeHostRuntimeTaskSchedulerHost::new();
+        let result = manager.wait(&[], &scheduler, 20_000, true).await.unwrap();
+        assert_eq!(result.toolName, "package_wait");
+        assert!(result.success);
+        assert_eq!(payload(result), json!({"status":"idle"}));
     }
 }
 
@@ -271,7 +369,7 @@ impl PackageExecution {
     }
 
     /// Consumes only newly produced output while retaining the final result for explicit later reads.
-    fn receipt(&self) -> Value {
+    fn receipt(&self, forWait: bool) -> ToolResult {
         let mut state = self.state.lock().expect("Package execution is poisoned");
         let mut output = Vec::new();
         let mut budget = MAX_OUTPUT_JSON_BYTES;
@@ -292,23 +390,73 @@ impl PackageExecution {
                 state.outputOffset += length;
             }
         }
-        let (status, results, error) = match &state.result {
-            None => ("running", Vec::new(), None),
-            Some(Ok(results)) => (
-                if results.iter().all(|result| result.success) { "completed" } else { "failed" },
-                results.iter().map(|result| json!({
-                    "tool_name": result.toolName, "success": result.success,
-                    "result": result.result.toString(), "error": result.error,
-                })).collect(),
-                None,
-            ),
-            Some(Err(error)) => ("failed", Vec::new(), Some(error.clone())),
-        };
         let hasMore = state.delivered < state.output.len();
         state.finalDelivered = state.result.is_some() && !hasMore;
-        json!({"execution_id": self.id, "tool_name": self.toolName, "status": status,
-            "output": output, "cursor": state.delivered, "has_more_output": hasMore,
-            "results": results, "error": error})
+        // Ordinary completions retain their original result, renderer and failure status.
+        if !forWait && output.is_empty() && !hasMore {
+            match &state.result {
+                Some(Ok(results)) if results.len() == 1 => return results[0].clone(),
+                Some(Err(error)) => return ToolResult { toolName: self.toolName.clone(),
+                    success: false, result: stringResultData(""), error: Some(error.clone()) },
+                _ => {}
+            }
+        }
+        let status = match &state.result {
+            None => "running",
+            Some(Ok(results)) if results.iter().all(|result| result.success) => "completed",
+            _ => "failed",
+        };
+        let success = forWait || status != "failed";
+        let error = if success { None } else {
+            Some(match &state.result {
+                Some(Ok(results)) => results.iter().filter_map(|result| result.error.as_deref()).collect::<Vec<_>>().join("\n"),
+                Some(Err(error)) => error.clone(),
+                None => unreachable!("Running execution cannot fail"),
+            })
+        };
+        let mut value = json!({"execution_id": self.id, "tool_name": self.toolName, "status": status});
+        if !output.is_empty() { value["output"] = json!(output); }
+        if hasMore { value["has_more_output"] = json!(true); }
+        match &state.result {
+            Some(Ok(results)) if results.len() == 1 => {
+                let result = &results[0];
+                if result.success || !matches!(&result.result, ToolResultData::StringResultData(data) if data.value.is_empty()) {
+                    value["result"] = modelResultValue(&result.result);
+                }
+                if forWait {
+                    if let Some(error) = &result.error { value["error"] = json!(error); }
+                }
+            }
+            Some(Ok(results)) => value["results"] = Value::Array(results.iter().map(|result| {
+                let mut entry = json!({"tool_name": result.toolName, "success": result.success,
+                    "result": modelResultValue(&result.result)});
+                if forWait {
+                    if let Some(error) = &result.error { entry["error"] = json!(error); }
+                }
+                entry
+            }).collect()),
+            Some(Err(error)) if forWait => value["error"] = json!(error),
+            Some(Err(_)) => {},
+            None => {}
+        }
+        ToolResult { toolName: if forWait { "package_wait".into() } else { self.toolName.clone() },
+            success, result: ToolResultData::JsonResultData(JsonResultData { value }), error }
+    }
+}
+
+/// Keeps business JSON structured and removes only the native result's own serialization tag.
+fn modelResultValue(result: &ToolResultData) -> Value {
+    match result {
+        ToolResultData::JsonResultData(data) => data.value.clone(),
+        ToolResultData::StringResultData(data) => json!(data.value),
+        ToolResultData::BooleanResultData(data) => json!(data.value),
+        ToolResultData::IntResultData(data) => json!(data.value),
+        ToolResultData::BinaryResultData(_) => json!(result.toString()),
+        _ => {
+            let mut value = serde_json::to_value(result).expect("Tool result must serialize");
+            value.as_object_mut().expect("Native result is an object").remove("__type");
+            value
+        }
     }
 }
 
@@ -364,9 +512,7 @@ impl crate::ToolExecutionManager::SharedToolExecutor for PackageWaitExecutor {
             .ok_or("Runtime task scheduler host is unavailable")?;
         Ok(crate::tools::ToolInvocation::prepareInvocation(request, checkAccess,
             crate::ToolExecutionManager::ToolEffect::READ, async move {
-                let value = manager.wait(&executions, scheduler.as_ref(), waitMs, true).await?;
-                Ok(crate::tools::ToolResultDataClasses::ToolResultData::JsonResultData(
-                    crate::tools::ToolResultDataClasses::JsonResultData { value }))
+                Ok(manager.wait(&executions, scheduler.as_ref(), waitMs, true).await?.result)
             }))
     }
 }

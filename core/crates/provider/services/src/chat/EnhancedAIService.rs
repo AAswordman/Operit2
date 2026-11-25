@@ -3419,7 +3419,7 @@ fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {
 fn buildPackageProxyToolPrompt() -> ToolPrompt {
     ToolPrompt {
         name: "package_proxy".to_string(),
-        description: "Execute an activated package tool. Every call returns execution_id and waits up to 20 seconds. A running execution continues in the background; collect further output and final results with package_wait instead of re-running the tool.".to_string(),
+        description: "Execute an activated package tool and wait up to 20 seconds. Completed calls return business results directly. Running work returns execution_id; collect further output and final results with package_wait instead of re-running the tool. has_more_output or a nonzero pending_execution_count requires further reads.".to_string(),
         parameters: buildToolParametersJson(&[
             crate::chat::config::SystemToolPrompts::ToolParameterSchema {
                 name: "tool_name".to_string(),

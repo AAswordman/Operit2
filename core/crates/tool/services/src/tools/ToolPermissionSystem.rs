@@ -58,6 +58,8 @@ pub enum PermissionRequestResult {
     DENY,
     /// Allow matching tool requests until this runtime session ends.
     ALLOW_SESSION,
+    /// Report a failed approval request without claiming that the user denied it.
+    ERROR(String),
 }
 
 type AsyncPermissionRequestFuture =
@@ -226,7 +228,7 @@ impl ToolPermissionSystem {
             .clone();
         let result = match requester {
             Some(callback) => callback(tool.clone(), description, chatId).await,
-            None => PermissionRequestResult::DENY,
+            None => PermissionRequestResult::ERROR("Tool approval requester is not installed.".into()),
         };
 
         self.applyPermissionResult(tool, result)
@@ -242,6 +244,9 @@ impl ToolPermissionSystem {
         match result {
             PermissionRequestResult::ALLOW => Ok(true),
             PermissionRequestResult::DENY => Ok(false),
+            PermissionRequestResult::ERROR(error) => Err(PreferencesDataStoreError::Message(
+                format!("Tool approval failed: {error}"),
+            )),
             PermissionRequestResult::ALLOW_SESSION => {
                 self.sessionApprovedTools
                     .lock()

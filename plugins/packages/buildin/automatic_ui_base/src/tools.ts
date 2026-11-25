@@ -76,8 +76,8 @@
         {
             "name": "focus_window",
             "description": {
-                "zh": "传入 list_windows 返回的 windowId 选择该窗口；Windows/macOS/Linux X11 在宿主预览小窗中显示原窗口，不抢占用户的前台工作。后续 UI 树、截图和输入共用窗口左上角 (0,0) 坐标。省略 window_id 可取消选择，恢复主屏幕截图和屏幕坐标。窗口失效时返回错误。",
-                "en": "Select a native windowId. Windows/macOS/Linux X11 show a host-owned preview without bringing the source in front of the user. Trees, screenshots and input then share window-local coordinates with (0,0) at the top left. Omit window_id to clear selection and return to desktop capture and screen coordinates. Stale targets fail."
+                "zh": "传入 list_windows 返回的 windowId 选择操作目标。Android 始终操作对应的原始虚拟屏幕，预览小窗最小化或缩放不影响读取、截图和输入，选择目标不会恢复或放大预览。Windows/macOS/Linux X11 在宿主预览小窗中显示原窗口，不抢占用户的前台工作。后续 UI 树、截图和输入共用窗口左上角 (0,0) 坐标。省略 window_id 可取消选择，恢复主屏幕截图和屏幕坐标。窗口失效时返回错误。",
+                "en": "Select a native windowId. Android operates on its original virtual display: minimizing or resizing the preview does not affect trees, screenshots or input, and selection preserves the preview size. Windows/macOS/Linux X11 show a host-owned preview without bringing the source in front of the user. Trees, screenshots and input then share window-local coordinates with (0,0) at the top left. Omit window_id to clear selection and return to desktop capture and screen coordinates. Stale targets fail."
             },
             "parameters": [{ "name": "window_id", "type": "string", "required": false,
                 "description": { "zh": "系统窗口 ID；省略可取消窗口选择。", "en": "Native window ID; omit to clear selection." } }],

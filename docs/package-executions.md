@@ -6,7 +6,7 @@ target through the existing permission and hook pipeline. Native built-in tools
 retain their ordinary execution contract. Direct SDK calls inside a package keep
 their awaited final-result semantics so dependent operations remain ordered.
 
-Every AI package invocation receives an opaque `execution_id`. The model waits
+Every AI package invocation retains an internal opaque `execution_id`. The model waits
 up to 20 seconds for completion. A top-level proxy `timeout_ms` accepts integers
 from 0 to 20000; 0 returns immediately. This control is separate from business
 arguments inside `params`. Expiry returns a running receipt and never cancels or
@@ -42,20 +42,39 @@ sequence, so reading progress never waits for an unfinished predecessor first.
 }
 ```
 
-`package_proxy` returns an envelope containing `executions` and `timed_out`.
-Each execution contains `execution_id`, `tool_name`, `status` (`running`,
-`completed` or `failed`), `output`, `cursor`, `results` and `error`. A running
-receipt is a successful acknowledgement; an already failed invocation retains
-the ordinary failed-tool status. Final `results` preserve each original tool's
-name, success, textual result and error.
+When a call completes without intermediate output, `package_proxy` and direct
+package calls return the original business result, preserving its UI renderer
+and failed-tool status. An ordinary failure reports its error once. Package
+return values are decoded at the JavaScript JSON boundary, so objects and arrays
+remain structured instead of becoming JSON-encoded strings. JSON-looking strings
+remain strings, and package-owned keys (including `__type`) are preserved.
+
+Running calls return a flat receipt, for example:
+
+```json
+{"execution_id":"package_...","tool_name":"super_admin:terminal","status":"running"}
+```
+
+Receipts with intermediate output also include `output`. A completed receipt
+includes the business `result` directly, or `error` on failure. Only invocations
+with multiple final results use `results`, preserving their names and success
+flags. Native result serialization tags are omitted from receipt business data.
+The `executions` envelope, `cursor`, `timed_out`, empty output arrays, null errors
+and zero counters are not sent to the model. Execution ownership, retained
+results, output offsets and delivery progress remain in the runtime.
 
 `package_wait` accepts optional `execution_id` and `timeout_ms` (default 20000,
 range 0–20000). With an ID it reads that exact execution, including an already
 completed result. Without an ID it snapshots existing executions in the same
 authenticated configuration owner and chat, including completed results not yet
 delivered. Later invocations do not join an outstanding wait. An empty snapshot
-returns immediately. CLI models call it through `proxy` with
+returns `{"status":"idle"}` immediately. CLI models call it through `proxy` with
 `tool_name: "package_wait"`.
+
+Wait receipts retain `execution_id`, `tool_name` and `status` so the model can
+associate a result with its original operation, even when waiting without an ID.
+An observed execution failure is reported inside the receipt; the wait itself
+only fails when observation cannot be performed.
 
 The CLI TUI renders `package_wait` as an ordinary tool row (`→`) for direct
 calls and calls through either proxy, including merged call/result rows. Its
@@ -65,14 +84,17 @@ The CLI public `search` tool uses the search symbol (`⌕`).
 
 Wait returns on new intermediate output, completion of any selected invocation,
 or expiry of its single total budget. Each response collects one ready execution;
-`pending_execution_count` reports how many selected executions still need reads.
+`pending_execution_count` reports how many selected executions still need reads,
+and is included only when another execution besides the returned one needs a read.
 This keeps unrelated completed results from being merged into an oversized tool
 response. Each output entry has a monotonically increasing `sequence`, UTF-8 byte
 `offset`, textual `value` and `complete` flag. Large intermediate events are
 split into Unicode-safe fragments under a 20 KB serialized JSON output budget;
 concatenate fragments with the same sequence before interpreting structured JSON
-text. `cursor` is the last fully delivered sequence, and `has_more_output` means
-another wait can immediately read retained fragments. Subsequent reads consume
+text. `has_more_output: true` means another wait can immediately read retained
+fragments; the field is omitted when there are none. A running status,
+`has_more_output`, or a nonzero `pending_execution_count` calls for more reads.
+Subsequent reads consume
 only new output; final results remain available through an explicit ID. Completed
 executions disappear from the implicit snapshot only after all their output and
 final results have been delivered. Executions and their retained output belong to the current runtime;

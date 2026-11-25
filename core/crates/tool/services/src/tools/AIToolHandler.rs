@@ -839,7 +839,7 @@ impl AIToolHandler {
                     error: Some(error.to_string()),
                 })?;
             if !approved {
-                let error = "User cancelled the tool execution.".to_string();
+                let error = "User denied the tool execution.".to_string();
                 self.notifyToolPermissionChecked(tool, false, Some(&error));
                 return Err(ToolResult {
                     toolName: tool.name.clone(),
@@ -869,7 +869,7 @@ impl AIToolHandler {
                     error: Some(error.to_string()),
                 })?;
             if !approved {
-                let error = "User cancelled the tool execution.".to_string();
+                let error = "User denied the tool execution.".to_string();
                 self.notifyToolPermissionChecked(tool, false, Some(&error));
                 return Err(ToolResult {
                     toolName: tool.name.clone(),
@@ -1068,20 +1068,7 @@ impl AIToolHandler {
         if let Err(error) = scheduler.scheduleHostRuntimeBlockingAsyncTask("package-execution", task) {
             execution.finish(Err(error.to_string()));
         }
-        let receipt = manager.wait(&[execution], scheduler.as_ref(), waitMs, false).await?;
-        let entry = &receipt["executions"][0];
-        let success = entry["status"] != "failed";
-        let error = if success { None } else {
-            Some(entry["error"].as_str().map(str::to_owned).unwrap_or_else(|| {
-                entry["results"].as_array().expect("Execution results must be an array").iter()
-                    .filter_map(|result| result["error"].as_str()).collect::<Vec<_>>().join("\n")
-            }))
-        };
-        Ok(vec![ToolResult {
-            toolName, success,
-            result: ToolResultData::JsonResultData(crate::tools::ToolResultDataClasses::JsonResultData { value: receipt }),
-            error,
-        }])
+        Ok(vec![manager.wait(&[execution], scheduler.as_ref(), waitMs, false).await?])
     }
 
     /// Executes under the native caller context and dispatches lifecycle hooks only for AI requests.
@@ -2852,7 +2839,7 @@ mod tests {
                     ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL },
                 )).await.unwrap();
                 assert!(!result[0].success, "{}", request.name);
-                assert_eq!(result[0].error.as_deref(), Some("User cancelled the tool execution."));
+                assert_eq!(result[0].error.as_deref(), Some("User denied the tool execution."));
                 assert_eq!(approvals.load(Ordering::SeqCst), index + 1, "{}", request.name);
             }
         }
@@ -3490,20 +3477,19 @@ mod tests {
             "configuration-owner".into(), Default::default(),
         )).await.expect("Foreground receipts and observations must not wait for queued work").unwrap();
         let queued: Value = serde_json::from_str(&first.results[1].result.toString()).unwrap();
-        assert_eq!(queued["executions"][0]["status"], "running");
+        assert_eq!(queued["status"], "running");
         hostTimeout(5_000, started.notified()).await.unwrap();
         let second = hostTimeout(5_000, ToolExecutionManager::executeInvocations(
             &[invocation("b0", "20000")], &fixture.handler,
             None, Some("shared-chat".into()), None, None, Vec::new(), ToolExposureMode::FULL,
             "configuration-owner".into(), Default::default(),
         )).await.unwrap().unwrap();
-        let completed: Value = serde_json::from_str(&second.results[0].result.toString()).unwrap();
-        assert_eq!(completed["executions"][0]["status"], "completed");
+        assert_eq!(second.results[0].result.toString(), "b0");
         assert_eq!(*events.lock().unwrap(), ["start:a0", "start:b0", "finish:b0"]);
         release.notify_one();
         let wait = crate::ToolExecutionManager::ToolInvocation {
             tool: AITool { name: "package_wait".into(), parameters: vec![ToolParameter {
-                name: "execution_id".into(), value: queued["executions"][0]["execution_id"].as_str().unwrap().into(),
+                name: "execution_id".into(), value: queued["execution_id"].as_str().unwrap().into(),
             }] }, rawText: String::new(), responseLocation: (0, 0),
         };
         let finalBatch = hostTimeout(5_000, ToolExecutionManager::executeInvocations(
@@ -3512,7 +3498,7 @@ mod tests {
             "configuration-owner".into(), Default::default(),
         )).await.unwrap().unwrap();
         let finalReceipt: Value = serde_json::from_str(&finalBatch.results[0].result.toString()).unwrap();
-        assert_eq!(finalReceipt["executions"][0]["status"], "completed");
+        assert_eq!(finalReceipt["status"], "completed");
         assert_eq!(*events.lock().unwrap(), ["start:a0", "start:b0", "finish:b0", "finish:a0", "start:a1", "finish:a1"]);
     }
 
@@ -3636,9 +3622,8 @@ mod tests {
         let mut orders = Vec::new();
         for (batch, labels) in [(batches.0, ["a0", "a1"]), (batches.1, ["b0", "b1"])] {
             for (result, label) in batch.results.iter().zip(labels) {
-                let receipt: Value = serde_json::from_str(&result.result.toString()).unwrap();
-                assert_eq!(receipt["executions"][0]["status"], "completed", "{receipt}");
-                let value: Value = serde_json::from_str(receipt["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap();
+                assert!(result.success);
+                let value: Value = serde_json::from_str(&result.result.toString()).unwrap();
                 assert_eq!(value["label"], label);
                 orders.push(value["order"].as_u64().unwrap());
             }
@@ -3720,9 +3705,39 @@ mod tests {
         assert_eq!(DECODED.load(Ordering::SeqCst),1);
         assert_eq!(EXECUTED.load(Ordering::SeqCst),0);
         assert_eq!(hooks.take(),["requested","intercept","permission","result","finished"]);
+        let permissions = fixture.handler.getToolPermissionSystem();
+        let mut decoded = 1;
+        for mode in [AiPermissionMode::ReadOnly, AiPermissionMode::WorkspaceWrite] {
+            permissions.saveAiPermissionMode(mode).unwrap();
+            permissions.clearAsyncPermissionRequester();
+            let unavailable = fixture.handler.executeToolInvocation(&request,
+                ToolExecutionPolicy::Ai { exposure:ToolExposureMode::FULL }).await.unwrap();
+            decoded += 1;
+            assert!(!unavailable[0].success);
+            assert_eq!(unavailable[0].error.as_deref(), Some(
+                "Tool approval failed: Tool approval requester is not installed."));
+            assert_eq!(EXECUTED.load(Ordering::SeqCst),0);
+            for reason in [
+                "chat tool permission timed out: request-1",
+                "Tool approval requires a chat context.",
+                "Unknown tool permission response result: invalid",
+            ] {
+                permissions.setAsyncPermissionRequester(move |_, _, _| async move {
+                    crate::tools::ToolPermissionSystem::PermissionRequestResult::ERROR(reason.into())
+                });
+                let failed = fixture.handler.executeToolInvocation(&request,
+                    ToolExecutionPolicy::Ai { exposure:ToolExposureMode::FULL }).await.unwrap();
+                decoded += 1;
+                assert!(!failed[0].success);
+                assert_eq!(failed[0].error, Some(format!("Tool approval failed: {reason}")));
+                assert_eq!(DECODED.load(Ordering::SeqCst),decoded);
+                assert_eq!(EXECUTED.load(Ordering::SeqCst),0);
+            }
+        }
+        hooks.take();
         let allowed = fixture.handler.executeToolInvocation(&request,ToolExecutionPolicy::Direct).await.unwrap();
         assert!(allowed[0].success);
-        assert_eq!(DECODED.load(Ordering::SeqCst),2);
+        assert_eq!(DECODED.load(Ordering::SeqCst),decoded + 1);
         assert_eq!(EXECUTED.load(Ordering::SeqCst),1);
         assert!(hooks.take().is_empty());
     }
@@ -3819,8 +3834,8 @@ mod tests {
         let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
             &request, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
         let first: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
-        assert_eq!(first["executions"][0]["status"], "running");
-        let id = first["executions"][0]["execution_id"].as_str().unwrap().to_string();
+        assert_eq!(first["status"], "running");
+        let id = first["execution_id"].as_str().unwrap().to_string();
         hostTimeout(2_000, started.notified()).await.unwrap();
         let wait = ToolCall { name: "package_wait".into(), parameters: BTreeMap::from([
             ("execution_id".into(), json!(id)), ("timeout_ms".into(), json!(0)),
@@ -3828,8 +3843,8 @@ mod tests {
         let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
             &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
         let progress: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
-        let output = first["executions"][0]["output"].as_array().unwrap().iter()
-            .chain(progress["executions"][0]["output"].as_array().unwrap()).collect::<Vec<_>>();
+        let output = first["output"].as_array().into_iter().flatten()
+            .chain(progress["output"].as_array().into_iter().flatten()).collect::<Vec<_>>();
         assert_eq!(output.len(), 1);
         assert_eq!(output[0]["value"], "first");
         release.notify_one();
@@ -3839,10 +3854,10 @@ mod tests {
                 let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
                     &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
                 let value: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
-                if value["executions"][0]["status"] == "completed" { break value; }
+                if value["status"] == "completed" { break value; }
             }
         }).await.unwrap();
-        assert_eq!(completed["executions"][0]["results"][0]["result"], "finished");
+        assert_eq!(completed["result"], "finished");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
 
         // A direct SDK dependency still waits for the real result and never receives a receipt.
@@ -3876,10 +3891,10 @@ mod tests {
                 let results = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
                     &implicit, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
                 let value: Value = serde_json::from_str(&results[0].result.toString()).unwrap();
-                if value["executions"][0]["status"] == "completed" { break value; }
+                if value["status"] == "completed" { break value; }
             }
         }).await.unwrap();
-        assert_eq!(completed["executions"][0]["results"][0]["result"], "finished");
+        assert_eq!(completed["result"], "finished");
         assert_eq!(calls.load(Ordering::SeqCst), 3);
     }
 
@@ -3947,8 +3962,8 @@ mod tests {
         let result = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
             &proxy, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
         let first: Value = serde_json::from_str(&result[0].result.toString()).unwrap();
-        assert_eq!(first["executions"][0]["status"], "running");
-        let id = first["executions"][0]["execution_id"].clone();
+        assert_eq!(first["status"], "running");
+        let id = first["execution_id"].clone();
         hostTimeout(5_000, started.notified()).await.unwrap();
         let wait = ToolCall { name: "package_wait".into(), parameters: BTreeMap::from([
             ("execution_id".into(), id), ("timeout_ms".into(), json!(0)),
@@ -3956,12 +3971,12 @@ mod tests {
         let result = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
             &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
         let progress: Value = serde_json::from_str(&result[0].result.toString()).unwrap();
-        let output = first["executions"][0]["output"].as_array().unwrap().iter()
-            .chain(progress["executions"][0]["output"].as_array().unwrap()).collect::<Vec<_>>();
+        let output = first["output"].as_array().into_iter().flatten()
+            .chain(progress["output"].as_array().into_iter().flatten()).collect::<Vec<_>>();
         assert_eq!(output.len(), 1);
         assert_eq!(serde_json::from_str::<Value>(output[0]["value"].as_str().unwrap()).unwrap(), json!({"phase":"first"}));
         let wait = ToolCall { parameters: BTreeMap::from([
-            ("execution_id".into(), first["executions"][0]["execution_id"].clone()),
+            ("execution_id".into(), first["execution_id"].clone()),
         ]), ..wait };
         release.notify_one();
         let mut later = Vec::new();
@@ -3970,12 +3985,12 @@ mod tests {
                 let result = ToolExecutionManager::scopeToolRuntimeContext(turn.clone(), fixture.handler.executeToolInvocation(
                     &wait, ToolExecutionPolicy::Ai { exposure: ToolExposureMode::FULL })).await.unwrap();
                 let value: Value = serde_json::from_str(&result[0].result.toString()).unwrap();
-                later.extend(value["executions"][0]["output"].as_array().unwrap().iter().cloned());
-                if value["executions"][0]["status"] != "running" { break value; }
+                later.extend(value["output"].as_array().into_iter().flatten().cloned());
+                if value["status"] != "running" { break value; }
             }
         }).await.unwrap();
-        assert_eq!(completed["executions"][0]["status"], "completed", "{completed}");
-        assert_eq!(serde_json::from_str::<Value>(completed["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap(), json!("finished"));
+        assert_eq!(completed["status"], "completed", "{completed}");
+        assert_eq!(completed["result"], "finished");
         assert_eq!(later.len(), 1);
         assert_eq!(serde_json::from_str::<Value>(later[0]["value"].as_str().unwrap()).unwrap(), json!({"phase":"last"}));
     }
@@ -4076,11 +4091,7 @@ mod tests {
                     assert!(results[0].success);
                     assert_eq!(results[0].toolName, "fixture:probe");
                     let ToolResultData::JsonResultData(data) = &results[0].result else { panic!("Expected probe result") };
-                    let value = if matches!(policy, ToolExecutionPolicy::Ai { .. }) {
-                        assert_eq!(data.value["executions"][0]["status"], "completed");
-                        serde_json::from_str::<Value>(data.value["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap()
-                    } else { data.value.clone() };
-                    assert_eq!(value["parameters"], json!({"command": "git status", "timeoutMs": "120000"}));
+                    assert_eq!(data.value["parameters"], json!({"command": "git status", "timeoutMs": "120000"}));
                     assert_eq!(probe.calls.load(Ordering::SeqCst), calls + 1);
                     if matches!(policy, ToolExecutionPolicy::Ai { .. }) {
                         assert_eq!(hooks.take(), ["requested", "intercept", "started", "result", "finished"]);
@@ -4148,8 +4159,7 @@ mod tests {
             assert!(batch.message.contains("<error>"));
             assert!(batch.message.contains("Invalid tool invocation:"));
             assert!(batch.results[2].success);
-            let value: Value = serde_json::from_str(&batch.results[2].result.toString()).unwrap();
-            let result: Value = serde_json::from_str(value["executions"][0]["results"][0]["result"].as_str().unwrap()).unwrap();
+            let result: Value = serde_json::from_str(&batch.results[2].result.toString()).unwrap();
             assert_eq!(result["parameters"]["command"], command);
             assert_eq!(probe.calls.load(Ordering::SeqCst), 1);
             assert_eq!(probe.accessCalls.load(Ordering::SeqCst), 1);

@@ -749,7 +749,7 @@ pub(crate) fn install_link_permission_requester(core: &mut operit_proxy_local::L
         .getToolPermissionSystem()
         .setAsyncPermissionRequester(move |tool, description, chatId| async move {
             let Some(chatId) = chatId else {
-                return PermissionRequestResult::DENY;
+                return PermissionRequestResult::ERROR("Tool approval requires a chat context.".into());
             };
             let response = requestChatToolPermissionAsync(
                 chatId,
@@ -757,13 +757,16 @@ pub(crate) fn install_link_permission_requester(core: &mut operit_proxy_local::L
                 description,
                 Duration::from_secs(60),
             )
-            .await
-            .expect("permission request failed");
+            .await;
+            let response = match response {
+                Ok(response) => response,
+                Err(error) => return PermissionRequestResult::ERROR(error),
+            };
             match response.as_str() {
                 "allow" => PermissionRequestResult::ALLOW,
                 "allow_session" => PermissionRequestResult::ALLOW_SESSION,
                 "deny" => PermissionRequestResult::DENY,
-                other => panic!("unknown permission response result: {other}"),
+                other => PermissionRequestResult::ERROR(format!("Unknown tool permission response result: {other}")),
             }
         });
 }

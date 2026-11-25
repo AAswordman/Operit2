@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="app.operit.windowprobe">
+    <uses-sdk android:minSdkVersion="30" android:targetSdkVersion="35" />
+    <instrumentation android:name="app.operit.windowsmoke.OwnerProbe" android:targetPackage="app.operit" />
+    <application android:label="Operit window owner probe" android:debuggable="true" />
+</manifest>

@@ -2249,18 +2249,28 @@ export namespace ToolPkg {
    * Supplies the exact persisted history boundary before native truncation.
    */
   export interface ChatHistoryTruncatePayload {
-    /** Identifies the before-history-truncate lifecycle stage. */
+    /**
+     * Identifies the before-history-truncate lifecycle stage.
+     */
     eventName: ChatLifecycleEventName;
-    /** Identifies the conversation whose history will change. */
+    /**
+     * Identifies the conversation whose history will change.
+     */
     chatId: string;
-    /** Identifies the first message removed by the requested truncation. */
+    /**
+     * Identifies the first message removed by the requested truncation.
+     */
     firstDeletedMessageTimestamp: number;
   }
 
-  /** Distinguishes creation input from an explicit destructive history boundary. */
+  /**
+   * Distinguishes creation input from an explicit destructive history boundary.
+   */
   export type ChatLifecyclePayload = ChatLifecycleEventPayload | ChatHistoryTruncatePayload;
 
-  /** Combines existing ToolPkg execution metadata with the typed lifecycle payload. */
+  /**
+   * Combines existing ToolPkg execution metadata with the typed lifecycle payload.
+   */
   export interface ChatLifecycleHookEvent extends HookEventBase<ChatLifecycleEventName, ChatLifecyclePayload> {
   }
 

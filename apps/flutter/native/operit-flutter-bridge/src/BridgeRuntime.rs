@@ -116,7 +116,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
         .getToolPermissionSystem()
         .setAsyncPermissionRequester(move |tool, description, chatId| async move {
             let Some(chatId) = chatId else {
-                return PermissionRequestResult::DENY;
+                return PermissionRequestResult::ERROR("Tool approval requires a chat context.".into());
             };
             let response = requestChatToolPermissionAsync(
                 chatId,
@@ -132,7 +132,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                         "OperitFlutterBridge",
                         &format!("tool permission request failed: {error}"),
                     );
-                    return PermissionRequestResult::DENY;
+                    return PermissionRequestResult::ERROR(error);
                 }
             };
             match response.as_str() {
@@ -144,7 +144,7 @@ fn install_permission_requester(core: &mut LocalCoreProxy) {
                         "OperitFlutterBridge",
                         &format!("unknown tool permission response result: {other}"),
                     );
-                    PermissionRequestResult::DENY
+                    PermissionRequestResult::ERROR(format!("Unknown tool permission response result: {other}"))
                 }
             }
         });

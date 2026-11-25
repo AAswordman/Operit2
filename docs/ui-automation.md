@@ -233,6 +233,9 @@ application overlays according to system policy.
 
 Use the same `list_windows`, `focus_window`, snapshots and input tools on these
 windows. Opaque window IDs survive minimization and restore; closed IDs fail.
+Selecting a hosted window and sending input operate on its original virtual
+display, including while its preview is minimized. Selection, screenshots and
+repeated app launches preserve the user's preview size and minimized state.
 Window-list bounds describe the physical floating content area for the indicator;
 tree bounds and automation coordinates refer to the virtual screen. Only the
 Android Host translates window IDs and coordinates. No Android-specific tool,

@@ -216,7 +216,7 @@ impl CliToolModeSupport {
 - `search` only searches the hidden tool catalog. It does not read files, search code, or browse the web.
 - All real capabilities are hidden behind `proxy`.
 - Do not call hidden tools directly. Use `search` first, then call `proxy` with the discovered target tool name and JSON params.
-- Package executions return an execution_id after at most 20 seconds and continue in the background. Collect their output and completion through `proxy` targeting `package_wait`; omit execution_id to collect earlier executions in this chat.
+- Package calls wait at most 20 seconds and return completed business results directly. Running work returns execution_id and continues in the background. Collect output and completion through `proxy` targeting `package_wait`; omit execution_id to collect earlier executions in this chat. has_more_output or a nonzero pending_execution_count requires further reads.
 - Operations in one response execute serially through actual completion, including after foreground expiry. Different batches can overlap; `package_wait` observes progress independently."#
         } else {
             r#"CLI 工具模式
@@ -224,7 +224,7 @@ impl CliToolModeSupport {
 - `search` 只搜索隐藏工具目录，不会直接读文件、搜代码或访问网页。
 - 所有真实能力都隐藏在 `proxy` 后面。
 - 不要直接调用隐藏工具。先用 `search`，再用发现到的目标工具名和 JSON 参数调用 `proxy`。
-- 包执行最多等待20秒，返回 execution_id 后在后台继续运行。使用 `proxy` 调用 `package_wait` 收取输出和完成结果，省略 execution_id 可收取当前对话前面的执行。
+- 包执行最多等待20秒，完成时直接返回业务结果，仍在运行时返回 execution_id。使用 `proxy` 调用 `package_wait` 收取输出和完成结果，省略 execution_id 可收取当前对话前面的执行。has_more_output 或非零 pending_execution_count 表示仍需继续领取。
 - 同一次响应中的操作按实际完成顺序串行执行，前台超时不会放行后续操作；不同批次可以并行，`package_wait` 独立读取进度。"#
         };
         let category = SystemToolPromptCategory {

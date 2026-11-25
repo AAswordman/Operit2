@@ -37,6 +37,11 @@ const TERMUX_TERMINAL: &str = "termux";
 const ANDROID_SYSTEM_TERMINAL: &str = "android-system";
 const PRIMARY_TERMINAL_TYPE: &str = "bash";
 
+/// Keeps downloaded Linux systems and installation files in the owner's fixed private storage.
+fn androidTerminalRootfsDirectory() -> HostResult<std::path::PathBuf> {
+    Ok(requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?.join("android-runtime/distributions"))
+}
+
 fn resolveAndroidNativeWorkingDirectory(
     path: &str,
     documentOperation: &dyn Fn(serde_json::Value) -> HostResult<serde_json::Value>,
@@ -264,7 +269,7 @@ impl TerminalHost for AndroidTerminalHost {
         Ok(operit_host_native_common::TerminalRootfs::distributions())
     }
 
-    /// Installs each downloaded distribution into its own device-local rootfs directory.
+    /// Installs distributions below private storage, independently of the selected data runtime.
     fn installTerminalDistribution(
         &self,
         distributionId: &str,
@@ -278,12 +283,8 @@ impl TerminalHost for AndroidTerminalHost {
                 "Downloadable rootfs images require an ARM64 Android host",
             ));
         }
-        let runtime = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
-        let relative = operit_host_api::RuntimeStorageLayout::TERMINAL_ROOTFS_DIR_PATH
-            .strip_prefix("runtime/")
-            .ok_or_else(|| HostError::new("Invalid terminal storage definition"))?;
         operit_host_native_common::TerminalRootfs::install(
-            &runtime.join(relative),
+            &androidTerminalRootfsDirectory()?,
             distributionId,
             instanceId,
             name,
@@ -296,11 +297,7 @@ impl TerminalHost for AndroidTerminalHost {
 
     /// Removes only a fresh host-owned instance when durable profile registration fails.
     fn discardTerminalDistribution(&self, instanceId: &str) -> HostResult<()> {
-        let runtime = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_ROOT")?;
-        let relative = operit_host_api::RuntimeStorageLayout::TERMINAL_ROOTFS_DIR_PATH
-            .strip_prefix("runtime/")
-            .ok_or_else(|| HostError::new("Invalid terminal storage definition"))?;
-        operit_host_native_common::TerminalRootfs::discard(&runtime.join(relative), instanceId)
+        operit_host_native_common::TerminalRootfs::discard(&androidTerminalRootfsDirectory()?, instanceId)
     }
 
     /// Registers user-supplied Linux root filesystems without modifying the bundled runtime.

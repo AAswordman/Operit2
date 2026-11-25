@@ -159,6 +159,8 @@ fn export_excludes_host_archive_namespaces_from_the_complete_runtime_tree() {
 #[test]
 fn rescue_excludes_host_storage_and_preserves_destination_environments() {
     let source = Fixture::new();
+    let android_system = "android-runtime/distributions/image/bin/bash";
+    source.write(android_system, b"source Android system");
     let private = [
         "runtime/terminal/rootfs/image/bin/sh",
         "runtime/identities/a/terminal/rootfs/image/sdcard/record",
@@ -181,14 +183,17 @@ fn rescue_excludes_host_storage_and_preserves_destination_environments() {
     for path in manifest["files"].as_array().unwrap().iter().map(|file| file["path"].as_str().unwrap())
         .chain(manifest["metadata"]["storageNodes"].as_array().unwrap().iter().map(|node| node["path"].as_str().unwrap())) {
         assert!(!Path::new(path).strip_prefix("runtime").is_ok_and(is_host_private_runtime_path), "{path}");
+        assert!(!Path::new(path).starts_with("application/android-runtime"), "{path}");
     }
     for (runtime, workspaces) in [("runtime", "workspaces"), ("storage/runtime", "storage")] {
         let target = Fixture::new();
+        target.write(android_system, b"target Android system");
         let target_private: Vec<_> = private.iter().map(|path| path.replacen("runtime", runtime, 1)).collect();
         for path in &target_private { target.write(path, b"target Host bytes"); }
         let mut importing = target.session_for(target.layout(runtime, workspaces), None);
         let id = transfer(&archive, &mut importing);
         importing.execute(json!({"operation":"restore", "archiveId":id})).unwrap();
+        assert_eq!(fs::read(target.0.join(android_system)).unwrap(), b"target Android system");
         for path in &target_private { assert_eq!(fs::read(target.0.join(path)).unwrap(), b"target Host bytes"); }
         assert_eq!(fs::read(target.0.join(runtime).join("data/record")).unwrap(), b"portable data");
         assert_eq!(fs::read(target.0.join(workspaces).join("project/terminal/rootfs/record")).unwrap(), b"workspace data");
