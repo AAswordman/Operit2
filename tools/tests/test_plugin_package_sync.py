@@ -22,6 +22,26 @@ SPEC.loader.exec_module(SYNC)
 
 
 class PluginPackageSyncTests(unittest.TestCase):
+    # Rejects official app builds before invoking Flutter, even when Flutter's asset hook is cached.
+    def test_app_build_entry_points_require_package_parsing(self):
+        sys.path.insert(0, str(REPO_ROOT / "tools/build_scripts"))
+        try:
+            for platform in ("android", "windows", "linux", "ios", "macos"):
+                with self.subTest(platform=platform):
+                    name = f"build_flutter_{platform}"
+                    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / f"tools/build_scripts/{name}.py")
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    with patch.object(module, "parse_args"), \
+                            patch.object(module, "prepare_apple_sherpa", create=True), \
+                            patch.object(module, "prepare_plugin_assets", side_effect=RuntimeError("package parse failed")), \
+                            patch.object(module, "run") as run:
+                        with self.assertRaisesRegex(RuntimeError, "package parse failed"):
+                            module.main()
+                        run.assert_not_called()
+        finally:
+            sys.path.pop(0)
+
     # Requires both runtime sources to pass the gate before publishing hot-reload notifications.
     def test_runtime_parse_failure_stops_sync_before_hot_reload(self):
         with patch.object(SYNC.sys, "argv", ["sync_plugin_packages.py", "--source", "runtime"]), \

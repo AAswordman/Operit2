@@ -14,6 +14,7 @@ from common import (
     flutter_pub_get,
     generate_dart_proxy_artifacts,
     prepare_python_command,
+    prepare_plugin_assets,
     require_command,
     run,
 )
@@ -69,6 +70,7 @@ def main() -> int:
     args = parse_args()
     prepare_apple_sherpa()
     os.environ.setdefault("RUSTFLAGS", "-Awarnings")
+    prepare_plugin_assets()
     require_command("cargo")
     flutter = flutter_command()
     if not args.skip_proxy_generation:

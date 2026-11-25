@@ -12,6 +12,7 @@ from common import (
     RELEASE_DIR,
     flutter_command,
     flutter_pub_get,
+    prepare_plugin_assets,
     require_command,
     run,
 )
@@ -46,6 +47,7 @@ def parse_args() -> argparse.Namespace:
 # Builds the Windows Flutter app and writes its MSI installer.
 def main() -> int:
     args = parse_args()
+    prepare_plugin_assets()
     flutter_pub_get(enforce_lockfile=args.enforce_lockfile)
     command = [flutter_command(), "build", "windows", "--release", "--no-pub"]
     if args.build_name:
