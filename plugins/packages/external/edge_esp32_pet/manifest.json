@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "toolpkg_id": "com.operit.edge_esp32_pet",
+  "version": "0.1.0",
+  "api_version": "2.0.0",
+  "main": "dist/main.js",
+  "display_name": {
+    "zh": "ESP32 任务猫",
+    "en": "ESP32 Task Cat"
+  },
+  "description": {
+    "zh": "插件在本机同步任务状态，已配对的 ESP32 Edge 节点本地播放任务猫精简动画。",
+    "en": "Host-side task companion for paired ESP32 Edge displays."
+  },
+  "enabled_by_default": false,
+  "resources": [
+    {
+      "key": "esp32_studio",
+      "path": "resources/studio.html",
+      "mime": "text/html"
+    }
+  ]
+}
