@@ -181,7 +181,6 @@ test("production Compose controls cancel and resume the exact admitted submissio
   planning.resolve({ text: JSON.stringify({ rounds: [[]] }) });
   assert.equal((await settled(runtime, admitted.metadata.submissionId)).outcome.status, "cancelled");
   assert.equal(sends.length, 1);
-  const blocked = await runtime.submit(); assert.equal(blocked.action, "Block"); assert.equal(blocked.clearInput, false);
   await ui.dispatch(keyedNode(ui.render().tree, "group-execution-refresh").props.onClick);
   assert.equal(keyedNode(ui.render().tree, "group-execution-resume").props.enabled, true);
   await ui.dispatch(keyedNode(ui.render().tree, "group-execution-resume").props.onClick);
@@ -224,6 +223,91 @@ test("registered group cancellation captures a live send and explicit resume nev
   await runtime.groupExecution({ action: "resume", chatId: "selector-chat", submissionId: admitted.metadata.submissionId });
   const completed = await settled(runtime, admitted.metadata.submissionId); assert.equal(completed.status, "settled", completed.error); assert.equal(completed.outcome.status, "completed");
   assert.equal(sends.length, 3); assert.equal(sends[2].kind, "continue"); assert.equal(sends[2].userMessageTimestamp, 10);
+});
+
+/** Allows a new user input after a native stop while preventing old controls from resuming the replaced plan. */
+test("registered group input replaces a cancelled native turn and preserves the next complete input", async t => {
+  const runtime = await environment(t), { first } = await bindGroup(runtime), pending = barrier(), started = barrier(), sends = [];
+  let plans = 0;
+  /** Selects one participant for the stopped input and an explicit empty plan for the next input. */
+  runtime.tools.Chat.call = async () => ({ text: JSON.stringify({ rounds: ++plans === 1 ? [[{ id: first.id, speak: true }]] : [[]] }) });
+  /** Holds only the first continuation and acknowledges each distinct original user message. */
+  runtime.tools.Chat.sendMessage = async request => {
+    sends.push(plain(request));
+    if (request.kind === "continue") { started.resolve(); return pending.promise; }
+    const result = receipt(request);
+    result.outcome.userMessageTimestamp = sends.length === 1 ? 10 : 11;
+    return result;
+  };
+  const admitted = await runtime.submit(); await started.promise;
+  const blocked = await runtime.submit(event({ text: "Input before the native stop settles" }));
+  assert.equal(blocked.action, "Block"); assert.equal(blocked.clearInput, false);
+  assert.equal(blocked.metadata.submissionId, admitted.metadata.submissionId); assert.equal(sends.length, 2);
+  const ui = controls(runtime); await ui.load();
+  // The native stop button can cancel a send without invoking the plugin's own cancellation control.
+  pending.resolve(receipt(sends[1], "cancelled"));
+  assert.equal((await settled(runtime, admitted.metadata.submissionId)).outcome.status, "cancelled");
+  await ui.dispatch(keyedNode(ui.render().tree, "group-execution-refresh").props.onClick);
+  const oldResume = keyedNode(ui.render().tree, "group-execution-resume").props.onClick;
+  const attachments = [{ filePath: "vfs://next.txt", nodeId: "next", fileName: "next.txt", mimeType: "text/plain", fileSize: 4, content: "next" }];
+  const next = await runtime.submit(event({ text: "A new input after stop", attachments, attachmentCount: 1, hasAttachments: true, replyToMessageTimestamp: 9 }));
+  assert.equal(next.action, "Consume"); assert.equal(next.clearInput, true);
+  assert.notEqual(next.metadata.submissionId, admitted.metadata.submissionId);
+  const done = await settled(runtime, next.metadata.submissionId);
+  assert.equal(done.status, "settled", done.error); assert.equal(done.outcome.status, "completed");
+  assert.equal(done.outcome.userMessageTimestamp, 11); assert.equal(plans, 2); assert.equal(sends.length, 3);
+  assert.deepEqual(sends[2].input, { text: "A new input after stop", attachments, replyToMessageTimestamp: 9 });
+  await assert.rejects(ui.dispatch(oldResume), /matching retained/);
+  assert.deepEqual(runtime.failures, []);
+});
+
+/** Waits for the old native turn to settle before allowing rollback and a new original input. */
+test("history truncation stops a live group turn before rollback and resend", async t => {
+  const runtime = await environment(t), { first } = await bindGroup(runtime), pending = barrier(), started = barrier(), cancelling = barrier(), sends = [];
+  let plans = 0;
+  /** Plans two replies for the original input and none for the explicit replacement. */
+  runtime.tools.Chat.call = async () => ({ text: JSON.stringify({ rounds: ++plans === 1 ? [[{ id: first.id, speak: true }], [{ id: first.id, speak: true }]] : [[]] }) });
+  /** Holds the original reply to model ongoing sentence-bubble presentation. */
+  runtime.tools.Chat.sendMessage = async request => {
+    sends.push(plain(request));
+    if (request.kind === "continue") { started.resolve(); return pending.promise; }
+    return receipt(request);
+  };
+  /** Records cancellation while retaining explicit control over final receipt delivery. */
+  runtime.tools.Chat.cancel = async chatId => { cancelling.resolve(); return { chatId, cancelRequested: true }; };
+  const admitted = await runtime.submit(); await started.promise;
+  let prepared = false;
+  const stopping = runtime.chatLifecycleHooks[0].function({ eventName: "before_history_truncate", eventPayload: {
+    eventName: "before_history_truncate", chatId: "selector-chat", firstDeletedMessageTimestamp: 10,
+  } }).then(result => { prepared = true; return result; });
+  await cancelling.promise;
+  assert.equal(prepared, false); assert.equal(sends.length, 2);
+  pending.resolve(receipt(sends[1], "cancelled"));
+  assert.deepEqual(plain(await stopping), { extension: null });
+  assert.equal(await runtime.groupExecution({ action: "current", chatId: "selector-chat" }), null);
+  await assert.rejects(runtime.groupExecution({ action: "resume", chatId: "selector-chat", submissionId: admitted.metadata.submissionId }), /matching retained/);
+  const resent = await runtime.submit(event({ text: "Edited input after rollback" }));
+  assert.equal(resent.action, "Consume");
+  const done = await settled(runtime, resent.metadata.submissionId);
+  assert.equal(done.outcome.status, "completed"); assert.equal(sends.length, 3);
+  assert.equal(sends[2].input.text, "Edited input after rollback"); assert.equal(plans, 2);
+});
+
+/** Stops a suspended planner before history mutation so its late plan cannot start a removed turn. */
+test("history truncation waits for group planning cancellation and removes the retained cursor", async t => {
+  const runtime = await environment(t); await bindGroup(runtime); const planning = barrier(), started = barrier();
+  /** Holds the configured functional planner while the rollback lifecycle begins. */
+  runtime.tools.Chat.call = () => { started.resolve(); return planning.promise; };
+  /** Acknowledges only original input persistence; no participant may run after rollback. */
+  runtime.tools.Chat.sendMessage = async request => { assert.equal(request.kind, "submit"); return receipt(request); };
+  await runtime.submit(); await started.promise;
+  let prepared = false;
+  const stopping = runtime.chatLifecycleHooks[0].function({ eventName: "before_history_truncate", eventPayload: {
+    eventName: "before_history_truncate", chatId: "selector-chat", firstDeletedMessageTimestamp: 10,
+  } }).then(() => { prepared = true; });
+  assert.equal(prepared, false);
+  planning.resolve({ text: JSON.stringify({ rounds: [[]] }) }); await stopping;
+  assert.equal(await runtime.groupExecution({ action: "current", chatId: "selector-chat" }), null);
 });
 
 /** Reports terminal planner failure through the real IPC and keeps both mutation controls disabled. */

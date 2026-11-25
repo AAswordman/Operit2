@@ -22,6 +22,58 @@ SPEC.loader.exec_module(SYNC)
 
 
 class PluginPackageSyncTests(unittest.TestCase):
+    # Rejects official app builds before invoking Flutter, even when Flutter's asset hook is cached.
+    def test_app_build_entry_points_require_package_parsing(self):
+        sys.path.insert(0, str(REPO_ROOT / "tools/build_scripts"))
+        try:
+            for platform in ("android", "windows", "linux", "ios", "macos"):
+                with self.subTest(platform=platform):
+                    name = f"build_flutter_{platform}"
+                    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / f"tools/build_scripts/{name}.py")
+                    module = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(module)
+                    with patch.object(module, "parse_args"), \
+                            patch.object(module, "prepare_apple_sherpa", create=True), \
+                            patch.object(module, "prepare_plugin_assets", side_effect=RuntimeError("package parse failed")), \
+                            patch.object(module, "run") as run:
+                        with self.assertRaisesRegex(RuntimeError, "package parse failed"):
+                            module.main()
+                        run.assert_not_called()
+        finally:
+            sys.path.pop(0)
+
+    # Requires both runtime sources to pass the gate before publishing hot-reload notifications.
+    def test_runtime_parse_failure_stops_sync_before_hot_reload(self):
+        with patch.object(SYNC.sys, "argv", ["sync_plugin_packages.py", "--source", "runtime"]), \
+                patch.object(SYNC, "_generate_plugin_sdk_types"), \
+                patch.object(SYNC, "_sync", return_value=(0, 1, 0)) as sync, \
+                patch.object(SYNC, "_validate_plugin_packages", side_effect=RuntimeError("registration rejected")) as gate, \
+                patch.object(SYNC, "_maybe_hot_reload_output") as reload:
+            with self.assertRaisesRegex(RuntimeError, "registration rejected"):
+                SYNC.main()
+            self.assertEqual(sync.call_count, 2)
+            self.assertEqual([source.name for source, output in gate.call_args.args[1]], ["buildin", "external"])
+            reload.assert_not_called()
+
+    # Invokes the real loader test on every sync, including runs that reuse compiler caches.
+    def test_parse_gate_has_explicit_outputs_and_no_activation_or_cache_skip(self):
+        jobs = [(Path("plugins/packages/buildin"), Path("assets/buildin")),
+                (Path("plugins/packages/external"), Path("assets/external"))]
+        with patch.object(SYNC, "_host_cargo_environment", return_value={"CARGO_BUILD_TARGET": "aarch64-linux-android"}), \
+                patch.object(SYNC, "_platform_command", return_value="cargo"), \
+                patch.object(SYNC, "_run_checked_command") as run:
+            for _ in range(2):
+                SYNC._validate_plugin_packages(REPO_ROOT, jobs, dry_run=False)
+            self.assertEqual(run.call_count, 2)
+            command = run.call_args.args[0]
+            self.assertIn("operit-js-bridge", command)
+            self.assertIn("plugin_parse_gate", command)
+            self.assertIn("--include-ignored", command)
+            environment = run.call_args.kwargs["env"]
+            self.assertNotIn("CARGO_BUILD_TARGET", environment)
+            self.assertEqual(json.loads(environment["OPERIT_PLUGIN_PARSE_INPUTS"]),
+                             {source.name: str(output.resolve()) for source, output in jobs})
+
     # Rebuilds cleaned, partial, or modified outputs while reusing an intact build.
     def test_child_prebuild_cache_requires_the_complete_generated_tree(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -131,12 +183,20 @@ class PluginPackageSyncTests(unittest.TestCase):
                 entry.write_bytes(contents)
 
     def test_macos_prebuild_adds_homebrew_without_overriding_caller_tools(self):
-        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.dict(os.environ, {"PATH": "/custom/bin:/usr/bin:/bin"}, clear=True):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", return_value=False), patch.dict(os.environ, {"PATH": "/custom/bin:/usr/bin:/bin"}, clear=True):
             environment = SYNC._plugin_build_environment()
             self.assertEqual(environment["PATH"], "/custom/bin:/usr/bin:/bin:/opt/homebrew/bin:/usr/local/bin")
             self.assertEqual(os.environ["PATH"], "/custom/bin:/usr/bin:/bin")
-        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.dict(os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin:/usr/local/bin"}, clear=True):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", return_value=False), patch.dict(os.environ, {"PATH": "/opt/homebrew/bin:/usr/bin:/usr/local/bin"}, clear=True):
             self.assertEqual(SYNC._plugin_build_environment()["PATH"], os.environ["PATH"])
+
+    def test_macos_prebuild_uses_selected_wasm_tools_after_xcode_resets_path(self):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.dict(os.environ, {"PATH": "/usr/bin:/bin", "OPERIT_WASM_TOOL_PATH": "/llvm/bin:/lld/bin"}, clear=True):
+            self.assertTrue(SYNC._plugin_build_environment()["PATH"].startswith("/llvm/bin:/lld/bin:/usr/bin"))
+
+    def test_macos_prebuild_finds_homebrew_llvm_if_override_is_missing(self):
+        with patch.object(SYNC.sys, "platform", "darwin"), patch.object(SYNC.os, "pathsep", ":"), patch.object(SYNC.Path, "is_dir", autospec=True, side_effect=lambda path: str(path) in ("/opt/homebrew/opt/llvm/bin", "/opt/homebrew/opt/lld/bin")), patch.dict(os.environ, {"PATH": "/usr/bin:/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:/bin"}, clear=True):
+            self.assertTrue(SYNC._plugin_build_environment()["PATH"].startswith("/opt/homebrew/opt/llvm/bin:/opt/homebrew/opt/lld/bin:/usr/bin"))
 
     def test_other_platforms_keep_the_existing_build_environment(self):
         for platform in ("linux", "win32"):

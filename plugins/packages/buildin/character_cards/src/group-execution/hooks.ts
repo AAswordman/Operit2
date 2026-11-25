@@ -68,9 +68,9 @@ export async function onGroupInputSubmit(event: ToolPkgTypes.ChatInputHookEvent)
     const input = submission(payload, chatId, binding.selection);
     trace.event("submission.created", { submissionId: input.submissionId, selection: input.selection });
     const current = executions.get(chatId);
-    if (current !== undefined && (current.status === "running" || (current.outcome !== null && current.outcome.status === "cancelled"))) {
+    if (current !== undefined && current.status === "running") {
       trace.event("block", { reason: "existing_submission", submissionId: current.input.submissionId, status: current.status });
-      return { action: "Block", clearInput: false, message: "An existing group submission must settle or resume before another input", metadata: { submissionId: current.input.submissionId } };
+      return { action: "Block", clearInput: false, message: "上一轮群聊仍在执行，请等待结束或先停止生成", metadata: { submissionId: current.input.submissionId } };
     }
     if (controller === null) controller = createGroupExecutionController(service, new NativeGroupTurnTransport());
     const work = controller.submit(input);
@@ -145,6 +145,15 @@ async function groupExecutionRequest(payload: GroupExecutionRequest): Promise<To
 function executionStatus(execution: InputExecution): GroupExecutionStatus {
   return { submissionId: execution.input.submissionId, chatId: execution.input.chatId, status: execution.status,
     outcome: execution.outcome, error: execution.status === "failed" ? String(execution.failure) : null };
+}
+
+/** Awaits actual cancellation and releases the retained cursor before native history truncation. */
+export async function stopGroupForHistoryTruncate(chatId: string): Promise<void> {
+  const execution = executions.get(chatId);
+  if (execution === undefined) return;
+  if (controller === null) throw new Error("Retained group execution has no controller");
+  await controller.stopForHistoryTruncate(chatId, execution.input.submissionId);
+  executions.delete(chatId);
 }
 
 /** Registers the actual exported input handler and package-local control channel without opening business storage. */

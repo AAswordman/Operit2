@@ -268,6 +268,7 @@ def main():
     parser.add_argument("--start-server", action="store_true")
     parser.add_argument("--screenshot", type=Path)
     parser.add_argument("--verify", action="store_true")
+    parser.add_argument("--owner-probe", action="store_true", help="Build a debug-only instrumentation of the installed app's real owner channel")
     arguments = parser.parse_args()
     root = Path(__file__).resolve().parents[2]
     if arguments.verify:
@@ -305,6 +306,8 @@ def main():
         parser.error("--sdk is required when building the test owner")
     fixture = root / "tools/tests/fixtures/android_window_smoke"
     output = root / "tools/release/work/android-window-smoke"
+    if arguments.owner_probe:
+        output = output / "owner-probe"
     output.mkdir(parents=True, exist_ok=True)
     classes = output / "classes"
     classes.mkdir(exist_ok=True)
@@ -314,6 +317,8 @@ def main():
     sources = [fixture / "SmokeActivity.java",
                generated / "windowServer/generated/aidl_source_output_dir/debug/out/app/operit/windowserver/IUiServer.java",
                generated / "accessibilityCompanion/generated/aidl_source_output_dir/debug/out/app/operit/accessibility/IUiAutomationProvider.java"]
+    if arguments.owner_probe:
+        sources = [fixture / "OwnerProbe.java"]
     run(["javac", "-source", "17", "-target", "17", "-classpath", platform, "-d", classes, *sources])
     class_archive = output / "classes.jar"
     with zipfile.ZipFile(class_archive, "w") as archive:
@@ -321,12 +326,13 @@ def main():
             archive.write(path, path.relative_to(classes).as_posix())
     run([build_tools / "d8.bat", "--lib", platform, "--min-api", "30", "--output", output, class_archive])
     apk = output / "window-smoke.apk"
-    run([build_tools / "aapt.exe", "package", "-f", "-M", fixture / "AndroidManifest.xml", "-I", platform, "-F", apk])
+    manifest = fixture / "owner_probe/AndroidManifest.xml" if arguments.owner_probe else fixture / "AndroidManifest.xml"
+    run([build_tools / "aapt.exe", "package", "-f", "-M", manifest, "-I", platform, "-F", apk])
     with zipfile.ZipFile(apk, "a", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.write(output / "classes.dex", "classes.dex")
     run([build_tools / "apksigner.bat", "sign", "--ks", Path(os.environ["USERPROFILE"]) / ".android/debug.keystore",
          "--ks-pass", "pass:android", "--key-pass", "pass:android", apk])
-    run(["adb", "install", "-r", apk])
+    run(["adb", "install", "--no-incremental", "-r", apk])
     print(f"Installed device test owner: {apk}")
 
 

@@ -148,3 +148,14 @@ test('ordinary launch and window selection share the existing public abstraction
     assert.doesNotMatch(source(path), /[Oo]penVirtualWindow|open_virtual_window|close_virtual_window|UiVirtualWindowTransport|is_virtual|isVirtual/);
   }
 });
+
+test('Android automation targets the display without restoring or gating its minimized preview', () => {
+  const host = source(android + 'AndroidUiAutomation.kt');
+  const route = host.slice(host.indexOf('val virtual = hosted.values.singleOrNull'), host.indexOf('val result = readResponse(provider, JSONObject().put("operation", operation)'));
+  assert.match(route, /parameters\.put\("display_id", displayId\)/);
+  assert.doesNotMatch(route, /isMinimized|uiServer\.control\("focus"/);
+  const main = source(payload + 'src/main/java/app/operit/uiserver/UiServerMain.java');
+  const reuse = main.slice(main.indexOf('if (window.packageName.equals(packageName))'), main.indexOf('DisplayWindow window = new DisplayWindow'));
+  assert.match(reuse, /window\.launch\(component\)/);
+  assert.doesNotMatch(reuse, /window\.raise\(\)/);
+});

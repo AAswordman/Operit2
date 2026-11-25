@@ -402,6 +402,14 @@ or native Rust-engine acceptance test and does not require external credentials.
 Remaining memory/editor entry points use the same real main IPC rather than disabled
 placeholder controls:
 
+- Chat execution retains the first resolved USER.md bytes in memory for each
+  conversation ID, participant and primary memory owner. Later profile writes do
+  not rewrite that conversation's system prefix during the same plugin runtime;
+  new conversations read the current document. Empty profiles are retained too.
+  Restarting the app or reloading the plugin discards these snapshots. Reads
+  without a conversation ID stay current, and disabling user descriptions still
+  suppresses the profile immediately. Role prompts, model choices and permissions
+  continue to resolve from their current records.
 - Global `memoryPreferences` live in the existing v3 metadata transaction. New live
   execution profiles omit USER.md when disabled. Historical re-execution also
   suppresses the runtime profile text, without modifying its saved opaque marker. Disabling automatic updates stops automatic candidate enqueueing
@@ -425,6 +433,16 @@ export full backups or maintain their own embedding/scoring implementation. UI m
 mutations use the same domain operations as dependency clients. Extraction follows the
 Kotlin query budgets, duplicate-title prompt and new-identity merge behavior; the
 scheduler orders candidates by source timestamp before applying its twenty-record cap.
+
+Before retrieval or extraction, the shared memory-job source projection removes
+attachment bodies (including recalled memories and pasted files), workspace
+attachments, legacy memory blocks, media locators, `meta`, `think` and `thinking`
+blocks. Nested internal blocks are removed together, and an unfinished internal
+block suppresses its remaining body. Cleanup runs before retrieval
+length limits and before assembling the MEMORY request; automatic candidates,
+manual updates and history rebuilds use the same projection. The saved conversation
+is retained. A window with no authored user text after cleanup completes without
+retrieval, model calls or profile updates; an orphan assistant source remains invalid.
 
 Kotlin remains the behavior reference, with explicit implementation differences:
 lexical expansion uses bounded Unicode terms and Han unigrams/bigrams rather than

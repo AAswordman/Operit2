@@ -33,7 +33,7 @@ public final class SmokeActivity extends Activity {
             server = IUiServer.Stub.asInterface(intent.getBundleExtra("endpoint").getBinder("server"));
             worker.execute(() -> {
                 try {
-                    if (server.getProtocolVersion() != 1) throw new IllegalStateException("Wrong server protocol");
+                    if (server.getProtocolVersion() != 2) throw new IllegalStateException("Wrong server protocol");
                     android.os.IInterface session = (android.os.IInterface) Class.forName("android.view.WindowManagerGlobal")
                             .getMethod("getWindowSession").invoke(null);
                     server.attach(owner, session.asBinder());

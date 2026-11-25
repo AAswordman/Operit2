@@ -1604,6 +1604,16 @@ impl ChatServiceCore {
             }
         };
         // Generation must not persist a summary boundary before valid content exists.
+        let chat = match self.chatHistoryDelegate.chatHistoryManager.loadChatHistory(currentChatId.clone()) {
+            Ok(Some(chat)) => chat,
+            Ok(None) => return self.summaryInsertionFailed(Some(currentChatId), "对话不存在".into()),
+            Err(error) => return self.summaryInsertionFailed(Some(currentChatId), error.to_string()),
+        };
+        let summaryOptions = operit_providers::chat::EnhancedAIService::SummaryConversationOptions {
+            workspacePath: self.chatHistoryDelegate.primaryWorkspacePathForChat(&chat),
+            workspaceFolders: self.chatHistoryDelegate.workspaceFolderPathsForChat(&chat),
+            promptFunctionType: PromptFunctionType::CHAT,
+        };
         let summaryToast = self.messageProcessingDelegate.toastEventFlow.clone();
         let summaryMessage = match AIMessageManager::summarizeMemory(
             &mut enhancedAiService,
@@ -1611,6 +1621,7 @@ impl ChatServiceCore {
             false,
             currentChatId.clone(),
             &configuration,
+            summaryOptions,
             None,
             None,
             std::sync::Arc::new(move |error| {
@@ -1959,80 +1970,80 @@ impl ChatServiceCore {
             .restoreWorkspaceForMessage(workspacePath, messageTimestamp, Some(chatId))
     }
 
-    /// Rolls an explicit chat back to a prior message timestamp.
+    /// Captures shared state so plugin cancellation can reenter Core after Holder is released.
+    fn captureHistoryTruncate(
+        &self, chatId: String, messageTimestamp: i64,
+    ) -> impl std::future::Future<Output = Result<ChatMessage, String>> + 'static {
+        let target = self.chatHistoryDelegate.chatMessagesSnapshotForChat(chatId.clone())
+            .into_iter().find(|message| message.timestamp == messageTimestamp && message.sender == "user")
+            .ok_or_else(|| "History truncation requires an existing user message".to_string());
+        let workspace = self.resolveWorkspaceRewindTarget(chatId.clone(), messageTimestamp);
+        let context = self.runtimeToolHandler().getContext();
+        let mut history = self.chatHistoryDelegate.clone_for_core();
+        let mut processing = self.messageProcessingDelegate.clone_for_core();
+        async move {
+            let target = target?;
+            crate::plugins::toolpkg::ToolPkgChatLifecycleHookBridge::ToolPkgChatLifecycleHookBridge::dispatchBeforeHistoryTruncate(&chatId, messageTimestamp).await?;
+            processing.cancelMessageForDestructiveMutation(chatId.clone()).await?;
+            if let Some((workspaceChatId, workspacePath)) = workspace {
+                if matches!(WorkspaceBackupManager::getInstance(context)
+                    .restoreWorkspaceForMessage(workspacePath, messageTimestamp, Some(workspaceChatId)),
+                    WorkspaceRewindOutcome::Unavailable) {
+                    return Err("Workspace history snapshot is unavailable".to_string());
+                }
+            }
+            history.truncateChatHistoryForChat(chatId, Some(messageTimestamp));
+            Ok(target)
+        }
+    }
+
+    /// Rolls back history after disposing prior work outside the chat runtime Holder lock.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub async fn rollbackToMessage(
+    pub fn rollbackToMessage(
         &mut self,
         chatId: String,
         messageTimestamp: i64,
-    ) -> Option<String> {
-        let currentMessages = self
-            .chatHistoryDelegate
-            .chatMessagesSnapshotForChat(chatId.clone());
-        let Some(targetMessage) = currentMessages
-            .into_iter()
-            .find(|message| message.timestamp == messageTimestamp)
-        else {
-            return None;
-        };
-        if targetMessage.sender != "user" {
-            return None;
+    ) -> impl std::future::Future<Output = Option<String>> + 'static {
+        let pending = self.captureHistoryTruncate(chatId, messageTimestamp);
+        async move {
+            match pending.await {
+                Ok(message) => Some(stripXmlLikeTags(&message.displayText())),
+                Err(error) => {
+                    AppLogger::e("ChatServiceCore", &format!("History rollback preparation failed: {error}"));
+                    None
+                }
+            }
         }
-        if matches!(
-            self.rewindWorkspaceForMessageTimestamp(chatId.clone(), messageTimestamp),
-            WorkspaceRewindOutcome::Unavailable
-        ) {
-            return None;
-        }
-        self.chatHistoryDelegate
-            .truncateChatHistoryForChat(chatId.clone(), Some(messageTimestamp));
-        Some(stripXmlLikeTags(&targetMessage.displayText()))
     }
 
-    /// Rewinds a user message and sends edited content as a new turn.
+    /// Rewinds and resends through captured native state without retaining Holder across plugin calls.
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
-    pub async fn rewindAndResendMessage(
+    pub fn rewindAndResendMessage(
         &mut self,
         chatId: String,
         messageTimestamp: i64,
         editedContent: String,
-    ) -> bool {
-        let currentMessages = self
-            .chatHistoryDelegate
-            .chatMessagesSnapshotForChat(chatId.clone());
-        let Some(targetMessage) = currentMessages
-            .into_iter()
-            .find(|message| message.timestamp == messageTimestamp)
-        else {
-            return false;
-        };
-        if targetMessage.sender != "user" {
-            return false;
+    ) -> impl std::future::Future<Output = bool> + 'static {
+        let pending = self.captureHistoryTruncate(chatId.clone(), messageTimestamp);
+        let starter = self.captureUserMessageStarter(Some(chatId), &ChatTurnOptions::default(), None);
+        async move {
+            let result = async {
+                let starter = starter?;
+                pending.await?;
+                starter.start(PromptFunctionType::CHAT, None, editedContent,
+                    None, None, None, Vec::new(), None, ChatTurnOptions::default(), None).await?;
+                Ok::<(), String>(())
+            }.await;
+            match result {
+                Ok(()) => true,
+                Err(error) => {
+                    AppLogger::e("ChatServiceCore", &format!("History resend preparation failed: {error}"));
+                    false
+                }
+            }
         }
-        if matches!(
-            self.rewindWorkspaceForMessageTimestamp(chatId.clone(), messageTimestamp),
-            WorkspaceRewindOutcome::Unavailable
-        ) {
-            return false;
-        }
-        self.chatHistoryDelegate
-            .truncateChatHistoryForChat(chatId.clone(), Some(messageTimestamp));
-        self.sendUserMessage(
-            PromptFunctionType::CHAT,
-            None,
-            Some(chatId),
-            editedContent,
-            None,
-            None,
-            None,
-            Vec::new(),
-            None,
-            ChatTurnOptions::default(),
-        )
-        .await;
-        true
     }
 
     /// Regenerates one AI message in place while preserving the surrounding chat history.

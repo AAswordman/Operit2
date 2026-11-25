@@ -346,14 +346,21 @@ class AndroidDocumentFileSystem(
         return Regex(out.toString(), if (caseInsensitive) setOf(RegexOption.IGNORE_CASE) else emptySet())
     }
 
-    private fun walk(root: Node, maximum: Int, visit: (Node, String) -> Unit) {
+    /** Stops recursion before opening another directory when the caller's result budget is full. */
+    private fun walk(root: Node, maximum: Int, shouldContinue: () -> Boolean = { true }, visit: (Node, String) -> Unit) {
         val seen = HashSet<String>()
+        /** Visits each document once while preserving the caller's early termination condition. */
         fun descend(current: Node, relative: String, depth: Int) {
+            if (!shouldContinue()) return
             require(depth <= 128) { "Search exceeded the maximum document depth" }
             if (current.isNativeSymlink() || !seen.add(current.identity())) return
             visit(current, relative)
-            if (current.stat().getBoolean("isDirectory") && (maximum < 0 || depth < maximum))
-                current.children().forEach { descend(it, if (relative.isEmpty()) it.name() else "$relative/${it.name()}", depth + 1) }
+            if (shouldContinue() && current.stat().getBoolean("isDirectory") && (maximum < 0 || depth < maximum)) {
+                for (child in current.children()) {
+                    if (!shouldContinue()) break
+                    descend(child, if (relative.isEmpty()) child.name() else "$relative/${child.name()}", depth + 1)
+                }
+            }
         }
         descend(root, "", 0)
     }
@@ -367,6 +374,7 @@ class AndroidDocumentFileSystem(
         }
         return matches
     }
+    /** Shares the match budget across files and stops document traversal when it is exhausted. */
     private fun grep(request: JSONObject): JSONObject {
         val pattern = Regex(request.getString("pattern"), if (request.optBoolean("caseInsensitive")) setOf(RegexOption.IGNORE_CASE) else emptySet())
         val filter = glob(request.optString("filePattern", "*").ifEmpty { "*" }, false)
@@ -375,7 +383,7 @@ class AndroidDocumentFileSystem(
         val context = request.optInt("contextLines", 0).coerceIn(0, 1000)
         var total = 0
         var searched = 0
-        walk(node(request.getString("path")), -1) { current, relative ->
+        walk(node(request.getString("path")), -1, { total < maximum }) { current, relative ->
             if (total < maximum && !current.stat().getBoolean("isDirectory") && (filter.matches(current.name()) || filter.matches(relative))) {
                 // Bound individual search reads so a provider cannot exhaust the runtime heap.
                 val bytes = current.input().use { readBounded(it, 8L * 1024 * 1024 + 1) }

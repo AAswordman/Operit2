@@ -18,6 +18,8 @@ static CHAT_LIFECYCLE_RUNTIME: Mutex<Option<ToolPkgBridgeRuntime>> = Mutex::new(
 
 /// Identifies the sole supported creation lifecycle stage.
 pub const CHAT_LIFECYCLE_BEFORE_CREATE: &str = "before_create";
+/// Names the awaited boundary that stops plugin-owned work before history truncation.
+pub const CHAT_LIFECYCLE_BEFORE_HISTORY_TRUNCATE: &str = "before_history_truncate";
 
 /// Distinguishes a new conversation draft from a branch of an existing source message.
 #[derive(Clone, Copy, Debug, Serialize)]
@@ -137,6 +139,29 @@ impl ToolPkgChatLifecycleHookBridge {
             }
         }
         Ok(extensions)
+    }
+
+    /// Awaits plugin-owned work disposal before the caller cancels native execution and truncates history.
+    #[allow(non_snake_case)]
+    pub async fn dispatchBeforeHistoryTruncate(chatId: &str, firstDeletedMessageTimestamp: i64) -> Result<(), String> {
+        if chatId.trim().is_empty() || firstDeletedMessageTimestamp < 1 {
+            return Err("History truncation requires a chat and positive message timestamp".to_string());
+        }
+        let context = Self::snapshot().await?;
+        let budget = ToolPkgPreHookTimeout::fromPreferences()?;
+        for hook in &context.hooks {
+            let raw = ToolPkgPreHookTimeout::runHook(
+                Some(&budget), &context.manager, &hook.containerPackageName, &hook.functionName,
+                TOOLPKG_EVENT_CHAT_LIFECYCLE, CHAT_LIFECYCLE_BEFORE_HISTORY_TRUNCATE,
+                &hook.hookId, hook.functionSource.as_deref(),
+                serde_json::json!({ "eventName": CHAT_LIFECYCLE_BEFORE_HISTORY_TRUNCATE,
+                    "chatId": chatId, "firstDeletedMessageTimestamp": firstDeletedMessageTimestamp }),
+            ).await?;
+            if parseCreationResult(raw)?.is_some() {
+                return Err("History truncation lifecycle must return {extension: null}".to_string());
+            }
+        }
+        Ok(())
     }
 }
 

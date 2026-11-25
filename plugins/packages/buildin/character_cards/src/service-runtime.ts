@@ -1,7 +1,7 @@
 import type { DomainInput, DomainOperation, DomainOutput } from "./api";
-import { executeDomain, resolveConfiguration, dispatch as executeRequest, combinePrompts, resolveMemoryOwner, parseOwner } from "./operations";
+import { executeDomain, isRepositoryDomainOperation, dispatch as executeRequest, combinePrompts, resolveMemoryOwner, parseOwner } from "./operations";
 import type { ChatConfigurationService } from "./domain";
-import { parseDomainPayload } from "./domain";
+import { parseDomainPayload, resolveChatConfiguration } from "./domain";
 import { listBindableChats } from "./chat-binding-catalog";
 import { parseChatSelection } from "./chat-bindings";
 import { MemoryJobRunner } from "./memory-jobs/scheduler";
@@ -50,6 +50,7 @@ export function createCharacterCardsService(
 ): CharacterCardsService {
   const jobs = new MemoryJobRunner(owner),
     application = createSelectionApplication(configurations);
+  const conversationUserPreferences = new Map<string, Promise<string>>();
   /** Validates refs before any selection mutation and applies configs only after actual file/native acknowledgement. */
   function dispatchRequest<R extends Request>(
     request: R,
@@ -118,6 +119,25 @@ export function createCharacterCardsService(
     runMemoryJobs: () => jobs.tick(),
     /** Reads only the metadata flags needed by prompt composition. */
     readGlobalMemoryPreferences: () => owner.readGlobalMemoryPreferences(),
+    /** Pins exact USER.md bytes for this runtime's conversation, role and owner; unbound reads stay current. */
+    readConversationUserPreferences(chatId, participantId, ownerKey) {
+      if (chatId === null) return service.dispatchDomain("memory.user.read", { ownerKey }).then(
+        /** Returns current document bytes when there is no conversation identity to retain. */
+        document => document.content,
+      );
+      const key = JSON.stringify([chatId, participantId, ownerKey]);
+      const existing = conversationUserPreferences.get(key);
+      if (existing !== undefined) return existing;
+      const pending = service.dispatchDomain("memory.user.read", { ownerKey }).then(
+        /** Retains empty profiles as well as populated documents without normalizing their bytes. */
+        document => document.content,
+      ).catch(
+        /** Removes an unsuccessful read while propagating its original error to all waiting callers. */
+        error => { conversationUserPreferences.delete(key); throw error; },
+      );
+      conversationUserPreferences.set(key, pending);
+      return pending;
+    },
     /** Reads only the selected character and its owned relations. */
     getCharacter: (id) => owner.getCharacter(id),
     /** Reads only the selected group and its saved membership. */
@@ -141,6 +161,8 @@ export function createCharacterCardsService(
       operation: K,
       input: DomainInput<K>,
     ): Promise<DomainOutput<K>> {
+      if (!isRepositoryDomainOperation(operation))
+        return resolveChatConfiguration(parseDomainPayload("chat.configuration.resolve", input), service) as Promise<DomainOutput<K>>;
       switch (operation) {
         case "snapshot":
           return owner.readConfigurationSnapshot() as Promise<DomainOutput<K>>;
@@ -148,8 +170,6 @@ export function createCharacterCardsService(
           const { chatId } = parseDomainPayload("chat.configuration.binding.find", input);
           return owner.chatBindings.findChatBinding(chatId) as Promise<DomainOutput<K>>;
         }
-        case "chat.configuration.resolve":
-          return resolveConfiguration(parseDomainPayload("chat.configuration.resolve", input), service) as Promise<DomainOutput<K>>;
         case "character.combine": {
           const { id, promptFunctionType = "CHAT", additionalTagIds = [] } = parseDomainPayload("character.combine", input);
           return combinePrompts(id, additionalTagIds, promptFunctionType, owner)

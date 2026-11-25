@@ -156,10 +156,6 @@ internal class AndroidUiAutomation(
         val virtual = hosted.values.singleOrNull { it.getString("windowId") == targetId }
         if (virtual != null) {
             val displayId = virtual.getInt("displayId")
-            if (operation == "focus_window") uiServer.control("focus", virtual.getString("windowId"))
-            else if (operation != "get_page_info") {
-                check(!virtual.getBoolean("isMinimized")) { "Focus the minimized Android window before sending input" }
-            }
             if (operation == "press_key") return@synchronized uiServer.control("key", virtual.getString("windowId"), parameters.getString("key_code"))
             parameters.remove("window_id")
             parameters.put("display_id", displayId)

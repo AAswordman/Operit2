@@ -1,4 +1,4 @@
-import screen from "./ui";
+import screen from "./settings.ui.js";
 import { cancelChat, composePrompt, defaultRule, inputHook as routeInput, openOriginal, publish, removeRule, saveRule, snapshot } from "./service";
 import type { Rule } from "./model";
 
@@ -74,6 +74,7 @@ export async function inputHook(event: ToolPkg.ChatInputHookEvent): Promise<Tool
   return routeInput(event);
 }
 
+/** Registers the settings entry and conversation hooks from exported functions. */
 export function registerToolPkg(): boolean {
   ToolPkg.registerToolboxUiModule({ id: "ai_chat_presentation_settings", runtime: "compose_dsl", screen,
     params: {}, title: { zh: "AI 分段对话", en: "AI Segmented Chat" } });

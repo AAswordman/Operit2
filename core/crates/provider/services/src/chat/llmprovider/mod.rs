@@ -76,7 +76,7 @@ pub mod ToolPkgJsAiProviderService;
 
 #[cfg(test)]
 #[path = "../../../../tests/ProviderMediaTestSupport.rs"]
-mod ProviderMediaTestSupport;
+pub(crate) mod ProviderMediaTestSupport;
 
 #[path = "LocalModelProvider.rs"]
 pub mod LocalModelProvider;

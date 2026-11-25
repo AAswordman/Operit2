@@ -9,6 +9,12 @@ import type { CharacterRepository } from "../src/canonical";
 type Equal<A, B> = [A] extends [B] ? [B] extends [A] ? true : false : false;
 type Assert<T extends true> = T;
 
+/** Prevents repository-only dispatch from accepting runtime-owned conversation configuration. */
+export type RepositoryConfigurationBoundary = Assert<Equal<
+  Extract<Parameters<typeof import("../src/operations").executeDomain>[0], "chat.configuration.resolve">,
+  never
+>>;
+
 /** Keeps the Files write declaration identical to the executor payload, including its diff envelope. */
 export type FileWriteResultContract = Assert<Equal<
   Awaited<ReturnType<typeof Tools.Files.write>>,

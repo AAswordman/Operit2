@@ -26,10 +26,17 @@ function runtime(options = {}) {
     registerInputMenuTogglePlugin({ function: handler }) { handlers.menu = handler; },
     registerChatResponseHook({ function: handler }) { handlers.response = handler; },
     registerChatInputHook({ function: handler }) { handlers.input = handler; },
+    registerChatLifecycleHook({ function: handler }) { handlers.lifecycle = handler; },
     registerSystemPromptComposeHook({ function: handler }) { handlers.prompt = handler; },
     registerToolboxUiModule({ screen }) { handlers.screen = screen; },
   };
-  const Tools = { Chat: { async sendMessage(request) {
+  const Tools = { Chat: {
+    /** Cancels only the explicit controlled native send used by truncation tests. */
+    async cancel(chatId) {
+      if (options.cancel === undefined) throw new Error("Unprovided native cancellation");
+      return options.cancel(chatId);
+    },
+    async sendMessage(request) {
     const decision = await handlers.input(input(request.input.text, { chatId: request.chatId, source: "Sequence" }));
     assert.equal(decision, undefined, "A native send must not re-enter the merge queue");
     requests.push(plain(request));
@@ -181,6 +188,43 @@ test("attachments and reply targets preserve their native submission after accep
   assert.equal(r.requests.length, 2); assert.equal(r.requests[0].input.text, "先说一句");
   assert.deepEqual(r.requests[1].input, { text: "看图", attachments, replyToMessageTimestamp: 77 });
   assert.equal(r.time.pending(), 0);
+});
+
+/** Builds the exact native lifecycle boundary emitted before rollback and edit/resend. */
+function truncate(chatId = "alice") {
+  return { eventName: "before_history_truncate", eventPayload: { eventName: "before_history_truncate", chatId, firstDeletedMessageTimestamp: 10 } };
+}
+
+test("rollback removes unsent Waifu input and its timers while keeping other chats intact", async () => {
+  const r = runtime({ bindings: { bob: "card:alice" } }); await r.enable({ mergeSend: true, mergeDelayMs: 500 });
+  await r.handlers.input(input("旧对话未发送内容"));
+  await r.handlers.input(input("另一个对话", { chatId: "bob" }));
+  assert.deepEqual(plain(await r.handlers.lifecycle(truncate())), { extension: null });
+  await r.handlers.input(input("回退后重新发送"));
+  await r.time.advance(500); await settle();
+  assert.equal(r.time.pending(), 0);
+  assert.deepEqual(r.requests.map(request => request.input.text).sort(), ["另一个对话", "回退后重新发送"].sort());
+  assert.deepEqual(r.toasts, []);
+});
+
+test("rollback awaits native cancellation and drops queued Waifu deliveries before accepting a fresh send", async () => {
+  let complete, cancelled = false;
+  const r = runtime({
+    /** Holds only the active pre-rollback native send. */
+    send: (_request, index) => index === 1 ? new Promise(resolve => { complete = resolve; }) : Promise.resolve({ outcome: { type: "committed", status: "completed" } }),
+    /** Records the actual cancellation boundary without settling the controlled receipt early. */
+    async cancel(chatId) { assert.equal(chatId, "alice"); cancelled = true; return { chatId, cancelRequested: true }; },
+  });
+  await r.enable({ mergeSend: true, mergeDelayMs: 500 });
+  await r.handlers.input(input("旧对话正在生成")); await r.time.advance(500);
+  await r.handlers.input(input("旧队列里的一条")); await r.time.advance(500);
+  let truncated = false;
+  const stopping = r.handlers.lifecycle(truncate()).then(() => { truncated = true; });
+  await settle(); assert.equal(cancelled, true); assert.equal(truncated, false); assert.equal(r.requests.length, 1);
+  complete({ outcome: { type: "committed", status: "cancelled" } }); await stopping;
+  assert.equal(r.requests.length, 1); assert.deepEqual(r.toasts, []);
+  await r.handlers.input(input("回退后的新消息")); await r.time.advance(500); await settle();
+  assert.deepEqual(r.requests.map(request => request.input.text), ["旧对话正在生成", "回退后的新消息"]);
 });
 
 /** Creates a minimal persistent native Compose context with inspectable actual nodes. */

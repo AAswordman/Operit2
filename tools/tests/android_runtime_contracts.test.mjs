@@ -161,6 +161,29 @@ test('Android archive staging follows the application private root through the n
   assert.doesNotMatch(host, /NativeArchiveStagingHost::new\(\s*runtimeStorageHost|runtimeStorageHost\s*\.runtimeRootDir/);
 });
 
+/** Keeps installation and failed-registration cleanup on the same private, non-portable owner. */
+test('Android downloaded systems stay private when runtime data or the bundled ABI changes', () => {
+  const host = source('hosts/android/src/terminal.rs');
+  const directory = section(host, 'fn androidTerminalRootfsDirectory(', 'fn resolveAndroidNativeWorkingDirectory(');
+  assert.match(directory, /requiredAndroidRuntimePath\("OPERIT_ANDROID_INTERNAL_ROOT"\)\?/);
+  assert.match(directory, /\.join\("android-runtime\/distributions"\)/);
+  const install = section(host, 'fn installTerminalDistribution(', 'fn discardTerminalDistribution(');
+  const discard = section(host, 'fn discardTerminalDistribution(', 'fn terminalProfileSupport(');
+  for (const operation of [install, discard]) {
+    assert.match(operation, /TerminalRootfs::(?:install|discard)\(\s*&androidTerminalRootfsDirectory\(\)\?/);
+    assert.doesNotMatch(operation, /OPERIT_ANDROID_RUNTIME_ROOT|RuntimeStorageLayout/);
+  }
+  const assets = source(`${android}src/main/kotlin/app/operit/AndroidRuntimeAssets.kt`);
+  assert.match(assets, /Os\.setenv\("OPERIT_ANDROID_INTERNAL_ROOT", context\.filesDir\.absolutePath, true\)/);
+  assert.match(assets, /val runtimeDir = File\(context\.filesDir, "android-runtime\/\$abi"\)/);
+  const module = source('apps/android-module/src/Runtime.rs');
+  assert.match(module, /let host = user\.join\("host"\);\s*private_dir\(&host\)\?/);
+  assert.match(module, /\("OPERIT_ANDROID_INTERNAL_ROOT", host\.clone\(\)\)/);
+  const rescue = source('hosts/common/operit-host-data-rescue/src/lib.rs');
+  const excluded = section(rescue, 'fn excluded_application_entry(', 'fn secret_payload(');
+  assert.match(excluded, /"android-runtime"\]\.contains\(&name\)/);
+});
+
 /** Keeps C-host startup separate from Android's model-bearing JNI constructor. */
 test('Android cannot bypass its host-owned creation boundary', () => {
   const exports = source('apps/flutter/native/operit-flutter-bridge/src/BridgeExports.rs');

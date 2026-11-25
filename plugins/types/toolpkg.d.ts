@@ -2180,9 +2180,9 @@ export namespace ToolPkg {
   }
 
   /**
-   * Identifies the sole synchronous chat creation lifecycle event.
+   * Identifies awaited chat creation and destructive history lifecycle events.
    */
-  export type ChatLifecycleEventName = "before_create";
+  export type ChatLifecycleEventName = "before_create" | "before_history_truncate";
 
   /**
    * Identifies whether the draft creates a new conversation or branches from an existing message.
@@ -2246,9 +2246,32 @@ export namespace ToolPkg {
   }
 
   /**
-   * Combines existing ToolPkg execution metadata with the strict isolated creation payload.
+   * Supplies the exact persisted history boundary before native truncation.
    */
-  export interface ChatLifecycleHookEvent extends HookEventBase<ChatLifecycleEventName, ChatLifecycleEventPayload> {
+  export interface ChatHistoryTruncatePayload {
+    /**
+     * Identifies the before-history-truncate lifecycle stage.
+     */
+    eventName: ChatLifecycleEventName;
+    /**
+     * Identifies the conversation whose history will change.
+     */
+    chatId: string;
+    /**
+     * Identifies the first message removed by the requested truncation.
+     */
+    firstDeletedMessageTimestamp: number;
+  }
+
+  /**
+   * Distinguishes creation input from an explicit destructive history boundary.
+   */
+  export type ChatLifecyclePayload = ChatLifecycleEventPayload | ChatHistoryTruncatePayload;
+
+  /**
+   * Combines existing ToolPkg execution metadata with the typed lifecycle payload.
+   */
+  export interface ChatLifecycleHookEvent extends HookEventBase<ChatLifecycleEventName, ChatLifecyclePayload> {
   }
 
   /**

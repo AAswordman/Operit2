@@ -1,5 +1,13 @@
 # Package discovery and activation
 
+## Build and pull-request admission
+
+`plugins/tools/sync_plugin_packages.py` validates the actual synchronized artifacts before hot reload or reporting success. This also runs in normal app and CLI builds. Its `operit-js-bridge` test gate invokes the production `ToolPkgLoader` and registration-only JavaScript engine for every ToolPkg, and `JsPackageLoader` for standalone scripts. It validates disabled packages too, and treats reported child-package errors as failures even when the loader returns a partially loaded container. Compiler caches do not skip this gate.
+
+Run `python plugins/tools/sync_plugin_packages.py --source runtime --no-hot-reload` locally. The `Package parsing` pull-request job runs the same command. Contributors must include its result in the PR template; maintainers must require this status before merging. This gate checks package admission and registration, without executing chat hooks or other plugin business operations.
+
+## Runtime activation
+
 `RuntimePackageManager::loadAvailablePackages` reads installation activation settings before scanning package sources. The initial scan uses the persisted extension owners directly; it does not depend on an already initialized runtime registry.
 
 Disabled ToolPkg containers remain in the installed catalog. Catalog reads parse the manifest and child package metadata, retaining identity, version, dependencies, scope, environment declarations and logo references. They do not create a JavaScript engine, evaluate the main entry, run `registerToolPkg`, load theme payloads or inflate unrelated archive resources. Authenticated marketplace packages also decode their structured publisher provenance without evaluating JavaScript, so disabled packages can still be updated with ownership checks.

@@ -4,7 +4,7 @@ use operit_plugin_sdk::javascript::{JsPackageToolCallRequest, JsPackageToolCallR
 
 use crate::tools::packTool::RuntimePackageManager::RuntimePackageManager;
 use crate::tools::ToolJsRuntime::PackageManagerJsRuntime;
-use crate::tools::ToolResultDataClasses::stringResultData;
+use crate::tools::ToolResultDataClasses::{stringResultData, JsonResultData, ToolResultData};
 use crate::ConversationMarkupManager::ToolResult;
 use crate::ToolExecutionManager::{
     AITool, AsyncToolExecutor, ToolAccessSpec, ToolBoundary, ToolEffect, ToolInvocationFuture,
@@ -105,11 +105,57 @@ fn packageToolCallRequest(tool: &AITool) -> JsPackageToolCallRequest {
 /// Converts the stable SDK package result into the Operit tool result.
 #[allow(non_snake_case)]
 fn packageToolResult(result: JsPackageToolCallResult) -> ToolResult {
+    let data = if result.success {
+        match serde_json::from_str(&result.result) {
+            Ok(value) => ToolResultData::JsonResultData(JsonResultData { value }),
+            Err(error) => return ToolResult { toolName: result.tool_name, success: false,
+                result: stringResultData(""), error: Some(format!("Invalid package result JSON: {error}")) },
+        }
+    } else { stringResultData(result.result) };
     ToolResult {
         toolName: result.tool_name,
         success: result.success,
-        result: stringResultData(result.result),
+        result: data,
         error: result.error,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// Decodes exactly the transport JSON layer and preserves every business value and key.
+    #[test]
+    fn package_results_decode_objects_arrays_scalars_and_json_looking_strings_once() {
+        for value in [json!({"__type":"BusinessType", "nested":[null,false]}), json!([1,2]),
+            json!(null), json!(false), json!(42), json!("{\"looks\":\"like JSON\"}")] {
+            let result = packageToolResult(JsPackageToolCallResult { tool_name: "example:read".into(),
+                success: true, result: value.to_string(), error: None });
+            assert!(result.success);
+            let ToolResultData::JsonResultData(data) = result.result else { panic!("Expected structured JSON") };
+            assert_eq!(data.value, value);
+        }
+    }
+
+    /// Rejects a broken transport result explicitly instead of guessing an alternative representation.
+    #[test]
+    fn malformed_package_result_is_an_explicit_failure() {
+        let result = packageToolResult(JsPackageToolCallResult { tool_name: "example:read".into(),
+            success: true, result: "invalid JSON".into(), error: None });
+        assert!(!result.success);
+        assert!(result.error.unwrap().starts_with("Invalid package result JSON:"));
+        assert_eq!(result.result.toString(), "");
+    }
+
+    /// Keeps the original package error without attempting to decode a failure as JSON.
+    #[test]
+    fn package_failure_preserves_its_error() {
+        let result = packageToolResult(JsPackageToolCallResult { tool_name: "example:read".into(),
+            success: false, result: String::new(), error: Some("setting does not exist".into()) });
+        assert!(!result.success);
+        assert_eq!(result.error.as_deref(), Some("setting does not exist"));
+        assert_eq!(result.result.toString(), "");
     }
 }
 

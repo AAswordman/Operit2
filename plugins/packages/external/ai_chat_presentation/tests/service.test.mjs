@@ -23,7 +23,7 @@ function sourceLoader(context) {
       compilerOptions: { module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2020 }, fileName: filename,
     }).outputText;
     const wrapper = vm.runInContext(`(function(exports, require, module) {${source}\n})`, context, { filename });
-    wrapper(module.exports, specifier => load(path.resolve(path.dirname(filename), specifier + '.ts')), module);
+    wrapper(module.exports, specifier => load(path.resolve(path.dirname(filename), specifier.replace(/\.js$/, '') + '.ts')), module);
     return module.exports;
   }
   return load;
@@ -322,7 +322,7 @@ async function screenDriver(h) {
   main.context.RuntimeContext.register({ snapshot: service.snapshot, saveRule: service.saveRule, removeRule: service.removeRule, openOriginal: service.openOriginal, cancelChat: service.cancelChat });
   const context = vm.createContext({ console, Date: main.context.Date, ToolPkg: {}, module: { exports: {} } });
   bridge(context); vm.runInContext(composeContextScript() + wrapComposeScript(), context);
-  context.module.exports = sourceLoader(context)(path.join(root, 'src/ui.ts'));
+  context.module.exports = sourceLoader(context)(path.join(root, 'src/settings.ui.ts'));
   composeStreamFixture(context).adapt();
   let frame = await context.__operit_render_compose_dsl({});
   function descendants(node) { return [node, ...(node.children ?? []).flatMap(descendants), ...Object.values(node.slots ?? {}).flatMap(nodes => nodes.flatMap(descendants))]; }

@@ -21,6 +21,7 @@ use operit_providers::chat::llmprovider::MediaLinkParser::MediaLinkParser;
 use operit_providers::chat::EnhancedAIService::{
     ChatGuidanceInbox, EnhancedAIService, MessageCancellationToken, ResumeRequest,
     SendMessageCallbacks, SendMessageOptions, SendMessageRuntime,
+    SummaryConversationOptions,
 };
 use operit_providers::runtime_support::ChatConfigurationResult;
 use operit_store::CoreNodeIdentityStore::CoreNodeIdentityStore;
@@ -535,6 +536,7 @@ impl AIMessageManager {
         autoContinue: bool,
         chatId: String,
         configuration: &ChatConfigurationResult,
+        options: SummaryConversationOptions,
         progress: Option<operit_providers::chat::enhance::ConversationService::SummaryProgressCallback>,
         trigger: Option<operit_providers::chat::enhance::ConversationService::SummaryTriggerContext>,
         onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
@@ -569,9 +571,11 @@ impl AIMessageManager {
             return Ok(None);
         }
 
+        // The model receives the ordinary structured history, including the previous checkpoint.
+        // Cleaning and condensing belong only to the display review appended after generation.
+        let conversationToSummarize = Self::getMemoryFromMessages(messages, configuration)?;
         let mut conversationReviewEntries = Vec::<(String, String)>::new();
-        let conversationToSummarize = messagesToSummarize.iter().enumerate().map(|(index, message)| {
-            let role = match message.sender.as_str() { "user" => "user", _ => "assistant" }.to_string();
+        for message in &messagesToSummarize {
             let cleanedContent = cleanSummarySourceMessage(message);
             if !cleanedContent.trim().is_empty() {
                 let displayContent = if message.sender == "ai" {
@@ -579,12 +583,11 @@ impl AIMessageManager {
                 } else { condenseUserForReview(&cleanedContent) };
                 conversationReviewEntries.push((summarySpeakerLabel(message), displayContent));
             }
-            (role, format!("#{}: {cleanedContent}", index + 1))
-        }).collect::<Vec<_>>();
+        }
 
         let startTime = ChatMessageTimestampAllocator::currentTimeMillis();
         let (summary, usage) = enhancedAiService
-            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, progress, trigger, onNonFatalError)
+            .generateSummaryForConfiguration(conversationToSummarize, previousSummary, chatId, configuration, options, progress, trigger, onNonFatalError)
             .await?;
         let endTime = ChatMessageTimestampAllocator::currentTimeMillis();
         if summary.trim().is_empty() {
@@ -709,6 +712,23 @@ impl AIMessageManager {
             }
         }
         Ok(turns)
+    }
+
+    /// Accepts a completed source only when streaming added assistant segments to an unchanged base.
+    pub(crate) fn committedConversationContextSource(
+        messages: Vec<ChatMessage>,
+        configuration: &ChatConfigurationResult,
+        firstAssistantTimestamp: i64,
+        expectedBase: [u8; 32],
+    ) -> Result<Option<Vec<PromptTurn>>, AiServiceError> {
+        let base = Self::getMemoryFromMessages(messages.iter()
+            .filter(|message| message.timestamp < firstAssistantTimestamp).cloned().collect(), configuration)?;
+        let baseUnchanged = operit_providers::chat::enhance::ConversationContext::sourceFingerprint(&base) == expectedBase;
+        let onlyAssistantAdditions = messages.iter()
+            .filter(|message| message.timestamp >= firstAssistantTimestamp)
+            .all(|message| message.sender == "ai");
+        if !baseUnchanged || !onlyAssistantAdditions { return Ok(None); }
+        Self::getMemoryFromMessages(messages, configuration).map(Some)
     }
 
     /// Converts stored assistant parts into provider turns while preserving tool boundaries.
@@ -1508,6 +1528,34 @@ mod tests {
         })).unwrap();
         configuration.extensionOwner = "configuration-owner".into();
         configuration
+    }
+
+    /// Refuses to bind an in-flight request to a background checkpoint or edited source.
+    #[test]
+    fn summary_context_commit_rejects_history_changed_during_streaming() {
+        let configuration = historyConfiguration(false, false);
+        let mut user = ChatMessage::new_with_parts("user".into(), vec![MessagePart::markdown("user".into(), 0, "question".into())]);
+        user.timestamp = 10;
+        let base = AIMessageManager::getMemoryFromMessages(vec![user.clone()], &configuration).unwrap();
+        let digest = operit_providers::chat::enhance::ConversationContext::sourceFingerprint(&base);
+        let mut reply = ChatMessage::new_with_parts("ai".into(), vec![MessagePart::markdown("reply".into(), 0, "answer".into())]);
+        reply.timestamp = 20;
+        assert!(AIMessageManager::committedConversationContextSource(
+            vec![user.clone(), reply.clone()], &configuration, 20, digest,
+        ).unwrap().is_some());
+        let mut checkpoint = ChatMessage::new_with_parts("summary".into(), vec![MessagePart::markdown("checkpoint".into(), 0, "background summary".into())]);
+        checkpoint.timestamp = 15;
+        assert!(AIMessageManager::committedConversationContextSource(
+            vec![user.clone(), checkpoint.clone(), reply.clone()], &configuration, 20, digest,
+        ).unwrap().is_none());
+        checkpoint.timestamp = 21;
+        assert!(AIMessageManager::committedConversationContextSource(
+            vec![user.clone(), reply.clone(), checkpoint], &configuration, 20, digest,
+        ).unwrap().is_none());
+        user.parts[0].content = "edited question".into();
+        assert!(AIMessageManager::committedConversationContextSource(
+            vec![user, reply], &configuration, 20, digest,
+        ).unwrap().is_none());
     }
 
     /// Builds exact persisted authors independently of the current participant roster or display names.

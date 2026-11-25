@@ -66,7 +66,7 @@ function violations(input) {
     || !/scope\(async\s*\{\s*hook\.onToolCallInterceptAsync\(tool\)\.await\s*\}\)\.await\?/.test(input.handler)) failures.push("batch aborts original policy error");
   const dispatch = region(input.registry, "pub async fn dispatchToolPromptComposeHooks(", "/// Dispatches prompt-finalize hooks");
   if (!/Result<PromptHookContext,\s*String>/.test(dispatch) || !/hook\.on_event_async\(&current\)\.await\?/.test(dispatch)) failures.push("tool prompt registry error Result");
-  const prepare = region(input.enhanced, "pub async fn prepareConversationHistory(", "pub async fn generateSummary(");
+  const prepare = region(input.enhanced, "pub async fn prepareConversationHistory(", "pub async fn prepareScheduledReply(");
   const filter = region(input.enhanced, "async fn applyToolPromptComposeHooksToAvailableTools(", "/// Constructs the native-authenticated tool snapshot");
   for (const [name, text] of [["prepare", prepare], ["filter", filter]]) {
     if (!/toolRuntimeContextForConfiguration\(/.test(text) || !/scopeToolRuntimeContext\(toolContext,/.test(text)) failures.push(name + " independent configuration scope");

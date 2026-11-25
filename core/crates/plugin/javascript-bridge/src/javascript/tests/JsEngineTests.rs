@@ -33,6 +33,9 @@ use std::time::{Duration, Instant};
 #[path = "JsCallContextTests.rs"]
 mod call_context_tests;
 
+#[path = "PluginParseGateTests.rs"]
+mod plugin_parse_gate;
+
 /// Direct package script calls read metadata while the bound ToolPkg manifest remains authoritative.
 #[tokio::test(flavor = "current_thread")]
 async fn standalone_metadata_selects_api_contract_for_each_execution() {

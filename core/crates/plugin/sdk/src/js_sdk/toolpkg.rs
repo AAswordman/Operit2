@@ -1695,12 +1695,15 @@ pub struct ToolPkgChatViewHookEvent {
     pub base_hook_event_base:
         ToolPkgHookEventBase<ToolPkgChatViewEventName, ToolPkgChatViewEventPayload>,
 }
-/// Identifies the sole synchronous chat creation lifecycle event.
+/// Identifies awaited chat creation and destructive history lifecycle events.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub enum ToolPkgChatLifecycleEventName {
     /// Runs before chat configuration resolution and transactional persistence.
     #[serde(rename = "before_create")]
     BeforeCreate,
+    /// Stops plugin-owned work before native history is truncated.
+    #[serde(rename = "before_history_truncate")]
+    BeforeHistoryTruncate,
 }
 /// Identifies whether the draft creates a new conversation or branches from an existing message.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
@@ -1740,10 +1743,26 @@ pub struct ToolPkgChatLifecycleEventPayload {
     /// Contains only this registered owner's source namespace, never the complete extension map.
     pub sourceExtension: super::JsNullable<ToolPkgJsonObject>,
 }
-/// Combines existing ToolPkg execution metadata with the strict isolated creation payload.
+/// Supplies the exact persisted history boundary before native truncation.
+pub struct ToolPkgChatHistoryTruncatePayload {
+    /// Identifies the before-history-truncate lifecycle stage.
+    pub eventName: ToolPkgChatLifecycleEventName,
+    /// Identifies the conversation whose history will change.
+    pub chatId: String,
+    /// Identifies the first message removed by the requested truncation.
+    pub firstDeletedMessageTimestamp: f64,
+}
+/// Distinguishes creation input from an explicit destructive history boundary.
+pub enum ToolPkgChatLifecyclePayload {
+    /// Supplies an isolated creation draft.
+    Variant1(ToolPkgChatLifecycleEventPayload),
+    /// Supplies a persisted conversation and exact truncation boundary.
+    Variant2(ToolPkgChatHistoryTruncatePayload),
+}
+/// Combines existing ToolPkg execution metadata with the typed lifecycle payload.
 pub struct ToolPkgChatLifecycleHookEvent {
     /// Supplies the same typed hook envelope used by the actual main hook executor.
-    pub base_hook_event_base: ToolPkgHookEventBase<ToolPkgChatLifecycleEventName, ToolPkgChatLifecycleEventPayload>,
+    pub base_hook_event_base: ToolPkgHookEventBase<ToolPkgChatLifecycleEventName, ToolPkgChatLifecyclePayload>,
 }
 /// Requires an explicit extension object or null; null and undefined are not valid top-level results.
 pub struct ToolPkgChatLifecycleHookResult {

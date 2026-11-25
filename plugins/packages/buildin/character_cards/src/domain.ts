@@ -283,6 +283,8 @@ export function jsonValue(value: unknown, path = "result"): JsonValue {
 export interface ChatConfigurationService extends Pick<CharacterRepository,
   "getCharacter" | "getGroup" | "getTag" | "getStore" | "listModels" | "listTtsConfigs" | "readGlobalMemoryPreferences"
 > {
+  /** Reuses a runtime-only user profile for an exact conversation, participant and memory owner. */
+  readConversationUserPreferences(chatId: string | null, participantId: string, ownerKey: string): Promise<string>;
   /** Resolves group portrait bytes through the main runtime's existing image services. */
   groupAvatar(group: GroupRecord, cards: readonly CharacterRecord[]): Promise<string | null>;
   /** Calls a typed business operation without invoking another command. */
@@ -356,7 +358,7 @@ async function chatParticipant(
   }
   const prompt = await combineCharacterPrompt(card, [], request.promptFunctionType, service);
   const userPreferencesText = (await service.readGlobalMemoryPreferences()).userDescriptionEnabled
-    ? (await service.dispatchDomain("memory.user.read", { ownerKey: primary })).content : "";
+    ? await service.readConversationUserPreferences(request.chatId, card.id, primary) : "";
   return {
     id: card.id, name: card.name, avatarUri: card.avatarUri,
     introPrompt: prompt, userPreferencesText,
@@ -369,11 +371,20 @@ async function chatParticipant(
   };
 }
 
-/** Resolves an explicit execution participant without moving domain selection rules into Core. */
+/** Resolves chat profiles through shared reads and reapplies live privacy after execution preparation. */
 export async function resolveChatConfiguration(request: ChatConfigurationRequest, service: ChatConfigurationService): Promise<ChatConfigurationResult> {
   const reads = configurationReadScope(service);
   if (request.purpose === "display") return resolveChatDisplay(request, reads);
-  return resolveChatExecution(request, reads);
+  const result = await resolveChatExecution(request, reads);
+  if ((await service.readGlobalMemoryPreferences()).userDescriptionEnabled) return result;
+  return {
+    ...result,
+    profile: { ...result.profile, userPreferencesText: "" },
+    participants: result.participants.map(
+      /** Masks every participant when privacy changes during asynchronous profile reads. */
+      profile => ({ ...profile, userPreferencesText: "" }),
+    ),
+  };
 }
 
 /** Resolves only an explicitly requested execution from current configuration. */

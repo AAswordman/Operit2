@@ -85,7 +85,7 @@ export class GroupExecutionController {
   /** Accepts only explicit domain and transport dependencies; it never creates a default or partially working backend. */
   constructor(private readonly dependencies: GroupExecutionDependencies) {}
 
-  /** Starts one retained submission and rejects a changed payload or competing sequence before doing any work. */
+  /** Starts one retained submission, replacing only a settled cancelled sequence and rejecting active competitors. */
   submit(input: GroupSubmission): Promise<GroupExecutionOutcome> {
     const saved = validateGroupSubmission(input), key = JSON.stringify([saved.chatId, saved.submissionId]), inputKey = canonical(jsonValue(saved));
     const existing = this.sessions.get(key);
@@ -94,7 +94,9 @@ export class GroupExecutionController {
       if (existing.retained === null) throw new Error("Group submission retained result was not initialized");
       return existing.retained;
     }
-    if (this.chats.has(saved.chatId)) throw new Error("Another group sequence already owns this chat");
+    const previousKey = this.chats.get(saved.chatId);
+    const previous = previousKey === undefined ? null : this.sessions.get(previousKey)!;
+    if (previous !== null && previous.phase !== "cancelled") throw new Error("Another group sequence already owns this chat");
     let acknowledgeInput!: (decision: GroupSendDecision) => void;
     const inputReady = new Promise<GroupSendDecision>(
       /** Exposes only an actual validated native input acknowledgement. */
@@ -102,10 +104,11 @@ export class GroupExecutionController {
     );
     const session: Session = { input: saved, inputKey, inputReady, acknowledgeInput, selection: null, speakers: [], planned: false, transportStarted: false, finalizationAttempted: false, cursor: 0, attempt: 0, userMessageTimestamp: null,
       receipts: [], disposition: null, phase: "planning", cancelled: false, activeRequestKey: null, cancellation: null, retained: null };
+    if (previous !== null) previous.phase = "stopped";
     this.sessions.set(key, session); this.chats.set(saved.chatId, key);
     session.retained = Promise.resolve().then(
       /** Starts after retaining identity so two synchronous submits cannot both begin planning. */
-      () => this.run(session, true),
+      () => this.run(session, true, previous),
     );
     return session.retained;
   }
@@ -145,6 +148,21 @@ export class GroupExecutionController {
       () => this.run(session, !session.planned),
     );
     return session.retained;
+  }
+
+  /** Stops and releases the exact retained plan before its original history can be removed. */
+  async stopForHistoryTruncate(chatId: string, submissionId: string): Promise<void> {
+    const session = this.session(chatId, submissionId);
+    if (session.phase === "failed" || session.phase === "stopped" || session.phase === "completed") return;
+    if (session.phase === "planning" || session.phase === "running") await this.cancel(chatId, submissionId);
+    await session.retained;
+    if (session.phase === "cancelled") {
+      if (session.transportStarted) {
+        await this.dependencies.transport.abandon({ submissionId, chatId, runtime: session.input.runtime });
+      }
+      session.phase = "stopped";
+      this.chats.delete(chatId);
+    }
   }
 
   /** Requires an exact retained session and never reconstructs one from current selection or history guesses. */
@@ -204,9 +222,13 @@ export class GroupExecutionController {
     return null;
   }
 
-  /** Records input first, plans once, and defers summary checks until the final acknowledged participant reply. */
-  private async run(session: Session, plan: boolean): Promise<GroupExecutionOutcome> {
+  /** Releases a replaced cancelled sequence, records input once, and summarizes only after the final reply. */
+  private async run(session: Session, plan: boolean, previous: Session | null = null): Promise<GroupExecutionOutcome> {
     try {
+      if (previous !== null && previous.transportStarted) {
+        previous.finalizationAttempted = true;
+        await this.dependencies.transport.abandon({ submissionId: previous.input.submissionId, chatId: previous.input.chatId, runtime: previous.input.runtime });
+      }
       await this.current(session, null);
       if (session.selection === null) throw new Error("Group execution selection is not initialized");
       if (session.cancelled) { session.phase = "cancelled"; return this.outcome(session, "cancelled"); }

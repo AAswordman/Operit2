@@ -182,3 +182,31 @@ test("lifecycle source namespace and strict result decoder expose no sibling map
   assert.match(result, /Value::Null => Ok\(None\)/);
   assert.match(result, /_ => Err/);
 });
+
+/** Checks destructive entry-point ordering against current Core sources; native execution remains outside this Node check. */
+test("rollback and edit-resend await lifecycle and native cancellation before workspace or history mutation", () => {
+  const core = source("core/crates/runtime/application/src/services/ChatServiceCore.rs");
+  const prepare = rustFunction(core, "captureHistoryTruncate");
+  assert.match(prepare, /Future<Output = Result<ChatMessage, String>> \+ 'static/);
+  assert.match(prepare, /dispatchBeforeHistoryTruncate\(&chatId, messageTimestamp\)\.await\?/);
+  assert.match(prepare, /cancelMessageForDestructiveMutation\(chatId\.clone\(\)\)\.await\?/);
+  assert.ok(prepare.indexOf("dispatchBeforeHistoryTruncate") < prepare.indexOf("cancelMessageForDestructiveMutation"));
+  assert.ok(prepare.indexOf("cancelMessageForDestructiveMutation") < prepare.indexOf(".restoreWorkspaceForMessage("));
+  assert.ok(prepare.indexOf(".restoreWorkspaceForMessage(") < prepare.indexOf(".truncateChatHistoryForChat("));
+  for (const name of ["rollbackToMessage", "rewindAndResendMessage"]) {
+    const body = rustFunction(core, name);
+    assert.match(body, /Future<Output = (?:Option<String>|bool)> \+ 'static/);
+    assert.ok(body.indexOf("captureHistoryTruncate") < body.indexOf("async move"));
+    assert.match(body, /pending\.await/);
+    if (name === "rewindAndResendMessage") assert.ok(body.indexOf("starter.start(") > body.indexOf("pending.await?"));
+  }
+  const dispatch = rustFunction(source(bridgePath), "dispatchBeforeHistoryTruncate");
+  assert.match(dispatch, /Self::snapshot\(\)\.await\?/);
+  assert.match(dispatch, /CHAT_LIFECYCLE_BEFORE_HISTORY_TRUNCATE[\s\S]*?firstDeletedMessageTimestamp[\s\S]*?\.await\?/);
+  assert.match(dispatch, /parseCreationResult\(raw\)\?\.is_some\(\)/);
+  const processing = source("core/crates/runtime/application/src/services/core/MessageProcessingDelegate.rs");
+  const cancel = rustFunction(processing, "cancelMessageForDestructiveMutation");
+  assert.match(cancel, /false, None, move \|result\|/);
+  assert.match(cancel, /completeCancelledTurnReceipt\(&chatId, None\)/);
+  assert.match(cancel, /failTurnReceipt\(&chatId, error\.clone\(\)\)/);
+});

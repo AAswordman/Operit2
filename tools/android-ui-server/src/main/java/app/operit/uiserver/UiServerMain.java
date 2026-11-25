@@ -160,7 +160,6 @@ public final class UiServerMain {
             for (DisplayWindow window : windows.values()) {
                 if (window.packageName.equals(packageName)) {
                     window.launch(component);
-                    window.raise();
                     result.complete(window.describe());
                     return;
                 }

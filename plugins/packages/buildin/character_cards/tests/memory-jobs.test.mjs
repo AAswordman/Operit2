@@ -32,6 +32,79 @@ test("candidate search query focuses recent question and answer within explicit 
   assert.ok(bounded.includes("a".repeat(180)));
 });
 
+/** Excludes recalled memories and large file bodies before retrieval budgets and the actual MEMORY call. */
+test("memory extraction sends authored text without attachments or recalled memory", async () => {
+  const calls = [], queries = [];
+  const { extractMessages, buildCandidateSearchQuery } = loadModule("src/memory-jobs/analysis.ts", { Tools: { Chat: {
+    /** Captures the production functional request without invoking a remote model. */
+    async call(options) { calls.push(plain(options)); return { text: "{}" }; },
+  } } });
+  const largeFile = "ATTACHED_FILE_ONLY ".repeat(12000);
+  const messages = [
+    { sender: "user", content: 'Before<attachment id="empty" content="SELF_CLOSING_ONLY"/>'
+      + '<attachment id="character_memory_recall">RECALLED_ONLY</attachment>'
+      + '<attachment id="file">' + largeFile + '</attachment>'
+      + '<workspace_attachment>WORKSPACE_ONLY</workspace_attachment>'
+      + '<memory_context source="character-memory">LEGACY_CONTEXT_ONLY</memory_context>'
+      + '<memory>LEGACY_MEMORY_ONLY</memory><image_link id="IMAGE_ONLY"/>'
+      + '<audio_link id="AUDIO_ONLY"/><video_link id="VIDEO_ONLY"/><media_link id="MEDIA_ONLY"/>After' },
+    { sender: "assistant", content: 'Answer<attachment id="answer-file">ASSISTANT_ATTACHMENT_ONLY</attachment>'
+      + '<meta provider="openai:reasoning">PROVIDER_META_ONLY</meta><meta value="SELF_CLOSING_META_ONLY"/>'
+      + '<think>REASONING_ONLY<thinking>NESTED_THOUGHT_ONLY</thinking>REASONING_TAIL_ONLY</think>'
+      + '<THINKING><META provider="test">NESTED_META_ONLY</META>THINKING_TAIL_ONLY</THINKING>'
+      + '<tool_result>TOOL_OUTPUT_ONLY</tool_result>Done' },
+  ];
+  const original = plain(messages);
+  const repository = {
+    /** Disables unrelated profile updates for this source-boundary regression. */
+    async readMemorySettings() { return { profileAutoUpdateEnabled: false, profileAutoUpdateLocked: false, memoryExtractionCustomRules: "" }; },
+    /** Captures the production retrieval query before returning no matching records. */
+    async searchMemories(options) { queries.push(options.query); return []; },
+    /** Supplies no folders so only the actual source projection is under test. */
+    async listMemoryFolders() { return []; },
+  };
+  await extractMessages(CONTROLLED_OWNER, messages, repository);
+  assert.equal(calls.length, 1); assert.equal(queries.length, 1);
+  const source = calls[0].turns[1].content;
+  for (const text of [source, queries[0], buildCandidateSearchQuery(messages)]) {
+    assert.match(text, /Before/u); assert.match(text, /After/u); assert.match(text, /Answer/u); assert.match(text, /Done/u);
+    assert.doesNotMatch(text, /[A-Z_]+_ONLY|<attachment|<workspace_attachment|<memory|<meta|<think|<(?:image|audio|video|media)_link/iu);
+  }
+  assert.ok(source.length < 150, "Large attached content must not reach the MEMORY request");
+  assert.deepEqual(plain(messages), original, "Extraction cleanup must not mutate saved source messages");
+});
+
+/** Prevents truncated internal output from leaking into retrieval while retaining similarly named authored markup. */
+test("memory retrieval excludes nested and unfinished internal blocks without matching ordinary tag names", () => {
+  const { buildCandidateSearchQuery } = loadModule("src/memory-jobs/analysis.ts");
+  for (const hidden of [
+    '<meta provider="test">META_ONLY<meta>INNER_ONLY</meta>TAIL_ONLY</meta>',
+    '<think>THINK_ONLY<think>INNER_ONLY</think>TAIL_ONLY</think>',
+    '<thinking>THINKING_ONLY<meta>INNER_ONLY</meta>TAIL_ONLY</thinking>',
+    '<meta provider="test">UNFINISHED_ONLY', '<think>UNFINISHED_ONLY', '<thinking>UNFINISHED_ONLY',
+    '<meta provider="UNFINISHED_ONLY',
+  ]) {
+    const query = buildCandidateSearchQuery([{ sender: "user", content: 'Keep<metadata>Ordinary metadata content</metadata><meta-data>Ordinary custom content</meta-data>' + hidden }]);
+    assert.match(query, /Keep/u);
+    assert.match(query, /Ordinary metadata content/u);
+    assert.match(query, /Ordinary custom content/u);
+    assert.doesNotMatch(query, /[A-Z_]+_ONLY/u);
+  }
+});
+
+/** Treats attachment-only user context as completed empty work without retrieval, AI, or profile writes. */
+test("attachment-only memory sources skip model work while orphan assistant input still fails", async () => {
+  const { extractMessages } = loadModule("src/memory-jobs/analysis.ts");
+  const result = await extractMessages(CONTROLLED_OWNER, [
+    { sender: "user", content: '<attachment id="character_memory_recall">Old facts</attachment><attachment id="file">File body</attachment>' },
+    { sender: "assistant", content: "This reply cannot supply authored user context." },
+  ], {});
+  assert.deepEqual(plain(result), { ownerKey: CONTROLLED_OWNER, created: 0, updated: 0, merged: 0, links: 0, profileUpdated: false, skipped: 0 });
+  const internalOnly = await extractMessages(CONTROLLED_OWNER, [{ sender: "user", content: '<meta>Internal metadata</meta><think>Private reasoning</think><thinking>Unfinished reasoning' }], {});
+  assert.deepEqual(plain(internalOnly), plain(result));
+  await assert.rejects(extractMessages(CONTROLLED_OWNER, [{ sender: "assistant", content: "Orphan reply" }], {}), /requires user context/u);
+});
+
 /** Reads one genuine owner from native bytes and rejects absent or duplicated persisted spaces. */
 async function readOwner(harness) {
   const state = await harness.readState(), matches = [];

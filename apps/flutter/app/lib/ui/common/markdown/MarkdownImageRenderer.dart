@@ -7,6 +7,7 @@ import 'MarkdownRemoteImage.dart';
 import 'MarkdownVideoRenderer.dart';
 
 class MarkdownImageRenderer extends StatelessWidget {
+  /// Creates a bounded image thumbnail with an optional full-size preview.
   const MarkdownImageRenderer({
     super.key,
     required this.imageMarkdown,
@@ -22,6 +23,7 @@ class MarkdownImageRenderer extends StatelessWidget {
   final bool enablePreview;
   final void Function(String url)? onOpenLink;
 
+  /// Keeps image thumbnails within the available width and height limit.
   @override
   Widget build(BuildContext context) {
     if (!isCompleteImageMarkdown(imageMarkdown)) {

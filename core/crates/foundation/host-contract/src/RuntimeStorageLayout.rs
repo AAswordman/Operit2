@@ -449,7 +449,8 @@ pub const CHARACTER_GROUPS_PREFERENCES_PATH: &str =
     "runtime/config/preferences/character_groups.preferences.json";
 pub const WORKSPACES_PREFERENCES_PATH: &str =
     "runtime/config/preferences/workspaces.preferences.json";
-/// Device-local rootfs instances and private installation staging directories.
+/// Runtime-backed rootfs storage used by OpenHarmony; Android and iOS own separate private roots.
+/// Retains node ownership for existing runtime-backed installations on all native hosts.
 pub const TERMINAL_ROOTFS: RuntimeStoragePathDefinition = RuntimeStoragePathDefinition::tree(
     "runtime/terminal/rootfs",
     RuntimeStorageOwnership::CoreNode,

@@ -15,6 +15,7 @@ from common import (
     flutter_command,
     flutter_pub_get,
     generate_dart_proxy_artifacts,
+    prepare_plugin_assets,
     read_properties,
     require_command,
     run,
@@ -117,6 +118,7 @@ def publish_android_apk(apk_path: Path, dist_dir: Path) -> Path:
 # Builds and verifies the ABI-specific Android release before publishing it.
 def main() -> int:
     args = parse_args()
+    prepare_plugin_assets()
     if not args.skip_signing:
         ensure_android_signing()
     flutter = flutter_command()

@@ -19,6 +19,7 @@ use crate::chat::enhance::ConversationService::{
     PromptHistoryHookDispatcher, SystemPromptComposer, ToolExposureMode,
 };
 use crate::chat::enhance::MultiServiceManager::{MultiServiceManager, SharedAIServiceHandle};
+use crate::chat::enhance::ConversationContext::{ConversationContext, ConversationContextCache};
 use crate::chat::hooks::PromptHookRegistry::{PromptHookContext, PromptHookRegistry};
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
@@ -115,6 +116,8 @@ pub struct EnhancedAISharedState {
     pub last_turn_model_identity: Option<TurnModelIdentity>,
     pub last_turn_context_window: Option<i64>,
     pub pendingRouteChange: Option<RouteChangeIntent>,
+    /// Prepared history is reusable only after the application commits its source messages.
+    pub conversation_contexts: ConversationContextCache,
 }
 
 /// Display metadata captured from the resolved model configuration for one turn.
@@ -384,6 +387,14 @@ pub struct SendMessageOptions {
 /// Describes the model round that should resume after a completed route change.
 pub struct ResumeRequest {
     pub options: SendMessageOptions,
+}
+
+/// Supplies ordinary chat preparation inputs for a conversation summary.
+#[derive(Clone, Debug)]
+pub struct SummaryConversationOptions {
+    pub workspacePath: Option<String>,
+    pub workspaceFolders: Vec<String>,
+    pub promptFunctionType: PromptFunctionType,
 }
 
 impl SendMessageOptions {
@@ -1093,19 +1104,6 @@ impl EnhancedAIService {
         Ok(history)
     }
 
-    /// Generates a functional summary with an explicit retry-error consumer.
-    pub async fn generateSummary(
-        &mut self,
-        messages: Vec<(String, String)>,
-        previousSummary: Option<String>,
-        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
-    ) -> Result<String, AiServiceError> {
-        let mut multiServiceManager = self.multi_service_manager.clone();
-        self.conversation_service
-            .generateSummary(messages, previousSummary, &mut multiServiceManager, onNonFatalError)
-            .await
-    }
-
     /// Prepares a text-only assistant reply through the real conversation prompt and accounting pipeline.
     pub async fn prepareScheduledReply(
         &mut self,
@@ -1165,37 +1163,123 @@ impl EnhancedAIService {
     /// Runs chat summaries under the already-selected native participant, including all plugin hooks.
     pub async fn generateSummaryForConfiguration(
         &mut self,
-        messages: Vec<(String, String)>,
+        messages: Vec<PromptTurn>,
         previousSummary: Option<String>,
         chatId: String,
         configuration: &ChatConfigurationResult,
+        options: SummaryConversationOptions,
         progress: Option<crate::chat::enhance::ConversationService::SummaryProgressCallback>,
         trigger: Option<crate::chat::enhance::ConversationService::SummaryTriggerContext>,
         onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<(String, TokenCounts), AiServiceError> {
+        let prepared = self.shared_state().conversation_contexts.get(
+            &chatId, &configuration.profile.id, &messages,
+        );
+        AppLogger::v_with_level(TAG, &format!(
+            "chat.summary.context chatId={} participantId={} reusedPreparedContext={} sourceTurns={}",
+            chatId, configuration.profile.id, prepared.is_some(), messages.len(),
+        ), operit_util::AppLogger::VERBOSE_LEVEL_2);
+        let prepared = match prepared {
+            Some(context) => context.as_ref().clone(),
+            None => self.prepareSummaryConversation(messages, &chatId, configuration, &options).await?,
+        };
         let context = toolRuntimeContextForConfiguration(
-            configuration, Some(chatId), None, Vec::new(), &ToolExposureMode::Full,
+            configuration, Some(chatId), options.workspacePath, options.workspaceFolders,
+            &ToolExposureMode::Full,
         )?;
         let mut manager = self.multi_service_manager.clone();
-        let turns = messages.into_iter().map(|(role, content)|
-            PromptTurn::new(PromptTurnKind::from_role(&role), content)
-        ).collect();
         ToolExecutionManager::scopeToolRuntimeContext(context,
-            self.conversation_service.generateSummaryWithProgress(turns, previousSummary, &mut manager, progress, trigger, onNonFatalError),
+            self.conversation_service.generateSummaryWithProgress(prepared, previousSummary, &mut manager, progress, trigger, onNonFatalError),
         ).await
     }
 
-    /// Summarizes prepared turns while preserving the caller's error notifications.
-    pub async fn generateSummaryFromPromptTurns(
+    /// Prepares uncached or historical sources through the ordinary chat prompt pipeline.
+    async fn prepareSummaryConversation(
         &mut self,
         messages: Vec<PromptTurn>,
-        previousSummary: Option<String>,
-        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
-    ) -> Result<String, AiServiceError> {
-        let mut multiServiceManager = self.multi_service_manager.clone();
-        self.conversation_service
-            .generateSummaryFromPromptTurns(messages, previousSummary, &mut multiServiceManager, onNonFatalError)
-            .await
+        chatId: &str,
+        configuration: &ChatConfigurationResult,
+        options: &SummaryConversationOptions,
+    ) -> Result<ConversationContext, AiServiceError> {
+        let sendOptions = SendMessageOptions {
+            chatId: Some(chatId.to_string()),
+            workspacePath: options.workspacePath.clone(),
+            workspaceFolders: options.workspaceFolders.clone(),
+            promptFunctionType: options.promptFunctionType.clone(),
+            executionParticipantId: Some(configuration.profile.id.clone()),
+            ..SendMessageOptions::new()
+        };
+        let mut runtime = self.createSendMessageRuntime(&sendOptions, configuration.clone())?;
+        runtime.promptMetadata.insert("promptPreparationId".into(), uuid::Uuid::new_v4().to_string());
+        let history = self.prepareConversationHistory(
+            messages, String::new(), sendOptions.chatId.clone(), options.workspacePath.clone(),
+            options.workspaceFolders.clone(), options.promptFunctionType.clone(), None,
+            sendOptions.executionParticipantId.clone(), None, false, FunctionType::CHAT,
+            None, None, PromptPreparationPurpose::Send, &runtime,
+        ).await?;
+        let tools = self.composeAvailableTools(
+            FunctionType::CHAT, sendOptions.chatId.clone(), options.promptFunctionType.clone(),
+            options.workspacePath.clone(), options.workspaceFolders.clone(), &runtime,
+        ).await?;
+        let mut metadata = btree_to_value_map(&runtime.promptMetadata);
+        metadata.extend(self.buildPromptFinalizeMetadata(
+            sendOptions.chatId, sendOptions.executionParticipantId, options.workspacePath.clone(),
+            true, true, false,
+        ));
+        let finalized = self.applyPromptFinalizeHooks(PromptHookContext {
+            stage: "before_finalize_prompt".into(), chat_id: Some(chatId.to_string()),
+            function_type: Some(function_type_name(&FunctionType::CHAT).into()),
+            prompt_function_type: Some(prompt_function_type_name(&options.promptFunctionType).into()),
+            raw_input: Some(String::new()), processed_input: Some(String::new()),
+            prepared_history: history,
+            model_parameters: serializePromptHookModelParameters(&runtime.modelParameters),
+            available_tools: serializePromptHookToolPrompts(&tools), metadata,
+            ..PromptHookContext::default()
+        }, PromptHookRegistry::dispatchPromptFinalizeHooks).await.map_err(AiServiceError::RequestFailed)?;
+        let finalized = self.applyPromptFinalizeHooks(PromptHookContext {
+            stage: "before_send_to_model".into(), ..finalized
+        }, PromptHookRegistry::dispatchPromptFinalizeHooks).await.map_err(AiServiceError::RequestFailed)?;
+        let processed = finalized.processed_input.ok_or_else(||
+            AiServiceError::RequestFailed("Summary preparation removed processed input".into()))?;
+        Ok(Self::conversationContext(
+            &runtime, self.applyFinalizedCurrentUserTurn(finalized.prepared_history, "", &processed),
+            tools, true,
+        ))
+    }
+
+    /// Captures model-facing history without recomposing prompts or stripping protocol metadata.
+    fn conversationContext(
+        runtime: &SendMessageRuntime,
+        history: Vec<PromptTurn>,
+        tools: Vec<ToolPrompt>,
+        enableThinking: bool,
+    ) -> ConversationContext {
+        ConversationContext {
+            history, available_tools: tools,
+            thinking: RequestThinking::for_model(
+                &runtime.modelConfig.thinking, runtime.modelConfig.thinkingLevel, enableThinking,
+            ),
+            model_parameters: runtime.modelParameters.clone(),
+            model_binding: runtime.chatConfiguration.profile.modelBinding.clone(),
+        }
+    }
+
+    /// Publishes completed context for the application's subsequent persistence acknowledgement.
+    fn recordConversationContext(
+        &self, chatId: Option<&str>, runtime: &SendMessageRuntime,
+        history: &[PromptTurn], tools: &[ToolPrompt], enableThinking: bool,
+    ) {
+        if let Some(chatId) = chatId {
+            self.shared_state().conversation_contexts.record(
+                chatId.to_string(), runtime.chatConfiguration.profile.id.clone(),
+                Self::conversationContext(runtime, history.to_vec(), tools.to_vec(), enableThinking),
+            );
+        }
+    }
+
+    /// Associates completed provider context with the exact persisted application history.
+    pub fn commitConversationContext(&self, chatId: &str, participantId: &str, source: Vec<PromptTurn>) {
+        self.shared_state().conversation_contexts.commit(chatId, participantId, source);
     }
 
     /// Generates a concise title using the model bound to title generation.
@@ -2300,6 +2384,12 @@ impl EnhancedAIService {
         if let Some(windowSize) = completedContextWindow {
             self.publishRequestWindowEstimate(windowSize);
         }
+        if !isSubTask && !runtime.textOnly {
+            self.recordConversationContext(
+                chatId.as_deref(), &runtime, &execContext.conversationHistory,
+                &preparedRequest.availableTools, enableThinking,
+            );
+        }
         AppLogger::v_with_level(TAG, &format!(
             "completed request window from prepared state chatId={} executionId={} elapsedMs={} success={}",
             logChatId, execContext.executionId,
@@ -2507,6 +2597,11 @@ impl EnhancedAIService {
         if maxTokens > 0 {
             let usageRatio = currentTokens as f64 / maxTokens as f64;
             if usageRatio >= tokenUsageThreshold {
+                if !isSubTask && !runtime.textOnly {
+                    self.recordConversationContext(
+                        chatId.as_deref(), runtime, &currentChatHistory, &availableTools, enableThinking,
+                    );
+                }
                 AppLogger::w(
                     TAG,
                     &format!(
@@ -3324,7 +3419,7 @@ fn resolveToolDisplayName(tool: &RuntimeAITool) -> String {
 fn buildPackageProxyToolPrompt() -> ToolPrompt {
     ToolPrompt {
         name: "package_proxy".to_string(),
-        description: "Execute an activated package tool. Every call returns execution_id and waits up to 20 seconds. A running execution continues in the background; collect further output and final results with package_wait instead of re-running the tool.".to_string(),
+        description: "Execute an activated package tool and wait up to 20 seconds. Completed calls return business results directly. Running work returns execution_id; collect further output and final results with package_wait instead of re-running the tool. has_more_output or a nonzero pending_execution_count requires further reads.".to_string(),
         parameters: buildToolParametersJson(&[
             crate::chat::config::SystemToolPrompts::ToolParameterSchema {
                 name: "tool_name".to_string(),

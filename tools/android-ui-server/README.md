@@ -98,7 +98,11 @@ the requested display. Activity launch acceptance alone is not reported as
 success; display rejection/redirection and unavailable accessibility are errors.
 
 `list_windows` exposes native windows through the existing shared schema.
-`focus_window(window_id)` restores and selects a hosted window. `get_page_info`
+`focus_window(window_id)` selects the hosted application's original virtual display
+without restoring or raising its preview. Minimizing or resizing the preview does
+not disable trees, screenshots, gestures or keys on that display. Repeated app
+launches preserve the preview's current size and minimized state. Only explicit
+human interaction with the preview restores it. `get_page_info`
 continues to use the signed accessibility companion and stream its full tree
 through its existing pipe. Subsequent input follows the selected window. The
 Android Host alone translates the opaque session ID to an internal display ID;
@@ -137,8 +141,10 @@ no input. Drag/resize and exercise multi-touch and local IME in each window.
 Continue resizing inward past the minimum from each corner and verify top-right
 docking, stable opposite-corner positioning and restoration. Tap Fullscreen and
 verify the same task and page appear on display 0 before its old window ID closes.
-Minimize and restore through `focus_window`, then close and verify its old ID
-fails. Stop an app through the existing tool. Release/kill the Android owner and
+Minimize, select through `focus_window` and continue trees, screenshots, gestures
+and keys while the preview stays minimized; relaunch the same app and verify the
+preview still stays minimized. Restore by tapping the preview, then close and
+verify its old ID fails. Stop an app through the existing tool. Release/kill the Android owner and
 verify its server, tasks and tmp directory disappear. Inspect the packaged archive
 for `classes.dex` and run on Android 11 and a current Android release.
 

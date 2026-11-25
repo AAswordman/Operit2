@@ -1,17 +1,15 @@
 use crate::process::background_command;
 
 use std::fs::{self, File};
-use std::io::{self, Read, Seek, SeekFrom, Write};
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 use globset::GlobBuilder;
-use grep_regex::RegexMatcherBuilder;
-use grep_searcher::{BinaryDetection, Searcher, SearcherBuilder, Sink, SinkMatch};
 use ignore::WalkBuilder;
 use operit_host_api::{
     FileEntry, FileExistence, FileInfo, FileSystemHost, FindFilesRequest, GrepCodeRequest,
-    GrepCodeResult, GrepFileMatch, GrepLineMatch, HostEnvironmentDescriptor, HostError, HostResult,
+    GrepCodeResult, HostEnvironmentDescriptor, HostError, HostResult,
 };
 use zip::write::SimpleFileOptions;
 use zip::{CompressionMethod, ZipArchive, ZipWriter};
@@ -316,74 +314,10 @@ impl FileSystemHost for WindowsFileSystemHost {
         })
     }
 
+    /// Searches through the shared native streaming grep implementation.
     fn grepCode(&self, request: GrepCodeRequest) -> HostResult<GrepCodeResult> {
         self.validatePath(&request.path, "path")?;
-        if request.pattern.trim().is_empty() {
-            return Err(HostError::new("Pattern parameter is required"));
-        }
-        if request.filePattern.trim().is_empty() {
-            return Err(HostError::new("file_pattern parameter is required"));
-        }
-
-        let matcher = RegexMatcherBuilder::new()
-            .case_insensitive(request.caseInsensitive)
-            .build(&request.pattern)
-            .map_err(|error| HostError::new(format!("Invalid regex pattern: {error}")))?;
-        let fileMatcher = GlobBuilder::new(&request.filePattern)
-            .case_insensitive(request.caseInsensitive)
-            .build()
-            .map_err(|error| HostError::new(format!("Invalid file pattern: {error}")))?
-            .compile_matcher();
-        let mut searcher = SearcherBuilder::new()
-            .line_number(true)
-            .binary_detection(BinaryDetection::quit(b'\x00'))
-            .max_matches(Some(request.maxResults as u64))
-            .build();
-        let mut matches = Vec::new();
-        let mut filesSearched = 0usize;
-        let mut totalMatches = 0usize;
-
-        for entry in WalkBuilder::new(&request.path).build() {
-            let entry = entry.map_err(|error| HostError::new(format!("walk error: {error}")))?;
-            let filePath = entry.path();
-            if !filePath.is_file() || !fileMatcher.is_match(filePath) {
-                continue;
-            }
-            filesSearched += 1;
-            let mut sink = RipgrepGrepSink::new();
-            searcher
-                .search_path(&matcher, filePath, &mut sink)
-                .map_err(HostError::from)?;
-            if sink.lineMatches.is_empty() {
-                continue;
-            }
-            let content = match fs::read_to_string(filePath) {
-                Ok(content) => content,
-                Err(_) => continue,
-            };
-            let lines = content.lines().collect::<Vec<_>>();
-            let mut lineMatches = sink.lineMatches;
-            if request.contextLines > 0 {
-                for lineMatch in &mut lineMatches {
-                    let lineIndex = lineMatch.lineNumber.saturating_sub(1);
-                    let start = lineIndex.saturating_sub(request.contextLines);
-                    let end = (lineIndex + request.contextLines + 1).min(lines.len());
-                    lineMatch.matchContext = Some(lines[start..end].join("\n"));
-                }
-            }
-            totalMatches += lineMatches.len();
-            if !lineMatches.is_empty() {
-                matches.push(GrepFileMatch {
-                    filePath: filePath.to_string_lossy().to_string(),
-                    lineMatches,
-                });
-            }
-        }
-        Ok(GrepCodeResult {
-            matches,
-            totalMatches,
-            filesSearched,
-        })
+        operit_host_native_common::grepCode(request)
     }
 
     fn zipFiles(&self, source: &str, destination: &str) -> HostResult<()> {
@@ -660,36 +594,4 @@ fn zip_file(
     let mut file = File::open(path)?;
     std::io::copy(&mut file, zipWriter)?;
     Ok(())
-}
-
-struct RipgrepGrepSink {
-    lineMatches: Vec<GrepLineMatch>,
-}
-
-impl RipgrepGrepSink {
-    fn new() -> Self {
-        Self {
-            lineMatches: Vec::new(),
-        }
-    }
-}
-
-impl Sink for RipgrepGrepSink {
-    type Error = io::Error;
-
-    fn matched(&mut self, _searcher: &Searcher, mat: &SinkMatch<'_>) -> Result<bool, Self::Error> {
-        let lineContent = bytes_to_search_line(mat.bytes());
-        self.lineMatches.push(GrepLineMatch {
-            lineNumber: mat.line_number().unwrap_or(0) as usize,
-            lineContent,
-            matchContext: None,
-        });
-        Ok(true)
-    }
-}
-
-fn bytes_to_search_line(bytes: &[u8]) -> String {
-    String::from_utf8_lossy(bytes)
-        .trim_end_matches(&['\r', '\n'][..])
-        .to_string()
 }

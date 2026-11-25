@@ -79,12 +79,31 @@ function analysis(value: unknown): Analysis | null {
   return result;
 }
 
-/** Removes execution metadata from text used for memory retrieval. */
+/** Removes complete internal blocks and suppresses unfinished bodies, preserving authored text outside them. */
+function memorySourceText(text: string): string {
+  const tags = /<(\/?)(attachment|workspace_attachment|memory|memory_context|meta|think|thinking|image_link|audio_link|video_link|media_link)(?=[\s/>]|$)[^>]*(?:>|$)/giu;
+  const stack: string[] = [];
+  let result = "", cursor = 0;
+  for (const match of text.matchAll(tags)) {
+    const name = match[2].toLowerCase(), end = match.index + match[0].length;
+    if (match[1] === "/") {
+      if (stack.length === 0 || stack[stack.length - 1] !== name) continue;
+      stack.pop();
+      if (stack.length === 0) cursor = end;
+    } else {
+      if (stack.length === 0) result += text.slice(cursor, match.index) + " ";
+      if (!/\/\s*>$/u.test(match[0])) stack.push(name);
+      else if (stack.length === 0) cursor = end;
+    }
+  }
+  return result + (stack.length === 0 ? text.slice(cursor) : "");
+}
+
+/** Removes attachments and execution metadata before applying memory retrieval budgets. */
 function normalizeCandidateSearchText(text: string, limit: number): string {
-  return text.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, " ")
+  return memorySourceText(text)
     .replace(/<tool(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool(?:_[A-Za-z0-9_]+)?>/giu, " ")
     .replace(/<tool_result(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool_result(?:_[A-Za-z0-9_]+)?>/giu, " ")
-    .replace(/<memory\b[^>]*>[\s\S]*?<\/memory>/giu, " ")
     .replace(/https?:\/\/\S+/gu, " ")
     .replace(/[\s`*_#>]+/gu, " ").trim().slice(0, limit);
 }
@@ -112,11 +131,10 @@ export function buildCandidateSearchQuery(messages: MemoryChatMessage[]): string
   ).join("\n");
 }
 
-/** Removes explicitly delimited thought, memory and tool-result content before extraction. */
+/** Keeps authored conversation text while excluding attachments, internal metadata, thoughts and tool-result bodies. */
 function cleanMessage(message: MemoryChatMessage): MemoryChatMessage {
-  let content = message.content.replace(/<think(?:ing)?\b[^>]*>[\s\S]*?<\/think(?:ing)?>/giu, "")
+  const content = memorySourceText(message.content)
     .replace(/<tool_result(?:_[A-Za-z0-9_]+)?\b[^>]*>[\s\S]*?<\/tool_result(?:_[A-Za-z0-9_]+)?>/giu, "[工具结果已省略]");
-  if (message.sender === "user") content = content.replace(/<memory\b[^>]*>[\s\S]*?<\/memory>/giu, "");
   return { ...message, content: content.trim() };
 }
 
@@ -171,9 +189,14 @@ function unresolvedReference(error: unknown): boolean {
     || message === "Memory merge requires at least two unique source records" || message.startsWith("Name already exists: ") || message === "Self relationships are not allowed";
 }
 
+/** Creates a no-change report for empty source text or an analysis with no reusable facts. */
+function emptyExtractionResult(ownerKey: string): MemoryExtractionResult {
+  return { ownerKey, created: 0, updated: 0, merged: 0, links: 0, profileUpdated: false, skipped: 0 };
+}
+
 /** Applies one model result using one title index and the canonical repository mutations. */
 async function applyAnalysis(ownerKey: string, result: Analysis | null, settings: MemorySettings, repository: CharacterRepository): Promise<MemoryExtractionResult> {
-  const report: MemoryExtractionResult = { ownerKey, created: 0, updated: 0, merged: 0, links: 0, profileUpdated: false, skipped: 0 };
+  const report = emptyExtractionResult(ownerKey);
   if (result === null) return report;
   report.skipped = result.skipped;
   if (result.profile_markdown !== undefined && result.profile_markdown !== null && (!settings.profileAutoUpdateEnabled || settings.profileAutoUpdateLocked))
@@ -237,6 +260,10 @@ async function applyAnalysis(ownerKey: string, result: Analysis | null, settings
 
 /** Calls the configured MEMORY model and stages its validated graph and optional profile edits. */
 export async function extractMessages(ownerKey: string, messages: MemoryChatMessage[], repository: CharacterRepository): Promise<MemoryExtractionResult> {
+  if (!messages.some(
+    /** Rejects orphan assistant input independently of attachment cleanup. */
+    message => message.sender === "user",
+  )) throw new Error("Memory extraction requires user context");
   const history = messages.map(cleanMessage).filter(
     /** Selects actual conversation content, excluding unsupported senders and blank records. */
     message => (message.sender === "user" || message.sender === "ai" || message.sender === "assistant") && message.content !== "",
@@ -245,7 +272,7 @@ export async function extractMessages(ownerKey: string, messages: MemoryChatMess
     /** Requires genuine user context rather than analyzing an orphan assistant reply. */
     message => message.sender === "user",
   );
-  if (user === undefined) throw new Error("Memory extraction requires user context");
+  if (user === undefined) return emptyExtractionResult(ownerKey);
   const settings = await repository.readMemorySettings(ownerKey);
   const profile = settings.profileAutoUpdateEnabled && !settings.profileAutoUpdateLocked ? (await repository.readUser(ownerKey)).content : "";
   const query = buildCandidateSearchQuery(history);

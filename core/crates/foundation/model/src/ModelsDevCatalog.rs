@@ -12,7 +12,9 @@
 //! suffix or a `:tag`; the id with a relay's window mark (`[1m]`), `claude-` prefix or
 //! channel word (`nyro-`) taken off; the id spelt as models.dev spells it (version dots
 //! and dashes, case, gaps and snapshot dates aside); the id without a channel tag in
-//! brackets. Variants stay apart: `-pro-max` is not `-pro`, `-mini` is not the model.
+//! brackets. Provider prices use the same spelling normalization, indexed on load.
+//! Variants stay apart: `-pro-max` is not `-pro`, `-mini` is not the model, and
+//! `-economy` keeps its own price. Ambiguous normalized prices stay unknown.
 
 use std::collections::{HashMap, HashSet};
 
@@ -191,7 +193,8 @@ struct CatalogProvider {
     models: Vec<ModelsDevProviderModel>,
     // One spelling can occur in several lookup stages; retain its key only once.
     // Zero means absent; each stage keeps its own first model index plus one.
-    aliases: HashMap<String, [usize; 4]>,
+    // Normalized spellings with different prices use usize::MAX to mark ambiguity.
+    aliases: HashMap<String, [usize; 6]>,
 }
 
 impl CatalogProvider {
@@ -206,24 +209,36 @@ impl CatalogProvider {
         self.alias(key.to_lowercase(), 0, index);
         self.alias(bare.to_string(), 1, index);
         self.alias(dashed(bare), 2, index);
+        self.alias(sameModel(bare), 4, index);
         // A vendor's own entry also answers for the id models.dev says it is, which
         // relays serve it under: DeepSeek's deepseek-flash for deepseek-v4.1-flash.
         if let Some((maker, model)) = entry.canonical.as_deref().and_then(|id| id.split_once('/')) {
             if ownApi(providerId, maker) {
                 let canonical = bareId(model);
                 self.alias(dashed(&canonical), 3, index);
+                self.alias(sameModel(&canonical), 5, index);
                 self.alias(canonical, 3, index);
             }
         }
     }
 
+    /// Records the first provider model for one spelling and lookup stage.
     fn alias(&mut self, key: String, stage: usize, index: usize) {
         let slot = &mut self.aliases.entry(key).or_default()[stage];
-        if *slot == 0 { *slot = index + 1; }
+        if *slot == 0 {
+            *slot = index + 1;
+        } else if stage >= 4
+            && *slot != usize::MAX
+            && self.models[*slot - 1].pricing != self.models[index].pricing
+        {
+            *slot = usize::MAX;
+        }
     }
 
+    /// Reads the model index registered for a spelling at one lookup stage.
     fn index(&self, key: &str, stage: usize) -> Option<usize> {
-        self.aliases.get(key)?[stage].checked_sub(1)
+        let slot = self.aliases.get(key)?[stage];
+        (slot != usize::MAX).then(|| slot.checked_sub(1)).flatten()
     }
 
     /// Finds the provider's entry for a model id.
@@ -240,9 +255,12 @@ impl CatalogProvider {
             }
         }
         let dashedBare = dashed(&bare);
+        let normalized = sameModel(&cutAt(&cutAt(&bare, '('), ':'));
         self.index(&dashedBare, 2)
             .or_else(|| self.index(&bare, 3))
             .or_else(|| self.index(&dashedBare, 3))
+            .or_else(|| self.index(&normalized, 4))
+            .or_else(|| self.index(&normalized, 5))
             .map(|index| &self.models[index])
     }
 }
@@ -975,6 +993,103 @@ mod tests {
             catalog.providerIdsFor("OPENAI", "https://api.openai.com/v1/chat/completions"),
             vec!["openai".to_string()]
         );
+    }
+
+    /// Keeps the economy model and the regular model at distinct provider prices.
+    fn economyCatalog() -> ModelsDevCatalog {
+        ModelsDevCatalog::parse(
+            br#"{
+                "volcengine": {
+                    "api": "https://ark.cn-beijing.volces.com/api/v3",
+                    "models": {
+                        "deepseek-v4-1-flash-economy-261017": {
+                            "limit": {"context": 1048576}, "tool_call": true,
+                            "cost": {"input": 0.12, "output": 0.48}
+                        },
+                        "deepseek-v4-1-flash-261017": {
+                            "cost": {"input": 0.15, "output": 0.6}
+                        }
+                    }
+                },
+                "byteplus": {
+                    "api": "https://ark.ap-southeast.bytepluses.com/api/v3",
+                    "models": {
+                        "deepseek-v4-1-flash-economy-261017": {
+                            "cost": {"input": 0.2, "output": 0.8}
+                        }
+                    }
+                }
+            }"#,
+            b"{}",
+        ).expect("economy catalog parses")
+    }
+
+    /// Resolves spelling and snapshot variations to the provider's economy price.
+    #[test]
+    fn normalized_prices_preserve_economy_and_provider_identity() {
+        let catalog = economyCatalog();
+        let ids = catalog.providerIdsFor(
+            "DOUBAO", "https://ark.cn-beijing.volces.com/api/v3/chat/completions",
+        );
+        assert_eq!(ids, vec!["volcengine".to_string()]);
+        for model in [
+            "deepseek-V4-1-flash-economy-261017",
+            "deepseek-v4.1-flash-economy-261017",
+            "DeepSeek V4p1 Flash Economy",
+            "vendor/deepseek_v4_1_flash_economy_20261017",
+        ] {
+            let price = catalog.price(&ids, model).expect("provider economy price");
+            assert_eq!(price.inputPricePerMillion, 0.12, "{model}");
+            assert_eq!(price.outputPricePerMillion, 0.48, "{model}");
+            let facts = catalog.facts(&ids, model).expect("provider economy facts");
+            assert_eq!(facts.catalogModelId, "deepseek-v4-1-flash-economy-261017");
+            assert_eq!(facts.contextTokens, Some(1_048_576));
+        }
+        assert_eq!(catalog.price(&ids, "deepseek-v4.1-flash").unwrap().inputPricePerMillion, 0.15);
+        assert_eq!(catalog.price(&["byteplus".to_string()],
+            "deepseek-v4.1-flash-economy").unwrap().inputPricePerMillion, 0.2);
+        assert!(catalog.price(&[], "deepseek-V4-1-flash-economy-261017").is_none());
+    }
+
+    /// Retains model variants instead of repeatedly shortening unknown names.
+    #[test]
+    fn normalized_prices_do_not_guess_model_prefixes() {
+        let catalog = economyCatalog();
+        let ids = ["volcengine".to_string()];
+        for model in [
+            "deepseek-v4.1-flash-economy-pro-261017",
+            "deepseek-v4.1-flash-mini-261017",
+            "deepseek-v4.1-flash-economy-2507",
+            "deepseek-v4.1-flash-economy-unknown",
+            "deepseek-v4.2-flash-economy-261017",
+        ] {
+            assert!(catalog.price(&ids, model).is_none(), "{model}");
+            assert!(catalog.facts(&ids, model).is_none(), "{model}");
+        }
+    }
+
+    /// Normalizes the maker's canonical model spelling when resolving its price.
+    #[test]
+    fn normalized_prices_resolve_canonical_ids() {
+        let catalog = catalog();
+        let ids = ["deepseek".to_string()];
+        let price = catalog.price(&ids, "DeepSeek V4p1 Flash 261017")
+            .expect("canonical provider price");
+        assert_eq!(price.inputPricePerMillion, 0.15);
+        assert_eq!(price.outputPricePerMillion, 0.6);
+    }
+
+    /// Rejects ambiguous normalized prices while retaining each exact snapshot price.
+    #[test]
+    fn normalized_price_collisions_do_not_pick_an_arbitrary_snapshot() {
+        let catalog = ModelsDevCatalog::parse(br#"{"relay":{"models":{
+            "model-5-20261017":{"cost":{"input":1,"output":2}},
+            "model-5-20261117":{"cost":{"input":3,"output":4}}
+        }}}"#, b"{}").unwrap();
+        let ids = ["relay".to_string()];
+        assert_eq!(catalog.price(&ids, "model-5-20261017").unwrap().inputPricePerMillion, 1.0);
+        assert_eq!(catalog.price(&ids, "model-5-20261117").unwrap().inputPricePerMillion, 3.0);
+        assert!(catalog.price(&ids, "model 5").is_none());
     }
 
     #[test]

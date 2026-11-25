@@ -24,7 +24,7 @@ mod SerialPort;
 pub use SerialPort::NativeSerialPortHost;
 
 #[cfg(feature = "fs")]
-pub use operit_host_native_filesystem::{NativeFileAppendHandle, PosixFileSystemHost};
+pub use operit_host_native_filesystem::{grepCode, NativeFileAppendHandle, PosixFileSystemHost};
 #[cfg(feature = "http")]
 pub use operit_host_native_http::{NativeHttpHost, NativeHttpServerHost};
 #[cfg(all(feature = "scheduler", not(target_arch = "wasm32")))]

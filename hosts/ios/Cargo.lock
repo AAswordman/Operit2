@@ -1386,8 +1386,6 @@ dependencies = [
  "core-foundation",
  "gethostname",
  "globset",
- "grep-regex",
- "grep-searcher",
  "ignore",
  "libc",
  "operit-host-api",

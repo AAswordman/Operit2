@@ -447,7 +447,7 @@ fn install_local_permission_requester(core: &mut operit_proxy_local::LocalCorePr
         .getToolPermissionSystem()
         .setAsyncPermissionRequester(move |tool, description, chatId| async move {
             let Some(chatId) = chatId else {
-                return PermissionRequestResult::DENY;
+                return PermissionRequestResult::ERROR("Tool approval requires a chat context.".into());
             };
             let response = match requestChatToolPermissionAsync(
                 chatId,
@@ -463,7 +463,7 @@ fn install_local_permission_requester(core: &mut operit_proxy_local::LocalCorePr
                         "TuiApproval",
                         &format!("permission request failed: {error}"),
                     );
-                    return PermissionRequestResult::DENY;
+                    return PermissionRequestResult::ERROR(error);
                 }
             };
             match response.as_str() {
@@ -472,7 +472,7 @@ fn install_local_permission_requester(core: &mut operit_proxy_local::LocalCorePr
                 "deny" => PermissionRequestResult::DENY,
                 other => {
                     AppLogger::e("TuiApproval", &format!("unknown permission result: {other}"));
-                    PermissionRequestResult::DENY
+                    PermissionRequestResult::ERROR(format!("Unknown tool permission response result: {other}"))
                 }
             }
         });

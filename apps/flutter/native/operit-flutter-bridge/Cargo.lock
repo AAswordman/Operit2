@@ -2487,8 +2487,6 @@ dependencies = [
  "core-foundation",
  "gethostname",
  "globset",
- "grep-regex",
- "grep-searcher",
  "ignore",
  "libc",
  "operit-host-api",
@@ -2557,8 +2555,6 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "globset",
- "grep-regex",
- "grep-searcher",
  "ignore",
  "image",
  "libc",
@@ -2746,8 +2742,6 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "globset",
- "grep-regex",
- "grep-searcher",
  "ignore",
  "image",
  "operit-host-api",

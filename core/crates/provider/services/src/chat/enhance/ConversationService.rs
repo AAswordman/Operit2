@@ -6,6 +6,7 @@ use serde_json::{json, Value};
 
 use crate::chat::config::FunctionalPrompts::FunctionalPrompts;
 use crate::chat::enhance::MultiServiceManager::MultiServiceManager;
+use crate::chat::enhance::ConversationContext::ConversationContext;
 use crate::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
@@ -427,41 +428,10 @@ impl ConversationService {
             .join("\n")
     }
 
-    /// Generates a summary while forwarding every provider retry error to its owner.
-    pub async fn generateSummary(
-        &self,
-        messages: Vec<(String, String)>,
-        previousSummary: Option<String>,
-        multiServiceManager: &mut MultiServiceManager,
-        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
-    ) -> Result<String, AiServiceError> {
-        self.generateSummaryFromPromptTurns(
-            messages
-                .into_iter()
-                .map(|(role, content)| PromptTurn::new(PromptTurnKind::from_role(&role), content))
-                .collect(),
-            previousSummary,
-            multiServiceManager,
-            onNonFatalError,
-        )
-        .await
-    }
-
-    /// Summarizes prepared turns with an explicit provider error consumer.
-    pub async fn generateSummaryFromPromptTurns(
-        &self,
-        messages: Vec<PromptTurn>,
-        previousSummary: Option<String>,
-        multiServiceManager: &mut MultiServiceManager,
-        onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
-    ) -> Result<String, AiServiceError> {
-        self.generateSummaryWithProgress(messages, previousSummary, multiServiceManager, None, None, onNonFatalError).await.map(|(content, _)| content)
-    }
-
     /// Runs summary hooks and generation with progress and required retry-error delivery.
     pub async fn generateSummaryWithProgress(
         &self,
-        messages: Vec<PromptTurn>,
+        context: ConversationContext,
         previousSummary: Option<String>,
         multiServiceManager: &mut MultiServiceManager,
         progress: Option<SummaryProgressCallback>,
@@ -469,23 +439,28 @@ impl ConversationService {
         onNonFatalError: Arc<dyn Fn(String) + Send + Sync>,
     ) -> Result<(String, TokenCounts), AiServiceError> {
         let useEnglish = false;
-        let previousSummary = previousSummary.map(|summary| ChatMarkupRegex::remove_meta_tags(&summary));
-        let mut systemPrompt =
-            FunctionalPrompts::buildSummarySystemPrompt(previousSummary.as_deref(), useEnglish);
-        let modelParameters =
-            multiServiceManager.getModelParametersForFunction(FunctionType::SUMMARY)?;
+        let summaryConfig = multiServiceManager.getModelConfigForFunction(FunctionType::SUMMARY)?;
+        let sameModel = summaryConfig.providerId == context.model_binding.providerId
+            && summaryConfig.modelId == context.model_binding.modelId;
+        let modelParameters = if sameModel { context.model_parameters } else { summaryConfig.parameters };
+        let thinking = if sameModel { context.thinking } else { RequestThinking::default() };
+        let availableTools = context.available_tools;
+        let mut summaryHistory = context.history;
+        let mut systemPrompt = summaryHistory.iter().find(|turn| turn.kind == PromptTurnKind::SYSTEM)
+            .map(|turn| turn.content.clone()).unwrap_or_default();
         let serializedModelParameters = serializeSummaryHookModelParameters(&modelParameters);
         let summaryService = multiServiceManager.getServiceForFunction(FunctionType::SUMMARY)?;
         let providerModel = {
             let service = summaryService.lock().await;
             service.provider_model()
         };
-        let mut summaryHistory = stripSummaryMetaTurns(messages);
-        let mut summaryPrompt = FunctionalPrompts::summaryUserMessage(useEnglish).to_string();
+        let mut summaryPrompt = FunctionalPrompts::summaryContinuationInstruction(useEnglish);
         let executionContext = ToolExecutionManager::currentToolRuntimeContext();
         let summaryChatId = executionContext.as_ref().and_then(|context| context.callerChatId.clone());
         let mut baseSummaryMetadata = std::collections::HashMap::from([
             ("providerModel".to_string(), json!(providerModel)),
+            ("sameConversationModel".to_string(), json!(sameModel)),
+            ("availableToolCount".to_string(), json!(availableTools.len())),
             (
                 "sourceMessageCount".to_string(),
                 json!(summaryHistory.len()),
@@ -563,17 +538,17 @@ impl ConversationService {
         summaryPrompt = beforeSendContext
             .summary_prompt
             .expect("SummaryHookContext.summary_prompt must be present after before_send_to_model");
-        preparedHistory = stripSummaryMetaTurns(preparedHistory);
         if let Some(callback) = &progress { callback("summary_preparing"); }
         let mut summaryStream = {
             let mut service = summaryService.lock().await;
+            service.reset_token_counts();
             service
                 .send_message(SendMessageRequest {
                     chat_history: preparedHistory.clone(),
                     model_parameters: modelParameters,
-                    thinking: RequestThinking::default(),
+                    thinking,
                     stream: true,
-                    available_tools: Vec::new(),
+                    available_tools: availableTools,
                     preserve_think_in_history: false,
                     enable_retry: true,
                     on_non_fatal_error: Some(onNonFatalError),
@@ -584,6 +559,9 @@ impl ConversationService {
         let mut content = String::new();
         summaryStream.collect(&mut |chunk| content.push_str(&chunk)).await;
         ensure_response_completed(summaryStream.as_ref())?;
+        if !ToolExecutionManager::extractToolInvocations(&content).is_empty() {
+            return Err(AiServiceError::RequestFailed("Conversation summary attempted to call a tool".into()));
+        }
         let mut summaryContent = ChatMarkupRegex::remove_meta_tags(&removeThinkingContent(content.trim()));
         let usage = {
             let service = summaryService.lock().await;
@@ -593,6 +571,10 @@ impl ConversationService {
                 output: service.output_token_count(),
             }
         };
+        operit_util::AppLogger::AppLogger::i("ConversationService", &format!(
+            "chat.summary.usage providerModel={} sameConversationModel={} inputTokens={} cachedInputTokens={} outputTokens={}",
+            providerModel, sameModel, usage.input, usage.cached_input, usage.output,
+        ));
 
         let afterGenerateContext =
             SummaryHookRegistry::dispatchSummaryGenerateHooks(SummaryHookContext {
@@ -915,9 +897,12 @@ fn buildSummaryPreparedHistory(
     chatHistory: Vec<PromptTurn>,
     summaryPrompt: String,
 ) -> Vec<PromptTurn> {
-    let mut prepared = Vec::with_capacity(chatHistory.len() + 2);
-    prepared.push(PromptTurn::new(PromptTurnKind::SYSTEM, systemPrompt));
-    prepared.extend(chatHistory);
+    let mut prepared = chatHistory;
+    if let Some(system) = prepared.iter_mut().find(|turn| turn.kind == PromptTurnKind::SYSTEM) {
+        system.content = systemPrompt;
+    } else if !systemPrompt.is_empty() {
+        prepared.insert(0, PromptTurn::new(PromptTurnKind::SYSTEM, systemPrompt));
+    }
     prepared.push(PromptTurn::new(PromptTurnKind::USER, summaryPrompt));
     prepared
 }
@@ -962,17 +947,6 @@ fn serializeSummaryHookModelParameters(
                 ),
                 ("isCustom".to_string(), json!(parameter.isCustom)),
             ])
-        })
-        .collect()
-}
-
-#[allow(non_snake_case)]
-fn stripSummaryMetaTurns(messages: Vec<PromptTurn>) -> Vec<PromptTurn> {
-    messages
-        .into_iter()
-        .map(|mut turn| {
-            turn.content = ChatMarkupRegex::remove_meta_tags(&turn.content);
-            turn
         })
         .collect()
 }
@@ -1157,31 +1131,96 @@ mod summary_tests {
         assert!(validateSummaryContent(" \n\t").is_err());
     }
 
+    /// Keeps previous checkpoints in history while appending either language's summary directive.
     #[test]
     fn summary_prompt_inherits_previous_summary_in_both_languages() {
         for use_english in [false, true] {
             let previous = "Important context from the previous conversation.";
-            let prompt = FunctionalPrompts::buildSummarySystemPrompt(Some(previous), use_english);
-            assert!(prompt.starts_with(FunctionalPrompts::summaryPrompt(use_english)));
-            assert_eq!(prompt.matches(previous).count(), 1);
-            assert_eq!(
-                FunctionalPrompts::buildSummarySystemPrompt(Some(" \n"), use_english),
-                FunctionalPrompts::summaryPrompt(use_english)
+            let history = vec![
+                PromptTurn::new(PromptTurnKind::SYSTEM, "conversation rules"),
+                PromptTurn::new(PromptTurnKind::SUMMARY, previous),
+                PromptTurn::new(PromptTurnKind::USER, "new question"),
+            ];
+            let prepared = buildSummaryPreparedHistory(
+                "conversation rules".into(), history.clone(),
+                FunctionalPrompts::summaryContinuationInstruction(use_english),
             );
+            assert_eq!(&prepared[..history.len()], history.as_slice());
+            assert_eq!(prepared.iter().filter(|turn| turn.content == previous).count(), 1);
+            assert_eq!(prepared.last().unwrap().kind, PromptTurnKind::USER);
+            assert!(prepared.last().unwrap().content.contains(FunctionalPrompts::summaryPrompt(use_english)));
         }
     }
 
+    /// Keeps provider reasoning signatures and structured identities in the cached prefix.
     #[test]
-    fn removes_protocol_meta_without_changing_turn_identity() {
+    fn summary_retains_protocol_meta_and_turn_identity() {
         let mut turn = PromptTurn::new(
             PromptTurnKind::ASSISTANT,
             r#"before<meta provider="openai:reasoning">SECRET</meta>after"#,
         );
         turn.metadata.insert("author".to_string(), json!("participant"));
-        let cleaned = stripSummaryMetaTurns(vec![turn.clone()]);
-        assert_eq!(cleaned[0].content, "before after");
-        assert_eq!(cleaned[0].kind, turn.kind);
-        assert_eq!(cleaned[0].metadata, turn.metadata);
+        let history = vec![
+            PromptTurn::new(PromptTurnKind::SYSTEM, "original rules"),
+            PromptTurn::new(PromptTurnKind::SUMMARY, "previous checkpoint"),
+            PromptTurn::new(PromptTurnKind::USER, "question"),
+            turn,
+            PromptTurn::new(PromptTurnKind::TOOL_CALL, "call"),
+            PromptTurn::new(PromptTurnKind::TOOL_RESULT, "result"),
+        ];
+        let prepared = buildSummaryPreparedHistory(
+            "original rules".into(), history.clone(), FunctionalPrompts::summaryContinuationInstruction(false),
+        );
+        assert_eq!(&prepared[..history.len()], history.as_slice());
+        assert_eq!(prepared.len(), history.len() + 1);
+        assert_eq!(prepared.last().unwrap().kind, PromptTurnKind::USER);
+    }
+
+    /// Exercises real provider serializers rather than comparing only internal message structs.
+    #[test]
+    fn summary_wire_requests_preserve_deepseek_and_responses_prefixes() {
+        use crate::chat::llmprovider::DeepseekProvider::DeepseekProvider;
+        use crate::chat::llmprovider::OpenAIResponsesProvider::OpenAIResponsesProvider;
+        use crate::chat::llmprovider::ProviderMediaTestSupport::{send_request, test_runtime_context};
+        use operit_model::ToolPrompt::ToolPrompt;
+
+        let history = vec![
+            PromptTurn::new(PromptTurnKind::SYSTEM, "original system"),
+            PromptTurn::new(PromptTurnKind::SUMMARY, "original checkpoint"),
+            PromptTurn::new(PromptTurnKind::USER, "original question"),
+            PromptTurn::new(PromptTurnKind::ASSISTANT, "original reply"),
+        ];
+        let mut chat = send_request(history.clone());
+        chat.available_tools = vec![ToolPrompt::new("read_file".into(), "Read a file".into())];
+        let mut summary = send_request(buildSummaryPreparedHistory(
+            "original system".into(), history, FunctionalPrompts::summaryContinuationInstruction(false),
+        ));
+        summary.available_tools = chat.available_tools.clone();
+
+        for endpoint in ["https://fixture.invalid/chat/completions", "https://fixture.invalid/responses"] {
+            let provider = DeepseekProvider::new(
+                endpoint.into(), String::new().into(), "deepseek-flash".into(), "DEEPSEEK".into(),
+                Vec::new(), false, false, false, Vec::new(), true, test_runtime_context(),
+            );
+            let original = provider.create_request_body(&chat).unwrap();
+            let compact = provider.create_request_body(&summary).unwrap();
+            let field = if endpoint.ends_with("responses") { "input" } else { "messages" };
+            let prefix = original[field].as_array().unwrap();
+            assert_eq!(&compact[field].as_array().unwrap()[..prefix.len()], prefix.as_slice());
+            assert_eq!(original["tools"], compact["tools"]);
+        }
+
+        let responses = OpenAIResponsesProvider::new(
+            "https://fixture.invalid/responses".into(), String::new().into(), "test".into(),
+            "OPENAI_RESPONSES".into(), Vec::new(), false, false, false, Vec::new(), true, test_runtime_context(),
+        );
+        let original = responses.create_request_body(&chat).unwrap();
+        let compact = responses.create_request_body(&summary).unwrap();
+        assert_eq!(original["prompt_cache_key"], compact["prompt_cache_key"]);
+        assert!(original["prompt_cache_key"].is_string());
+        let prefix = original["input"].as_array().unwrap();
+        assert_eq!(&compact["input"].as_array().unwrap()[..prefix.len()], prefix.as_slice());
+        assert_eq!(original["tools"], compact["tools"]);
     }
 }
 
