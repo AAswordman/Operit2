@@ -292,6 +292,10 @@ pub struct ToolInvocation {
     pub tool: AITool,
     pub rawText: String,
     pub responseLocation: (usize, usize),
+    /// Model-assigned identity echoed into the matching result so history
+    /// compilation pairs concurrent same-named calls exactly.
+    #[serde(default)]
+    pub callId: Option<String>,
 }
 
 /// Captures a completed request to move one chat to another CoreNode.
@@ -311,7 +315,20 @@ pub struct ToolExecutionBatch {
 impl ToolExecutionBatch {
     /// Formats each invocation result once without imposing a batch-wide output limit.
     pub fn new(results: Vec<ToolResult>, routeChangeIntent: Option<RouteChangeIntent>) -> Self {
-        let message = ConversationMarkupManager::buildToolResultMessage(&results);
+        Self::withCallIds(results, &[], routeChangeIntent)
+    }
+
+    /// Same as `new`, echoing each result's call id into the provider markup when the
+    /// model assigned one so concurrent same-named calls stay addressable in history.
+    pub fn withCallIds(
+        results: Vec<ToolResult>,
+        callIds: &[Option<String>],
+        routeChangeIntent: Option<RouteChangeIntent>,
+    ) -> Self {
+        let message = ConversationMarkupManager::buildToolResultMessageWithCallIds(
+            &results,
+            Some(callIds),
+        );
         let displayMessage = results.iter()
             .map(|result| ConversationMarkupManager::formatToolResultForDisplay(result, None))
             .collect::<Vec<_>>().join("\n");
@@ -380,6 +397,9 @@ impl ToolExecutionManager {
                 },
                 rawText: response[tool_match.start..tool_match.end].to_string(),
                 responseLocation: (tool_match.start, tool_match.end),
+                callId: attr_value(&response[tool_match.start..tool_match.end], "call_id")
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
             });
         }
         let toolNames = invocations
@@ -428,6 +448,7 @@ impl ToolExecutionManager {
         let mut toolHandler = toolHandler.clone();
         let mut results = Vec::new();
         let mut displays = Vec::new();
+        let mut callIds: Vec<Option<String>> = Vec::new();
         let mut routeChangeIntent = None;
         let requestedToolNames = invocations
             .iter()
@@ -520,10 +541,11 @@ impl ToolExecutionManager {
                 );
                 displays.push(toolHandler.toolDisplayDeclaration(&displayToolName));
                 results.push(finalResult);
+                callIds.push(invocation.callId.clone());
             }
         }
 
-        let mut batch = ToolExecutionBatch::new(results, routeChangeIntent);
+        let mut batch = ToolExecutionBatch::withCallIds(results, &callIds, routeChangeIntent);
         batch.displayMessage = batch.results.iter().zip(&displays)
             .map(|(result, display)| ConversationMarkupManager::formatToolResultForDisplay(result, display.as_ref()))
             .collect::<Vec<_>>().join("\n");

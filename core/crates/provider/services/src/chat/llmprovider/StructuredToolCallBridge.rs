@@ -20,6 +20,7 @@ enum ProviderHistoryBlockType {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct ToolResultRecord {
     name: Option<String>,
+    call_id: Option<String>,
     content: String,
 }
 
@@ -29,6 +30,15 @@ pub(crate) struct OpenToolCall {
     /// Provider-visible function name, kept separate from the executable target.
     pub(crate) function_name: String,
     pub(crate) matching_name: String,
+    /// Call identity carried by the stored markup, used to pair results exactly
+    /// when several same-named calls are open at once.
+    pub(crate) source_call_id: Option<String>,
+}
+
+/// One pending tool result: executable name plus the call id it claims to answer.
+pub(crate) struct ToolResultIdentity {
+    pub(crate) name: Option<String>,
+    pub(crate) call_id: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -84,21 +94,36 @@ impl StructuredToolCallBridge {
         None
     }
 
-    /// Consumes open tool calls whose executable names match result names.
+    /// Consumes open tool calls matched by results. An exact `call_id` pair wins so
+    /// concurrent same-named calls stay addressable; otherwise results pair with the
+    /// oldest open call of the same executable name (invocation order).
     pub(crate) fn consumeMatchingToolCalls(
         openToolCalls: &mut Vec<OpenToolCall>,
-        resultToolNames: &[Option<String>],
+        results: &[ToolResultIdentity],
     ) -> Vec<MatchedToolCall> {
         let mut matched = Vec::new();
-        for (result_index, result_name) in resultToolNames.iter().enumerate() {
-            let normalized = result_name.as_deref().unwrap_or("").trim();
-            if normalized.is_empty() {
+        for (result_index, result) in results.iter().enumerate() {
+            let call_id = result.call_id.as_deref().map(str::trim).filter(|id| !id.is_empty());
+            let name = result.name.as_deref().unwrap_or("").trim();
+            if call_id.is_none() && name.is_empty() {
                 continue;
             }
-            let Some(call_index) = openToolCalls
-                .iter()
-                .position(|call| call.matching_name == normalized)
-            else {
+            let call_index = call_id
+                .and_then(|call_id| {
+                    openToolCalls
+                        .iter()
+                        .position(|call| call.source_call_id.as_deref() == Some(call_id))
+                })
+                .or_else(|| {
+                    if name.is_empty() {
+                        None
+                    } else {
+                        openToolCalls
+                            .iter()
+                            .position(|call| call.matching_name == name)
+                    }
+                });
+            let Some(call_index) = call_index else {
                 continue;
             };
             matched.push(MatchedToolCall {
@@ -443,7 +468,12 @@ impl StructuredToolCallBridge {
                 let callId = StructuredToolCallBridge::generatedToolCallId(*nextToolCallOrdinal);
                 *nextToolCallOrdinal += 1;
                 let mut clonedToolCall = toolCall.clone();
+                let mut sourceCallId = None;
                 if let Some(object) = clonedToolCall.as_object_mut() {
+                    sourceCallId = object
+                        .remove("call_id")
+                        .and_then(|value| value.as_str().map(str::to_string))
+                        .filter(|value| !value.trim().is_empty());
                     object.insert("id".to_string(), json!(callId.clone()));
                 }
                 let matchingName = StructuredToolCallBridge::toolCallName(&clonedToolCall);
@@ -456,6 +486,7 @@ impl StructuredToolCallBridge {
                         .unwrap_or_default()
                         .to_string(),
                     matching_name: matchingName,
+                    source_call_id: sourceCallId,
                 });
             }
         }
@@ -654,12 +685,15 @@ impl StructuredToolCallBridge {
                     let (textContent, toolResults) = Self::parseXmlToolResults(&content);
                     let resultsList = toolResults.unwrap_or_default();
                     if !resultsList.is_empty() && !openToolCalls.is_empty() {
-                        let resultToolNames = resultsList
+                        let resultIdentities = resultsList
                             .iter()
-                            .map(|result| result.name.clone())
+                            .map(|result| ToolResultIdentity {
+                                name: result.name.clone(),
+                                call_id: result.call_id.clone(),
+                            })
                             .collect::<Vec<_>>();
                         let matchedCalls =
-                            Self::consumeMatchingToolCalls(&mut openToolCalls, &resultToolNames);
+                            Self::consumeMatchingToolCalls(&mut openToolCalls, &resultIdentities);
                         for matchedCall in matchedCalls {
                             let result = &resultsList[matchedCall.result_index];
                             let mut toolMessage = Map::new();
@@ -1013,14 +1047,26 @@ impl StructuredToolCallBridge {
                 "call_{}_{}_{}",
                 toolNamePart, hashPart, callIndex
             ));
-            toolCalls.push(json!({
+            let mut toolCall = json!({
                 "id": callId,
                 "type": "function",
                 "function": {
                     "name": toolMatch.name,
                     "arguments": Value::Object(params).to_string(),
                 }
-            }));
+            });
+            // Keep the caller-assigned identity for exact result pairing; consumers pop
+            // this field before the call reaches a provider payload.
+            let callSource = &content[toolMatch.start..toolMatch.end];
+            if let Some(sourceCallId) = attr_value(callSource, "call_id")
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty())
+            {
+                if let Some(object) = toolCall.as_object_mut() {
+                    object.insert("call_id".to_string(), json!(sourceCallId));
+                }
+            }
+            toolCalls.push(toolCall);
         }
         textContent.push_str(&content[cursor..]);
         (textContent.trim().to_string(), Some(toolCalls))
@@ -1080,6 +1126,9 @@ impl StructuredToolCallBridge {
             let resultName = attr_value(&block.raw, "name");
             results.push(ToolResultRecord {
                 name: resultName,
+                call_id: attr_value(&block.raw, "call_id")
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
                 content: resultContent.trim().to_string(),
             });
             textContent = textContent.replace(&block.raw, "").trim().to_string();
@@ -1520,6 +1569,70 @@ mod tests {
             );
             assert_eq!(messages[result_index]["content"], content);
         }
+    }
+
+    /// Concurrent same-named calls pair by call id when results carry it, even when
+    /// result order is reversed relative to the calls.
+    #[test]
+    fn same_name_calls_pair_exactly_by_call_id() {
+        let history = vec![
+            PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                concat!(
+                    r#"<tool name="super_admin:terminal" call_id="c1"><param name="command">echo one</param></tool>"#,
+                    r#"<tool name="super_admin:terminal" call_id="c2"><param name="command">echo two</param></tool>"#,
+                ),
+            ),
+            PromptTurn::new(
+                PromptTurnKind::TOOL_RESULT,
+                concat!(
+                    r#"<tool_result name="super_admin:terminal" status="success" call_id="c2"><content>two</content></tool_result>"#,
+                    r#"<tool_result name="super_admin:terminal" status="success" call_id="c1"><content>one</content></tool_result>"#,
+                ),
+            ),
+        ];
+        let messages =
+            StructuredToolCallBridge::buildMessagesValueForProvider(&history, true, true);
+        let messages = messages.as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        let calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(calls.len(), 2);
+        assert!(!calls[0]["function"]["arguments"].as_str().unwrap().contains("call_id"));
+        // Result order is reversed relative to the calls; call ids must pin each payload
+        // to its own call instead of pairing the first same-named open call.
+        assert_eq!(messages[1]["tool_call_id"], calls[1]["id"]);
+        assert_eq!(messages[1]["content"], "two");
+        assert_eq!(messages[2]["tool_call_id"], calls[0]["id"]);
+        assert_eq!(messages[2]["content"], "one");
+    }
+
+    /// Results without call ids still pair by executable name in invocation order.
+    #[test]
+    fn results_without_call_ids_fall_back_to_name_order() {
+        let history = vec![
+            PromptTurn::new(
+                PromptTurnKind::ASSISTANT,
+                concat!(
+                    r#"<tool name="super_admin:terminal" call_id="c1"><param name="command">echo one</param></tool>"#,
+                    r#"<tool name="super_admin:terminal" call_id="c2"><param name="command">echo two</param></tool>"#,
+                ),
+            ),
+            PromptTurn::new(
+                PromptTurnKind::TOOL_RESULT,
+                concat!(
+                    r#"<tool_result name="super_admin:terminal" status="success"><content>one</content></tool_result>"#,
+                    r#"<tool_result name="super_admin:terminal" status="success"><content>two</content></tool_result>"#,
+                ),
+            ),
+        ];
+        let messages =
+            StructuredToolCallBridge::buildMessagesValueForProvider(&history, true, true);
+        let messages = messages.as_array().unwrap();
+        let calls = messages[0]["tool_calls"].as_array().unwrap();
+        assert_eq!(messages[1]["tool_call_id"], calls[0]["id"]);
+        assert_eq!(messages[1]["content"], "one");
+        assert_eq!(messages[2]["tool_call_id"], calls[1]["id"]);
+        assert_eq!(messages[2]["content"], "two");
     }
 
     /// Retains one native result per call after large same-name results pass through finalized markup.

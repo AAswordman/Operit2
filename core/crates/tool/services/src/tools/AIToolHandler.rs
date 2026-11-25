@@ -3419,7 +3419,7 @@ mod tests {
         let invocations = (0..3).map(|index| crate::ToolExecutionManager::ToolInvocation {
             tool: AITool { name: "pipeline_probe".into(), parameters: vec![ToolParameter {
                 name: "index".into(), value: index.to_string(),
-            }] }, rawText: String::new(), responseLocation: (0, 0),
+            }] }, rawText: String::new(), responseLocation: (0, 0), callId: None,
         }).collect::<Vec<_>>();
         let mut batch = Box::pin(ToolExecutionManager::executeInvocations(
             &invocations, &mut fixture.handler, None, Some("chat".into()), None,
@@ -3477,12 +3477,12 @@ mod tests {
                 ToolParameter { name: "tool_name".into(), value: "fixture:ordered".into() },
                 ToolParameter { name: "params".into(), value: json!({"label": label}).to_string() },
                 ToolParameter { name: "timeout_ms".into(), value: timeout.into() },
-            ] }, rawText: String::new(), responseLocation: (0, 0),
+            ] }, rawText: String::new(), responseLocation: (0, 0), callId: None,
         };
         let observe = crate::ToolExecutionManager::ToolInvocation {
             tool: AITool { name: "package_wait".into(), parameters: vec![ToolParameter {
                 name: "timeout_ms".into(), value: "0".into(),
-            }] }, rawText: String::new(), responseLocation: (0, 0),
+            }] }, rawText: String::new(), responseLocation: (0, 0), callId: None,
         };
         let first = hostTimeout(5_000, ToolExecutionManager::executeInvocations(
             &[invocation("a0", "0"), invocation("a1", "0"), observe], &fixture.handler,
@@ -3504,7 +3504,7 @@ mod tests {
         let wait = crate::ToolExecutionManager::ToolInvocation {
             tool: AITool { name: "package_wait".into(), parameters: vec![ToolParameter {
                 name: "execution_id".into(), value: queued["executions"][0]["execution_id"].as_str().unwrap().into(),
-            }] }, rawText: String::new(), responseLocation: (0, 0),
+            }] }, rawText: String::new(), responseLocation: (0, 0), callId: None,
         };
         let finalBatch = hostTimeout(5_000, ToolExecutionManager::executeInvocations(
             &[wait], &fixture.handler,
@@ -3621,7 +3621,7 @@ mod tests {
         let invocations = |group: &str| (0..2).map(|index| crate::ToolExecutionManager::ToolInvocation {
             tool: AITool { name: "parallel_probe:run".into(), parameters: vec![ToolParameter {
                 name: "label".into(), value: format!("{group}{index}"),
-            }] }, rawText: String::new(), responseLocation: (0, 0),
+            }] }, rawText: String::new(), responseLocation: (0, 0), callId: None,
         }).collect::<Vec<_>>();
         let first = invocations("a");
         let second = invocations("b");
@@ -4131,6 +4131,7 @@ mod tests {
                     },
                     rawText: String::new(),
                     responseLocation: (0, 0),
+                    callId: None,
                 }
             }).collect::<Vec<_>>();
             let batch = ToolExecutionManager::executeInvocations(

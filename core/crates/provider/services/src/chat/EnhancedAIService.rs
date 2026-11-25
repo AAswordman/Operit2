@@ -2399,6 +2399,19 @@ impl EnhancedAIService {
         );
 
         if !self.isExecutionContextActive(context) {
+            // Dropping results silently here is what turns finished tool work into
+            // "工具结果缺失" placeholders during history compilation; keep it observable.
+            AppLogger::w(
+                TAG,
+                &format!(
+                    "chat.tool_result.dropped executionId={} round={} tools=[{}] resultCount={} messageBytes={} reason=execution_context_inactive_before_state",
+                    context.executionId,
+                    context.roundManager.roundIndex,
+                    displayToolNames,
+                    results.len(),
+                    toolResultMessageLen
+                ),
+            );
             return Ok(false);
         }
 
@@ -2409,6 +2422,17 @@ impl EnhancedAIService {
         }
 
         if !self.isExecutionContextActive(context) {
+            AppLogger::w(
+                TAG,
+                &format!(
+                    "chat.tool_result.dropped executionId={} round={} tools=[{}] resultCount={} messageBytes={} reason=execution_context_inactive_before_history",
+                    context.executionId,
+                    context.roundManager.roundIndex,
+                    displayToolNames,
+                    results.len(),
+                    toolResultMessageLen
+                ),
+            );
             return Ok(false);
         }
 

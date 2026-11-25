@@ -10,7 +10,7 @@ use std::sync::{Arc, Mutex};
 use super::OpenAIProvider::{StreamingJsonXmlConverter, StreamingJsonXmlEvent};
 use super::OpenAIResponsesProvider::strip_responses_protocol_markup;
 use super::StreamingResponseLines::SseDecoder;
-use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge};
+use super::StructuredToolCallBridge::{OpenToolCall, StructuredToolCallBridge, ToolResultIdentity};
 use super::ThinkingDialect::ThinkingDialect;
 use crate::chat::llmprovider::AIService::{
     response_stream_from_chunks, retry_error_text, retry_message, AIService, AiServiceError,
@@ -478,10 +478,19 @@ impl ClaudeProvider {
                 .map_err(|error| AiServiceError::RequestFailed(error.to_string()))?;
             let call_id = generated_tool_use_id(*next_tool_use_ordinal);
             *next_tool_use_ordinal += 1;
+            let source_call_id = match call.as_object() {
+                Some(object) => object
+                    .get("call_id")
+                    .and_then(Value::as_str)
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+                None => None,
+            };
             open_tool_calls.push(OpenToolCall {
                 id: call_id.clone(),
                 function_name: function["name"].as_str().unwrap_or_default().to_string(),
                 matching_name: StructuredToolCallBridge::toolCallName(&call),
+                source_call_id,
             });
             blocks.push(json!({
                 "type": "tool_use",
@@ -512,12 +521,17 @@ impl ClaudeProvider {
         open_tool_calls: &mut Vec<OpenToolCall>,
     ) -> Value {
         let blocks = ChatMarkupRegex::tool_result_blocks(content);
-        let result_names = blocks
+        let result_identities = blocks
             .iter()
-            .map(|block| operit_util::ChatMarkupRegex::attr_value(&block.raw, "name"))
+            .map(|block| ToolResultIdentity {
+                name: operit_util::ChatMarkupRegex::attr_value(&block.raw, "name"),
+                call_id: operit_util::ChatMarkupRegex::attr_value(&block.raw, "call_id")
+                    .map(|value| value.trim().to_string())
+                    .filter(|value| !value.is_empty()),
+            })
             .collect::<Vec<_>>();
         let matched =
-            StructuredToolCallBridge::consumeMatchingToolCalls(open_tool_calls, &result_names);
+            StructuredToolCallBridge::consumeMatchingToolCalls(open_tool_calls, &result_identities);
         let mut text_content = content.to_string();
         let mut result_blocks = Vec::new();
         for matched_call in matched {
