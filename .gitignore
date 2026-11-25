@@ -99,6 +99,7 @@ target/
 # Compiled WebAssembly and object files
 *.wasm
 !plugins/packages/external/wechat/resources/silk-decoder.wasm
+!tools/tests/fixtures/wasm/memory.wasm
 *.o
 
 # ESP32 / ESP-IDF build outputs
