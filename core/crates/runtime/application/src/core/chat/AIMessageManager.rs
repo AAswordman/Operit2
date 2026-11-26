@@ -631,10 +631,22 @@ impl AIMessageManager {
     pub async fn calculateStableContextWindow(
         request: StableContextWindowRequest<'_>,
     ) -> Result<i64, operit_providers::chat::llmprovider::AIService::AiServiceError> {
+        let (windowSize, _) = Self::calculateStableContextWindowWithBreakdown(request).await?;
+        Ok(windowSize)
+    }
+
+    /// Calculates a stable context window and category breakdown with the complete workspace folder set.
+    #[allow(non_snake_case)]
+    pub async fn calculateStableContextWindowWithBreakdown(
+        request: StableContextWindowRequest<'_>,
+    ) -> Result<
+        (i64, Option<operit_model::ContextWindowBreakdown::ContextWindowBreakdown>),
+        operit_providers::chat::llmprovider::AIService::AiServiceError,
+    > {
         let memory = Self::getMemoryFromMessages(request.chatHistory, &request.runtime.chatConfiguration)?;
         request
             .enhancedAiService
-            .estimateRequestWindowFromMemory(
+            .estimateRequestWindowFromMemoryWithBreakdown(
                 request.messageContent,
                 memory,
                 request.chatId,
