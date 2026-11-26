@@ -1,3 +1,4 @@
+import 'support/chat_voice_input_session.dart';
 import 'support/native_sidebar_bridge.dart';
 
 import 'dart:async';
@@ -336,9 +337,7 @@ class _ComposerRoute extends OperitScreen {
             onSendMessage: () {},
             onQueueMessage: () {},
             onCancelMessage: () {},
-            isSpeechRecording: false,
-            isSpeechTranscribing: false,
-            onSpeechInput: () {},
+            voiceInput: createIdleVoiceInputSession(),
           )
         : ClassicChatInputSection(
             controller: controller,
@@ -351,9 +350,7 @@ class _ComposerRoute extends OperitScreen {
             onSendMessage: () {},
             onQueueMessage: () {},
             onCancelMessage: () {},
-            isSpeechRecording: false,
-            isSpeechTranscribing: false,
-            onSpeechInput: () {},
+            voiceInput: createIdleVoiceInputSession(),
           );
     return Column(
       key: const ValueKey<String>('safe-area-page'),

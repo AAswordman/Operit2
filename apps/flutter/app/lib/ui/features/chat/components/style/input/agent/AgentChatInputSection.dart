@@ -17,6 +17,8 @@ import '../../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../../theme/OperitTheme.dart';
 import '../../../../../settings/model/ProviderLogo.dart';
+import '../../../../voice_input/ChatVoiceInputCard.dart';
+import '../../../../voice_input/ChatVoiceInputSession.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../ChatLayoutMetrics.dart';
 import '../common/AttachmentPackageSelectorDialog.dart';
@@ -51,9 +53,7 @@ class AgentChatInputSection extends StatefulWidget {
     this.onGuideMessage,
     this.onInterruptAndSendMessage,
     required this.onCancelMessage,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
-    required this.onSpeechInput,
+    required this.voiceInput,
     this.pendingQueueMessages = const <PendingQueueMessageItem>[],
     this.isPendingQueueExpanded = true,
     this.onPendingQueueExpandedChange,
@@ -94,9 +94,7 @@ class AgentChatInputSection extends StatefulWidget {
   final VoidCallback? onGuideMessage;
   final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
-  final VoidCallback onSpeechInput;
+  final ChatVoiceInputSession voiceInput;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
   final ValueChanged<bool>? onPendingQueueExpandedChange;
@@ -683,6 +681,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
     final themePreferenceSnapshot = OperitTheme.of(
       context,
     ).themePreferenceSnapshot;
+    final voiceTextStyle =
+        Theme.of(context).textTheme.bodyMedium?.copyWith(height: 20 / 14) ??
+        const TextStyle(fontSize: 14, height: 20 / 14);
     final processing = widget.isLoading || widget.inputState.isProcessing;
     final hasDraftText = widget.controller.text.trim().isNotEmpty;
     final canSendMessage = hasDraftText || widget.attachments.isNotEmpty;
@@ -737,50 +738,59 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                   imageStyle: buildThemeInputImageStyle(
                     themePreferenceSnapshot,
                   ),
-                  child: _InputBody(
-                    hintSuffix: widget.hintSuffix,
-                    controller: widget.controller,
-                    focusNode: widget.focusNode,
-                    inputState: widget.inputState,
-                    modelLabel: _modelLabel,
-                    modelProviderTypeId: _modelProviderTypeId,
-                    modelProviderName: _modelProviderName,
-                    modelSelectorOpen: _modelPopupEntry != null,
-                    inputMenuOpen:
-                        _inputMenuPopupEntry != null && !_inputMenuClosing,
-                    modelSelectorLink: _modelPopupLink,
-                    modelSelectorKey: _modelPopupTargetKey,
-                    settingsLink: _inputMenuPopupLink,
-                    settingsKey: _inputMenuPopupTargetKey,
-                    attachmentKey: _attachmentPopupTargetKey,
-                    processing: processing,
-                    hasDraftText: hasDraftText,
-                    canSendMessage: canSendMessage,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    hostMissing: widget.hostMissing,
-                    onSendMessage: widget.onSendMessage,
-                    onQueueMessage: widget.onQueueMessage,
-                    onGuideMessage: widget.onGuideMessage,
-                    onInterruptAndSendMessage: widget.onInterruptAndSendMessage,
-                    onCancelMessage: widget.onCancelMessage,
-                    isSpeechRecording: widget.isSpeechRecording,
-                    isSpeechTranscribing: widget.isSpeechTranscribing,
-                    onSpeechInput: widget.onSpeechInput,
-                    inputExpanded: _inputExpanded,
-                    onToggleInputExpansion: _toggleInputExpansion,
-                    attachments: widget.attachments,
-                    onRemoveAttachment: widget.onRemoveAttachment,
-                    onPreviewAttachment: widget.onPreviewAttachment,
-                    onAttachFiles: widget.onAttachFiles,
-                    onPasteImages: widget.onPasteImages,
-                    draggingFiles: _draggingFiles,
-                    onDraggingFilesChanged: _setDraggingFiles,
-                    onAttach: _openAttachmentPopup,
-                    onSettings: _openInputMenuPopup,
-                    onModelSelector: _toggleSettingsPopup,
-                    onMentionEnter: widget.onMentionEnter,
-                    onMentionKeyEvent: widget.onMentionKeyEvent,
+                  child: ChatVoiceInputSwitcher(
+                    session: widget.voiceInput,
+                    textStyle: voiceTextStyle,
+                    textOrigin: themeAgentComposerTextOrigin,
+                    surfaceBottomInset: themeComposerBottomInset(
+                      insets: themeAgentComposerInsets,
+                      floating: themePreferenceSnapshot.chatInputFloating,
+                      systemBottomInset: MediaQuery.paddingOf(context).bottom,
+                    ),
+                    composer: _InputBody(
+                      hintSuffix: widget.hintSuffix,
+                      controller: widget.controller,
+                      focusNode: widget.focusNode,
+                      inputState: widget.inputState,
+                      modelLabel: _modelLabel,
+                      modelProviderTypeId: _modelProviderTypeId,
+                      modelProviderName: _modelProviderName,
+                      modelSelectorOpen: _modelPopupEntry != null,
+                      inputMenuOpen:
+                          _inputMenuPopupEntry != null && !_inputMenuClosing,
+                      modelSelectorLink: _modelPopupLink,
+                      modelSelectorKey: _modelPopupTargetKey,
+                      settingsLink: _inputMenuPopupLink,
+                      settingsKey: _inputMenuPopupTargetKey,
+                      attachmentKey: _attachmentPopupTargetKey,
+                      processing: processing,
+                      hasDraftText: hasDraftText,
+                      canSendMessage: canSendMessage,
+                      showCancelAction: showCancelAction,
+                      showQueueAction: showQueueAction,
+                      hostMissing: widget.hostMissing,
+                      onSendMessage: widget.onSendMessage,
+                      onQueueMessage: widget.onQueueMessage,
+                      onGuideMessage: widget.onGuideMessage,
+                      onInterruptAndSendMessage:
+                          widget.onInterruptAndSendMessage,
+                      onCancelMessage: widget.onCancelMessage,
+                      voiceInput: widget.voiceInput,
+                      inputExpanded: _inputExpanded,
+                      onToggleInputExpansion: _toggleInputExpansion,
+                      attachments: widget.attachments,
+                      onRemoveAttachment: widget.onRemoveAttachment,
+                      onPreviewAttachment: widget.onPreviewAttachment,
+                      onAttachFiles: widget.onAttachFiles,
+                      onPasteImages: widget.onPasteImages,
+                      draggingFiles: _draggingFiles,
+                      onDraggingFilesChanged: _setDraggingFiles,
+                      onAttach: _openAttachmentPopup,
+                      onSettings: _openInputMenuPopup,
+                      onModelSelector: _toggleSettingsPopup,
+                      onMentionEnter: widget.onMentionEnter,
+                      onMentionKeyEvent: widget.onMentionKeyEvent,
+                    ),
                   ),
                 ),
               ),
@@ -854,9 +864,7 @@ class _InputBody extends StatelessWidget {
     this.onGuideMessage,
     this.onInterruptAndSendMessage,
     required this.onCancelMessage,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
-    required this.onSpeechInput,
+    required this.voiceInput,
     required this.inputExpanded,
     required this.onToggleInputExpansion,
     required this.attachments,
@@ -899,9 +907,7 @@ class _InputBody extends StatelessWidget {
   final VoidCallback? onGuideMessage;
   final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
-  final VoidCallback onSpeechInput;
+  final ChatVoiceInputSession voiceInput;
   final bool inputExpanded;
   final VoidCallback onToggleInputExpansion;
   final List<AttachmentInfo> attachments;
@@ -923,12 +929,7 @@ class _InputBody extends StatelessWidget {
     final theme = Theme.of(context);
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    final showMissingHost =
-        hostMissing &&
-        !showCancelAction &&
-        !showQueueAction &&
-        !isSpeechRecording &&
-        !isSpeechTranscribing;
+    final showMissingHost = hostMissing && !showCancelAction && !showQueueAction;
     final modelLabelStyle =
         theme.textTheme.bodyMedium?.copyWith(
           color: colorScheme.onSurface,
@@ -959,14 +960,14 @@ class _InputBody extends StatelessWidget {
         onMentionKeyEvent: onMentionKeyEvent,
         child: ChatPastedImageHandler(
           focusNode: focusNode,
-          enabled: !isSpeechRecording && !isSpeechTranscribing,
+          enabled: true,
           onPasteImages: onPasteImages,
           child: ThemeComposerTextEditor(
             controller: controller,
             focusNode: focusNode,
             hintText: '${l10n.askOperitHint}$hintSuffix',
             inputExpanded: inputExpanded,
-            readOnly: isSpeechRecording || isSpeechTranscribing,
+            readOnly: false,
             contentInsertionConfiguration:
                 chatPastedImageContentInsertionConfiguration(
                   onPasteImages: onPasteImages,
@@ -1069,69 +1070,55 @@ class _InputBody extends StatelessWidget {
                 ? null
                 : resolveThemeInputActionAsset(
                     OperitTheme.of(context).themePreferenceSnapshot,
-                    isStop: isSpeechRecording || showCancelAction,
+                    isStop: showCancelAction,
                     isSend: showQueueAction || canSendMessage,
                   ),
             imageSize: showMissingHost
                 ? null
                 : resolveThemeInputActionAssetSize(
                     OperitTheme.of(context).themePreferenceSnapshot,
-                    isStop: isSpeechRecording || showCancelAction,
+                    isStop: showCancelAction,
                     isSend: showQueueAction || canSendMessage,
                   ),
-            processing: processing || isSpeechTranscribing,
-            progress: isSpeechTranscribing ? null : _progressFor(inputState),
-            background: isSpeechRecording
-                ? colorScheme.error
-                : _actionBackground(
-                    colorScheme,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    canSend: canSendMessage,
-                  ),
-            foreground: isSpeechRecording
-                ? colorScheme.onError
-                : _actionForeground(
-                    colorScheme,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    canSend: canSendMessage,
-                  ),
-            icon: isSpeechRecording
-                ? Icons.stop
-                : isSpeechTranscribing
-                ? Icons.graphic_eq
-                : showMissingHost
+            processing: processing,
+            progress: _progressFor(inputState),
+            background: _actionBackground(
+              colorScheme,
+              showCancelAction: showCancelAction,
+              showQueueAction: showQueueAction,
+              canSend: canSendMessage,
+            ),
+            foreground: _actionForeground(
+              colorScheme,
+              showCancelAction: showCancelAction,
+              showQueueAction: showQueueAction,
+              canSend: canSendMessage,
+            ),
+            icon: showMissingHost
                 ? Icons.device_unknown
                 : _actionIcon(
                     showCancelAction: showCancelAction,
                     showQueueAction: showQueueAction,
                     canSend: canSendMessage,
                   ),
-            tooltip: isSpeechRecording
-                ? '停止录音'
-                : isSpeechTranscribing
-                ? '正在识别'
-                : showCancelAction
+            tooltip: showCancelAction
                 ? l10n.cancel
                 : showQueueAction
                 ? l10n.chatQueueAddMessage
                 : showMissingHost
                 ? l10n.chatRouteClaimHostPrompt
                 : (canSendMessage ? l10n.send : ''),
-            onPressed: isSpeechTranscribing
-                ? null
-                : () {
-                    if (showCancelAction) {
-                      onCancelMessage();
-                    } else if (showQueueAction) {
-                      onQueueMessage();
-                    } else if (showMissingHost || canSendMessage) {
-                      onSendMessage();
-                    } else {
-                      onSpeechInput();
-                    }
-                  },
+            onPressed: () {
+              if (showCancelAction) {
+                onCancelMessage();
+              } else if (showQueueAction) {
+                onQueueMessage();
+              } else if (showMissingHost || canSendMessage) {
+                onSendMessage();
+              } else {
+                voiceInput.start();
+              }
+            },
           ),
         ],
       ),

@@ -11,6 +11,8 @@ import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
 import '../../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../../theme/OperitTheme.dart';
+import '../../../../voice_input/ChatVoiceInputCard.dart';
+import '../../../../voice_input/ChatVoiceInputSession.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../ChatLayoutMetrics.dart';
 import '../agent/AgentInputMenuPopup.dart';
@@ -44,9 +46,7 @@ class ClassicChatInputSection extends StatefulWidget {
     this.onGuideMessage,
     this.onInterruptAndSendMessage,
     required this.onCancelMessage,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
-    required this.onSpeechInput,
+    required this.voiceInput,
     this.pendingQueueMessages = const <PendingQueueMessageItem>[],
     this.isPendingQueueExpanded = true,
     this.onPendingQueueExpandedChange,
@@ -85,9 +85,7 @@ class ClassicChatInputSection extends StatefulWidget {
   final VoidCallback? onGuideMessage;
   final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
-  final VoidCallback onSpeechInput;
+  final ChatVoiceInputSession voiceInput;
   final List<PendingQueueMessageItem> pendingQueueMessages;
   final bool isPendingQueueExpanded;
   final ValueChanged<bool>? onPendingQueueExpandedChange;
@@ -450,6 +448,9 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
   @override
   Widget build(BuildContext context) {
     final snapshot = OperitTheme.of(context).themePreferenceSnapshot;
+    final voiceTextStyle =
+        Theme.of(context).textTheme.bodyMedium?.copyWith(height: 20 / 14) ??
+        const TextStyle(fontSize: 14, height: 20 / 14);
     final processing = widget.isLoading || widget.inputState.isProcessing;
     final hasDraftText = widget.controller.text.trim().isNotEmpty;
     final canSendMessage = hasDraftText || widget.attachments.isNotEmpty;
@@ -509,40 +510,51 @@ class _ClassicChatInputSectionState extends State<ClassicChatInputSection>
                             onPreviewAttachment: widget.onPreviewAttachment,
                           ),
                         ),
-                      _ClassicInputBody(
-                        hintSuffix: widget.hintSuffix,
-                        controller: widget.controller,
-                        focusNode: widget.focusNode,
-                        inputState: widget.inputState,
-                        settingsKey: _inputMenuPopupTargetKey,
-                        inputMenuOpen:
-                            _inputMenuPopupEntry != null && !_inputMenuClosing,
-                        attachmentKey: _attachmentPopupTargetKey,
-                        processing: processing,
-                        hasDraftText: hasDraftText,
-                        canSendMessage: canSendMessage,
-                        showCancelAction: showCancelAction,
-                        showQueueAction: showQueueAction,
-                        hostMissing: widget.hostMissing,
-                        onSendMessage: widget.onSendMessage,
-                        onQueueMessage: widget.onQueueMessage,
-                        onGuideMessage: widget.onGuideMessage,
-                        onInterruptAndSendMessage:
-                            widget.onInterruptAndSendMessage,
-                        onCancelMessage: widget.onCancelMessage,
-                        isSpeechRecording: widget.isSpeechRecording,
-                        isSpeechTranscribing: widget.isSpeechTranscribing,
-                        onSpeechInput: widget.onSpeechInput,
-                        inputExpanded: _inputExpanded,
-                        onToggleInputExpansion: _toggleInputExpansion,
-                        onAttachFiles: widget.onAttachFiles,
-                        onPasteImages: widget.onPasteImages,
-                        draggingFiles: _draggingFiles,
-                        onDraggingFilesChanged: _setDraggingFiles,
-                        onSettings: _toggleInputMenuPopup,
-                        onAttach: _toggleAttachmentPopup,
-                        onMentionEnter: widget.onMentionEnter,
-                        onMentionKeyEvent: widget.onMentionKeyEvent,
+                      ChatVoiceInputSwitcher(
+                        session: widget.voiceInput,
+                        textStyle: voiceTextStyle,
+                        textOrigin: themeClassicComposerTextOrigin,
+                        surfaceBottomInset: themeComposerBottomInset(
+                          insets: themeClassicComposerInsets(
+                            floating: snapshot.chatInputFloating,
+                          ),
+                          floating: snapshot.chatInputFloating,
+                          systemBottomInset: MediaQuery.paddingOf(context).bottom,
+                        ),
+                        composer: _ClassicInputBody(
+                          hintSuffix: widget.hintSuffix,
+                          controller: widget.controller,
+                          focusNode: widget.focusNode,
+                          inputState: widget.inputState,
+                          settingsKey: _inputMenuPopupTargetKey,
+                          inputMenuOpen:
+                              _inputMenuPopupEntry != null &&
+                              !_inputMenuClosing,
+                          attachmentKey: _attachmentPopupTargetKey,
+                          processing: processing,
+                          hasDraftText: hasDraftText,
+                          canSendMessage: canSendMessage,
+                          showCancelAction: showCancelAction,
+                          showQueueAction: showQueueAction,
+                          hostMissing: widget.hostMissing,
+                          onSendMessage: widget.onSendMessage,
+                          onQueueMessage: widget.onQueueMessage,
+                          onGuideMessage: widget.onGuideMessage,
+                          onInterruptAndSendMessage:
+                              widget.onInterruptAndSendMessage,
+                          onCancelMessage: widget.onCancelMessage,
+                          voiceInput: widget.voiceInput,
+                          inputExpanded: _inputExpanded,
+                          onToggleInputExpansion: _toggleInputExpansion,
+                          onAttachFiles: widget.onAttachFiles,
+                          onPasteImages: widget.onPasteImages,
+                          draggingFiles: _draggingFiles,
+                          onDraggingFilesChanged: _setDraggingFiles,
+                          onSettings: _toggleInputMenuPopup,
+                          onAttach: _toggleAttachmentPopup,
+                          onMentionEnter: widget.onMentionEnter,
+                          onMentionKeyEvent: widget.onMentionKeyEvent,
+                        ),
                       ),
                     ],
                   ),
@@ -576,9 +588,7 @@ class _ClassicInputBody extends StatelessWidget {
     this.onGuideMessage,
     this.onInterruptAndSendMessage,
     required this.onCancelMessage,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
-    required this.onSpeechInput,
+    required this.voiceInput,
     required this.inputExpanded,
     required this.onToggleInputExpansion,
     required this.onAttachFiles,
@@ -609,9 +619,7 @@ class _ClassicInputBody extends StatelessWidget {
   final VoidCallback? onGuideMessage;
   final VoidCallback? onInterruptAndSendMessage;
   final VoidCallback onCancelMessage;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
-  final VoidCallback onSpeechInput;
+  final ChatVoiceInputSession voiceInput;
   final bool inputExpanded;
   final VoidCallback onToggleInputExpansion;
   final ValueChanged<List<String>>? onAttachFiles;
@@ -630,11 +638,7 @@ class _ClassicInputBody extends StatelessWidget {
     final colorScheme = theme.colorScheme;
     final l10n = AppLocalizations.of(context)!;
     final showMissingHost =
-        hostMissing &&
-        !showCancelAction &&
-        !showQueueAction &&
-        !isSpeechRecording &&
-        !isSpeechTranscribing;
+        hostMissing && !showCancelAction && !showQueueAction;
     final inputContent = ThemeClassicComposerBody(
       inputExpanded: inputExpanded,
       actionWidth:
@@ -650,17 +654,17 @@ class _ClassicInputBody extends StatelessWidget {
         onSendMessage: onSendMessage,
         onMentionEnter: onMentionEnter,
         onMentionKeyEvent: onMentionKeyEvent,
-        child: ChatPastedImageHandler(
-          focusNode: focusNode,
-          enabled: !isSpeechRecording && !isSpeechTranscribing,
-          onPasteImages: onPasteImages,
-          child: ThemeClassicComposerTextEditor(
-            controller: controller,
+          child: ChatPastedImageHandler(
             focusNode: focusNode,
-            hintText: '${l10n.askOperitHint}$hintSuffix',
-            inputExpanded: inputExpanded,
-            readOnly: isSpeechRecording || isSpeechTranscribing,
-            hasDraftText: hasDraftText,
+            enabled: true,
+            onPasteImages: onPasteImages,
+            child: ThemeClassicComposerTextEditor(
+              controller: controller,
+              focusNode: focusNode,
+              hintText: '${l10n.askOperitHint}$hintSuffix',
+              inputExpanded: inputExpanded,
+              readOnly: false,
+              hasDraftText: hasDraftText,
             transparentSurface: OperitTheme.of(
               context,
             ).themePreferenceSnapshot.transparentSurfaceEnabled,
@@ -766,71 +770,55 @@ class _ClassicInputBody extends StatelessWidget {
                 ? null
                 : resolveThemeInputActionAsset(
                     OperitTheme.of(context).themePreferenceSnapshot,
-                    isStop: isSpeechRecording || showCancelAction,
+                    isStop: showCancelAction,
                     isSend: showQueueAction || canSendMessage,
                   ),
             imageSize: showMissingHost
                 ? null
                 : resolveThemeInputActionAssetSize(
                     OperitTheme.of(context).themePreferenceSnapshot,
-                    isStop: isSpeechRecording || showCancelAction,
+                    isStop: showCancelAction,
                     isSend: showQueueAction || canSendMessage,
                   ),
-            processing: processing || isSpeechTranscribing,
-            progress: isSpeechTranscribing
-                ? null
-                : _classicProgressFor(inputState),
-            background: isSpeechRecording
-                ? colorScheme.error
-                : _classicActionBackground(
-                    colorScheme,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    canSend: canSendMessage,
-                  ),
-            foreground: isSpeechRecording
-                ? colorScheme.onError
-                : _classicActionForeground(
-                    colorScheme,
-                    showCancelAction: showCancelAction,
-                    showQueueAction: showQueueAction,
-                    canSend: canSendMessage,
-                  ),
-            icon: isSpeechRecording
-                ? Icons.stop
-                : isSpeechTranscribing
-                ? Icons.graphic_eq
-                : showMissingHost
+            processing: processing,
+            progress: _classicProgressFor(inputState),
+            background: _classicActionBackground(
+              colorScheme,
+              showCancelAction: showCancelAction,
+              showQueueAction: showQueueAction,
+              canSend: canSendMessage,
+            ),
+            foreground: _classicActionForeground(
+              colorScheme,
+              showCancelAction: showCancelAction,
+              showQueueAction: showQueueAction,
+              canSend: canSendMessage,
+            ),
+            icon: showMissingHost
                 ? Icons.device_unknown
                 : _classicActionIcon(
                     showCancelAction: showCancelAction,
                     showQueueAction: showQueueAction,
                     canSend: canSendMessage,
                   ),
-            tooltip: isSpeechRecording
-                ? '停止录音'
-                : isSpeechTranscribing
-                ? '正在识别'
-                : showCancelAction
+            tooltip: showCancelAction
                 ? l10n.cancel
                 : showQueueAction
                 ? l10n.chatQueueAddMessage
                 : showMissingHost
                 ? l10n.chatRouteClaimHostPrompt
                 : (canSendMessage ? l10n.send : ''),
-            onPressed: isSpeechTranscribing
-                ? null
-                : () {
-                    if (showCancelAction) {
-                      onCancelMessage();
-                    } else if (showQueueAction) {
-                      onQueueMessage();
-                    } else if (showMissingHost || canSendMessage) {
-                      onSendMessage();
-                    } else {
-                      onSpeechInput();
-                    }
-                  },
+            onPressed: () {
+              if (showCancelAction) {
+                onCancelMessage();
+              } else if (showQueueAction) {
+                onQueueMessage();
+              } else if (showMissingHost || canSendMessage) {
+                onSendMessage();
+              } else {
+                voiceInput.start();
+              }
+            },
           ),
         ],
       ),

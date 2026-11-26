@@ -12,6 +12,7 @@ import 'package:operit2/data/preferences/UserPreferencesManager.dart';
 import 'package:operit2/ui/features/chat/components/style/input/agent/AgentChatInputSection.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'support/chat_voice_input_session.dart';
 
 /// Checks the real Agent composer's paint work during keyboard inset changes.
 void main() {
@@ -52,9 +53,7 @@ void main() {
                   onSendMessage: () {},
                   onQueueMessage: () {},
                   onCancelMessage: () {},
-                  isSpeechRecording: false,
-                  isSpeechTranscribing: false,
-                  onSpeechInput: () {},
+                  voiceInput: createIdleVoiceInputSession(),
                 ),
               ],
             ),

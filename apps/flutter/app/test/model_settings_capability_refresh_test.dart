@@ -20,6 +20,7 @@ import 'package:operit2/ui/features/chat/components/style/input/agent/AgentModel
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/features/settings/model/ProviderLogo.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'support/chat_voice_input_session.dart';
 
 /// Describes one authenticated model participant for the Core bridge fixture.
 Map<String, Object?> _participantModel({required bool followsGlobal}) => {
@@ -53,9 +54,7 @@ void main() {
               onSendMessage: () {},
               onQueueMessage: () {},
               onCancelMessage: () {},
-              isSpeechRecording: false,
-              isSpeechTranscribing: false,
-              onSpeechInput: () {},
+              voiceInput: createIdleVoiceInputSession(),
             ),
           ),
         ),
@@ -326,9 +325,7 @@ void main() {
                 onSendMessage: () {},
                 onQueueMessage: () {},
                 onCancelMessage: () {},
-                isSpeechRecording: false,
-                isSpeechTranscribing: false,
-                onSpeechInput: () {},
+                voiceInput: createIdleVoiceInputSession(),
               );
             },
           ),
@@ -731,9 +728,7 @@ void main() {
             onSendMessage: () {},
             onQueueMessage: () {},
             onCancelMessage: () {},
-            isSpeechRecording: false,
-            isSpeechTranscribing: false,
-            onSpeechInput: () {},
+            voiceInput: createIdleVoiceInputSession(),
           ),
         ),
       );
