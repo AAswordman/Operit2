@@ -1587,11 +1587,17 @@ pub struct ChatScheduledMessage {
     pub id: String,
     pub chatId: String,
     pub timestamp: i64,
-    /// preparing, scheduled, delivered, cancelled, invalidated, skipped, or failed.
+    /// preparing, scheduled, delivered, cancelled, invalidated, skipped, or failed. Delivered confirms persistence, not UI visibility.
     pub status: String,
     pub error: JsNullable<String>,
     /// Contains the accepted prepared body, including host-generated replies.
     pub text: String,
+    /// Reports whether notification delivery or registration was requested; old receipts may lack this evidence.
+    pub notificationAttempted: bool,
+    /// Reports Host acceptance, not system display or user visibility.
+    pub notificationRegistered: bool,
+    /// Contains notification failure independently of message persistence.
+    pub notificationError: JsNullable<String>,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

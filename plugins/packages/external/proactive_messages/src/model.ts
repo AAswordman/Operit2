@@ -8,6 +8,9 @@ export interface Job {
   id: string; chatId: string; title: string; dueAt: number; text: string;
   status: JobStatus; error: string;
   instruction?: string;
+  notificationAttempted?: boolean;
+  notificationRegistered?: boolean;
+  notificationError?: string | null;
 }
 export interface State { version: 1; generationVersion?: 2; rules: Rule[]; jobs: Job[] }
 export const MAX_PENDING = 32;

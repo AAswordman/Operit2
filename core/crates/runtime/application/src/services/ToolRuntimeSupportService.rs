@@ -95,10 +95,16 @@ impl RuntimeToolSupport {
     /// Starts one host-owned delivery worker. It survives plugin unload and restores persisted plans.
     pub fn startScheduledChatDelivery(self: &Arc<Self>) -> Result<(), String> {
         if self.hostManager.runtimeStorageHost.is_none() { return Ok(()); }
+        let manager = self.runtimeBindings()?.toolHandler.getOrCreatePackageManager();
+        let readiness = manager.lock().map_err(|error| error.to_string())?.packageRegistryReadiness();
         let scheduler = self.hostManager.hostRuntimeTaskSchedulerHost.clone().ok_or("Scheduled chat scheduler is unavailable")?;
         let timer = scheduler.clone();
         let weak = Arc::downgrade(self);
         scheduler.scheduleHostRuntimeAsyncTask("scheduled-chat-messages", Box::new(move || Box::pin(async move {
+            if let Err(error) = readiness.wait_until_ready().await {
+                operit_util::AppLogger::AppLogger::e("ScheduledChatMessages", &error);
+                return;
+            }
             loop {
                 let Some(runtime) = weak.upgrade() else { break; };
                 if let Err(error) = runtime.preparedChatDelivery.reconcile(&runtime.hostManager, &runtime.chatRuntimeHolder).await {

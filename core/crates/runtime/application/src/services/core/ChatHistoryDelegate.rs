@@ -2064,20 +2064,8 @@ impl ChatHistoryDelegate {
         didUpdate
     }
 
-    #[allow(non_snake_case)]
-    /// Commits completed prepared text with canonical retry detection, including messages hidden by summaries.
-    pub fn commitPreparedAssistantMessage(&mut self, chatId: &str, text: &str, timestamp: i64) -> Result<bool, String> {
-        let mut message = ChatMessage::new_with_markdown_timestamp("ai".into(), text.into(), timestamp);
-        message.sentAt = timestamp;
-        message.completedAt = operit_host_api::TimeUtils::currentTimeMillis();
-        // Tag plain-text deliveries exactly like generated scheduled replies so the host
-        // identifies every delivery uniformly; the snapshot path keeps existing tags intact.
-        message.pluginExtensions.insert("host.chat.scheduled".into(), serde_json::json!({ "preparedAt": message.completedAt }));
-        self.commitPreparedAssistantMessageSnapshot(chatId, message)
-    }
-
-    /// Commits the complete prepared reply without replacing its author, model usage or generation timing.
-    pub fn commitPreparedAssistantMessageSnapshot(&mut self, chatId: &str, message: ChatMessage) -> Result<bool, String> {
+    /// Commits once and returns the canonical selected record for runtime-wide publication.
+    pub fn commitPreparedAssistantMessageSnapshot(&mut self, chatId: &str, message: ChatMessage) -> Result<(bool, ChatMessage), String> {
         let timestamp = message.timestamp;
         self.requireChatExists(chatId)?;
         if self.chatHistoryManager.loadChatMessageIndexPosition(chatId, timestamp).map_err(|error| error.to_string())?.is_some() {
@@ -2085,12 +2073,15 @@ impl ChatHistoryDelegate {
             if existing.sender != "ai" || existing.displayText() != message.displayText() {
                 return Err("Prepared message timestamp conflicts with an existing message".into());
             }
-            return Ok(true);
+            // Preserve any revision the user selected after the original delivery.
+            let selected = self.chatHistoryManager.loadChatMessagesDescUpTo(chatId.into(), timestamp, 1)
+                .map_err(|error| error.to_string())?.into_iter().find(|message| message.timestamp == timestamp)
+                .ok_or("Prepared message disappeared during recovery")?;
+            return Ok((true, selected));
         }
         let message = self.chatHistoryManager.addMessage(chatId.into(), message).map_err(|error| error.to_string())?;
         ToolPkgChatMessageHookBridge::dispatchMessagePersisted(chatId, &message);
-        self.publishChatMessage(chatId, message);
-        Ok(false)
+        Ok((false, message))
     }
 
     pub fn addMessageToChat(&mut self, message: ChatMessage, chatIdOverride: Option<String>) {

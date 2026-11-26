@@ -1835,6 +1835,12 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (!mounted) {
       return;
     }
+    ClientLogger.v(
+      'chat.messages_applied chatId=$_requestedChatFlowChatId count=${messages.length} '
+      'firstTimestamp=${messages.firstOrNull?.timestamp} lastTimestamp=${messages.lastOrNull?.timestamp}',
+      tag: 'ChatFlowTrace',
+      verboseLevel: VerboseLevel.level2,
+    );
     _messages
       ..clear()
       ..addAll(messages);

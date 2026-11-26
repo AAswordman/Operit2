@@ -35,7 +35,11 @@ const { messages } = await Tools.Chat.listScheduledMessages();
 await Tools.Chat.cancelScheduledMessage("unique-message-id");
 ```
 
-`scheduleMessage` 返回 `{ message: { id, chatId, timestamp, status, error, text } }`，`text` 是宿主实际准备的正文。传入 `generation` 时要求 `text` 为空；已有纯文本调用仍使用非空 `text`。`listScheduledMessages` 只列出调用插件自己的预约及结果。终态包括 `delivered`、`cancelled`、`skipped`、`invalidated` 和 `failed`，`error` 为字符串或 `null`。`cancelScheduledMessage` 返回 `{ id, cancelled: true }`，重复撤销安全。
+`scheduleMessage` 和 `listScheduledMessages` 返回的消息包含 `id, chatId, timestamp, status, error, text, notificationAttempted, notificationRegistered, notificationError`，`text` 是宿主实际准备的正文。传入 `generation` 时要求 `text` 为空；已有纯文本调用仍使用非空 `text`。`listScheduledMessages` 只列出调用插件自己的预约及结果。终态包括 `delivered`、`cancelled`、`skipped`、`invalidated` 和 `failed`，`error` 为字符串或 `null`。`cancelScheduledMessage` 返回 `{ id, cancelled: true }`，重复撤销安全。
+
+`scheduled` 表示正文准备和预约持久化成功；`delivered` 只表示聊天消息已入库，提交入口同时向已打开的主界面、悬浮窗及独立窗口消息流发布同一数据库记录。去重恢复也重新发布，不重复写入。界面收到更新会记录 `ChatFlowTrace chat.messages_applied`；这表示消息列表状态已应用，不等于已经进入可见区域，当前没有 UI 可见性回执。
+
+通知结果独立记录：`notificationAttempted` 表示已发起通知请求，`notificationRegistered` 表示 Host 接受请求，不证明系统展示；`notificationError` 保存通知失败，消息仍可为 `delivered`。旧 Android 记录没有写入这两个布尔字段，其 `false` 不能作为未尝试通知的证据。未收到 Host 确认的请求不自动重发。插件记录页分别显示写入结果与通知结果。
 
 ID 自动按已认证的插件身份隔离。相同 ID 和相同参数可安全重试，即使调用响应丢失或预约已到期；相同 ID 与不同内容冲突时拒绝。需要新计划时使用新 ID。宿主保留最多 60 条待处理消息和最近 256 条结果。
 
@@ -48,6 +52,8 @@ Android、HarmonyOS、Windows、macOS、Linux、Web 使用宿主调度器，在�
 iOS 在预约时将已生成内容提交系统本地通知，到点由系统展示。宿主在应用恢复前台后检查上下文并同步有效消息，不再次通知。应用挂起期间不能更新或撤回已经展示的系统通知，恢复后检测到上下文变化的正文不会再写入对话。iOS 的通知权限交互和实际展示仍受系统设置约束。
 
 所有平台的预约均保存在宿主设备本地存储中，宿主重启后自动恢复。应用退出、设备休眠、浏览器后台节流等会影响非 iOS 的实际投递时间；iOS 的系统通知不会唤醒插件调用 AI。接口不承诺绕过操作系统的执行限制。
+
+恢复任务由应用初始化统一启动，先预约插件目录加载，再等待目录就绪，随后检查对话与角色配置。准备中断、对话忙、上下文或参与者改变会保留各自原因；它们不等于数据库投递失败。对话忙时不准备新正文，已经接受的预约在忙状态结束后继续核验。
 
 关闭或删除规则会通过统一接口撤销待发消息。停用或卸载插件前，请先在设置页关闭规则：预约由宿主持有，插件停止运行本身不会撤销已经提交的计划。更改规则会先撤销旧计划，再重新抽取和准备。
 
