@@ -1,63 +1,6 @@
 name: Incremental Update Merge
 
 on:
-  pull_request:
-    paths:
-      - '.github/workflows/incremental-updates.yml'
-      - 'core/Cargo.toml'
-      - 'core/Cargo.lock'
-      - 'core/crates/foundation/util/**'
-      - 'core/crates/foundation/host-api/**'
-      - 'core/crates/foundation/host-contract/**'
-      - 'core/crates/foundation/vfs/**'
-      - 'hosts/common/operit-host-native-storage/**'
-      - 'hosts/common/operit-host-native-filesystem/**'
-      - 'hosts/android/src/update_*.rs'
-      - 'hosts/android/src/system_operation.rs'
-      - 'hosts/windows/src/process.rs'
-      - 'hosts/windows/src/tools/system/mod.rs'
-      - 'hosts/windows/src/tools/system/update_msi.rs'
-      - 'apps/flutter/native/operit-flutter-bridge/src/FlutterSystemOperationBridge.rs'
-      - 'core/crates/runtime/application/src/core/application/ApplicationUpdate.rs'
-      - 'apps/cli/src/cli/mod.rs'
-      - 'apps/cli/src/tui/core/app.rs'
-      - 'apps/cli/src/tui/view/render.rs'
-      - 'apps/flutter/app/.fvmrc'
-      - 'apps/flutter/app/pubspec.yaml'
-      - 'apps/flutter/app/pubspec.lock'
-      - 'apps/flutter/app/lib/core/update/**'
-      - 'apps/flutter/app/lib/ui/features/update/**'
-      - 'apps/flutter/app/test/update/**'
-      - 'tools/tests/fixtures/msi_cabinet_delta.json'
-  push:
-    branches: [main, master]
-    paths:
-      - '.github/workflows/incremental-updates.yml'
-      - 'core/Cargo.toml'
-      - 'core/Cargo.lock'
-      - 'core/crates/foundation/util/**'
-      - 'core/crates/foundation/host-api/**'
-      - 'core/crates/foundation/host-contract/**'
-      - 'core/crates/foundation/vfs/**'
-      - 'hosts/common/operit-host-native-storage/**'
-      - 'hosts/common/operit-host-native-filesystem/**'
-      - 'hosts/android/src/update_*.rs'
-      - 'hosts/android/src/system_operation.rs'
-      - 'hosts/windows/src/process.rs'
-      - 'hosts/windows/src/tools/system/mod.rs'
-      - 'hosts/windows/src/tools/system/update_msi.rs'
-      - 'apps/flutter/native/operit-flutter-bridge/src/FlutterSystemOperationBridge.rs'
-      - 'core/crates/runtime/application/src/core/application/ApplicationUpdate.rs'
-      - 'apps/cli/src/cli/mod.rs'
-      - 'apps/cli/src/tui/core/app.rs'
-      - 'apps/cli/src/tui/view/render.rs'
-      - 'apps/flutter/app/.fvmrc'
-      - 'apps/flutter/app/pubspec.yaml'
-      - 'apps/flutter/app/pubspec.lock'
-      - 'apps/flutter/app/lib/core/update/**'
-      - 'apps/flutter/app/lib/ui/features/update/**'
-      - 'apps/flutter/app/test/update/**'
-      - 'tools/tests/fixtures/msi_cabinet_delta.json'
   workflow_dispatch:
 
 permissions:
