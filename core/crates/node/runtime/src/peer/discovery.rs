@@ -91,7 +91,15 @@ impl HostRuntimePeerService {
         let now = self.discoveryNow().ok();
         let mut known = self.state.discovery.records.lock().unwrap_or_else(|p| p.into_inner());
         known.retain(|_, entry| entry.expires.is_none_or(|expires| now.is_some_and(|now| expires > now)));
-        known.values().flat_map(|entry| entry.records.iter().cloned()).collect()
+        known.values().flat_map(|entry| entry.records.iter().cloned()).filter_map(|mut record| {
+            // Filter before ranking so a restricted carrier never advertises an
+            // unusable first choice when the same peer also offers TCP.
+            let modes = record.properties.get_mut("transports")?;
+            *modes = modes.split(',').filter(|mode| parseTransport(mode)
+                .is_ok_and(|transport| self.state.link.supportsTransport(transport)))
+                .collect::<Vec<_>>().join(",");
+            (!modes.is_empty()).then_some(record)
+        }).collect()
     }
     pub(super) fn clearDiscovery(&self) {
         self.state

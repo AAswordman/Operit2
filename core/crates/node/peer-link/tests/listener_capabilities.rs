@@ -200,3 +200,32 @@ async fn unsupported_websocket_does_not_acquire_http_resources() {
     assert!(matches!(result, Err(message) if message == "Host does not support WebSocket peer listeners"));
     assert_eq!(server.binds.load(Ordering::SeqCst), 0);
 }
+
+/// Product composition restricts carriers even when the Host has more providers.
+#[tokio::test]
+async fn stream_link_exposes_only_tcp_and_serial_without_acquiring_other_hosts() {
+    let http = Arc::new(HttpFixture { upgrades: true, binds: AtomicUsize::new(0) });
+    let host = Arc::new(HostManager {
+        httpServerHost: Some(http.clone()),
+        tcpHost: Some(Arc::new(TcpFixture)),
+        serialPortHost: Some(Arc::new(SerialFixture)),
+        bluetoothHost: Some(Arc::new(BluetoothFixture(true))),
+        serviceDiscoveryHost: Some(Arc::new(DiscoveryFixture(true))),
+        ..HostManager::default()
+    });
+    let link = StreamHostPeerLink::withMaxMessageBytes(2048).unwrap();
+    assert!(link.supportsTransport(PeerTransport::Tcp));
+    assert!(link.supportsTransport(PeerTransport::Serial));
+    let capabilities = link.listenerCapabilities(&host);
+    assert_eq!(capabilities.transports, vec![PeerTransport::Tcp, PeerTransport::Serial]);
+    assert!(capabilities.discoveryAdvertisement);
+    let endpoint = PeerEndpoint { nodeId: "local".into(), address: "unused".into() };
+    for transport in [PeerTransport::Http, PeerTransport::WebSocket, PeerTransport::Bluetooth] {
+        assert!(!link.supportsTransport(transport));
+        assert!(link.connect(host.clone(), endpoint.clone(), endpoint.clone(), transport).await.is_err());
+        assert!(link.listen(host.clone(), endpoint.clone(), transport).await.is_err());
+    }
+    assert_eq!(http.binds.load(Ordering::SeqCst), 0);
+    assert!(StreamHostPeerLink::withMaxMessageBytes(0).is_err());
+    assert!(StreamHostPeerLink::withMaxMessageBytes(u32::MAX as usize).is_err());
+}

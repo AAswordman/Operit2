@@ -28,9 +28,7 @@ impl Default for HostPeerLink {
 impl HostPeerLink {
     /// Resource policy belongs to the embedding app, not the OS or transport.
     pub fn withMaxMessageBytes(maxMessageBytes: usize) -> Result<Self, String> {
-        if maxMessageBytes == 0 || maxMessageBytes > (u32::MAX as usize).saturating_sub(12) {
-            return Err("Peer message byte limit is outside the framing range".into());
-        }
+        validateMaxMessageBytes(maxMessageBytes)?;
         Ok(Self { maxMessageBytes, ..Self::default() })
     }
 
@@ -107,6 +105,60 @@ impl PeerLink for HostPeerLink {
             PeerTransport::Http => http::listen(&self.networkServers, &host, source, self.maxMessageBytes).await,
             PeerTransport::WebSocket => websocket::listen(&self.networkServers, &host, source, self.maxMessageBytes).await,
             PeerTransport::Bluetooth => bluetooth::listen(&host, source, self.maxMessageBytes).await,
+        }
+    }
+}
+
+/// Host byte-stream carriers for endpoints that do not provide HTTP, WebSocket
+/// or Bluetooth Link services. Framing and session protocols are shared.
+/// TCP uses a dedicated socket, rather than a shared HTTP/TCP listener.
+pub struct StreamHostPeerLink {
+    maxMessageBytes: usize,
+}
+impl StreamHostPeerLink {
+    pub fn withMaxMessageBytes(maxMessageBytes: usize) -> Result<Self, String> {
+        validateMaxMessageBytes(maxMessageBytes)?;
+        Ok(Self { maxMessageBytes })
+    }
+}
+fn validateMaxMessageBytes(maxMessageBytes: usize) -> Result<(), String> {
+    if maxMessageBytes == 0 || maxMessageBytes > (u32::MAX as usize).saturating_sub(12) {
+        return Err("Peer message byte limit is outside the framing range".into());
+    }
+    Ok(())
+}
+#[async_trait]
+impl PeerLink for StreamHostPeerLink {
+    fn supportsTransport(&self, transport: PeerTransport) -> bool {
+        matches!(transport, PeerTransport::Tcp | PeerTransport::Serial)
+    }
+    fn listenerCapabilities(&self, host: &HostManager) -> PeerListenerCapabilities {
+        PeerListenerCapabilities {
+            transports: [
+                (host.tcpHost.is_some(), PeerTransport::Tcp),
+                (host.serialPortHost.is_some(), PeerTransport::Serial),
+            ].into_iter().filter_map(|(installed, transport)| installed.then_some(transport)).collect(),
+            discoveryAdvertisement: host.serviceDiscoveryHost.as_ref()
+                .is_some_and(|discovery| discovery.supportsAdvertisement() || host.httpHost.is_some()),
+        }
+    }
+    async fn connect(
+        &self, host: Arc<HostManager>, source: PeerEndpoint, target: PeerEndpoint,
+        transport: PeerTransport,
+    ) -> Result<Arc<dyn PeerConnection>, String> {
+        match transport {
+            PeerTransport::Tcp => tcp::connect(&host, source, target, self.maxMessageBytes).await,
+            PeerTransport::Serial => serial::connect(&host, source, target, self.maxMessageBytes).await,
+            _ => Err(format!("Stream Link does not support {transport:?}")),
+        }
+    }
+    async fn listen(
+        &self, host: Arc<HostManager>, source: PeerEndpoint, transport: PeerTransport,
+    ) -> Result<Arc<dyn PeerListener>, String> {
+        match transport {
+            PeerTransport::Tcp => tcp::listenDedicated(&host, source, self.maxMessageBytes).await,
+            PeerTransport::Serial => serial::listen(&host, source, self.maxMessageBytes).await,
+            _ => Err(format!("Stream Link does not support {transport:?} peer listeners")),
         }
     }
 }

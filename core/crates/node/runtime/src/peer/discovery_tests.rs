@@ -327,3 +327,21 @@ async fn mdns_stop_during_refresh_releases_the_retried_subscription() {
     stopped.expect("stop must not wait for a blocking discovery scan").unwrap();
     waitUntil(|| discovery.callback.lock().unwrap().is_none()).await;
 }
+
+/// Mixed advertisements must select a carrier the composed Link can use.
+#[test]
+fn stream_endpoint_discovery_selects_tcp_and_preserves_cached_advertisements() {
+    let mut client = service("client", None);
+    Arc::get_mut(&mut client.state).unwrap().link = Arc::new(
+        operit_peer_link::StreamHostPeerLink::withMaxMessageBytes(2048).unwrap());
+    let mut mixed = advertisement("server", "127.0.0.1:37195");
+    mixed.properties.insert("transports".into(), "http,ws,tcp".into());
+    let mut httpOnly = advertisement("http-only", "127.0.0.1:37196");
+    httpOnly.properties.insert("transports".into(), "http,ws".into());
+    client.rememberDiscoveryRecords(&[mixed, httpOnly]);
+    assert_eq!(client.discoveredPeerEndpoints("server"), vec![("127.0.0.1:37195".into(), PeerTransport::Tcp)]);
+    assert!(client.discoveredPeerEndpoints("http-only").is_empty());
+    Arc::get_mut(&mut client.state).unwrap().link = Arc::new(HostPeerLink::default());
+    assert_eq!(client.discoveredPeerEndpoints("server").len(), 3);
+    assert_eq!(client.discoveredPeerEndpoints("http-only").len(), 2);
+}

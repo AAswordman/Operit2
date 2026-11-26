@@ -249,7 +249,7 @@ struct State {
     limits: PeerRuntimeLimits,
     directoryStart: directory::StartDirectory,
     host: Arc<HostManager>,
-    link: HostPeerLink,
+    link: Arc<dyn PeerLink>,
     store: PeerStateStore,
     nodeId: String,
     info: LinkDeviceInfo,
@@ -295,7 +295,8 @@ impl HostRuntimePeerService {
     pub fn newWithLimits<R: PeerRouter + 'static>(
         host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
     ) -> Result<Arc<Self>, String> {
-        Self::newWithDirectory(host, router, info, limits, directory::startServer)
+        let link = Arc::new(HostPeerLink::withMaxMessageBytes(limits.maxFrameBytes)?);
+        Self::newWithDirectory(host, router, info, limits, directory::startServer, link)
     }
 
     /// Creates a receiver that browses/registers with directories but does not
@@ -303,17 +304,28 @@ impl HostRuntimePeerService {
     pub fn newEndpointWithLimits<R: PeerRouter + 'static>(
         host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
     ) -> Result<Arc<Self>, String> {
-        Self::newWithDirectory(host, router, info, limits, directory::startEndpoint)
+        let link = Arc::new(HostPeerLink::withMaxMessageBytes(limits.maxFrameBytes)?);
+        Self::newEndpointWithLink(host, router, info, limits, link)
+    }
+
+    /// Selects Host carriers at product composition; pairing and Space stay shared.
+    /// The supplied Link must enforce limits.maxFrameBytes on physical frames.
+    pub fn newEndpointWithLink<R: PeerRouter + 'static>(
+        host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
+        link: Arc<dyn PeerLink>,
+    ) -> Result<Arc<Self>, String> {
+        Self::newWithDirectory(host, router, info, limits, directory::startEndpoint, link)
     }
 
     fn newWithDirectory<R: PeerRouter + 'static>(
         host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
-        directoryStart: directory::StartDirectory,
+        directoryStart: directory::StartDirectory, link: Arc<dyn PeerLink>,
     ) -> Result<Arc<Self>, String> {
         if limits.incomingSessions == 0 || limits.pendingPairings == 0 || limits.concurrentProbes == 0 {
             return Err("Peer runtime limits must be positive".into());
         }
-        let link = HostPeerLink::withMaxMessageBytes(limits.maxFrameBytes)?;
+        // Validate even when the product supplies its own carrier implementation.
+        let _ = HostPeerLink::withMaxMessageBytes(limits.maxFrameBytes)?;
         let storage = host
             .runtimeStorageHost
             .clone()
@@ -1151,7 +1163,7 @@ impl RuntimePeerService for HostRuntimePeerService {
     }
     /// Reports the operation capabilities supplied by this node's actual Host providers.
     fn listenerCapabilities(&self) -> operit_peer_link::PeerListenerCapabilities {
-        HostPeerLink::listenerCapabilities(&self.state.host)
+        self.state.link.listenerCapabilities(&self.state.host)
     }
 
     /// Validates every requested transport before opening the selected listeners.
@@ -1657,7 +1669,7 @@ mod single_channel_tests {
                 hostRuntimeTaskSchedulerHost: Some(scheduler),
                 ..HostManager::default()
             }),
-            link: HostPeerLink::default(),
+            link: Arc::new(HostPeerLink::default()),
             store: PeerStateStore::new(storage),
             nodeId: "self".into(),
             info: LinkDeviceInfo { platform: "test".into(), model: "test".into(), pairingIncarnation: None },

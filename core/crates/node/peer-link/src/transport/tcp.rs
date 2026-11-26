@@ -87,6 +87,12 @@ pub(super) async fn listen(
             }))
         }).await;
     }
+    listenDedicated(host, source, maxMessageBytes).await
+}
+
+pub(super) async fn listenDedicated(
+    host: &HostManager, mut source: PeerEndpoint, maxMessageBytes: usize,
+) -> Result<Arc<dyn PeerListener>, String> {
     let provider = host.tcpHost.as_ref().ok_or("TCP Host is not installed")?;
     let listener = provider
         .bind(&source.address)
