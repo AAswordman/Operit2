@@ -31,7 +31,8 @@ HTTP/USB inspection tools remain available for secondary development.
 Wi-Fi settings come from the setup page or `OPERIT_WIFI_SSID` and
 `OPERIT_WIFI_PASSWORD`. mDNS advertises `_operit-edge._tcp`. Serial Link is
 available offline; TCP Link requires a station connection. The plain HTTP setup
-page is retained; model HTTPS requests belong to Core.
+page is retained; model HTTPS requests belong to Core. This board uses IPv4;
+its ESP-IDF build disables IPv6. Shared Core and desktop networking are unchanged.
 
 Pairing uses the receiving device's six-digit code for both UART and TCP. No
 Edge token is required. Pairing and Space admission are separate: an additional
@@ -99,14 +100,17 @@ application image against the 3,997,696-byte app partition. It does not flash.
 container. Normal firmware updates preserve NVS and the reserved layout partition.
 Keep the matching ELF for crash address resolution.
 
-Measured on 2026-11-27, the complete Core text/audio application is 3,171,376 bytes,
-down from 3,423,712 bytes before this cleanup (252,336 bytes / 7.37%). It leaves
-826,320 bytes in the unchanged application partition. The 2 MiB target is still
-exceeded by 1,074,224 bytes; the fixed 4 MiB flash container is not the app size.
+Measured on 2026-11-27, the complete Core text/audio application is 3,143,376 bytes
+(3.00 MiB), down 28,000 bytes from the previous 3,171,376-byte image and 280,336
+bytes (8.19%) from 3,423,712 bytes before the cleanup. It leaves 854,320 bytes in
+the unchanged application partition. The 1 MiB target remains unmet by 2,094,800
+bytes. The fixed 4 MiB flash container is not the app size. Further major savings
+need a smaller shared endpoint runtime and fewer typed serialization paths;
+removing display pages alone does not address that code.
 
 Verification: Xtensa release, final ELF ABI and partition checks passed, as did
-110 editor tests, 58 firmware-module simulator tests and 46 Core/Edge protocol
-tests. The separate Windows CLI/UI end-to-end run failed during outgoing pairing
+110 editor tests, 58 firmware-module simulator tests, 46 Core/Edge protocol
+tests and 25 board tests. The separate Windows CLI/UI end-to-end run failed during outgoing pairing
 with simulator exit 0xC0000005; its text/audio round trip is not verified. The
 current-source fixture CLI was built with the unused native inference engine
 temporarily disabled; its manifest and lockfile were restored after that build.
@@ -115,6 +119,10 @@ The simulator compiles actual firmware protocol/storage modules, constrains its
 Rust heap to 256 KiB and uses guarded task stacks. C/Wasm tests run the same UI
 sources. Desktop timing and allocator results do not measure ESP-IDF, Wi-Fi,
 DMA or whole-board memory. No physical test is claimed for this cleanup.
+
+The board no longer allocates the unused 76800-byte RGB332 Wi-Fi mirror at
+startup. TFT writes go directly to SPI; UI ownership stays with the face host.
+USB inspection and the same-source C/Wasm preview remain available.
 
 The renderer has no heap or full-screen framebuffer: two RGB565 rows use
 1280 bytes, with at most eight strip flushes per pump. The 4168-glyph Noto font

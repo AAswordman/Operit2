@@ -185,11 +185,37 @@ struct ChatSession {
 }
 
 impl ChatSession {
+    fn finishSend(&self, result: Result<(), String>) {
+        if let Err(error) = &result { *self.error.lock().unwrap() = Some(error.clone()); }
+        *self.sendResult.lock().unwrap() = Some(result);
+        self.sending.store(false, Ordering::Release);
+        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+    }
+
     fn addTask(&self, task: NodeUiTask) {
         let mut tasks = self.tasks.lock().unwrap();
         if self.retired.load(Ordering::Acquire) { task.abort(); }
         else { tasks.push(task); }
     }
+}
+
+fn beginSend() -> Result<Arc<ChatSession>, String> {
+    let session = currentChat()
+        .ok_or("设备尚未连接")?;
+    if session
+        .services
+        .peers()
+        .activePeerNodeIds()
+        .unwrap_or_default()
+        .is_empty()
+    {
+        return Err("设备已离线".into());
+    }
+    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
+    if session.sending.swap(true, Ordering::AcqRel) {
+        return Err("请等待当前操作完成".into());
+    }
+    Ok(session)
 }
 
 /// Reconnects the volatile UI even when entry replacement happens between polls.
@@ -205,7 +231,7 @@ pub struct SpaceChatRoute {
 impl SpaceChatRoute {
     pub fn reset(&mut self) { clear(); *self = Self::default(); }
     pub fn poll(&mut self, services: NodeServices) {
-        let session = SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone();
+        let session = currentChat();
         if self.installed {
             if let Some(session) = &session {
                 self.chatId = session.chatId.clone();
@@ -481,6 +507,10 @@ fn openMessageStreams(session: &Arc<ChatSession>, descriptors: Vec<operit_link::
 
 static UI_REVISION: AtomicU32 = AtomicU32::new(1);
 static SESSION: OnceLock<Mutex<Option<Arc<ChatSession>>>> = OnceLock::new();
+
+fn currentChat() -> Option<Arc<ChatSession>> {
+    SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().clone()
+}
 // Display capacity follows the physical renderer. Encoded protocol state still
 // retains all list positions so subsequent deltas are never rebased/truncated.
 const MAX_CHAT_MESSAGES: usize = 12;
@@ -786,11 +816,7 @@ pub fn clear() {
 }
 
 pub fn snapshot() -> serde_json::Value {
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone();
+    let session = currentChat();
     match session {
         Some(session) => {
             // Do not hold UI state locks while serializing or acquiring another
@@ -814,25 +840,7 @@ pub fn snapshot() -> serde_json::Value {
 }
 
 pub fn newChat() -> Result<(), String> {
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("设备尚未连接")?;
-    if session
-        .services
-        .peers()
-        .activePeerNodeIds()
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err("设备已离线".into());
-    }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) {
-        return Err("请等待当前操作完成".into());
-    }
+    let session = beginSend()?;
     spawnNodeUiTask(move || async move {
         let args = chatFields(&session.chatId);
         let response = session
@@ -869,11 +877,7 @@ pub fn newChat() -> Result<(), String> {
 
 /// Returns a compact state label for the 320x240 task rail.
 pub fn taskStatus() -> String {
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone();
+    let session = currentChat();
     let Some(session) = session else {
         return "离线".into();
     };
@@ -1004,25 +1008,7 @@ pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
     {
         return Err("只支持小于 512 KiB 的 PNG/JPEG 图片".into());
     }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or("设备尚未连接")?;
-    if session
-        .services
-        .peers()
-        .activePeerNodeIds()
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err("设备已离线".into());
-    }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) {
-        return Err("请等待当前消息发送完成".into());
-    }
+    let session = beginSend()?;
     spawnNodeUiTask(move || async move {
         let result = async {
             let args = operit_link::CoreValue::Map(std::collections::BTreeMap::from([
@@ -1046,15 +1032,10 @@ pub fn sendImage(bytes: Vec<u8>, mime: String) -> Result<(), String> {
             if !link.starts_with("<link type=\"image\" id=\"") {
                 return Err("Core 返回了无效图片引用".into());
             }
-            sendImageMessage(&session, link).await
+            sendMessageToCore(&session, link).await
         }
         .await;
-        if let Err(error) = &result {
-            *session.error.lock().unwrap() = Some(error.clone());
-        }
-        *session.sendResult.lock().unwrap() = Some(result);
-        session.sending.store(false, Ordering::Release);
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        session.finishSend(result);
     });
     Ok(())
 }
@@ -1065,39 +1046,16 @@ pub fn send(text: String) -> Result<(), String> {
         return Err("消息不能为空".into());
     }
     if text.len() > 16384 { return Err("消息超过 16384 字节，请拆分发送".into()); }
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| "设备尚未连接 Space".to_string())?;
-    if session
-        .services
-        .peers()
-        .activePeerNodeIds()
-        .unwrap_or_default()
-        .is_empty()
-    {
-        return Err("设备已离线".into());
-    }
-    if !session.ready.load(Ordering::Acquire) { return Err("远端对话正在初始化，请稍后重试".into()); }
-    if session.sending.swap(true, Ordering::AcqRel) {
-        return Err("上一条消息仍在发送".into());
-    }
+    let session = beginSend()?;
     *session.error.lock().unwrap() = None;
     spawnNodeUiTask(move || async move {
-        let result = sendImageMessage(&session, text).await;
-        if let Err(error) = &result {
-            *session.error.lock().unwrap() = Some(error.clone());
-        }
-        *session.sendResult.lock().unwrap() = Some(result);
-        session.sending.store(false, Ordering::Release);
-        UI_REVISION.fetch_add(1, Ordering::Relaxed);
+        let result = sendMessageToCore(&session, text).await;
+        session.finishSend(result);
     });
     Ok(())
 }
 
-async fn sendImageMessage(session: &ChatSession, text: String) -> Result<(), String> {
+async fn sendMessageToCore(session: &ChatSession, text: String) -> Result<(), String> {
     // Construct Link values directly: avoid duplicating the input through a
     // JSON value tree on the device, and keep the firmware serializer small.
     let mut args = BTreeMap::new();
@@ -1387,11 +1345,7 @@ mod tests {
 
 /// Acknowledge the remote send, not merely admission to the local queue.
 pub fn takeSendResult() -> Option<Result<(), String>> {
-    let session = SESSION
-        .get_or_init(|| Mutex::new(None))
-        .lock()
-        .unwrap()
-        .clone()?;
+    let session = currentChat()?;
     let result = session.sendResult.lock().unwrap().take();
     result
 }

@@ -1,7 +1,5 @@
 #![allow(non_snake_case)]
 
-use std::sync::{atomic::{AtomicBool, Ordering}, Arc, Mutex};
-
 use esp_idf_hal::delay::FreeRtos;
 use esp_idf_hal::gpio::{InputPin, Output, OutputPin, PinDriver};
 use esp_idf_hal::spi::{
@@ -11,8 +9,7 @@ use esp_idf_hal::units::FromValueType;
 use operit_host_api::{HostError, HostResult};
 
 use crate::face::FaceRect;
-use crate::mirror_color::pack_rgb332;
-use crate::pins::{logicalDisplaySize, madctlForRotation, DISPLAY_ROTATION_DEGREES};
+use crate::pins::{logicalDisplaySize, DISPLAY_ROTATION_DEGREES};
 use crate::robot_face::FaceCanvas;
 
 const ILI9341_SWRESET: u8 = 0x01;
@@ -28,158 +25,7 @@ const ILI9341_FRMCTR1: u8 = 0xB1;
 const ILI9341_DISCTRL: u8 = 0xB6;
 const ILI9341_PWCTRL1: u8 = 0xC0;
 const ILI9341_PWCTRL2: u8 = 0xC1;
-const ILI9341_VMCTRL1: u8 = 0xC5;
-const ILI9341_VMCTRL2: u8 = 0xC7;
-const ILI9341_PWCTRLA: u8 = 0xCB;
-const ILI9341_PWCTRLB: u8 = 0xCF;
-const ILI9341_ENABLE3G: u8 = 0xF2;
-const ILI9341_GAMMASET: u8 = 0x26;
-const ILI9341_POSGAMMA: u8 = 0xE0;
 const ILI9341_NEGGAMMA: u8 = 0xE1;
-
-/// Thread-safe copy of the logical display framebuffer for diagnostics and mirroring.
-///
-/// The face renderer writes to the ILI9341, so keeping this copy lets the firmware
-/// expose the current screen over Wi-Fi without reading the panel back over SPI.
-pub struct Esp32ScreenMirror {
-    width: u16,
-    height: u16,
-    ui_active: AtomicBool,
-    state: Mutex<Esp32ScreenMirrorState>,
-}
-
-/// One ordered rectangle in the compact screen mirror.
-#[derive(Clone, Copy, Debug)]
-pub struct Esp32ScreenMirrorRect {
-    pub rect: FaceRect,
-    pub color: u16,
-}
-
-struct Esp32ScreenMirrorState {
-    background: u16,
-    rects: Vec<Esp32ScreenMirrorRect>,
-    pixels: Vec<u8>,
-}
-
-impl Esp32ScreenMirror {
-    /// Creates a compact RGB332 mirror with fallible allocation.
-    pub fn new(width: u16, height: u16) -> HostResult<Self> {
-        let length = usize::from(width) * usize::from(height);
-        let mut pixels = Vec::new();
-        pixels.try_reserve_exact(length)
-            .map_err(|error| HostError::new(format!("screen mirror allocation: {error}")))?;
-        pixels.resize(length, 0);
-        Ok(Self {
-            width,
-            height,
-            ui_active: AtomicBool::new(false),
-            state: Mutex::new(Esp32ScreenMirrorState {
-                background: 0,
-                rects: Vec::new(),
-                pixels,
-            }),
-        })
-    }
-
-    /// Returns the logical framebuffer dimensions.
-    pub fn dimensions(&self) -> (u16, u16) {
-        (self.width, self.height)
-    }
-
-    /// Releases the optional 320x240 pixel copy when no preview server uses it.
-    /// Physical TFT writes continue independently of this diagnostic mirror.
-    pub fn disablePixelMirror(&self) {
-        if let Ok(mut state) = self.state.lock() {
-            state.pixels = Vec::new();
-        }
-    }
-
-    /// Makes self-drawn UI the sole owner of physical display updates.
-    pub fn activateUi(&self) {
-        self.ui_active.store(true, Ordering::Release);
-    }
-
-    fn isUiActive(&self) -> bool {
-        self.ui_active.load(Ordering::Acquire)
-    }
-
-    /// Reads the compact drawing state while holding its lock for the duration of the read.
-    pub fn withState<F, T>(&self, reader: F) -> T
-    where
-        F: FnOnce(u16, &[Esp32ScreenMirrorRect]) -> T,
-    {
-        match self.state.lock() {
-            Ok(state) => reader(state.background, &state.rects),
-            Err(_) => reader(0, &[]),
-        }
-    }
-
-    /// Reads compact RGB332 pixels; callers expand only the output row or packet.
-    pub fn withRgb332<F, T>(&self, reader: F) -> T
-    where
-        F: FnOnce(&[u8]) -> T,
-    {
-        match self.state.lock() {
-            Ok(state) => reader(&state.pixels),
-            Err(_) => reader(&[]),
-        }
-    }
-
-    /// Copies one row, releasing the screen lock before callers perform network I/O.
-    pub fn copyRgb332Row(&self, y: u16, output: &mut [u8]) {
-        output.fill(0);
-        if y >= self.height { return; }
-        if let Ok(state) = self.state.lock() {
-            if state.pixels.is_empty() { return; }
-            let width = usize::from(self.width);
-            let count = output.len().min(width);
-            let start = usize::from(y) * width;
-            output[..count].copy_from_slice(&state.pixels[start..start + count]);
-        }
-    }
-
-    fn fill(&self, color: u16) {
-        if let Ok(mut state) = self.state.lock() {
-            state.background = color;
-            state.rects.clear();
-            state.pixels.fill(pack_rgb332(color));
-        }
-    }
-
-    fn fillRect(&self, rect: FaceRect, color: u16) {
-        if let Ok(mut state) = self.state.lock() {
-            state.rects.push(Esp32ScreenMirrorRect { rect, color });
-            if state.pixels.is_empty() { return; }
-            let right = rect.x.saturating_add(rect.width).min(self.width);
-            let bottom = rect.y.saturating_add(rect.height).min(self.height);
-            for y in rect.y.min(self.height)..bottom {
-                for x in rect.x.min(self.width)..right {
-                    let index = usize::from(y) * usize::from(self.width) + usize::from(x);
-                    state.pixels[index] = pack_rgb332(color);
-                }
-            }
-        }
-    }
-
-    /// Copies one little-endian RGB565 self-drawn UI region into the framebuffer mirror.
-    fn writeRgb565(&self, rect: FaceRect, bytes: &[u8]) {
-        if let Ok(mut state) = self.state.lock() {
-            if state.pixels.is_empty() { return; }
-            let right = rect.x.saturating_add(rect.width).min(self.width);
-            let bottom = rect.y.saturating_add(rect.height).min(self.height);
-            for y in rect.y.min(self.height)..bottom {
-                for x in rect.x.min(self.width)..right {
-                    let offset = (usize::from(y - rect.y) * usize::from(rect.width) + usize::from(x - rect.x)) * 2;
-                    if offset + 1 >= bytes.len() {
-                        return;
-                    }
-                    let index = usize::from(y) * usize::from(self.width) + usize::from(x);
-                    state.pixels[index] = pack_rgb332(u16::from_le_bytes([bytes[offset], bytes[offset + 1]]));
-                }
-            }
-        }
-    }
-}
 
 /// Drives the ESP32-2432S028 ILI9341 panel over HSPI.
 pub struct Esp32Ili9341 {
@@ -188,7 +34,6 @@ pub struct Esp32Ili9341 {
     _backlight: PinDriver<'static, Output>,
     width: u16,
     height: u16,
-    mirror: Arc<Esp32ScreenMirror>,
 }
 
 impl Esp32Ili9341 {
@@ -238,7 +83,6 @@ impl Esp32Ili9341 {
             _backlight: backlight,
             width,
             height,
-            mirror: Arc::new(Esp32ScreenMirror::new(width, height)?),
         };
         display.initialize()?;
         display
@@ -246,11 +90,6 @@ impl Esp32Ili9341 {
             .set_high()
             .map_err(|error| HostError::new(error.to_string()))?;
         Ok(display)
-    }
-
-    /// Returns the framebuffer mirror shared with the firmware web server.
-    pub fn screenMirror(&self) -> Arc<Esp32ScreenMirror> {
-        Arc::clone(&self.mirror)
     }
 
     /// Sends the ILI9341 power-up sequence and selects the firmware rotation.
@@ -373,19 +212,12 @@ impl FaceCanvas for Esp32Ili9341 {
         if self.width == 0 || self.height == 0 {
             return Ok(());
         }
-        if self.mirror.isUiActive() {
-            return Ok(());
-        }
         self.fillWindow(0, 0, self.width - 1, self.height - 1, color)?;
-        self.mirror.fill(color);
         Ok(())
     }
 
     fn fillRect(&mut self, rect: FaceRect, color: u16) -> HostResult<()> {
         if rect.width == 0 || rect.height == 0 {
-            return Ok(());
-        }
-        if self.mirror.isUiActive() {
             return Ok(());
         }
         let x1 = rect
@@ -402,7 +234,6 @@ impl FaceCanvas for Esp32Ili9341 {
             return Ok(());
         }
         self.fillWindow(rect.x, rect.y, x1, y1, color)?;
-        self.mirror.fillRect(rect, color);
         Ok(())
     }
 
@@ -438,7 +269,6 @@ impl FaceCanvas for Esp32Ili9341 {
             }
             self.spi.write(&swapped[..length]).map_err(|error| HostError::new(error.to_string()))?;
         }
-        self.mirror.writeRgb565(rect, pixels);
         Ok(())
     }
 }

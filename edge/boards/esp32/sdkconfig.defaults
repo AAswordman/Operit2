@@ -41,3 +41,6 @@ CONFIG_ESP_WIFI_ENABLE_WPA3_OWE_STA=n
 
 # Use the ESP32 ROM printf/scanf implementation for bounded native UI fields.
 CONFIG_NEWLIB_NANO_FORMAT=y
+
+# Station, setup AP and Link discovery expose IPv4 addresses on this board.
+CONFIG_LWIP_IPV6=n

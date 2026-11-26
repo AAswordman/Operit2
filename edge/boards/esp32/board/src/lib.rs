@@ -17,7 +17,6 @@ pub mod serial_debug;
 
 pub mod audio;
 pub mod face;
-pub mod mirror_color;
 pub mod pins;
 pub mod robot_face;
 pub mod touch;
@@ -33,8 +32,6 @@ mod gpio;
 pub use board::Esp32Board;
 #[cfg(target_os = "espidf")]
 pub use display::Esp32Ili9341;
-#[cfg(target_os = "espidf")]
-pub use display::{Esp32ScreenMirror, Esp32ScreenMirrorRect};
 #[cfg(target_os = "espidf")]
 pub use gpio::Esp32GpioHost;
 #[cfg(target_os = "espidf")]

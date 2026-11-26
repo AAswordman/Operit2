@@ -63,7 +63,7 @@ fn initializeAllocationDiagnostic() {
 /// Starts the ESP32-2432S028 Operit Edge firmware.
 #[cfg(target_os = "espidf")]
 fn main() {
-    if let Err(error) = runFirmware(None) {
+    if let Err(error) = runFirmware() {
         // Startup has not handed UART to Link yet. Use the ROM formatter rather
         // than linking Rust's buffered stderr solely for this fatal diagnostic.
         unsafe { esp_idf_hal::sys::esp_rom_printf(
@@ -85,9 +85,7 @@ fn main() {
 }
 
 #[cfg(target_os = "espidf")]
-fn runFirmware(
-    nodeServices: Option<operit_edge_sdk::runtime::NodeServices::NodeServices>,
-) -> operit_host_api::HostResult<()> {
+fn runFirmware() -> operit_host_api::HostResult<()> {
     use std::sync::Arc;
 
     use crate::config::Esp32FirmwareConfig;
@@ -106,6 +104,7 @@ fn runFirmware(
     use operit_edge_sdk::device::PeerRouter::EdgePeerRouter;
     use operit_edge_sdk::runtime::NodeServices::NodeServices;
     use operit_edge_sdk::runtime::PeerStateStore::PeerStateStore;
+    use operit_edge_sdk::runtime::RuntimePeerService::RuntimePeerService;
     use operit_edge_sdk::storage::CoreNodeIdentityStore::CoreNodeIdentityStore;
 
     esp_idf_svc::sys::link_patches();
@@ -116,7 +115,6 @@ fn runFirmware(
         "operit-esp32 stability diagnostics v1; reset_reason={}",
         unsafe { esp_idf_svc::sys::esp_reset_reason() }
     );
-    logRuntimeHealth("boot");
 
     // Mio/Tokio wake their device executors through eventfd. ESP-IDF returns
     // EACCES until its EventFD VFS is registered; keep the mount alive for the
@@ -167,9 +165,6 @@ fn runFirmware(
     let serialDebug = serialHost.debug_io();
     let faceHost = board.robotFaceHost();
     board.activateUi();
-    // The physical TFT is the only display sink in the firmware. Release the
-    // optional diagnostic framebuffer so pairing and chat retain heap headroom.
-    board.screenMirror().disablePixelMirror();
     let mut ui = Esp32Ui::new(&board)?;
     let scheduler =
         Arc::new(operit_host_native_scheduler::LocalHostRuntimeTaskSchedulerHost::new()?);
@@ -216,7 +211,6 @@ fn runFirmware(
     // Show the launcher even if the configured network is unavailable.
     ui.pump(1);
     let (_wifi, wifiMode) = Esp32Wifi::connectOrSetup(modem, &config, nvsPartition.clone())?;
-    logRuntimeHealth("wifi-ready");
     status.setWifiConnected(wifiMode == crate::wifi::Esp32WifiMode::Station && _wifi.stationConnected());
     let peerTransports = Esp32FirmwareConfig::peerTransports(wifiMode == crate::wifi::Esp32WifiMode::Station);
     let _sntp = if wifiMode == crate::wifi::Esp32WifiMode::Station {
@@ -224,7 +218,6 @@ fn runFirmware(
     } else {
         None
     };
-    logRuntimeHealth("sntp-ready");
     let _setupServer = match wifiMode {
         crate::wifi::Esp32WifiMode::Station => {
             let ip = _wifi.ipv4()?;
@@ -254,7 +247,6 @@ fn runFirmware(
             )?)
         }
     };
-    logRuntimeHealth("network-start-complete");
 
     // ESP-IDF mDNS must be initialized after the Wi-Fi netif is up. Keep the
     // same HostManager and inject this host capability before constructing the
@@ -270,26 +262,17 @@ fn runFirmware(
         log::info!("operit-esp32 discarded {discardedPairings} unfinished pairings after unsynchronized clock reset");
     }
     let edgeRouter = EdgePeerRouter::new(identity.nodeId.clone());
-    let injectedServices = nodeServices;
-    let peerService = match injectedServices.as_ref() {
-        Some(services) => services.peers(),
-        None => runtime_profile::create_peer_service(
-            Arc::new(hostManager.clone()),
-            &edgeRouter,
-            deviceInfo.clone(),
-            runtime_profile::peer_limits(),
-        )
-        .map_err(HostError::new)?,
-    };
-    if injectedServices.is_none() {
-        let peers = PeerStateStore::new(runtimeStorage.clone());
-        let mut saved = peers.hostConfig().map_err(HostError::new)?
-            .ok_or_else(|| HostError::new("Node listener preferences are not initialized"))?;
-        if saved.transports != peerTransports {
-            saved.transports = peerTransports.clone();
-            saved.updatedAt = currentTimeMillis();
-            peers.saveHostConfig(&saved).map_err(HostError::new)?;
-        }
+    let peerService = runtime_profile::create_peer_service(
+        Arc::new(hostManager.clone()), &edgeRouter, deviceInfo.clone(),
+        runtime_profile::peer_limits(),
+    ).map_err(HostError::new)?;
+    let peers = PeerStateStore::new(runtimeStorage.clone());
+    let mut saved = peers.hostConfig().map_err(HostError::new)?
+        .ok_or_else(|| HostError::new("Node listener preferences are not initialized"))?;
+    if saved.transports != peerTransports {
+        saved.transports = peerTransports.clone();
+        saved.updatedAt = currentTimeMillis();
+        peers.saveHostConfig(&saved).map_err(HostError::new)?;
     }
     let spaceService = operit_edge_sdk::runtime::NodeSpaceService::NodeSpaceService::new(
         runtimeStorage.clone(),
@@ -411,7 +394,6 @@ fn runFirmware(
     let mut lastPaired = paired;
     let mut nextPairingPoll = std::time::Instant::now();
     let mut nextWifiPoll = std::time::Instant::now();
-    logRuntimeHealth("ready");
     let mut lastChatRevision = u32::MAX;
     let mut lastChatConnected = false;
     let mut chatRoute = crate::edge_chat::SpaceChatRoute::default();
@@ -692,32 +674,5 @@ pub(crate) fn runtimeHealthSnapshot() -> serde_json::Value {
             "serialFrameCounters": operit_peer_link::serialFrameCounters(),
             "peerSessionError": operit_edge_sdk::runtime::HostRuntimePeerService::peerSessionDiagnostic(),
         })
-    }
-}
-
-#[cfg(target_os = "espidf")]
-pub(crate) fn logRuntimeHealth(stage: &str) {
-    use esp_idf_svc::sys;
-    unsafe {
-        log::info!(
-            "health {stage}: heap_free={} heap_min={} largest_8bit={} main_stack_free={}",
-            sys::esp_get_free_heap_size(),
-            sys::esp_get_minimum_free_heap_size(),
-            sys::heap_caps_get_largest_free_block(sys::MALLOC_CAP_8BIT),
-            sys::uxTaskGetStackHighWaterMark(std::ptr::null_mut()),
-        );
-        let mut stats = sys::nvs_stats_t::default();
-        let result = sys::nvs_get_stats(std::ptr::null(), &mut stats);
-        if result == sys::ESP_OK as i32 {
-            log::info!(
-                "health {stage}: nvs_used={} nvs_free={} nvs_available={} nvs_total={}",
-                stats.used_entries,
-                stats.free_entries,
-                stats.available_entries,
-                stats.total_entries,
-            );
-        } else {
-            log::warn!("health {stage}: NVS stats failed ({result})");
-        }
     }
 }
