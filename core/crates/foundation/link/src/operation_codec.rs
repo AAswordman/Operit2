@@ -100,11 +100,33 @@ pub fn decodeLinkRequest(bytes: &[u8]) -> Result<CoreLinkRequest, CoreLinkCodecE
     })
 }
 
+// A Call's application payload is already a validated CoreValue tree. Move
+// it out before typed metadata validation instead of walking and rebuilding it.
+#[cfg(feature = "compact-codec")]
+fn decodeCallResponse(bytes: &[u8]) -> Result<CoreCallResponse, CoreLinkCodecError> {
+    let mut value = crate::codec::decodeLinkValue(bytes)?;
+    let result = match &mut value {
+        CoreValue::Map(fields) => fields.get_mut("result"),
+        CoreValue::List(fields) => fields.get_mut(1),
+        _ => None,
+    };
+    let payload = match result {
+        Some(CoreValue::Map(fields)) if fields.len() == 1 => fields.get_mut("Ok")
+            .map(|value| std::mem::replace(value, CoreValue::Null)),
+        _ => None,
+    };
+    let mut response: CoreCallResponse = fromCoreValue(value)?;
+    if let Some(payload) = payload { response.result = Ok(payload); }
+    Ok(response)
+}
+#[cfg(not(feature = "compact-codec"))]
+fn decodeCallResponse(bytes: &[u8]) -> Result<CoreCallResponse, CoreLinkCodecError> { decodeLink(bytes) }
+
 /// Decodes each response body directly into its standard typed representation.
 pub fn decodeLinkResponse(bytes: &[u8]) -> Result<CoreLinkResponse, CoreLinkCodecError> {
     let (operation, body) = envelope::<Operation>(bytes)?;
     Ok(match operation {
-        Operation::Call => CoreLinkResponse::Call(decodeLink(body)?),
+        Operation::Call => CoreLinkResponse::Call(decodeCallResponse(body)?),
         Operation::Watch => {
             requireVariantMap(body)?;
             #[derive(Deserialize)]

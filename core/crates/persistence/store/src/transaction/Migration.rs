@@ -290,7 +290,7 @@ impl Definition {
         };
         let mut data = preferences
             .view
-            .clone()
+            .as_deref().cloned()
             .unwrap_or_else(|| Data::empty(owner));
         data.values = preferences
             .iterEntries()
@@ -304,7 +304,7 @@ impl Definition {
         }
         preferences.values = migrated.values;
         context.after.values.clear();
-        preferences.view = Some(context.after);
+        preferences.view = Some(Arc::new(context.after));
         Ok(())
     }
 }

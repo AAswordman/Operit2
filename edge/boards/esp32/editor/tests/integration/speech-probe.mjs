@@ -7,7 +7,7 @@ import ts from 'typescript';
 // binary codec. It does not substitute for microphone, speaker or STT quality tests.
 export async function probeSpeech({core, node, directory, post, waitDevice, t}) {
   const fixture = path.join(directory, 'edge_speech_fixture.js');
-  const metadata = {name:'edge_speech_fixture', apiVersion:'2.0.0', description:'Isolated device speech transport test',
+  const metadata = {name:'edge_speech_fixture', api_version:'2.0.0', description:'Isolated device speech transport test',
     enabledByDefault:true, tools:[{name:'probe',description:'Verify bounded speech packets',
       parameters:[{name:'node_id',description:'Paired Edge node',type:'string',required:true},
         {name:'mode',description:'Disconnect or roundtrip',type:'string',required:false}]}]};

@@ -29,7 +29,7 @@ fn data(store: &PreferencesDataStore, preferences: &Preferences) -> Result<Data,
     let version = PreferencesDataStore::readSchemaVersion(preferences)?;
     let mut result = preferences
         .view
-        .clone()
+        .as_deref().cloned()
         .unwrap_or_else(|| Data::empty(file::preferenceOwner(&store.storagePath, version)));
     result.owner = file::preferenceOwner(&store.storagePath, version);
     result.values = preferences
@@ -48,7 +48,7 @@ fn preferences(mut data: Data) -> Preferences {
         &PreferencesDataStore::schemaVersionKey(),
         data.owner.format,
     );
-    result.view = Some(data);
+    result.view = Some(Arc::new(data));
     result
 }
 fn state(store: &PreferencesDataStore) -> Result<Option<OwnerState>, Error> {

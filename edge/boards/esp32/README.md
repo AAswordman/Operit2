@@ -102,29 +102,41 @@ application image against the 3,997,696-byte app partition. It does not flash.
 container. Normal firmware updates preserve NVS and the reserved layout partition.
 Keep the matching ELF for crash address resolution.
 
-Measured on 2026-11-27, the complete Core text/audio application is 2,691,008 bytes
-(2.57 MiB), down 155,984 bytes (5.48%) from the previous 2,846,992-byte image.
-It leaves 1,306,688 bytes in the unchanged application partition. The 1 MiB
-target remains unmet by 1,642,432 bytes. The fixed 4 MiB flash container is not
-the app size. A build without HTTP discovery directories now rejects those
-settings before writing them, allowing URL parsing to leave this image.
-Endpoint reconciliation persists authority without diagnostic trend counters;
-Core retains those counters. Listener start and unpair actions share one task
-submission and completion path. Audio capture no longer performs diagnostic sample
-statistics or a local tone/capture self-test. The current chat window projects
-directly to bounded display rows; Core still owns complete history.
+Measured on 2026-11-27, the complete Core text/audio application is
+2,596,784 bytes (2.48 MiB), down 94,224 bytes from the previous
+2,691,008-byte image. The unchanged application partition has 1,400,912 bytes
+free. The 1 MiB target remains unmet by 1,548,208 bytes. The fixed 4 MiB flash
+container is not the application size.
 
-Verification: Xtensa release, matching ELF ABI, application partition and C/Wasm
-packaging, 109 editor tests, 18 USB protocol tests, 25 board tests and TypeScript
-checks passed. The runtime without HTTP directories passed 150 tests, and the
-existing config test also verifies that unsupported directories leave storage
-unchanged; the directory-enabled variant passed its targeted config test.
-Firmware-module simulation passed 55 tests and Core/Edge protocol fixtures
-passed 46 tests. One UI test dedicated to the deleted audio self-test was removed.
-The separate Windows CLI/UI end-to-end run still exits with 0xC0000005 during
-outgoing pairing; its text/audio round trip is not verified.
-The current-source fixture CLI was built with the unused native inference engine
-temporarily disabled; its manifest and lockfile were restored after that build.
+Node-local preferences reject transaction commit records and omit the replica
+codec. Shared immutable replay views avoid copying metadata with every snapshot.
+Ordered preference maps eliminate sorting copies before encoding. The storage
+edit and timeout paths share their implementations across callers. Link values
+use the existing MessagePack scanner with a bounded container stack; successful
+Call payloads move through metadata validation without rebuilding their trees.
+The native simulator's TCP buffer is heap-owned instead of occupying its task stack.
+
+Verification: final Xtensa release, ELF ABI, partition and C/Wasm packaging
+passed. Link: 62 passed; runtime without HTTP directories: 150 passed; persistence:
+373 passed, 3 ignored; editor: 109 passed; TypeScript checks passed. Existing
+firmware-module simulation and Core/Edge protocol fixtures previously passed
+55 and 46 tests respectively.
+
+The Linux simulator passed a targeted real-TCP transport workflow against Core:
+pairing and approval, storage-full/interrupted-write recovery, 65-second PCM byte
+volume, long recognition text, repeated audio rounds, playback backpressure,
+text streaming, long UTF-8 input, reconnect, restart and offline cancellation.
+The deterministic model and speech providers do not validate recognition quality.
+The workflow kept the 256 KiB heap and 16/24/20 KiB guarded task stacks; sampled
+peak heap was 230,256 bytes with zero allocation failures. One preceding run
+timed out waiting for the simulated leave action; the repeat completed. Two bundled-plugin
+blocks were excluded only in that targeted run; their assertions remain in the
+full suite. The full workflow still fails when a Core market package reports a
+successful import but is absent from the loaded-plugin list. The separate Windows
+workflow still exits with 0xC0000005; a debugger locates its failure inside the
+Windows BCrypt initialization path on a bounded stack. Neither full workflow is
+reported as passed. The fixture CLI has native inference disabled; its manifest
+and lockfile were restored after building.
 
 The simulator compiles actual firmware protocol/storage modules, constrains its
 Rust heap to 256 KiB and uses guarded task stacks. C/Wasm tests run the same UI

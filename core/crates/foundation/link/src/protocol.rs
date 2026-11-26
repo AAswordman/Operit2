@@ -473,6 +473,7 @@ impl<'de> Deserialize<'de> for CoreValue {
 
 /// Converts a serializable Rust value into the Link value model.
 #[allow(non_snake_case)]
+#[inline(never)]
 pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::CoreLinkCodecError> {
     crate::value_codec::to_value(value)
         .map_err(|e| crate::codec::CoreLinkCodecError::Encode(e.to_string()))
@@ -480,6 +481,7 @@ pub fn toCoreValue(value: impl Serialize) -> Result<CoreValue, crate::codec::Cor
 
 /// Converts a Link value into a typed Rust value.
 #[allow(non_snake_case)]
+#[inline(never)]
 pub fn fromCoreValue<T>(value: CoreValue) -> Result<T, crate::codec::CoreLinkCodecError>
 where
     T: serde::de::DeserializeOwned,

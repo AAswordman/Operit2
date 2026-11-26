@@ -18,21 +18,25 @@ pub(crate) async fn withScheduler<F: Future>(
             .try_into()
             .map_err(|_| HostError::new("Peer timeout exceeds u64 milliseconds"))?,
     );
-    timeoutWithDelay(Box::pin(operation), delay).await
+    let operation: std::pin::Pin<Box<dyn Future<Output = F::Output> + '_>> = Box::pin(operation);
+    timeoutWithDelay(operation, delay).await
 }
 
 async fn timeoutWithDelay<F: Future>(
     operation: F,
-    delay: HostRuntimeTurnFuture,
+    mut delay: HostRuntimeTurnFuture,
 ) -> HostResult<F::Output> {
-    tokio::select! {
-        biased;
-        result = operation => Ok(result),
-        result = delay => {
-            result?;
-            Err(HostError::timeout("Peer operation timed out"))
+    let mut operation = std::pin::pin!(operation);
+    std::future::poll_fn(|context| {
+        if let std::task::Poll::Ready(value) = operation.as_mut().poll(context) {
+            return std::task::Poll::Ready(Ok(value));
         }
-    }
+        match delay.as_mut().poll(context) {
+            std::task::Poll::Ready(result) => std::task::Poll::Ready(
+                result.and_then(|()| Err(HostError::timeout("Peer operation timed out")))),
+            std::task::Poll::Pending => std::task::Poll::Pending,
+        }
+    }).await
 }
 
 #[cfg(test)]

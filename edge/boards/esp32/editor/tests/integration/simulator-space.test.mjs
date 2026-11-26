@@ -301,6 +301,8 @@ test(process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1'
       assert(!screen().nodes.some(node => ['error', 'space_join_error'].includes(node.id)), 'successful approval must clear the prior failed-action overlay');
     };
     const leave = async () => {
+      await waitDevice('completed Space request before leaving', device =>
+        device.deviceSpace?.phase === 0 && !device.deviceSpace?.pendingJoin);
       await update(); call('navigate_home');
       await tap('sidebar_toggle'); await tap('sidebar_settings'); await tap('settings_space'); await tap('space_manage'); await tap('space_leave');
       assert.equal(screen().page, 'LeaveSpace');
@@ -459,7 +461,7 @@ test(process.env.OPERIT_SIM_TEST_DEVICE_SPACE_ONLY === '1'
     // Execute the public APIs from a real Core JavaScript package, not just
     // through CLI built-in tool calls or a mocked JS execution host.
     const fixture = path.join(directory, 'edge_ports_fixture.js');
-    const fixtureMetadata = {name:'edge_ports_fixture', apiVersion:'2.0.0', description:'Isolated hardware SDK integration test',
+    const fixtureMetadata = {name:'edge_ports_fixture', api_version:'2.0.0', description:'Isolated hardware SDK integration test',
       enabledByDefault:true, tools:[{name:'probe', description:'Read a declared Edge native action',
         parameters:[{name:'node_id',description:'Explicit Edge node',type:'string',required:true}]}]};
     await writeFile(fixture, `/* METADATA
