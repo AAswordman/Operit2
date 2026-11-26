@@ -63,6 +63,15 @@ replacement and source-mutation reconciliation remain supported.
 
 ## Verification and diagnostics
 
+Automatic summaries reserve one task per chat. If another automatic request
+arrives while that task is registered, it observes the existing completion.
+Before calling the model, the owner retains the captured history if it is still
+the beginning of the current history; otherwise it uses the current history.
+It estimates the selected history and skips only when it is below the threshold.
+Manual summaries and token-limit recovery continue to run explicitly. The
+before-send cached window remains a scheduling hint; the post-reply check saves
+a fresh estimate after the assistant message has been committed.
+
 Provider regressions compare serialized DeepSeek Chat Completions and Responses
 requests, verifying that the summary has the original message prefix and tools.
 OpenAI Responses additionally verifies that `prompt_cache_key` stays equal.
