@@ -1,0 +1,16 @@
+{
+  "ugui": {
+    "repository": "achimdoebler/UGUI",
+    "commit": "ce0bccb5b7d4877c42081419fccadf7aa5727303",
+    "files": {
+      "ugui.c": {
+        "source": "ugui.c",
+        "sha256": "b71500f0fad87b65a31b0af85309ba32859cbc2be663f51e34cd3778dc2098e5"
+      },
+      "ugui.h": {
+        "source": "ugui.h",
+        "sha256": "670e47d3e940eab9f8f8e452ba9ef0edc295061ffe427caa6d80033b88e703a4"
+      }
+    }
+  }
+}

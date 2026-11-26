@@ -1,0 +1,91 @@
+--- a/edge/boards/esp32/ui_port/operit_mini_ui.c
++++ b/edge/boards/esp32/ui_port/operit_mini_ui.c
+@@ -4,6 +4,7 @@
+  */
+ #include "operit_mini_ui.h"
+ #include "mini_font.h"
++#include "ugui.h"
+ #include <stdio.h>
+ #include <stdarg.h>
+ #include <string.h>
+@@ -67,14 +68,15 @@
+ } face_primitive_t;
+ #include "mini_face.h"
+ static mini_state_t ui;
++static int stroke_width = 1;
+ static uint8_t strip[WIDTH * ROWS * 2];
+ /* A bounded inspection buffer is included in the real device RAM budget. */
+ static char debug_json[3328];
+ static size_t json_at;
+ static bool json_ok;
+-_Static_assert(sizeof(ui) + sizeof(strip) + sizeof(debug_json) + sizeof(json_at) + sizeof(json_ok) <= 10 * 1024,
++_Static_assert(sizeof(ui) + sizeof(strip) + sizeof(debug_json) + sizeof(json_at) + sizeof(json_ok) + sizeof(stroke_width) <= 10 * 1024,
+                "Mini UI static RAM must remain below 10 KiB");
+-size_t operit_mini_static_bytes(void) { return sizeof(ui) + sizeof(strip) + sizeof(debug_json) + sizeof(json_at) + sizeof(json_ok); }
++size_t operit_mini_static_bytes(void) { return sizeof(ui) + sizeof(strip) + sizeof(debug_json) + sizeof(json_at) + sizeof(json_ok) + sizeof(stroke_width); }
+ size_t operit_mini_draw_bytes(void) { return sizeof(strip); }
+ static uint16_t rgb(unsigned c) { return (uint16_t)(((c >> 8) & 0xf800) | ((c >> 5) & 0x07e0) | ((c >> 3) & 31)); }
+ static void invalidate(void) {
+@@ -132,11 +134,15 @@
+     unsigned at = (unsigned)((y-ui.render_y)*WIDTH+x)*2;
+     strip[at] = (uint8_t)c; strip[at+1] = (uint8_t)(c >> 8);
+ }
++static void graphics_pixel(UG_S16 x, UG_S16 y, UG_COLOR color) {
++    for (int row=0;row<stroke_width;++row) for (int col=0;col<stroke_width;++col)
++        pixel(x-stroke_width/2+col,y-stroke_width/2+row,color);
++}
+ static void rect(int x, int y, int w, int h, uint16_t color) {
+     int top = y > ui.render_y ? y : ui.render_y;
+     int end = y+h < ui.render_y+ROWS ? y+h : ui.render_y+ROWS;
+     int left = x > 0 ? x : 0, right = x+w < WIDTH ? x+w : WIDTH;
+-    for (int row = top; row < end; ++row) for (int col = left; col < right; ++col) pixel(col,row,color);
++    if(left<right&&top<end)UG_FillFrame(left,top,right-1,end-1,color);
+ }
+ static void text(const node_t *node) {
+     const char *s = node->text;
+@@ -412,15 +418,9 @@
+ }
+ /* Small integer-only SVG painter. Geometry lives in flash, not a framebuffer. */
+ static void vector_line(int x,int y,int endX,int endY,int width,uint16_t color) {
+-    int dx=endX>x?endX-x:x-endX, sx=x<endX?1:-1;
+-    int dy=endY>y?y-endY:endY-y, sy=y<endY?1:-1, error=dx+dy;
+-    for (;;) {
+-        rect(x-width/2,y-width/2,width,width,color);
+-        if(x==endX&&y==endY)break;
+-        int twice=2*error;
+-        if(twice>=dy){error+=dy;x+=sx;}
+-        if(twice<=dx){error+=dx;y+=sy;}
+-    }
++    stroke_width=width;
++    UG_DrawLine(x,y,endX,endY,color);
++    stroke_width=1;
+ }
+ static void face(const node_t *box) {
+     for(unsigned i=0;i<sizeof(face_primitives)/sizeof(*face_primitives);++i) {
+@@ -764,7 +764,8 @@
+ bool operit_ui_init(uint16_t w,uint16_t h,operit_ui_flush_cb_t flush,operit_ui_touch_cb_t touch,operit_ui_action_cb_t action,void *context) {
+     (void)touch;
+     if(w!=WIDTH||h!=HEIGHT||!flush) return false;
+-    memset(&ui,0,sizeof(ui)); ui.page=2; ui.flush=flush; ui.action=action; ui.context=context; ui.pressed_node=-1;ui.chat_follow_tail=true;
++    memset(&ui,0,sizeof(ui));
++    ui.page=2; ui.flush=flush; ui.action=action; ui.context=context; ui.pressed_node=-1;ui.chat_follow_tail=true;
+     copy(ui.space,sizeof(ui.space),"等待加入设备空间"); invalidate(); scene(); return true;
+ }
+ void operit_ui_scene_painter(operit_ui_scene_cb_t painter) { ui.scene_painter=painter; }
+@@ -780,6 +781,8 @@
+     if(ui.render_y==0) ui.frame_tick=ui.scene_tick;
+     if(!ui.dirty||!ui.flush) return;
+     scene();
++    UG_GUI graphics={0};
++    UG_Init(&graphics,graphics_pixel,WIDTH,HEIGHT);
+     /* Bound SPI work per main-loop iteration; no whole-frame stack buffer. */
+     for (unsigned n=0;n<8&&ui.render_y<HEIGHT;++n) {
+         memset(strip,0,sizeof(strip));
+@@ -798,6 +801,7 @@
+         operit_ui_area_t area={0,ui.render_y,WIDTH-1,ui.render_y+ROWS-1};
+         ui.flush(&area,strip,sizeof(strip),ui.context); ui.render_y+=ROWS;
+     }
++    UG_SelectGUI(NULL);
+     if(ui.render_y>=HEIGHT) {
+         ui.dirty=ui.refresh_again;ui.refresh_again=false;
+         if(ui.dirty)ui.render_y=0;

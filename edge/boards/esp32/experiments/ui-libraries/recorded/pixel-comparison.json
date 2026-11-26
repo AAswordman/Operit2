@@ -1,0 +1,74 @@
+[
+  {
+    "scenario": "approval",
+    "page": "Space",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "chat-start",
+    "page": "Chat",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "chat-text",
+    "page": "Chat",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "drawer",
+    "page": "Sidebar",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "error",
+    "page": "Space",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "face-default",
+    "page": "Expression",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "face-sad",
+    "page": "Expression",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "face-sleepy",
+    "page": "Expression",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "paired",
+    "page": "Settings",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "pairing",
+    "page": "Pairing",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "remote-home",
+    "page": "Settings",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  },
+  {
+    "scenario": "scene",
+    "page": "edge_scene",
+    "pixelDifferences": 0,
+    "stateEqual": true
+  }
+]

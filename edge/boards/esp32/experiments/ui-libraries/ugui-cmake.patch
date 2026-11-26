@@ -1,0 +1,12 @@
+--- a/edge/boards/esp32/ui_port/CMakeLists.txt
++++ b/edge/boards/esp32/ui_port/CMakeLists.txt
+@@ -1,6 +1,6 @@
+ idf_component_register(
+-    SRCS "operit_mini_ui.c"
+-    INCLUDE_DIRS "."
++    SRCS "operit_mini_ui.c" "../.embuild/ugui-probe/ugui.c"
++    INCLUDE_DIRS "." "../.embuild/ugui-probe"
+     REQUIRES esp_timer esp_partition spi_flash nvs_flash
+ )
+-message(STATUS "Operit UI: allocator-free self-drawn renderer")
++message(STATUS "Operit UI experiment: uGUI RGB565 primitive backend")
