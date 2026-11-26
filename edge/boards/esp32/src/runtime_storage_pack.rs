@@ -1,7 +1,6 @@
 //! Small bounded LZSS records for the ESP32 virtual storage cache.
 //! Records and range-read history are bounded; no whole-database decompression.
 use operit_host_api::{HostError, HostResult};
-use std::io::{self, Write};
 
 pub const MAX_RECORD_SIZE: usize = 16 * 1024;
 const WINDOW: usize = 4096;
@@ -115,10 +114,14 @@ impl MatchIndex {
         best
     }
 }
+// Both passes use one encoder: count first, then fill the exactly reserved Vec.
+// A generic io::Write sink duplicated the encoder and retained unused I/O errors
+// in Flash even though these in-memory sinks cannot produce an I/O failure.
 #[inline(never)]
-fn compress(input: &[u8], mut output: impl Write, index: &mut MatchIndex) -> io::Result<()> {
+fn compress(input: &[u8], mut output: Option<&mut Vec<u8>>, index: &mut MatchIndex) -> usize {
     index.reset();
     let mut at = 0;
+    let mut size = 0;
     while at < input.len() {
         let mut flags = 0u8;
         let mut group = [0u8; 16];
@@ -138,20 +141,13 @@ fn compress(input: &[u8], mut output: impl Write, index: &mut MatchIndex) -> io:
                 at += 1;
             }
         }
-        output.write_all(&[flags])?;
-        output.write_all(&group[..used])?;
+        if let Some(bytes) = output.as_deref_mut() {
+            bytes.push(flags);
+            bytes.extend_from_slice(&group[..used]);
+        }
+        size += 1 + used;
     }
-    Ok(())
-}
-struct Counter(usize);
-impl Write for Counter {
-    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-        self.0 += bytes.len();
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
-    }
+    size
 }
 /// Two passes reserve the compressed size, not the expanded JSON record size.
 #[inline(never)]
@@ -162,15 +158,14 @@ pub fn pack(input: &[u8]) -> HostResult<Vec<u8>> {
         ));
     }
     let mut index = MatchIndex::new(input.len())?;
-    let mut count = Counter(0);
-    compress(input, &mut count, &mut index).map_err(|e| HostError::new(e.to_string()))?;
-    let compressed = count.0 < input.len();
-    let size = 3 + if compressed { count.0 } else { input.len() };
+    let count = compress(input, None, &mut index);
+    let compressed = count < input.len();
+    let size = 3 + if compressed { count } else { input.len() };
     let mut output = Vec::new();
     output.try_reserve_exact(size).map_err(|_| allocation(size))?;
     output.push(if compressed { 2 } else { 0 });
     output.extend_from_slice(&(input.len() as u16).to_le_bytes());
-    if compressed { compress(input, &mut output, &mut index).map_err(|e| HostError::new(e.to_string()))?; }
+    if compressed { compress(input, Some(&mut output), &mut index); }
     else { output.extend_from_slice(input); }
     Ok(output)
 }

@@ -1,6 +1,8 @@
 //! Real TCP, shared pairing and shared admission, with no application runtime.
 #[path = "../../../src/runtime_storage_pack.rs"]
 mod runtime_storage_pack;
+#[path = "../../../src/runtime_profile.rs"]
+mod runtime_profile;
 use runtime_storage_pack as pack;
 #[path = "../../../src/runtime_storage_codec.rs"]
 mod codec;
@@ -30,7 +32,22 @@ struct Storage(
     bool,
     Mutex<codec::tests::PhysicalNvs>,
     Mutex<Option<usize>>,
+    Arc<JournalStorage>,
 );
+/// Full Core needs the production SQLite journal as well as in-memory preferences.
+/// Each fixture owns a private temporary namespace, shared across reopen operations.
+struct JournalStorage(operit_host_native_storage::NativeRuntimeStorageHost);
+impl Default for JournalStorage {
+    fn default() -> Self {
+        let root = std::env::temp_dir().join(format!("operit-space-test-{}", uuid::Uuid::new_v4()));
+        Self(operit_host_native_storage::NativeRuntimeStorageHost::new(root.clone(), root.join("workspaces")))
+    }
+}
+impl Drop for JournalStorage {
+    fn drop(&mut self) {
+        if let Some(root) = self.0.runtimeRootDir() { let _ = std::fs::remove_dir_all(root); }
+    }
+}
 impl Storage {
     fn update(&self, change: impl FnOnce(&mut BTreeMap<String, Vec<u8>>)) -> HostResult<()> {
         let mut files = self.0.lock().unwrap();
@@ -68,6 +85,10 @@ impl Storage {
     }
 }
 impl RuntimeStorageHost for Storage {
+    fn openTransactionDatabase(&self, path: &str) -> HostResult<Box<dyn operit_host_api::RuntimeSqliteConnection>> {
+        if self.1 { return Err(HostError::new("Endpoint storage has no SQL journal")); }
+        self.4.0.openTransactionDatabase(path)
+    }
     fn retainPreferencesCache(&self) -> bool { !self.1 }
     fn nodeLocalApplicationHistoryLimit(&self) -> Option<usize> { self.1.then_some(2) }
 
@@ -180,6 +201,7 @@ fn node(
         bounded,
         Mutex::default(),
         Mutex::default(),
+        Default::default(),
     )))
 }
 fn node_from_storage(
@@ -824,7 +846,7 @@ async fn approval_retry_recovers_each_partial_write_without_duplicate_admission(
                     // in-memory decision or operation can rescue this retry.
                     gateway_peer.stop().await.unwrap();
                     wait_for_peer_availability(&applicant_peer, &gateway.localNodeId(), false).await;
-                    let recovered = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default()));
+                    let recovered = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default(), storage.4.clone()));
                     (storage, gateway_router, gateway_peer, gateway) = node_from_storage(recovered);
                     gateway_peer.startListening(&[PeerTransport::Tcp]).await.unwrap();
                     wait_for_peer_availability(&applicant_peer, &gateway.localNodeId(), true).await;
@@ -838,7 +860,7 @@ async fn approval_retry_recovers_each_partial_write_without_duplicate_admission(
             }).count();
             assert_eq!(admissions, 1, "failure point {failure} appended duplicate admissions");
             // Reopen fresh storage identity: no process-shared store caches.
-            let reopened = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default()));
+            let reopened = Arc::new(Storage(Mutex::new(storage.0.lock().unwrap().clone()), true, Mutex::new(storage.2.lock().unwrap().clone()), Mutex::default(), storage.4.clone()));
             let restored = NodeSpaceService::new(reopened, gateway_peer.clone()).unwrap();
             assert_eq!(restored.spaceChannelScope(&applicant_id).unwrap(), gateway.spaceChannelScope(&applicant_id).unwrap());
         }).await;
@@ -1116,6 +1138,7 @@ mod core_edge {
             true,
             Mutex::default(),
             Mutex::default(),
+            Default::default(),
         )))
     }
     fn reopened(storage: &Arc<Storage>) -> Arc<Storage> {
@@ -1124,6 +1147,7 @@ mod core_edge {
             storage.1,
             Mutex::new(storage.2.lock().unwrap().clone()),
             Mutex::default(),
+            storage.4.clone(),
         ))
     }
     async fn start(core: &CoreFixture, edge: &EdgeFixture) {
@@ -1257,6 +1281,61 @@ mod core_edge {
         })
         .await;
         core.peers.stop().await.unwrap();
+        edge.peers.stop().await.unwrap();
+        outcome.unwrap();
+    }
+
+    /// Saving a second Core pairing must not grant it the selected Space.
+    #[tokio::test]
+    async fn two_core_pairings_survive_restart_with_only_one_admitted_space() {
+        let _guard = TEST_LOCK.lock().await;
+        let a = core_node();
+        let b = core_node();
+        let edge = edge_node_with_limits(Arc::new(Storage(
+            Mutex::default(), true, Mutex::default(), Mutex::default(),
+            Default::default(),
+        )), runtime_profile::peer_limits());
+        let outcome = tokio::time::timeout(Duration::from_secs(30), async {
+            start(&a, &edge).await;
+            b.peers.startListening(&[PeerTransport::Tcp]).await.unwrap();
+            let a_id = a.router.localNodeId();
+            let b_id = b.router.localNodeId();
+            for core in [&a, &b] {
+                // Device-initiated pairings authorize its outgoing join request.
+                // Inbound and outbound grants remain separate in the shared protocol.
+                let address = PeerStateStore::new(core.storage.clone()).hostConfig().unwrap().unwrap().bindAddress;
+                let pending = edge.peers.startPairing(PeerEndpoint {
+                    nodeId: core.router.localNodeId(), address,
+                }, Some(PeerTransport::Tcp)).await.unwrap();
+                let code = core.peers.pairingPrompts().unwrap().into_iter()
+                    .find(|prompt| prompt.pairingId == pending.pairingId).unwrap().confirmationCode;
+                edge.peers.finishPairing(&pending.pairingId, &code).await.unwrap();
+            }
+            assert_eq!(edge.peers.pairedPeers().unwrap().len(), 2);
+            assert_eq!(edge.service.spaceChannelScope(&a_id).unwrap(), None);
+            assert_eq!(edge.service.spaceChannelScope(&b_id).unwrap(), None);
+            let request = edge.service.requestDeviceSpaceJoin(a_id.clone()).await.unwrap();
+            assert_eq!(request.status, SpaceJoinStatus::Pending);
+            a.service.decideDeviceSpaceJoin(request.requestId.clone(), request.assignmentVersion, true).await.unwrap();
+            assert_eq!(edge.service.refreshDeviceSpaceJoin(request.requestId).await.unwrap().status, SpaceJoinStatus::Joined);
+            let selected_space = a.service.deviceSpace().unwrap().spaceId;
+            let state = edge.service.spaceStore().space().unwrap();
+            assert_eq!(state.spaceId, selected_space);
+            assert!(state.members.contains(&a_id));
+            assert!(!state.members.contains(&b_id));
+            assert_eq!(edge.service.spaceChannelScope(&a_id).unwrap(), Some(selected_space.clone()));
+            assert_eq!(edge.service.spaceChannelScope(&b_id).unwrap(), None);
+            assert_eq!(edge.peers.pairedPeers().unwrap().len(), 2);
+            edge.peers.stop().await.unwrap();
+            let restored = edge_node_with_limits(reopened(&edge.storage), runtime_profile::peer_limits());
+            assert_eq!(restored.peers.pairedPeers().unwrap().len(), 2);
+            assert_eq!(restored.service.spaceStore().space().unwrap().spaceId, selected_space);
+            assert_eq!(restored.service.spaceChannelScope(&a_id).unwrap(), Some(selected_space));
+            assert_eq!(restored.service.spaceChannelScope(&b_id).unwrap(), None);
+            restored.peers.stop().await.unwrap();
+        }).await;
+        a.peers.stop().await.unwrap();
+        b.peers.stop().await.unwrap();
         edge.peers.stop().await.unwrap();
         outcome.unwrap();
     }
@@ -1616,7 +1695,9 @@ mod core_edge {
         let _guard = TEST_LOCK.lock().await;
         let core = core_node();
         let edge = edge_node_with_limits(Arc::new(Storage(Mutex::default(), true,
-            Mutex::default(), Mutex::default())),
+            Mutex::default(), Mutex::default(),
+            Default::default(),
+        )),
             operit_edge_sdk::runtime::HostRuntimePeerService::PeerRuntimeLimits::constrained());
         start(&core, &edge).await;
         let result = tokio::time::timeout(Duration::from_secs(30), async {

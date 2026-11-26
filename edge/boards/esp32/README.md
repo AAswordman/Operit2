@@ -34,6 +34,19 @@ Configure Wi-Fi from the setup page or with `OPERIT_WIFI_SSID` and
 joining a Space remains a separate, approved action. A Core receiving a remote
 pairing uses the same code-confirmed shared handshake.
 
+The device can retain pairings with multiple Core nodes while belonging to one
+current Space. Pairing another Core does not replace the current Space or grant
+that Core its permissions. Space admission requires its own approved request.
+Leaving a Space keeps direct pairings. The board currently accepts up to two
+concurrent incoming sessions; this is not a two-pairing storage limit. Retained
+credentials and Space state still share the board's bounded NVS capacity.
+The current screen does not provide a selector for all saved Core pairings:
+the join action uses the last requested target, or the first outbound pairing.
+This UI limitation is separate from the shared protocol's multi-pairing support.
+Inbound and outbound pairing authorizations are separate. For the ESP32 to
+initiate a join request, it needs an outbound pairing to the selected Core;
+an inbound-only pairing from that Core does not grant the reverse direction.
+
 Use the ESP32 toolchain and partition table documented in the repository's
 `BUILDING.md`. Select the actual serial port for your device rather than assuming
 the port in a developer's local configuration. Preserve existing Wi-Fi/NVS data
@@ -308,6 +321,31 @@ C/Wasm tests exercise the same renderer. Build the preview before those tests.
 The hardware smoke tool requires an already paired/admitted device and does not
 complete first-pairing or full-chat acceptance. See the editor's verification
 commands and distinguish simulator, build and physical-device results.
+
+### Task cat firmware update (2026-11-26)
+
+The current task cat build passes Xtensa compilation, ABI inspection and actual
+image generation: **3,997,552 / 3,997,696 bytes**, with **144 bytes free** in the
+unchanged application partition. Sharing one packed-storage encoder between its
+counting and writing passes saves 656 image bytes without changing the stored
+format, dictionary, allocation budget or enabled device services. Further firmware
+changes must rerun `npm run check:firmware --prefix edge/boards/esp32/editor`;
+the remaining Flash margin is small.
+
+The image was installed on the physical ESP32 with the data-preserving update
+path. After reboot, the device still reported saved pairing credentials and connected
+Wi-Fi; NVS used 335 entries before and after the update. Twenty consecutive UART health requests
+completed with increasing uptime, no reported session error and no allocation
+failure. The 65 simulator regression tests also passed. This run does not establish
+live Core reconnection, multi-Core hardware admission or task-cat display acceptance.
+
+A real-TCP integration test with two independent Core fixtures and the board's
+Peer limits verifies two device-initiated pairings, explicit admission to one
+Core's Space, rejection of the other Core's Space scope, and preservation across
+Edge restart. Full Core fixtures use the native SQL transaction journal; endpoint
+fixtures continue to reject SQL access. Ten related storage, board-budget and
+pairing/admission regressions passed as well. This is protocol acceptance on the
+desktop, separate from multi-Core hardware acceptance.
 
 ### Build and simulator verification (2026-10-28)
 
