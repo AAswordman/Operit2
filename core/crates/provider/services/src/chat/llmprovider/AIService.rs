@@ -6,10 +6,10 @@ use operit_model::OpenAIModels::ModelOption;
 use operit_model::PromptTurn::PromptTurn;
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    empty_revisable_event_channel, with_event_channel, DelegatingRevisableSharedTextStream,
-    RevisableTextStreamLike,
+    collect_revised_text, empty_revisable_event_channel, with_event_channel,
+    DelegatingRevisableSharedTextStream, RevisableTextStreamLike,
 };
-use operit_util::stream::Stream::{Stream, VecStream};
+use operit_util::stream::Stream::VecStream;
 
 use super::ThinkingDialect::RequestThinking;
 
@@ -70,15 +70,9 @@ pub fn empty_response_stream() -> Box<dyn RevisableTextStreamLike> {
     response_stream_from_chunks(Vec::new())
 }
 
-/// Collects every chunk from a revisable response stream.
-pub async fn collect_stream_chunks(mut stream: Box<dyn RevisableTextStreamLike>) -> Vec<String> {
-    let mut chunks = Vec::new();
-    stream
-        .collect(&mut |chunk| {
-            chunks.push(chunk);
-        })
-        .await;
-    chunks
+/// Collects the accepted response, applying retries before exposing its final text.
+pub async fn collect_response_text(mut stream: Box<dyn RevisableTextStreamLike>) -> Result<String, AiServiceError> {
+    collect_revised_text(stream.as_mut()).await.map_err(AiServiceError::RequestFailed)
 }
 
 /// Rejects a failed producer before interpreting any received text as a completed model round.

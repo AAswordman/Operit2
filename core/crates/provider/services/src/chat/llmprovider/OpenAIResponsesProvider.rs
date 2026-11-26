@@ -18,10 +18,10 @@ use operit_model::ModelConfigData::{BuiltinToolRequestFormat, ModelBuiltinTool};
 use operit_model::PromptTurn::PromptTurn;
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    with_event_channel_and_failure, RevisableTextStream, RevisableTextStreamLike,
+    with_ordered_event_channel_and_failure, RevisableTextStream, RevisableTextStreamLike,
     TerminalFailureState, TextStreamEventCarrier,
 };
-use operit_util::stream::Stream::{FnStream, Stream};
+use operit_util::stream::Stream::FnStream;
 use operit_util::ChatMarkupRegex::{attr_value, tag_body, tag_ranges};
 use operit_util::ChatUtils::ChatUtils;
 
@@ -1342,7 +1342,7 @@ impl AIService for OpenAIResponsesProvider {
                     .expect("OpenAI Responses parent stream must only be collected once");
                 let producerTerminalFailure = producerTerminalFailure.clone();
                 Box::pin(async move {
-                    parentStream.collect(emit).await;
+                    parentStream.collect_ordered(emit).await;
                     if let Some(error) = parentStream.terminal_failure() {
                         producerTerminalFailure.set(error);
                     }
@@ -1355,7 +1355,7 @@ impl AIService for OpenAIResponsesProvider {
                     });
                 })
             });
-            return Ok(Box::new(with_event_channel_and_failure(
+            return Ok(Box::new(with_ordered_event_channel_and_failure(
                 cold_stream,
                 event_channel,
                 terminalFailure,

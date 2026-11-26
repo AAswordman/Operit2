@@ -25,8 +25,8 @@ use operit_model::ModelParameter::ParameterValueType;
 use operit_model::PromptTurn::{PromptTurn, PromptTurnKind};
 use operit_model::ToolPrompt::ToolPrompt;
 use operit_util::stream::RevisableTextStream::{
-    with_event_channel_and_failure, RevisableTextStream, RevisableTextStreamLike,
-    ResponseStreamItem, TerminalFailureState, TextStreamEventCarrier, TextStreamEventType,
+    with_ordered_event_channel_and_failure, ResponseStreamItem, RevisableTextStream,
+    RevisableTextStreamLike, TerminalFailureState, TextStreamEventCarrier, TextStreamEventType,
 };
 use operit_util::stream::Stream::{FnStream, Stream};
 use operit_util::AppLogger::AppLogger;
@@ -342,6 +342,92 @@ impl DeepseekProvider {
             runtime_context,
             state: Arc::new(Mutex::new(DeepseekProviderState::default())),
         }
+    }
+
+    /// Decodes the parent transport while retaining cancellation, usage and stream revisions.
+    fn decode_parent_stream(&self, mut parent: OpenAIProvider, result: Box<dyn RevisableTextStreamLike>) -> Box<dyn RevisableTextStreamLike> {
+        let mut provider = self.clone();
+        let activeParentGeneration = provider.setActiveParent(parent.clone());
+        if provider.isCancelled() { parent.cancel_streaming(); }
+        let event_channel = result.event_channel().clone();
+        let terminalFailure = TerminalFailureState::new();
+        let producerTerminalFailure = terminalFailure.clone();
+        let mut ownedResult = Some(result);
+        let mut ownedParent = Some(parent);
+        let mut ownedProvider = Some(provider);
+        let cold_stream = FnStream::new(move |emit| {
+            let mut result = ownedResult
+                .take()
+                .expect("Deepseek parent stream must only be collected once");
+            let mut parent = ownedParent
+                .take()
+                .expect("Deepseek parent stream must only be collected once");
+            let mut provider = ownedProvider
+                .take()
+                .expect("Deepseek parent stream must only be collected once");
+            let producerTerminalFailure = producerTerminalFailure.clone();
+            Box::pin(async move {
+                let mut decoder = DeepseekDsmlDecoder::default();
+                let mut savepoints = HashMap::new();
+                let mut decodingError = None;
+                result
+                    .collect_ordered(&mut |item| match item {
+                        ResponseStreamItem::Chunk(chunk) if decodingError.is_none() => {
+                            match decoder.push(&chunk) {
+                                Ok(content) if !content.is_empty() => emit(ResponseStreamItem::Chunk(content)),
+                                Ok(_) => {}
+                                Err(error) => {
+                                    decodingError = Some(error.to_string());
+                                    parent.cancel_streaming();
+                                }
+                            }
+                        }
+                        ResponseStreamItem::Revision(event) => {
+                            match event.event_type {
+                                TextStreamEventType::Savepoint => {
+                                    savepoints.insert(event.id.clone(), decoder.clone());
+                                }
+                                TextStreamEventType::Rollback => {
+                                    if let Some(saved) = savepoints.get(&event.id) {
+                                        decoder.clone_from(saved);
+                                    }
+                                }
+                            }
+                            emit(ResponseStreamItem::Revision(event));
+                        },
+                        _ => {}
+                    })
+                    .await;
+                if let Some(error) = decodingError {
+                    producerTerminalFailure.set(error);
+                } else if let Some(error) = result.terminal_failure() {
+                    producerTerminalFailure.set(error);
+                } else {
+                    match decoder.finish() {
+                        Ok(tail) if !tail.is_empty() => emit(ResponseStreamItem::Chunk(tail)),
+                        Ok(_) => {}
+                        Err(error) => producerTerminalFailure.set(error.to_string()),
+                    }
+                }
+                AppLogger::v_with_level(
+                    PROVIDER_TRANSPORT_LOG_TAG,
+                    &format!(
+                        "provider.deepseek.parent.stream.done providerModel={} inputTokens={} cachedInputTokens={} outputTokens={}",
+                        parent.provider_model(),
+                        parent.input_token_count(),
+                        parent.cached_input_token_count(),
+                        parent.output_token_count(),
+                    ),
+                    operit_util::AppLogger::VERBOSE_LEVEL_3,
+                );
+                provider.finishActiveParent(activeParentGeneration, TokenCounts {
+                    input: (parent.input_token_count() - parent.cached_input_token_count()).max(0),
+                    cached_input: parent.cached_input_token_count(),
+                    output: parent.output_token_count(),
+                });
+            })
+        });
+        Box::new(with_ordered_event_channel_and_failure(cold_stream, event_channel, terminalFailure))
     }
 
     fn apply_token_counts(&self, token_counts: TokenCounts) {
@@ -842,91 +928,7 @@ impl AIService for DeepseekProvider {
                 ),
                 operit_util::AppLogger::VERBOSE_LEVEL_3,
             );
-            let event_channel = result.event_channel().clone();
-            let terminalFailure = TerminalFailureState::new();
-            let producerTerminalFailure = terminalFailure.clone();
-            let mut provider = self.clone();
-            let activeParentGeneration = provider.setActiveParent(parent.clone());
-            if provider.isCancelled() {
-                parent.cancel_streaming();
-            }
-            let mut ownedResult = Some(result);
-            let mut ownedParent = Some(parent);
-            let mut ownedProvider = Some(provider);
-            let cold_stream = FnStream::new(move |emit| {
-                let mut result = ownedResult
-                    .take()
-                    .expect("Deepseek parent stream must only be collected once");
-                let mut parent = ownedParent
-                    .take()
-                    .expect("Deepseek parent stream must only be collected once");
-                let mut provider = ownedProvider
-                    .take()
-                    .expect("Deepseek parent stream must only be collected once");
-                let producerTerminalFailure = producerTerminalFailure.clone();
-                Box::pin(async move {
-                    let mut decoder = DeepseekDsmlDecoder::default();
-                    let mut savepoints = HashMap::new();
-                    let mut decodingError = None;
-                    result
-                        .collect_ordered(&mut |item| match item {
-                            ResponseStreamItem::Chunk(chunk) if decodingError.is_none() => {
-                                match decoder.push(&chunk) {
-                                    Ok(content) if !content.is_empty() => emit(content),
-                                    Ok(_) => {}
-                                    Err(error) => {
-                                        decodingError = Some(error.to_string());
-                                        parent.cancel_streaming();
-                                    }
-                                }
-                            }
-                            ResponseStreamItem::Revision(event) => match event.event_type {
-                                TextStreamEventType::Savepoint => {
-                                    savepoints.insert(event.id, decoder.clone());
-                                }
-                                TextStreamEventType::Rollback => {
-                                    if let Some(saved) = savepoints.get(&event.id) {
-                                        decoder.clone_from(saved);
-                                    }
-                                }
-                            },
-                            _ => {}
-                        })
-                        .await;
-                    if let Some(error) = decodingError {
-                        producerTerminalFailure.set(error);
-                    } else if let Some(error) = result.terminal_failure() {
-                        producerTerminalFailure.set(error);
-                    } else {
-                        match decoder.finish() {
-                            Ok(tail) if !tail.is_empty() => emit(tail),
-                            Ok(_) => {}
-                            Err(error) => producerTerminalFailure.set(error.to_string()),
-                        }
-                    }
-                    AppLogger::v_with_level(
-                        PROVIDER_TRANSPORT_LOG_TAG,
-                        &format!(
-                            "provider.deepseek.parent.stream.done providerModel={} inputTokens={} cachedInputTokens={} outputTokens={}",
-                            parent.provider_model(),
-                            parent.input_token_count(),
-                            parent.cached_input_token_count(),
-                            parent.output_token_count(),
-                        ),
-                        operit_util::AppLogger::VERBOSE_LEVEL_3,
-                    );
-                    provider.finishActiveParent(activeParentGeneration, TokenCounts {
-                        input: (parent.input_token_count() - parent.cached_input_token_count()).max(0),
-                        cached_input: parent.cached_input_token_count(),
-                        output: parent.output_token_count(),
-                    });
-                })
-            });
-            return Ok(Box::new(with_event_channel_and_failure(
-                cold_stream,
-                event_channel,
-                terminalFailure,
-            )));
+            return Ok(self.decode_parent_stream(parent, result));
         }
 
         let response = super::ProviderHttp::post(&self.api_endpoint)
@@ -1412,6 +1414,51 @@ mod dsml_tests {
         "</｜｜DSML｜｜invoke>\n",
         "</｜｜DSML｜｜calls>"
     );
+
+    /// Replays a disconnected native tool delta, its retry and a later final response through production decoding.
+    #[tokio::test]
+    async fn retry_rolls_back_partial_tool_markup_before_later_rounds() {
+        use crate::chat::llmprovider::AIService::SharedAiResponseStream;
+        use operit_model::MessagePartCodec::{AssistantMarkupStreamState, MessagePartCodec};
+        use operit_util::stream::HotStream::mutable_shared_stream;
+        use operit_util::stream::RevisableTextStream::{ResponseStreamItem, TextStreamEvent, TextStreamEventType};
+        use operit_util::stream::TextStreamRevisionTracker::TextStreamRevisionTracker;
+        let provider = DeepseekProvider::new("https://fixture.invalid/chat/completions".into(), "".into(), "deepseek-v4-flash".into(), "DEEPSEEK".into(), vec![], false, false, false, vec![], true, test_runtime_context());
+        let parent = SharedAiResponseStream::new_ordered(mutable_shared_stream(usize::MAX), mutable_shared_stream(usize::MAX));
+        let output = provider.decode_parent_stream(provider.open_ai_parent(false), Box::new(parent.clone()));
+        let mut output = output;
+        let mut tracker = TextStreamRevisionTracker::new("");
+        let (begun, started) = tokio::sync::oneshot::channel();
+        let mut begun = Some(begun);
+        let collect = async {
+            output.collect_ordered(&mut |item| match item {
+                ResponseStreamItem::Chunk(chunk) => {
+                    tracker.append(&chunk);
+                    if let Some(begun) = begun.take() { let _ = begun.send(()); }
+                }
+                ResponseStreamItem::Revision(event) => match event.event_type {
+                    TextStreamEventType::Savepoint => tracker.savepoint(&event.id),
+                    TextStreamEventType::Rollback => { tracker.rollback(&event.id).expect("Retry savepoint must reach the message consumer"); }
+                },
+            }).await;
+            assert_eq!(output.terminal_failure(), None);
+        };
+        let drive = async {
+            parent.emit_revision(TextStreamEvent { event_type: TextStreamEventType::Savepoint, id: "attempt".into() });
+            parent.emit_chunk("<tool_abandoned name=\"write_file\"><param name=\"content\">partial".into());
+            started.await.unwrap();
+            parent.emit_revision(TextStreamEvent { event_type: TextStreamEventType::Rollback, id: "attempt".into() });
+            parent.emit_chunk("<tool_retry name=\"write_file\"><param name=\"content\">complete</param></tool_retry>".into());
+            parent.close();
+        };
+        futures_util::future::join(collect, drive).await;
+        let mut message = AssistantMarkupStreamState::new();
+        message.push(tracker.current_content()).unwrap();
+        message.push("<tool_result_retry name=\"write_file\" status=\"success\"><content>saved</content></tool_result_retry>最终结果已完成").unwrap();
+        let parts = message.finish().unwrap();
+        assert_eq!(MessagePartCodec::visibleText(&parts), "最终结果已完成");
+        assert!(!tracker.current_content().contains("abandoned"));
+    }
 
     /// Extracts semantic tool calls without depending on generated tag suffixes.
     fn decoded_calls(text: &str) -> (String, Vec<Value>) {

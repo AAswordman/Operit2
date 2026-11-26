@@ -10,7 +10,7 @@ use crate::chat::enhance::ConversationContext::ConversationContext;
 use crate::chat::hooks::SummaryHookRegistry::{SummaryHookContext, SummaryHookRegistry};
 use crate::chat::llmprovider::ThinkingDialect::RequestThinking;
 use crate::chat::llmprovider::AIService::{
-    ensure_response_completed, AiServiceError, SendMessageRequest, TokenCounts,
+    collect_response_text, AiServiceError, SendMessageRequest, TokenCounts,
 };
 use crate::runtime_support::ProviderRuntimeContext;
 use operit_model::FunctionType::FunctionType;
@@ -20,7 +20,6 @@ use operit_store::repository::UsageStatisticsStore::{UsageRequestSource, UsageSt
 use operit_util::ChatMarkupRegex::{attr_value, ChatMarkupRegex};
 use operit_vfs::VfsPath;
 use operit_tools::ToolExecutionManager::ToolExecutionManager;
-use operit_util::stream::Stream::Stream;
 use crate::chat::llmprovider::MediaLinkParser::unescape_xml_attribute;
 
 const APPLY_FILE_TOOL_NAME: &str = "apply_file";
@@ -549,7 +548,7 @@ impl ConversationService {
             .summary_prompt
             .expect("SummaryHookContext.summary_prompt must be present after before_send_to_model");
         if let Some(callback) = &progress { callback("summary_preparing"); }
-        let mut summaryStream = {
+        let summaryStream = {
             let mut service = summaryService.lock().await;
             service.reset_token_counts();
             service
@@ -566,9 +565,7 @@ impl ConversationService {
                 })
                 .await?
         };
-        let mut content = String::new();
-        summaryStream.collect(&mut |chunk| content.push_str(&chunk)).await;
-        ensure_response_completed(summaryStream.as_ref())?;
+        let content = collect_response_text(summaryStream).await?;
         if !ToolExecutionManager::extractToolInvocations(&content).is_empty() {
             return Err(AiServiceError::RequestFailed("Conversation summary attempted to call a tool".into()));
         }
@@ -675,7 +672,7 @@ impl ConversationService {
             let service = title_service.lock().await;
             service.provider_model()
         };
-        let mut title_stream = {
+        let title_stream = {
             let mut service = title_service.lock().await;
             service
                 .send_message(SendMessageRequest {
@@ -691,9 +688,7 @@ impl ConversationService {
                 })
                 .await?
         };
-        let mut title_content = String::new();
-        title_stream.collect(&mut |chunk| title_content.push_str(&chunk)).await;
-        ensure_response_completed(title_stream.as_ref())?;
+        let title_content = collect_response_text(title_stream).await?;
         let title = sanitizeConversationTitle(&removeThinkingContent(&title_content));
         let (input_tokens, cached_input_tokens, output_tokens) = {
             let service = title_service.lock().await;

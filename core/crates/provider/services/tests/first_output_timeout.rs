@@ -2,6 +2,10 @@
 
 use std::sync::{Arc, Mutex};
 
+use operit_providers::{chat, runtime_support};
+#[path = "../../tests/ProviderMediaTestSupport.rs"]
+mod runtime_fixture;
+
 use operit_host_api::HostManager::{setDefaultHostRuntimeTaskSchedulerHost, setDefaultHttpHost};
 use operit_host_api::{
     HostError, HostResult, HostRuntimeAsyncTask, HostRuntimeTask, HostRuntimeTaskSchedulerHost,
@@ -11,10 +15,12 @@ use operit_host_api::{
     HttpStreamOpenedCallback, HttpStreamResponseCallback,
 };
 use operit_providers::chat::llmprovider::{
-    AIService::{AIService, SendMessageRequest},
+    AIService::{collect_response_text, AIService, SendMessageRequest},
     ClaudeProvider::ClaudeProvider,
+    DeepseekProvider::DeepseekProvider,
     GeminiProvider::GeminiProvider,
     OpenAIProvider::OpenAIProvider,
+    OpenAIResponsesProvider::OpenAIResponsesProvider,
 };
 use tokio::sync::{mpsc, oneshot};
 
@@ -184,6 +190,8 @@ enum Protocol {
     OpenAi,
     Claude,
     Gemini,
+    Deepseek,
+    Responses,
 }
 
 impl Protocol {
@@ -216,15 +224,27 @@ impl Protocol {
                 vec![],
                 true,
             )),
+            Self::Deepseek => Box::new(DeepseekProvider::new(
+                endpoint, "".into(), "test".into(), "DEEPSEEK".into(), vec![],
+                false, false, false, vec![], true, runtime_fixture::test_runtime_context(),
+            )),
+            Self::Responses => Box::new(OpenAIResponsesProvider::new(
+                endpoint, "".into(), "test".into(), "OPENAI_RESPONSES".into(), vec![],
+                false, false, false, vec![], true, runtime_fixture::test_runtime_context(),
+            )),
         }
     }
 
     /// Returns real text, reasoning or native tool deltas in each provider's wire format.
     fn output(self, kind: usize) -> &'static str {
         match (self, kind) {
-            (Self::OpenAi, 0) => "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
-            (Self::OpenAi, 1) => "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n",
-            (Self::OpenAi, _) => "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]}}]}\n\n",
+            (Self::Deepseek, 3) => "data: {\"choices\":[{\"delta\":{\"content\":\"<｜｜DSML｜｜calls><｜｜DSML｜｜invoke name=\\\"echo\\\"><｜｜DSML｜｜parameter name=\\\"text\\\" string=\\\"true\\\">partial\"}}]}\n\n",
+            (Self::OpenAi | Self::Deepseek, 0) => "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\n",
+            (Self::OpenAi | Self::Deepseek, 1) => "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}\n\n",
+            (Self::OpenAi | Self::Deepseek, _) => "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"name\":\"echo\",\"arguments\":\"{}\"}}]}}]}\n\n",
+            (Self::Responses, 0) => "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+            (Self::Responses, 1) => "data: {\"type\":\"response.reasoning_text.delta\",\"delta\":\"thinking\"}\n\n",
+            (Self::Responses, _) => "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"call_id\":\"call_fixture\",\"name\":\"echo\",\"arguments\":\"{}\"}}\n\n",
             (Self::Claude, 0) => "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
             (Self::Claude, 1) => concat!("data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n", "data: {\"type\":\"content_block_delta\",\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"thinking\"}}\n\n"),
             (Self::Claude, _) => "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"tool_use\",\"name\":\"echo\",\"input\":{}}}\n\n",
@@ -237,7 +257,7 @@ impl Protocol {
     /// Supplies valid protocol metadata that must not release the first-output deadline.
     fn metadata(self) -> &'static str {
         match self {
-            Self::OpenAi => concat!(
+            Self::OpenAi | Self::Deepseek => concat!(
                 "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n",
                 "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":70000,\"completion_tokens\":0}}\n\n"
             ),
@@ -246,24 +266,27 @@ impl Protocol {
                 "data: {\"type\":\"content_block_start\",\"content_block\":{\"type\":\"thinking\",\"thinking\":\"\"}}\n\n"
             ),
             Self::Gemini => "data: {\"candidates\":[{\"content\":{\"parts\":[{\"thought\":true,\"text\":\"\",\"thoughtSignature\":\"signature\"}]}}],\"usageMetadata\":{\"promptTokenCount\":70000}}\n\n",
+            Self::Responses => "data: {\"type\":\"response.created\"}\n\n",
         }
     }
 
     /// Returns a complete buffered response when streaming is disabled.
     fn json(self) -> &'static str {
         match self {
-            Self::OpenAi => "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}",
+            Self::OpenAi | Self::Deepseek => "{\"choices\":[{\"message\":{\"content\":\"ok\"}}]}",
             Self::Claude => "{\"content\":[{\"type\":\"text\",\"text\":\"ok\"}]}",
             Self::Gemini => "{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"ok\"}]}}]}",
+            Self::Responses => "{\"output\":[{\"type\":\"message\",\"content\":[{\"type\":\"output_text\",\"text\":\"ok\"}]}]}",
         }
     }
 
     /// Completes the model protocol without depending on a remote EOF.
     fn completion(self) -> &'static str {
         match self {
-            Self::OpenAi => "data: [DONE]\n\n",
+            Self::OpenAi | Self::Deepseek => "data: [DONE]\n\n",
             Self::Claude => "data: {\"type\":\"message_stop\"}\n\n",
             Self::Gemini => "data: {\"candidates\":[{\"finishReason\":\"STOP\"}]}\n\n",
+            Self::Responses => "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[]}}\n\n",
         }
     }
 }
@@ -456,6 +479,33 @@ async fn terminal_cases(harness: &mut Harness, protocol: Protocol, retries: bool
     assert!(timers.try_recv().is_err());
 }
 
+/// Replays real output followed by a disconnect through the collector used by summaries.
+async fn retries_discard_partial_output(harness: &mut Harness, protocol: Protocol, kind: usize) {
+    harness.http.cancelled.lock().unwrap().clear();
+    let mut provider = protocol.provider();
+    let output = provider.send_message(request(true, true, Arc::default())).await.unwrap();
+    let collect = collect_response_text(output);
+    let drive = async {
+        let mut deadline = harness.timers.recv().await.unwrap();
+        let first = harness.requests.recv().await.unwrap();
+        first.headers(true);
+        first.bytes(protocol.output(kind));
+        deadline.expired.closed().await;
+        (first.closed)(Err("fixture connection interrupted".into()));
+        let retry = harness.timers.recv().await.unwrap();
+        assert_eq!(retry.delay_ms, 1000);
+        retry.expired.send(()).unwrap();
+        let _deadline = harness.timers.recv().await.unwrap();
+        let second = harness.requests.recv().await.unwrap();
+        second.headers(true);
+        second.bytes(protocol.output(0));
+        second.bytes(protocol.completion());
+        (second.closed)(Ok(()));
+    };
+    let (text, ()) = futures_util::future::join(collect, drive).await;
+    assert_eq!(text.unwrap().trim(), "ok", "{protocol:?} kind={kind}");
+}
+
 /// Runs serially because each case intentionally owns the process-wide Host contracts.
 #[tokio::test]
 async fn model_first_output_deadline_covers_missing_headers_and_retries() {
@@ -475,11 +525,18 @@ async fn model_first_output_deadline_covers_missing_headers_and_retries() {
             }
             for kind in 0..3 {
                 output_disarms_deadline(&mut harness, protocol, kind).await;
+                retries_discard_partial_output(&mut harness, protocol, kind).await;
             }
             terminal_cases(&mut harness, protocol, false, false).await;
             terminal_cases(&mut harness, protocol, true, false).await;
             terminal_cases(&mut harness, protocol, true, true).await;
         }
+        for protocol in [Protocol::Deepseek, Protocol::Responses] {
+            for kind in 0..3 {
+                retries_discard_partial_output(&mut harness, protocol, kind).await;
+            }
+        }
+        retries_discard_partial_output(&mut harness, Protocol::Deepseek, 3).await;
     })
     .await
     .expect("Host-controlled deadlines and retries must settle without real-time waits");
