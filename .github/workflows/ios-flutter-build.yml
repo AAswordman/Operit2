@@ -143,6 +143,11 @@ jobs:
       - name: Bundle models.dev catalog
         run: python3 tools/build_scripts/models_dev_bundle.py
 
+      - name: Install plugin build tools
+        run: |
+          npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+          corepack enable
+
       - name: Generate Dart proxy artifacts
         run: |
           cargo clean --manifest-path core/crates/proxy/local/Cargo.toml -p operit-proxy-local
