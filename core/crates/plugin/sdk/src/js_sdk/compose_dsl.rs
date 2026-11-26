@@ -2323,13 +2323,13 @@ pub struct ComposeCommonProps {
     /// Shape that bounds and optionally clips the background paint.
     pub backgroundShape: Option<ComposeShape>,
 }
-/// One image tile in an adaptive media grid with a stable participant identity.
+/// One image tile in an adaptive media grid. IDs remain stable when the active tile changes.
 pub struct MediaStageParticipant {
-    /// Stable identity retained when the active tile changes.
+    /// Stable participant identifier.
     pub id: String,
-    /// Accessible title for the participant image.
+    /// Accessible title for the tile.
     pub title: String,
-    /// Image displayed in the participant tile.
+    /// Image shown inside the tile.
     pub imageUri: Option<String>,
 }
 /// Declares a floating media surface with an optional user-controlled camera.

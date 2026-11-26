@@ -2771,19 +2771,19 @@ export interface ComposeCommonProps {
 }
 
 /**
- * One image tile in an adaptive media grid with a stable participant identity.
+ * One image tile in an adaptive media grid. IDs remain stable when the active tile changes.
  */
 export interface MediaStageParticipant {
   /**
-   * Stable identity retained when the active tile changes.
+   * Stable participant identifier.
    */
   id: string;
   /**
-   * Accessible title for the participant image.
+   * Accessible title for the tile.
    */
   title: string;
   /**
-   * Image displayed in the participant tile.
+   * Image shown inside the tile.
    */
   imageUri?: string;
 }
