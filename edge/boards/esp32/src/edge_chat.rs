@@ -92,79 +92,6 @@ async fn nextUiEvent(
     }
 }
 
-// Lossless, volatile list cache. Each element retains the original Link value
-// encoding. A nested delta decodes only its addressed element, never the whole
-// transcript/history tree; the same generic delta engine handles nested paths.
-#[derive(Default)]
-struct UiValue {
-    encoded: Vec<Vec<u8>>,
-    display: serde_json::Value,
-}
-impl UiValue {
-    fn replace(&mut self, value: CoreValue) -> Result<(), String> {
-        let CoreValue::List(items) = value else { return Err("Expected a UI list snapshot".into()); };
-        let mut encoded = Vec::with_capacity(items.len());
-        for mut item in items {
-            boundCoreValue(&mut item, 0);
-            encoded.push(operit_link::encodeLink(item).map_err(|error| error.to_string())?);
-        }
-        self.encoded = encoded;
-        Ok(())
-    }
-    fn update(&mut self, event: operit_link::CoreEvent) -> Result<(), String> {
-        if event.kind != CoreEventKind::Delta { return self.replace(event.value); }
-        let CoreValue::Map(fields) = event.value else { return Err("Expected incremental delta map".into()); };
-        let Some(CoreValue::List(operations)) = fields.get("$coreDelta") else { return Err("Missing incremental delta marker".into()); };
-        // Only compact bytes are cloned for rollback, never the large map tree.
-        let mut next = Self { encoded: self.encoded.clone(), display: serde_json::Value::Null };
-        for operation in operations {
-            let CoreValue::Map(fields) = operation else { return Err("Expected incremental operation map".into()); };
-            let Some(CoreValue::String(op)) = fields.get("op") else { return Err("Missing incremental operation".into()); };
-            let Some(CoreValue::List(path)) = fields.get("path") else { return Err("Missing incremental path".into()); };
-            if path.is_empty() {
-                if op != "set" { return Err("Cannot remove UI list root".into()); }
-                next.replace(fields.get("value").cloned().ok_or("Missing incremental value")?)?;
-                continue;
-            }
-            let CoreValue::Unsigned(index) = path[0] else { return Err("Expected unsigned UI list index".into()); };
-            let index = usize::try_from(index).map_err(|_| "UI list index exceeds platform limit")?;
-            if path.len() == 1 && op == "remove" {
-                if index >= next.encoded.len() { return Err("Invalid UI list removal index".into()); }
-                next.encoded.remove(index);
-                continue;
-            }
-            if index > next.encoded.len() || (index == next.encoded.len() && (path.len() != 1 || op != "set")) {
-                return Err("Invalid UI list delta index".into());
-            }
-            let base = if index < next.encoded.len() {
-                operit_link::decodeLink::<CoreValue>(&next.encoded[index]).map_err(|error| error.to_string())?
-            } else { CoreValue::Null };
-            let mut operation = fields.clone();
-            operation.insert("path".into(), CoreValue::List(path[1..].to_vec()));
-            let delta = CoreValue::Map(BTreeMap::from([("$coreDelta".into(), CoreValue::List(vec![CoreValue::Map(operation)]))]));
-            let mut item = base.intoIncrementalDelta(&delta)?;
-            boundCoreValue(&mut item, 0);
-            if index == next.encoded.len() { next.encoded.push(Vec::new()); }
-            operit_link::encodeLinkInto(item, &mut next.encoded[index]).map_err(|error| error.to_string())?;
-        }
-        self.encoded = next.encoded;
-        Ok(())
-    }
-    fn forEachLast(&self, count: usize, mut project: impl FnMut(CoreValue)) -> Result<(), String> {
-        let start = self.encoded.len().saturating_sub(count);
-        for bytes in &self.encoded[start..] {
-            project(operit_link::decodeLink(bytes).map_err(|error| error.to_string())?);
-        }
-        Ok(())
-    }
-    #[cfg(test)]
-    fn decode(&self) -> Result<CoreValue, String> {
-        let mut items = Vec::new();
-        self.forEachLast(self.encoded.len(), |item| items.push(item))?;
-        Ok(CoreValue::List(items))
-    }
-}
-
 struct ChatSession {
     client: Arc<dyn CoreLinkSharedClient + Send + Sync>,
     services: NodeServices,
@@ -173,7 +100,7 @@ struct ChatSession {
     ready: AtomicBool,
     retired: AtomicBool,
     needsReconnect: AtomicBool,
-    messages: Mutex<UiValue>,
+    messages: Mutex<serde_json::Value>,
     error: Mutex<Option<String>>,
     executionError: Mutex<Option<String>>,
     generating: AtomicBool,
@@ -620,7 +547,7 @@ fn installSession(
         retired: AtomicBool::new(false),
         needsReconnect: AtomicBool::new(false),
         tasks: Mutex::new(Vec::new()),
-        messages: Mutex::new(UiValue::default()),
+        messages: Mutex::new(serde_json::Value::Null),
         error: Mutex::new(None),
         executionError: Mutex::new(None),
         generating: AtomicBool::new(false),
@@ -682,14 +609,14 @@ fn startSubscriptions(session: Arc<ChatSession>) {
                 if let Some(CoreValue::String(error)) = fields.get("error") { return Err(error.clone()); }
                 let Some(CoreValue::List(items)) = fields.get("messages") else { return Err("Missing chat window messages".into()); };
                 if items.len() > MAX_CHAT_MESSAGES { return Err("Chat window exceeds the negotiated row limit".into()); }
-                let mut messages = session.messages.lock().unwrap();
-                messages.replace(fields.get("messages").cloned().ok_or("Missing chat window messages")?)?;
                 let mut rows = Vec::new(); let mut descriptors = Vec::new();
-                messages.forEachLast(MAX_CHAT_MESSAGES, |item| {
+                for item in items {
+                    let mut item = item.clone();
+                    boundCoreValue(&mut item, 0);
                     collectMessageStreams(&item, &mut descriptors);
                     if let serde_json::Value::Array(mut projected) = projectMessages(&CoreValue::List(vec![item])) { rows.append(&mut projected); }
-                })?;
-                messages.display = serde_json::Value::Array(rows);
+                }
+                *session.messages.lock().unwrap() = serde_json::Value::Array(rows);
                 openMessageStreams(&session, descriptors);
                 *session.error.lock().unwrap() = None;
                 Ok(())
@@ -776,12 +703,6 @@ fn recordSubscriptionEnd(closed: &AtomicBool, cancelled: &tokio::sync::watch::Re
     if !*cancelled.borrow() { closed.store(true, Ordering::Release); }
 }
 
-pub fn needsReconnect() -> bool {
-    SESSION.get_or_init(|| Mutex::new(None)).lock().unwrap().as_ref()
-        .is_some_and(|session| session.needsReconnect.load(Ordering::Acquire)
-            || session.subscriptionsClosed.load(Ordering::Acquire))
-}
-
 /// Returns the live Space route state, rather than whether the pairing
 /// listener is enabled.
 pub fn isConnected() -> bool {
@@ -821,7 +742,7 @@ pub fn snapshot() -> serde_json::Value {
         Some(session) => {
             // Do not hold UI state locks while serializing or acquiring another
             // lock: the single-threaded network runtime also updates this state.
-            let rows = session.messages.lock().unwrap().display.clone();
+            let rows = session.messages.lock().unwrap().clone();
             let messages = renderMessages(rows, &session.streams.lock().unwrap());
             let error = session.error.lock().unwrap().clone()
                 .or_else(|| session.executionError.lock().unwrap().clone());
@@ -1137,55 +1058,6 @@ mod tests {
         assert!(!closed.load(Ordering::Acquire));
     }
 
-    fn uiEvent(kind: CoreEventKind, value: CoreValue) -> operit_link::CoreEvent {
-        operit_link::CoreEvent { requestId: None, target: "chat".into(),
-            propertyName: "messages".into(), kind, value }
-    }
-
-    #[test]
-    fn encoded_ui_state_preserves_successive_nested_delta_paths() {
-        let value = |count| CoreValue::List((0..count).map(|index| CoreValue::Map(BTreeMap::from([
-            ("id".into(), CoreValue::Unsigned(index)),
-            ("parts".into(), CoreValue::List(vec![CoreValue::Map(BTreeMap::from([
-                ("content".into(), CoreValue::String(format!("reply-{index}"))),
-                ("unusedMetadata".into(), CoreValue::Null),
-            ]))])),
-        ]))).collect());
-        let mut cache = UiValue::default();
-        let mut previous = None;
-        for count in [2, 5, 12, 3, 0, 1] {
-            let expected = value(count);
-            let (kind, delta) = CoreValue::incrementalEvent(&mut previous, expected.clone());
-            cache.update(uiEvent(kind, delta)).unwrap();
-            assert_eq!(cache.decode().unwrap(), expected);
-        }
-    }
-
-    #[test]
-    fn item_cache_nested_updates_and_invalid_later_paths_are_transactional() {
-        let mut cache = UiValue::default();
-        let base = CoreValue::List(vec![CoreValue::Map(BTreeMap::from([
-            ("parts".into(), CoreValue::List(vec![CoreValue::String("old".into())])),
-            ("untouched".into(), CoreValue::String("same".into())),
-        ]))]);
-        cache.update(uiEvent(CoreEventKind::Snapshot, base.clone())).unwrap();
-        let mut expected = base.clone();
-        let CoreValue::List(items) = &mut expected else { panic!("list") };
-        let CoreValue::Map(fields) = &mut items[0] else { panic!("map") };
-        fields.insert("parts".into(), CoreValue::List(vec![CoreValue::String("new".into()), CoreValue::Null]));
-        let mut previous = Some(base);
-        let (kind, delta) = CoreValue::incrementalEvent(&mut previous, expected.clone());
-        cache.update(uiEvent(kind, delta)).unwrap();
-        assert_eq!(cache.decode().unwrap(), expected);
-        let operation = |index| CoreValue::Map(BTreeMap::from([
-            ("op".into(), CoreValue::String("remove".into())),
-            ("path".into(), CoreValue::List(vec![CoreValue::Unsigned(index)])),
-        ]));
-        let delta = CoreValue::Map(BTreeMap::from([("$coreDelta".into(), CoreValue::List(vec![operation(0), operation(99)]))]));
-        assert!(cache.update(uiEvent(CoreEventKind::Delta, delta)).is_err());
-        assert_eq!(cache.decode().unwrap(), expected, "no partial update may be published");
-    }
-
     #[test]
     fn cached_display_renders_live_stream_without_decoding_full_state() {
         let messages = CoreValue::List(vec![CoreValue::Map(BTreeMap::from([
@@ -1221,17 +1093,6 @@ mod tests {
         let lines: usize = rows.iter().map(|r| 1+r["text"].as_str().unwrap().matches('\n').count()).sum();
         assert!(bytes <= MAX_CHAT_STRING_BYTES); assert!(lines <= MAX_CHAT_LINES);
         assert!(rows.last().unwrap()["text"].as_str().unwrap().ends_with("最新终点"));
-    }
-
-    #[test]
-    fn invalid_ui_delta_keeps_last_encoded_value() {
-        let mut cache = UiValue::default();
-        let expected = CoreValue::List(vec![CoreValue::String("kept".into())]);
-        cache.update(uiEvent(CoreEventKind::Snapshot, expected.clone())).unwrap();
-        let encoded = cache.encoded.clone();
-        assert!(cache.update(uiEvent(CoreEventKind::Delta, CoreValue::Null)).is_err());
-        assert_eq!(cache.encoded, encoded);
-        assert_eq!(cache.decode().unwrap(), expected);
     }
 
     #[tokio::test]

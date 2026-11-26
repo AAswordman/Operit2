@@ -32,6 +32,11 @@ or platform-specific Link envelope.
 values as MessagePack `bin` data. Runtime conversion uses `toCoreValue` and
 `fromCoreValue`; it never normalizes values through `serde_json::Value`.
 
+Constrained endpoints can enable `compact-codec` to share the MessagePack
+value decoder across typed routes. This keeps the same wire representation and
+retains owned binary slices. It rejects duplicate map keys, incomplete values,
+trailing data and nesting beyond 64 containers before typed conversion.
+
 ## Carriers
 
 The local Flutter and WASM bridges carry MessagePack values to generated local

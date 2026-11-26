@@ -303,7 +303,7 @@ impl<'de> Deserializer<'de> for CoreValue {
             CoreValue::Unsigned(v) => visitor.visit_u64(v),
             CoreValue::Float(v) => visitor.visit_f64(v),
             CoreValue::String(v) => visitor.visit_string(v),
-            CoreValue::Bytes(v) => visitor.visit_bytes(&v),
+            CoreValue::Bytes(v) => crate::codec::withDecodeSource(v, |bytes| visitor.visit_bytes(bytes)),
             CoreValue::List(v) => {
                 visit_value_sequence(ValueSequence::Values(v.into_iter()), visitor)
             }

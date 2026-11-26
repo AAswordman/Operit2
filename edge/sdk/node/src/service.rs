@@ -86,11 +86,6 @@ impl DeviceIoStateStream {
         }
     }
 
-    /// Returns a handle that can cancel this stream from its Link adapter.
-    pub(crate) fn closeHandle(&self) -> DeviceIoStateStreamClose {
-        self.close.clone()
-    }
-
     /// Transfers the typed receiver to Link while retaining subscription cancellation.
     pub(crate) fn intoEventStream(
         mut self,
@@ -170,11 +165,6 @@ impl RobotFaceStateStream {
             receiver: Some(receiver),
             close: RobotFaceStateStreamClose::new(onClose),
         }
-    }
-
-    /// Returns a handle that can cancel this stream from its Link adapter.
-    pub(crate) fn closeHandle(&self) -> RobotFaceStateStreamClose {
-        self.close.clone()
     }
 
     /// Transfers robot face updates to Link without a forwarding task.

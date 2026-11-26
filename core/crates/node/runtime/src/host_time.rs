@@ -18,7 +18,7 @@ pub(crate) async fn withScheduler<F: Future>(
             .try_into()
             .map_err(|_| HostError::new("Peer timeout exceeds u64 milliseconds"))?,
     );
-    timeoutWithDelay(operation, delay).await
+    timeoutWithDelay(Box::pin(operation), delay).await
 }
 
 async fn timeoutWithDelay<F: Future>(

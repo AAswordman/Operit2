@@ -313,8 +313,6 @@ impl PeerStateStore {
         if errors.is_empty() { Ok(()) } else { Err(errors.join("; ")) }
     }
 
-    /// Reads only the requested record; another broken request has no bearing on this one.
-
     /// Read-only enumeration isolates malformed rows. Security cleanup uses the strict reader below.
     pub(crate) fn independentRecords<T: DeserializeOwned>(&self, path: &str) -> Result<BTreeMap<String, T>, String> {
         let mut records = BTreeMap::new();
@@ -336,13 +334,6 @@ impl PeerStateStore {
         self.store(path).typedEntries::<T>()
             .map(|entries| entries.into_iter().collect())
             .map_err(|error| format!("Invalid peer state records at {path}: {error}"))
-    }
-
-    /// Decode a scan without the oversized tree nodes of large typed records.
-    pub(crate) fn recordValues<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, String> {
-        self.store(path).typedEntries::<T>()
-            .map(|entries| entries.into_iter().map(|(_, record)| record).collect())
-            .map_err(|error| error.to_string())
     }
 
     /// Re-read one authorization from the current snapshot without decoding
@@ -760,17 +751,7 @@ impl PeerStateStore {
         Ok(())
     }
 
-    /// Reads pending records without bypassing pairing-code confirmation.
-    /// 不向 UI 返回这些原始数据：旧出站状态可能包含临时密钥。
-    pub(crate) fn pendingRecords(
-        &self,
-        direction: StoredDirection,
-    ) -> Result<BTreeMap<String, Value>, String> {
-        self.records(match direction {
-            StoredDirection::Inbound => RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH,
-            StoredDirection::Outbound => RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
-        })
-    }
+
 }
 /// Writes listener fields into the existing node-local preference snapshot.
 fn writeHostConfigPreferences(
@@ -940,13 +921,12 @@ mod tests {
             store.putRecord(path, &id.to_string(),
                 &serde_json::json!({"id": id, "payload": {"evidence": ["x".repeat(2048)]}})).unwrap();
         }
-        let mut records = store.recordValues::<Projection>(path).unwrap();
-        records.sort_by_key(|record| record.id);
+        let records = store.records::<Projection>(path).unwrap().into_values().collect::<Vec<_>>();
         assert_eq!(records, (0..8).map(|id| Projection { id }).collect::<Vec<_>>());
-        assert!(store.recordValues::<FullRecord>(path).is_err());
+        assert!(store.records::<FullRecord>(path).is_err());
         store.putRecord(path, "z-broken", &serde_json::json!({"payload": "evidence"})).unwrap();
         let before = storage.0.lock().unwrap().clone();
-        assert!(store.recordValues::<Projection>(path).is_err());
+        assert!(store.records::<Projection>(path).is_err());
         assert_eq!(*storage.0.lock().unwrap(), before);
     }
 
@@ -1983,16 +1963,7 @@ mod tests {
         CoreNodeStateStore::newWithStorage(storage.clone(), RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .replace(p)
             .unwrap();
-        for (direction, path) in [
-            (
-                StoredDirection::Inbound,
-                RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH,
-            ),
-            (
-                StoredDirection::Outbound,
-                RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
-            ),
-        ] {
+        for path in [RUNTIME_LINK_ACCESS_PENDING_PAIRINGS_PATH, RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH] {
             writeRecord(
                 &store,
                 path,
@@ -2000,7 +1971,7 @@ mod tests {
                 serde_json::json!({"old-state":"retained"}),
             );
             assert_eq!(
-                store.pendingRecords(direction).unwrap()["pending"]["old-state"],
+                store.records::<Value>(path).unwrap()["pending"]["old-state"],
                 "retained"
             );
         }

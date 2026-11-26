@@ -32,7 +32,9 @@ Wi-Fi settings come from the setup page or `OPERIT_WIFI_SSID` and
 `OPERIT_WIFI_PASSWORD`. mDNS advertises `_operit-edge._tcp`. Serial Link is
 available offline; TCP Link requires a station connection. The plain HTTP setup
 page is retained; model HTTPS requests belong to Core. This board uses IPv4;
-its ESP-IDF build disables IPv6. Shared Core and desktop networking are unchanged.
+its ESP-IDF build disables IPv6. This product omits the optional HTTP discovery
+directory (`peer-directory`); mDNS, saved endpoints, TCP and UART remain available.
+The SDK keeps directory support enabled by default for other products.
 
 Pairing uses the receiving device's six-digit code for both UART and TCP. No
 Edge token is required. Pairing and Space admission are separate: an additional
@@ -100,19 +102,22 @@ application image against the 3,997,696-byte app partition. It does not flash.
 container. Normal firmware updates preserve NVS and the reserved layout partition.
 Keep the matching ELF for crash address resolution.
 
-Measured on 2026-11-27, the complete Core text/audio application is 3,143,376 bytes
-(3.00 MiB), down 28,000 bytes from the previous 3,171,376-byte image and 280,336
-bytes (8.19%) from 3,423,712 bytes before the cleanup. It leaves 854,320 bytes in
-the unchanged application partition. The 1 MiB target remains unmet by 2,094,800
-bytes. The fixed 4 MiB flash container is not the app size. Further major savings
-need a smaller shared endpoint runtime and fewer typed serialization paths;
-removing display pages alone does not address that code.
+Measured on 2026-11-27, the complete Core text/audio application is 2,846,992 bytes
+(2.72 MiB), down 296,384 bytes (9.43%) from the previous 3,143,376-byte image.
+It leaves 1,150,704 bytes in the unchanged application partition. The 1 MiB
+target remains unmet by 1,798,416 bytes. The fixed 4 MiB flash container is not
+the app size. Shared typed MessagePack decoding provides most of this reduction;
+the HTTP discovery directory and the redundant encoded chat display cache were
+also removed from this product. The current chat window projects directly to
+bounded display rows; Core still owns complete history.
 
-Verification: Xtensa release, final ELF ABI and partition checks passed, as did
-110 editor tests, 58 firmware-module simulator tests, 46 Core/Edge protocol
-tests and 25 board tests. The separate Windows CLI/UI end-to-end run failed during outgoing pairing
-with simulator exit 0xC0000005; its text/audio round trip is not verified. The
-current-source fixture CLI was built with the unused native inference engine
+Verification: Xtensa release, matching ELF ABI, application partition and C/Wasm
+packaging, 110 editor tests and TypeScript checks passed. Link codec tests, the runtime with and without HTTP directory
+support (164 and 150 tests), 55 firmware-module simulator tests and 46 Core/Edge
+protocol tests passed. Three tests specific to the deleted encoded display cache
+were removed. The separate Windows CLI/UI end-to-end run still exits with
+0xC0000005 during outgoing pairing; its text/audio round trip is not verified.
+The current-source fixture CLI was built with the unused native inference engine
 temporarily disabled; its manifest and lockfile were restored after that build.
 
 The simulator compiles actual firmware protocol/storage modules, constrains its

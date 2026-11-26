@@ -274,3 +274,33 @@ fn value_sequences_keep_binary_u8_semantics_and_reject_unconsumed_items() {
     assert!(fromCoreValue::<First>(bytes).is_err());
     assert!(fromCoreValue::<First>(list).is_err());
 }
+
+/// A shared value decoder must not collapse conflicting authorization fields.
+#[cfg(feature = "compact-codec")]
+#[test]
+fn duplicate_fields_are_rejected_before_typed_conversion() {
+    #[derive(Deserialize)]
+    struct Policy { allowed: bool }
+    let conflicting = [0x82, 0xa7, b'a', b'l', b'l', b'o', b'w', b'e', b'd', 0xc2,
+        0xa7, b'a', b'l', b'l', b'o', b'w', b'e', b'd', 0xc3];
+    assert!(rmp_serde::from_slice::<Policy>(&conflicting).is_err());
+    assert!(decodeLink::<Policy>(&conflicting).is_err());
+    let valid = encodeLink(core_map([("allowed", CoreValue::Bool(true))])).unwrap();
+    assert!(decodeLink::<Policy>(&valid).unwrap().allowed);
+}
+
+#[cfg(feature = "compact-codec")]
+#[test]
+fn compact_decoder_rejects_unbounded_or_incomplete_values() {
+    for bytes in [
+        vec![0xdd, 0xff, 0xff, 0xff, 0xff],
+        vec![0xdf, 0xff, 0xff, 0xff, 0xff],
+        vec![0xc0, 0xc0],
+        [vec![0x91; 2048], vec![0xc0]].concat(),
+    ] {
+        assert!(operit_link::decodeLink::<operit_link::CoreValue>(&bytes).is_err());
+    }
+    let value: Vec<u8> = (0..128).collect();
+    let bytes = operit_link::encodeLink(&value).unwrap();
+    assert_eq!(operit_link::decodeLink::<Vec<u8>>(&bytes).unwrap(), value);
+}

@@ -22,6 +22,7 @@ use crypto::{Channel, MultiplexedChannel, error};
 #[path = "peer/space_client.rs"] mod space_client;
 #[path = "peer/availability.rs"] mod availability;
 #[path = "peer/discovery.rs"] mod discovery;
+#[cfg(feature = "peer-directory")]
 #[path = "peer/directory.rs"] mod directory;
 #[path = "peer/pairing_throttle.rs"] mod pairing_throttle;
 use pairing_throttle::{pairingSource, PairingThrottle};
@@ -247,6 +248,7 @@ impl PeerRuntimeLimits {
 
 struct State {
     limits: PeerRuntimeLimits,
+    #[cfg(feature = "peer-directory")]
     directoryStart: directory::StartDirectory,
     host: Arc<HostManager>,
     link: Arc<dyn PeerLink>,
@@ -296,7 +298,7 @@ impl HostRuntimePeerService {
         host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
     ) -> Result<Arc<Self>, String> {
         let link = Arc::new(HostPeerLink::withMaxMessageBytes(limits.maxFrameBytes)?);
-        Self::newWithDirectory(host, router, info, limits, directory::startServer, link)
+        Self::newWithDirectory(host, router, info, limits, #[cfg(feature = "peer-directory")] directory::startServer, link)
     }
 
     /// Creates a receiver that browses/registers with directories but does not
@@ -314,12 +316,13 @@ impl HostRuntimePeerService {
         host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
         link: Arc<dyn PeerLink>,
     ) -> Result<Arc<Self>, String> {
-        Self::newWithDirectory(host, router, info, limits, directory::startEndpoint, link)
+        Self::newWithDirectory(host, router, info, limits, #[cfg(feature = "peer-directory")] directory::startEndpoint, link)
     }
 
     fn newWithDirectory<R: PeerRouter + 'static>(
         host: Arc<HostManager>, router: &Arc<R>, info: LinkDeviceInfo, limits: PeerRuntimeLimits,
-        directoryStart: directory::StartDirectory, link: Arc<dyn PeerLink>,
+        #[cfg(feature = "peer-directory")] directoryStart: directory::StartDirectory,
+        link: Arc<dyn PeerLink>,
     ) -> Result<Arc<Self>, String> {
         if limits.incomingSessions == 0 || limits.pendingPairings == 0 || limits.concurrentProbes == 0 {
             return Err("Peer runtime limits must be positive".into());
@@ -333,6 +336,7 @@ impl HostRuntimePeerService {
         let service = Arc::new(Self {
             state: Arc::new(State {
                 limits,
+                #[cfg(feature = "peer-directory")]
                 directoryStart,
                 host,
                 link,
@@ -365,78 +369,83 @@ impl HostRuntimePeerService {
     }
 
     /// Checks the known identity and the handshake result before creating a pairing transaction.
-    async fn startPairingWithInvitation(&self, target: PeerEndpoint, transport: Option<PeerTransport>, invitationId: Option<&str>) -> Result<PendingPairing, CoreLinkError> {
-        operit_util::app_log!(i, "RuntimePeerService", &format!(
-            "pairing.start local={:?} target={:?} transport={transport:?} qr={} protocol=v{}",
-            self.state.nodeId, target.nodeId, invitationId.is_some(), crate::PeerProtocol::VERSION));
-        if !target.nodeId.is_empty() {
-            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            self.ensureDeviceUnpaired(&target.nodeId)?;
-        }
-        // A bare `ip:port` input pairs without a user-picked carrier: classify
-        // the endpoint once, then normalize the address for the winner so the
-        // pending record stores the same endpoint a later reconnect would dial.
-        let transport = match transport {
-            Some(transport) => transport,
-            None => self.timeout(std::time::Duration::from_secs(10),
-                resolvePairingTransport(&self.state.host, &target.address)).await
-                .map_err(|_| CoreLinkError::new("PAIRING_TIMEOUT", "Pairing transport detection timed out"))?
-                .map_err(error)?,
-        };
-        let mut endpoints = vec![(pairingAddressFor(&target.address, transport), transport)];
-        if !target.nodeId.is_empty() && isNetworkTransport(transport) {
-            for endpoint in self.discoveredPeerEndpoints(&target.nodeId) {
-                if !endpoints.contains(&endpoint) { endpoints.push(endpoint); }
+    #[inline(never)]
+    fn startPairingWithInvitation<'a>(&'a self, target: PeerEndpoint, transport: Option<PeerTransport>, invitationId: Option<&'a str>)
+        -> futures_util::future::LocalBoxFuture<'a, Result<PendingPairing, CoreLinkError>> {
+        Box::pin(async move {
+            operit_util::app_log!(i, "RuntimePeerService", &format!(
+                "pairing.start local={:?} target={:?} transport={transport:?} qr={} protocol=v{}",
+                self.state.nodeId, target.nodeId, invitationId.is_some(), crate::PeerProtocol::VERSION));
+            if !target.nodeId.is_empty() {
+                let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                self.ensureDeviceUnpaired(&target.nodeId)?;
             }
-        }
-        let mut retries = 0;
-        let ((_, id, info, root, node), raw, address, transport) = loop {
-            let attempt = self.tryPeerEndpoints(&target.nodeId, &endpoints, |raw| {
-                self.handshake(raw, "start", "", None, None, invitationId)
-            });
-            let result = self.timeout(std::time::Duration::from_millis(CONNECT_DEADLINE_MS), attempt).await
-                .map_err(|_| CoreLinkError::new("PAIRING_TIMEOUT", "Pairing candidates timed out"))?;
-            match result {
-                Ok(value) => break value,
-                // Opening a UART can reset the receiver. Preserve its boot-window retries.
-                Err(_) if transport == PeerTransport::Serial && retries < 2 => retries += 1,
-                Err(failure) => return Err(failure),
+            // A bare `ip:port` input pairs without a user-picked carrier: classify
+            // the endpoint once, then normalize the address for the winner so the
+            // pending record stores the same endpoint a later reconnect would dial.
+            let transport = match transport {
+                Some(transport) => transport,
+                None => self.timeout(std::time::Duration::from_secs(10),
+                    resolvePairingTransport(&self.state.host, &target.address)).await
+                    .map_err(|_| CoreLinkError::new("PAIRING_TIMEOUT", "Pairing transport detection timed out"))?
+                    .map_err(error)?,
+            };
+            let mut endpoints = vec![(pairingAddressFor(&target.address, transport), transport)];
+            if !target.nodeId.is_empty() && isNetworkTransport(transport) {
+                for endpoint in self.discoveredPeerEndpoints(&target.nodeId) {
+                    if !endpoints.contains(&endpoint) { endpoints.push(endpoint); }
+                }
             }
-        };
-        raw.close().await;
-        {
-            let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            self.ensureDeviceUnpaired(&node)?;
-            self.state
-                .store
-                .putPending(
-                    RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
-                    &id,
-                    &Pending {
-                        version: PAIRING_SERVICE_VERSION,
-                        id: id.clone(),
-                        clientDeviceId: self.state.nodeId.clone(),
-                        peerNodeId: node.clone(),
-                        endpoint: address,
-                        transport,
-                        info: info.clone(),
-                        root,
-                        expires: currentTimeMillis() + PAIRING_LIFETIME_MS,
-                        attempts: 0,
-                        confirmationCode: None,
-                        qrJoinConsent: None,
-                        invitationId: invitationId.map(str::to_owned),
-                    },
-                    currentTimeMillis(),
-                    self.state.limits.pendingPairings,
-                )
-                .map_err(error)?;
-        }
-        self.changed(); Ok(PendingPairing { pairingId: id, peerNodeId: node, displayName: info.displayName() })
+            let mut retries = 0;
+            let ((_, id, info, root, node), raw, address, transport) = loop {
+                let attempt = self.tryPeerEndpoints(&target.nodeId, &endpoints, |raw| {
+                    self.handshake(raw, "start", "", None, None, invitationId)
+                });
+                let result = self.timeout(std::time::Duration::from_millis(CONNECT_DEADLINE_MS), attempt).await
+                    .map_err(|_| CoreLinkError::new("PAIRING_TIMEOUT", "Pairing candidates timed out"))?;
+                match result {
+                    Ok(value) => break value,
+                    // Opening a UART can reset the receiver. Preserve its boot-window retries.
+                    Err(_) if transport == PeerTransport::Serial && retries < 2 => retries += 1,
+                    Err(failure) => return Err(failure),
+                }
+            };
+            raw.close().await;
+            {
+                let _guard = self.state.mutation.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                self.ensureDeviceUnpaired(&node)?;
+                self.state
+                    .store
+                    .putPending(
+                        RUNTIME_LINK_ACCESS_PENDING_OUTBOUND_PAIRINGS_PATH,
+                        &id,
+                        &Pending {
+                            version: PAIRING_SERVICE_VERSION,
+                            id: id.clone(),
+                            clientDeviceId: self.state.nodeId.clone(),
+                            peerNodeId: node.clone(),
+                            endpoint: address,
+                            transport,
+                            info: info.clone(),
+                            root,
+                            expires: currentTimeMillis() + PAIRING_LIFETIME_MS,
+                            attempts: 0,
+                            confirmationCode: None,
+                            qrJoinConsent: None,
+                            invitationId: invitationId.map(str::to_owned),
+                        },
+                        currentTimeMillis(),
+                        self.state.limits.pendingPairings,
+                    )
+                    .map_err(error)?;
+            }
+            self.changed(); Ok(PendingPairing { pairingId: id, peerNodeId: node, displayName: info.displayName() })
+        })
     }
     fn router(&self) -> Result<Arc<dyn PeerRouter>, CoreLinkError> {
         self.state.router.upgrade().ok_or_else(|| CoreLinkError::new("PEER_ROUTER_CLOSED", "Peer router was released"))
     }
+
     fn connectionLock(&self, key: &str) -> Arc<AsyncMutex<()>> {
         let mut locks = self.state.connectLocks.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         locks.retain(|_, lock| lock.strong_count() != 0);
@@ -543,89 +552,92 @@ impl HostRuntimePeerService {
     /// six-digit code into a SPAKE2 password instead of an offline-verifiable
     /// MAC message. On success the returned secret is the SPAKE2-derived session
     /// key; for `start` it remains the X25519 root stored in the pending record.
-    async fn handshake(&self, raw: Arc<dyn PeerConnection>, purpose: &str, sessionId: &str,
-        saved: Option<&[u8]>, pairingCode: Option<&str>, invitationId: Option<&str>,
-    ) -> Result<(Arc<Channel>, String, LinkDeviceInfo, Vec<u8>, String), CoreLinkError> {
-        let (private, public) = crypto::ephemeral()?;
-        let hello = Hello { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, nodeId: self.state.nodeId.clone(),
-            maxFrameBytes: self.state.limits.maxFrameBytes,
-            expectedNodeId: raw.target().nodeId.clone(),
-            info: self.state.store.announcedDeviceInfo(&self.state.info), public: public.clone(),
-            purpose: purpose.into(), sessionId: sessionId.into(), duplex: true,
-            invitationId: invitationId.map(str::to_owned),
-            pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };
-        let reply: HelloReply = rawCall(&self.state.host, &raw, "hello", &hello).await
-            .inspect_err(|failure| {
-                operit_util::app_log!(w, "RuntimePeerService", &format!(
-                    "handshake.hello.failed local={:?} target={:?} purpose={purpose:?} transport={:?} localProtocol=v{} error={:?}",
-                    self.state.nodeId, raw.target().nodeId, raw.transport(), crate::PeerProtocol::VERSION, failure.to_string()));
-            })?;
-        if matches!(purpose, "start" | "finish") {
-            operit_util::app_log!(i, "RuntimePeerService", &format!(
-                "pairing.hello_reply.received local={:?} peer={:?} platform={:?} purpose={purpose:?} localProtocol=v{} remoteProtocol={:?}",
-                self.state.nodeId, reply.transcript.serverNodeId, reply.info.platform,
-                crate::PeerProtocol::VERSION, reply.transcript.protocol.as_ref().map(|protocol| protocol.version)));
-        }
-        if !reply.duplex { return Err(error("Peer must support one bidirectional Link channel")); }
-        let t = &reply.transcript;
-        crate::PeerProtocol::PeerProtocol::requireAdvertised(t.protocol.as_ref(), "received hello reply")?;
-        if t.version != PAIRING_SERVICE_VERSION || t.clientNodeId != self.state.nodeId || t.clientPublic != public
-            || t.clientMaxFrameBytes != self.state.limits.maxFrameBytes || t.serverMaxFrameBytes == 0
-            || (!raw.target().nodeId.is_empty() && t.serverNodeId != raw.target().nodeId)
-            || t.serverNodeId == self.state.nodeId || t.serverPublic.len() != 32 || t.challenge.len() != 32
-            || (!sessionId.is_empty() && t.sessionId != sessionId) {
-            return Err(error("Handshake identity/transcript mismatch"));
-        }
-        if matches!(purpose, "start" | "finish")
-            && reply.pairingProtocol != Some(PAIRING_PROTOCOL_VERSION) {
-            return Err(CoreLinkError::new(
-                "PAIRING_PROTOCOL_UPGRADE_REQUIRED",
-                PAIRING_PROTOCOL_UPGRADE_REQUIRED,
-            ));
-        }
-        let context = crypto::transcript(t)?;
-        let dh = crypto::agree(private, &t.serverPublic)?;
-        let root = crypto::derive(&dh, &context, b"operit-pairing-root-v1")?;
-        let key = match saved { Some(saved) => crypto::derive(&dh, saved, &context)?, None => root };
-        let finishing = purpose == "finish";
-        let spake = if finishing {
-            let code = pairingCode.ok_or_else(|| error("Pairing confirmation code is required"))?;
-            let startRoot = saved.ok_or_else(|| error("Pairing confirmation root is missing"))?;
-            let (clientId, serverId) = crypto::pairingIdentities(&context);
-            let (state, message) = crypto::spakeStart(true, code.as_bytes(), &clientId, &serverId)?;
-            let state = (state, startRoot.to_vec());
-            (Some(state), Some(message))
-        } else {
-            (None, None)
-        };
-        let accepted: Authorized = rawCall(&self.state.host, &raw, "authorize", &Authorization {
-            keyProof: crypto::proof(&key, &context, b"client"),
-            spake: spake.1,
-        }).await?;
-        crypto::verify(&key, &context, b"server", &accepted.proof)?;
-        if accepted.pairingId != t.sessionId { return Err(error("Pairing correlation mismatch")); }
-        let storedSecret = match spake.0 {
-            Some((state, startRoot)) => {
-                let serverMessage = accepted.spake.ok_or_else(|| CoreLinkError::new(
+    #[inline(never)]
+    fn handshake<'a>(&'a self, raw: Arc<dyn PeerConnection>, purpose: &'a str, sessionId: &'a str,
+        saved: Option<&'a [u8]>, pairingCode: Option<&'a str>, invitationId: Option<&'a str>,
+    ) -> futures_util::future::LocalBoxFuture<'a, Result<(Arc<Channel>, String, LinkDeviceInfo, Vec<u8>, String), CoreLinkError>> {
+        Box::pin(async move {
+            let (private, public) = crypto::ephemeral()?;
+            let hello = Hello { protocol: Some(crate::PeerProtocol::PeerProtocol::current()), version: PAIRING_SERVICE_VERSION, nodeId: self.state.nodeId.clone(),
+                maxFrameBytes: self.state.limits.maxFrameBytes,
+                expectedNodeId: raw.target().nodeId.clone(),
+                info: self.state.store.announcedDeviceInfo(&self.state.info), public: public.clone(),
+                purpose: purpose.into(), sessionId: sessionId.into(), duplex: true,
+                invitationId: invitationId.map(str::to_owned),
+                pairingProtocol: Some(PAIRING_PROTOCOL_VERSION) };
+            let reply: HelloReply = rawCall(&self.state.host, &raw, "hello", &hello).await
+                .inspect_err(|failure| {
+                    operit_util::app_log!(w, "RuntimePeerService", &format!(
+                        "handshake.hello.failed local={:?} target={:?} purpose={purpose:?} transport={:?} localProtocol=v{} error={:?}",
+                        self.state.nodeId, raw.target().nodeId, raw.transport(), crate::PeerProtocol::VERSION, failure.to_string()));
+                })?;
+            if matches!(purpose, "start" | "finish") {
+                operit_util::app_log!(i, "RuntimePeerService", &format!(
+                    "pairing.hello_reply.received local={:?} peer={:?} platform={:?} purpose={purpose:?} localProtocol=v{} remoteProtocol={:?}",
+                    self.state.nodeId, reply.transcript.serverNodeId, reply.info.platform,
+                    crate::PeerProtocol::VERSION, reply.transcript.protocol.as_ref().map(|protocol| protocol.version)));
+            }
+            if !reply.duplex { return Err(error("Peer must support one bidirectional Link channel")); }
+            let t = &reply.transcript;
+            crate::PeerProtocol::PeerProtocol::requireAdvertised(t.protocol.as_ref(), "received hello reply")?;
+            if t.version != PAIRING_SERVICE_VERSION || t.clientNodeId != self.state.nodeId || t.clientPublic != public
+                || t.clientMaxFrameBytes != self.state.limits.maxFrameBytes || t.serverMaxFrameBytes == 0
+                || (!raw.target().nodeId.is_empty() && t.serverNodeId != raw.target().nodeId)
+                || t.serverNodeId == self.state.nodeId || t.serverPublic.len() != 32 || t.challenge.len() != 32
+                || (!sessionId.is_empty() && t.sessionId != sessionId) {
+                return Err(error("Handshake identity/transcript mismatch"));
+            }
+            if matches!(purpose, "start" | "finish")
+                && reply.pairingProtocol != Some(PAIRING_PROTOCOL_VERSION) {
+                return Err(CoreLinkError::new(
                     "PAIRING_PROTOCOL_UPGRADE_REQUIRED",
                     PAIRING_PROTOCOL_UPGRADE_REQUIRED,
-                ))?;
-                let spakeKey = crypto::spakeFinish(state, &serverMessage)?;
-                let sessionSecret = crypto::pairingSessionSecret(&spakeKey, &startRoot, &context)?;
-                let proof = accepted.spakeProof.ok_or_else(|| error("Pairing confirmation proof is missing"))?;
-                crypto::verify(&sessionSecret, &context, b"server-spake", &proof)?;
-                sessionSecret.to_vec()
+                ));
             }
-            None => root.to_vec(),
-        };
-        let id = t.sessionId.clone(); let peerNodeId = t.serverNodeId.clone();
-        let info = reply.info;
-        let channelKey = if finishing {
-            let secret: [u8; 32] = storedSecret.as_slice().try_into().map_err(|_| error("Invalid pairing secret"))?;
-            secret
-        } else { key };
-        let channel = Channel::new(raw, &channelKey, &context, true, t.clientMaxFrameBytes.min(t.serverMaxFrameBytes))?;
-        Ok((channel, id, info, storedSecret, peerNodeId))
+            let context = crypto::transcript(t)?;
+            let dh = crypto::agree(private, &t.serverPublic)?;
+            let root = crypto::derive(&dh, &context, b"operit-pairing-root-v1")?;
+            let key = match saved { Some(saved) => crypto::derive(&dh, saved, &context)?, None => root };
+            let finishing = purpose == "finish";
+            let spake = if finishing {
+                let code = pairingCode.ok_or_else(|| error("Pairing confirmation code is required"))?;
+                let startRoot = saved.ok_or_else(|| error("Pairing confirmation root is missing"))?;
+                let (clientId, serverId) = crypto::pairingIdentities(&context);
+                let (state, message) = crypto::spakeStart(true, code.as_bytes(), &clientId, &serverId)?;
+                let state = (state, startRoot.to_vec());
+                (Some(state), Some(message))
+            } else {
+                (None, None)
+            };
+            let accepted: Authorized = rawCall(&self.state.host, &raw, "authorize", &Authorization {
+                keyProof: crypto::proof(&key, &context, b"client"),
+                spake: spake.1,
+            }).await?;
+            crypto::verify(&key, &context, b"server", &accepted.proof)?;
+            if accepted.pairingId != t.sessionId { return Err(error("Pairing correlation mismatch")); }
+            let storedSecret = match spake.0 {
+                Some((state, startRoot)) => {
+                    let serverMessage = accepted.spake.ok_or_else(|| CoreLinkError::new(
+                        "PAIRING_PROTOCOL_UPGRADE_REQUIRED",
+                        PAIRING_PROTOCOL_UPGRADE_REQUIRED,
+                    ))?;
+                    let spakeKey = crypto::spakeFinish(state, &serverMessage)?;
+                    let sessionSecret = crypto::pairingSessionSecret(&spakeKey, &startRoot, &context)?;
+                    let proof = accepted.spakeProof.ok_or_else(|| error("Pairing confirmation proof is missing"))?;
+                    crypto::verify(&sessionSecret, &context, b"server-spake", &proof)?;
+                    sessionSecret.to_vec()
+                }
+                None => root.to_vec(),
+            };
+            let id = t.sessionId.clone(); let peerNodeId = t.serverNodeId.clone();
+            let info = reply.info;
+            let channelKey = if finishing {
+                let secret: [u8; 32] = storedSecret.as_slice().try_into().map_err(|_| error("Invalid pairing secret"))?;
+                secret
+            } else { key };
+            let channel = Channel::new(raw, &channelKey, &context, true, t.clientMaxFrameBytes.min(t.serverMaxFrameBytes))?;
+            Ok((channel, id, info, storedSecret, peerNodeId))
+        })
     }
     /// Returns the peer's only authenticated connection while it remains usable.
     fn peerChannel(&self, node: &str) -> Option<Arc<MultiplexedChannel>> {
@@ -1054,26 +1066,36 @@ async fn readCall(raw: &Arc<dyn PeerConnection>, method: &str) -> Result<CoreCal
     }
 }
 async fn rawCall<T: Serialize, R: serde::de::DeserializeOwned>(host: &HostManager, raw: &Arc<dyn PeerConnection>, method: &str, args: &T) -> Result<R, CoreLinkError> {
-    let id = CoreRequestId::new(uuid::Uuid::new_v4().to_string());
-    let request = PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(id.0.clone(), HANDSHAKE, method,
-        toCoreValue(args).map_err(|e| error(e.to_string()))?)));
-    let exchange = async {
-        raw.send(request).await.map_err(error)?;
-        raw.receive().await.map_err(error)
-    };
-    let scheduler = host.hostRuntimeTaskSchedulerHost.as_deref()
-        .ok_or_else(|| error("Host scheduler is not installed"))?;
-    let response = crate::host_time::withScheduler(scheduler, std::time::Duration::from_secs(5), exchange).await
-        .map_err(|_| CoreLinkError::new("PAIRING_TIMEOUT", if raw.transport() == PeerTransport::Serial {
-            format!("Serial pairing response timed out ({method})")
-        } else {
-            format!("Pairing {method} timed out: the receiver did not reply over {:?}", raw.transport())
-        }))??;
-    match response {
-        Some(PeerMessage::Response(CoreLinkResponse::Call(r))) if r.requestId == id => fromCoreValue(r.result?).map_err(|e| error(e.to_string())),
-        None => Err(CoreLinkError::new("PEER_CONNECTION_CLOSED", "Peer ended the stream before handshake")),
-        _ => Err(error("Pairing response correlation mismatch")),
-    }
+    let args = toCoreValue(args).map_err(|e| error(e.to_string()))?;
+    fromCoreValue(rawExchange(host, raw, method, args).await?).map_err(|e| error(e.to_string()))
+}
+
+/// Share the handshake exchange across typed requests and bound its caller's task state.
+#[inline(never)]
+fn rawExchange<'a>(host: &'a HostManager, raw: &'a Arc<dyn PeerConnection>, method: &'a str, args: CoreValue)
+    -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<CoreValue, CoreLinkError>> + 'a>> {
+    Box::pin(async move {
+        let id = CoreRequestId::new(uuid::Uuid::new_v4().to_string());
+        let request = PeerMessage::Request(CoreLinkRequest::Call(CoreCallRequest::new(id.0.clone(), HANDSHAKE, method,
+            args)));
+        let exchange = async {
+            raw.send(request).await.map_err(error)?;
+            raw.receive().await.map_err(error)
+        };
+        let scheduler = host.hostRuntimeTaskSchedulerHost.as_deref()
+            .ok_or_else(|| error("Host scheduler is not installed"))?;
+        let response = crate::host_time::withScheduler(scheduler, std::time::Duration::from_secs(5), exchange).await
+            .map_err(|_| CoreLinkError::new("PAIRING_TIMEOUT", if raw.transport() == PeerTransport::Serial {
+                format!("Serial pairing response timed out ({method})")
+            } else {
+                format!("Pairing {method} timed out: the receiver did not reply over {:?}", raw.transport())
+            }))??;
+        match response {
+            Some(PeerMessage::Response(CoreLinkResponse::Call(r))) if r.requestId == id => r.result,
+            None => Err(CoreLinkError::new("PEER_CONNECTION_CLOSED", "Peer ended the stream before handshake")),
+            _ => Err(error("Pairing response correlation mismatch")),
+        }
+    })
 }
 async fn sendValue(raw: &Arc<dyn PeerConnection>, id: CoreRequestId, value: impl Serialize) -> Result<(), CoreLinkError> {
     raw.send(PeerMessage::Response(CoreLinkResponse::Call(CoreCallResponse::ok(id, toCoreValue(value).map_err(|e| error(e.to_string()))?))))
@@ -1177,6 +1199,8 @@ impl RuntimePeerService for HostRuntimePeerService {
         let _lifecycle = self.state.lifecycle.lock().await;
         use crate::PeerStateStore::PeerHostPortMode;
         let mut config = self.state.store.hostConfig().map_err(error)?.ok_or_else(|| error("Configure bindAddress/transports before listening"))?;
+        #[cfg(not(feature = "peer-directory"))]
+        if config.discovery.is_some() { return Err(error("HTTP discovery directories are not enabled in this build")); }
         let scheduler = self.state.host.hostRuntimeTaskSchedulerHost.clone().ok_or_else(|| error("Host scheduler is not installed"))?;
         let mut listeners = self.state.listeners.lock().await;
         let requested: BTreeSet<_> = listeners.keys().copied().chain(transports.iter().copied()).collect();
@@ -1261,9 +1285,11 @@ impl RuntimePeerService for HostRuntimePeerService {
         }.await;
         match result {
             Ok(advertisements) => {
+                #[cfg(feature = "peer-directory")]
                 let newTransports: Vec<_> = opened.keys().copied().collect();
                 listeners.extend(opened);
                 drop(listeners);
+                #[cfg(feature = "peer-directory")]
                 if let Err(failure) = self.startDirectory().await {
                     // A configured directory is a required source; report startup failure.
                     let rejected = {
@@ -1287,6 +1313,7 @@ impl RuntimePeerService for HostRuntimePeerService {
     async fn stop(&self) -> Result<(), CoreLinkError> {
         let _lifecycle = self.state.lifecycle.lock().await;
         self.stopAvailabilityWorker().await;
+        #[cfg(feature = "peer-directory")]
         self.stopDirectory().await;
         self.clearDiscovery();
         self.state.advertisements.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clear();
@@ -1663,6 +1690,7 @@ mod single_channel_tests {
         let _ = operit_store::CoreSpaceStore::CoreSpaceStore::newNodeLocal(storage.clone()).initialize();
         HostRuntimePeerService { state: Arc::new(State {
             limits: PeerRuntimeLimits::default(),
+            #[cfg(feature = "peer-directory")]
             directoryStart: directory::startServer,
             host: Arc::new(HostManager {
                 runtimeStorageHost: Some(storage.clone()),

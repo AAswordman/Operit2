@@ -438,8 +438,9 @@ impl<'de> Visitor<'de> for CoreValueVisitor {
     where
         A: SeqAccess<'de>,
     {
-        let mut values = Vec::with_capacity(sequence.size_hint().unwrap_or(0));
+        let mut values = Vec::new();
         while let Some(value) = sequence.next_element()? {
+            values.try_reserve(1).map_err(serde::de::Error::custom)?;
             values.push(value);
         }
         Ok(CoreValue::List(values))
@@ -452,7 +453,9 @@ impl<'de> Visitor<'de> for CoreValueVisitor {
     {
         let mut values = BTreeMap::new();
         while let Some((key, value)) = entries.next_entry::<String, CoreValue>()? {
-            values.insert(key, value);
+            if values.insert(key, value).is_some() && cfg!(feature = "compact-codec") {
+                return Err(serde::de::Error::custom("Duplicate Link map key"));
+            }
         }
         Ok(CoreValue::Map(values))
     }

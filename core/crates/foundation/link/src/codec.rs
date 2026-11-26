@@ -224,7 +224,23 @@ pub fn decodeLink<T>(bytes: &[u8]) -> Result<T, CoreLinkCodecError>
 where
     T: DeserializeOwned,
 {
-    rmp_serde::from_slice(bytes).map_err(|error| CoreLinkCodecError::Decode(error.to_string()))
+    #[cfg(feature = "compact-codec")]
+    { crate::fromCoreValue(decodeLinkValue(bytes)?) }
+    #[cfg(not(feature = "compact-codec"))]
+    { rmp_serde::from_slice(bytes).map_err(|error| CoreLinkCodecError::Decode(error.to_string())) }
+}
+
+#[cfg(feature = "compact-codec")]
+#[inline(never)]
+fn decodeLinkValue(bytes: &[u8]) -> Result<crate::CoreValue, CoreLinkCodecError> {
+    // Reject impossible container lengths and trailing data before allocating a tree.
+    let mut cursor = FieldCursor { bytes, at: 0 };
+    cursor.skip()?;
+    if cursor.at != bytes.len() { return Err(FieldCursor::invalid()); }
+    let mut decoder = rmp_serde::Deserializer::from_read_ref(bytes);
+    decoder.set_max_depth(64);
+    serde::Deserialize::deserialize(&mut decoder)
+        .map_err(|error| CoreLinkCodecError::Decode(error.to_string()))
 }
 
 /// Decodes owned transport bytes while retaining binary fields as shared slices.
@@ -236,6 +252,10 @@ pub fn decodeLinkOwned<T: DeserializeOwned>(bytes: CoreBytes) -> Result<T, CoreL
 
 /// Retains one owned frame while a typed decoder selects its borrowed fields.
 pub(crate) fn decodeOwnedWith<T>(bytes: CoreBytes, decode: impl FnOnce(&[u8]) -> Result<T, CoreLinkCodecError>) -> Result<T, CoreLinkCodecError> {
+    withDecodeSource(bytes, decode)
+}
+
+pub(crate) fn withDecodeSource<T>(bytes: CoreBytes, decode: impl FnOnce(&[u8]) -> T) -> T {
     struct Scope(Option<CoreBytes>);
     impl Drop for Scope {
         /// Restores the previous owned decode source after this scope.

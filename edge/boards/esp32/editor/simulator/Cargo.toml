@@ -18,7 +18,7 @@ required-features = ["core-integration-tests"]
 [dependencies]
 operit-node-runtime = { path = "../../../../../core/crates/node/runtime", default-features = false, optional = true }
 operit-tools = { path = "../../../../../core/crates/tool/services", default-features = false, optional = true }
-operit-edge-sdk = { path = "../../../../sdk", features = ["space", "scene"] }
+operit-edge-sdk = { path = "../../../../sdk", default-features = false, features = ["space", "scene"] }
 operit-host-native-storage = { path = "../../../../../hosts/common/operit-host-native-storage" }
 linked_list_allocator = "0.10.6"
 uuid = { version = "1", features = ["v4"] }
@@ -30,7 +30,7 @@ log = "0.4"
 base64 = "0.22"
 operit-host-api = { path = "../../../../../core/crates/foundation/host-api" }
 operit-util = { path = "../../../../../core/crates/foundation/util", default-features = false, features = ["compact-json"] }
-operit-link = { path = "../../../../../core/crates/foundation/link" }
+operit-link = { path = "../../../../../core/crates/foundation/link", features = ["compact-codec"] }
 serde_json = "1"
 serde = { version = "1", features = ["derive"] }
 tokio = { version = "1", features = ["rt", "macros", "net", "sync", "time", "io-util"] }
