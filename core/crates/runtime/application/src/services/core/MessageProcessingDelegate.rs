@@ -590,14 +590,19 @@ struct ChatSummaryTasks {
 impl ChatSummaryTasks {
     /// Rejects overlapping summaries instead of replacing their cancellation handles.
     fn register(&self, chatId: String, task: ChatSummaryTask) -> Result<(), String> {
+        self.registerOrGet(chatId.clone(), task).map_err(|_| format!(
+            "Conversation summary already running for chat: {chatId}"
+        ))
+    }
+
+    /// Atomically returns the existing owner when another summary already holds the chat.
+    fn registerOrGet(&self, chatId: String, task: ChatSummaryTask) -> Result<(), ChatSummaryTask> {
         let mut tasks = self
             .tasks
             .lock()
             .expect("summary task registry mutex poisoned");
-        if tasks.contains_key(&chatId) {
-            return Err(format!(
-                "Conversation summary already running for chat: {chatId}"
-            ));
+        if let Some(existing) = tasks.get(&chatId) {
+            return Err(existing.clone());
         }
         tasks.insert(chatId, task);
         Ok(())
@@ -1292,6 +1297,15 @@ impl MessageProcessingDelegate {
         task: ChatSummaryTask,
     ) -> Result<(), String> {
         self.summaryTasksByChatId.register(chatId, task)
+    }
+
+    /// Reserves the chat or returns the already registered summary atomically.
+    pub(crate) fn registerSummaryTaskOrGet(
+        &self,
+        chatId: String,
+        task: ChatSummaryTask,
+    ) -> Result<(), ChatSummaryTask> {
+        self.summaryTasksByChatId.registerOrGet(chatId, task)
     }
 
     /// Reads the actual summary operation shared by every clone serving this chat.
@@ -3708,6 +3722,11 @@ mod tests {
             .register("chat-a".to_string(), original.clone())
             .unwrap();
         assert!(tasks.register("chat-a".to_string(), summaryTask()).is_err());
+        let existing = match tasks.registerOrGet("chat-a".to_string(), summaryTask()) {
+            Err(existing) => existing,
+            Ok(()) => panic!("an automatic summary must reuse the registered owner"),
+        };
+        assert!(Arc::ptr_eq(&existing.taskId, &original.taskId));
         assert!(Arc::ptr_eq(
             &tasks.get("chat-a").unwrap().taskId,
             &original.taskId

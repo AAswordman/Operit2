@@ -44,6 +44,7 @@ use operit_model::ChatHistoryListItem::ChatHistoryListItem;
 use operit_model::ChatMessage::ChatMessage;
 use operit_model::ChatMessageLocatorPreview::ChatMessageLocatorPreview;
 use operit_model::ChatTurnOptions::ChatTurnOptions;
+use operit_model::ContextWindowBreakdown::ContextWindowBreakdown;
 use operit_plugin_sdk::js_sdk::results::{JsOptional, MessageSendOutcome, MessageSendResultData};
 use operit_model::FunctionType::FunctionType;
 use operit_model::InputProcessingState::InputProcessingState;
@@ -135,6 +136,8 @@ pub struct ChatInputMenuSummary {
     pub inputTokenCount: i64,
     pub outputTokenCount: i64,
     pub maxContextTokens: i64,
+    #[serde(default)]
+    pub breakdown: Option<ContextWindowBreakdown>,
 }
 
 /// Bounded read-only plugin projection for the chat's execution Core.
@@ -1516,8 +1519,15 @@ impl ChatServiceCore {
     #[allow(non_snake_case)]
     #[operit_route_macros::operit_core_route(binding = chatId)]
     pub async fn deleteMessagesFrom(&mut self, chatId: String, messageTimestamp: i64) -> bool {
-        self.chatHistoryDelegate
-            .deleteMessagesFromTimestamp(chatId, messageTimestamp)
+        let deleted = self
+            .chatHistoryDelegate
+            .deleteMessagesFromTimestamp(chatId.clone(), messageTimestamp);
+        if deleted {
+            if let Some(delegate) = self.getTokenStatisticsDelegate() {
+                delegate.clearContextBreakdown(Some(chatId));
+            }
+        }
+        deleted
     }
 
     /// Deletes one alternate response variant from a message timestamp.
@@ -1525,6 +1535,11 @@ impl ChatServiceCore {
     pub fn deleteMessageVariant(&mut self, timestamp: i64, variantIndex: i32) {
         self.chatHistoryDelegate
             .deleteMessageVariant(timestamp, variantIndex);
+        if let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow.value() {
+            if let Some(delegate) = self.getTokenStatisticsDelegate() {
+                delegate.clearContextBreakdown(Some(chatId));
+            }
+        }
     }
 
     /// Selects the displayed response variant for one message timestamp.
@@ -1532,6 +1547,11 @@ impl ChatServiceCore {
     pub fn selectMessageVariant(&mut self, timestamp: i64, selectedVariantIndex: i32) {
         self.chatHistoryDelegate
             .selectMessageVariant(timestamp, selectedVariantIndex);
+        if let Some(chatId) = self.chatHistoryDelegate.currentChatIdFlow.value() {
+            if let Some(delegate) = self.getTokenStatisticsDelegate() {
+                delegate.clearContextBreakdown(Some(chatId));
+            }
+        }
     }
 
     /// Creates and resolves a branch with its source's persisted opaque binding before selecting it.
@@ -1755,7 +1775,13 @@ impl ChatServiceCore {
 
     /// Removes every message from the currently selected chat.
     pub fn clearCurrentChat(&mut self) {
+        let chatId = self.chatHistoryDelegate.currentChatIdFlow.value();
         self.chatHistoryDelegate.clearCurrentChat();
+        if let Some(chatId) = chatId {
+            if let Some(delegate) = self.getTokenStatisticsDelegate() {
+                delegate.clearContextBreakdown(Some(chatId));
+            }
+        }
     }
 
     /// Serializes all chat histories into a JSON archive string.
@@ -3110,19 +3136,76 @@ impl ChatServiceCore {
         };
         // A non-zero live estimate tracks every request/tool round and is reseeded on each
         // persisted write, so it is never older than the row; zero means a cold cache.
-        let liveWindowSize = if chatId.is_some() {
+        let mut liveWindowSize = if chatId.is_some() {
             self.getTokenStatisticsDelegate()
                 .map(|delegate| delegate.getLastCurrentWindowSize(chatId.clone()))
                 .unwrap_or(0)
         } else {
             0
         };
+        let liveBreakdown = if chatId.is_some() {
+            self.getTokenStatisticsDelegate()
+                .and_then(|delegate| delegate.getLastContextBreakdown(chatId.clone()))
+        } else {
+            None
+        };
         let persistedWindowSize = chat.as_ref().map(|c| c.currentWindowSize).unwrap_or(0);
+        let breakdown = if liveBreakdown.is_some() {
+            liveBreakdown
+        } else if let (Some(id), Some(chatRecord)) = (chatId.as_ref(), chat.as_ref()) {
+            let hasContent = persistedWindowSize > 0
+                || !self
+                    .chatHistoryDelegate
+                    .getRuntimeChatHistory(id.clone())
+                    .is_empty();
+            if hasContent {
+                if let Some(mut service) = self.newEnhancedAiServiceForChat(id) {
+                    match MessageCoordinationDelegate::calculateStableWindowWithBreakdownFromDelegates(
+                        &self.chatHistoryDelegate,
+                        &mut service,
+                        &chatRecord.id,
+                        None,
+                        PromptFunctionType::CHAT,
+                        None,
+                        None,
+                    )
+                    .await
+                    {
+                        Ok((windowSize, computedBreakdown)) => {
+                            liveWindowSize = windowSize;
+                            if let Some(delegate) = self.getTokenStatisticsDelegate() {
+                                delegate.cacheContextBreakdown(
+                                    Some(id.clone()),
+                                    windowSize,
+                                    computedBreakdown,
+                                );
+                            }
+                            computedBreakdown
+                        }
+                        Err(error) => {
+                            AppLogger::v_with_level(
+                                "ChatServiceCore",
+                                &format!("Cold context breakdown estimation skipped for {}: {}", id, error),
+                                operit_util::AppLogger::VERBOSE_LEVEL_2,
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         Ok(ChatInputMenuSummary {
             currentWindowSize: if liveWindowSize > 0 { liveWindowSize } else { persistedWindowSize },
             inputTokenCount: chat.as_ref().map(|c| c.inputTokens).unwrap_or(0),
             outputTokenCount: chat.as_ref().map(|c| c.outputTokens).unwrap_or(0),
             maxContextTokens: i64::from(config.context.maxContextTokens),
+            breakdown,
         })
     }
 
@@ -3994,13 +4077,27 @@ mod chat_input_menu_summary_tests {
         assert_eq!(summary.currentWindowSize, 1000);
         assert_eq!((summary.inputTokenCount, summary.outputTokenCount), (111, 22));
 
-        // A live mid-turn estimate must win over the row left by the previous completed turn.
-        core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.setTokenCounts(
-            Some("summary-stale".into()), 111, 22, 5000,
+        // Live breakdown cached in TokenStatisticsDelegate flows into ChatInputMenuSummary and is
+        // cleared cleanly when clearContextBreakdown invalidates the chat's cache.
+        let sampleBreakdown = ContextWindowBreakdown {
+            systemPromptTokens: 1200,
+            toolTokens: 2500,
+            fileTokens: 300,
+            toolResultTokens: 700,
+            conversationTokens: 300,
+        };
+        core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.setTokenCountsWithBreakdown(
+            Some("summary-stale".into()), 111, 22, 5000, Some(sampleBreakdown),
         );
         let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
         assert_eq!(summary.currentWindowSize, 5000);
+        assert_eq!(summary.breakdown, Some(sampleBreakdown));
         assert_eq!((summary.inputTokenCount, summary.outputTokenCount), (111, 22));
+
+        core.getTokenStatisticsDelegate().unwrap().clearContextBreakdown(Some("summary-stale".into()));
+        let summary = core.chatInputMenuSummary(Some("summary-stale".into())).await.unwrap();
+        assert_eq!(summary.currentWindowSize, 1000);
+        assert_eq!(summary.breakdown, None);
 
         // Production sends run on a deep-cloned worker delegate; its updates must reach the Core.
         let mut workerDelegate = core.getMessageCoordinationDelegate().unwrap().tokenStatisticsDelegate.clone();

@@ -37,7 +37,7 @@ jobs:
   build-ios:
     needs: build-arm64-rootfs
     runs-on: macos-15
-    timeout-minutes: 90
+    timeout-minutes: 300
     env:
       RUSTFLAGS: -Awarnings
       RUST_TOOLCHAIN_VERSION: 1.95.0
@@ -139,6 +139,20 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-ios-
             ${{ runner.os }}-rust-${{ env.RUST_TOOLCHAIN_VERSION }}-cargo-
+
+      - name: Bundle models.dev catalog
+        run: python3 tools/build_scripts/models_dev_bundle.py
+
+      - name: Install Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 4.0.10
+          actions-cache-folder: emsdk-cache
+
+      - name: Install plugin build tools
+        run: |
+          npm install --prefix .ci-tools/typescript --no-audit --no-fund typescript@5.9.3
+          corepack enable
 
       - name: Generate Dart proxy artifacts
         run: |

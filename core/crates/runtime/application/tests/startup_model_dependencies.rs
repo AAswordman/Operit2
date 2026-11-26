@@ -3,7 +3,7 @@
 
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
-    Arc,
+    Arc, Mutex,
 };
 
 use operit_host_api::HostManager::HostManager;
@@ -58,7 +58,7 @@ impl HttpHost for UnusedHttp {
 }
 
 /// Keeps background tasks outside the synchronous startup and model-construction assertions.
-struct StartupScheduler;
+struct StartupScheduler(Arc<Mutex<Vec<String>>>);
 impl HostRuntimeTaskSchedulerHost for StartupScheduler {
     /// Supplies a deterministic clock.
     fn monotonicTimeMillis(&self) -> HostResult<u64> {
@@ -69,7 +69,8 @@ impl HostRuntimeTaskSchedulerHost for StartupScheduler {
         Ok(())
     }
     /// Leaves plugin loading unexecuted while startup completes.
-    fn scheduleHostRuntimeAsyncTask(&self, _: &str, _: HostRuntimeAsyncTask) -> HostResult<()> {
+    fn scheduleHostRuntimeAsyncTask(&self, name: &str, _: HostRuntimeAsyncTask) -> HostResult<()> {
+        self.0.lock().unwrap().push(name.into());
         Ok(())
     }
     /// Leaves cooperative work unexecuted while startup completes.
@@ -274,17 +275,22 @@ async fn startup_and_plain_chat_do_not_require_owner_or_missing_auxiliary_models
         root.join("workspaces"),
     ));
     let owner = Arc::new(OwnerSystem(AtomicUsize::new(0)));
+    let scheduledTasks = Arc::new(Mutex::new(Vec::new()));
     let mut context = HostManager::withFileSystemHost(Arc::new(
         operit_host_native_filesystem::PosixFileSystemHost::new(),
     ))
     .withRuntimeStorageHost(storage.clone())
     .withHttpHost(Arc::new(UnusedHttp))
-    .withHostRuntimeTaskSchedulerHost(Arc::new(StartupScheduler))
+    .withHostRuntimeTaskSchedulerHost(Arc::new(StartupScheduler(scheduledTasks.clone())))
     .withHostJavaScriptRuntimeHost(Arc::new(UnusedJavaScript));
     context.runtimeSqliteHost = Some(storage);
     context.systemOperationHost = Some(owner.clone());
     let mut application = OperitApplication::newWithContext(context);
+    assert!(!scheduledTasks.lock().unwrap().iter().any(|name| name == "scheduled-chat-messages"));
     application.onCreate().unwrap();
+    let tasks = scheduledTasks.lock().unwrap().clone();
+    assert!(tasks.iter().position(|name| name == "operit-plugin-startup").unwrap()
+        < tasks.iter().position(|name| name == "scheduled-chat-messages").unwrap());
     assert!(application.initialized);
     assert_eq!(
         owner.0.load(Ordering::SeqCst),

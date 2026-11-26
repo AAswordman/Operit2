@@ -12,6 +12,7 @@ class RuntimeWindowRecording {
   final _result = Completer<RecordedAudio?>();
   final int _maxDurationMs;
   final int? _silenceMs;
+  final void Function(Uint8List bytes)? _onChunk;
   late final Future<void> _started;
   Timer? _deadline;
   Future<void>? _ending;
@@ -33,12 +34,14 @@ class RuntimeWindowRecording {
   bool _heardSpeech = false;
   double _level = 0;
 
-  /// Starts capture on the owner engine and arms its deadline after authorization.
+  /// Starts capture on the owner engine and arms its deadline after
+  /// authorization. Every captured chunk also reaches [onChunk].
   RuntimeWindowRecording(
     this._maxDurationMs,
     this._silenceMs, {
     bool echoCancellation = false,
-  }) {
+    void Function(Uint8List bytes)? onChunk,
+  }) : _onChunk = onChunk {
     _started = _recorder.start(
       onChunk: _observe,
       echoCancellation: echoCancellation,
@@ -87,6 +90,7 @@ class RuntimeWindowRecording {
   /// Meters the input and detects trailing silence using fixed PCM16 frames.
   void _observe(Uint8List bytes) {
     if (_ending != null) return;
+    _onChunk?.call(bytes);
     final silenceMs = _silenceMs;
     for (final byte in bytes) {
       final low = _lowByte;

@@ -1,13 +1,12 @@
 use operit_host_api::terminalSessionKey as sessionKey;
 use operit_host_api::TerminalProfiles::{profileMounts, TerminalMount};
-use operit_host_api::TerminalControl::{controlToSequence, normalizeControl};
 use operit_host_api::TerminalText::{appendPtyOutput as appendAndroidPtyOutput, dropCommandEcho, nonBlank, renderTerminalText, rfindBytes, stripPtyDeviceStatusReports, stripPtyPromptMarkers, scanPtyOutput, updatePtyCursor as updateAndroidPtyCursor, PtyCursor as AndroidPtyCursor};
 use std::collections::{BTreeMap, VecDeque};
 use std::env;
 use std::ffi::CString;
 use std::io::Write;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -102,6 +101,7 @@ struct AndroidPtySession {
     commandOutput: AndroidPtyCommandOutput,
     screenOutput: Arc<Mutex<VecDeque<u8>>>,
     commandRunning: bool,
+    processOwned: bool,
     exitCode: Option<i32>,
 }
 
@@ -204,11 +204,13 @@ impl AndroidTerminalHost {
     }
 
     pub fn writePtySession(&self, sessionId: &str, data: &[u8]) -> HostResult<usize> {
-        let state = self.lockState()?;
-        let session = state.ptySessions.get(sessionId).ok_or_else(|| {
-            HostError::new(format!("Android PTY session does not exist: {sessionId}"))
-        })?;
-        writeAndroidPtyBytes(&session.writer, data)
+        let writer = {
+            let state = self.lockState()?;
+            state.ptySessions.get(sessionId).ok_or_else(|| {
+                HostError::new(format!("Android PTY session does not exist: {sessionId}"))
+            })?.writer.clone()
+        };
+        writeAndroidPtyBytes(&writer, data)
     }
 
     pub fn resizePtySession(&self, sessionId: &str, rows: u16, cols: u16) -> HostResult<()> {
@@ -230,6 +232,7 @@ impl AndroidTerminalHost {
         let exitCode = pollPidExitCode(&mut session.process)?;
         if let Some(code) = exitCode {
             session.exitCode = Some(code);
+            session.commandRunning = false;
         }
         Ok(exitCode)
     }
@@ -261,6 +264,26 @@ impl AndroidTerminalHost {
 }
 
 impl TerminalHost for AndroidTerminalHost {
+    /// Launches a fresh Android PTY with its complete command supplied as an argument.
+    fn openTerminalSession(&self, request: &operit_host_api::TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        let name = nonBlank(&request.sessionName, "session_name")?;
+        let kind = requireAndroidTerminal(&request.terminal, &request.terminalType)?;
+        if self.implementation(&kind)? != request.terminal {
+            return Err(HostError::new("Android terminal requires a matching launch profile"));
+        }
+        let directory = match &request.workingDir {
+            Some(directory) => nonBlank(directory, "working_directory")?,
+            None => initialAndroidWorkingDir(&request.terminal, &kind)?,
+        };
+        let session = createAndroidPtyProcess(self.profile.as_ref(), self.termuxLauncher.as_ref(),
+            name.clone(), kind.clone(), directory, 24, 80, request.command.as_deref(), false)?;
+        let terminal = session.terminal.clone();
+        let id = nextTerminalId();
+        self.lockState()?.ptySessions.insert(id.clone(), session);
+        Ok(TerminalSessionInfo { sessionId: id, sessionName: name, platform: PLATFORM.into(),
+            terminal, terminalType: kind, isNewSession: true })
+    }
+
     /// Offers ARM64 rootfs archives only on Android devices executing that architecture.
     fn terminalDistributions(&self) -> HostResult<Vec<operit_host_api::TerminalDistribution>> {
         if std::env::consts::ARCH != "aarch64" {
@@ -342,7 +365,7 @@ impl TerminalHost for AndroidTerminalHost {
                 _ => return Err(HostError::new("Termux directory mode must be home or workspace")),
             }
         } else {
-            androidProfileRootfs(profile)?;
+            if profile.terminal != ANDROID_SYSTEM_TERMINAL { androidProfileRootfs(profile)?; }
             androidProfileMounts(profile)?;
         }
         Ok(Arc::new(Self {
@@ -487,7 +510,8 @@ impl TerminalHost for AndroidTerminalHost {
                     session.exitCode = Some(exitCode);
                 }
             }
-            if session.exitCode.is_some() {
+            if session.exitCode.is_some() { session.commandRunning = false; }
+            if session.exitCode.is_some() && !session.processOwned {
                 continue;
             }
             entries.push(TerminalSessionListEntry {
@@ -622,20 +646,9 @@ impl TerminalHost for AndroidTerminalHost {
         control: Option<&str>,
     ) -> HostResult<TerminalInputOutput> {
         let normalizedSessionId = nonBlank(sessionId, "session_id")?;
-        if input.is_none() && control.and_then(normalizeControl).is_none() {
-            return Err(HostError::new(
-                "At least one of input or control is required",
-            ));
-        }
-        let mut state = self.lockState()?;
-        let session = state
-            .ptySessions
-            .get_mut(&normalizedSessionId)
-            .ok_or_else(|| {
-                HostError::new(format!("Terminal session does not exist: {sessionId}"))
-            })?;
-        let acceptedChars =
-            applyAndroidPtyTerminalInput(session, input, control.and_then(normalizeControl))?;
+        let data = operit_host_api::TerminalControl::terminalInput(input, control)?;
+        self.writePtySession(&normalizedSessionId, data.as_bytes())?;
+        let acceptedChars = data.chars().count();
         Ok(TerminalInputOutput {
             sessionId: normalizedSessionId,
             acceptedChars,
@@ -681,7 +694,16 @@ impl TerminalHost for AndroidTerminalHost {
             .ok_or_else(|| {
                 HostError::new(format!("Terminal session does not exist: {sessionId}"))
             })?;
-        let content = androidPtyScreenContent(session)?;
+        if session.processOwned && session.exitCode.is_none() {
+            session.exitCode = pollPidExitCode(&mut session.process)?;
+            if session.exitCode.is_some() { session.commandRunning = false; }
+        }
+        let terminalType = session.terminalType.clone();
+        let commandRunning = session.commandRunning;
+        let screenOutput = session.screenOutput.clone();
+        let terminal = session.terminal.clone();
+        drop(state);
+        let content = androidPtyScreenContent(&screenOutput)?;
         let rows = content.lines().count();
         let cols = content
             .lines()
@@ -691,12 +713,12 @@ impl TerminalHost for AndroidTerminalHost {
         Ok(TerminalScreenOutput {
             sessionId: normalizedSessionId,
             platform: PLATFORM.to_string(),
-            terminal: session.terminal.clone(),
-            terminalType: session.terminalType.clone(),
+            terminal,
+            terminalType,
             rows,
             cols,
             content,
-            commandRunning: session.commandRunning,
+            commandRunning,
         })
     }
 }
@@ -940,9 +962,15 @@ fn createAndroidPtySession(
     rows: u16,
     cols: u16,
 ) -> HostResult<AndroidPtySession> {
-    androidLogInfo(&format!(
-        "createAndroidPtySession start name={sessionName} type={terminalType} workingDir={workingDir} size={rows}x{cols}"
-    ));
+    createAndroidPtyProcess(profile, termuxLauncher, sessionName, terminalType, workingDir, rows, cols, None, true)
+}
+
+/// Starts a PTY process without routing commands through an interactive line editor.
+fn createAndroidPtyProcess(
+    profile: Option<&operit_host_api::TerminalProfile>, termuxLauncher: Option<&TermuxLauncher>,
+    sessionName: String, terminalType: String, workingDir: String, rows: u16, cols: u16,
+    script: Option<&str>, managedPrompt: bool,
+) -> HostResult<AndroidPtySession> {
     let terminal = match profile {
         Some(profile) => profile.terminal.as_str(),
         None => androidTerminalName(&terminalType)?,
@@ -950,13 +978,17 @@ fn createAndroidPtySession(
     let (process, readerFd, masterFd, workingDir, startupInput) = if terminal == TERMUX_TERMINAL {
         let launcher = termuxLauncher.ok_or_else(|| HostError::new("Termux launcher is unavailable"))?;
         let (control, reader, writer) = terminal_termux::start(
-            launcher, &androidPtyPromptCommand(), &workingDir, rows, cols,
+            launcher, if managedPrompt { androidPtyPromptCommand() } else { String::new() }.as_str(), &workingDir, rows, cols, script,
         )?;
         (AndroidPtyProcess::Termux(control), reader, writer, workingDir, None)
     } else {
-        let command = match profile {
-            Some(profile) => buildAndroidProfileCommand(profile, &workingDir)?,
-            None => buildAndroidPtyCommand(&terminalType, &workingDir)?,
+        let command = if managedPrompt {
+            match profile {
+                Some(profile) => buildAndroidProfileCommand(profile, &workingDir)?,
+                None => buildAndroidPtyCommand(&terminalType, &workingDir)?,
+            }
+        } else {
+            buildAndroidProcessCommand(profile, &terminalType, &workingDir, script)?
         };
         let (process, reader, writer) = startAndroidPtyProcess(&command, rows, cols)?;
         (process, reader, writer, command.workingDir.unwrap_or(workingDir), command.startupInput)
@@ -968,10 +1000,6 @@ fn createAndroidPtySession(
     let screenOutput = Arc::new(Mutex::new(VecDeque::new()));
     let cursorState: AndroidPtyCursorState =
         Arc::new(Mutex::new(AndroidPtyCursor { row: 1, col: 1 }));
-    let outputClosed = match &process {
-        AndroidPtyProcess::Termux(control) => Some(control.outputClosed()),
-        _ => None,
-    };
     let mut session = AndroidPtySession {
         sessionName,
         terminal: terminal.into(),
@@ -984,7 +1012,8 @@ fn createAndroidPtySession(
         output: output.clone(),
         commandOutput: commandOutput.clone(),
         screenOutput: screenOutput.clone(),
-        commandRunning: false,
+        commandRunning: !managedPrompt,
+        processOwned: !managedPrompt,
         exitCode: None,
     };
     session.reader = Some(scheduleAndroidPtyReader(
@@ -993,9 +1022,9 @@ fn createAndroidPtySession(
         output.clone(),
         commandOutput.clone(),
         screenOutput.clone(),
-        cursorState,
-        outputClosed,
+        cursorState, managedPrompt,
     )?);
+    if managedPrompt {
     if let Some(input) = startupInput {
         writeAndroidPtyBytes(&writer, input.as_bytes())?;
     }
@@ -1013,6 +1042,7 @@ fn createAndroidPtySession(
         return Err(error);
     }
     clearAndroidPtyCommandOutput(&commandOutput)?;
+    }
     androidLogInfo(&format!(
         "createAndroidPtySession ready masterFd={masterFd} name={}",
         session.sessionName
@@ -1024,8 +1054,7 @@ fn createAndroidPtySession(
 fn scheduleAndroidPtyReader(
     readerFd: RawFd, writer: Arc<Mutex<RawFd>>, output: Arc<Mutex<VecDeque<u8>>>,
     commandOutput: AndroidPtyCommandOutput, screenOutput: Arc<Mutex<VecDeque<u8>>>,
-    cursorState: AndroidPtyCursorState,
-    outputClosed: Option<Arc<AtomicBool>>,
+    cursorState: AndroidPtyCursorState, managedPrompt: bool,
 ) -> HostResult<Box<dyn FnOnce() + Send>> {
     #[cfg(target_os = "android")]
     {
@@ -1047,13 +1076,10 @@ fn scheduleAndroidPtyReader(
                 let visibleChunk = stripPtyPromptMarkers(&commandChunk);
                 appendAndroidPtyOutput(&output, &visibleChunk, PTY_OUTPUT_LIMIT);
                 appendAndroidPtyOutput(&screenOutput, &visibleChunk, PTY_OUTPUT_LIMIT);
-                appendAndroidPtyCommandOutput(&commandOutput, &commandChunk);
+                if managedPrompt { appendAndroidPtyCommandOutput(&commandOutput, &commandChunk); }
                 Ok(())
             },
             move |error| {
-                if let Some(outputClosed) = outputClosed {
-                    outputClosed.store(true, Ordering::Release);
-                }
                 closed.fail(HostError::new(format!("Android PTY reached EOF or stopped: {}", error.message)));
             },
         )?;
@@ -1063,7 +1089,7 @@ fn scheduleAndroidPtyReader(
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (readerFd, writer, output, commandOutput, screenOutput, cursorState, outputClosed);
+        let _ = (readerFd, writer, output, commandOutput, screenOutput, cursorState, managedPrompt);
         Err(HostError::new("Android PTY is only available on Android target"))
     }
 }
@@ -1160,12 +1186,12 @@ fn androidPtyTimedOutCommandOutputText(raw: &[u8], command: &str) -> String {
     dropCommandEcho(clean, command)
 }
 
-fn androidPtyScreenContent(session: &AndroidPtySession) -> HostResult<String> {
-    let buffer = session
-        .screenOutput
-        .lock()
+/// Renders a copied screen without retaining the terminal output lock.
+fn androidPtyScreenContent(output: &Arc<Mutex<VecDeque<u8>>>) -> HostResult<String> {
+    let buffer = output.lock()
         .map_err(|_| HostError::new("android pty screen output mutex poisoned"))?;
     let bytes = buffer.iter().copied().collect::<Vec<_>>();
+    drop(buffer);
     let visibleBytes = stripPtyPromptMarkers(&bytes);
     let text = String::from_utf8_lossy(&visibleBytes);
     Ok(renderTerminalText(&text))
@@ -1186,26 +1212,7 @@ fn writeAndroidPtyBytes(writer: &Arc<Mutex<RawFd>>, data: &[u8]) -> HostResult<u
     writePtyFd(*fd, data)
 }
 
-fn applyAndroidPtyTerminalInput(
-    session: &mut AndroidPtySession,
-    input: Option<&str>,
-    control: Option<&str>,
-) -> HostResult<usize> {
-    let mut acceptedChars = 0;
-    if let Some(input) = input {
-        writeAndroidPtyBytes(&session.writer, input.as_bytes())?;
-        acceptedChars += input.chars().count();
-    }
-    if let Some(control) = control {
-        let sequence = match control {
-            "enter" => "\r".to_string(),
-            value => controlToSequence(value, input)?,
-        };
-        writeAndroidPtyBytes(&session.writer, sequence.as_bytes())?;
-        acceptedChars += sequence.chars().count();
-    }
-    Ok(acceptedChars)
-}
+
 
 /// Normalizes Android terminal type names accepted by the host.
 fn normalizeAndroidTerminalType(terminalType: &str) -> HostResult<String> {
@@ -1370,12 +1377,19 @@ fn androidProfileMounts(profile: &operit_host_api::TerminalProfile) -> HostResul
 
 /// Enters a session-owned mount namespace before invoking chroot with literal arguments.
 fn buildAndroidChrootCommand(rootfs: &Path, workingDir: &str, mounts: &[TerminalMount]) -> HostResult<AndroidPtyCommand> {
+    buildAndroidChrootProcess(rootfs, workingDir, mounts, None, true)
+}
+
+/// Passes launch mode and script literally across the root and mount namespace boundary.
+fn buildAndroidChrootProcess(rootfs: &Path, workingDir: &str, mounts: &[TerminalMount], script: Option<&str>, managedPrompt: bool) -> HostResult<AndroidPtyCommand> {
     let rootArguments = crate::terminal_privilege::requireRootArguments()?;
     let shell = "/system/bin/sh";
     let mut arguments = vec![
         "/system/bin/unshare".to_string(), "-m".into(), shell.into(), "-c".into(),
         include_str!("terminal_chroot.sh").into(), "operit-chroot".into(),
-        rootfs.to_string_lossy().into_owned(), workingDir.into(), androidPtyPromptCommand(),
+        rootfs.to_string_lossy().into_owned(), workingDir.into(),
+        if managedPrompt { androidPtyPromptCommand() } else { String::new() },
+        if script.is_some() { "command" } else { "interactive" }.into(), script.unwrap_or_default().into(),
     ];
     for path in ["/proc", "/dev", "/sys", "/storage", "/sdcard", "/data/local/tmp"] {
         arguments.extend([path.into(), path.into(), "rbind".into()]);
@@ -1415,6 +1429,7 @@ fn buildAndroidProfileCommand(
     profile: &operit_host_api::TerminalProfile,
     workingDir: &str,
 ) -> HostResult<AndroidPtyCommand> {
+    if profile.terminal == ANDROID_SYSTEM_TERMINAL { return buildAndroidShellPtyCommand(workingDir); }
     let rootfs = androidProfileRootfs(profile)?;
     let mounts = androidProfileMounts(profile)?;
     if profile.terminal == CHROOT_TERMINAL {
@@ -1483,6 +1498,23 @@ fn buildAndroidProotPtyCommand(
     })
 }
 
+/// Builds raw process arguments for every Android launcher without prompt instrumentation.
+fn buildAndroidProcessCommand(profile: Option<&operit_host_api::TerminalProfile>, kind: &str, directory: &str, script: Option<&str>) -> HostResult<AndroidPtyCommand> {
+    if kind == "shell" { return buildAndroidShellProcess(directory, script, false); }
+    let rootfs = match profile {
+        Some(profile) => androidProfileRootfs(profile)?,
+        None => requiredAndroidRuntimePath("OPERIT_ANDROID_ROOTFS_DIR")?,
+    };
+    let mounts = match profile { Some(profile) => androidProfileMounts(profile)?, None => Vec::new() };
+    if profile.is_some_and(|profile| profile.terminal == CHROOT_TERMINAL) {
+        return buildAndroidChrootProcess(&rootfs, directory, &mounts, script, false);
+    }
+    let args = match script { Some(script) => vec!["--noprofile", "--norc", "-c", script], None => vec!["--noprofile", "--norc", "-i"] };
+    let mut command = buildAndroidProotPtyCommand(&rootfs, directory, &mounts, &args)?;
+    command.envp.retain(|entry| !entry.as_bytes().starts_with(b"PROMPT_COMMAND=") && !entry.as_bytes().starts_with(b"PS1="));
+    Ok(command)
+}
+
 /// Builds the PTY startup command for an Android terminal type.
 fn buildAndroidPtyCommand(terminalType: &str, workingDir: &str) -> HostResult<AndroidPtyCommand> {
     match terminalType {
@@ -1502,6 +1534,11 @@ fn buildAndroidBashPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand>
 
 /// Builds the PTY startup command for Android system shell.
 fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand> {
+    buildAndroidShellProcess(workingDir, None, true)
+}
+
+/// Selects Android's real privilege transport before constructing the process arguments.
+fn buildAndroidShellProcess(workingDir: &str, script: Option<&str>, managedPrompt: bool) -> HostResult<AndroidPtyCommand> {
     let transport = crate::terminal_privilege::privileges()?.select()?;
     let runtimeDir = requiredAndroidRuntimePath("OPERIT_ANDROID_RUNTIME_DIR")?;
     let internalRoot = requiredAndroidRuntimePath("OPERIT_ANDROID_INTERNAL_ROOT")?;
@@ -1512,8 +1549,8 @@ fn buildAndroidShellPtyCommand(workingDir: &str) -> HostResult<AndroidPtyCommand
 
     let systemPath = env::var("PATH")
         .map_err(|error| HostError::new(format!("Android terminal PATH is required: {error}")))?;
-    buildAndroidSystemShellCommand(
-        transport,
+    buildAndroidSystemShellProcess(
+        script, managedPrompt, transport,
         workingDir,
         &runtimeDir,
         &internalRoot,
@@ -1548,6 +1585,15 @@ fn buildAndroidSystemShellCommand(
     nativeLibraryDir: &Path,
     systemPath: &str,
 ) -> HostResult<AndroidPtyCommand> {
+    buildAndroidSystemShellProcess(None, true, transport, workingDir, runtimeDir, internalRoot, tmpDir, nativeLibraryDir, systemPath)
+}
+
+/// Supplies the full script to sh before startup; no startup text is typed into the terminal.
+fn buildAndroidSystemShellProcess(
+    command: Option<&str>, managedPrompt: bool, transport: crate::terminal_privilege::ShellTransport,
+    workingDir: &str, runtimeDir: &Path, internalRoot: &Path, tmpDir: &Path,
+    nativeLibraryDir: &Path, systemPath: &str,
+) -> HostResult<AndroidPtyCommand> {
     use crate::terminal_privilege::ShellTransport;
 
     let workDir = androidSystemShellWorkingDirectory(
@@ -1560,7 +1606,10 @@ fn buildAndroidSystemShellCommand(
         nativeLibraryDir.to_string_lossy(),
         runtimeDir.to_string_lossy()
     );
-    let commandText = "exec /system/bin/sh -i";
+    let commandText = match command {
+        Some(command) => format!("exec /system/bin/sh -c {}", quoteAndroidShellArgument(command)),
+        None => "exec /system/bin/sh -i".into(),
+    };
     let shell = Path::new("/system/bin/sh");
     let environment = if transport == ShellTransport::Shizuku {
         vec![
@@ -1633,7 +1682,7 @@ fn buildAndroidSystemShellCommand(
         shizuku: transport == ShellTransport::Shizuku,
         dropRootToShell: false,
         workingDir: Some(workDir),
-        startupInput: Some(include_str!("system_shell_init.sh").to_string()),
+        startupInput: managedPrompt.then(|| include_str!("system_shell_init.sh").to_string()),
     })
 }
 
@@ -2219,7 +2268,7 @@ fn pollPidExitCode(process: &mut AndroidPtyProcess) -> HostResult<Option<i32>> {
             return Ok(Some(libc::WEXITSTATUS(status)));
         }
         if libc::WIFSIGNALED(status) {
-            return Ok(Some(-libc::WTERMSIG(status)));
+            return Ok(Some(128 + libc::WTERMSIG(status)));
         }
         Ok(Some(-1))
     }

@@ -450,6 +450,8 @@ interface V86Module {
 type LinuxVmSessionState = "starting" | "running" | "failed" | "closed";
 
 interface LinuxVmSession {
+  launch: { directory: string; command: string | null } | null;
+  processRecord: number[];
   readonly id: string;
   emulator: V86StarterInstance | null;
   state: LinuxVmSessionState;
@@ -3827,6 +3829,24 @@ self.onmessage = (event) => {
     session.inputQueue = [];
   }
 
+  /** Consumes only the guest relay's process-exit record, independently of shell prompts. */
+  function consumeLinuxVmProcessRecord(session: LinuxVmSession, byte: number): boolean {
+    const prefix = textEncoder.encode(`\x1b]1337;OPERIT_PROCESS_EXIT;${session.id};`);
+    if (session.processRecord.length === 0 && byte !== 27) return false;
+    session.processRecord.push(byte);
+    const index = session.processRecord.length - 1;
+    if (index < prefix.length && byte !== prefix[index] || session.processRecord.length > prefix.length + 16) {
+      appendLinuxVmOutput(session, Uint8Array.from(session.processRecord));
+      session.processRecord = [];
+    } else if (byte === 7 && session.processRecord.length > prefix.length) {
+      const text = textDecoder.decode(Uint8Array.from(session.processRecord.slice(prefix.length, -1)));
+      session.processRecord = [];
+      if (!/^\d+$/.test(text)) { failLinuxVmSession(session, new Error("Invalid guest process exit record")); return true; }
+      session.exitCode = Number(text);
+    }
+    return true;
+  }
+
   /** Starts the v86 Linux guest and connects its virtual serial console to one terminal session. */
   async function startLinuxVm(session: LinuxVmSession): Promise<void> {
     try {
@@ -3838,7 +3858,18 @@ self.onmessage = (event) => {
       }
       renderLinuxVmProgress(session, "Downloading runtime");
       const emulator = new module.V86({
-        filesystem: { handle9p: createTerminal9p({ call: callTerminalFilesystem }) },
+        filesystem: { handle9p: createTerminal9p({ async call(method, args) {
+          if (session.launch && args[0] === ".__operit_terminal_launch") {
+            const quote = (value: string): string => "'" + value.replace(/'/g, "'\\''") + "'";
+            const script = textEncoder.encode(`cd -- ${quote(session.launch.directory)} || exit
+exec /bin/sh ${session.launch.command === null ? "-i" : "-c " + quote(session.launch.command)}
+`);
+            if (method === "stat") return {isDirectory:false,size:script.length};
+            if (method === "read") return script.slice(Number(args[1]), Number(args[1]) + Number(args[2]));
+            throw new Error("Terminal launch file is read-only");
+          }
+          return callTerminalFilesystem(method, args);
+        } }) },
         wasm_path: v86AssetUrl("v86.wasm"),
         memory_size: 512 * 1024 * 1024,
         vga_memory_size: 2 * 1024 * 1024,
@@ -3846,7 +3877,7 @@ self.onmessage = (event) => {
         vga_bios: { url: v86AssetUrl("vgabios.bin") },
         bzimage: { url: v86RuntimeAssetUrl("operit-runtime-bzimage.bin") },
         initrd: { url: v86RuntimeAssetUrl("operit-runtime-initrd.cpio.gz") },
-        cmdline: `console=ttyS0 operit.mode=terminal operit.rows=${session.rows} operit.cols=${session.cols} tsc=reliable mitigations=off random.trust_cpu=on`,
+        cmdline: `console=ttyS0 operit.mode=terminal operit.rows=${session.rows} operit.cols=${session.cols}${session.launch ? ` operit.launch=${session.id}` : ""} tsc=reliable mitigations=off random.trust_cpu=on`,
         autostart: true,
         disable_keyboard: true,
         disable_mouse: true,
@@ -3857,6 +3888,7 @@ self.onmessage = (event) => {
         if (typeof value === "number" && session.state !== "closed") {
           const byte = value & 0xff;
           finishLinuxVmProgress(session, "Starting Linux");
+          if (session.launch && consumeLinuxVmProcessRecord(session, byte)) return;
           const activeCommand = session.activeCommand;
           if (activeCommand === null) {
             appendLinuxVmOutput(session, Uint8Array.of(byte));
@@ -3865,7 +3897,9 @@ self.onmessage = (event) => {
           }
           if (session.state === "starting") {
             session.startupText = `${session.startupText}${String.fromCharCode(byte)}`.slice(-128);
-            if (session.startupText.includes("OPERIT_TERMINAL_READY")) {
+            if (session.launch && session.startupText.endsWith("OPERIT_TERMINAL_READY\x07")) {
+              failLinuxVmSession(session, new Error("Browser terminal runtime must be updated for process-owned sessions"));
+            } else if (session.startupText.endsWith(session.launch ? "OPERIT_PROCESS_READY\x07" : "OPERIT_TERMINAL_READY\x07")) {
               markLinuxVmReady(session);
             }
           }
@@ -3886,7 +3920,7 @@ self.onmessage = (event) => {
       emulator.add_listener("emulator-stopped", () => {
         if (session.state !== "closed" && session.state !== "failed") {
           session.state = "closed";
-          session.exitCode = 0;
+          session.exitCode ??= 1;
           rejectLinuxVmCommands(session, new Error(`Linux VM terminal stopped: ${session.id}`));
         }
       });
@@ -3899,7 +3933,7 @@ self.onmessage = (event) => {
   }
 
   /** Allocates one browser-local Linux VM terminal session and begins guest boot. */
-  function startLinuxVmSession(sessionId: string, rows: number, cols: number): void {
+  function startLinuxVmSession(sessionId: string, rows: number, cols: number, launch: LinuxVmSession["launch"] = null): void {
     if (linuxVmSessions.has(sessionId)) {
       throw new Error(`Linux VM terminal session already exists: ${sessionId}`);
     }
@@ -3924,6 +3958,8 @@ self.onmessage = (event) => {
       managedExecution: null,
       screen: [],
       workingDir: "/",
+      launch,
+      processRecord: [],
     };
     linuxVmSessions.set(sessionId, session);
     void startLinuxVm(session);
@@ -4037,6 +4073,11 @@ self.onmessage = (event) => {
           throw error;
         }
       },
+      /** Boots one guest whose first PTY child executes the complete launch script. */
+      openProcess(sessionId: string, directory: string, command: string | null): void {
+        if (!directory.startsWith("/") || directory.includes("\0") || command?.includes("\0")) throw new Error("Invalid terminal process launch");
+        startLinuxVmSession(sessionId, 24, 80, {directory, command});
+      },
       /** Drains raw virtual serial bytes from one browser-local Linux VM terminal. */
       readPty(sessionId: string): Uint8Array {
         return readLinuxVmPty(sessionId);
@@ -4086,7 +4127,7 @@ self.onmessage = (event) => {
       /** Exposes current session activity and retained visible output independently of PTY drains. */
       sessionState(sessionId: string) {
         const session = linuxVmSession(sessionId);
-        return { commandRunning: session.activeCommand !== null || session.pendingCommands.length > 0,
+        return { commandRunning: session.launch ? session.exitCode === null : session.activeCommand !== null || session.pendingCommands.length > 0,
           workingDir: session.workingDir, content: textDecoder.decode(Uint8Array.from(session.screen)) };
       },
       /** Records terminal dimensions requested for one browser-local Linux VM terminal. */

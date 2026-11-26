@@ -2,7 +2,6 @@
 
 use std::io::{Read, Write};
 use std::net::{Shutdown, TcpStream};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use operit_host_api::{HostError, HostResult};
@@ -15,18 +14,12 @@ pub(crate) struct TermuxControl {
     socket: TcpStream,
     exit: [u8; 4],
     received: usize,
-    outputClosed: Arc<AtomicBool>,
 }
 
 impl TermuxControl {
     /// Stops the remote PTY when its owning session closes.
     pub(crate) fn close(&self) {
         let _ = self.socket.shutdown(Shutdown::Both);
-    }
-
-    /// Marks when the existing host reader has published the final PTY bytes.
-    pub(crate) fn outputClosed(&self) -> Arc<AtomicBool> {
-        self.outputClosed.clone()
     }
 
     /// Forwards a terminal size change to the Termux-owned master PTY.
@@ -42,9 +35,6 @@ impl TermuxControl {
 
     /// Reads the actual shell exit status without blocking the terminal output pump.
     pub(crate) fn pollExit(&mut self) -> HostResult<Option<i32>> {
-        if !self.outputClosed.load(Ordering::Acquire) {
-            return Ok(None);
-        }
         while self.received < self.exit.len() {
             match self.socket.read(&mut self.exit[self.received..]) {
                 Ok(0) => return Err(HostError::new("Termux disconnected before reporting its exit status")),
@@ -66,6 +56,7 @@ pub(crate) fn start(
     directory: &str,
     rows: u16,
     cols: u16,
+    command: Option<&str>,
 ) -> HostResult<(TermuxControl, i32, i32)> {
     use std::net::{Ipv4Addr, TcpListener};
     use std::os::fd::{AsRawFd, IntoRawFd};
@@ -77,6 +68,7 @@ pub(crate) fn start(
     launch(serde_json::json!({
         "port": port, "token": token, "rows": rows, "cols": cols,
         "script": include_str!("terminal_termux.py"), "prompt": prompt, "directory": directory,
+        "mode": if command.is_some() { "command" } else { "interactive" }, "command": command.unwrap_or_default(),
     }))?;
 
     let deadline = Instant::now() + Duration::from_secs(12);
@@ -119,7 +111,6 @@ pub(crate) fn start(
         socket: control,
         exit: [0; 4],
         received: 0,
-        outputClosed: Arc::new(AtomicBool::new(false)),
     }, data.into_raw_fd(), writer.into_raw_fd()))
 }
 
@@ -131,6 +122,6 @@ fn termuxStartupTimeout() -> HostError {
 
 #[cfg(not(target_os = "android"))]
 /// Rejects Termux launches outside the Android target.
-pub(crate) fn start(_: &TermuxLauncher, _: &str, _: &str, _: u16, _: u16) -> HostResult<(TermuxControl, i32, i32)> {
+pub(crate) fn start(_: &TermuxLauncher, _: &str, _: &str, _: u16, _: u16, _: Option<&str>) -> HostResult<(TermuxControl, i32, i32)> {
     Err(HostError::new("Termux is only available on Android"))
 }

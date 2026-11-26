@@ -91,6 +91,12 @@ impl Drop for JsEngineOwner {
 }
 
 enum JsAsyncCallback {
+    ObservedToolResult {
+        requestId: u64,
+        result: Value,
+        callId: String,
+        toolName: String,
+    },
     ProfiledToolResult {
         requestId: u64,
         result: Value,
@@ -1955,6 +1961,13 @@ impl JsEngineState {
     #[cfg(test)]
     fn deliverAsyncCallbackSynchronously(&mut self, callback: JsAsyncCallback) -> Result<(), String> {
         match callback {
+            JsAsyncCallback::ObservedToolResult { requestId, result, callId, toolName } => {
+                let settled = self.runtime.settleHostJavaScriptPromise(requestId, result, false);
+                AppLogger::trace("JsExecutionTiming", &format!(
+                    "kind=host_callback_settled callId={callId} requestId={requestId} tool={toolName} success={}", settled.is_ok(),
+                ));
+                settled
+            }
             JsAsyncCallback::Promise { requestId, result } => {
                 let (result, reject) = match result {
                     Ok(value) => (value, false),
@@ -1976,6 +1989,13 @@ impl JsEngineState {
     /// Settles host results while awaiting any Promise continuations on the realm's own executor.
     async fn deliverAsyncCallback(&mut self, callback: JsAsyncCallback) -> Result<(), String> {
         match callback {
+            JsAsyncCallback::ObservedToolResult { requestId, result, callId, toolName } => {
+                let settled = self.runtime.executeHostJavaScriptCommand(HostJavaScriptCommand::Settle(requestId, result, false)).await;
+                AppLogger::trace("JsExecutionTiming", &format!(
+                    "kind=host_callback_settled callId={callId} requestId={requestId} tool={toolName} success={}", settled.is_ok(),
+                ));
+                settled
+            }
             JsAsyncCallback::Promise { requestId, result } => {
                 let (value, reject) = match result {
                     Ok(value) => (value, false),
@@ -2450,6 +2470,9 @@ fn dispatchStructuredToolCall(
         Ok(timing) => timing,
         Err(error) => { fail(error.to_string()); return; }
     };
+    // Idle cleanup needs correlation at the native result and Promise-settlement boundaries.
+    let observation = (timing.is_none() && matches!(toolName, "get_terminal_session_screen" | "close_terminal_session"))
+        .then(|| (callId.to_string(), toolName.to_string()));
     let mut request = match JsHostOperations::parseToolCallValue(toolType, toolName, params) {
         Ok(request) => request,
         Err(error) => {
@@ -2483,8 +2506,9 @@ fn dispatchStructuredToolCall(
     // Tool executors may perform blocking host calls (terminal sessions, device
     // commands, package I/O), so they run on the blocking pool. Coordination
     // deadlines and promise pumps must stay responsive behind a busy tool.
+    let taskName = format!("operit-js-tool-call callId={callId} requestId={requestId} tool={toolName}");
     let scheduled = defaultHostRuntimeTaskSchedulerHost().scheduleHostRuntimeBlockingAsyncTask(
-        "operit-js-tool-call",
+        &taskName,
         Box::new(move || {
             Box::pin(async move {
                 let result = async {
@@ -2504,7 +2528,15 @@ fn dispatchStructuredToolCall(
                     Some(timing) => JsAsyncCallback::ProfiledToolResult {
                         requestId, result: value, timing, successful,
                     },
-                    None => JsAsyncCallback::Promise { requestId, result: Ok(value) },
+                    None => match observation {
+                        Some((callId, toolName)) => {
+                            AppLogger::trace("JsExecutionTiming", &format!(
+                                "kind=host_callback_ready callId={callId} requestId={requestId} tool={toolName}",
+                            ));
+                            JsAsyncCallback::ObservedToolResult { requestId, result: value, callId, toolName }
+                        }
+                        None => JsAsyncCallback::Promise { requestId, result: Ok(value) },
+                    },
                 };
                 sink(callback);
             })

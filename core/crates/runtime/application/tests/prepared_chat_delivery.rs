@@ -68,6 +68,13 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
             timestamp: 123,
             notify: false,
         };
+        let (mainFlow, floatingFlow, detachedFlow) = {
+            let mut holder = application.chatRuntimeHolder.lock().await;
+            let main = holder.getCore(ChatRuntimeSlot::MAIN).localChatMessagesFlow("prepared-target".into());
+            let floating = holder.getCore(ChatRuntimeSlot::FLOATING).localChatMessagesFlow("prepared-target".into());
+            let detached = holder.getCore(ChatRuntimeSlot::DETACHED("test-window".into())).localChatMessagesFlow("prepared-target".into());
+            (main, floating, detached)
+        };
         let deliver = |request| {
             PreparedChatDeliveryService::deliver(
                 &application.hostManager,
@@ -77,6 +84,23 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
         };
         let first = deliver(request.clone()).await.unwrap();
         assert!(!first.duplicate);
+        for flow in [&mainFlow, &floatingFlow, &detachedFlow] {
+            assert_eq!(flow.value().len(), 1);
+            assert_eq!(flow.value()[0].timestamp, request.timestamp);
+        }
+        // Simulate a crash after SQLite commits but before any observer is published.
+        let recovery = ChatPreparedMessageRequest { timestamp: 124, text: "Recovered delivery".into(), ..request.clone() };
+        {
+            let mut holder = application.chatRuntimeHolder.lock().await;
+            let manager = &holder.getCore(ChatRuntimeSlot::MAIN).chatHistoryDelegate.chatHistoryManager;
+            manager.addMessage("prepared-target".into(), operit_model::ChatMessage::ChatMessage::new_with_markdown_timestamp(
+                "ai".into(), recovery.text.clone(), recovery.timestamp)).unwrap();
+        }
+        assert_eq!(mainFlow.value().len(), 1);
+        assert!(deliver(recovery).await.unwrap().duplicate);
+        for flow in [&mainFlow, &floatingFlow, &detachedFlow] {
+            assert_eq!(flow.value().iter().map(|message| message.timestamp).collect::<Vec<_>>(), vec![123, 124]);
+        }
         let again = deliver(request.clone()).await.unwrap();
         assert!(again.duplicate);
         let mut holder = application.chatRuntimeHolder.lock().await;
@@ -85,7 +109,7 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
         let messages = core
             .chatHistoryDelegate
             .getRuntimeChatHistory("prepared-target".into());
-        assert_eq!(messages.len(), 1);
+        assert_eq!(messages.len(), 2);
         assert_eq!(messages[0].sender, "ai");
         assert_eq!(messages[0].displayText(), "Hello from a prepared message");
         assert!(messages[0].completedAt > 0);
@@ -112,8 +136,8 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
         // The generation path stamps its own preparedAt before snapshot commit; the snapshot
         // commit must keep that tag untouched instead of re-stamping it with the commit time.
         snapshot.pluginExtensions.insert("host.chat.scheduled".into(), serde_json::json!({ "preparedAt": 180 }));
-        assert!(!core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap());
-        assert!(core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap());
+        assert!(!core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap().0);
+        assert!(core.chatHistoryDelegate.commitPreparedAssistantMessageSnapshot("prepared-target", snapshot.clone()).unwrap().0);
         let mut persisted = core.chatHistoryDelegate.chatHistoryManager.loadChatMessageVariant("prepared-target", 125, 0).unwrap();
         // The repository adds canonical VFS attachment locators independently of generation metadata.
         for part in &mut persisted.parts { part.attributes.clear(); }
@@ -320,6 +344,11 @@ fn prepared_delivery_persists_an_assistant_once_without_switching_chats() {
                 .status,
             "delivered"
         );
+        let dueReceipt = receipt.messages.iter().find(|message| message.id == "due-slot").unwrap();
+        assert!(dueReceipt.notificationAttempted);
+        assert!(!dueReceipt.notificationRegistered);
+        assert!(dueReceipt.notificationError.as_value().is_some());
+        assert!(dueReceipt.error.as_value().is_none(), "notification failure must not become a message persistence error");
         let holder = application.chatRuntimeHolder.lock().await;
         let manager = &holder
             .cores

@@ -26,6 +26,7 @@ internal object TermuxTerminalLauncher {
                 request.getInt("port").toString(), request.getString("token"),
                 request.getInt("rows").toString(), request.getInt("cols").toString(),
                 request.getString("prompt"), request.getString("directory"),
+                request.getString("mode"), request.getString("command"),
             ))
         }
         check(context.packageManager.resolveService(intent, 0) != null) {

@@ -1,5 +1,7 @@
 // ignore_for_file: file_names
 
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 
 import '../../../../core/proxy/generated/CoreProxyModels.g.dart' as core_proxy;
@@ -9,6 +11,7 @@ import '../../../theme/OperitTheme.dart';
 import '../../chat/components/style/ThemedChatMessage.dart';
 import '../../chat/components/style/input/agent/AgentChatInputSection.dart';
 import '../../chat/components/style/input/classic/ClassicChatInputSection.dart';
+import '../../chat/voice_input/ChatVoiceInputSession.dart';
 import '../../chat/viewmodel/ChatViewModel.dart';
 
 /// Previews sample content using the production chat widgets, not imitations.
@@ -29,12 +32,18 @@ class ChatAppearancePreview extends StatefulWidget {
 class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
   final _inputController = TextEditingController();
   final _inputFocusNode = FocusNode(canRequestFocus: false);
+  final _voiceInput = ChatVoiceInputSession(
+    core: const _PreviewVoiceInputCore(),
+    selectedConfigId: () async => null,
+    commit: (_) {},
+  );
   final _defaultViewModel = ChatViewModel();
   final _sampleDay = DateTime.now();
 
   /// Releases preview-only text input resources.
   @override
   void dispose() {
+    _voiceInput.dispose();
     _inputController.dispose();
     _inputFocusNode.dispose();
     super.dispose();
@@ -167,9 +176,7 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
           onSendMessage: _noOp,
           onQueueMessage: _noOp,
           onCancelMessage: _noOp,
-          isSpeechRecording: false,
-          isSpeechTranscribing: false,
-          onSpeechInput: _noOp,
+          voiceInput: _voiceInput,
         );
       case UserPreferencesManager.INPUT_STYLE_CLASSIC:
         return ClassicChatInputSection(
@@ -182,9 +189,7 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
           onSendMessage: _noOp,
           onQueueMessage: _noOp,
           onCancelMessage: _noOp,
-          isSpeechRecording: false,
-          isSpeechTranscribing: false,
-          onSpeechInput: _noOp,
+          voiceInput: _voiceInput,
         );
       default:
         throw FormatException(
@@ -196,6 +201,36 @@ class _ChatAppearancePreviewState extends State<ChatAppearancePreview> {
 
 /// Keeps appearance previews inert without performing chat actions.
 void _noOp() {}
+
+/// Keeps the preview composer's voice input idle; its pointers are ignored.
+class _PreviewVoiceInputCore implements ChatVoiceInputCore {
+  const _PreviewVoiceInputCore();
+
+  Never _unsupported() =>
+      throw UnsupportedError('The appearance preview cannot recognize speech');
+
+  @override
+  Future<String> startStreamSession({required String configId}) =>
+      _unsupported();
+
+  @override
+  Stream<String> streamPartialText({required String sessionId}) =>
+      _unsupported();
+
+  @override
+  Future<void> pushStreamAudio({
+    required String sessionId,
+    required Uint8List audio,
+  }) => _unsupported();
+
+  @override
+  Future<String> finishStreamSession({required String sessionId}) =>
+      _unsupported();
+
+  @override
+  Future<void> cancelStreamSession({required String sessionId}) =>
+      _unsupported();
+}
 
 /// The fixed preview sentences are plain text. Feed their paragraph events to
 /// the production renderer locally so opening appearance never waits for Core

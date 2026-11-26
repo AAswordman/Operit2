@@ -224,7 +224,16 @@ pub struct TerminalExecRequest {
     pub timeoutMs: Option<u64>,
 }
 
-/// Runs a command in the newest available named session with an independent foreground wait.
+/// Selects a fresh persistent interactive terminal without command-completion instrumentation.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerminalOpenRequest {
+    pub sessionName: String,
+    pub profileId: Option<String>,
+    pub terminalType: Option<TerminalType>,
+}
+
+/// Runs a fresh command process with an independent foreground wait.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TerminalRunRequest {
@@ -238,7 +247,7 @@ pub struct TerminalRunRequest {
     pub waitMs: u64,
 }
 
-/// Streams a named-session command until actual completion, independently of foreground waits.
+/// Streams a fresh command process until actual completion, independently of foreground waits.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TerminalRunStreamRequest {
@@ -652,10 +661,12 @@ pub trait SystemTerminalHost: Send + Sync {
     /// Runs one command as a single-consumer async iterable of live output and completion.
     /// Wait expiry or returning from the iterator detaches observation while the command continues.
     fn execStream(&self, request: TerminalExecRequest) -> JsAsyncIterable<TerminalExecEvent>;
-    /// Runs a command under session ownership. Expired foreground waits retain the running command.
-    /// A yielded session is reserved; the next run with this name acquires a new session generation.
+    /// Opens a fresh persistent interactive shell. Input is literal; screen state has no per-command exit receipt.
+    fn open(&self, request: TerminalOpenRequest) -> JsFuture<TerminalSessionCreationResultData>;
+    /// Runs a fresh command process. Expired foreground waits retain it for screen, input and wait.
+    /// Each call starts a new environment; variables and directory changes do not carry across calls.
     fn run(&self, request: TerminalRunRequest) -> JsFuture<TerminalCommandResultData>;
-    /// Streams a named-session command until it completes; returning detaches its observation.
+    /// Streams a fresh command process until it completes; returning detaches its observation.
     fn runStream(&self, request: TerminalRunStreamRequest) -> JsAsyncIterable<TerminalExecEvent>;
     /// Waits for the original managed command without writing anything to its terminal.
     /// Expired waits return timedOut=true while the command continues in its original session.

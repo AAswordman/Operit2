@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
+use operit_model::ContextWindowBreakdown::ContextWindowBreakdown;
 use operit_providers::chat::EnhancedAIService::EnhancedAIService;
 use operit_store::PreferencesDataStore::{mutableStateFlow, MutableStateFlow, StateFlow};
 
@@ -19,6 +20,7 @@ pub struct TokenStatisticsDelegate {
     pub cumulativeOutputTokensByChatKey: HashMap<String, i64>,
     // Sends and summaries run on deep-cloned workers; estimates must reach the owning Core.
     pub lastWindowSizeByChatKey: Arc<Mutex<HashMap<String, i64>>>,
+    pub lastBreakdownByChatKey: Arc<Mutex<HashMap<String, ContextWindowBreakdown>>>,
     pub perRequestTokenCountByChatKey: HashMap<String, Option<(i64, i64)>>,
     pub activeChatId: Option<String>,
 }
@@ -38,6 +40,7 @@ impl TokenStatisticsDelegate {
             cumulativeInputTokensByChatKey: HashMap::new(),
             cumulativeOutputTokensByChatKey: HashMap::new(),
             lastWindowSizeByChatKey: Arc::new(Mutex::new(HashMap::new())),
+            lastBreakdownByChatKey: Arc::new(Mutex::new(HashMap::new())),
             perRequestTokenCountByChatKey: HashMap::new(),
             activeChatId: None,
         }
@@ -95,11 +98,18 @@ impl TokenStatisticsDelegate {
     pub fn bindChatService(&mut self, chatId: Option<String>, service: &EnhancedAIService) {
         let key = Self::chatKey(chatId.as_ref());
         self.handlePerRequestCounts(key.clone(), service.getPerRequestTokenCounts());
+        self.handleRequestWindowBreakdown(key.clone(), service.getRequestWindowBreakdown());
         self.handleRequestWindowEstimate(key.clone(), service.getRequestWindowEstimate());
         let mut delegate = self.clone();
+        let estimateKey = key.clone();
         let flow = service.requestWindowEstimateFlow();
         flow.subscribe(move |windowSize| {
-            delegate.handleRequestWindowEstimate(key.clone(), windowSize);
+            delegate.handleRequestWindowEstimate(estimateKey.clone(), windowSize);
+        });
+        let mut breakdownDelegate = self.clone();
+        let breakdownFlow = service.requestWindowBreakdownFlow();
+        breakdownFlow.subscribe(move |breakdown| {
+            breakdownDelegate.handleRequestWindowBreakdown(key.clone(), breakdown);
         });
     }
 
@@ -129,6 +139,19 @@ impl TokenStatisticsDelegate {
     }
 
     #[allow(non_snake_case)]
+    fn handleRequestWindowBreakdown(
+        &mut self,
+        key: String,
+        breakdown: Option<ContextWindowBreakdown>,
+    ) {
+        if let Some(breakdown) = breakdown {
+            self.breakdownCache().insert(key, breakdown);
+        } else {
+            self.breakdownCache().remove(&key);
+        }
+    }
+
+    #[allow(non_snake_case)]
     pub fn resetTokenStatistics(&mut self, service: Option<&mut EnhancedAIService>) {
         self.cumulativeInputTokens = 0;
         self.cumulativeOutputTokens = 0;
@@ -142,6 +165,7 @@ impl TokenStatisticsDelegate {
         self.cumulativeInputTokensByChatKey.clear();
         self.cumulativeOutputTokensByChatKey.clear();
         self.windowCache().clear();
+        self.breakdownCache().clear();
         self.perRequestTokenCountByChatKey.clear();
         if let Some(service) = service {
             service.resetTokenCounters();
@@ -191,12 +215,29 @@ impl TokenStatisticsDelegate {
         outputTokens: i64,
         windowSize: i64,
     ) {
+        self.setTokenCountsWithBreakdown(chatId, inputTokens, outputTokens, windowSize, None);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn setTokenCountsWithBreakdown(
+        &mut self,
+        chatId: Option<String>,
+        inputTokens: i64,
+        outputTokens: i64,
+        windowSize: i64,
+        breakdown: Option<ContextWindowBreakdown>,
+    ) {
         let key = Self::chatKey(chatId.as_ref());
         self.cumulativeInputTokensByChatKey
             .insert(key.clone(), inputTokens);
         self.cumulativeOutputTokensByChatKey
             .insert(key.clone(), outputTokens);
         self.windowCache().insert(key.clone(), windowSize);
+        if let Some(breakdown) = breakdown {
+            self.breakdownCache().insert(key.clone(), breakdown);
+        } else {
+            self.breakdownCache().remove(&key);
+        }
         if self.isActiveKey(&key) {
             self.cumulativeInputTokens = inputTokens;
             self.cumulativeOutputTokens = outputTokens;
@@ -206,6 +247,35 @@ impl TokenStatisticsDelegate {
             self.currentWindowSizeFlow.set_value(windowSize);
             self.lastCurrentWindowSize = windowSize;
         }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn cacheContextBreakdown(
+        &self,
+        chatId: Option<String>,
+        windowSize: i64,
+        breakdown: Option<ContextWindowBreakdown>,
+    ) {
+        let key = Self::chatKey(chatId.as_ref().or(self.activeChatId.as_ref()));
+        self.windowCache().insert(key.clone(), windowSize);
+        if let Some(breakdown) = breakdown {
+            self.breakdownCache().insert(key, breakdown);
+        } else {
+            self.breakdownCache().remove(&key);
+        }
+    }
+
+    #[allow(non_snake_case)]
+    pub fn clearContextBreakdown(&self, chatId: Option<String>) {
+        let key = Self::chatKey(chatId.as_ref().or(self.activeChatId.as_ref()));
+        self.windowCache().remove(&key);
+        self.breakdownCache().remove(&key);
+    }
+
+    #[allow(non_snake_case)]
+    pub fn getLastContextBreakdown(&self, chatId: Option<String>) -> Option<ContextWindowBreakdown> {
+        let key = Self::chatKey(chatId.as_ref().or(self.activeChatId.as_ref()));
+        self.breakdownCache().get(&key).copied()
     }
 
     #[allow(non_snake_case)]
@@ -233,6 +303,14 @@ impl TokenStatisticsDelegate {
         self.lastWindowSizeByChatKey
             .lock()
             .expect("token statistics window cache mutex poisoned")
+    }
+
+    fn breakdownCache(
+        &self,
+    ) -> std::sync::MutexGuard<'_, HashMap<String, ContextWindowBreakdown>> {
+        self.lastBreakdownByChatKey
+            .lock()
+            .expect("token statistics breakdown cache mutex poisoned")
     }
 
     #[allow(non_snake_case)]
@@ -274,11 +352,29 @@ mod window_cache_sharing_tests {
         assert_eq!(owner.getLastCurrentWindowSize(Some("chat-a".into())), 5000);
 
         let mut compressionWorker = owner.clone();
-        compressionWorker.setTokenCounts(Some("chat-a".into()), 10, 20, 800);
+        let expected = ContextWindowBreakdown {
+            systemPromptTokens: 200,
+            toolTokens: 300,
+            fileTokens: 50,
+            toolResultTokens: 150,
+            conversationTokens: 100,
+        };
+        compressionWorker.setTokenCountsWithBreakdown(
+            Some("chat-a".into()),
+            10,
+            20,
+            800,
+            Some(expected),
+        );
         assert_eq!(owner.getLastCurrentWindowSize(Some("chat-a".into())), 800);
+        assert_eq!(
+            owner.getLastContextBreakdown(Some("chat-a".into())),
+            Some(expected)
+        );
 
         let mut resetter = owner.clone();
         resetter.resetTokenStatistics(None);
         assert_eq!(owner.getLastCurrentWindowSize(Some("chat-a".into())), 0);
+        assert_eq!(owner.getLastContextBreakdown(Some("chat-a".into())), None);
     }
 }

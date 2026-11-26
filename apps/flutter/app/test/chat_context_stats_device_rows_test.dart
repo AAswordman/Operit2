@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import 'package:operit2/core/proxy/generated/CoreProxyModels.g.dart';
 import 'package:operit2/l10n/generated/app_localizations.dart';
 import 'package:operit2/ui/common/components/M3LoadingIndicator.dart';
 import 'package:operit2/ui/features/chat/components/workspace/ChatContextStatsTopBarButton.dart';
+import 'package:operit2/ui/features/chat/components/workspace/context_stats/TopBarDynamicCapsule.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 
 void main() {
@@ -17,7 +19,7 @@ void main() {
     for (final textScale in <double>[1, 2]) {
       for (final owner in <String>['local', 'offline']) {
         testWidgets(
-          'device rows stay compact at $textScale / $direction / owner=$owner',
+          'decentralized fiber nodes stay compact at $textScale / $direction / owner=$owner',
           (tester) async {
             tester.view.physicalSize = const Size(320, 800);
             tester.view.devicePixelRatio = 1;
@@ -31,13 +33,13 @@ void main() {
               ),
             );
             await tester.pumpAndSettle();
-            await tester.tap(find.byIcon(Icons.data_usage_rounded));
+            await tester.tap(find.byType(TopBarDynamicCapsule));
             await tester.pumpAndSettle();
 
             final menu = tester.getRect(
               find
                   .ancestor(
-                    of: find.text('设备'),
+                    of: find.text('节点与路由'),
                     matching: find.byType(SingleChildScrollView),
                   )
                   .first,
@@ -57,30 +59,24 @@ void main() {
               final row = find.bySemanticsLabel('${device.deviceName}，$status');
               expect(row, findsOneWidget);
               final rect = tester.getRect(row);
-              expect(rect.height, lessThanOrEqualTo(24 * textScale + 12));
+              expect(
+                rect.height,
+                lessThanOrEqualTo(math.max(44.0, 24 * textScale + 16)),
+              );
               expect(rect.left, greaterThanOrEqualTo(menu.left));
               expect(rect.right, lessThanOrEqualTo(menu.right));
-              final name = find.text(device.deviceName);
-              expect(
-                tester.getSize(name).height,
-                lessThanOrEqualTo(24 * textScale),
-              );
-              expect(
-                find.descendant(
-                  of: row,
-                  matching: find.byIcon(Icons.check_rounded),
-                ),
-                executing ? findsOneWidget : findsNothing,
-              );
             }
-            expect(find.byTooltip('本机'), findsOneWidget);
-            expect(find.byTooltip('当前执行设备'), findsOneWidget);
-            expect(find.byTooltip('离线'), findsOneWidget);
-            expect(find.byTooltip('在线 · 2 跳中继'), findsOneWidget);
-            expect(find.text('本机'), findsNothing);
-            expect(find.text('当前执行'), findsNothing);
-            expect(find.text('在线'), findsNothing);
-            expect(find.text('离线'), findsNothing);
+
+            // Local device uses minimal orb without text label inside the canvas.
+            expect(find.text('macos-arm64'), findsNothing);
+            expect(find.byTooltip('本机 · macos-arm64'), findsOneWidget);
+            expect(find.byTooltip('windows-剑 · 离线'), findsOneWidget);
+            expect(
+              find.byTooltip(
+                '一个名字特别长的远程设备-with-a-long-name · 在线 · 2 跳中继',
+              ),
+              findsOneWidget,
+            );
             expect(tester.takeException(), isNull);
             await tester.pumpWidget(const SizedBox.shrink());
           },
@@ -88,6 +84,7 @@ void main() {
       }
     }
   }
+
   testWidgets(
     'context counts keep refreshing while device discovery is pending',
     (tester) async {
@@ -95,21 +92,21 @@ void main() {
         ..topologyGate = Completer<void>();
       await tester.pumpWidget(_app(bridge));
       await tester.pumpAndSettle();
-      expect(find.text('1%'), findsOneWidget);
-      await tester.tap(find.byIcon(Icons.data_usage_rounded));
+      expect(find.textContaining('1%'), findsOneWidget);
+      await tester.tap(find.byType(TopBarDynamicCapsule));
       await tester.pumpAndSettle();
-      expect(find.text('5826 / 1000000'), findsOneWidget);
+      expect(find.byTooltip('5826 / 1000000'), findsOneWidget);
 
       bridge.currentWindowSize = 129774;
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
-      expect(find.text('129774 / 1000000'), findsOneWidget);
-      expect(find.text('13%'), findsOneWidget);
+      expect(find.byTooltip('129774 / 1000000'), findsOneWidget);
+      expect(find.textContaining('13%'), findsOneWidget);
       expect(bridge.topologyCalls, 1);
 
       bridge.topologyGate!.complete();
       await tester.pumpAndSettle();
-      expect(find.byTooltip('本机'), findsOneWidget);
+      expect(find.byTooltip('本机 · macos-arm64'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -121,16 +118,16 @@ void main() {
         ..topologyError = StateError('Device lookup failed');
       await tester.pumpWidget(_app(bridge));
       await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.data_usage_rounded));
+      await tester.tap(find.byType(TopBarDynamicCapsule));
       await tester.pumpAndSettle();
-      expect(find.text('5826 / 1000000'), findsOneWidget);
+      expect(find.byTooltip('5826 / 1000000'), findsOneWidget);
       expect(find.text('无法加载设备信息'), findsOneWidget);
 
       bridge.currentWindowSize = 129774;
       await tester.pump(const Duration(seconds: 4));
       await tester.pumpAndSettle();
-      expect(find.text('129774 / 1000000'), findsOneWidget);
-      expect(find.text('13%'), findsOneWidget);
+      expect(find.byTooltip('129774 / 1000000'), findsOneWidget);
+      expect(find.textContaining('13%'), findsOneWidget);
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
@@ -142,15 +139,15 @@ void main() {
       ..summaryError = StateError('Context lookup failed');
     await tester.pumpWidget(_app(bridge));
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.data_usage_rounded));
+    await tester.tap(find.byType(TopBarDynamicCapsule));
     await tester.pumpAndSettle();
     expect(find.text('无法加载上下文信息'), findsOneWidget);
-    expect(find.byTooltip('本机'), findsOneWidget);
+    expect(find.byTooltip('本机 · macos-arm64'), findsOneWidget);
 
     bridge.summaryError = null;
     await tester.pump(const Duration(seconds: 4));
     await tester.pumpAndSettle();
-    expect(find.text('5826 / 1000000'), findsOneWidget);
+    expect(find.byTooltip('5826 / 1000000'), findsOneWidget);
     expect(find.text('无法加载上下文信息'), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
@@ -162,11 +159,11 @@ void main() {
         ..switchGate = Completer<void>();
       await tester.pumpWidget(_app(bridge));
       await tester.pumpAndSettle();
-      await tester.tap(find.byIcon(Icons.data_usage_rounded));
+      await tester.tap(find.byType(TopBarDynamicCapsule));
       await tester.pumpAndSettle();
-      expect(find.byIcon(Icons.play_arrow_rounded), findsNothing);
-      await tester.tap(find.text(_devices[0].deviceName));
-      await tester.tap(find.text(_devices[1].deviceName));
+
+      await tester.tap(_deviceSemantics('windows-剑', '离线'));
+      await tester.tap(_deviceSemantics('macos-arm64', '本机，当前执行设备，在线'));
       expect(bridge.switchCalls, isEmpty);
 
       await tester.tap(find.text(_devices[2].deviceName));
@@ -178,7 +175,9 @@ void main() {
       expect(find.byType(M3LoadingIndicator), findsOneWidget);
       expect(_selectedRow(_devices[1].deviceName), findsOneWidget);
       expect(_selectedRow(_devices[2].deviceName), findsNothing);
-      await tester.tap(find.text(_devices[2].deviceName));
+      await tester.tap(
+        _deviceSemantics(_devices[2].deviceName, '正在切换，在线 · 2 跳中继'),
+      );
       expect(bridge.switchCalls, hasLength(1));
       bridge.switchGate!.complete();
       await tester.pumpAndSettle();
@@ -186,7 +185,7 @@ void main() {
       expect(_selectedRow(_devices[1].deviceName), findsNothing);
       expect(_selectedRow(_devices[2].deviceName), findsOneWidget);
 
-      await tester.tap(find.text(_devices[1].deviceName));
+      await tester.tap(_deviceSemantics('macos-arm64', '本机，在线'));
       await tester.pumpAndSettle();
       expect(bridge.switchCalls, hasLength(2));
       expect(bridge.switchCalls.last.args, {
@@ -205,7 +204,7 @@ void main() {
       ..switchError = StateError('device unavailable');
     await tester.pumpWidget(_app(bridge));
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.data_usage_rounded));
+    await tester.tap(find.byType(TopBarDynamicCapsule));
     await tester.pumpAndSettle();
     await tester.tap(find.text(_devices[2].deviceName));
     await tester.pumpAndSettle();
@@ -226,7 +225,7 @@ void main() {
     final bridge = _DeviceStatsBridge('local')..switchGate = Completer<void>();
     await tester.pumpWidget(_app(bridge));
     await tester.pumpAndSettle();
-    await tester.tap(find.byIcon(Icons.data_usage_rounded));
+    await tester.tap(find.byType(TopBarDynamicCapsule));
     await tester.pumpAndSettle();
     await tester.tap(find.text(_devices[2].deviceName));
     await tester.pump();
@@ -239,7 +238,135 @@ void main() {
     expect(find.byType(M3LoadingIndicator), findsNothing);
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets(
+    'segmented/telemetry toggle, compaction, and live processing states update capsule',
+    (tester) async {
+      final bridge = _DeviceStatsBridge('local')
+        ..currentWindowSize = 200000;
+      final processingState = ValueNotifier<InputProcessingState>(
+        InputProcessingState.idle(),
+      );
+      addTearDown(processingState.dispose);
+
+      await tester.pumpWidget(
+        _app(bridge, processingState: processingState),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('20% · 本机'), findsOneWidget);
+
+      processingState.value = InputProcessingState.executingTool(
+        toolName: 'run_command',
+      );
+      await tester.pump();
+      expect(find.text('本机 · run_command'), findsOneWidget);
+
+      processingState.value = InputProcessingState.summarizing(
+        message: 'summary_key_files',
+      );
+      await tester.pump();
+      expect(find.textContaining('文件'), findsOneWidget);
+
+      processingState.value = InputProcessingState.idle();
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(TopBarDynamicCapsule));
+      await tester.pumpAndSettle();
+
+      // Switch between Scheme A segmented view and Scheme B telemetry view.
+      await tester.tap(find.text('仪表'));
+      await tester.pumpAndSettle();
+      expect(find.text('可用余量'), findsOneWidget);
+
+      await tester.tap(find.text('分段'));
+      await tester.pumpAndSettle();
+
+      // Trigger manual compaction.
+      await tester.tap(find.text('压缩'));
+      await tester.pumpAndSettle();
+      expect(bridge.compactCalls, 1);
+      expect(find.textContaining('压缩完毕'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'top bar capsule collapses to minimal size when empty and caps long labels',
+    (tester) async {
+      final emptyBridge = _DeviceStatsBridge('')..maxContextTokens = 0;
+      final processingState = ValueNotifier<InputProcessingState>(
+        InputProcessingState.idle(),
+      );
+      addTearDown(processingState.dispose);
+
+      await tester.pumpWidget(
+        _app(emptyBridge, processingState: processingState),
+      );
+      await tester.pumpAndSettle();
+      final emptyWidth = tester.getSize(find.byType(TopBarDynamicCapsule)).width;
+      expect(emptyWidth, lessThan(64.0));
+
+      final activeBridge = _DeviceStatsBridge('local')
+        ..currentWindowSize = 200000;
+      await tester.pumpWidget(
+        _app(activeBridge, processingState: processingState),
+      );
+      await tester.pumpAndSettle();
+      final idleWidth = tester.getSize(find.byType(TopBarDynamicCapsule)).width;
+      expect(idleWidth, greaterThan(emptyWidth));
+      expect(idleWidth, lessThanOrEqualTo(208.0));
+
+      processingState.value = InputProcessingState.executingTool(
+        toolName: 'very_long_remote_tool_name_for_overflow_cap_verification',
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+      final longWidth = tester.getSize(find.byType(TopBarDynamicCapsule)).width;
+      expect(longWidth, greaterThan(idleWidth));
+      expect(longWidth, lessThanOrEqualTo(208.0));
+      processingState.value = InputProcessingState.idle();
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+
+  testWidgets(
+    'segmented and telemetry views render core context breakdown categories',
+    (tester) async {
+      final bridge = _DeviceStatsBridge('local')
+        ..currentWindowSize = 6151
+        ..breakdown = const ContextWindowBreakdown(
+          systemPromptTokens: 1400,
+          toolTokens: 3800,
+          fileTokens: 53,
+          toolResultTokens: 531,
+          conversationTokens: 367,
+        );
+      await tester.pumpWidget(_app(bridge));
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.byType(TopBarDynamicCapsule));
+      await tester.pumpAndSettle();
+
+      expect(find.text('系统提示词 1.4k'), findsOneWidget);
+      expect(find.text('工具 3.8k'), findsOneWidget);
+      expect(find.text('文件 53'), findsOneWidget);
+      expect(find.text('工具结果 531'), findsOneWidget);
+      expect(find.text('会话内容 367'), findsOneWidget);
+
+      await tester.tap(find.text('仪表'));
+      await tester.pumpAndSettle();
+      expect(find.text('可用余量'), findsOneWidget);
+      expect(find.text('系统提示词 1.4k'), findsOneWidget);
+      expect(find.text('工具 3.8k'), findsOneWidget);
+      expect(find.text('文件 53'), findsOneWidget);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }
+
+Finder _deviceSemantics(String name, String status) =>
+    find.bySemanticsLabel('$name，$status');
 
 Finder _selectedRow(String name) => find.byWidgetPredicate(
   (widget) =>
@@ -253,6 +380,7 @@ Widget _app(
   TextDirection direction = TextDirection.ltr,
   double textScale = 1,
   String? chatId = 'chat',
+  ValueNotifier<InputProcessingState>? processingState,
 }) => MaterialApp(
   theme: ThemeData.dark(useMaterial3: true),
   locale: const Locale('zh'),
@@ -270,6 +398,7 @@ Widget _app(
       child: ChatContextStatsTopBarButton(
         viewModel: ChatViewModel(bridge: bridge),
         currentChatId: chatId,
+        processingStateListenable: processingState,
       ),
     ),
   ),
@@ -311,7 +440,10 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
   Object? topologyError;
   Object? summaryError;
   int topologyCalls = 0;
+  int compactCalls = 0;
   int currentWindowSize = 5826;
+  int maxContextTokens = 1_000_000;
+  ContextWindowBreakdown? breakdown;
 
   BindingRouteStatus get status => BindingRouteStatus(
     ownerNodeId: owner,
@@ -332,6 +464,11 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
       owner = (request.args as Map)['targetNodeId'] as String;
       return encodeCoreLink(<Object?>[0, status.toJson()]);
     }
+    if (request.methodName == 'compactChat') {
+      compactCalls++;
+      currentWindowSize = math.max(1000, currentWindowSize ~/ 4);
+      return encodeCoreLink(<Object?>[0, true]);
+    }
     if (request.methodName == 'deviceSpaceTopology') {
       topologyCalls++;
       await topologyGate?.future;
@@ -345,7 +482,8 @@ class _DeviceStatsBridge extends OperitRuntimeBridge {
         currentWindowSize: currentWindowSize,
         inputTokenCount: 8972,
         outputTokenCount: 96,
-        maxContextTokens: 1_000_000,
+        maxContextTokens: maxContextTokens,
+        breakdown: breakdown,
       ).toJson(),
       'deviceSpaceTopology' => RuntimeDeviceSpaceTopology(
         currentDeviceId: 'local',

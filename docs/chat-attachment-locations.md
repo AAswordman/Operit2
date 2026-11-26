@@ -36,6 +36,12 @@ VFS 的 `/operitapp/data` 映射整个 Runtime 根，因此旧地址
 `/operitapp/data/data/chat_attachments/...` 中有两层 `data`。新附件使用工作区或产出区域的地址。
 旧消息引用的已清理 `temp/clean_on_exit` 文件无法恢复，需要重新上传。
 
+## 模型请求中的历史媒体
+
+`AIMessageManager` 在调用消息输入处理插件或组装模型请求前，保留所提供历史中的图片、音频和视频链接，不再按图片／音视频历史轮数设置提前删除。此处不扩大正式聊天历史的选取范围，也不改变历史摘要、附件持久化位置或提供方的媒体能力限制。
+
+轮次裁剪辅助函数按已遇到的用户轮数计数，避免从 `usize::MAX` 饱和递增导致所有轮次始终落在保留范围。测试覆盖全部保留、仅保留最近一轮和零轮，以及首条用户消息前的助手内容。
+
 ## 文件选择与有界导入
 
 - app 通过统一 `SelectedFileInput` 消费元数据和输入流。实现复用现有 `OperitFolderAccessPlatform` 注册、`file_selector` 和原生选择通道；app/core 不判断 Android、Apple、Windows 或 Web，也不调用平台授权通道或按平台拼来源。

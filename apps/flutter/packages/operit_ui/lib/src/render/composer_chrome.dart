@@ -2,6 +2,23 @@ import 'package:flutter/material.dart';
 
 import '../assets/theme_asset_resolver.dart';
 
+/// Width of the outline around the Classic composer's text field.
+const double _classicOutlineWidth = 1;
+
+/// Side of the settings control that precedes the text inside the Classic
+/// composer's text field.
+const double _classicSettingsExtent = 34;
+
+/// Offset of the first text line inside the Agent composer's content box.
+const Offset themeAgentComposerTextOrigin = Offset(16, 10);
+
+/// Offset of the first text line inside the Classic composer's content box,
+/// counted past its outline and the settings control before the text.
+const Offset themeClassicComposerTextOrigin = Offset(
+  _classicOutlineWidth + 14 + _classicSettingsExtent,
+  _classicOutlineWidth + 9,
+);
+
 class ThemeComposerHorizontalVisibility extends StatelessWidget {
   const ThemeComposerHorizontalVisibility({
     super.key,
@@ -108,14 +125,21 @@ class ThemeClassicComposerTextEditor extends StatelessWidget {
             focusedBorder: inputBorder.copyWith(
               borderSide: BorderSide(color: scheme.primary, width: 1.2),
             ),
-            contentPadding: const EdgeInsets.fromLTRB(14, 9, 44, 9),
+            contentPadding: EdgeInsets.fromLTRB(
+              themeClassicComposerTextOrigin.dx -
+                  _classicOutlineWidth -
+                  _classicSettingsExtent,
+              themeClassicComposerTextOrigin.dy - _classicOutlineWidth,
+              44,
+              9,
+            ),
             prefixIconConstraints: const BoxConstraints(
               minWidth: 0,
-              minHeight: 34,
+              minHeight: _classicSettingsExtent,
             ),
             prefixIcon: ThemeComposerHorizontalVisibility(
-              width: 34,
-              height: 34,
+              width: _classicSettingsExtent,
+              height: _classicSettingsExtent,
               visible: !inputExpanded,
               alignment: AlignmentDirectional.centerStart,
               child: settings,
@@ -518,7 +542,12 @@ class ThemeComposerTextEditor extends StatelessWidget {
               border: InputBorder.none,
               enabledBorder: InputBorder.none,
               focusedBorder: InputBorder.none,
-              contentPadding: const EdgeInsets.fromLTRB(16, 10, 48, 8),
+              contentPadding: EdgeInsets.fromLTRB(
+                themeAgentComposerTextOrigin.dx,
+                themeAgentComposerTextOrigin.dy,
+                48,
+                8,
+              ),
             ),
             onSubmitted: onSubmitted,
           ),

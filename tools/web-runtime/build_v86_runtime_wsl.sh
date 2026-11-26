@@ -348,11 +348,19 @@ for argument in $(cat /proc/cmdline); do
         operit.cols=*)
             terminal_cols="${argument#operit.cols=}"
             ;;
+        operit.launch=*)
+            terminal_launch="${argument#operit.launch=}"
+            ;;
         operit.mode=agent)
             exec /usr/local/bin/operit-runtime-init </dev/ttyS0 >/dev/ttyS0 2>&1
             ;;
     esac
 done
+if [ -n "$terminal_launch" ]; then
+    mkdir -p /mnt/operit-host
+    mount -t 9p -o trans=virtio,version=9p2000,cache=none,msize=65536 host9p /mnt/operit-host || exit
+    exec /usr/local/bin/operit-runtime-terminal "$terminal_rows" "$terminal_cols" /mnt/operit-host/.__operit_terminal_launch "$terminal_launch" </dev/ttyS0 >/dev/ttyS0 2>&1
+fi
 exec /usr/local/bin/operit-runtime-terminal "$terminal_rows" "$terminal_cols" </dev/ttyS0 >/dev/ttyS0 2>&1
 EOF
     chmod 0755 "$initramfs_root/init"

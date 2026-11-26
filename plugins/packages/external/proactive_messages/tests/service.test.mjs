@@ -82,7 +82,8 @@ function host() {
             calls.push(['model', structuredClone(value.generation)]);
             if (modelHook) await modelHook();
             if (modelError) throw Error('model offline');
-            message = { ...structuredClone(value), text: '最近有喝到喜欢的茶吗？', status: 'scheduled', error: null };
+            message = { ...structuredClone(value), text: '最近有喝到喜欢的茶吗？', status: 'scheduled', error: null,
+              notificationAttempted: false, notificationRegistered: false, notificationError: null };
           }
           scheduled.set(value.id, message);
           if (lostResponse) throw Error('response lost');
@@ -175,6 +176,22 @@ test('host delivery survives plugin restart; reading receipts never sends again'
   const h = host(); let service = h.runtime(); await service.setForeground(true); await service.saveRule(rule()); service.stop();
   h.advance(120000); h.complete(); service = h.runtime(); await service.tick();
   assert.ok(h.state().jobs.every(job => job.status === 'delivered')); assert.equal(count(h, 'schedule'), 2);
+});
+test('notification failure stays separate from the durable message receipt', async () => {
+  const h = host(), service = h.runtime();
+  await service.setForeground(true); await service.saveRule(rule());
+  await service.setForeground(false); h.advance(60000);
+  const receipt = [...h.scheduled.values()][0];
+  Object.assign(receipt, { status: 'delivered', error: null, notificationAttempted: true,
+    notificationRegistered: false, notificationError: 'notification host timed out' });
+  await service.tick();
+  const job = h.state().jobs.find(job => job.id === receipt.id);
+  assert.equal(job.status, 'delivered');
+  assert.equal(job.error, '');
+  assert.equal(job.notificationAttempted, true);
+  assert.equal(job.notificationRegistered, false);
+  assert.equal(job.notificationError, 'notification host timed out');
+  assert.equal(count(h, 'schedule'), 2);
 });
 test('response loss reconciles the accepted durable identity without a duplicate schedule', async () => {
   const h = host(), service = h.runtime(); await service.setForeground(true); h.loseResponse(true); await service.saveRule(rule());

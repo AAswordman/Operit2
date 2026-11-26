@@ -17,6 +17,7 @@ import 'package:operit2/ui/features/chat/components/style/input/common/ChatCompo
 import 'package:operit2/ui/features/chat/components/style/input/common/ChatPendingMessageQueuePanel.dart';
 import 'package:operit2/ui/features/chat/viewmodel/ChatViewModel.dart';
 import 'package:operit2/ui/theme/OperitTheme.dart';
+import 'support/chat_voice_input_session.dart';
 
 /// Verifies real composer popups against root and constrained page overlays.
 void main() {
@@ -592,9 +593,7 @@ Widget _composer({
         onSendMessage: () {},
         onQueueMessage: () {},
         onCancelMessage: () {},
-        isSpeechRecording: false,
-        isSpeechTranscribing: false,
-        onSpeechInput: () {},
+        voiceInput: createIdleVoiceInputSession(),
       )
     : ClassicChatInputSection(
         key: key,
@@ -609,9 +608,7 @@ Widget _composer({
         onSendMessage: () {},
         onQueueMessage: () {},
         onCancelMessage: () {},
-        isSpeechRecording: false,
-        isSpeechTranscribing: false,
-        onSpeechInput: () {},
+        voiceInput: createIdleVoiceInputSession(),
       );
 
 class _PendingModelBridge extends OperitRuntimeBridge {

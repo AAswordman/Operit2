@@ -3064,6 +3064,58 @@ mod tests {
             parameters: serde_json::from_value(parameters).unwrap(), device: None }
     }
 
+    /// Exercises typed screen conversion and Host callback delivery through the actual tool pipeline.
+    #[tokio::test]
+    async fn resident_screen_calls_resume_after_typed_tool_pipeline_completion() {
+        use operit_plugin_sdk::js_sdk::results::{
+            TerminalImplementation, TerminalSessionScreenResultData, TerminalType,
+        };
+        operit_host_api::HostManager::setDefaultHostJavaScriptRuntimeHost(Arc::new(
+            operit_host_native_scheduler::NativeHostJavaScriptRuntimeHost::new(),
+        ));
+        let mut fixture = PipelineFixture::new();
+        fixture.handler.registerBuiltinTool(BuiltinToolName::GetTerminalSessionScreen, Box::new(FnToolExecutor {
+            validate: Arc::new(|_| ToolValidationResult { valid: true, errorMessage: String::new() }),
+            effect: ToolEffect::READ,
+            invoke: Arc::new(|tool| {
+                let session = tool.parameters.iter().find(|parameter| parameter.name == "session_id").unwrap();
+                ToolResult { toolName: tool.name.clone(), success: true, error: None,
+                    result: ToolResultData::TerminalSessionScreenResultData(TerminalSessionScreenResultData {
+                        sessionId: session.value.clone(), platform: "android".into(),
+                        terminal: TerminalImplementation::AndroidSystem, terminalType: TerminalType::Shell,
+                        rows: 1, cols: 16384, content: "x".repeat(16384), commandRunning: false,
+                    }),
+                }
+            }),
+        }), ToolRegistrationVisibility::PUBLIC);
+        let engine = operit_js_bridge::javascript::JsEngine::JsEngine::new(Arc::new(fixture.handler.clone())).unwrap();
+        let script = r#"
+            exports.sweep = async function(params) {
+                for (let index = 0; index < 128; index++) {
+                    const screen = await Tools.System.terminal.screen(params.session);
+                    if (screen.sessionId !== params.session || screen.content.length !== 16384)
+                        throw new Error('Screen result crossed owners or lost data');
+                }
+                return params.session;
+            };
+        "#;
+        let calls = (0..8).map(|index| {
+            let engine = engine.clone();
+            async move {
+                let session = format!("screen-{index}");
+                let params = BTreeMap::from([
+                    ("session".into(), json!(session)), ("__operit_package_lang".into(), json!("en")),
+                ]);
+                let output = engine.execute_script_function(script, "sweep", &params,
+                    &BTreeMap::new(), None, true, None).await.unwrap().unwrap();
+                assert_eq!(serde_json::from_str::<String>(&output).unwrap(), session);
+            }
+        });
+        hostTimeout(15_000, futures_util::future::join_all(calls)).await
+            .expect("Completed typed screen tools must resume all resident calls");
+        engine.destroy();
+    }
+
     /// Proves AI admission remains active while the same executor is direct and hook-free for JS.
     #[tokio::test]
     async fn ai_and_js_share_executors_but_not_lifecycle_or_permissions() {

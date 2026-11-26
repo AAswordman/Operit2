@@ -15,6 +15,7 @@ import '../../../common/interactions/DrawerGestureExclusion.dart';
 import '../../../theme/OperitTheme.dart';
 import '../viewmodel/ChatViewModel.dart';
 import '../tts/TtsPlaybackController.dart';
+import '../voice_input/ChatVoiceInputSession.dart';
 import 'ChatArea.dart';
 import 'NewChatIntro.dart';
 import 'ChatLayoutMetrics.dart';
@@ -42,6 +43,8 @@ class ChatScreenContent extends StatelessWidget {
     required this.scrollController,
     required this.inputProcessingState,
     this.mentionSuggestionPanel,
+    this.onMentionEnter,
+    this.onMentionKeyEvent,
     required this.viewModel,
     required this.currentChatId,
     this.fileDirectory,
@@ -108,9 +111,7 @@ class ChatScreenContent extends StatelessWidget {
     required this.onDismissToast,
     required this.isMultiSelectMode,
     required this.isPreparingChatSwitch,
-    required this.isSpeechRecording,
-    required this.isSpeechTranscribing,
-    required this.onSpeechInput,
+    required this.voiceInput,
     this.selectedMessageTimestamps = const <int>{},
     this.showInput = true,
   });
@@ -125,6 +126,8 @@ class ChatScreenContent extends StatelessWidget {
   final ScrollController scrollController;
   final core_proxy.InputProcessingState inputProcessingState;
   final Widget? mentionSuggestionPanel;
+  final bool Function()? onMentionEnter;
+  final KeyEventResult Function(KeyEvent event)? onMentionKeyEvent;
   final ChatViewModel viewModel;
   final String? currentChatId;
   final String? fileDirectory;
@@ -197,9 +200,7 @@ class ChatScreenContent extends StatelessWidget {
   final VoidCallback onDismissToast;
   final bool isMultiSelectMode;
   final bool isPreparingChatSwitch;
-  final bool isSpeechRecording;
-  final bool isSpeechTranscribing;
-  final VoidCallback onSpeechInput;
+  final ChatVoiceInputSession voiceInput;
   final Set<int> selectedMessageTimestamps;
 
   @override
@@ -405,6 +406,8 @@ class ChatScreenContent extends StatelessWidget {
         isLoading: loading,
         inputState: inputProcessingState,
         mentionSuggestionPanel: mentionSuggestionPanel,
+        onMentionEnter: onMentionEnter,
+        onMentionKeyEvent: onMentionKeyEvent,
         viewModel: viewModel,
         currentChatId: currentChatId,
         onSendMessage: sendMessage,
@@ -432,9 +435,7 @@ class ChatScreenContent extends StatelessWidget {
         onAttachPackage: onAttachPackage,
         onRemoveAttachment: onRemoveAttachment,
         onPreviewAttachment: onPreviewAttachment,
-        isSpeechRecording: isSpeechRecording,
-        isSpeechTranscribing: isSpeechTranscribing,
-        onSpeechInput: onSpeechInput,
+        voiceInput: voiceInput,
       ),
       UserPreferencesManager.INPUT_STYLE_CLASSIC => ClassicChatInputSection(
         hintSuffix: hint.suffix,
@@ -444,6 +445,8 @@ class ChatScreenContent extends StatelessWidget {
         isLoading: loading,
         inputState: inputProcessingState,
         mentionSuggestionPanel: mentionSuggestionPanel,
+        onMentionEnter: onMentionEnter,
+        onMentionKeyEvent: onMentionKeyEvent,
         viewModel: viewModel,
         currentChatId: currentChatId,
         onSendMessage: sendMessage,
@@ -471,9 +474,7 @@ class ChatScreenContent extends StatelessWidget {
         onAttachPackage: onAttachPackage,
         onRemoveAttachment: onRemoveAttachment,
         onPreviewAttachment: onPreviewAttachment,
-        isSpeechRecording: isSpeechRecording,
-        isSpeechTranscribing: isSpeechTranscribing,
-        onSpeechInput: onSpeechInput,
+        voiceInput: voiceInput,
       ),
       _ => throw FormatException('Unknown chat input style: $inputStyle'),
     };

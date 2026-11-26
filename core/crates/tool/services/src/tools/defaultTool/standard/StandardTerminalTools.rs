@@ -47,6 +47,29 @@ pub struct TerminalToolExecutor {
 }
 
 impl StandardTerminalTools {
+    /// Resolves the selected profile and launches a fresh process in the current file directory.
+    pub(crate) fn openSelectedSession(&self, name: &str, requestedType: Option<&str>, requestedProfile: Option<&str>, command: Option<String>) -> HostResult<TerminalSessionInfo> {
+        let host = self.host()?;
+        if requestedType.is_some() && requestedProfile.is_some() {
+            return Err(HostError::new("Specify profileId or terminalType, not both"));
+        }
+        let (terminal, terminalType, sessionName) = if let Some(kind) = requestedType {
+            let info = host.terminalInfo()?;
+            let entry = info.types.into_iter().find(|entry| entry.terminalType == kind)
+                .ok_or_else(|| HostError::new("Terminal interpreter is not registered"))?;
+            if !entry.available { return Err(HostError::new("Terminal interpreter is unavailable")); }
+            (entry.terminal, kind.to_string(), name.to_string())
+        } else {
+            let settings = host.terminalProfileSettings()?;
+            let id = requestedProfile.unwrap_or(&settings.defaultProfileId);
+            let profile = settings.profiles.into_iter().find(|profile| profile.id == id)
+                .ok_or_else(|| HostError::new(format!("Terminal profile is not registered: {id}")))?;
+            (format!("profile:{}", profile.id), profile.terminalType, format!("{name}_profile_{}", profile.id))
+        };
+        let workingDir = self.fileDirectory()?.map(|path| self.resolveFileDirectory(host, &terminal, &terminalType, &path)).transpose()?;
+        host.openTerminalSession(&operit_host_api::TerminalSessionRequest { sessionName, terminal, terminalType, workingDir, command })
+    }
+
     /// Acquires the newest idle generation without submitting directory commands to a busy shell.
     pub(crate) fn availableSession(
         &self,
@@ -524,7 +547,7 @@ fn hiddenTerminalCommandResultData(
 }
 
 #[allow(non_snake_case)]
-fn terminalSessionCreationResultData(
+pub(crate) fn terminalSessionCreationResultData(
     data: &TerminalSessionInfo,
 ) -> HostResult<TerminalSessionCreationResultData> {
     Ok(TerminalSessionCreationResultData {

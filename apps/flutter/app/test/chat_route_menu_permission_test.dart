@@ -440,6 +440,7 @@ class _MenuBridge extends OperitRuntimeBridge {
           inputTokenCount: 456,
           outputTokenCount: 789,
           maxContextTokens: 64_000,
+          breakdown: null,
         ).toJson();
       case 'getToolPkgPublicApiOwners':
         expect((request.args as Map)['apiName'], 'chat.context.actions');

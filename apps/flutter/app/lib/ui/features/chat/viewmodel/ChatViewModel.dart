@@ -611,6 +611,11 @@ class ChatViewModel {
     return _chat.insertSummary(message: message);
   }
 
+  /// Manually compacts the requested chat into a summary checkpoint.
+  Future<bool> compactChat(String chatId) {
+    return _chat.compactChat(chatId: chatId);
+  }
+
   Future<void> loadOlderMessagesForCurrentChat() {
     return _chat.loadOlderMessagesForCurrentChat();
   }

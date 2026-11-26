@@ -27,6 +27,7 @@ struct WebTerminalSession {
     workingDir: String,
     rows: u16,
     cols: u16,
+    processOwned: bool,
 }
 
 thread_local! {
@@ -46,6 +47,20 @@ impl WebTerminalHost {
 }
 
 impl TerminalHost for WebTerminalHost {
+    /// Supplies a launch script through the guest filesystem, before any interactive shell starts.
+    fn openTerminalSession(&self, request: &operit_host_api::TerminalSessionRequest) -> HostResult<TerminalSessionInfo> {
+        requireLinuxVmTerminalType(&request.terminal, &request.terminalType)?;
+        let name = requiredText(&request.sessionName, "session_name")?;
+        let directory = request.workingDir.as_deref().unwrap_or("/");
+        let id = nextTerminalSessionId();
+        call_terminal("openProcess", &[JsValue::from_str(&id), JsValue::from_str(directory),
+            request.command.as_deref().map(JsValue::from_str).unwrap_or(JsValue::NULL)])?;
+        TERMINAL_SESSIONS.with(|sessions| sessions.borrow_mut().insert(id.clone(), WebTerminalSession {
+            sessionName: name.clone(), terminalType: SHELL_TERMINAL_TYPE.into(), workingDir: directory.into(), rows: 24, cols: 80, processOwned: true,
+        }));
+        Ok(TerminalSessionInfo { sessionId: id, sessionName: name, platform: PLATFORM.into(), terminal: TERMINAL.into(), terminalType: SHELL_TERMINAL_TYPE.into(), isNewSession: true })
+    }
+
     /// Starts isolated browser terminals at their only supported guest root.
     fn resolveWorkingDirectory(
         &self,
@@ -115,6 +130,7 @@ impl TerminalHost for WebTerminalHost {
             workingDir: normalizedWorkingDir,
             rows,
             cols,
+            processOwned: false,
         };
         TERMINAL_SESSIONS.with(|sessions| {
             sessions.borrow_mut().insert(sessionId.clone(), session);
@@ -192,7 +208,7 @@ impl TerminalHost for WebTerminalHost {
         });
         let mut active = Vec::new();
         for (sessionId, session) in entries {
-            if self.pollPtyExitCode(&sessionId)?.is_none() {
+            if self.pollPtyExitCode(&sessionId)?.is_none() || session.processOwned {
                 let state = call_terminal("sessionState", &[JsValue::from_str(&sessionId)])?;
                 active.push(TerminalSessionListEntry {
                     sessionId,
@@ -353,8 +369,9 @@ impl TerminalHost for WebTerminalHost {
         input: Option<&str>,
         control: Option<&str>,
     ) -> HostResult<TerminalInputOutput> {
-        let content = input.or(control).unwrap_or_default();
-        let acceptedChars = self.writePtySession(sessionId, content.as_bytes())?;
+        let content = operit_host_api::TerminalControl::terminalInput(input, control)?;
+        self.writePtySession(sessionId, content.as_bytes())?;
+        let acceptedChars = content.chars().count();
         Ok(TerminalInputOutput {
             sessionId: sessionId.to_string(),
             acceptedChars,
@@ -369,6 +386,17 @@ impl TerminalHost for WebTerminalHost {
             success: true,
             message: "Linux VM terminal session closed".to_string(),
         })
+    }
+
+    /// Closes only a matching session after its real guest process has exited.
+    fn closeSessionIfIdle(&self, sessionId: &str, sessionName: &str) -> HostResult<TerminalCloseOutput> {
+        let session = TERMINAL_SESSIONS.with(|sessions| sessions.borrow().get(sessionId).cloned())
+            .ok_or_else(|| HostError::new("Terminal session does not exist"))?;
+        if !operit_host_api::terminalSessionNameMatches(&session.sessionName, sessionName) {
+            return Err(HostError::new("Terminal session name does not match"));
+        }
+        if self.getSessionScreen(sessionId)?.commandRunning { return Err(HostError::new("Terminal session has a process in progress")); }
+        self.closeSession(sessionId)
     }
 
     /// Renders the retained serial screen independently of the Flutter output consumer.

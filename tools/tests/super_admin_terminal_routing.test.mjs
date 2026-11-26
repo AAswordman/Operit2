@@ -54,20 +54,30 @@ function fixture({ platform = 'android', defaultType = 'bash', implementations =
       },
       System: {
         terminal: {
-          /** Streams the original command until actual completion without a foreground wait. */
-          async *runStream(request) {
-            calls.push({ operation: 'observe', observation: { op: 'runstream', ...structuredClone(request) } });
-            let nameToUse = request.sessionName;
-            for (let generation = 1; sessions.get(`${request.terminalType}:${nameToUse}`)?.commandRunning; generation++) {
-              nameToUse = `${request.sessionName}_generation_${generation}`;
-            }
-            const created = await this.create(nameToUse, request.terminalType);
+          /** Returns a bounded foreground receipt while the session owns unfinished execution. */
+          async run(request) {
+            calls.push({ operation: 'observe', observation: { op: 'run', ...structuredClone(request) } });
+            const created = await this.open(request);
             const session = [...sessions.values()].find(value => value.sessionId === created.sessionId);
-            session.commandRunning = true;
-            yield { type: 'start', ...created, command: request.command };
-            yield { type: 'chunk', ...created, command: request.command, chunk: output, chunkIndex: 0, receivedChars: output.length };
-            session.commandRunning = false;
-            yield { type: 'completed', result: { ...created, command: request.command, output, exitCode: 0, timedOut } };
+            session.commandRunning = timedOut;
+            session.receipt = { ...created, command: request.command, output, exitCode: timedOut ? -1 : 0, timedOut };
+            return session.receipt;
+          },
+          /** Models a fresh PTY process rather than the legacy reusable session API. */
+          async open(request) {
+            const terminalType = request.terminalType;
+            if (!Object.hasOwn(implementations, terminalType)) throw new Error(`Unsupported terminal type: ${terminalType}`);
+            const session = { sessionId: `session-${++sessionSequence}`, sessionName: request.sessionName,
+              platform, terminal: implementations[terminalType], terminalType, commandRunning: true, isNewSession: true };
+            sessions.set(session.sessionId, session);
+            return {...session};
+          },
+          /** Reads the original execution without submitting another command. */
+          async wait(sessionId, waitMs) {
+            calls.push({ operation: 'wait', sessionId, waitMs });
+            const session = [...sessions.values()].find(value => value.sessionId === sessionId);
+            assert.ok(session);
+            return { ...session.receipt, timedOut: session.commandRunning, exitCode: session.commandRunning ? -1 : 0 };
           },
           /** Returns capabilities whose default may differ from the selected session. */
           async info() { return terminalInfo; },
@@ -151,8 +161,8 @@ test('one execution entry point advertises discovery without platform presets', 
   assert.ok(metadata.tools.some(tool => tool.name === 'terminal'));
   assert.ok(metadata.tools.some(tool => tool.name === 'list_terminals'));
   assert.ok(metadata.tools.some(tool => tool.name === 'close'));
-  assert.ok(!metadata.tools.some(tool => tool.name === 'terminal_wait'));
-  assert.equal(fixture().tools.terminal_wait, undefined);
+  assert.ok(metadata.tools.some(tool => tool.name === 'terminal_wait'));
+  assert.equal(typeof fixture().tools.terminal_wait, 'function');
   assert.deepEqual(metadata.tools.find(tool => tool.name === 'terminal').parameters.map(parameter => parameter.name), ['command', 'profileId']);
   for (const name of ['powershell', 'bash', 'zsh', 'shell']) assert.ok(!metadata.tools.some(tool => tool.name === name));
 });
@@ -172,11 +182,17 @@ function managedFixture(options = {}) {
   f.terminalInfo.defaultProfileId = 'ubuntu_a';
   f.terminalInfo.profiles = profiles();
   // The fixture's old interpreter model remains useful for session lifetime and output handling.
-  const originalRun = f.context.Tools.System.terminal.runStream;
-  f.context.Tools.System.terminal.runStream = async function*(request) {
+  const originalRun = f.context.Tools.System.terminal.run;
+  const originalOpen = f.context.Tools.System.terminal.open;
+  f.context.Tools.System.terminal.run = async function(request) {
     const profile = f.terminalInfo.profiles.find(value => value.id === request.profileId);
     f.calls.push({operation:'selectedProfile', profileId:request.profileId});
-    yield* originalRun.call(this, {...request, sessionName:`${request.sessionName}_profile_${profile.id}`, terminalType:profile.terminalType});
+    return originalRun.call(this, {...request, sessionName:`${request.sessionName}_profile_${profile.id}`, terminalType:profile.terminalType});
+  };
+  f.context.Tools.System.terminal.open = async function(request) {
+    if (request.terminalType !== undefined) return originalOpen.call(this, request);
+    const profile = f.terminalInfo.profiles.find(value => value.id === request.profileId);
+    return originalOpen.call(this, {...request, sessionName:`${request.sessionName}_profile_${profile.id}`, terminalType:profile.terminalType});
   };
   return f;
 }
@@ -188,14 +204,31 @@ test('default and explicit profiles select separate same-interpreter sessions', 
   const b = await f.tools.terminal({command:'pwd',profileId:'ubuntu_b'});
   const again = await f.tools.terminal({command:'pwd',profileId:'ubuntu_a'});
   assert.notEqual(a.sessionId,b.sessionId);
-  assert.equal(a.sessionId,again.sessionId);
+  assert.notEqual(a.sessionId,again.sessionId);
+  assert.equal(again.context_preserved,false);
   f.terminalInfo.defaultProfileId = 'ubuntu_b';
-  assert.equal((await f.tools.terminal({command:'pwd'})).sessionId,b.sessionId);
+  assert.notEqual((await f.tools.terminal({command:'pwd'})).sessionId,b.sessionId);
   assert.deepEqual(f.calls.filter(call => call.operation === 'selectedProfile').map(call => call.profileId),
     ['ubuntu_a','ubuntu_b','ubuntu_a','ubuntu_b']);
   const discovered = await f.tools.list_terminals();
   assert.equal(discovered.profiles.length,3);
   assert.equal(discovered.defaultProfileId,'ubuntu_b');
+});
+
+/** Persistent interactive programs remain protected even after long periods without tool activity. */
+test('interactive open preserves the live shell until explicit close', async () => {
+  const f = managedFixture();
+  const interactive = await f.tools.terminal_open({profileId:'ubuntu_a'});
+  assert.equal(interactive.mode,'interactive');
+  assert.equal(interactive.context_preserved,true);
+  const command = await f.tools.terminal({command:'pwd',profileId:'ubuntu_a'});
+  assert.notEqual(interactive.sessionId,command.sessionId);
+  f.setTime(600000); await f.hooks[0].function();
+  assert.equal(f.sessions.size,1);
+  assert.equal([...f.sessions.values()][0].sessionId,interactive.sessionId);
+  await f.tools.input({sessionId:interactive.sessionId,input:'c',control:'ctrl'});
+  await f.tools.close({sessionId:interactive.sessionId});
+  assert.equal(f.sessions.size,0);
 });
 
 /** Checks unknown and unavailable IDs fail before any execution reaches the host. */
@@ -207,49 +240,56 @@ test('invalid profile selection fails without starting a command', async () => {
   assert.equal(f.calls.length,0);
 });
 
-/** Keeps terminal completion and large output independent of package foreground wait controls. */
-test('profile execution streams session identity and output before returning the final result', async () => {
+/** Preserves exact-profile identity and large output with a bounded foreground wait. */
+test('profile execution returns session identity and output with a bounded wait', async () => {
   const f = managedFixture({output:'x'.repeat(12001)});
   const first = await f.tools.terminal({command:'printf large'});
   assert.equal(first.status, 'completed');
-  assert.deepEqual(f.intermediate.map(event => event.type), ['start', 'chunk']);
-  assert.equal(f.intermediate[0].sessionId, first.sessionId);
-  assert.equal(f.intermediate[1].chunk.length, 12001);
   assert.equal(f.files.get(first.output_saved_to).length,12001);
   const system = await f.tools.terminal({command:'id',profileId:'system'});
   assert.equal(system.terminal,'android-system');
-  assert.ok(f.calls.filter(call => call.operation === 'observe').every(call => !Object.hasOwn(call.observation, 'waitMs')));
+  assert.ok(f.calls.filter(call => call.operation === 'observe').every(call => call.observation.waitMs === 1000));
   const result = await f.tools.close({sessionId:first.sessionId});
   assert.equal(result.success,true);
   assert.notEqual((await f.tools.terminal({command:'pwd'})).sessionId,first.sessionId);
 });
 
-/** Prevents a running receipt from being mistaken for the final package result. */
-test('an incomplete terminal stream fails explicitly instead of completing the package early', async () => {
+/** Keeps screen, input and original-result observation available after foreground waiting expires. */
+test('a running command returns control and can be observed without submitting it again', async () => {
   const f = managedFixture({timedOut:true});
-  await assert.rejects(f.tools.terminal({command:'slow'}), /before command completion/);
+  const running = await f.tools.terminal({command:'read answer'});
+  assert.equal(running.status, 'running');
+  assert.equal(running.exitCode, null);
+  assert.equal(running.commandRunning, true);
+  assert.equal((await f.tools.get_screen({sessionId:running.sessionId})).commandRunning, true);
+  await f.tools.input({sessionId:running.sessionId,input:'answer',control:'enter'});
+  assert.equal((await f.tools.terminal_wait({sessionId:running.sessionId})).status, 'running');
+  [...f.sessions.values()][0].commandRunning = false;
+  const completed = await f.tools.terminal_wait({sessionId:running.sessionId});
+  assert.equal(completed.status, 'completed');
+  assert.equal(completed.exitCode, 0);
+  assert.equal(f.calls.filter(call => call.operation === 'observe').length, 1);
+  assert.ok(f.calls.filter(call => call.operation === 'wait').every(call => call.waitMs === 1000));
 });
 
-/** Exercises a real pending async iterator and verifies package output arrives before final resolution. */
-test('a slow command emits live output while its package promise remains pending', async () => {
+/** A pending original command must not prevent another tool from sending the input it needs. */
+test('input and screen remain independent from a pending command result wait', async () => {
   const f = managedFixture();
+  const started = await f.tools.terminal({command:'read answer'});
   let release;
   const gate = new Promise(resolve => { release = resolve; });
-  f.context.Tools.System.terminal.runStream = async function*() {
-    yield {type:'start',sessionId:'slow-session'};
-    yield {type:'chunk',sessionId:'slow-session',chunk:'first\n'};
-    await gate;
-    yield {type:'chunk',sessionId:'slow-session',chunk:'second\n'};
-    yield {type:'completed',result:{sessionId:'slow-session',platform:'android',terminal:'proot',terminalType:'bash',output:'first\nsecond\n',exitCode:0,timedOut:false}};
+  const original = f.context.Tools.System.terminal.wait;
+  f.context.Tools.System.terminal.wait = async function(...args) {
+    await gate; return original.apply(this, args);
   };
   let completed = false;
-  const running = f.tools.terminal({command:'slow'}).then(value => { completed = true; return value; });
+  const running = f.tools.terminal_wait({sessionId:started.sessionId}).then(value => { completed = true; return value; });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(completed, false);
-  assert.equal(f.intermediate[1].chunk, 'first\n');
+  await f.tools.get_screen({sessionId:started.sessionId});
+  await f.tools.input({sessionId:started.sessionId,input:'answer',control:'enter'});
   release();
-  assert.equal((await running).output, 'first\nsecond\n');
-  assert.equal(f.intermediate[2].chunk, 'second\n');
+  assert.equal((await running).status, 'completed');
 });
 
 /** Proves cleanup runs from the durable Host hook without another AI tool invocation. */
@@ -293,28 +333,21 @@ test('terminal interactions reset only the used session deadline', async () => {
 });
 
 /** Keeps a silent running command protected even after many inactivity intervals. */
-test('a pending stream stays alive and receives a full idle period after completion', async () => {
-  const f = managedFixture();
-  const original = f.context.Tools.System.terminal.runStream;
-  let release;
-  const gate = new Promise(resolve => { release = resolve; });
-  f.context.Tools.System.terminal.runStream = async function*(request) {
-    for await (const event of original.call(this,request)) {
-      if (event.type === 'completed') await gate;
-      yield event;
-    }
-  };
-  const running = f.tools.terminal({command:'silent build'});
-  await new Promise(resolve => setImmediate(resolve));
+test('a returned running command stays protected and receives a full observed idle period', async () => {
+  const f = managedFixture({timedOut:true});
+  await f.tools.terminal({command:'silent build'});
   f.setTime(3600000);
   await f.main.onClock();
   assert.equal(f.calls.filter(call => call.operation === 'closeIfIdle').length, 0);
-  release();
-  await running;
+  [...f.sessions.values()][0].commandRunning = false;
+  await f.main.onClock();
   f.setTime(4199999);
   await f.main.onClock();
   assert.equal(f.sessions.size, 1);
   f.setTime(4200000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  f.setTime(4800000);
   await f.main.onClock();
   assert.equal(f.sessions.size, 0);
 });
@@ -325,25 +358,20 @@ test('an idle generation is reclaimed while another generation is running', asyn
   const first = await f.tools.terminal({command:'pwd'});
   const idle = [...f.sessions.values()][0];
   idle.commandRunning = true;
-  const original = f.context.Tools.System.terminal.runStream;
-  let release;
-  const gate = new Promise(resolve => { release = resolve; });
-  f.context.Tools.System.terminal.runStream = async function*(request) {
-    for await (const event of original.call(this,request)) {
-      if (event.type === 'chunk') await gate;
-      yield event;
-    }
-  };
-  const running = f.tools.terminal({command:'build'});
-  await new Promise(resolve => setImmediate(resolve));
+  const running = await f.tools.terminal({command:'build'});
+  const busy = [...f.sessions.values()].find(session => session.sessionId === running.sessionId);
+  busy.commandRunning = true;
   idle.commandRunning = false;
   f.setTime(600000);
   await f.main.onClock();
   assert.equal(f.sessions.size, 1);
   assert.notEqual([...f.sessions.values()][0].sessionId, first.sessionId);
-  release();
-  await running;
+  busy.commandRunning = false;
+  await f.tools.terminal_wait({sessionId:busy.sessionId});
   f.setTime(1200000);
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 1);
+  f.setTime(1800000);
   await f.main.onClock();
   assert.equal(f.sessions.size, 0);
 });
@@ -374,6 +402,151 @@ test('cleanup does not interrupt a pending screen read', async () => {
   f.setTime(1700000);
   await f.main.onClock();
   assert.equal(f.sessions.size, 0);
+});
+
+/** Reproduces the diagnostic's pending cleanup screen and checks both profiles can still execute. */
+test('a pending idle screen probe cannot block commands in either profile', async () => {
+  const f = managedFixture();
+  const first = await f.tools.terminal({command:'pwd'});
+  const screen = f.context.Tools.System.terminal.screen;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.screen = async function(sessionId) {
+    if (sessionId === first.sessionId) await gate;
+    return screen.call(this, sessionId);
+  };
+  f.setTime(600000);
+  const cleanup = f.main.onClock();
+  await new Promise(setImmediate);
+  const completed = [];
+  const commands = ['ubuntu_a', 'ubuntu_b'].map(profileId =>
+    f.tools.terminal({command:'echo alive', profileId}).then(result => {
+      completed.push(profileId);
+      return result;
+    }));
+  try {
+    await new Promise(setImmediate);
+    assert.deepEqual([...completed].sort(), ['ubuntu_a', 'ubuntu_b']);
+  } finally {
+    release();
+    await Promise.all([cleanup, ...commands]);
+  }
+  assert.ok(![...f.sessions.values()].some(session => session.sessionId === first.sessionId),
+    'New processes do not reuse the idle process observed by this probe');
+});
+
+/** Reproduces a suspended close without letting it hold a different profile's session lease. */
+test('a pending idle close only delays acquisition of its own session family', async () => {
+  const f = managedFixture();
+  const first = await f.tools.terminal({command:'pwd'});
+  const close = f.context.Tools.System.terminal.closeIfIdle;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.closeIfIdle = async function(...args) {
+    await gate;
+    return close.apply(this, args);
+  };
+  f.setTime(600000);
+  const cleanup = f.main.onClock();
+  await new Promise(setImmediate);
+  const completed = [];
+  const commands = ['ubuntu_a', 'ubuntu_b'].map(profileId =>
+    f.tools.terminal({command:'echo alive', profileId}).then(result => {
+      completed.push(profileId);
+      return result;
+    }));
+  try {
+    await new Promise(setImmediate);
+    assert.deepEqual([...completed], ['ubuntu_b']);
+  } finally {
+    release();
+    await Promise.all([cleanup, ...commands]);
+  }
+  assert.ok(![...f.sessions.values()].some(session => session.sessionId === first.sessionId));
+});
+
+/** Keeps a delayed observation single-flight while allowing another session's reclamation. */
+test('overlapping idle sweeps do not duplicate a pending probe or delay another profile cleanup', async () => {
+  const f = managedFixture();
+  const a = await f.tools.terminal({command:'pwd'});
+  const b = await f.tools.terminal({command:'pwd',profileId:'ubuntu_b'});
+  const screen = f.context.Tools.System.terminal.screen;
+  const probes = [];
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.screen = async function(sessionId) {
+    probes.push(sessionId);
+    if (sessionId === a.sessionId) await gate;
+    return screen.call(this, sessionId);
+  };
+  f.setTime(600000);
+  const firstSweep = f.main.onClock();
+  const secondSweep = f.main.onClock();
+  try {
+    await new Promise(setImmediate);
+    assert.equal(probes.filter(id => id === a.sessionId).length, 1);
+    assert.equal(probes.filter(id => id === b.sessionId).length, 1);
+    assert.ok(![...f.sessions.values()].some(session => session.sessionId === b.sessionId));
+  } finally {
+    release();
+    await Promise.all([firstSweep, secondSweep]);
+  }
+});
+
+/** Invalidates old probes by activity revision even when the session becomes idle again. */
+test('a delayed idle probe cannot close a session used and released since its snapshot', async () => {
+  const f = managedFixture();
+  const first = await f.tools.terminal({command:'pwd'});
+  const screen = f.context.Tools.System.terminal.screen;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.screen = async function(sessionId) {
+    await gate;
+    return screen.call(this, sessionId);
+  };
+  f.setTime(600000);
+  const cleanup = f.main.onClock();
+  await new Promise(setImmediate);
+  try {
+    await f.tools.input({sessionId:first.sessionId,input:'c',control:'ctrl'});
+    f.setTime(1200000);
+  } finally {
+    release();
+    await cleanup;
+  }
+  assert.equal(f.sessions.size, 1, 'The stale screen must not authorize closing the reused session');
+  f.context.Tools.System.terminal.screen = screen;
+  await f.main.onClock();
+  assert.equal(f.sessions.size, 0, 'A fresh probe can reclaim it after the new idle period');
+});
+
+/** Releases the close barrier even when the Host rejects closing the session. */
+test('a failed idle close releases waiting acquisition and preserves the original error', async () => {
+  const f = managedFixture();
+  const first = await f.tools.terminal({command:'pwd'});
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  f.context.Tools.System.terminal.closeIfIdle = async function() {
+    await gate;
+    throw new Error('Host refused close');
+  };
+  f.setTime(600000);
+  const cleanup = f.main.onClock();
+  await new Promise(setImmediate);
+  const command = f.tools.terminal({command:'echo alive'});
+  release();
+  await cleanup;
+  assert.notEqual((await command).sessionId, first.sessionId);
+  assert.match(f.errors[0][0], /Host refused close/);
+  f.context.Tools.System.terminal.closeIfIdle = async function() {
+    throw new Error('Host refused close');
+  };
+  f.setTime(1200000);
+  await f.main.onClock();
+  assert.equal(f.errors.length, 2, 'Each of the two distinct sessions reports its own close failure once');
+  f.setTime(1800000);
+  await f.main.onClock();
+  assert.equal(f.errors.length, 2, 'Repeated failures on the same sessions are not logged again');
 });
 
 /** Checks independent host activity after this plugin's stream has already completed. */

@@ -10,6 +10,15 @@ function __operitManagedTerminalResult(response) {
     return response.result;
 }
 
+/** Opens a raw interactive session using the same host PTY transport. */
+function __operitOpenTerminal(request) {
+    var value = __operitSnapshotJsonObject(request);
+    var observation = { op: 'session', sessionName: value.sessionName };
+    if (value.terminalType !== undefined) observation.terminalType = value.terminalType;
+    if (value.profileId !== undefined) observation.profileId = value.profileId;
+    return toolCall('terminal_observe', { observation: observation }).then(__operitManagedTerminalResult);
+}
+
 /** Starts a session-owned command without tying its lifetime to this JavaScript Promise. */
 function __operitRunTerminal(request) {
     var value = __operitSnapshotJsonObject(request);

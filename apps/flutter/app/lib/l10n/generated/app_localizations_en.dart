@@ -963,6 +963,15 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatSpeechNoTextRecognized => 'No speech recognized.';
 
   @override
+  String get chatVoiceListening => 'Listening…';
+
+  @override
+  String get chatVoiceStopListening => 'Stop listening';
+
+  @override
+  String get chatVoiceThinking => 'thinking';
+
+  @override
   String get history => 'History';
 
   @override

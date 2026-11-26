@@ -29,6 +29,7 @@ class AppNotificationService with WidgetsBindingObserver {
 
   StreamSubscription<RuntimeHostInteractionRequest>? _subscription;
   bool _isForeground = true;
+  final _activeRequests = <String>{};
 
   /// Starts lifecycle tracking and application-notification event delivery.
   void initialize() {
@@ -97,6 +98,7 @@ class AppNotificationService with WidgetsBindingObserver {
   Future<void> _handleAppNotification(
     RuntimeHostInteractionRequest request,
   ) async {
+    if (!_activeRequests.add(request.requestId)) return;
     try {
       final payload = request.appNotification;
       if (payload == null) {
@@ -116,6 +118,7 @@ class AppNotificationService with WidgetsBindingObserver {
       );
     } finally {
       await _acknowledge(request.requestId);
+      _activeRequests.remove(request.requestId);
     }
   }
 

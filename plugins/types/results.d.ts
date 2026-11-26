@@ -1070,7 +1070,7 @@ export interface ChatScheduledMessage {
   chatId: string;
   timestamp: number;
   /**
-   * preparing, scheduled, delivered, cancelled, invalidated, skipped, or failed.
+   * preparing, scheduled, delivered, cancelled, invalidated, skipped, or failed. Delivered confirms persistence, not UI visibility.
    */
   status: string;
   error: string | null;
@@ -1078,6 +1078,18 @@ export interface ChatScheduledMessage {
    * Contains the accepted prepared body, including host-generated replies.
    */
   text: string;
+  /**
+   * Reports whether notification delivery or registration was requested; old receipts may lack this evidence.
+   */
+  notificationAttempted: boolean;
+  /**
+   * Reports Host acceptance, not system display or user visibility.
+   */
+  notificationRegistered: boolean;
+  /**
+   * Contains notification failure independently of message persistence.
+   */
+  notificationError: string | null;
 }
 
 export interface ChatScheduleMessageResultData {
@@ -1816,7 +1828,7 @@ export interface EdgePortResultData {
 /**
  * Exchanges one scoped terminal execution observation through the common tool transport.
  */
-export type TerminalObservationResultData = { result: TerminalCommandResultData; } | { handle: string; } | { event: TerminalExecEvent | null; } | { };
+export type TerminalObservationResultData = { result: TerminalSessionCreationResultData; } | { result: TerminalCommandResultData; } | { handle: string; } | { event: TerminalExecEvent | null; } | { };
 
 /**
  * Reports exactly the requested WebSocket operation.

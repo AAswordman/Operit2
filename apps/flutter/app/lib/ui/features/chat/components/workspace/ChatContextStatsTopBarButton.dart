@@ -3,31 +3,39 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../../../../core/proxy/generated/CoreProxyModels.g.dart'
     as core_proxy;
 import '../../../../../l10n/generated/app_localizations.dart';
-import '../../../../common/components/M3LoadingIndicator.dart';
 import '../../../../main/navigation/AppNavigationModels.dart';
 import '../../../../main/screens/OperitScreens.dart';
 import '../../../../main/screens/ScreenRouteRegistry.dart';
 import '../../../settings/models/SettingsModels.dart';
 import '../../viewmodel/ChatViewModel.dart';
+import 'context_stats/ContextUsagePanel.dart';
+import 'context_stats/DecentralizedFiberTopologyPanel.dart';
+import 'context_stats/TopBarCapsuleModels.dart';
+import 'context_stats/TopBarDynamicCapsule.dart';
 
-/// Shows context usage with one compact statistics and device menu.
+/// Shows live context and routing activity in an elongated top-bar capsule
+/// paired with a modular context-usage and decentralized fiber-topology menu.
 class ChatContextStatsTopBarButton extends StatefulWidget {
-  /// Creates the context menu for the current conversation.
+  /// Creates the context and node-routing menu for the current conversation.
   const ChatContextStatsTopBarButton({
     super.key,
     required this.viewModel,
     required this.currentChatId,
+    this.processingStateListenable,
   });
 
   final ChatViewModel viewModel;
   final String? currentChatId;
+  final ValueListenable<core_proxy.InputProcessingState>?
+  processingStateListenable;
 
-  /// Creates the statistics polling and menu state.
+  /// Creates the statistics polling, live status, and menu state.
   @override
   State<ChatContextStatsTopBarButton> createState() =>
       _ChatContextStatsTopBarButtonState();
@@ -37,6 +45,8 @@ class _ChatContextStatsTopBarButtonState
     extends State<ChatContextStatsTopBarButton> {
   final MenuController _menuController = MenuController();
   Timer? _refreshTimer;
+  Timer? _compactBannerTimer;
+  Timer? _routeBannerTimer;
   StreamSubscription<core_proxy.BindingRouteStatus?>? _routeSubscription;
   core_proxy.ChatInputMenuSummary? _summary;
   core_proxy.RuntimeDeviceSpaceTopology? _topology;
@@ -48,14 +58,26 @@ class _ChatContextStatsTopBarButtonState
   bool _loadFailed = false;
   bool _routeFailed = false;
   bool _isOpen = false;
+  bool _compacting = false;
+  bool _recentCompactCompleted = false;
+  int? _recentCompactedSavedTokens;
+  String? _compactError;
   String? _switchingDeviceId;
+  String? _recentSwitchedDeviceName;
   String? _switchError;
   int _requestEpoch = 0;
 
-  /// Starts polling without creating a second device settings surface.
+  ContextVisualMode _contextVisualMode = ContextVisualMode.segmented;
+  NodeLabelDisplayMode _nodeDisplayMode = NodeLabelDisplayMode.auto;
+
+  core_proxy.InputProcessingState get _processingState =>
+      widget.processingStateListenable?.value ??
+      core_proxy.InputProcessingState.idle();
+
   @override
   void initState() {
     super.initState();
+    widget.processingStateListenable?.addListener(_onProcessingStateChanged);
     _bindRouteStatus();
     unawaited(_loadAllData());
     _refreshTimer = Timer.periodic(const Duration(seconds: 4), (_) {
@@ -63,13 +85,20 @@ class _ChatContextStatsTopBarButtonState
     });
   }
 
-  /// Invalidates in-flight data when the conversation or runtime changes.
   @override
   void didUpdateWidget(covariant ChatContextStatsTopBarButton oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.processingStateListenable != widget.processingStateListenable) {
+      oldWidget.processingStateListenable?.removeListener(
+        _onProcessingStateChanged,
+      );
+      widget.processingStateListenable?.addListener(_onProcessingStateChanged);
+    }
     if (oldWidget.currentChatId != widget.currentChatId ||
         oldWidget.viewModel != widget.viewModel) {
       _requestEpoch++;
+      _compactBannerTimer?.cancel();
+      _routeBannerTimer?.cancel();
       _pollingSummary = false;
       _pollingTopology = false;
       _topologyFailed = false;
@@ -79,23 +108,38 @@ class _ChatContextStatsTopBarButtonState
       _loading = true;
       _loadFailed = false;
       _routeFailed = false;
+      _compacting = false;
+      _recentCompactCompleted = false;
+      _recentCompactedSavedTokens = null;
+      _compactError = null;
       _switchingDeviceId = null;
+      _recentSwitchedDeviceName = null;
       _switchError = null;
       _bindRouteStatus();
       unawaited(_loadAllData());
     }
   }
 
-  /// Stops periodic work and detaches the route stream.
   @override
   void dispose() {
     _requestEpoch++;
+    widget.processingStateListenable?.removeListener(_onProcessingStateChanged);
     _refreshTimer?.cancel();
+    _compactBannerTimer?.cancel();
+    _routeBannerTimer?.cancel();
     _routeSubscription?.cancel();
     super.dispose();
   }
 
-  /// Marks the executing device in the single device list.
+  void _onProcessingStateChanged() {
+    if (!mounted) return;
+    setState(() {});
+    final tag = _processingState.tag;
+    if (tag == 'Completed' || tag == 'Idle') {
+      unawaited(_loadSummary());
+    }
+  }
+
   void _bindRouteStatus() {
     _routeSubscription?.cancel();
     final chatId = widget.currentChatId;
@@ -121,12 +165,10 @@ class _ChatContextStatsTopBarButtonState
         );
   }
 
-  /// Refreshes context statistics independently of device discovery.
   Future<void> _loadAllData() async {
     await Future.wait<void>(<Future<void>>[_loadSummary(), _loadTopology()]);
   }
 
-  /// Publishes new context counts as soon as Core returns them.
   Future<void> _loadSummary() async {
     if (_pollingSummary) return;
     _pollingSummary = true;
@@ -153,7 +195,6 @@ class _ChatContextStatsTopBarButtonState
     }
   }
 
-  /// Keeps slow or failed device queries from holding up subsequent count refreshes.
   Future<void> _loadTopology() async {
     if (_pollingTopology) return;
     _pollingTopology = true;
@@ -181,7 +222,57 @@ class _ChatContextStatsTopBarButtonState
     }
   }
 
-  /// Changes the owning Core and keeps selection tied to the confirmed route.
+  Future<void> _triggerCompaction() async {
+    final chatId = widget.currentChatId;
+    if (chatId == null || chatId.trim().isEmpty || _compacting) return;
+    final epoch = _requestEpoch;
+    final beforeTokens = _summary?.currentWindowSize;
+    _compactBannerTimer?.cancel();
+    setState(() {
+      _compacting = true;
+      _recentCompactCompleted = false;
+      _recentCompactedSavedTokens = null;
+      _compactError = null;
+    });
+    try {
+      final compacted = await widget.viewModel.compactChat(chatId);
+      if (!mounted || epoch != _requestEpoch) return;
+      if (!compacted) {
+        setState(() {
+          _compactError = '当前暂无可压缩的上下文历史';
+        });
+        return;
+      }
+      await _loadSummary();
+      if (!mounted || epoch != _requestEpoch) return;
+      final afterTokens = _summary?.currentWindowSize;
+      final saved =
+          beforeTokens != null &&
+              afterTokens != null &&
+              beforeTokens > afterTokens
+          ? beforeTokens - afterTokens
+          : null;
+      setState(() {
+        _recentCompactCompleted = true;
+        _recentCompactedSavedTokens = saved;
+      });
+      _compactBannerTimer = Timer(const Duration(milliseconds: 3200), () {
+        if (!mounted || epoch != _requestEpoch) return;
+        setState(() {
+          _recentCompactCompleted = false;
+          _recentCompactedSavedTokens = null;
+        });
+      });
+    } catch (error) {
+      if (!mounted || epoch != _requestEpoch) return;
+      setState(() => _compactError = '压缩失败：$error');
+    } finally {
+      if (mounted && epoch == _requestEpoch) {
+        setState(() => _compacting = false);
+      }
+    }
+  }
+
   Future<void> _switchExecutionDevice(
     core_proxy.RuntimeDeviceSpaceDevice device,
   ) async {
@@ -190,8 +281,10 @@ class _ChatContextStatsTopBarButtonState
       return;
     }
     final epoch = _requestEpoch;
+    _routeBannerTimer?.cancel();
     setState(() {
       _switchingDeviceId = device.deviceId;
+      _recentSwitchedDeviceName = null;
       _switchError = null;
     });
     try {
@@ -201,9 +294,18 @@ class _ChatContextStatsTopBarButtonState
         targetNodeId: device.deviceId,
       );
       if (!mounted || epoch != _requestEpoch) return;
+      final targetLabel = shortDeviceLabel(
+        device,
+        isLocal: device.deviceId == _topology?.currentDeviceId,
+      );
       setState(() {
         _bindingStatus = status;
         _routeFailed = false;
+        _recentSwitchedDeviceName = targetLabel;
+      });
+      _routeBannerTimer = Timer(const Duration(milliseconds: 2800), () {
+        if (!mounted || epoch != _requestEpoch) return;
+        setState(() => _recentSwitchedDeviceName = null);
       });
       unawaited(_loadAllData());
     } catch (error) {
@@ -216,17 +318,20 @@ class _ChatContextStatsTopBarButtonState
     }
   }
 
-  /// Returns the model context limit Core reports in tokens.
-  int? get _maxContextTokens => _summary?.maxContextTokens;
+  String? get _ownerDeviceId => _bindingStatus?.ownerIsLocal == true
+      ? _topology?.currentDeviceId
+      : _bindingStatus?.ownerNodeId;
 
-  /// Leaves unavailable limits unknown rather than presenting a false zero.
-  double? get _contextUsagePercentage {
-    final limit = _maxContextTokens;
-    if (limit == null || limit <= 0 || _summary == null) return null;
-    return _summary!.currentWindowSize / limit * 100;
+  bool _canSelectDevice(core_proxy.RuntimeDeviceSpaceDevice device) {
+    final chatId = widget.currentChatId;
+    if (chatId == null || chatId.trim().isEmpty) return false;
+    if (_switchingDeviceId != null) return false;
+    if (device.deviceId == _ownerDeviceId) return false;
+    if (!device.online) return false;
+    return device.deviceId == _topology?.currentDeviceId ||
+        device.coreVersion != null;
   }
 
-  /// Opens the existing device settings through the menu's only add-device action.
   void _openDeviceSpaceSettings() {
     _menuController.close();
     final entry = ScreenRouteRegistry.toEntry(
@@ -239,26 +344,47 @@ class _ChatContextStatsTopBarButtonState
     );
   }
 
-  /// Builds a native Material menu without nested status cards or duplicate actions.
+  void _cycleNodeDisplayMode() {
+    setState(() {
+      _nodeDisplayMode = switch (_nodeDisplayMode) {
+        NodeLabelDisplayMode.auto => NodeLabelDisplayMode.taskOnly,
+        NodeLabelDisplayMode.taskOnly => NodeLabelDisplayMode.nameOnly,
+        NodeLabelDisplayMode.nameOnly => NodeLabelDisplayMode.auto,
+      };
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final colorScheme = Theme.of(context).colorScheme;
-    final percentage = _contextUsagePercentage;
-    final displayText = _loading
-        ? '...'
-        : percentage == null
-        ? '--'
-        : '${percentage.toStringAsFixed(0)}%';
     final mediaQuery = MediaQuery.of(context);
-    final ownerDeviceId = _bindingStatus?.ownerIsLocal == true
-        ? _topology?.currentDeviceId
-        : _bindingStatus?.ownerNodeId;
-    final ownerInDeviceList = _topology?.devices.any(
-      (device) => device.deviceId == ownerDeviceId,
+    final processingState = _processingState;
+    final capsulePresentation = TopBarCapsuleResolver.resolve(
+      TopBarActivitySnapshot(
+        summary: _summary,
+        loadingSummary: _loading,
+        summaryFailed: _loadFailed,
+        processingState: processingState,
+        routeStatus: _bindingStatus,
+        routeFailed: _routeFailed,
+        topology: _topology,
+        compacting: _compacting,
+        recentCompactedSavedTokens: _recentCompactedSavedTokens,
+        recentCompactCompleted: _recentCompactCompleted,
+        switchingDeviceId: _switchingDeviceId,
+        recentSwitchedDeviceName: _recentSwitchedDeviceName,
+      ),
+      l10n,
     );
 
+    final canCompact =
+        widget.currentChatId?.trim().isNotEmpty == true &&
+        (_summary?.currentWindowSize ?? 0) > 0 &&
+        processingState.tag != 'Summarizing';
+
     return Padding(
-      padding: const EdgeInsetsDirectional.only(end: 8),
+      padding: const EdgeInsetsDirectional.only(end: 2),
       child: Center(
         child: MenuAnchor(
           controller: _menuController,
@@ -273,8 +399,18 @@ class _ChatContextStatsTopBarButtonState
               colorScheme.surfaceContainer,
             ),
             padding: const WidgetStatePropertyAll(EdgeInsets.zero),
+            shape: WidgetStatePropertyAll(
+              RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(14),
+                side: BorderSide(
+                  color: colorScheme.outlineVariant.withValues(alpha: 0.65),
+                ),
+              ),
+            ),
           ),
-          builder: (context, controller, _) => TextButton.icon(
+          builder: (context, controller, _) => TopBarDynamicCapsule(
+            presentation: capsulePresentation,
+            isOpen: _isOpen,
             onPressed: () {
               if (controller.isOpen) {
                 controller.close();
@@ -282,328 +418,58 @@ class _ChatContextStatsTopBarButtonState
                 controller.open();
               }
             },
-            icon: const Icon(Icons.data_usage_rounded, size: 14),
-            label: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: <Widget>[
-                Text(displayText),
-                const SizedBox(width: 3),
-                Icon(
-                  _isOpen
-                      ? Icons.expand_less_rounded
-                      : Icons.expand_more_rounded,
-                  size: 16,
-                ),
-              ],
-            ),
-            style: TextButton.styleFrom(
-              foregroundColor: percentage != null && percentage >= 90
-                  ? colorScheme.error
-                  : colorScheme.onSurfaceVariant,
-              minimumSize: const Size(0, 28),
-              padding: const EdgeInsets.symmetric(horizontal: 8),
-              visualDensity: VisualDensity.compact,
-            ),
           ),
           menuChildren: <Widget>[
             SizedBox(
-              width: math.min(300.0, mediaQuery.size.width - 24),
+              width: math.min(276.0, mediaQuery.size.width - 24),
               child: ConstrainedBox(
                 constraints: BoxConstraints(
-                  maxHeight: math.min(440.0, mediaQuery.size.height - 24),
+                  maxHeight: math.min(400.0, mediaQuery.size.height - 24),
                 ),
                 child: SingleChildScrollView(
                   primary: false,
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(10),
                   child: Column(
                     mainAxisSize: MainAxisSize.min,
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: <Widget>[
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: Text(
-                              '上下文占用',
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: AppLocalizations.of(context)!.refresh,
-                            onPressed: _pollingSummary ? null : _loadAllData,
-                            icon: const Icon(Icons.refresh_rounded, size: 16),
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ],
+                      ContextUsagePanel(
+                        summary: _summary,
+                        loading: _loading,
+                        loadFailed: _loadFailed,
+                        visualMode: _contextVisualMode,
+                        compacting: _compacting,
+                        canCompact: canCompact,
+                        compactError: _compactError,
+                        onVisualModeChanged: (mode) {
+                          setState(() => _contextVisualMode = mode);
+                        },
+                        onCompactPressed: _triggerCompaction,
+                        onRefreshPressed: _loadAllData,
+                        pollingSummary: _pollingSummary,
                       ),
-                      if (_loading)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(vertical: 8),
-                          child: Text(AppLocalizations.of(context)!.loading),
-                        )
-                      else if (_loadFailed)
-                        Text(
-                          AppLocalizations.of(
-                            context,
-                          )!.contextStatsSummaryLoadFailed,
-                          style: TextStyle(color: colorScheme.error),
-                        )
-                      else ...<Widget>[
-                        _StatRow(
-                          label: '上下文窗口',
-                          value:
-                              '${_summary!.currentWindowSize} / '
-                              '${_maxContextTokens! > 0 ? _maxContextTokens : "未设置上限"}',
-                        ),
-                        _StatRow(
-                          label: '输入 Token',
-                          value: '${_summary!.inputTokenCount}',
-                        ),
-                        _StatRow(
-                          label: '输出 Token',
-                          value: '${_summary!.outputTokenCount}',
-                        ),
-                      ],
-                      const Divider(height: 16),
-                      Row(
-                        children: <Widget>[
-                          Expanded(
-                            child: Text(
-                              '设备',
-                              style: Theme.of(context).textTheme.titleSmall,
-                            ),
-                          ),
-                          IconButton(
-                            tooltip: '添加设备',
-                            onPressed: _openDeviceSpaceSettings,
-                            icon: const Icon(Icons.add_rounded, size: 18),
-                            color: colorScheme.onSurfaceVariant,
-                            visualDensity: VisualDensity.compact,
-                          ),
-                        ],
+                      const Divider(height: 12),
+                      DecentralizedFiberTopologyPanel(
+                        topology: _topology,
+                        topologyFailed: _topologyFailed,
+                        bindingStatus: _bindingStatus,
+                        routeFailed: _routeFailed,
+                        processingState: processingState,
+                        switchingDeviceId: _switchingDeviceId,
+                        switchError: _switchError,
+                        ownerDeviceId: _ownerDeviceId,
+                        displayMode: _nodeDisplayMode,
+                        onDisplayModeCycle: _cycleNodeDisplayMode,
+                        canSelectDevice: _canSelectDevice,
+                        onSelectDevice: _switchExecutionDevice,
+                        onAddDevice: _openDeviceSpaceSettings,
                       ),
-                      if (_topology == null)
-                        Text(
-                          _topologyFailed
-                              ? AppLocalizations.of(
-                                  context,
-                                )!.contextStatsDevicesLoadFailed
-                              : AppLocalizations.of(context)!.loading,
-                          style: _topologyFailed
-                              ? TextStyle(color: colorScheme.error)
-                              : null,
-                        ),
-                      if (_topology != null) ...<Widget>[
-                        for (final device in _topology!.devices)
-                          _DeviceRow(
-                            device: device,
-                            isLocal:
-                                device.deviceId == _topology!.currentDeviceId,
-                            isExecuting: device.deviceId == ownerDeviceId,
-                            isSwitching: device.deviceId == _switchingDeviceId,
-                            onSelect:
-                                widget.currentChatId?.trim().isNotEmpty ==
-                                        true &&
-                                    _switchingDeviceId == null &&
-                                    device.deviceId != ownerDeviceId &&
-                                    device.online &&
-                                    (device.deviceId ==
-                                            _topology!.currentDeviceId ||
-                                        device.coreVersion != null)
-                                ? () => _switchExecutionDevice(device)
-                                : null,
-                            online: device.deviceId == ownerDeviceId
-                                ? _bindingStatus!.ownerReachable
-                                : device.online,
-                          ),
-                        if (ownerDeviceId != null && ownerInDeviceList == false)
-                          Text(
-                            '执行设备不在当前空间中',
-                            style: TextStyle(color: colorScheme.error),
-                          ),
-                        if (_switchError case final error?)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 6),
-                            child: Tooltip(
-                              message: error,
-                              child: Text(
-                                error,
-                                maxLines: 2,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(color: colorScheme.error),
-                              ),
-                            ),
-                          ),
-                        if (_routeFailed)
-                          Text(
-                            '无法读取执行设备状态',
-                            style: TextStyle(color: colorScheme.error),
-                          ),
-                      ],
                     ],
                   ),
                 ),
               ),
             ),
           ],
-        ),
-      ),
-    );
-  }
-}
-
-class _StatRow extends StatelessWidget {
-  /// Creates one context metric without repeating the top bar percentage.
-  const _StatRow({required this.label, required this.value});
-
-  final String label;
-  final String value;
-
-  /// Aligns values to the trailing edge while allowing narrow-screen wrapping.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
-      child: Row(
-        children: <Widget>[
-          Expanded(
-            child: Text(
-              label,
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class _DeviceRow extends StatelessWidget {
-  /// Creates the sole row for a device, including its execution and connection state.
-  const _DeviceRow({
-    required this.device,
-    required this.isLocal,
-    required this.isExecuting,
-    required this.online,
-    required this.isSwitching,
-    required this.onSelect,
-  });
-
-  final core_proxy.RuntimeDeviceSpaceDevice device;
-  final bool isLocal;
-  final bool isExecuting;
-  final bool online;
-  final bool isSwitching;
-  final VoidCallback? onSelect;
-
-  /// Keeps roles and connectivity compact while names use the remaining width.
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final connection = !online
-        ? '离线'
-        : device.relayHops != null && device.relayHops! > 0
-        ? '在线 · ${device.relayHops} 跳中继'
-        : '在线';
-    final status = <String>[
-      if (isLocal) '本机',
-      if (isExecuting) '当前执行设备',
-      if (isSwitching) '正在切换',
-      connection,
-    ].join('，');
-    final onlineColor = theme.brightness == Brightness.dark
-        ? Colors.green.shade400
-        : Colors.green.shade700;
-
-    return Semantics(
-      container: true,
-      label: '${device.deviceName}，$status',
-      excludeSemantics: true,
-      button: true,
-      selected: isExecuting,
-      enabled: onSelect != null,
-      onTap: onSelect,
-      child: InkWell(
-        onTap: onSelect,
-        borderRadius: BorderRadius.circular(6),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
-          child: Row(
-            children: <Widget>[
-              Tooltip(
-                message: isLocal ? '本机' : '远程设备',
-                child: Icon(
-                  isLocal
-                      ? Icons.computer_rounded
-                      : Icons.devices_other_rounded,
-                  size: 16,
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Tooltip(
-                  message: device.deviceName,
-                  child: Text(
-                    device.deviceName,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall,
-                  ),
-                ),
-              ),
-              if (isSwitching) ...<Widget>[
-                const SizedBox(width: 8),
-                const M3LoadingIndicator(size: 16),
-              ] else if (isExecuting) ...<Widget>[
-                const SizedBox(width: 8),
-                Tooltip(
-                  message: '当前执行设备',
-                  child: Icon(
-                    Icons.check_rounded,
-                    size: 16,
-                    color: colors.primary,
-                  ),
-                ),
-              ],
-              const SizedBox(width: 8),
-              Tooltip(
-                message: connection,
-                child: SizedBox(
-                  width: 16,
-                  height: 22,
-                  child: Center(
-                    child: Container(
-                      width: 7,
-                      height: 7,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: online ? onlineColor : null,
-                        border: online
-                            ? null
-                            : Border.all(
-                                color: colors.onSurfaceVariant,
-                                width: 1.5,
-                              ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ],
-          ),
         ),
       ),
     );

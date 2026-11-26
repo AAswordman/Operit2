@@ -355,18 +355,10 @@ impl AIMessageManager {
         };
 
         let apiPreferences = ApiPreferences::getInstance();
-        let maxImageHistoryUserTurns = apiPreferences
-            .maxImageHistoryUserTurnsFlow()
-            .first()
-            .unwrap_or(2);
-        let maxMediaHistoryUserTurns = apiPreferences
-            .maxMediaHistoryUserTurnsFlow()
-            .first()
-            .unwrap_or(1);
         let memoryAfterImageLimit =
-            Self::limitImageLinksInChatHistory(memory, maxImageHistoryUserTurns);
+            Self::limitImageLinksInChatHistory(memory, i32::MAX);
         let memoryForRequest =
-            Self::limitMediaLinksInChatHistory(memoryAfterImageLimit, maxMediaHistoryUserTurns);
+            Self::limitMediaLinksInChatHistory(memoryAfterImageLimit, i32::MAX);
 
         let pluginExecution = MessageProcessingPluginRegistry::createExecutionIfMatched(
             MessageProcessingHookParams {
@@ -631,10 +623,22 @@ impl AIMessageManager {
     pub async fn calculateStableContextWindow(
         request: StableContextWindowRequest<'_>,
     ) -> Result<i64, operit_providers::chat::llmprovider::AIService::AiServiceError> {
+        let (windowSize, _) = Self::calculateStableContextWindowWithBreakdown(request).await?;
+        Ok(windowSize)
+    }
+
+    /// Calculates a stable context window and category breakdown with the complete workspace folder set.
+    #[allow(non_snake_case)]
+    pub async fn calculateStableContextWindowWithBreakdown(
+        request: StableContextWindowRequest<'_>,
+    ) -> Result<
+        (i64, Option<operit_model::ContextWindowBreakdown::ContextWindowBreakdown>),
+        operit_providers::chat::llmprovider::AIService::AiServiceError,
+    > {
         let memory = Self::getMemoryFromMessages(request.chatHistory, &request.runtime.chatConfiguration)?;
         request
             .enhancedAiService
-            .estimateRequestWindowFromMemory(
+            .estimateRequestWindowFromMemoryWithBreakdown(
                 request.messageContent,
                 memory,
                 request.chatId,
@@ -1050,14 +1054,15 @@ impl AIMessageManager {
             .count();
         let keepFromTurn = totalUserTurns.saturating_sub(limit);
 
-        let mut currentUserTurnIndex = usize::MAX;
+        let mut seenUserTurns = 0usize;
         history
             .into_iter()
             .map(|turn| {
                 if turn.kind == PromptTurnKind::USER {
-                    currentUserTurnIndex = currentUserTurnIndex.saturating_add(1);
+                    seenUserTurns += 1;
                 }
-                let shouldKeepMedia = limit > 0 && currentUserTurnIndex >= keepFromTurn;
+                let shouldKeepMedia = limit > 0
+                    && (seenUserTurns > keepFromTurn || (seenUserTurns == 0 && limit >= totalUserTurns));
                 if !shouldKeepMedia && MediaLinkParser::has_media_links(&turn.content) {
                     let removed = MediaLinkParser::remove_media_links(&turn.content)
                         .trim()
@@ -1086,14 +1091,15 @@ impl AIMessageManager {
             .count();
         let keepFromTurn = totalUserTurns.saturating_sub(limit);
 
-        let mut currentUserTurnIndex = usize::MAX;
+        let mut seenUserTurns = 0usize;
         history
             .into_iter()
             .map(|turn| {
                 if turn.kind == PromptTurnKind::USER {
-                    currentUserTurnIndex = currentUserTurnIndex.saturating_add(1);
+                    seenUserTurns += 1;
                 }
-                let shouldKeepImages = limit > 0 && currentUserTurnIndex >= keepFromTurn;
+                let shouldKeepImages = limit > 0
+                    && (seenUserTurns > keepFromTurn || (seenUserTurns == 0 && limit >= totalUserTurns));
                 if !shouldKeepImages && MediaLinkParser::has_image_links(&turn.content) {
                     let removed = MediaLinkParser::remove_image_links(&turn.content)
                         .trim()
@@ -1502,6 +1508,30 @@ fn strip_tag_blocks(text: &str, tag_name: &str) -> String {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// Retains all history at the maximum limit and applies smaller limits by user turn.
+    #[test]
+    fn media_history_turn_limits_preserve_recent_turns() {
+        let content = "text <link type=\"image\" id=\"img\"/> <link type=\"audio\" id=\"aud\"/>";
+        let history = vec![
+            PromptTurn::new(PromptTurnKind::ASSISTANT, content.to_string()),
+            PromptTurn::new(PromptTurnKind::USER, content.to_string()),
+            PromptTurn::new(PromptTurnKind::ASSISTANT, content.to_string()),
+            PromptTurn::new(PromptTurnKind::USER, content.to_string()),
+            PromptTurn::new(PromptTurnKind::ASSISTANT, content.to_string()),
+        ];
+        let apply = |limit| {
+            AIMessageManager::limitMediaLinksInChatHistory(
+                AIMessageManager::limitImageLinksInChatHistory(history.clone(), limit),
+                limit,
+            )
+        };
+        assert!(apply(i32::MAX).iter().all(|turn| turn.content == content));
+        let limited = apply(1);
+        assert!(limited[..3].iter().all(|turn| turn.content == "text"));
+        assert!(limited[3..].iter().all(|turn| turn.content == content));
+        assert!(apply(0).iter().all(|turn| turn.content == "text"));
+    }
 
     /// Low context usage cannot trigger automatic summaries, even after many user turns.
     #[test]
