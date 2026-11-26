@@ -27,6 +27,7 @@
     "device:swipe": "node --experimental-strip-types src/device.mts swipe",
     "test:hardware": "python -X utf8 device-smoke.py",
     "test:device-debug": "python -X utf8 -m unittest discover -s tests -p test_device_*.py",
+    "test:msgpack": "python -X utf8 check-msgpack.py",
     "test:xtensa": "python -X utf8 -m unittest discover -s tests -p test_xtensa_overlay.py",
     "device:draft": "node --experimental-strip-types src/device.mts draft",
     "device:session": "python -X utf8 device-session.py",
