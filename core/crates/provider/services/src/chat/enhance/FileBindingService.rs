@@ -237,12 +237,22 @@ impl FileBindingService {
         let mut enrichedOps = Vec::<(EditOperation, usize, usize)>::new();
 
         for op in operations {
-            let (start, end) = self.findBestMatchRange(&originalLines, &op.oldContent);
+            let (start, end, bestScore) = self.findBestMatchRange(&originalLines, &op.oldContent);
             if start < 0 {
+                // Fast path for short OLD fragments inside long lines: the line-window
+                // n-gram score is diluted by the surrounding text, so an exact, unique
+                // containment match is accepted even when it cannot clear the threshold.
+                if let Some((s, e)) = self.findUniqueContainmentRange(&originalLines, &op.oldContent) {
+                    enrichedOps.push((op.clone(), s as usize, e as usize));
+                    continue;
+                }
                 return (
                     false,
-                    "Could not find a match for an OLD block. The file may have changed too much."
-                        .to_string(),
+                    format!(
+                        "Could not find a match for an OLD block (best similarity {:.3}, required {:.2}). The file may have changed too much, or the OLD text is a short fragment of a much longer line; in that case provide the complete line as OLD.",
+                        bestScore,
+                        MATCH_THRESHOLD
+                    ),
                 );
             }
             if self.hasMultiplePerfectMatches(originalContent, &op.oldContent) {
@@ -429,18 +439,18 @@ impl FileBindingService {
         operations
     }
 
-    fn findBestMatchRange(&self, originalLines: &[String], oldContent: &str) -> (isize, isize) {
+    fn findBestMatchRange(&self, originalLines: &[String], oldContent: &str) -> (isize, isize, f64) {
         let oldContentLines = oldContent.lines().collect::<Vec<_>>();
         let numOldLines = oldContentLines.len();
         if numOldLines == 0 || originalLines.is_empty() {
-            return (-1, -1);
+            return (-1, -1, 0.0);
         }
 
         let normalizedOldContent = normalizeWhitespace(oldContent);
         let normalizedOldLength = normalizedOldContent.len();
         let baseNgrams = self.buildNgrams(&normalizedOldContent, 3);
         if baseNgrams.is_empty() {
-            return (-1, -1);
+            return (-1, -1, 0.0);
         }
 
         let delta = (numOldLines as f64 * 0.2) as isize + 2;
@@ -485,10 +495,38 @@ impl FileBindingService {
         }
 
         if best.bestScore > MATCH_THRESHOLD {
-            (best.startLine, best.endLine)
+            (best.startLine, best.endLine, best.bestScore)
         } else {
-            (-1, -1)
+            (-1, -1, best.bestScore)
         }
+    }
+
+
+    /// Locates an OLD block that appears exactly once when the file is viewed as
+    /// consecutive line windows of the same line count, compared after whitespace
+    /// normalization. Used as a fallback for fragments inside long lines.
+    fn findUniqueContainmentRange(&self, originalLines: &[String], oldContent: &str) -> Option<(isize, isize)> {
+        let normalizedOld = normalizeWhitespace(oldContent);
+        if normalizedOld.is_empty() {
+            return None;
+        }
+        let numOldLines = oldContent.lines().count();
+        if numOldLines == 0 || originalLines.is_empty() {
+            return None;
+        }
+        let mut found: Option<(usize, usize)> = None;
+        let mut i = 0usize;
+        while i + numOldLines <= originalLines.len() {
+            let window = normalizeWhitespace(&originalLines[i..i + numOldLines].join("\n"));
+            if window.contains(&normalizedOld) {
+                if found.is_some() {
+                    return None; // ambiguous, let the caller report no match
+                }
+                found = Some((i, i + numOldLines - 1));
+            }
+            i += 1;
+        }
+        found.map(|(start, end)| (start as isize, end as isize))
     }
 
     fn buildNgrams(&self, s: &str, n: usize) -> BTreeSet<String> {
@@ -799,6 +837,55 @@ mod bounded_diff_tests {
     }
 
     /// Reconstructs both inputs across repeated lines, empty inputs, insertions and deletions.
+    /// A unique fragment inside a long line edits that line while preserving its
+    /// surrounding text, even though the window n-gram score cannot clear the threshold.
+    #[test]
+    fn unique_fragment_in_long_line_is_applied() {
+        let svc = FileBindingService;
+        let long = format!("{}{}", "prefix field, ".repeat(200), "TAIL");
+        let ops = vec![StructuredEditOperation {
+            action: StructuredEditAction::REPLACE,
+            oldContent: "field, TAIL".to_string(),
+            newContent: "field, CHANGED".to_string(),
+        }];
+        let (result, message) = svc.processFileBindingOperations(&long, &ops);
+        assert!(!message.starts_with("Error"), "{message}");
+        assert!(result.starts_with("prefix field, "), "{result}");
+        assert!(result.ends_with("CHANGED"), "{result}");
+        assert!(!result.contains("TAIL"), "{result}");
+    }
+
+    /// A fragment that appears in more than one place is still rejected, and the
+    /// failure message now carries the best similarity score.
+    #[test]
+    fn ambiguous_fragment_is_rejected_with_score_diagnostic() {
+        let svc = FileBindingService;
+        let content = "alpha beta gamma\nalpha beta gamma\n";
+        let ops = vec![StructuredEditOperation {
+            action: StructuredEditAction::REPLACE,
+            oldContent: "lpha be".to_string(),
+            newContent: "X".to_string(),
+        }];
+        let (_, message) = svc.processFileBindingOperations(content, &ops);
+        assert!(message.starts_with("Error"), "{message}");
+        assert!(message.contains("similarity"), "{message}");
+    }
+
+    /// Multi-line OLD blocks keep working through the regular window matcher.
+    #[test]
+    fn multiline_block_still_matches_normally() {
+        let svc = FileBindingService;
+        let content = "line one\nline two\nline three\n";
+        let ops = vec![StructuredEditOperation {
+            action: StructuredEditAction::REPLACE,
+            oldContent: "line one\nline two".to_string(),
+            newContent: "replaced".to_string(),
+        }];
+        let (result, message) = svc.processFileBindingOperations(content, &ops);
+        assert!(!message.starts_with("Error"), "{message}");
+        assert_eq!(result, "replaced\nline three");
+    }
+
     #[test]
     fn line_edits_reconstruct_both_sources_with_duplicate_lines_and_line_endings() {
         for old in ["", "a", "a\nb\na\n", "a\r\nb\r\n", "\n\n"] {
