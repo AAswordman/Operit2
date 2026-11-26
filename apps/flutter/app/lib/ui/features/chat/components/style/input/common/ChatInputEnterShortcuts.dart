@@ -15,6 +15,8 @@ class ChatInputEnterShortcuts extends StatelessWidget {
     required this.inputExpanded,
     required this.canSendMessage,
     required this.onSendMessage,
+    this.onMentionEnter,
+    this.onMentionKeyEvent,
     required this.child,
   });
 
@@ -22,6 +24,8 @@ class ChatInputEnterShortcuts extends StatelessWidget {
   final bool inputExpanded;
   final bool canSendMessage;
   final VoidCallback onSendMessage;
+  final bool Function()? onMentionEnter;
+  final KeyEventResult Function(KeyEvent event)? onMentionKeyEvent;
   final Widget child;
 
   /// Applies the saved switch while keeping expanded editors in multiline mode.
@@ -39,20 +43,40 @@ class ChatInputEnterShortcuts extends StatelessWidget {
 
   /// Binds both Enter keys without replacing the active text editor.
   Widget _buildShortcuts(bool enterSends, Widget child) {
+    final innerChild = onMentionKeyEvent == null
+        ? child
+        : Focus(
+            canRequestFocus: false,
+            skipTraversal: true,
+            onKeyEvent: (_, event) {
+              if (_hasChatInputComposition(controller)) {
+                return KeyEventResult.ignored;
+              }
+              return onMentionKeyEvent!(event);
+            },
+            child: child,
+          );
     return CallbackShortcuts(
       bindings: <ShortcutActivator, VoidCallback>{
         for (final key in <LogicalKeyboardKey>[
           LogicalKeyboardKey.enter,
           LogicalKeyboardKey.numpadEnter,
         ]) ...{
-          _ChatInputEnterActivator(key, controller: controller): enterSends
-              ? _sendIfReady
-              : _insertNewline,
+          _ChatInputEnterActivator(key, controller: controller): () {
+            if (onMentionEnter?.call() == true) {
+              return;
+            }
+            if (enterSends) {
+              _sendIfReady();
+            } else {
+              _insertNewline();
+            }
+          },
           _ChatInputEnterActivator(key, controller: controller, control: true):
               _insertNewline,
         },
       },
-      child: child,
+      child: innerChild,
     );
   }
 

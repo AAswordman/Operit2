@@ -186,6 +186,7 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
         debugPrint('Failed to watch terminal sessions: $error\n$stackTrace');
       },
     );
+    _consumePendingTerminalOpen(deferToPostFrame: true);
   }
 
   /// Reloads localized catalog display data when the host language changes.
@@ -268,7 +269,25 @@ class _WorkspacePanelState extends State<WorkspacePanel> {
     if (!mounted) {
       return;
     }
+    _consumePendingTerminalOpen(deferToPostFrame: false);
     setState(() {});
+  }
+
+  void _consumePendingTerminalOpen({required bool deferToPostFrame}) {
+    if (!_session.pendingTerminalOpen) {
+      return;
+    }
+    _session.pendingTerminalOpen = false;
+    if (deferToPostFrame) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        unawaited(_createAndOpenTerminalSession());
+      });
+      return;
+    }
+    unawaited(_createAndOpenTerminalSession());
   }
 
   /// Refreshes peer plugin tabs after a sidebar dock movement.

@@ -16,10 +16,10 @@ import '../../../../../../../core/proxy/generated/CoreProxyModels.g.dart'
 import '../../../../../../../l10n/generated/app_localizations.dart';
 import '../../../../../../common/layout/OverlayGeometry.dart';
 import '../../../../../../theme/OperitTheme.dart';
-import '../../../../../packages/utils/PackageDisplayUtils.dart';
 import '../../../../../settings/model/ProviderLogo.dart';
 import '../../../../viewmodel/ChatViewModel.dart';
 import '../../../ChatLayoutMetrics.dart';
+import '../common/AttachmentPackageSelectorDialog.dart';
 import '../common/ChatAttachmentImagePreview.dart';
 import '../common/ChatAttachmentMenuPopup.dart';
 import '../common/ChatComposerSendActionMenu.dart';
@@ -76,6 +76,8 @@ class AgentChatInputSection extends StatefulWidget {
     this.onAttachPackage,
     this.onSettings,
     this.onModelSelector,
+    this.onMentionEnter,
+    this.onMentionKeyEvent,
   });
 
   final String hintSuffix;
@@ -117,6 +119,8 @@ class AgentChatInputSection extends StatefulWidget {
   final ValueChanged<String>? onAttachPackage;
   final VoidCallback? onSettings;
   final VoidCallback? onModelSelector;
+  final bool Function()? onMentionEnter;
+  final KeyEventResult Function(KeyEvent event)? onMentionKeyEvent;
 
   @override
   State<AgentChatInputSection> createState() => _AgentChatInputSectionState();
@@ -526,11 +530,9 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
 
   Future<void> _showAttachmentPackageSelector() async {
     _dismissAttachmentPopup();
-    final packageName = await showDialog<String>(
+    final packageName = await showAttachmentPackageSelectorDialog(
       context: context,
-      builder: (context) {
-        return _AttachmentPackageSelectorDialog(viewModel: widget.viewModel);
-      },
+      viewModel: widget.viewModel,
     );
     if (packageName == null || packageName.trim().isEmpty) {
       return;
@@ -717,6 +719,8 @@ class _AgentChatInputSectionState extends State<AgentChatInputSection>
                     onAttach: _openAttachmentPopup,
                     onSettings: _openInputMenuPopup,
                     onModelSelector: _toggleSettingsPopup,
+                    onMentionEnter: widget.onMentionEnter,
+                    onMentionKeyEvent: widget.onMentionKeyEvent,
                   ),
                 ),
               ),
@@ -804,6 +808,8 @@ class _InputBody extends StatelessWidget {
     required this.onAttach,
     required this.onSettings,
     required this.onModelSelector,
+    this.onMentionEnter,
+    this.onMentionKeyEvent,
   });
 
   final String hintSuffix;
@@ -846,6 +852,8 @@ class _InputBody extends StatelessWidget {
   final VoidCallback? onAttach;
   final VoidCallback? onSettings;
   final VoidCallback? onModelSelector;
+  final bool Function()? onMentionEnter;
+  final KeyEventResult Function(KeyEvent event)? onMentionKeyEvent;
 
   /// Builds the Agent composer with animated input expansion.
   @override
@@ -885,6 +893,8 @@ class _InputBody extends StatelessWidget {
         inputExpanded: inputExpanded,
         canSendMessage: canSendMessage,
         onSendMessage: onSendMessage,
+        onMentionEnter: onMentionEnter,
+        onMentionKeyEvent: onMentionKeyEvent,
         child: ChatPastedImageHandler(
           focusNode: focusNode,
           enabled: !isSpeechRecording && !isSpeechTranscribing,
@@ -1086,329 +1096,6 @@ class _InputBody extends StatelessWidget {
       ),
     );
   }
-}
-
-enum _AttachmentPackageKind { package, skill, mcp }
-
-class _AttachmentPackageOption {
-  const _AttachmentPackageOption({
-    required this.packageName,
-    required this.title,
-    required this.description,
-    required this.kind,
-  });
-
-  final String packageName;
-  final String title;
-  final String description;
-  final _AttachmentPackageKind kind;
-}
-
-class _AttachmentPackageSelectorDialog extends StatefulWidget {
-  const _AttachmentPackageSelectorDialog({required this.viewModel});
-
-  final ChatViewModel viewModel;
-
-  @override
-  State<_AttachmentPackageSelectorDialog> createState() =>
-      _AttachmentPackageSelectorDialogState();
-}
-
-class _AttachmentPackageSelectorDialogState
-    extends State<_AttachmentPackageSelectorDialog> {
-  final TextEditingController _searchController = TextEditingController();
-  late final Future<List<_AttachmentPackageOption>> _future =
-      _loadAttachmentPackageOptions(widget.viewModel);
-
-  @override
-  void initState() {
-    super.initState();
-    _searchController.addListener(_onSearchChanged);
-  }
-
-  @override
-  void dispose() {
-    _searchController.removeListener(_onSearchChanged);
-    _searchController.dispose();
-    super.dispose();
-  }
-
-  void _onSearchChanged() {
-    if (mounted) {
-      setState(() {});
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final colorScheme = Theme.of(context).colorScheme;
-    return AlertDialog(
-      title: Text(
-        l10n.attachmentPackageSelectTitle,
-        style: Theme.of(context).textTheme.titleMedium,
-      ),
-      content: SizedBox(
-        width: 420,
-        child: FutureBuilder<List<_AttachmentPackageOption>>(
-          future: _future,
-          builder: (context, snapshot) {
-            if (snapshot.hasError) {
-              Error.throwWithStackTrace(snapshot.error!, snapshot.stackTrace!);
-            }
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const SizedBox(
-                height: 120,
-                child: Center(child: CircularProgressIndicator()),
-              );
-            }
-            final options = snapshot.requireData;
-            if (options.isEmpty) {
-              return Padding(
-                padding: const EdgeInsets.symmetric(vertical: 24),
-                child: Text(
-                  l10n.attachmentPackageEmpty,
-                  textAlign: TextAlign.center,
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              );
-            }
-
-            final filteredOptions = _filteredPackageOptions(options);
-            return ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 400),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: <Widget>[
-                  TextField(
-                    controller: _searchController,
-                    maxLines: 1,
-                    decoration: InputDecoration(
-                      hintText: l10n.attachmentPackageSearchPlaceholder,
-                      prefixIcon: Icon(
-                        Icons.search,
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                      suffixIcon: _searchController.text.isEmpty
-                          ? null
-                          : IconButton(
-                              onPressed: _searchController.clear,
-                              icon: const Icon(Icons.clear),
-                              tooltip: l10n.clearSearch,
-                            ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  if (filteredOptions.isEmpty)
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 24),
-                      child: Text(
-                        l10n.attachmentPackageSearchEmpty,
-                        textAlign: TextAlign.center,
-                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
-                        ),
-                      ),
-                    )
-                  else
-                    Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: filteredOptions.length,
-                        itemBuilder: (context, index) {
-                          final option = filteredOptions[index];
-                          return _AttachmentPackageOptionTile(
-                            option: option,
-                            onTap: () =>
-                                Navigator.of(context).pop(option.packageName),
-                          );
-                        },
-                      ),
-                    ),
-                ],
-              ),
-            );
-          },
-        ),
-      ),
-      actions: <Widget>[
-        TextButton(
-          onPressed: () => Navigator.of(context).pop(),
-          child: Text(l10n.cancel),
-        ),
-      ],
-    );
-  }
-
-  List<_AttachmentPackageOption> _filteredPackageOptions(
-    List<_AttachmentPackageOption> options,
-  ) {
-    final query = _searchController.text.trim().toLowerCase();
-    if (query.isEmpty) {
-      return options;
-    }
-    return options
-        .where((option) {
-          return option.title.toLowerCase().contains(query) ||
-              option.packageName.toLowerCase().contains(query) ||
-              option.description.toLowerCase().contains(query);
-        })
-        .toList(growable: false);
-  }
-}
-
-class _AttachmentPackageOptionTile extends StatelessWidget {
-  const _AttachmentPackageOptionTile({
-    required this.option,
-    required this.onTap,
-  });
-
-  final _AttachmentPackageOption option;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colorScheme = theme.colorScheme;
-    return Material(
-      color: Colors.transparent,
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
-          child: Row(
-            children: <Widget>[
-              Icon(Icons.auto_awesome, size: 20, color: colorScheme.primary),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: <Widget>[
-                    Text(
-                      option.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onSurface,
-                      ),
-                    ),
-                    Text(
-                      _buildAttachmentPackageSubtitle(
-                        AppLocalizations.of(context)!,
-                        option,
-                      ),
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-Future<List<_AttachmentPackageOption>> _loadAttachmentPackageOptions(
-  ChatViewModel viewModel,
-) async {
-  final packageManager = viewModel.clients.application.packageManager();
-  final skillRepository = viewModel.clients.application.skillRepository();
-  final permissionsMcpRuntimeMcpLocalServer =
-      viewModel.clients.permissionsMcpRuntimeMcpLocalServer;
-  final options = <String, _AttachmentPackageOption>{};
-
-  final availablePackages = await packageManager.getAvailablePackages();
-  final packageEntries = availablePackages.entries.toList()
-    ..sort((left, right) => left.key.compareTo(right.key));
-  for (final entry in packageEntries) {
-    final packageName = entry.key;
-    final isContainer = await packageManager.isToolPkgContainer(
-      packageName: packageName,
-    );
-    if (isContainer) {
-      continue;
-    }
-    options.putIfAbsent(
-      packageName,
-      () => _AttachmentPackageOption(
-        packageName: packageName,
-        title: toolPackageDisplayName(entry.value),
-        description: localizedText(entry.value.description),
-        kind: _AttachmentPackageKind.package,
-      ),
-    );
-  }
-
-  final skillPackages = await skillRepository.getAiVisibleSkillPackages();
-  final skillEntries = skillPackages.entries.toList()
-    ..sort((left, right) => left.key.compareTo(right.key));
-  for (final entry in skillEntries) {
-    options.putIfAbsent(
-      entry.key,
-      () => _AttachmentPackageOption(
-        packageName: entry.key,
-        title: entry.key,
-        description: entry.value.description,
-        kind: _AttachmentPackageKind.skill,
-      ),
-    );
-  }
-
-  final mcpServers = await permissionsMcpRuntimeMcpLocalServer
-      .getAllMcpServers();
-  final mcpMetadata = await permissionsMcpRuntimeMcpLocalServer
-      .getAllPluginMetadata();
-  final mcpEntries = mcpServers.entries.toList()
-    ..sort((left, right) => left.key.compareTo(right.key));
-  for (final entry in mcpEntries) {
-    final metadata = mcpMetadata[entry.key];
-    options.putIfAbsent(
-      entry.key,
-      () => _AttachmentPackageOption(
-        packageName: entry.key,
-        title: _mcpPackageTitle(entry.key, metadata),
-        description: metadata?.description ?? '',
-        kind: _AttachmentPackageKind.mcp,
-      ),
-    );
-  }
-
-  return options.values.toList(growable: false);
-}
-
-String _mcpPackageTitle(
-  String serverName,
-  core_proxy.PluginMetadata? metadata,
-) {
-  final title = metadata?.name.trim() ?? '';
-  if (title.isEmpty) {
-    return serverName;
-  }
-  return title;
-}
-
-String _buildAttachmentPackageSubtitle(
-  AppLocalizations l10n,
-  _AttachmentPackageOption option,
-) {
-  final typeLabel = switch (option.kind) {
-    _AttachmentPackageKind.package => l10n.attachmentPackageKindPackage,
-    _AttachmentPackageKind.skill => l10n.attachmentPackageKindSkill,
-    _AttachmentPackageKind.mcp => l10n.attachmentPackageKindMcp,
-  };
-  if (option.description.trim().isEmpty) {
-    return typeLabel;
-  }
-  return '$typeLabel · ${option.description}';
 }
 
 class _AttachmentStrip extends StatelessWidget {

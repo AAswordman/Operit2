@@ -3,6 +3,7 @@
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -10,6 +11,7 @@ import 'package:image_picker_platform_interface/image_picker_platform_interface.
 import 'package:mime/mime.dart';
 
 import '../../../../core/application/PluginHotReload.dart';
+import '../../../../core/host/FileSaveService.dart';
 import '../../../../core/host/SelectedFileInput.dart';
 import '../../../../core/host/IncomingAttachmentService.dart';
 import '../../../../core/link/CoreLinkProtocol.dart';
@@ -38,9 +40,13 @@ import '../components/attachments/AttachmentViewerDialog.dart';
 import '../components/WorkspaceChangeConfirmDialog.dart';
 import '../components/WorkspaceShell.dart';
 import '../components/ChatMessageSlotHost.dart';
+import '../components/NewChatIntro.dart';
+import '../components/style/input/agent/AgentModelSelectorPopup.dart';
+import '../components/style/input/common/EnabledMcpServersDialog.dart';
 import '../components/style/input/common/MentionSuggestionPanel.dart';
 import '../components/style/input/common/MentionTokenUtils.dart';
 import '../components/style/input/common/PendingQueueMessageItem.dart';
+import '../components/style/input/common/SlashCommandCatalog.dart';
 import '../components/workspace/ChatContextStatsTopBarButton.dart';
 import '../components/workspace/WorkspaceLayoutMetrics.dart';
 import '../components/workspace/WorkspaceSession.dart';
@@ -366,7 +372,10 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
   List<core_proxy.RuntimeHostInteractionToolPermissionRequest>
   _toolPermissionRequests =
       const <core_proxy.RuntimeHostInteractionToolPermissionRequest>[];
+  final MentionSuggestionController _mentionSuggestionController =
+      MentionSuggestionController();
   bool _showMentionSuggestionPanel = false;
+  bool _mentionShowsCommands = false;
   String _mentionSearchQuery = '';
   String? _mentionSuggestionTriggerChar;
 
@@ -454,6 +463,7 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     PendingChatDraftHandler.revision.removeListener(_consumePendingChatDraft);
     _messageController.removeListener(_onMessageControllerChanged);
     _messageController.dispose();
+    _mentionSuggestionController.dispose();
     _inputFocusNode.dispose();
     _scrollController.dispose();
     _messageNavigation.dispose();
@@ -711,44 +721,556 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       _clearMentionSuggestionState();
       return;
     }
+    final showsCommands = activeMention.isLeadingSlashCommand(value.text);
     final changed =
         !_showMentionSuggestionPanel ||
+        _mentionShowsCommands != showsCommands ||
         _mentionSuggestionTriggerChar != activeMention.triggerChar ||
         _mentionSearchQuery != activeMention.query;
     if (!changed) {
       return;
     }
-    if (!mounted) {
+    void assign() {
       _showMentionSuggestionPanel = true;
+      _mentionShowsCommands = showsCommands;
       _mentionSuggestionTriggerChar = activeMention.triggerChar;
       _mentionSearchQuery = activeMention.query;
+    }
+
+    if (!mounted) {
+      assign();
       return;
     }
-    setState(() {
-      _showMentionSuggestionPanel = true;
-      _mentionSuggestionTriggerChar = activeMention.triggerChar;
-      _mentionSearchQuery = activeMention.query;
-    });
+    setState(assign);
   }
 
   /// Clears the active mention suggestion state.
   void _clearMentionSuggestionState() {
+    _mentionSuggestionController.resetSelection();
     if (!_showMentionSuggestionPanel &&
+        !_mentionShowsCommands &&
         _mentionSuggestionTriggerChar == null &&
         _mentionSearchQuery.isEmpty) {
       return;
     }
-    if (!mounted) {
+    void clear() {
       _showMentionSuggestionPanel = false;
+      _mentionShowsCommands = false;
       _mentionSuggestionTriggerChar = null;
       _mentionSearchQuery = '';
+    }
+
+    if (!mounted) {
+      clear();
       return;
     }
-    setState(() {
-      _showMentionSuggestionPanel = false;
-      _mentionSuggestionTriggerChar = null;
-      _mentionSearchQuery = '';
-    });
+    setState(clear);
+  }
+
+  bool _useEnglishSlashCommands() {
+    final code = Localizations.localeOf(context).languageCode.toLowerCase();
+    return !code.startsWith('zh');
+  }
+
+  void _clearComposerCommandInput() {
+    _clearMentionSuggestionState();
+    final chatId = _currentChatId;
+    if (chatId != null) {
+      _inputDraftsByChatId[chatId] = TextEditingValue.empty;
+    }
+    _applyMessageControllerValue(TextEditingValue.empty);
+    _previousMessageInputValue = TextEditingValue.empty;
+  }
+
+  KeyEventResult _handleMentionKeyEvent(KeyEvent event) {
+    if (!_showMentionSuggestionPanel || !_mentionSuggestionController.hasItems) {
+      return KeyEventResult.ignored;
+    }
+    if (event is! KeyDownEvent && event is! KeyRepeatEvent) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    if (key == LogicalKeyboardKey.arrowDown) {
+      _mentionSuggestionController.moveSelection(1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowUp) {
+      _mentionSuggestionController.moveSelection(-1);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.tab) {
+      return _mentionSuggestionController.acceptSelected()
+          ? KeyEventResult.handled
+          : KeyEventResult.ignored;
+    }
+    if (key == LogicalKeyboardKey.escape) {
+      _clearMentionSuggestionState();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  bool _handleMentionEnter() {
+    if (!_showMentionSuggestionPanel || !_mentionSuggestionController.hasItems) {
+      return false;
+    }
+    return _mentionSuggestionController.acceptSelected();
+  }
+
+  Future<void> _selectSlashCommand(
+    SlashCommandOption option, {
+    bool completeOnly = false,
+  }) async {
+    if (completeOnly || option.acceptsArguments) {
+      if (!_replaceCurrentMentionToken(option.name)) {
+        return;
+      }
+      _clearMentionSuggestionState();
+      return;
+    }
+    _clearComposerCommandInput();
+    await _executeSlashCommandOption(option, const <String>[]);
+  }
+
+  Future<bool> _tryHandleSubmittedSlashCommand(String trimmedText) async {
+    if (!trimmedText.startsWith('/')) {
+      return false;
+    }
+    final body = trimmedText.substring(1).trimLeft();
+    if (body.isEmpty) {
+      return false;
+    }
+    final firstWhitespace = body.indexOf(RegExp(r'\s'));
+    final commandName =
+        (firstWhitespace == -1 ? body : body.substring(0, firstWhitespace))
+            .toLowerCase();
+    final rest = firstWhitespace == -1
+        ? ''
+        : body.substring(firstWhitespace + 1).trim();
+
+    final useEnglish = _useEnglishSlashCommands();
+    final commands = await loadSlashCommandOptions(
+      _viewModel,
+      useEnglish: useEnglish,
+    );
+    if (!mounted) {
+      return true;
+    }
+    final option = findSlashCommandByName(commands, commandName);
+    if (option == null) {
+      return false;
+    }
+
+    if (!option.acceptsArguments && rest.isNotEmpty) {
+      _showLocalToast(
+        useEnglish ? 'Usage: ${option.usage}' : '用法: ${option.usage}',
+      );
+      return true;
+    }
+
+    final List<String> args;
+    if (rest.isEmpty) {
+      args = const <String>[];
+    } else {
+      try {
+        args = splitSlashCommandTokens(rest);
+      } on FormatException catch (error) {
+        _showLocalToast(error.message);
+        return true;
+      }
+    }
+
+    _clearComposerCommandInput();
+    await _executeSlashCommandOption(option, args);
+    return true;
+  }
+
+  Future<void> _executeSlashCommandOption(
+    SlashCommandOption option,
+    List<String> args,
+  ) async {
+    final useEnglish = _useEnglishSlashCommands();
+    switch (option.kind) {
+      case SlashCommandKind.builtin:
+        await _executeBuiltinSlashCommand(option.builtinId!, useEnglish);
+        return;
+      case SlashCommandKind.plugin:
+        await _executePluginSlashCommand(option, args, useEnglish);
+        return;
+    }
+  }
+
+  Future<void> _executeBuiltinSlashCommand(
+    BuiltinSlashCommandId commandId,
+    bool useEnglish,
+  ) async {
+    switch (commandId) {
+      case BuiltinSlashCommandId.newChat:
+        newChatIntroArmed.value = true;
+        try {
+          await _viewModel.chatCore.createNewChat(
+            setAsCurrentChat: true,
+            sourceChatId: null,
+            parentChatId: null,
+            workspaceId: null,
+            input: null,
+          );
+        } catch (error, stackTrace) {
+          newChatIntroArmed.value = false;
+          ClientLogger.e(
+            'Failed to create new chat from slash command',
+            tag: 'AIChatScreen',
+            error: error,
+            stackTrace: stackTrace,
+          );
+          if (mounted) {
+            _showLocalToast(
+              useEnglish ? 'Failed to create new chat: $error' : '新建对话失败: $error',
+            );
+          }
+        }
+        return;
+      case BuiltinSlashCommandId.undo:
+        _undoLastUserMessage(useEnglish);
+        return;
+      case BuiltinSlashCommandId.compact:
+        final chatId = _activeChatIdForMessageAction();
+        if (chatId == null) {
+          _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
+          return;
+        }
+        await _compactCurrentChat(chatId, useEnglish);
+        return;
+      case BuiltinSlashCommandId.fork:
+        final chatId = _activeChatIdForMessageAction();
+        if (chatId == null) {
+          _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
+          return;
+        }
+        await _forkCurrentChat(useEnglish);
+        return;
+      case BuiltinSlashCommandId.exportChat:
+        final chatId = _activeChatIdForMessageAction();
+        if (chatId == null) {
+          _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
+          return;
+        }
+        await _exportCurrentChatJson(chatId, useEnglish);
+        return;
+      case BuiltinSlashCommandId.terminal:
+        _workspaceSession.requestOpenTerminal();
+        return;
+      case BuiltinSlashCommandId.mcp:
+        await showEnabledMcpServersDialog(
+          context: context,
+          clients: _viewModel.clients,
+        );
+        return;
+      case BuiltinSlashCommandId.model:
+        await _openModelSelectorDialog();
+        return;
+    }
+  }
+
+  void _undoLastUserMessage(bool useEnglish) {
+    final chatId = _activeChatIdForMessageAction();
+    if (chatId == null) {
+      _showLocalToast(AppLocalizations.of(context)!.chatPleaseCreateNewChat);
+      return;
+    }
+    if (_isQueueBlocked) {
+      _showLocalToast(
+        useEnglish
+            ? 'Finish the active turn before running /undo.'
+            : '当前对话正在处理，请结束后再执行 /undo。',
+      );
+      return;
+    }
+    if (_hasNewerDisplayHistory) {
+      _showLocalToast(
+        useEnglish
+            ? 'Jump to the latest messages before running /undo.'
+            : '请先回到最新消息底部后再执行 /undo。',
+      );
+      return;
+    }
+    int? lastUserTimestamp;
+    for (var i = _messages.length - 1; i >= 0; i -= 1) {
+      if (_messages[i].sender == 'user') {
+        lastUserTimestamp = _messages[i].timestamp;
+        break;
+      }
+    }
+    if (lastUserTimestamp == null) {
+      _showLocalToast(
+        useEnglish ? 'No user message to undo.' : '当前没有可撤销的用户消息。',
+      );
+      return;
+    }
+    _requestRollbackToMessage(lastUserTimestamp);
+  }
+
+  Future<void> _compactCurrentChat(String chatId, bool useEnglish) async {
+    if (_isQueueBlocked) {
+      _showLocalToast(
+        useEnglish
+            ? 'Finish the active turn before running /compact.'
+            : '当前对话正在处理，请结束后再执行 /compact。',
+      );
+      return;
+    }
+    try {
+      final compacted = await _viewModel.compactChat(chatId);
+      if (!mounted) {
+        return;
+      }
+      _showLocalToast(
+        compacted
+            ? (useEnglish ? 'Conversation compacted.' : '已完成上下文压缩。')
+            : (useEnglish
+                  ? 'Not enough conversation context to compact.'
+                  : '当前上下文暂无可压缩内容。'),
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to compact conversation from slash command',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showLocalToast(
+          useEnglish ? 'Compact failed: $error' : '压缩上下文失败: $error',
+        );
+      }
+    }
+  }
+
+  Future<void> _forkCurrentChat(bool useEnglish) async {
+    if (_hasNewerDisplayHistory) {
+      _showLocalToast(
+        useEnglish
+            ? 'Jump to the latest messages before running /fork.'
+            : '请先回到最新消息底部后再执行 /fork。',
+      );
+      return;
+    }
+    if (_messages.isEmpty) {
+      _showLocalToast(
+        useEnglish ? 'No messages to fork from.' : '当前会话还没有可分支的消息。',
+      );
+      return;
+    }
+    try {
+      await _createBranch(_messages.last.timestamp);
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to fork conversation from slash command',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showLocalToast(useEnglish ? 'Fork failed: $error' : '创建分支失败: $error');
+      }
+    }
+  }
+
+  Future<void> _exportCurrentChatJson(String chatId, bool useEnglish) async {
+    try {
+      final rawJson = await _viewModel.clients.chatRuntimeHolderMain
+          .exportChatHistoriesToJson();
+      final decoded = jsonDecode(rawJson);
+      if (decoded is! Map<String, dynamic>) {
+        throw const FormatException('Unexpected chat export payload');
+      }
+      final rawChats = decoded['chats'];
+      Map<String, dynamic>? matchedChat;
+      if (rawChats is List) {
+        for (final entry in rawChats) {
+          if (entry is Map && entry['id']?.toString() == chatId) {
+            matchedChat = Map<String, dynamic>.from(entry);
+            break;
+          }
+        }
+      }
+      if (matchedChat == null) {
+        if (mounted) {
+          _showLocalToast(
+            useEnglish
+                ? 'Current chat has no exported records yet.'
+                : '当前会话暂无可导出的记录。',
+          );
+        }
+        return;
+      }
+
+      final workspaceId = matchedChat['workspaceId']?.toString();
+      final matchedWorkspaces = <Map<String, dynamic>>[];
+      final rawWorkspaces = decoded['workspaces'];
+      if (workspaceId != null &&
+          workspaceId.isNotEmpty &&
+          rawWorkspaces is List) {
+        for (final entry in rawWorkspaces) {
+          if (entry is Map && entry['id']?.toString() == workspaceId) {
+            matchedWorkspaces.add(Map<String, dynamic>.from(entry));
+          }
+        }
+      }
+
+      final archive = <String, dynamic>{
+        if (decoded.containsKey('archiveType'))
+          'archiveType': decoded['archiveType'],
+        if (decoded.containsKey('formatVersion'))
+          'formatVersion': decoded['formatVersion'],
+        if (decoded.containsKey('exportedAt'))
+          'exportedAt': decoded['exportedAt'],
+        'workspaces': matchedWorkspaces,
+        'chats': <Map<String, dynamic>>[matchedChat],
+      };
+      final formattedJson = const JsonEncoder.withIndent('  ').convert(archive);
+      final safeId = chatId.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+      final savedPath = await FileSaveService.saveBytes(
+        bytes: Uint8List.fromList(utf8.encode(formattedJson)),
+        name: 'operit-chat-$safeId.json',
+        mimeType: 'application/json',
+        acceptedTypeGroups: const <XTypeGroup>[
+          XTypeGroup(label: 'JSON', extensions: <String>['json']),
+        ],
+      );
+      if (savedPath != null && savedPath.trim().isNotEmpty && mounted) {
+        _showLocalToast(AppLocalizations.of(context)!.savedTo(savedPath));
+      }
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to export current chat from slash command',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showLocalToast(
+          useEnglish ? 'Export failed: $error' : '导出对话失败: $error',
+        );
+      }
+    }
+  }
+
+  Future<void> _openModelSelectorDialog() {
+    final maxDialogHeight = (MediaQuery.sizeOf(context).height * 0.72).clamp(
+      280.0,
+      440.0,
+    );
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Dialog(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        insetPadding: const EdgeInsets.all(24),
+        child: SizedBox(
+          width: 300,
+          child: ConstrainedBox(
+            constraints: BoxConstraints(maxHeight: maxDialogHeight),
+            child: AgentModelSelectorPopup(
+              viewModel: _viewModel,
+              currentChatId: _currentChatId,
+              onDismiss: () => Navigator.of(dialogContext).pop(),
+              onModelChanged: (modelId, {providerTypeId, providerName}) {},
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _executePluginSlashCommand(
+    SlashCommandOption option,
+    List<String> args,
+    bool useEnglish,
+  ) async {
+    try {
+      final result = await _viewModel.clients.application.runCoreCommand(
+        args: <String>['plugin', 'exec', option.name, ...args],
+      );
+      if (!mounted) {
+        return;
+      }
+      if (result is! Map<Object?, Object?>) {
+        throw StateError('Invalid core command output');
+      }
+      final stderr = result['stderr']?.toString().trim() ?? '';
+      final stdout = result['stdout']?.toString().trim() ?? '';
+      final output = stderr.isNotEmpty ? stderr : stdout;
+      if (output.isEmpty) {
+        _showLocalToast(
+          useEnglish
+              ? 'Executed /${option.name}.'
+              : '已执行 /${option.name}。',
+        );
+        return;
+      }
+      if (!output.contains('\n') && output.length <= 100) {
+        _showLocalToast(output);
+        return;
+      }
+      await _showSlashCommandOutputDialog(
+        title: '/${option.name}',
+        content: output,
+      );
+    } catch (error, stackTrace) {
+      ClientLogger.e(
+        'Failed to run plugin slash command /${option.name}',
+        tag: 'AIChatScreen',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      if (mounted) {
+        _showLocalToast(
+          useEnglish
+              ? 'Command /${option.name} failed: $error'
+              : '命令 /${option.name} 执行失败: $error',
+        );
+      }
+    }
+  }
+
+  Future<void> _showSlashCommandOutputDialog({
+    required String title,
+    required String content,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    final useEnglish = _useEnglishSlashCommands();
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(title),
+        content: SizedBox(
+          width: 520,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 400),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                content,
+                style: Theme.of(dialogContext).textTheme.bodyMedium,
+              ),
+            ),
+          ),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () {
+              unawaited(Clipboard.setData(ClipboardData(text: content)));
+              _showLocalToast(useEnglish ? 'Copied to clipboard' : '已复制到剪贴板');
+            },
+            child: Text(useEnglish ? 'Copy' : '复制'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: Text(l10n.close),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Replaces the active mention token with the selected token text.
@@ -2069,6 +2591,9 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
     if (text.isEmpty && !hasAttachments) {
       return;
     }
+    if (text.startsWith('/') && await _tryHandleSubmittedSlashCommand(text)) {
+      return;
+    }
     final wasQueueBlocked = _isQueueBlocked;
     if (wasQueueBlocked &&
         text.isNotEmpty &&
@@ -2851,6 +3376,23 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
       searchQuery: _mentionSearchQuery,
       triggerChar: triggerChar,
       hasBoundWorkspace: _currentWorkspacePath?.trim().isNotEmpty == true,
+      showsCommands: _mentionShowsCommands,
+      controller: _mentionSuggestionController,
+      onCommandSelected: (option, {required completeOnly}) {
+        unawaited(
+          _selectSlashCommand(option, completeOnly: completeOnly).catchError((
+            Object error,
+            StackTrace stackTrace,
+          ) {
+            ClientLogger.e(
+              'Failed to select slash command',
+              tag: 'AIChatScreen',
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }),
+        );
+      },
       onPackageSelected: (packageName) {
         unawaited(
           _selectMentionPackage(packageName).catchError((
@@ -3028,6 +3570,8 @@ class _AIChatSurfaceState extends State<_AIChatSurface> {
           onPreviewAttachment: _previewAttachment,
           toastMessageListenable: _toastMessageNotifier,
           onDismissToast: _dismissToast,
+          onMentionEnter: _handleMentionEnter,
+          onMentionKeyEvent: _handleMentionKeyEvent,
         );
         return ChatMessageLocatorHost(
           currentChatId: data.currentChatId,
