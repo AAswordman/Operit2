@@ -655,7 +655,12 @@ impl PeerStateStore {
     }
     /// Saves explicit listener settings without removing unrelated preference keys.
     pub fn saveHostConfig(&self, config: &PeerHostConfig) -> Result<(), String> {
-        if let Some(discovery) = &config.discovery { discovery.validate()?; }
+        if config.discovery.is_some() {
+            #[cfg(feature = "peer-directory")]
+            config.discovery.as_ref().unwrap().validate()?;
+            #[cfg(not(feature = "peer-directory"))]
+            return Err("HTTP discovery directories are not enabled in this build".into());
+        }
         self.store(RUNTIME_LINK_ACCESS_HOST_CONFIG_PATH)
             .try_edit_result(|preferences| writeHostConfigPreferences(preferences, config))
             .map_err(|error: PreferencesDataStoreError| error.to_string())
@@ -1760,6 +1765,17 @@ mod tests {
                 .unwrap(),
             "keep"
         );
+        config.discovery = Some(PeerDiscoveryConfig {
+            directoryUrl: "http://127.0.0.1:37196".into(),
+            groupKey: "discovery-test-group".into(),
+            ..PeerDiscoveryConfig::default()
+        });
+        let before = storage.0.lock().unwrap().clone();
+        let saved = store.saveHostConfig(&config);
+        assert_eq!(saved.is_ok(), cfg!(feature = "peer-directory"));
+        if !cfg!(feature = "peer-directory") {
+            assert_eq!(before, *storage.0.lock().unwrap(), "unsupported settings must not modify storage");
+        }
     }
     #[test]
     fn original_directional_records_do_not_create_reverse_authorization() {

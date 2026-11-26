@@ -17,10 +17,9 @@ static bool IRAM_ATTR microphone_overflow(i2s_chan_handle_t channel, i2s_event_d
 }
 // Match Rust CaptureBlock. The discarded low bits do not enter PCM conversion.
 typedef struct {
-    uint32_t nonzero, peak, right_peak;
     int16_t samples[256];
 } capture_block_t;
-_Static_assert(sizeof(capture_block_t) == 524, "CaptureBlock ABI");
+_Static_assert(sizeof(capture_block_t) == 512, "CaptureBlock ABI");
 typedef struct {
     i2s_chan_handle_t channel;
     QueueHandle_t blocks;
@@ -31,12 +30,8 @@ typedef struct {
     int32_t input[512];
     capture_block_t output;
 } microphone_t;
-static uint32_t peak24(int32_t raw) {
-    int32_t sample = raw >> 8;
-    return sample < 0 ? (uint32_t)-sample : (uint32_t)sample;
-}
 // Drain hardware at higher priority than Host workflows. The fixed 32-block
-// PCM queue stores 512 ms in 16,768 bytes; no full recording is retained.
+// PCM queue stores 512 ms in 16,384 bytes; no full recording is retained.
 static void microphone_task(void *context) {
     microphone_t *mic = context;
     int64_t previous = esp_timer_get_time();
@@ -50,15 +45,8 @@ static void microphone_task(void *context) {
         if (atomic_load(&microphone_overflows)) err = -10000 - (int)max_gap;
         if (err == ESP_OK && count != sizeof(mic->input)) err = ESP_ERR_INVALID_SIZE;
         if (err == ESP_OK) {
-            mic->output.nonzero = mic->output.peak = mic->output.right_peak = 0;
-            for (unsigned i = 0; i < 256; i++) {
-                int32_t left = mic->input[i * 2];
-                mic->output.samples[i] = left >> 16;
-                mic->output.nonzero += left != 0;
-                uint32_t peak = peak24(left), right = peak24(mic->input[i * 2 + 1]);
-                if (peak > mic->output.peak) mic->output.peak = peak;
-                if (right > mic->output.right_peak) mic->output.right_peak = right;
-            }
+            for (unsigned i = 0; i < 256; i++)
+                mic->output.samples[i] = mic->input[i * 2] >> 16;
             if (xQueueSend(mic->blocks, &mic->output, 0) != pdTRUE) err = -20000;
         }
         if (err != ESP_OK) { atomic_store(&mic->error, err); break; }

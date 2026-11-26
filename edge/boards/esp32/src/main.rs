@@ -451,77 +451,41 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 "face_neutral" => {
                     setExpression("neutral")?;
                 }
-                "run_node" | "edge_search" | "edge_pair" => {
+                "run_node" | "edge_search" | "edge_pair" | "edge_unpair" => {
+                    let unpair = action == "edge_unpair";
                     let result = (|| -> Result<(), String> {
                         let services = nodeServices.clone();
                         let (sender, receiver) = std::sync::mpsc::channel();
-                        let transports = peerTransports.clone();
-                        scheduler
-                            .scheduleHostRuntimeAsyncTask(
-                                "edge-listen-ui",
-                                Box::new(move || {
-                                    Box::pin(async move {
-                                        let result = services
-                                            .peers()
-                                            .startListening(&transports)
-                                            .await
-                                            .map_err(|error| error.to_string());
-                                        let _ = sender.send(result);
-                                    })
-                                }),
-                            )
-                            .map_err(|error| error.to_string())?;
-                        receiver
-                            .recv_timeout(std::time::Duration::from_secs(5))
-                            .map_err(|error| format!("Host task timeout: {error}"))?
-                    })();
-                    match result {
-                        Ok(()) => {
-                            setExpression("listening")?;
-                        }
-                        Err(error) => ui.actionError(&error),
-                    }
-                }
-                "edge_unpair" => {
-                    let result = (|| -> Result<(), String> {
-                        let services = nodeServices.clone();
-                        let (sender, receiver) = std::sync::mpsc::channel();
-                        scheduler
-                            .scheduleHostRuntimeAsyncTask(
-                                "edge-unpair-ui",
-                                Box::new(move || {
-                                    Box::pin(async move {
-                                        let result = async {
-                                            for peer in services
-                                                .peers()
-                                                .pairedPeers()
-                                                .map_err(|error| error.to_string())?
-                                            {
-                                                services
-                                                    .peers()
-                                                    .removePairedPeer(&peer.nodeId)
-                                                    .await
-                                                    .map_err(|error| error.to_string())?;
-                                            }
-                                            Ok::<_, String>(())
+                        let transports = if unpair { Vec::new() } else { peerTransports.clone() };
+                        scheduler.scheduleHostRuntimeAsyncTask("edge-peer-ui", Box::new(move || {
+                            Box::pin(async move {
+                                let result = async {
+                                    let peers = services.peers();
+                                    if unpair {
+                                        for peer in peers.pairedPeers().map_err(|error| error.to_string())? {
+                                            peers.removePairedPeer(&peer.nodeId).await
+                                                .map_err(|error| error.to_string())?;
                                         }
-                                        .await;
-                                        let _ = sender.send(result);
-                                    })
-                                }),
-                            )
-                            .map_err(|error| error.to_string())?;
-                        receiver
-                            .recv_timeout(std::time::Duration::from_secs(5))
+                                    } else {
+                                        peers.startListening(&transports).await
+                                            .map_err(|error| error.to_string())?;
+                                    }
+                                    Ok::<_, String>(())
+                                }.await;
+                                let _ = sender.send(result);
+                            })
+                        })).map_err(|error| error.to_string())?;
+                        receiver.recv_timeout(std::time::Duration::from_secs(5))
                             .map_err(|error| format!("Host task timeout: {error}"))?
                     })();
                     match result {
-                        Ok(()) => {
+                        Ok(()) if unpair => {
                             deviceSpaceUi.reset();
                             chatRoute.reset();
                             status.setPairingCode("");
                             setExpression("neutral")?;
                         }
+                        Ok(()) => setExpression("listening")?,
                         Err(error) => ui.actionError(&error),
                     }
                 }
@@ -533,9 +497,6 @@ fn runFirmware() -> operit_host_api::HostResult<()> {
                 }
                 "edge_voice" => {
                     if let Err(error)=audio::toggleRecording() {ui.actionError(&error);}
-                }
-                "edge_audio_test" => {
-                    if let Err(error)=audio::test() {ui.actionError(&error);}
                 }
                 "edge_send" => {
                     let draft = ui.chatDraft();

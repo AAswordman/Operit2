@@ -196,7 +196,9 @@ fn rememberPeerProtocol(service: &dyn NodeSpaceContext, peer: &str, version: u32
 fn mergePeerOperations(service: &dyn NodeSpaceContext, peer: &str, spaceId: &str,
     operations: &[SyncOperation]) -> Result<usize, String> {
     if operations.len() > MAX_RECONCILE_PAGE_OPS {
-        space_doctor::updateCounters(service, |counters| counters.oversizeOffersRefused += 1).ok();
+        if cfg!(feature = "full") && !service.isSpaceEndpoint() {
+            space_doctor::updateCounters(service, |counters| counters.oversizeOffersRefused += 1).ok();
+        }
         return Err(format!(
             "Reconciliation page of {} operations exceeds the {} operation ceiling",
             operations.len(),
@@ -371,13 +373,16 @@ pub(crate) async fn reconcile(service: &dyn NodeSpaceContext, peer: &str) -> Res
         "shared Space reconciliation with {peer}: members {}, localIsMember={localIsMember}, converged={converged} in {rounds} round(s)",
         state.memberNodeIds.len()
     ));
-    space_doctor::updateCounters(service, |counters| {
-        counters.reconcileExchanges += 1;
-        counters.reconcileRounds += rounds as u64;
-        if !converged {
-            counters.reconcileIncomplete += 1;
-        }
-    }).ok();
+    // Core owns diagnostic trends; endpoint reconciliation only persists authority.
+    if cfg!(feature = "full") && !service.isSpaceEndpoint() {
+        space_doctor::updateCounters(service, |counters| {
+            counters.reconcileExchanges += 1;
+            counters.reconcileRounds += rounds as u64;
+            if !converged {
+                counters.reconcileIncomplete += 1;
+            }
+        }).ok();
+    }
     Ok(SharedSpaceReconciliation {
         spaceId: current.spaceId,
         members: state.memberNodeIds.into_iter().collect(),

@@ -102,21 +102,27 @@ application image against the 3,997,696-byte app partition. It does not flash.
 container. Normal firmware updates preserve NVS and the reserved layout partition.
 Keep the matching ELF for crash address resolution.
 
-Measured on 2026-11-27, the complete Core text/audio application is 2,846,992 bytes
-(2.72 MiB), down 296,384 bytes (9.43%) from the previous 3,143,376-byte image.
-It leaves 1,150,704 bytes in the unchanged application partition. The 1 MiB
-target remains unmet by 1,798,416 bytes. The fixed 4 MiB flash container is not
-the app size. Shared typed MessagePack decoding provides most of this reduction;
-the HTTP discovery directory and the redundant encoded chat display cache were
-also removed from this product. The current chat window projects directly to
-bounded display rows; Core still owns complete history.
+Measured on 2026-11-27, the complete Core text/audio application is 2,691,008 bytes
+(2.57 MiB), down 155,984 bytes (5.48%) from the previous 2,846,992-byte image.
+It leaves 1,306,688 bytes in the unchanged application partition. The 1 MiB
+target remains unmet by 1,642,432 bytes. The fixed 4 MiB flash container is not
+the app size. A build without HTTP discovery directories now rejects those
+settings before writing them, allowing URL parsing to leave this image.
+Endpoint reconciliation persists authority without diagnostic trend counters;
+Core retains those counters. Listener start and unpair actions share one task
+submission and completion path. Audio capture no longer performs diagnostic sample
+statistics or a local tone/capture self-test. The current chat window projects
+directly to bounded display rows; Core still owns complete history.
 
 Verification: Xtensa release, matching ELF ABI, application partition and C/Wasm
-packaging, 110 editor tests and TypeScript checks passed. Link codec tests, the runtime with and without HTTP directory
-support (164 and 150 tests), 55 firmware-module simulator tests and 46 Core/Edge
-protocol tests passed. Three tests specific to the deleted encoded display cache
-were removed. The separate Windows CLI/UI end-to-end run still exits with
-0xC0000005 during outgoing pairing; its text/audio round trip is not verified.
+packaging, 109 editor tests, 18 USB protocol tests, 25 board tests and TypeScript
+checks passed. The runtime without HTTP directories passed 150 tests, and the
+existing config test also verifies that unsupported directories leave storage
+unchanged; the directory-enabled variant passed its targeted config test.
+Firmware-module simulation passed 55 tests and Core/Edge protocol fixtures
+passed 46 tests. One UI test dedicated to the deleted audio self-test was removed.
+The separate Windows CLI/UI end-to-end run still exits with 0xC0000005 during
+outgoing pairing; its text/audio round trip is not verified.
 The current-source fixture CLI was built with the unused native inference engine
 temporarily disabled; its manifest and lockfile were restored after that build.
 
@@ -214,9 +220,8 @@ two-pin amplified speaker connector driven by DAC GPIO26.
 Capture runs on I2S1 at 16 kHz, with 32-bit stereo slots (64 bit clocks/frame).
 Only the left slot is converted to mono PCM16, with DC removal, bounded gain and
 saturation. A priority-10 native task drains DMA independently of Host workflows.
-Its fixed 32-block queue retains 512 ms of high-16-bit mono input and raw signal
-statistics in 16,768 bytes; the original PCM filter uses exactly those same high
-bits, so conversion is unchanged. Its 3 KiB stack, queue and scratch storage are
+Its fixed 32-block queue retains 512 ms of high-16-bit mono input in 16,384 bytes.
+The original PCM filter uses exactly those same high bits, so conversion is unchanged. Its 3 KiB stack, queue and scratch storage are
 released on close. Four DMA descriptors of 256 stereo frames provide a fixed
 8 KiB / 64 ms hardware ring. The ISR and its callback remain in IRAM during
 Flash cache suspension. DMA and PCM queue overflow fail capture explicitly.
@@ -244,25 +249,14 @@ emits mono PCM16 independently of hardware; the simulator tests this same source
 conversion, including the final PCM16-to-DAC8 conversion. It does not parse WAV
 or Core speech packets.
 
-In Settings → Device operations, **Audio self-test** works without a Space or
-speech processor: it plays a quiet 250 ms tone, then captures roughly three seconds
-of microphone sample statistics. It does not save or upload the recording.
-USB diagnostics expose the same test and status:
-
-```powershell
-python edge/boards/esp32/editor/device-debug.py audio --port COM24 --text test
-python edge/boards/esp32/editor/device-debug.py audio --port COM24 --text status
-```
-
-Use the actual attached COM port and close any other UART owner first. Tests
-report sample count, nonzero samples, left/right raw peak, clipping, sums and driver
-errors. A successful DMA write does not prove audible sound; nonzero microphone
-samples do not prove recognition quality. Hardware results must be recorded
-separately from desktop unit/transport tests.
-
+Microphone acquisition uploads bounded PCM blocks to Core; playback consumes
+Core-provided WAV segments. Production capture does not compute diagnostic
+peaks, clipping counts or sums, and the local tone/capture self-test has been
+removed. DMA overrun detection, backpressure, cancellation and driver errors
+remain. USB `audio --text status|record|stop` exposes the same transport state.
 With an admitted Core speech processor attached, USB `audio --text "speak 你好"`
-requests synthesis through the existing processor and plays returned PCM16 WAV.
-The standalone hardware self-test does not establish this Core round trip.
+requests Core synthesis and plays the returned PCM16 WAV.
+
 Firmware release builds omit Rust console log formatting and IDF info/warning
 logs that are disabled at runtime once Link owns UART; early startup failures,
 C error logs, UI errors, allocation evidence and USB diagnostics remain available.

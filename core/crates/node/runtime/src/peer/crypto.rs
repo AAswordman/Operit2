@@ -648,11 +648,6 @@ impl MultiplexedChannel {
         (self.changed)();
     }
 
-    /// Returns the terminal channel error or a new local error.
-    fn failureOr(&self, message: &str) -> CoreLinkError {
-        self.failure.lock().unwrap_or_else(|poisoned| poisoned.into_inner()).clone().unwrap_or_else(|| error(message))
-    }
-
     /// Releases local state before awaiting transport shutdown.
     async fn fail(&self, failure: CoreLinkError) {
         self.terminate(failure);
